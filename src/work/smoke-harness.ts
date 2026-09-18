@@ -18,12 +18,22 @@
  *   - Either way the author's code is compiled with `optimize=1`, so no
  *     `assert` statement it wrote exists at run time.
  *
- * The verdict is the shape of what `run()` returned: a dict with an `actions`
- * list for every case, at least one action across them, and outputs that
- * differ between cases. One line per case goes to stdout, so the shared
- * verdict rule in `src/lib/skill-sandbox.ts` reads the harness's lines; a
- * failure is one `smoke harness:` line on stderr with the author's frames of
- * the traceback, which is what the retry is told.
+ * The verdict is what `run()` returned, read against the skill it stands for
+ * (`SmokeHarnessContract`): a dict with an `actions` list for every case and
+ * actions from at least two of them; every action one of the two verbs that
+ * reach a real surface, on a surface the author was shown as connected, with
+ * a tool that surface allows and SKILL.md names; at least one action on the
+ * skill's target surface; each case's action arguments carrying a value that
+ * case supplied, and every input the executor binds from the candidate row
+ * (the record, the reply target) when the case supplies it; and action
+ * arguments, not merely outputs, that differ between cases. A mimic that
+ * passes says nothing about a provider's answer, but one that fails any of
+ * these describes a write the gate would refuse or aim at a constant.
+ *
+ * One line per case goes to stdout, so the shared verdict rule in
+ * `src/lib/skill-sandbox.ts` reads the harness's lines; a failure is one
+ * `smoke harness:` line on stderr with the author's frames of the traceback,
+ * which is what the retry is told.
  *
  * Both backends write this as smoke.py and run `python smoke.py`, so neither
  * changes. Mock mode never uses it: the hosted demo and the frozen evaluation
@@ -32,8 +42,76 @@
  * Kept free of model clients and Convex imports.
  */
 
+import type { SurfacePath, SurfaceRecord } from '../surfaces/types';
+import { verdictFor as surfaceVerdictFor } from '../surfaces/verdict';
+import { CANDIDATE_BOUND_TARGET_INPUTS } from './skill-inputs';
+
 /** Where the author's source, base64-encoded, is written into the harness. */
 const AUTHORED_SOURCE_SLOT = '__DAY0_AUTHORED_SOURCE__';
+
+/** Where the contract, base64-encoded JSON, is written into the harness. */
+const CONTRACT_SLOT = '__DAY0_SMOKE_CONTRACT__';
+
+/** One surface the author was shown as connected, as the harness reads it. */
+export interface SmokeHarnessSurface {
+  slug: string;
+  path?: SurfacePath;
+  allowedTools: string[];
+}
+
+/**
+ * What the harness holds `run()`'s actions against: the skill the smoke test
+ * stands for and the surfaces the author was told it may target.
+ */
+export interface SmokeHarnessContract {
+  /** SKILL.md as it will be stored; an action's tool must be named in it. */
+  body: string;
+  /** The surface the skill was approved for; some case must act on it. */
+  targetSurface?: string;
+  /** The connected surfaces, the same list the author prompt shows. */
+  surfaces: SmokeHarnessSurface[];
+  /**
+   * Inputs the executor binds by value from the candidate row. They name
+   * where a write lands, so a case that supplies one must carry it into an
+   * action argument.
+   */
+  boundInputs: string[];
+}
+
+/**
+ * The contract for one authored skill.
+ *
+ * Args:
+ *   body: SKILL.md as it will be stored.
+ *   surfaces: The agent's surfaces.
+ *   targetSurface: The surface slug the skill was approved for, if any.
+ *   now: Clock for the connection verdict, as the author prompt read it.
+ *
+ * Returns:
+ *   The body, the target, and the surfaces `surfaceInstructions` lists as
+ *   connected with their allowlists.
+ */
+export function smokeHarnessContract(
+  body: string,
+  surfaces: readonly SurfaceRecord[],
+  targetSurface: string | undefined,
+  now: number,
+): SmokeHarnessContract {
+  return {
+    body,
+    ...(targetSurface ? { targetSurface } : {}),
+    surfaces: surfaces
+      .filter((surface): boolean => surfaceVerdictFor(surface, now) === 'connected')
+      .map(
+        (surface): SmokeHarnessSurface => ({
+          slug: surface.slug,
+          ...(surface.path ? { path: surface.path } : {}),
+          allowedTools: [...(surface.toolAllowlist ?? [])],
+        }),
+      ),
+    boundInputs: [...CANDIDATE_BOUND_TARGET_INPUTS],
+  };
+}
 
 /** The harness, Python 3.12, with the slot for the author's source. */
 export const SMOKE_HARNESS = String.raw`
@@ -51,11 +129,13 @@ import base64
 import copy
 import inspect
 import json
+import re
 import sys
 import traceback
 
 AUTHORED_FILE = "authored_smoke.py"
 AUTHORED = base64.b64decode("__DAY0_AUTHORED_SOURCE__").decode("utf-8")
+CONTRACT = json.loads(base64.b64decode("__DAY0_SMOKE_CONTRACT__").decode("utf-8"))
 MIN_CASES = 2
 DEFINITIONS = (
     ast.Import,
@@ -66,14 +146,8 @@ DEFINITIONS = (
     ast.Assign,
     ast.AnnAssign,
 ) + ((ast.TypeAlias,) if hasattr(ast, "TypeAlias") else ())
-VERBS = (
-    "mcp.call",
-    "http.request",
-    "slack.postMessage",
-    "ticket.update",
-    "spreadsheet.appendRow",
-    "twitter.reply",
-)
+REAL_VERBS = ("mcp.call", "http.request")
+VERB_PATHS = {"mcp.call": ("mcp", "browser-driven"), "http.request": ("documented-api",)}
 SECRET_WORDS = ("secret", "token", "password", "authorization", "credential", "key")
 MAX_CARRIED = 3
 MAX_CARRIED_CHARS = 40
@@ -222,25 +296,89 @@ def canonical(value):
         return repr(value)
 
 
-def action_label(action):
-    """A short name for one emitted action: its verb, then the tool or path it names."""
+def action_parts(action, case_index, action_index):
+    """The verb and arguments of one action, in the executor's shape or the flat one authors also write."""
+    at = f"case {case_index} action {action_index}"
     if not isinstance(action, dict):
-        return type(action).__name__
-    args = action.get("args") if isinstance(action.get("args"), dict) else {}
-    names = []
-    for value in (
-        action.get("action"),
-        action.get("type"),
-        action.get("tool"),
-        args.get("tool"),
-        action.get("path"),
-        args.get("path"),
-    ):
-        if isinstance(value, str) and value and value not in names:
-            names.append(value)
-    verbs = [name for name in names if name in VERBS]
-    others = [name for name in names if name not in VERBS]
-    return " ".join(verbs[:1] + others[:1] if verbs else others[:2]) or "action"
+        fail(f"{at} is {type(action).__name__}; every action is a dict with a verb and its arguments")
+    top = action.get("tool")
+    verb = top if top in REAL_VERBS else action.get("action") or action.get("type")
+    if verb not in REAL_VERBS:
+        shown = verb or top or "no verb"
+        fail(
+            f"{at} uses {shown}; only mcp.call and http.request reach a real surface, "
+            "and any other verb is refused at execution"
+        )
+    if isinstance(action.get("args"), dict):
+        return verb, action["args"]
+    return verb, {key: value for key, value in action.items() if key not in ("action", "type") and value != verb}
+
+
+def names_operation(operation):
+    """Whether SKILL.md names an operation as a whole word."""
+    pattern = r"(?<![A-Za-z0-9_.-])" + re.escape(operation) + r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9])"
+    return re.search(pattern, CONTRACT["body"]) is not None
+
+
+def check_action(action, case_index, action_index):
+    """Refuse a verb, surface or tool the skill could not use at execution or does not name."""
+    at = f"case {case_index} action {action_index}"
+    verb, args = action_parts(action, case_index, action_index)
+    slug = args.get("surface")
+    surface = next((entry for entry in CONTRACT["surfaces"] if entry["slug"] == slug), None)
+    if surface is None:
+        listed = ", ".join(entry["slug"] for entry in CONTRACT["surfaces"]) or "none"
+        fail(f"{at} targets surface {slug!r}, which is not a connected surface (connected: {listed})")
+    if surface.get("path") not in VERB_PATHS[verb]:
+        fail(f"{at} uses {verb} on {slug}, whose path is {surface.get('path') or 'unknown'}")
+    if verb == "mcp.call":
+        operation = args.get("tool")
+    else:
+        operation = re.split(r"[?#]", str(args.get("path") or ""), maxsplit=1)[0].strip("/")
+    if not isinstance(operation, str) or not operation:
+        fail(f"{at} names no tool for {verb} on {slug}")
+    if operation not in surface["allowedTools"]:
+        fail(f"{at} uses {operation}, which is not in the allowlist of {slug}")
+    if not names_operation(operation):
+        fail(f"{at} uses {operation}, which SKILL.md never names; a skill emits only the tools its procedure declares")
+    return verb, args, operation
+
+
+def leaves(value):
+    """Every scalar inside a value, reading a string that holds JSON as the JSON it holds."""
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in leaves(item)]
+    if isinstance(value, (list, tuple)):
+        return [leaf for item in value for leaf in leaves(item)]
+    if isinstance(value, str):
+        text = value.strip()
+        if text[:1] in ("{", "["):
+            try:
+                return leaves(json.loads(text))
+            except ValueError:
+                pass
+        return [value]
+    if isinstance(value, bool) or value is None:
+        return []
+    return [str(value)]
+
+
+def supplied(inputs):
+    """The scalar values a case supplies that an argument could carry."""
+    return [leaf for leaf in leaves(inputs) if len(leaf.strip()) >= 2]
+
+
+def carries(arguments, value):
+    """Whether any argument leaf contains a supplied value."""
+    return any(value in leaf for leaf in leaves(arguments))
+
+
+def input_value(inputs, name):
+    """A case's value for a declared input, whichever of hyphens or underscores its key uses."""
+    for key, value in inputs.items():
+        if str(key).replace("_", "-").strip("<>") == name:
+            return value
+    return None
 
 
 def carried(inputs, output):
@@ -262,7 +400,8 @@ def carried(inputs, output):
 
 def check(calls):
     """Decide the verdict from what run() returned, and print one line per call."""
-    for index, (_, output) in enumerate(calls, 1):
+    checked = []
+    for index, (inputs, output) in enumerate(calls, 1):
         if not isinstance(output, dict):
             kind = type(output).__name__
             fail(f"run() returned {kind} for case {index}; it must return a dict with an actions list")
@@ -271,16 +410,40 @@ def check(calls):
                 f"run() returned no actions list for case {index}; "
                 "the dict it returns carries what the skill emits under actions"
             )
-    if not any(output["actions"] for _, output in calls):
-        fail("run() emitted no actions for any case; a representative input makes the skill emit an action")
-    if len({canonical(output) for _, output in calls}) < MIN_CASES:
-        fail("run() returned the same output for every case, so its actions do not follow its inputs")
-    for index, (inputs, output) in enumerate(calls, 1):
-        actions = output["actions"]
-        plural = "" if len(actions) == 1 else "s"
-        labels = ", ".join(action_label(a) for a in actions) or "none"
-        line = f"case {index}: run() emitted {len(actions)} action{plural} ({labels})"
-        values = carried(inputs, output) if isinstance(inputs, dict) else []
+        parts = [check_action(action, index, number) for number, action in enumerate(output["actions"], 1)]
+        checked.append((index, inputs if isinstance(inputs, dict) else {}, output, parts))
+    emitting = [entry for entry in checked if entry[3]]
+    if len(emitting) < MIN_CASES:
+        fail(
+            f"run() emitted actions for {len(emitting)} of {len(checked)} cases; "
+            f"{MIN_CASES} representative inputs must each make the skill emit an action"
+        )
+    for index, inputs, _, parts in emitting:
+        arguments = [args for _, args, _ in parts]
+        if supplied(inputs) and not any(carries(arguments, value) for value in supplied(inputs)):
+            fail(
+                f"no action argument in case {index} carries a value that case supplied; "
+                "a write that ignores its inputs is hard-coded"
+            )
+        for name in CONTRACT["boundInputs"]:
+            value = input_value(inputs, name)
+            if value is None or isinstance(value, bool) or not supplied({name: value}):
+                continue
+            if not all(carries(arguments, leaf) for leaf in supplied({name: value})):
+                fail(
+                    f"case {index} supplies <{name}> but no action argument carries it; the executor binds "
+                    f"<{name}> from the candidate, so a write that ignores it is aimed at a constant"
+                )
+    if len({canonical([args for _, args, _ in parts]) for _, _, _, parts in emitting}) < MIN_CASES:
+        fail("run() emitted the same action arguments for every case, so its writes do not follow its inputs")
+    target = CONTRACT.get("targetSurface")
+    if target and not any(args.get("surface") == target for _, _, _, parts in emitting for _, args, _ in parts):
+        fail(f"no case emits an action on {target}, the surface this skill was approved for")
+    for index, inputs, output, parts in checked:
+        plural = "" if len(parts) == 1 else "s"
+        labels = ", ".join(f"{verb} {operation}" for verb, _, operation in parts) or "none"
+        line = f"case {index}: run() emitted {len(parts)} action{plural} ({labels})"
+        values = carried(inputs, output)
         if values:
             line += "; carries " + ", ".join(values)
         print(line, flush=True)
@@ -335,12 +498,17 @@ main()
  *
  * Args:
  *   authored: The author's smoke.py, already unwrapped from any fence.
+ *   contract: The skill and surfaces the actions are held against.
  *
  * Returns:
- *   The harness with the author's source embedded. The source travels as
- *   base64, so no character in it can end the string it sits in.
+ *   The harness with the author's source and the contract embedded. Both
+ *   travel as base64, so no character in either can end the string it sits in.
  */
-export function harnessedSmokeTest(authored: string): string {
+export function harnessedSmokeTest(authored: string, contract: SmokeHarnessContract): string {
   const encoded = Buffer.from(authored, 'utf8').toString('base64');
-  return SMOKE_HARNESS.replace(AUTHORED_SOURCE_SLOT, (): string => encoded);
+  const encodedContract = Buffer.from(JSON.stringify(contract), 'utf8').toString('base64');
+  return SMOKE_HARNESS.replace(AUTHORED_SOURCE_SLOT, (): string => encoded).replace(
+    CONTRACT_SLOT,
+    (): string => encodedContract,
+  );
 }

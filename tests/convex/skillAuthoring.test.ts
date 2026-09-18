@@ -353,9 +353,12 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
     ).resolves.toEqual({ ok: true });
     const { realAuthorSchema } = await import('../../convex/skillActions');
-    const { harnessedSmokeTest } = await import('../../src/work/smoke-harness');
+    const { harnessedSmokeTest, smokeHarnessContract } = await import('../../src/work/smoke-harness');
     expect(recorded.schemas).toEqual([realAuthorSchema]);
-    expect(recorded.sandboxPrograms).toEqual([harnessedSmokeTest(casesSmokeTest)]);
+    // The contract is the stored body and the agent's connected surfaces: none on this seed.
+    expect(recorded.sandboxPrograms).toEqual([
+      harnessedSmokeTest(casesSmokeTest, smokeHarnessContract(reusableBody, [], undefined, 0)),
+    ]);
     const registered = await readSkill(harness, skillId);
     expect(registered.state).toBe('registered');
     expect(registered.verificationLog).toContain('case 1: run() emitted 1 action');
@@ -392,11 +395,9 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
     await expect(
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
     ).resolves.toEqual({ ok: true });
-    const { harnessedSmokeTest } = await import('../../src/work/smoke-harness');
+    const { harnessedSmokeTest, smokeHarnessContract } = await import('../../src/work/smoke-harness');
+    const harnessed = harnessedSmokeTest(casesSmokeTest, smokeHarnessContract(reusableBody, [], undefined, 0));
     expect(recorded.users).toHaveLength(1);
-    expect(recorded.sandboxPrograms).toEqual([
-      harnessedSmokeTest(casesSmokeTest),
-      harnessedSmokeTest(casesSmokeTest),
-    ]);
+    expect(recorded.sandboxPrograms).toEqual([harnessed, harnessed]);
   });
 });

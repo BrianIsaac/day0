@@ -12,7 +12,7 @@ import {
   buildAuthorPrompt,
   verifyAuthoredSkill,
 } from '../../convex/skillActions';
-import { harnessedSmokeTest } from '../../src/work/smoke-harness';
+import { harnessedSmokeTest, smokeHarnessContract } from '../../src/work/smoke-harness';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import { clipRefusedDraft, REFUSED_DRAFT_CHARS, REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
@@ -117,7 +117,11 @@ describe('skill author prompts', (): void => {
     expect(real).toContain('Define `CASES`, a list of two different representative input dicts');
     expect(real).toContain('none of them the values of the work item that first needed this skill');
     expect(real).toContain('no call to run(), no assertion, no check and no print() at the top level');
-    expect(real).toContain('The harness calls run() once per case and checks the results itself');
+    expect(real).toContain('The harness calls run() once per case and checks those rules itself');
+    expect(real).toContain('`{"tool": "mcp.call", "args": {"surface", "tool", "toolArgsJson"}}`');
+    expect(real).toContain('`{"tool": "http.request", "args": {"surface", "method", "path", "headersJson", "body"}}`');
+    expect(real).toContain("with a tool from that surface's allowed tools that SKILL.md names");
+    expect(real).toContain('the record id, and the reply channel and thread when a case gives them, reach the arguments');
     expect(real).not.toContain('Call run() once for each of two different representative input dicts');
     expect(real).not.toContain('print() one concise success line per call');
     // Everything but the smoke-test contract is the mock prompt, word for word.
@@ -418,7 +422,11 @@ describe('skill author prompts', (): void => {
         'real',
       ),
     ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest: program, unwrapped: true });
-    expect(verify).toHaveBeenCalledWith({ skillName: 's', skillBody: '# s', smokeTest: harnessedSmokeTest(program) });
+    expect(verify).toHaveBeenCalledWith({
+      skillName: 's',
+      skillBody: '# s',
+      smokeTest: harnessedSmokeTest(program, smokeHarnessContract('# s', [], undefined, 0)),
+    });
   });
 
   it('refuses a real-mode program without the run landmark before the sandbox, and needs no print', async (): Promise<void> => {

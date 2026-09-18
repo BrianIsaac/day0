@@ -46,6 +46,16 @@ export const EXECUTION_INPUT_LINES: readonly string[] = [
   '  - `<audit-expectation>`: the read-back the runbook prescribes as evidence (an audit line, a returned identifier, a snapshot).',
 ];
 
+/**
+ * The taught inputs the executor binds by value from the candidate row that
+ * say where a write lands: the record and the reply target. The smoke harness
+ * holds a case that supplies one to carrying it into an action argument, so a
+ * write aimed at a constant cannot pass on the strength of a varying comment.
+ * `<originating-surface>` is bound by value too but routes rather than
+ * addresses, so a procedure may read it without sending it.
+ */
+export const CANDIDATE_BOUND_TARGET_INPUTS: readonly string[] = ['record-id', 'reply-channel', 'reply-thread'];
+
 /** One declared input and where this run's value comes from. */
 export interface SkillInputBinding {
   name: string;

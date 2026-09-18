@@ -21,7 +21,7 @@ import {
   smokeTestPreflightReason,
   unwrapMarkdownFence,
 } from '../src/work/smoke-test';
-import { harnessedSmokeTest } from '../src/work/smoke-harness';
+import { harnessedSmokeTest, smokeHarnessContract, type SmokeHarnessContract } from '../src/work/smoke-harness';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
@@ -97,7 +97,9 @@ const REAL_SMOKE_TEST_LINES: readonly string[] = [
   'You also produce a small Python smoke test, smoke.py, that demonstrates the skill\'s shape. A verification harness runs it in a fresh Python 3.12 sandbox with no third-party packages. It must:',
   '  - Define a `run(inputs: dict) -> dict` function that mimics the skill\'s shape (input keys → output keys, including the `actions` list) and reads every value it needs from `inputs`; the inputs are the skill\'s declared inputs.',
   '  - Define `CASES`, a list of two different representative input dicts (different identifiers and values, none of them the values of the work item that first needed this skill).',
-  '  - Stop there: no call to run(), no assertion, no check and no print() at the top level. The harness calls run() once per case and checks the results itself: each returns a dict whose `actions` list follows its inputs, and the two outputs differ. Nothing else in smoke.py runs, and assert statements are not compiled.',
+  '  - Return every action in the executor\'s shape, `{"tool": "mcp.call", "args": {"surface", "tool", "toolArgsJson"}}` or `{"tool": "http.request", "args": {"surface", "method", "path", "headersJson", "body"}}`: on a surface from the Surfaces list, with a tool from that surface\'s allowed tools that SKILL.md names. Both cases emit actions, and at least one action is on the target surface.',
+  '  - Build the action arguments from `inputs`: the record id, and the reply channel and thread when a case gives them, reach the arguments of that case\'s actions, and the two cases produce different arguments.',
+  '  - Stop there: no call to run(), no assertion, no check and no print() at the top level. The harness calls run() once per case and checks those rules itself. Nothing else in smoke.py runs, and assert statements are not compiled.',
   '',
 ];
 
@@ -345,6 +347,9 @@ type SkillVerifier = (args: AuthorSkillArgs) => Promise<SkillSandboxRun>;
  *   args: The skill and the author's smoke test.
  *   verify: The sandbox call, injected for tests.
  *   mode: The deployment's surface mode.
+ *   contract: What the real-mode harness holds the actions against. Without
+ *     one the harness knows no connected surface, so every action is refused:
+ *     a caller that forgets it cannot register a skill unchecked.
  *
  * Returns:
  *   The preflight refusal, or the sandbox's result with the author's program.
@@ -353,6 +358,7 @@ export async function verifyAuthoredSkill(
   args: AuthorSkillArgs,
   verify: SkillVerifier = authorAndVerifySkill,
   mode: SurfaceMode = SURFACE_MODE,
+  contract?: SmokeHarnessContract,
 ): Promise<
   | { ok: true; result: SkillSandboxRun; smokeTest: string; unwrapped: boolean }
   | { ok: false; reason: string }
@@ -360,7 +366,10 @@ export async function verifyAuthoredSkill(
   const fence = unwrapMarkdownFence(args.smokeTest);
   const reason = smokeTestPreflightReason(fence.source, mode);
   if (reason) return { ok: false, reason: `smoke test rejected before sandbox: ${reason}` };
-  const program = mode === 'real' ? harnessedSmokeTest(fence.source) : fence.source;
+  const program =
+    mode === 'real'
+      ? harnessedSmokeTest(fence.source, contract ?? smokeHarnessContract(args.skillBody, [], undefined, Date.now()))
+      : fence.source;
   const result = await verify({ ...args, smokeTest: program });
   return { ok: true, result, smokeTest: fence.source, unwrapped: fence.unwrapped };
 }
@@ -672,11 +681,12 @@ export const authorAndRegisterSkill = action({
       return { ok: false, reason: `sandbox verification unavailable: ${reason}` };
     }
     try {
-      const verification = await verifyAuthoredSkill({
-        skillName: skill.name,
-        skillBody: body,
-        smokeTest,
-      });
+      const verification = await verifyAuthoredSkill(
+        { skillName: skill.name, skillBody: body, smokeTest },
+        authorAndVerifySkill,
+        SURFACE_MODE,
+        smokeHarnessContract(body, surfaceRows.map(toSurfaceRecord), skill.targetSurface, Date.now()),
+      );
       if (!verification.ok) {
         return await recordAuthoringFailure(ctx, args.skillId, runId, {
           rowReason: noted(verification.reason),

@@ -13,6 +13,8 @@ import {
   recordedAssertion,
   rehearsalSmokeIds,
 } from '../fixtures/skill-smoke-assertion-2026-09-18';
+import { CANDIDATE_BOUND_TARGET_INPUTS } from '../../src/work/skill-inputs';
+import type { SmokeHarnessContract } from '../../src/work/smoke-harness';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -50,12 +52,25 @@ async function runInPython(args: AuthorSkillArgs): Promise<SkillSandboxRun> {
   }
 }
 
+/** The two surfaces Mateo's author was shown as connected on the rehearsal bed. */
+const REHEARSAL_CONTRACT: SmokeHarnessContract = {
+  body: RECORDED_BODY_2026_09_18,
+  targetSurface: 'linear',
+  surfaces: [
+    { slug: 'linear', path: 'mcp', allowedTools: ['get_issue', 'list_issues', 'save_comment', 'save_issue'] },
+    { slug: 'slack', path: 'documented-api', allowedTools: ['chat.postMessage', 'conversations.history'] },
+  ],
+  boundInputs: [...CANDIDATE_BOUND_TARGET_INPUTS],
+};
+
 /** Verify with the authoring module as the surface mode stubbed beforehand loads it. */
-async function verifyAsLoaded(smokeTest: string) {
+async function verifyAsLoaded(smokeTest: string, contract?: SmokeHarnessContract) {
   const { verifyAuthoredSkill } = await import('../../convex/skillActions');
   return await verifyAuthoredSkill(
     { skillName: 'kanban-comment-and-close', skillBody: RECORDED_BODY_2026_09_18, smokeTest },
     runInPython,
+    undefined,
+    contract,
   );
 }
 
@@ -93,7 +108,7 @@ describe("the rehearsal's kanban-comment-and-close authoring (F2, 18 Sep)", (): 
     const smokeTest = reconstructedSmokeTest(ids);
 
     useSurfaceMode('real');
-    const verification = await verifyAsLoaded(smokeTest);
+    const verification = await verifyAsLoaded(smokeTest, REHEARSAL_CONTRACT);
 
     expect(verification.ok).toBe(true);
     if (!verification.ok) return;
@@ -103,5 +118,15 @@ describe("the rehearsal's kanban-comment-and-close authoring (F2, 18 Sep)", (): 
     expect(verification.result.ok).toBe(true);
     expect(verification.result.stdout).toContain(ids.asserted);
     expect(verification.result.stdout).toContain(ids.other);
+  });
+
+  it('refuses the same sound program in real mode when the caller gives no contract: no surface is known, so none is allowed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const verification = await verifyAsLoaded(reconstructedSmokeTest(rehearsalSmokeIds()));
+
+    expect(verification.ok).toBe(true);
+    if (!verification.ok) return;
+    expect(verification.result.ok).toBe(false);
+    expect(verification.result.stderr).toContain("targets surface 'linear', which is not a connected surface (connected: none)");
   });
 });
