@@ -39,7 +39,7 @@ async function collect<T>(fn: () => Promise<T>): Promise<{ reports: ModelCallRep
 }
 
 describe('model-call telemetry from the retry wrapper', (): void => {
-  it.fails('reports one attempt and the wall-clock duration of a call that succeeds first time', async (): Promise<void> => {
+  it('reports one attempt and the wall-clock duration of a call that succeeds first time', async (): Promise<void> => {
     vi.useFakeTimers();
     const generate = vi.fn(async (): Promise<{ object: { ok: true } }> => {
       await vi.advanceTimersByTimeAsync(1_250);
@@ -61,7 +61,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     ]);
   });
 
-  it.fails('reports the attempts and the total duration of a retried call', async (): Promise<void> => {
+  it('reports the attempts and the total duration of a retried call', async (): Promise<void> => {
     vi.useFakeTimers();
     const generate = vi
       .fn()
@@ -89,7 +89,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     ]);
   });
 
-  it.fails('reports a call that exhausted its attempts as failed, with the status and the error class only', async (): Promise<void> => {
+  it('reports a call that exhausted its attempts as failed, with the status and the error class only', async (): Promise<void> => {
     vi.useFakeTimers();
     const overloaded = Object.assign(new Error(`overloaded while handling ${SECRET_PROMPT}`), {
       statusCode: 503,
@@ -117,7 +117,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     expect(JSON.stringify(reports)).not.toContain('sk-live');
   });
 
-  it.fails('reports a timed-out call as timed out after one attempt', async (): Promise<void> => {
+  it('reports a timed-out call as timed out after one attempt', async (): Promise<void> => {
     vi.useFakeTimers();
     // The faked clock does not fire `AbortSignal.timeout`, so the provider
     // call is made to fail on its own at the wall, as an aborted fetch does.
@@ -146,7 +146,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     ]);
   });
 
-  it.fails('reports a text call too, and nothing when no observer is installed', async (): Promise<void> => {
+  it('reports a text call too, and nothing when no observer is installed', async (): Promise<void> => {
     const generate = vi.fn().mockResolvedValue({ text: 'done' });
     const agent = { name: 'day0-good-habits', generate } as unknown as Agent;
 
@@ -157,7 +157,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     await expect(agentText({ agent, user: 'unobserved' })).resolves.toBe('done');
   });
 
-  it.fails('keeps concurrent steps\' reports apart', async (): Promise<void> => {
+  it('keeps concurrent steps\' reports apart', async (): Promise<void> => {
     const generate = vi.fn().mockResolvedValue({ text: 'done' });
     const agent = { name: 'day0-good-habits', generate } as unknown as Agent;
     const seen: Record<string, number> = { a: 0, b: 0 };
