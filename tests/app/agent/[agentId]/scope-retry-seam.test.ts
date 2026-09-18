@@ -167,5 +167,7 @@ describe('the manager retries an out-of-scope skip from the card', { timeout: 30
     expect(claimed.managerFeedback).toMatchObject({ reason: 'The venue is ours to book.', kind: 'retry-note' });
     expect(nextItemToEvaluate(await items())).toBeUndefined();
     expect(card(claimed, noop)).not.toContain('>Retry<');
-  });
+    // The whole seam in one test: the card's render, the retry, the evaluation. It passes in
+    // under two seconds alone and overran the default five beside other suites on a loaded machine.
+  }, 30_000);
 });
