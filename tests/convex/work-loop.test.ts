@@ -349,6 +349,35 @@ describe('the server-side steps', (): void => {
     ).resolves.toEqual({ decision: 'claim' });
   });
 
+  it('evaluates a queued row again only once the employee has a free slot', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const open = await insertDiscovered(harness, agentId, 'REVOPS-15');
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-16');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(open, { state: 'plan-pending', verdict: { decision: 'claim' } });
+      await ctx.db.patch(workItemId, {
+        verdict: { decision: 'queue', reason: 'WIP cap reached: supervised cold-start limit is 1' },
+      });
+    });
+
+    await expect(
+      harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }),
+    ).resolves.toEqual({ decision: 'noop-queued' });
+    expect(recorded.scopeCalls).toEqual([]);
+    expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationClaimedAt');
+
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(open, { state: 'cancelled' });
+    });
+    await expect(
+      harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }),
+    ).resolves.toEqual({ decision: 'claim' });
+    expect(recorded.scopeCalls).toHaveLength(1);
+  });
+
   it('claims nothing when the dashboard drives the loop in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     vi.useFakeTimers();

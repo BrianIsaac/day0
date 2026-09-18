@@ -67,7 +67,9 @@ export type StepClaim = { claimed: true } | { claimed: false; reason: string };
  * both read the row ready, exactly one proceeds to the model. The claim is
  * released by the step's own result (`applyVerdict`, `setPlan`); a run that
  * throws or dies leaves it to lapse, so a failing step is retried by the
- * sweep no sooner than the lease.
+ * sweep no sooner than the lease. A row queued at the cap is evaluated again
+ * only once the employee has a free slot: while it has none, the evaluation
+ * could only queue the row again, at the price of a model call.
  *
  * Args:
  *   ctx: Mutation context.
@@ -89,8 +91,15 @@ export async function claimLoopStepInTransaction(
   const ready = step === 'evaluation' ? 'discovered' : 'claimed';
   if (row.state !== ready) return { claimed: false, reason: `state=${row.state}` };
   if (holdsLiveStepClaim(row, step, now)) return { claimed: false, reason: 'claimed' };
+  if (step === 'evaluation' && queuedAtCap(row) && !(await hasFreeSlot(ctx, row.agentId))) {
+    return { claimed: false, reason: 'queued' };
+  }
   await ctx.db.patch(workItemId, { [CLAIM_FIELD[step]]: now });
   return { claimed: true };
+}
+
+function queuedAtCap(row: Pick<Doc<'workItems'>, 'verdict'>): boolean {
+  return (row.verdict as { decision?: unknown } | undefined)?.decision === 'queue';
 }
 
 /** The states that hold one of the employee's work-in-progress slots. */
@@ -142,6 +151,23 @@ export async function openSlotCount(
 }
 
 /**
+ * Whether the employee holds fewer open rows than its current cap.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   agentId: The employee.
+ *
+ * Returns:
+ *   True when a claim would fit under the cap.
+ */
+async function hasFreeSlot(ctx: MutationCtx, agentId: Id<'agents'>): Promise<boolean> {
+  const agent = await ctx.db.get(agentId);
+  if (!agent) return false;
+  const cap = autonomousActionsOn(agent) ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT;
+  return (await openSlotCount(ctx, agentId, cap)) < cap;
+}
+
+/**
  * The discovered row a free slot goes to: the oldest one no evaluation holds.
  *
  * A row whose evaluation is running lands its own verdict and wakes the next
@@ -162,10 +188,7 @@ export async function nextRowForFreeSlot(
   agentId: Id<'agents'>,
   now: number,
 ): Promise<Id<'workItems'> | undefined> {
-  const agent = await ctx.db.get(agentId);
-  if (!agent) return undefined;
-  const cap = autonomousActionsOn(agent) ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT;
-  if ((await openSlotCount(ctx, agentId, cap)) >= cap) return undefined;
+  if (!(await hasFreeSlot(ctx, agentId))) return undefined;
   const discovered = await ctx.db
     .query('workItems')
     .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'discovered'))
@@ -204,7 +227,7 @@ export async function scheduleNextStep(ctx: MutationCtx, row: LoopRow): Promise<
   if (SURFACE_MODE !== 'real' || isRevocationTrialRow(row)) return;
   switch (row.state) {
     case 'discovered':
-      if ((row.verdict as { decision?: unknown } | undefined)?.decision === 'queue') {
+      if (queuedAtCap(row)) {
         await wakeQueuedWork(ctx, row.agentId);
       } else {
         await scheduleEvaluation(ctx, row._id);
@@ -274,7 +297,7 @@ export async function resumeStalledStepsInTransaction(
     let evaluated = false;
     for (const row of await ready('discovered')) {
       if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
-      if ((row.verdict as { decision?: unknown } | undefined)?.decision === 'queue') continue;
+      if (queuedAtCap(row)) continue;
       await scheduleEvaluation(ctx, row._id);
       evaluated = true;
       rescheduled += 1;
