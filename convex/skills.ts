@@ -678,6 +678,43 @@ export const requestRevision = mutation({
 });
 
 /**
+ * One-off: re-queue the rows an earlier registration left at `needs-skill`.
+ *
+ * Until registration reached every waiting row, a deployment could register a
+ * skill and leave every item but the first parked behind it. Nothing re-reads
+ * such a row: the registration that should have moved it has already happened.
+ * This applies, for every registered skill, the re-queue its registration
+ * would apply today.
+ *
+ *   npx convex run skills:requeueStranded
+ *
+ * Safe to run twice: a re-queued row is no longer at `needs-skill`.
+ */
+export const requeueStranded = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ requeued: number }> => {
+    let requeued = 0;
+    for (const agent of await ctx.db.query('agents').collect()) {
+      const registeredSkills = await ctx.db
+        .query('skills')
+        .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'registered'))
+        .collect();
+      for (const skill of registeredSkills) {
+        for (const row of await waitingRows(ctx, skill, { sameName: true })) {
+          if (row.state !== 'needs-skill') continue;
+          await applyVerdict(ctx, row._id, {
+            decision: 'pending-reevaluation',
+            reason: 'skill registered, ready to retry',
+          });
+          requeued += 1;
+        }
+      }
+    }
+    return { requeued };
+  },
+});
+
+/**
  * One-off: move what `daytonaSandboxId` holds onto `sandboxId`.
  *
  * The field was named after the only sandbox there was. The local one writes

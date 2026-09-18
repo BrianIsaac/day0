@@ -706,3 +706,34 @@ describe('two proposals of one name', (): void => {
     expect(again).toBe(live);
   });
 });
+
+describe('rows a registration already left behind', (): void => {
+  it('are re-queued by the one-off, which is safe to run twice', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    // The 19 Sep rows: the skill registered, its first item completed, the
+    // second still parked behind it.
+    const { first, second } = await seedLinkedPair(harness, agentId, 'registered');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(first, { state: 'completed' });
+    });
+    const other = await seedLinkedPair(harness, await seedEmployee(harness, 'Mateo'), 'proposed');
+
+    await expect(harness.mutation(internal.skills.requeueStranded, {})).resolves.toEqual({
+      requeued: 1,
+    });
+
+    expect((await readItem(harness, first)).state).toBe('completed');
+    expect(await readItem(harness, second)).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'pending-reevaluation' },
+    });
+    expect((await readItem(harness, other.second)).state).toBe('needs-skill');
+    expect(await pendingEvaluations(harness)).toEqual([String(second)]);
+    await expect(harness.mutation(internal.skills.requeueStranded, {})).resolves.toEqual({
+      requeued: 0,
+    });
+  });
+});
