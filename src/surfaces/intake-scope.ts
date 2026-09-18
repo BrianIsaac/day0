@@ -383,3 +383,32 @@ export function scopeDrift(scope: IntakeScope, pages: readonly ScopePage[]): Sco
     return !page?.markdown.split(/\r?\n/).some((line): boolean => line.trim() === value.quote);
   });
 }
+
+/**
+ * Say which approved values' page lines have changed, and what to do.
+ *
+ * Args:
+ *   scope: The approved scope.
+ *   drift: The values `scopeDrift` found, in scope order.
+ *
+ * Returns:
+ *   One message for the card, or undefined when nothing has changed.
+ */
+export function presentScopeDrift(
+  scope: IntakeScope,
+  drift: readonly ScopeValue[],
+): string | undefined {
+  if (drift.length === 0) return undefined;
+  const label = (value: ScopeValue): string =>
+    value === scope.team
+      ? `team ${value.value}`
+      : value === scope.project
+        ? `project ${value.value}`
+        : `#${value.value}`;
+  const refs = [...new Set(drift.map((value): string => value.ref))];
+  return (
+    `Changed since this card was proposed: ${drift.map(label).join(', ')} ` +
+    `${drift.length === 1 ? 'is' : 'are'} no longer stated on ${refs.join(', ')}. ` +
+    'Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.'
+  );
+}

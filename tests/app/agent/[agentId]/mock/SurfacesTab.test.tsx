@@ -520,44 +520,41 @@ describe('SurfacesTab and what each employee reads', (): void => {
     state.sources = [{ _id: sourceId, label: 'Kestrel Supply folder' }];
   });
 
-  it.fails(
-    'shows what a work-bearing card reads, with the handbook lines that ground it',
-    (): void => {
-      state.surfaces = [
-        card({
-          slug: 'linear',
-          displayName: 'Linear',
-          class: 'kanban',
-          path: 'mcp',
-          intakeScope: {
-            team: scopeValue('FIN', '- Team: `FIN`'),
-            project: scopeValue('September close', '- Project: `September close`'),
-          },
-        }),
-        card({
-          slug: 'slack',
-          displayName: 'Slack',
-          class: 'chat',
-          path: 'documented-api',
-          intakeScope: {
-            channels: ['finance-close', 'ops-requests'].map((channel) =>
-              scopeValue(channel, '- Channels: #finance-close, #ops-requests'),
-            ),
-          },
-        }),
-      ];
-      const markup = render();
-      expect(markup).toContain('Reads: Linear team FIN, project September close');
-      expect(markup).toContain('Reads: Slack #finance-close, #ops-requests');
-      expect(markup).toContain('- Team: `FIN`');
-      expect(markup).toContain('- Project: `September close`');
-      expect(markup).toContain('- Channels: #finance-close, #ops-requests');
-      expect(markup).toContain('Kestrel Supply folder / finance/handbook.md');
-      expect(markup).not.toContain('Changed since this card was proposed');
-    },
-  );
+  it('shows what a work-bearing card reads, with the handbook lines that ground it', (): void => {
+    state.surfaces = [
+      card({
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'mcp',
+        intakeScope: {
+          team: scopeValue('FIN', '- Team: `FIN`'),
+          project: scopeValue('September close', '- Project: `September close`'),
+        },
+      }),
+      card({
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        path: 'documented-api',
+        intakeScope: {
+          channels: ['finance-close', 'ops-requests'].map((channel) =>
+            scopeValue(channel, '- Channels: #finance-close, #ops-requests'),
+          ),
+        },
+      }),
+    ];
+    const markup = render();
+    expect(markup).toContain('Reads: Linear team FIN, project September close');
+    expect(markup).toContain('Reads: Slack #finance-close, #ops-requests');
+    expect(markup).toContain('- Team: `FIN`');
+    expect(markup).toContain('- Project: `September close`');
+    expect(markup).toContain('- Channels: #finance-close, #ops-requests');
+    expect(markup).toContain('Kestrel Supply folder / finance/handbook.md');
+    expect(markup).not.toContain('Changed since this card was proposed');
+  });
 
-  it.fails('says why an empty scope reads nothing, and names each dropped pick', (): void => {
+  it('says why an empty scope reads nothing, and names each dropped pick', (): void => {
     state.surfaces = [
       card({
         slug: 'slack',
@@ -574,7 +571,7 @@ describe('SurfacesTab and what each employee reads', (): void => {
     expect(markup).toContain('Dropped #revops-asks: finance/handbook.md does not state it.');
   });
 
-  it.fails('flags an approved value whose handbook line has since changed', (): void => {
+  it('flags an approved value whose handbook line has since changed', (): void => {
     state.pages = [
       {
         ...financePages[0],
@@ -603,44 +600,41 @@ describe('SurfacesTab and what each employee reads', (): void => {
     );
   });
 
-  it.fails(
-    "lists the documented systems this role's charter does not name under the cards, each with Propose",
-    (): void => {
-      state.charter = {
-        approved: true,
-        body: { namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'named' }] },
-      };
-      state.surfaces = [
-        card({ slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp' }),
-        card({
-          slug: 'looker-pipeline-tile',
-          displayName: 'Looker pipeline tile',
-          class: 'analytics',
-          verdict: 'declared',
-          discoveryEvidence: [
-            {
-              kind: 'documentation',
-              sourceId,
-              ref: 'systems/looker-pipeline-tile.md',
-              quote: '# Looker pipeline tile',
-              current: true,
-              firstSeenAt: 1,
-              lastSeenAt: 1,
-            },
-          ],
-        }),
-      ];
-      const markup = render();
-      expect(markup).toContain('<details');
-      expect(markup).toContain("Documented in the company, not named in this role's charter (1)");
-      expect(markup).toMatch(/Looker pipeline tile[\s\S]*>Propose<\/button>/);
-      expect(markup).toContain('Kestrel Supply folder / systems/looker-pipeline-tile.md');
-      // Not a card of its own, and not counted as waiting for orientation.
-      expect(markup).not.toContain('id="surface-looker-pipeline-tile"');
-      expect(markup).not.toContain('no proposal yet');
-      expect(markup).toContain('id="surface-linear"');
-    },
-  );
+  it("lists the documented systems this role's charter does not name under the cards, each with Propose", (): void => {
+    state.charter = {
+      approved: true,
+      body: { namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'named' }] },
+    };
+    state.surfaces = [
+      card({ slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp' }),
+      card({
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'declared',
+        discoveryEvidence: [
+          {
+            kind: 'documentation',
+            sourceId,
+            ref: 'systems/looker-pipeline-tile.md',
+            quote: '# Looker pipeline tile',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+      }),
+    ];
+    const markup = render();
+    expect(markup).toContain('<details');
+    expect(markup).toContain("Documented in the company, not named in this role's charter (1)");
+    expect(markup).toMatch(/Looker pipeline tile[\s\S]*>Propose<\/button>/);
+    expect(markup).toContain('Kestrel Supply folder / systems/looker-pipeline-tile.md');
+    // Not a card of its own, and not counted as waiting for orientation.
+    expect(markup).not.toContain('id="surface-looker-pipeline-tile"');
+    expect(markup).not.toContain('no proposal yet');
+    expect(markup).toContain('id="surface-linear"');
+  });
 
   it('keeps every declared system a card when the charter names no work system', (): void => {
     state.charter = { approved: true, body: { namedSystems: [] } };

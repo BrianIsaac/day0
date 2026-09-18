@@ -5,6 +5,7 @@ import {
   emptyScopeReason,
   groundScopePicks,
   presentIntakeScope,
+  presentScopeDrift,
   scopeCandidates,
   scopeDrift,
   scopeFieldsFor,
@@ -294,5 +295,12 @@ describe('the scope an approved card reads', (): void => {
         edited.filter((page): boolean => page.ref !== 'finance/handbook.md'),
       ),
     ).toHaveLength(4);
+  });
+
+  it('says which changed values intake still reads, and how to take the page as it is now', (): void => {
+    expect(presentScopeDrift(finance, [])).toBeUndefined();
+    expect(presentScopeDrift(finance, [finance.team!, finance.channels![1]])).toBe(
+      'Changed since this card was proposed: team FIN, #ops-requests are no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.',
+    );
   });
 });
