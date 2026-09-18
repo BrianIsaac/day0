@@ -76,6 +76,18 @@ describe('one verification at a time', (): void => {
     expect(refused.heldForMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('admits exactly one of two simultaneous takers', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const first = await seedSkill(harness, 'first');
+    const second = await seedSkill(harness, 'second');
+    const attempts = await Promise.all([
+      harness.mutation(internal.sandboxLease.take, first),
+      harness.mutation(internal.sandboxLease.take, second),
+    ]);
+    expect(attempts.filter((attempt) => attempt.taken)).toHaveLength(1);
+    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toHaveLength(1);
+  });
+
   it('is taken by the waiter as soon as the holder releases it', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -86,6 +98,9 @@ describe('one verification at a time', (): void => {
     expect((await harness.mutation(internal.sandboxLease.take, second)).taken).toBe(false);
     await expect(harness.mutation(internal.sandboxLease.release, first)).resolves.toEqual({
       released: true,
+    });
+    await expect(harness.mutation(internal.sandboxLease.release, first)).resolves.toEqual({
+      released: false,
     });
     await expect(harness.mutation(internal.sandboxLease.take, second)).resolves.toMatchObject({
       taken: true,
