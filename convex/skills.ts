@@ -34,7 +34,7 @@ import { redactTokenShapes } from '../src/surfaces/redact';
  * skills walk the full path.
  *
  * `verified` is no longer a resting state: verification, registration and the
- * requeue of the work item that asked for the skill all land in
+ * requeue of every work item waiting for the skill all land in
  * `completeRegistration`, one transaction. Rows written by the earlier
  * three-mutation path can still be sitting in it, so it is listed alongside
  * `authoring` and accepted as a retry.
@@ -221,8 +221,9 @@ async function requeueWaitingWork(
  * re-queued the rows waiting then, so this row arrives at a callable skill
  * with nobody left to move it. It is sent back once per registration, keyed
  * on the row's `reevaluation` record. A second `needs-skill` naming the same
- * registration means the skill does not cover the row, and the row says so
- * instead of being evaluated for ever.
+ * registration was decided with the skill on the list, so the skill does not
+ * cover the row: it is skipped with that reason, which leaves it a Retry on
+ * its card, rather than evaluated for ever or parked where nothing moves it.
  *
  * Args:
  *   ctx: Mutation context.
@@ -239,7 +240,7 @@ async function requeueLinkedAfterRegistration(
   const key = `skill-registered:${skill._id}:${skill.registeredAt ?? 0}`;
   if (item.reevaluation?.key === key) {
     await applyVerdict(ctx, workItemId, {
-      decision: 'needs-skill',
+      decision: 'skip',
       reason: `registered skill "${skill.name}" was tried and does not cover this item`,
     });
     return;
@@ -861,8 +862,8 @@ export const recordAuthoringProgress = internalMutation({
 
 /**
  * Everything that has to be true at once for a skill to count as registered:
- * the verified body is stored, the row becomes callable, and the work item
- * that asked for the skill goes back into the queue.
+ * the verified body is stored, the row becomes callable, and every work item
+ * waiting for the skill goes back into the queue.
  *
  * These used to be three mutations. A failure between the first and the second
  * left a `verified` row that no panel listed and no retry accepted; a failure

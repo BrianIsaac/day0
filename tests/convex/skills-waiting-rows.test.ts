@@ -566,7 +566,7 @@ describe('an item linked to a skill after it registered', (): void => {
     expect(await pendingEvaluations(harness)).toEqual([String(late)]);
   });
 
-  it('re-queues it once per registration, so a skill that does not cover it cannot loop', async (): Promise<void> => {
+  it('re-queues it once per registration, then skips it with a reason instead of looping', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -586,11 +586,14 @@ describe('an item linked to a skill after it registered', (): void => {
 
     await expect(proposeFor(harness, agentId, late)).resolves.toBe(skillId);
 
-    const parked = await readItem(harness, late);
-    expect(parked.state).toBe('needs-skill');
-    expect((parked.verdict as { reason: string }).reason).toBe(
-      'registered skill "kanban-comment-and-close" was tried and does not cover this item',
-    );
+    const reason =
+      'registered skill "kanban-comment-and-close" was tried and does not cover this item';
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'skipped',
+      skipReason: reason,
+      verdict: { decision: 'skip', reason },
+    });
+    expect(await pendingEvaluations(harness)).toHaveLength(1);
   });
 
   it('is caught by the registration itself when the link had not landed yet', async (): Promise<void> => {
