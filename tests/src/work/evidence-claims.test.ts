@@ -425,7 +425,28 @@ describe('the work item as evidence (19 September, LOG-2)', (): void => {
     expect(itemEvidence(log2Candidate, [other('LOG-21', brightwater)]).join('\n')).not.toContain('Brightwater');
     const held = { ...ownRead, applied: { ...log2GroundingApplied, held: true } };
     const failed = { ...ownRead, applied: { ...log2GroundingApplied, ok: false, effect: undefined, reason: brightwater } };
-    expect(itemEvidence({ ...log2Candidate, title: '', contentSummary: '' }, [held, failed])).toEqual([]);
+    const rowOnly = itemEvidence({ ...log2Candidate, title: '', contentSummary: '', contentRefs: [] }, [held, failed]);
+    expect(rowOnly).toEqual(['LOG-2']);
+  });
+
+  it('takes only what the item reports: a request, a condition, a doubt and a short quotation support nothing', (): void => {
+    const asked = (contentSummary: string): ClaimEvidence =>
+      withItem(itemEvidence({ ...log2Candidate, externalId: 'REVOPS-7', title: 'Refresh the tile', contentSummary }, []));
+    const done = 'The pipeline tile is refreshed to 74% and the audit comment is posted.';
+    expect(unsupportedClaims(done, asked('Confirm the pipeline tile is refreshed to 74% and the audit comment is posted.'))).toEqual([done]);
+    expect(unsupportedClaims(done, asked('Move REVOPS-7 to Done once the pipeline tile is refreshed to 74% and the audit comment is posted.'))).toEqual([done]);
+    expect(unsupportedClaims(done, asked('Finance say the pipeline tile is refreshed to 74% and the audit comment is posted, which is not confirmed.'))).toEqual([done]);
+    expect(unsupportedClaims(done, asked('Is the pipeline tile is refreshed to 74% and the audit comment is posted?'))).toEqual([done]);
+    // The same words as a report are the requester's statement, and may be repeated.
+    expect(unsupportedClaims(done, asked('The pipeline tile is refreshed to 74% and the audit comment is posted.'))).toEqual([]);
+    const quoted = "LOG-2 is now closed, per 'Meridian Freight'.";
+    expect(unsupportedClaims(quoted, log2)).toEqual([quoted]);
+  });
+
+  it('knows the item by its id without a grounding read', (): void => {
+    const named = `On LOG-2, ${LOG_2_REFUSED_CLAIM}`;
+    expect(unsupportedClaims(named, withItem(itemEvidence(log2Candidate, [])))).toEqual([]);
+    expect(unsupportedClaims(named.replace('LOG-2', 'LOG-3'), withItem(itemEvidence(log2Candidate, [])))).toHaveLength(1);
   });
 
   it('keeps a token-shaped value in the ticket body out of the evidence', (): void => {

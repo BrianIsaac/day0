@@ -30,10 +30,13 @@ import type { MockAction, WorkCandidate } from './types';
  * has confirmed a revised delivery date of 26 September.", which was the
  * ticket's description word for word. A ticket says what was asked and what
  * the requester reported; it cannot say what this run did. So the item
- * supports a sentence that repeats it (a quoted span, or a run of its words
- * with every value the sentence gives carried somewhere), and an identifier
- * the item merely mentions vouches for nothing: "LOG-2 is now closed" finds
- * no support in LOG-2's title.
+ * supports only a sentence that repeats one of its own reports: a run of
+ * words shared with an item sentence that itself asserts a settled state,
+ * with every value the message gives carried by the item or the ledger.
+ * What the item asks for ("confirm the tile is refreshed to 74%") or sets
+ * as a condition is no report, a short quotation of it proves nothing, and
+ * an identifier it merely mentions vouches for nothing: "LOG-2 is now
+ * closed" finds no support in LOG-2's own record.
  */
 
 /** What the executor may cite: the ledger rendered for the closing prompt, page texts, the manager's words, the item's own. */
@@ -167,11 +170,23 @@ function prepare(evidence: ClaimEvidence): PreparedEvidence {
     ledgerText: own,
     ledgerRuns: new Set(runsOf(own)),
     ledgerTokens: new Set(distinctiveTokens(own)),
-    // Runs are taken per text, so no run spans the title and the body.
-    itemRuns: new Set(item.flatMap(runsOf)),
+    itemRuns: new Set(item.flatMap(sentencesOf).filter(reports).flatMap(runsOf)),
     itemTokens: new Set(item.flatMap(distinctiveTokens)),
-    quotable: [own, ...evidence.documentation, ...item].map(normalised),
+    quotable: [own, ...evidence.documentation].map(normalised),
   };
+}
+
+/** A sentence that asks for something: "Please confirm ...", "Make sure the tile is updated". */
+const REQUEST_OPENING =
+  /^(?:please|kindly|confirm|check|verify|ensure|make sure|see that|can you|could you|would you|we need|i need|need to|needs to|must|should)\b/i;
+
+/**
+ * Whether an item sentence reports a settled state, as against asking for
+ * one, doubting it or setting it as a condition. Only a report can be
+ * repeated as a fact.
+ */
+function reports(sentence: string): boolean {
+  return claims(sentence) && !HEDGED.test(sentence) && !asks(sentence) && !REQUEST_OPENING.test(sentence.trim());
 }
 
 /** The string values an action's arguments carry, at any depth: where a record read names its ticket. */
@@ -195,9 +210,10 @@ function readsTheItem(action: MockAction, externalId: string): boolean {
 /**
  * The work item's own words, as evidence for what the executor says about it.
  *
- * The title and the body are the row's; a grounding read counts when it
- * landed and its action names this item's id, so a record read for another
- * ticket, whoever it belongs to, is never this item's evidence. Each text
+ * The id, the title, the body and the references are the row's; a
+ * grounding read counts when it landed and its action names this item's
+ * id, so a record read for another ticket, whoever it belongs to, is never
+ * this item's evidence. Each text
  * passes the structural redaction the ledger passes before it is rendered,
  * and none of it is put in a prompt or a reason: it is only matched against.
  *
@@ -209,13 +225,14 @@ function readsTheItem(action: MockAction, externalId: string): boolean {
  *   The redacted texts, one per source; empty when the item carries none.
  */
 export function itemEvidence(
-  candidate: Pick<WorkCandidate, 'externalId' | 'title' | 'contentSummary'>,
+  candidate: Pick<WorkCandidate, 'externalId' | 'title' | 'contentSummary'> & Partial<Pick<WorkCandidate, 'contentRefs'>>,
   reads: readonly GroundingRead[] = [],
 ): string[] {
   const landed = reads
     .filter(({ action, applied }) => applied.ok && !applied.held && readsTheItem(action, candidate.externalId))
     .map(({ applied }) => (applied.effect ?? '').replace(/\\[nr]/g, '\n'));
-  return [candidate.title, candidate.contentSummary, ...landed]
+  const names = [candidate.externalId, ...(candidate.contentRefs ?? [])].join(' ');
+  return [candidate.title, candidate.contentSummary, names, ...landed]
     .map((text) => redactTokenShapes(text).trim())
     .filter(Boolean);
 }
@@ -236,11 +253,11 @@ function supported(sentence: string, prepared: PreparedEvidence): boolean {
 }
 
 /**
- * Whether a sentence repeats the work item: it shares a run of words with
- * the item, and every value it gives is one the item or the ledger carries.
- * A run alone would let "a revised delivery date of 27 September" ride on
- * the ticket's 26; a value alone would let the ticket's id vouch for a
- * result, which only the ledger can show.
+ * Whether a sentence repeats a report the work item makes: it shares a run
+ * of words with one, and every value it gives is one the item or the ledger
+ * carries. A run alone would let "a revised delivery date of 27 September"
+ * ride on the ticket's 26; a value alone would let the ticket's id vouch
+ * for a result, which only the ledger can show.
  */
 function repeatsTheItem(sentence: string, tokens: readonly string[], prepared: PreparedEvidence): boolean {
   if (!runsOf(sentence).some((run) => prepared.itemRuns.has(run))) return false;
