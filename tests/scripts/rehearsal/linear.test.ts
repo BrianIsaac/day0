@@ -126,11 +126,11 @@ describe('a failed Linear call, classified', (): void => {
     return error as LinearRequestError;
   }
 
-  it.fails('calls a timeout, a dropped connection, a 5xx and a rate limit transient, with the wait Linear asked for', async (): Promise<void> => {
+  it('calls a timeout, a dropped connection, a 5xx and a rate limit transient, with the wait Linear asked for', async (): Promise<void> => {
     expect(await failure(async () => { throw timedOut(); })).toMatchObject({ transient: true, reason: 'a timeout' });
     expect(await failure(async () => { throw new TypeError('fetch failed'); })).toMatchObject({
       transient: true,
-      reason: 'a dropped connection',
+      reason: 'a network failure',
     });
     expect(await failure(async () => new Response('<html>502 Bad Gateway</html>', { status: 502 }))).toMatchObject({
       transient: true,
@@ -149,7 +149,7 @@ describe('a failed Linear call, classified', (): void => {
     ).toMatchObject({ transient: true, reason: 'a Linear rate limit', waitMs: 5_000 });
   });
 
-  it.fails('calls a timeout while the answer is still arriving a timeout too', async (): Promise<void> => {
+  it('calls a timeout while the answer is still arriving a timeout too', async (): Promise<void> => {
     const stalled = new ReadableStream<Uint8Array>({
       start(controller): void {
         controller.enqueue(new TextEncoder().encode('{"da'));
@@ -162,7 +162,7 @@ describe('a failed Linear call, classified', (): void => {
     });
   });
 
-  it.fails('never calls a request Linear refused as wrong transient', async (): Promise<void> => {
+  it('never calls a request Linear refused as wrong transient', async (): Promise<void> => {
     const invalid = { errors: [{ message: 'Argument Validation Error', extensions: { code: 'INVALID_INPUT' } }] };
     const refused = await failure(async () => json(invalid, { status: 400 }));
     expect(refused).toMatchObject({ transient: false });
@@ -195,7 +195,7 @@ describe('one retry', (): void => {
   const timeout = (): LinearRequestError =>
     new LinearRequestError('Linear did not answer within 30 s.', 'a timeout', true);
 
-  it.fails('names the retry, pauses, and runs the second attempt it is given', async (): Promise<void> => {
+  it('names the retry, pauses, and runs the second attempt it is given', async (): Promise<void> => {
     const io = recorder();
     const result = await retryOnce('label delete', io, async (): Promise<string> => {
       throw timeout();
@@ -205,7 +205,7 @@ describe('one retry', (): void => {
     expect(io.sleeps).toEqual([RETRY_PAUSE_MS]);
   });
 
-  it.fails('waits as long as Linear asked, and says so', async (): Promise<void> => {
+  it('waits as long as Linear asked, and says so', async (): Promise<void> => {
     const io = recorder();
     let calls = 0;
     await retryOnce('label delete', io, async (): Promise<void> => {
@@ -217,7 +217,7 @@ describe('one retry', (): void => {
     expect(io.sleeps).toEqual([7_000]);
   });
 
-  it.fails('fails with one line naming both failures when the retry fails too', async (): Promise<void> => {
+  it('fails with one line naming both failures when the retry fails too', async (): Promise<void> => {
     const io = recorder();
     await expect(
       retryOnce('label delete', io, async (): Promise<void> => {
@@ -251,7 +251,7 @@ describe('one retry', (): void => {
     expect(io.sleeps).toEqual([]);
   });
 
-  it.fails('does not wait past its cap, and says how long Linear asked for', async (): Promise<void> => {
+  it('does not wait past its cap, and says how long Linear asked for', async (): Promise<void> => {
     const io = recorder();
     let again = 0;
     await expect(
