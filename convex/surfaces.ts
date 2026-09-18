@@ -1014,6 +1014,53 @@ export const recordProbeFailure = internalMutation({
 });
 
 /**
+ * Record that a probe's first call failed in a way worth one more call.
+ *
+ * Written before the wait, so the card and the trail show the retry while it
+ * is pending and keep it after the second call connects. The verdict is left
+ * alone: one failed call establishes nothing about the enterprise's system.
+ *
+ * Returns:
+ *   False when a newer probe has taken over and the retry must not run.
+ */
+export const recordProbeRetry = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    generation: v.number(),
+    reason: v.string(),
+    retryAfterMs: v.number(),
+    attemptedAt: v.number(),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    if (surface.probeGeneration !== args.generation) return false;
+    await ctx.db.patch(surface._id, {
+      probeAttempts: withProbeAttempt(surface, {
+        path: surface.path ?? 'unknown',
+        endpoint: surface.endpoint,
+        outcome: 'retried',
+        reason: args.reason,
+        attemptedAt: args.attemptedAt,
+        retryAfterMs: args.retryAfterMs,
+      }),
+    });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.probe-retried',
+      payload: {
+        surfaceId: surface._id,
+        path: surface.path,
+        reason: args.reason,
+        retryAfterMs: args.retryAfterMs,
+      },
+      createdAt: args.attemptedAt,
+    });
+    return true;
+  },
+});
+
+/**
  * Move one failed probe to the next route both approvers already saw.
  *
  * A `connected` row is deliberately not demotable. The descent is one-way -

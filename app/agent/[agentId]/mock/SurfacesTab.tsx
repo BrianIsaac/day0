@@ -467,9 +467,10 @@ export function EvidenceQuote({ quote }: { quote?: string }): React.ReactNode {
 type SurfaceProbeAttempt = {
   path: string;
   endpoint?: string;
-  outcome: 'demoted' | 'ungranted' | 'listed-dead';
+  outcome: 'demoted' | 'ungranted' | 'listed-dead' | 'retried';
   reason: string;
   attemptedAt: number;
+  retryAfterMs?: number;
 };
 
 export interface SurfaceLadderProps {
@@ -492,14 +493,20 @@ export function SurfaceLadder({ candidates, attempts }: SurfaceLadderProps): Rea
         <ol className="mt-1 space-y-1">
           {attempts.map((attempt, index): React.ReactNode => (
             <li key={`${attempt.attemptedAt}-${attempt.path}-${index}`}>
-              <span className="font-medium">{attempt.path} attempt failed: </span>
+              <span className="font-medium">
+                {attempt.outcome === 'retried'
+                  ? `${attempt.path} first probe failed: `
+                  : `${attempt.path} attempt failed: `}
+              </span>
               {attempt.reason}{' '}
               <span className="text-[var(--color-muted)]">
-                {attempt.outcome === 'demoted'
-                  ? 'Fell to the next approved rung.'
-                  : attempt.outcome === 'ungranted'
-                    ? 'Waiting on Day0 or approved access.'
-                    : 'No approved fallback connected.'}
+                {attempt.outcome === 'retried'
+                  ? `Retried after ${Math.round((attempt.retryAfterMs ?? 0) / 1_000)} s.`
+                  : attempt.outcome === 'demoted'
+                    ? 'Fell to the next approved rung.'
+                    : attempt.outcome === 'ungranted'
+                      ? 'Waiting on Day0 or approved access.'
+                      : 'No approved fallback connected.'}
               </span>
             </li>
           ))}
