@@ -657,6 +657,25 @@ describe('check', (): void => {
     expect(gaps).toContain('looker-tile is not running in day0-bed-test');
   });
 
+  it('tells a refused Notion secret from a component that is not running', async (): Promise<void> => {
+    const refused = harness({}, (args) =>
+      args.includes('exec')
+        ? { status: 0, stdout: `${JSON.stringify({ error: 'Notion refused the request: unauthorized (API token is invalid.)' })}\n`, stderr: '' }
+        : undefined,
+    );
+    await run(refused, ['check']);
+    expect(refused.logs.join('\n')).toContain(
+      'Notion refused the request: unauthorized (API token is invalid.): DAY0_BED_NOTION_TOKEN must be the secret of the integration the parent page is shared with',
+    );
+    const down = harness({}, (args) =>
+      args.includes('exec') ? { status: 1, stdout: '', stderr: 'service "docs-notion-mcp" is not running' } : undefined,
+    );
+    await run(down, ['check']);
+    expect(down.logs.join('\n')).toContain(
+      'the Notion component could not be read (service "docs-notion-mcp" is not running); is it running (pnpm convex:up --profile docs-notion)?',
+    );
+  });
+
   it('says which token is missing rather than calling a provider without one', async (): Promise<void> => {
     const h = harness({ DAY0_BED_LINEAR_API_KEY: '', DAY0_BED_SLACK_BOT_TOKEN: '', DAY0_BED_NOTION_TOKEN: '' });
     expect(await run(h, ['check'])).toBe(1);
@@ -698,10 +717,15 @@ describe('the Notion comparison', (): void => {
 describe('the Notion read, run as the container runs it', (): void => {
   let server: Server;
   let url: string;
+  let searchAnswer: unknown;
   const seen: Array<{ method: string; rpc?: string; auth?: string; notion?: string; session?: string }> = [];
 
   beforeEach(async (): Promise<void> => {
     seen.length = 0;
+    searchAnswer = {
+      results: [{ id: 'p1', properties: { title: { type: 'title', title: [{ plain_text: 'Linear automation' }] } } }],
+      has_more: false,
+    };
     server = createServer((request: IncomingMessage, response: ServerResponse): void => {
       let raw = '';
       request.on('data', (chunk: Buffer) => (raw += chunk.toString()));
@@ -720,15 +744,7 @@ describe('the Notion read, run as the container runs it', (): void => {
         }
         let result: unknown = { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'fake' } };
         if (rpc.params?.name === 'API-post-search') {
-          result = {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                results: [{ id: 'p1', properties: { title: { type: 'title', title: [{ plain_text: 'Linear automation' }] } } }],
-                has_more: false,
-              }),
-            }],
-          };
+          result = { content: [{ type: 'text', text: JSON.stringify(searchAnswer) }] };
         } else if (rpc.params?.name === 'API-retrieve-page-markdown') {
           result = { content: [{ type: 'text', text: JSON.stringify({ markdown: `# Page ${String(rpc.params.arguments?.page_id)}` }) }] };
         }
@@ -744,7 +760,7 @@ describe('the Notion read, run as the container runs it', (): void => {
     await new Promise<void>((done) => server.close(() => done()));
   });
 
-  it('lists and reads every page in one session with both tokens, then ends the session', async (): Promise<void> => {
+  async function readThroughScript(): Promise<string> {
     const child = spawn(process.execPath, ['--input-type=module', '-'], {
       env: { ...process.env, MCP_URL: url, AUTH_TOKEN: 'transport-token', DAY0_BED_NOTION_TOKEN: NOTION_TOKEN },
     });
@@ -752,6 +768,11 @@ describe('the Notion read, run as the container runs it', (): void => {
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
     child.stdin.end(NOTION_READER_SCRIPT);
     await new Promise<void>((done) => child.on('close', () => done()));
+    return stdout;
+  }
+
+  it('lists and reads every page in one session with both tokens, then ends the session', async (): Promise<void> => {
+    const stdout = await readThroughScript();
     expect(parseNotionRead(stdout)).toEqual([{ id: 'p1', title: 'Linear automation', markdown: '# Page p1' }]);
     expect(seen.map((call) => call.rpc ?? call.method)).toEqual([
       'initialize',
@@ -762,5 +783,13 @@ describe('the Notion read, run as the container runs it', (): void => {
     ]);
     expect(seen.every((call) => call.auth === 'Bearer transport-token' && call.notion === NOTION_TOKEN)).toBe(true);
     expect(seen.slice(1).every((call) => call.session === 'session-1')).toBe(true);
+  });
+
+  it('reports a token Notion refused as the refusal, never as an empty workspace', async (): Promise<void> => {
+    // What the bundled component relays when the integration secret is wrong, as read live on 18 September.
+    searchAnswer = { status: 401, object: 'error', code: 'unauthorized', message: 'API token is invalid.' };
+    const stdout = await readThroughScript();
+    expect(() => parseNotionRead(stdout)).toThrow('Notion refused the request: unauthorized (API token is invalid.)');
+    expect(seen.map((call) => call.rpc ?? call.method)).toEqual(['initialize', 'notifications/initialized', 'tools/call', 'DELETE']);
   });
 });

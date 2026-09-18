@@ -533,9 +533,12 @@ async function checkNotion(io: CompanyIo, report: Report): Promise<void> {
     if (read.status !== 0) throw new Error((read.stderr || read.stdout).trim().split('\n').pop() ?? 'no output');
     pages = parseNotionRead(read.stdout);
   } catch (error) {
+    const reason = (error as Error).message;
     report.line(
       'gap',
-      `the Notion component could not be read (${(error as Error).message}); is it running (pnpm convex:up --profile docs-notion)?`,
+      reason.startsWith('Notion refused')
+        ? `${reason}: ${NOTION_TOKEN_ENV} must be the secret of the integration the parent page is shared with`
+        : `the Notion component could not be read (${reason}); is it running (pnpm convex:up --profile docs-notion)?`,
     );
     return;
   }

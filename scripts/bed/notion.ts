@@ -67,9 +67,16 @@ async function send(method, params, notification) {
 }
 function payload(result) {
   if (!result || result.isError) throw new Error('the Notion component returned an error');
-  if (result.structuredContent !== undefined) return result.structuredContent;
-  const text = (result.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
-  return JSON.parse(text);
+  let value = result.structuredContent;
+  if (value === undefined) {
+    const text = (result.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+    value = JSON.parse(text);
+  }
+  // The component relays Notion's own error object as a successful tool result.
+  if (value && (value.object === 'error' || value.status === 'error')) {
+    throw new Error('Notion refused the request: ' + (value.code || 'error') + (value.message ? ' (' + value.message + ')' : ''));
+  }
+  return value;
 }
 function title(result) {
   for (const property of Object.values(result.properties || {})) {
