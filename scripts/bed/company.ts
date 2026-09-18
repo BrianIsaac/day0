@@ -857,11 +857,91 @@ async function linearForWrite(
   return { linear, targets: teamTargets(spec, workspace) };
 }
 
-async function ensureLabel(linear: BedLinear, spec: BedSpec, undo: UndoLedger, report: Report): Promise<string> {
+/**
+ * What one seed or post has written so far: the tickets it made active, which
+ * this clone may archive at teardown, the label it created, and the undo that
+ * takes its writes back when a later call fails. A write the undo cannot take
+ * back is kept, so the state file records it for teardown.
+ */
+class BedWrites {
+  readonly activated: string[] = [];
+  createdLabelId?: string;
+  private readonly undo = new UndoLedger();
+  private readonly strandedIssues: Array<{ id: string; identifier: string }> = [];
+  private strandedLabelId?: string;
+
+  constructor(private readonly linear: BedLinear) {}
+
+  /** A ticket this run created or unarchived; the undo archives it. */
+  activatedIssue(issue: { id: string; identifier: string }, undoLabel: string): void {
+    this.activated.push(issue.id);
+    this.undo.register(undoLabel, async (): Promise<void> => {
+      try {
+        await this.linear.archive(issue);
+      } catch (error) {
+        this.strandedIssues.push(issue);
+        throw error;
+      }
+    });
+  }
+
+  /** The label this run created; the undo deletes it. */
+  createdLabel(name: string, id: string): void {
+    this.createdLabelId = id;
+    this.undo.register(`delete label ${name}`, async (): Promise<void> => {
+      try {
+        await this.linear.deleteLabel(name, id);
+      } catch (error) {
+        this.strandedLabelId = id;
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Report the failure, take back what this run wrote, and record in the
+   * state file whatever the undo could not, so teardown removes it.
+   *
+   * Args:
+   *   io: The machine.
+   *   verb: `seed` or `post`, for the report.
+   *   error: What stopped the run.
+   *   previous: The state file as the run found it.
+   *   labelName: The bed's label name, for the report.
+   *   report: The report.
+   */
+  async rollBack(
+    io: CompanyIo,
+    verb: string,
+    error: unknown,
+    previous: CompanyState | undefined,
+    labelName: string,
+    report: Report,
+  ): Promise<void> {
+    report.line('gap', `${verb} stopped: ${(error as Error).message}`);
+    for (const result of await this.undo.runAll()) {
+      report.line(result.ok ? 'ok' : 'gap', `undo: ${result.label}${result.ok ? '' : ` failed (${result.error})`}`);
+    }
+    if (this.strandedIssues.length === 0 && this.strandedLabelId === undefined) return;
+    writeState(io, {
+      epoch: previous?.epoch ?? slackTs(io.now()),
+      issueIds: [...new Set([...(previous?.issueIds ?? []), ...this.strandedIssues.map((issue) => issue.id)])],
+      labelId: this.strandedLabelId ?? previous?.labelId,
+    });
+    for (const issue of this.strandedIssues) {
+      report.line('note', `${issue.identifier} is recorded in ${STATE_FILE} so teardown archives it`);
+    }
+    if (this.strandedLabelId !== undefined) {
+      report.line('note', `label ${labelName} is recorded in ${STATE_FILE} so teardown deletes it`);
+    }
+  }
+}
+
+async function ensureLabel(linear: BedLinear, spec: BedSpec, writes: BedWrites, report: Report): Promise<string> {
   const existing = await linear.label(spec.label);
   if (existing) return existing.id;
   const id = await linear.createLabel(spec.label);
-  undo.register(`delete label ${spec.label}`, () => linear.deleteLabel(spec.label, id));
+  writes.createdLabel(spec.label, id);
   report.line('ok', `created label ${spec.label}`);
   return id;
 }
@@ -872,7 +952,7 @@ async function fileTicket(
   existing: BedIssue | undefined,
   target: TeamTarget,
   labelId: string,
-  undo: UndoLedger,
+  writes: BedWrites,
   report: Report,
 ): Promise<void> {
   const stateId = target.states.get(ticket.state)!;
@@ -885,13 +965,13 @@ async function fileTicket(
       stateId,
       labelIds: [labelId],
     });
-    undo.register(`archive ${created.identifier}`, () => linear.archive(created));
+    writes.activatedIssue(created, `archive ${created.identifier}`);
     report.line('ok', `created ${ticket.key} as ${created.identifier} "${ticket.title}" (${ticket.state})`);
     return;
   }
   if (existing.archived) {
     await linear.unarchive(existing);
-    undo.register(`archive ${existing.identifier} again`, () => linear.archive(existing));
+    writes.activatedIssue(existing, `archive ${existing.identifier} again`);
     report.line('ok', `unarchived ${ticket.key} ${existing.identifier}`);
   }
   const input = resetInput(existing, ticket, { teamId: target.teamId, projectId: target.projectId, stateId, labelId });
@@ -932,12 +1012,9 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
       return 1;
     }
   }
-  const undo = new UndoLedger();
-  let createdLabelId: string | undefined;
+  const writes = new BedWrites(linear);
   try {
-    const priorLabel = await linear.label(spec.label);
-    const labelId = await ensureLabel(linear, spec, undo, report);
-    if (!priorLabel) createdLabelId = labelId;
+    const labelId = await ensureLabel(linear, spec, writes, report);
     for (const ticket of spec.tickets) {
       const existing = byKey.get(ticket.key);
       if (!toFile.includes(ticket)) {
@@ -952,25 +1029,18 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
         }
         continue;
       }
-      await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, undo, report);
+      await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, writes, report);
     }
   } catch (error) {
-    report.line('gap', `seed stopped: ${(error as Error).message}`);
-    for (const result of await undo.runAll()) {
-      report.line(result.ok ? 'ok' : 'gap', `undo: ${result.label}${result.ok ? '' : ` failed (${result.error})`}`);
-    }
+    await writes.rollBack(io, 'seed', error, previous, spec.label, report);
     return 1;
   }
 
-  const currentIssues = await linear.issues();
-  const activated = currentIssues.filter((issue) => {
-    const before = byKey.get(issue.key);
-    return !issue.archived && (!before || before.archived);
-  });
+  // Recorded from seed's own writes: a read here that failed would leave filed tickets no clone owns.
   const state: CompanyState = {
     epoch: previous?.epoch ?? slackTs(io.now()),
-    issueIds: [...new Set([...(previous?.issueIds ?? []), ...activated.map((issue) => issue.id)])],
-    labelId: previous?.labelId ?? createdLabelId,
+    issueIds: [...new Set([...(previous?.issueIds ?? []), ...writes.activated])],
+    labelId: previous?.labelId ?? writes.createdLabelId,
   };
   writeState(io, state);
   report.section('Slack');
@@ -1024,21 +1094,15 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     report.line('ok', `${key} is already filed as ${existing.identifier} (${existing.stateName}); nothing changed`);
     return 0;
   }
-  const undo = new UndoLedger();
+  const writes = new BedWrites(linear);
   try {
-    const labelId = await ensureLabel(linear, spec, undo, report);
-    await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, undo, report);
+    const labelId = await ensureLabel(linear, spec, writes, report);
+    await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, writes, report);
   } catch (error) {
-    report.line('gap', `post stopped: ${(error as Error).message}`);
-    for (const result of await undo.runAll()) {
-      report.line(result.ok ? 'ok' : 'gap', `undo: ${result.label}${result.ok ? '' : ` failed (${result.error})`}`);
-    }
+    await writes.rollBack(io, 'post', error, state, spec.label, report);
     return 1;
   }
-  const filed = (await linear.issues()).find((issue) => issue.key === key && !issue.archived);
-  if (filed && (!existing || existing.archived)) {
-    writeState(io, { ...state, issueIds: [...new Set([...state.issueIds, filed.id])] });
-  }
+  writeState(io, { ...state, issueIds: [...new Set([...state.issueIds, ...writes.activated])] });
   return 0;
 }
 

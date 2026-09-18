@@ -936,7 +936,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(h.linear.labels).toEqual([]);
   });
 
-  it.fails('records what seed filed even when Linear stops answering reads after the writes', async (): Promise<void> => {
+  it('records what seed filed even when Linear stops answering reads after the writes', async (): Promise<void> => {
     const h = harness();
     const original = h.linear.fetch;
     let reads = 0;
@@ -953,7 +953,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(allArchived(h)).toBe(true);
   });
 
-  it.fails('records a ticket its undo could not archive, so teardown archives it', async (): Promise<void> => {
+  it('records a ticket its undo could not archive, so teardown archives it', async (): Promise<void> => {
     const h = harness();
     const original = h.linear.fetch;
     let creates = 0;
