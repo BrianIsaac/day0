@@ -47,6 +47,162 @@ describe('the Slack client', (): void => {
     await client.deleteMessage('D1', '2.0');
     expect(JSON.parse(calls[1]!.body)).toEqual({ channel: 'D1', ts: '2.0' });
   });
+
+  it('waits for Retry-After and retries one HTTP 429', async (): Promise<void> => {
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      return calls === 1
+        ? new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+            status: 429,
+            headers: { 'Retry-After': '7' },
+          })
+        : new Response(JSON.stringify({ ok: true, team: 'day0', user_id: 'UBOT', bot_id: 'BBOT' }));
+    }) as typeof globalThis.fetch;
+    const lines: string[] = [];
+    const sleeps: number[] = [];
+    const client = new SlackClient('x', fetch, {
+      say: (line: string): void => {
+        lines.push(line);
+      },
+      sleep: async (ms: number): Promise<void> => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.authTest()).resolves.toMatchObject({ team: 'day0' });
+    expect(calls).toBe(2);
+    expect(lines).toEqual(['retrying Slack auth.test after HTTP 429, in 7 s as Slack asked']);
+    expect(sleeps).toEqual([7_000]);
+  });
+
+  it('retries once when Slack times out before answering', async (): Promise<void> => {
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      if (calls === 1) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      return new Response(JSON.stringify({ ok: true, team: 'day0', user_id: 'UBOT', bot_id: 'BBOT' }));
+    }) as typeof globalThis.fetch;
+    const lines: string[] = [];
+    const sleeps: number[] = [];
+    const client = new SlackClient('x', fetch, {
+      say: (line: string): void => {
+        lines.push(line);
+      },
+      sleep: async (ms: number): Promise<void> => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.authTest()).resolves.toMatchObject({ team: 'day0' });
+    expect(calls).toBe(2);
+    expect(lines).toEqual(['retrying Slack auth.test after a timeout']);
+    expect(sleeps).toEqual([2_000]);
+  });
+
+  it('retries one HTTP 5xx even when the response is not JSON', async (): Promise<void> => {
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      return calls === 1
+        ? new Response('<html>service unavailable</html>', { status: 503 })
+        : new Response(JSON.stringify({ ok: true, team: 'day0', user_id: 'UBOT', bot_id: 'BBOT' }));
+    }) as typeof globalThis.fetch;
+    const lines: string[] = [];
+    const sleeps: number[] = [];
+    const client = new SlackClient('x', fetch, {
+      say: (line: string): void => {
+        lines.push(line);
+      },
+      sleep: async (ms: number): Promise<void> => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.authTest()).resolves.toMatchObject({ team: 'day0' });
+    expect(calls).toBe(2);
+    expect(lines).toEqual(['retrying Slack auth.test after HTTP 503']);
+    expect(sleeps).toEqual([2_000]);
+  });
+
+  it('treats message_not_found after a timed-out delete as the first attempt having landed', async (): Promise<void> => {
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      if (calls === 1) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      return new Response(JSON.stringify({ ok: false, error: 'message_not_found' }));
+    }) as typeof globalThis.fetch;
+    const lines: string[] = [];
+    const client = new SlackClient('x', fetch, {
+      say: (line: string): void => {
+        lines.push(line);
+      },
+      sleep: async (): Promise<void> => undefined,
+    });
+
+    await expect(client.deleteMessage('D1', '2.0')).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+    expect(lines).toEqual([
+      'retrying Slack chat.delete after a timeout',
+      'the first Slack chat.delete landed before the timeout; not sent again',
+    ]);
+  });
+
+  it('does not wait beyond the retry cap', async (): Promise<void> => {
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      return new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+        status: 429,
+        headers: { 'Retry-After': '1800' },
+      });
+    }) as typeof globalThis.fetch;
+    const lines: string[] = [];
+    const sleeps: number[] = [];
+    const client = new SlackClient('x', fetch, {
+      say: (line: string): void => {
+        lines.push(line);
+      },
+      sleep: async (ms: number): Promise<void> => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.authTest()).rejects.toThrow(
+      'Slack auth.test failed: Slack asked to wait 1800 s after HTTP 429, longer than the 60 s a retry waits',
+    );
+    expect(calls).toBe(1);
+    expect(lines).toEqual([]);
+    expect(sleeps).toEqual([]);
+  });
+
+  it('does not retry cant_delete_message or another provider refusal', async (): Promise<void> => {
+    const codes = ['cant_delete_message', 'invalid_auth'];
+    for (const code of codes) {
+      let calls = 0;
+      const fetch = (async (): Promise<Response> => {
+        calls += 1;
+        return new Response(JSON.stringify({ ok: false, error: code }));
+      }) as typeof globalThis.fetch;
+      const lines: string[] = [];
+      const sleeps: number[] = [];
+      const client = new SlackClient('x', fetch, {
+        say: (line: string): void => {
+          lines.push(line);
+        },
+        sleep: async (ms: number): Promise<void> => {
+          sleeps.push(ms);
+        },
+      });
+
+      await expect(
+        code === 'cant_delete_message' ? client.deleteMessage('D1', '2.0') : client.authTest(),
+      ).rejects.toThrow(`Slack ${code === 'cant_delete_message' ? 'chat.delete' : 'auth.test'}: ${code}`);
+      expect(calls, code).toBe(1);
+      expect(lines, code).toEqual([]);
+      expect(sleeps, code).toEqual([]);
+    }
+  });
 });
 
 describe('which messages are the run’s to delete', (): void => {
