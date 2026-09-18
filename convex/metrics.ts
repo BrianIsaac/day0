@@ -28,6 +28,8 @@ export interface AgentMetrics {
   };
   actions: {
     autoApplied: number;
+    /** Replayed browser calls that landed: a sign-in repeated in a new invocation, never a write of the work. */
+    sessionRestores: number;
     held: number;
     approved: number;
     rejected: number;
@@ -46,6 +48,8 @@ export interface LedgerObservation {
   observedAt: number | null;
   runId: string | null;
   entry: UnknownRecord;
+  /** Set on a replayed browser call: the key of the row whose session it re-established. */
+  sessionRestoreOf?: string;
 }
 
 function asRecord(value: unknown): UnknownRecord | undefined {
@@ -89,24 +93,40 @@ function actionKeyFromIdempotencyKey(key: unknown): string | undefined {
   return parts.length >= 3 ? `${parts[1]}:${parts[2]}` : undefined;
 }
 
-function ledgerEntries(output: unknown): UnknownRecord[] {
+/**
+ * Every row of a ledger, a re-established browser session's replayed calls
+ * each counted as the row it is, just before the row that needed the page.
+ */
+function ledgerEntries(output: unknown): Array<{ entry: UnknownRecord; sessionRestoreOf?: string }> {
   const applied = asRecord(output)?.applied;
-  return Array.isArray(applied)
-    ? applied.flatMap((entry): UnknownRecord[] => {
-        const row = asRecord(entry);
-        return row ? [row] : [];
-      })
-    : [];
+  if (!Array.isArray(applied)) return [];
+  return applied.flatMap((value) => {
+    const row = asRecord(value);
+    if (!row) return [];
+    const steps = asRecord(row.sessionRestore)?.steps;
+    const owner = asString(row.idempotencyKey);
+    const replayed = Array.isArray(steps)
+      ? steps.flatMap((step) => {
+          const entry = asRecord(step);
+          return entry ? [{ entry, ...(owner ? { sessionRestoreOf: owner } : {}) }] : [];
+        })
+      : [];
+    return [...replayed, { entry: row }];
+  });
 }
 
-/** Every durable ledger row, deduplicated across its work row and completion event. */
+/**
+ * Every durable ledger row, deduplicated across its work row and completion
+ * event. A replayed browser call is a transport call of its own, so it is a
+ * row here too, marked with the row whose session it re-established.
+ */
 export function collectLedgerObservations(
   events: readonly Doc<'events'>[],
   workItems: readonly Doc<'workItems'>[],
 ): LedgerObservation[] {
   const observations = new Map<string, LedgerObservation>();
   const add = (workItemId: string, output: unknown, observedAt: number | null): void => {
-    ledgerEntries(output).forEach((entry, index) => {
+    ledgerEntries(output).forEach(({ entry, sessionRestoreOf }, index) => {
       const idempotencyKey = asString(entry.idempotencyKey);
       const key = idempotencyKey ?? `${workItemId}:${observedAt ?? 'current'}:${index}`;
       const existing = observations.get(key);
@@ -116,6 +136,7 @@ export function collectLedgerObservations(
         observedAt,
         runId: runIdFromIdempotencyKey(idempotencyKey),
         entry,
+        ...(sessionRestoreOf ? { sessionRestoreOf } : {}),
       });
     });
   };
@@ -372,14 +393,21 @@ function actionMetrics(
       .sort((left, right) => right.at - left.at)[0];
     return revoked ? [{ latency: observation.at - revoked.at }] : [];
   });
+  const landed = ({ entry }: LedgerObservation): boolean => entry.ok === true && entry.held !== true;
+  // A replayed sign-in repeats a call the run already landed; it is counted
+  // as a replay, never as a second automatic action.
   const autoApplied = ledger.filter(
-    ({ entry }) =>
-      entry.ok === true &&
-      entry.held !== true &&
-      (entry.authority === 'standing' || entry.authority === 'autonomous'),
+    (observation) =>
+      landed(observation) &&
+      observation.sessionRestoreOf === undefined &&
+      (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous'),
+  ).length;
+  const sessionRestores = ledger.filter(
+    (observation) => landed(observation) && observation.sessionRestoreOf !== undefined,
   ).length;
   return {
     autoApplied,
+    sessionRestores,
     held: held.size,
     approved: approved.size,
     rejected: rejected.size,

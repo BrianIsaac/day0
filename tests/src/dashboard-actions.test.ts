@@ -341,6 +341,7 @@ const completeMetrics: AgentMetrics = {
   },
   actions: {
     autoApplied: 4,
+    sessionRestores: 0,
     held: 2,
     approved: 2,
     rejected: 0,

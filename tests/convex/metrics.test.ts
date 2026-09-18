@@ -244,6 +244,7 @@ describe('agent evaluation metrics', (): void => {
       },
       actions: {
         autoApplied: 2,
+        sessionRestores: 0,
         held: 4,
         approved: 1,
         rejected: 3,
@@ -523,9 +524,7 @@ describe('a browser session re-established before an apply invocation', (): void
   const item = (id: string, applied: unknown[]): Doc<'workItems'> =>
     ({ _id: id, state: 'completed', output: { applied } }) as unknown as Doc<'workItems'>;
 
-  // Red until the replayed calls are read: today the nested steps are
-  // invisible to the audit trail and there is no count of them.
-  it.fails('counts each replayed transport call toward the audit trail and not toward autoApplied', (): void => {
+  it('counts each replayed transport call toward the audit trail and not toward autoApplied', (): void => {
     const restored = item('wi', [
       {
         tool: 'mcp.call',
