@@ -552,6 +552,40 @@ describe('documentation sources in real mode', (): void => {
     expect(credential?.revokedAt).toEqual(expect.any(Number));
   });
 
+  it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId, ref: 'page.md', title: 'Finance handbook',
+      markdown: '- Channels: #finance-close', updatedAt: 2,
+    });
+    const surfaceId = await harness.run(async (ctx) => await ctx.db.insert('surfaces', {
+      agentId, slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected',
+      credentialLanded: true, whereFound: [], createdAt: 1,
+      managerApprovedAt: 2, itApprovedAt: 3, probeGeneration: 4,
+      intakeScope: { channels: [{
+        value: 'finance-close', sourceId, ref: 'page.md', quote: '- Channels: #finance-close',
+      }] },
+    }));
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId, ref: 'page.md', title: 'Finance handbook',
+      markdown: '- Channels: #ops-requests', updatedAt: 3,
+    });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId, runId, refs: ['page.md'], credentialRefs: [], pageCount: 1, redactionCount: 0,
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'proposed', probeGeneration: 5 });
+    expect(surface?.managerApprovedAt).toBeUndefined();
+    expect(surface?.itApprovedAt).toBeUndefined();
+    expect(surface?.intakeScope?.channels?.[0].value).toBe('finance-close');
+    await expect(harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, {
+      surfaceId, role: 'manager',
+    })).rejects.toThrow('re-run orientation');
+  });
+
   it('skips a source mid-sync and restarts one whose generation stopped progressing', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

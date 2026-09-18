@@ -318,6 +318,13 @@ export function approvedChannelNames(scope: IntakeScope): string[] {
   return (scope.channels ?? []).map((channel): string => channel.value);
 }
 
+/** Every approved bound, including additional projects, with its source line. */
+export function intakeScopeValues(scope: IntakeScope): ScopeValue[] {
+  return [scope.team, scope.project, ...(scope.projects ?? []), ...(scope.channels ?? [])].filter(
+    (value): value is ScopeValue => value !== undefined,
+  );
+}
+
 /**
  * Whether an approved scope leaves a surface of this class nothing to read.
  *
@@ -418,9 +425,7 @@ function distinctLines(values: readonly ScopeValue[]): ScopeValue[] {
  *   Each value whose page is gone or no longer carries its quoted line.
  */
 export function scopeDrift(scope: IntakeScope, pages: readonly ScopePage[]): ScopeValue[] {
-  const values = [scope.team, scope.project, ...(scope.projects ?? []), ...(scope.channels ?? [])].filter(
-    (value): value is ScopeValue => value !== undefined,
-  );
+  const values = intakeScopeValues(scope);
   return values.filter((value): boolean => {
     const page = pages.find(
       (candidate): boolean =>

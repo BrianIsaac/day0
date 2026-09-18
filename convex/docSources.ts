@@ -14,6 +14,7 @@ import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { reconcileDocumentedSystems } from './surfaces';
 import { purgeCredential } from './credentials';
+import { intakeScopeValues } from '../src/surfaces/intake-scope';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -679,6 +680,51 @@ export const finishSync = internalMutation({
     }
     for (const mirror of mirrors) {
       if (!mirror.sourceRef || !current.has(mirror.sourceRef)) await ctx.db.delete(mirror._id);
+    }
+    if (SURFACE_MODE === 'real') {
+      const currentPages = new Map(pages.filter((page) => current.has(page.ref)).map((page) => [page.ref, page.markdown]));
+      const agents = await ctx.db.query('agents')
+        .withIndex('by_userId', (index) => index.eq('userId', source.userId))
+        .take(101);
+      if (agents.length > 100) throw new Error('Documentation source exceeds 100 agents.');
+      for (const agent of agents) {
+        if (!agentReadsSource(agent, source._id)) continue;
+        const surfaces = await ctx.db.query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
+          .take(1_001);
+        if (surfaces.length > 1_000) throw new Error('Agent exceeds 1,000 surfaces.');
+        for (const surface of surfaces) {
+          if (!surface.intakeScope || !['proposed', 'approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) continue;
+          const changed = intakeScopeValues(surface.intakeScope).some((value) =>
+            value.sourceId === source._id &&
+            !currentPages.get(value.ref)?.split(/\r?\n/).some((line) => line.trim() === value.quote)
+          );
+          if (!changed || (surface.verdict === 'proposed' && surface.managerApprovedAt === undefined && surface.itApprovedAt === undefined)) continue;
+          await ctx.db.patch(surface._id, {
+            verdict: 'proposed',
+            reason: 'A documented intake queue changed. Reject this card and re-run orientation before approval.',
+            managerApprovedAt: undefined,
+            itApprovedAt: undefined,
+            probeGeneration: (surface.probeGeneration ?? 0) + 1,
+            toolAllowlist: undefined,
+            toolArguments: undefined,
+            lastVerifiedAt: undefined,
+            providerIdentityId: undefined,
+            providerWorkspaceId: undefined,
+            managerDmChannelId: undefined,
+            managerUserId: undefined,
+            managerName: undefined,
+            channelsNotJoined: undefined,
+            lastPolledAt: undefined,
+          });
+          await ctx.db.insert('events', {
+            agentId: surface.agentId,
+            type: 'surface.scope-reapproval-required',
+            payload: { surfaceId: surface._id, sourceId: source._id },
+            createdAt: Date.now(),
+          });
+        }
+      }
     }
     const credentials = await ctx.db
       .query('credentials')

@@ -21,6 +21,7 @@ import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
 import { reevaluatePendingInTransaction } from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
+import { intakeScopeValues } from '../src/surfaces/intake-scope';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -1337,6 +1338,16 @@ export const approve = mutation({
     await assertOwnsAgent(ctx, surface.agentId);
     if (surface.verdict !== 'proposed') {
       throw new Error(`Only a proposed surface can be approved; this one is ${surface.verdict}.`);
+    }
+    for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
+      if (!value.sourceId) continue;
+      const page = await ctx.db.query('docPages')
+        .withIndex('by_source_ref', (index) =>
+          index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref))
+        .unique();
+      if (!page?.markdown.split(/\r?\n/).some((line) => line.trim() === value.quote)) {
+        throw new Error('A documented intake queue changed; reject this card and re-run orientation before approval.');
+      }
     }
     if (surface.path === 'browser-driven') {
       const component = browserComponent(process.env.DAY0_BROWSER_MCP_URL);
