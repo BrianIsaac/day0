@@ -12,15 +12,18 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const recorded = vi.hoisted(() => ({
   users: [] as string[],
+  schemas: [] as unknown[],
   outputs: [] as Array<{ body: string; smokeTest: string }>,
   sandboxRuns: 0,
+  sandboxPrograms: [] as string[],
   sandbox: undefined as SkillSandboxRun | undefined,
 }));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async <T>(args: { user: string }): Promise<T> => {
+  agentJson: async <T>(args: { user: string; schema: unknown }): Promise<T> => {
     recorded.users.push(args.user);
+    recorded.schemas.push(args.schema);
     const next = recorded.outputs.shift();
     if (!next) throw new Error('no authored output queued');
     return next as T;
@@ -31,8 +34,9 @@ vi.mock('../../src/lib/mastra', () => ({
 vi.mock('../../src/lib/skill-sandbox', () => ({
   // The bundled sandbox: the path that takes the verification lease.
   configuredSkillSandboxBackend: (): string => 'local',
-  authorAndVerifySkill: async (): Promise<SkillSandboxRun> => {
+  authorAndVerifySkill: async (args: { smokeTest: string }): Promise<SkillSandboxRun> => {
     recorded.sandboxRuns += 1;
+    recorded.sandboxPrograms.push(args.smokeTest);
     if (!recorded.sandbox) throw new Error('no sandbox result queued');
     return recorded.sandbox;
   },
@@ -111,8 +115,10 @@ describe('the static gate on an authored skill, through the authoring action', (
   beforeEach((): void => {
     useSurfaceMode('mock');
     recorded.users.length = 0;
+    recorded.schemas.length = 0;
     recorded.outputs.length = 0;
     recorded.sandboxRuns = 0;
+    recorded.sandboxPrograms.length = 0;
     recorded.sandbox = {
       backend: 'local',
       sandboxId: 'local:run-1',
@@ -231,6 +237,19 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(modelFailed.refusedSmokeTest).toBeUndefined();
   });
 
+  it('runs the author program as written in mock mode', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.sandboxPrograms).toEqual([smokeTest]);
+    const { authorSchema } = await import('../../convex/skillActions');
+    expect(recorded.schemas).toEqual([authorSchema]);
+  });
+
   it('removes a markdown fence from the smoke test before the gate and says so in the log', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);
@@ -293,5 +312,91 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(result.reason).toContain('SKILL.md uses `{{value}}`');
     expect(result.reason).toContain('SKILL.md declares no `## Inputs` section');
     expect(recorded.sandboxRuns).toBe(0);
+  });
+});
+
+describe('real-mode authoring, where the harness is the smoke test', (): void => {
+  const casesSmokeTest = [
+    'def run(inputs: dict) -> dict:',
+    '    return {"actions": [{"action": "mcp.call", "tool": "save_comment", "id": inputs["record-id"]}]}',
+    '',
+    'CASES = [{"record-id": "OPS-3"}, {"record-id": "OPS-9"}]',
+  ].join('\n');
+
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    recorded.users.length = 0;
+    recorded.schemas.length = 0;
+    recorded.outputs.length = 0;
+    recorded.sandboxRuns = 0;
+    recorded.sandboxPrograms.length = 0;
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-real',
+      stdout: 'case 1: run() emitted 1 action\ncase 2: run() emitted 1 action\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+  });
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('asks in the real-mode schema, sends the sandbox the harness, and registers', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest: casesSmokeTest });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    const { realAuthorSchema } = await import('../../convex/skillActions');
+    const { harnessedSmokeTest } = await import('../../src/work/smoke-harness');
+    expect(recorded.schemas).toEqual([realAuthorSchema]);
+    expect(recorded.sandboxPrograms).toEqual([harnessedSmokeTest(casesSmokeTest)]);
+    const registered = await readSkill(harness, skillId);
+    expect(registered.state).toBe('registered');
+    expect(registered.verificationLog).toContain('case 1: run() emitted 1 action');
+  });
+
+  it('parks the author program, not the harness, when no sandbox ran, and harnesses it again on Retry', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest: casesSmokeTest });
+    recorded.sandbox = {
+      backend: 'none',
+      sandboxId: '(skipped)',
+      stdout: '',
+      stderr: '',
+      ok: false,
+      skipped: true,
+      skipReason: 'the local sandbox is not running',
+    };
+
+    const parked = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(parked.ok).toBe(false);
+    expect((await readSkill(harness, skillId)).pendingSmokeTest).toBe(casesSmokeTest);
+
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-retry',
+      stdout: 'case 1\ncase 2\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    const { harnessedSmokeTest } = await import('../../src/work/smoke-harness');
+    expect(recorded.users).toHaveLength(1);
+    expect(recorded.sandboxPrograms).toEqual([
+      harnessedSmokeTest(casesSmokeTest),
+      harnessedSmokeTest(casesSmokeTest),
+    ]);
   });
 });

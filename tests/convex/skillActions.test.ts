@@ -1,11 +1,18 @@
 /** @vitest-environment node */
 
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   AUTHOR_SYSTEM,
+  AUTHOR_SYSTEM_REAL,
+  authorSchema,
+  authorSchemaFor,
+  authorSystemFor,
   buildAuthorPrompt,
   verifyAuthoredSkill,
 } from '../../convex/skillActions';
+import { harnessedSmokeTest } from '../../src/work/smoke-harness';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import { clipRefusedDraft, REFUSED_DRAFT_CHARS, REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
@@ -100,6 +107,35 @@ describe('skill author prompts', (): void => {
     expect(AUTHOR_SYSTEM).toContain('Call run() once for each of two different representative input dicts');
     expect(AUTHOR_SYSTEM).toContain('none of them the values of the work item that first needed this skill');
     expect(AUTHOR_SYSTEM).not.toContain('Call run() once.');
+  });
+
+  it('asks a real-mode author for run() and its CASES only, because the harness calls and checks', (): void => {
+    expect(authorSystemFor('mock')).toBe(AUTHOR_SYSTEM);
+    const real = authorSystemFor('real');
+    expect(real).toBe(AUTHOR_SYSTEM_REAL);
+    expect(real).toContain('reads every value it needs from `inputs`');
+    expect(real).toContain('Define `CASES`, a list of two different representative input dicts');
+    expect(real).toContain('none of them the values of the work item that first needed this skill');
+    expect(real).toContain('no call to run(), no assertion, no check and no print() at the top level');
+    expect(real).toContain('The harness calls run() once per case and checks the results itself');
+    expect(real).not.toContain('Call run() once for each of two different representative input dicts');
+    expect(real).not.toContain('print() one concise success line per call');
+    // Everything but the smoke-test contract is the mock prompt, word for word.
+    const [mockHead, mockTail] = AUTHOR_SYSTEM.split('You also produce a small Python smoke test');
+    expect(real.startsWith(mockHead!)).toBe(true);
+    expect(real.endsWith(mockTail!.slice(mockTail!.indexOf('Discipline:')))).toBe(true);
+  });
+
+  it('describes the real-mode smoke test in the schema the author answers with', (): void => {
+    expect(authorSchemaFor('mock')).toBe(authorSchema);
+    const real = z.toJSONSchema(authorSchemaFor('real')) as {
+      properties: Record<string, { description?: string }>;
+    };
+    const mock = z.toJSONSchema(authorSchema) as { properties: Record<string, { description?: string }> };
+    expect(real.properties.body).toEqual(mock.properties.body);
+    expect(real.properties.smokeTest?.description).toContain('CASES, a list of two different representative input dicts');
+    expect(real.properties.smokeTest?.description).toContain('the verification harness calls run() once per case');
+    expect(real.properties.smokeTest?.description).not.toContain('print one success line');
   });
 
   it('puts the shape and the execution inputs in front of the author', (): void => {
@@ -359,6 +395,45 @@ describe('skill author prompts', (): void => {
     expect(verify).toHaveBeenCalledOnce();
   });
 
+  it('hands the sandbox the harness around the author program in real mode, and keeps the author program', async (): Promise<void> => {
+    const sandboxResult: SkillSandboxRun = {
+      backend: 'local',
+      sandboxId: 'local:run-4',
+      stdout: 'case 1\ncase 2\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+    const verify = vi.fn(async (): Promise<SkillSandboxRun> => sandboxResult);
+    const program = [
+      'def run(inputs: dict) -> dict:',
+      '    return {"actions": [{"action": "mcp.call", "tool": "save_comment", "id": inputs["record-id"]}]}',
+      'CASES = [{"record-id": "OPS-1"}, {"record-id": "OPS-2"}]',
+    ].join('\n');
+
+    await expect(
+      verifyAuthoredSkill(
+        { skillName: 's', skillBody: '# s', smokeTest: '```python\n' + program + '\n```' },
+        verify,
+        'real',
+      ),
+    ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest: program, unwrapped: true });
+    expect(verify).toHaveBeenCalledWith({ skillName: 's', skillBody: '# s', smokeTest: harnessedSmokeTest(program) });
+  });
+
+  it('refuses a real-mode program without the run landmark before the sandbox, and needs no print', async (): Promise<void> => {
+    const verify = vi.fn<() => Promise<SkillSandboxRun>>();
+
+    await expect(
+      verifyAuthoredSkill(
+        { skillName: 's', skillBody: '# s', smokeTest: 'def main(inputs: dict) -> dict:\n    return {}\nCASES = []\n' },
+        verify,
+        'real',
+      ),
+    ).resolves.toEqual({ ok: false, reason: expect.stringContaining('must define run(inputs: dict) -> dict') });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it('names the missing landmark when a parsable program lacks the contract', async (): Promise<void> => {
     const verify = vi.fn<() => Promise<SkillSandboxRun>>();
     const noRun = 'def main(inputs: dict) -> dict:\n    return {}\nprint(main({}))\n';
@@ -437,6 +512,18 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain('Correct that failure in this attempt; do not repeat the rejected output.');
     expect(prompt).not.toContain('Refused SKILL.md');
     expect(prompt).not.toContain('--- Required correction ---');
+  });
+
+  // The hosted demo and the frozen evaluation author skills in mock mode, so
+  // the author's instructions and the schema it answers in are byte-for-byte
+  // what they were when those runs were recorded.
+  it('keeps the mock author system prompt byte-identical', (): void => {
+    expect(createHash('sha256').update(AUTHOR_SYSTEM).digest('hex')).toMatchInlineSnapshot(`"18ef5587bdadf6bac04c6dde98ac05c08025f135ff46caf6297f2fa34ad3ba20"`);
+  });
+
+  it('keeps the mock author schema byte-identical', (): void => {
+    const schema = JSON.stringify(z.toJSONSchema(authorSchema));
+    expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(`"5e9fdc6c1f59fcee97c4b1504d62e838f1042c27436ff368467881945ca43a22"`);
   });
 
   it('tells the next authoring attempt why the prior smoke source was rejected', (): void => {

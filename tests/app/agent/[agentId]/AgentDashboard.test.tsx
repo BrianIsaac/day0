@@ -1174,6 +1174,19 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).toContain('Only one authoring run holds a skill at a time');
   });
 
+  // Rehearsal 1, 0:29: a traceback's caret line has no break opportunity, so
+  // the column kept its full width and pushed Retry past the card's edge.
+  it('lets the text column shrink beside Retry and wraps a log with no spaces, so Retry stays in the card', (): void => {
+    const carets = '^'.repeat(56);
+    const traceback = {
+      ...refused,
+      verificationLog: `verification in the local sandbox failed - smoke test exited 1. stderr: ${carets} AssertionError`,
+    } as unknown as Doc<'skills'>;
+    const markup = panel([traceback]);
+    expect(markup).toMatch(/<div class="flex-1 min-w-0"><div class="font-medium[^"]*">refresh-the-tile</);
+    expect(markup).toMatch(new RegExp(`<div class="[^"]*\\bbreak-words\\b[^"]*">verification in the local sandbox failed[^<]*\\^{56}`));
+  });
+
   it('says Revise is the one that always authors again', (): void => {
     const registered = { ...base, state: 'registered', body: '# Refresh' } as unknown as Doc<'skills'>;
     const markup = renderToStaticMarkup(
