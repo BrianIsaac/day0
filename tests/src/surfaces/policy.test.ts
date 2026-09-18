@@ -20,10 +20,12 @@ import {
   MALFORMED_ACTION,
   MOCK_VERB_REFUSED,
   needsStandingGrant,
+  NOT_AUTOMATIC,
   normaliseActionVerdict,
   parseSurfaceAction,
   provenanceTrailer,
   requiredScope,
+  replayAuthorityRefusal,
   reviewAction,
   sharedWriteWithoutAttribution,
   reviewActions,
@@ -1114,5 +1116,80 @@ describe('revoked write scopes under the autonomous-actions switch', (): void =>
     expect(grantRefusal(parsed(chatPost('C0PUBLIC')), slack, grants, true, revoked)).toBeUndefined();
     expect(grantRefusal(parsed(chatPost('D0MANAGER')), slack, grants, true, revoked)).toBeUndefined();
     expect(grantRefusal(parsed(comment()), linear, new Set(['linear:write']), false, revoked)).toBeUndefined();
+  });
+});
+
+describe('a replayed browser call under the authority it first landed with', (): void => {
+  const tile: SurfaceRecord = {
+    slug: 'looker',
+    displayName: 'Looker',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click'],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+  const replayed = (tool: string, toolArgs: unknown = {}): ParsedSurfaceAction => {
+    const result = parseSurfaceAction({
+      tool: 'mcp.call',
+      args: { surface: 'looker', tool, toolArgsJson: JSON.stringify(toolArgs) },
+    } as MockAction);
+    if (!result.ok) throw new Error(result.reason);
+    return result.action;
+  };
+  const navigate = replayed('browser_navigate', { url: 'http://looker-tile:8080/' });
+  const fill = replayed('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] });
+  const read = new Set(['looker:read']);
+
+  it('keeps the approved-phase rule for a manager row: the write rests on the approval, the read on its grant', (): void => {
+    const live = { grants: read, autonomousActions: false };
+    expect(replayAuthorityRefusal(fill, tile, 'manager', live)).toBeUndefined();
+    expect(replayAuthorityRefusal(navigate, tile, 'manager', live)).toBeUndefined();
+    expect(replayAuthorityRefusal(navigate, tile, 'manager', { ...live, grants: new Set() })).toBe(
+      'no grant (looker:read)',
+    );
+  });
+
+  it('needs the toggle on now for an autonomous row', (): void => {
+    expect(replayAuthorityRefusal(fill, tile, 'autonomous', { grants: read, autonomousActions: true })).toBeUndefined();
+    expect(replayAuthorityRefusal(fill, tile, 'autonomous', { grants: read, autonomousActions: false })).toBe(
+      NOT_AUTOMATIC,
+    );
+  });
+
+  it('needs its grant now for a standing row, or a row that recorded no authority', (): void => {
+    for (const authority of ['standing', undefined] as const) {
+      expect(replayAuthorityRefusal(fill, tile, authority, { grants: read, autonomousActions: true })).toBe(
+        'no grant (looker:write)',
+      );
+      expect(
+        replayAuthorityRefusal(fill, tile, authority, {
+          grants: new Set(['looker:write']),
+          autonomousActions: false,
+        }),
+      ).toBeUndefined();
+    }
+  });
+
+  it('refuses under every authority once the scope is revoked', (): void => {
+    const live = {
+      grants: new Set(['looker:read']),
+      autonomousActions: true,
+      revokedScopes: new Set(['looker:write']),
+    };
+    for (const authority of ['manager', 'autonomous', 'standing'] as const) {
+      expect(replayAuthorityRefusal(fill, tile, authority, live)).toBe('no grant (looker:write)');
+      expect(replayAuthorityRefusal(navigate, tile, authority, live)).toBeUndefined();
+    }
+    expect(
+      replayAuthorityRefusal(navigate, tile, 'manager', {
+        ...live,
+        grants: new Set(),
+        revokedScopes: new Set(['looker:read']),
+      }),
+    ).toBe('no grant (looker:read)');
   });
 });

@@ -417,11 +417,14 @@ services:
   # the page's own field.
   #
   # `--isolated` gives every MCP session its own browser context. Day0 opens
-  # one session per `mcp.call` and closes it afterwards; without the flag the
-  # server keeps a single shared browser and the second call in a run fails
-  # with "Browser is already in use", so a skill could navigate but never
-  # snapshot. Sessions share no page state, which is also what an audited
-  # per-action call should mean.
+  # one session per run and surface for each apply invocation and closes it
+  # when that invocation's actions are done. A run's phases are separate
+  # invocations, so the next one starts in a new, blank, signed-out context;
+  # Day0 replays the run's own landed navigate and sign-in there before the
+  # first action that needs the page. Without the flag the server keeps a
+  # single shared browser and a second session fails with "Browser is
+  # already in use". Sessions share no page state, so two runs never see
+  # each other's pages.
   playwright-mcp:
     profiles: ['browser']
     image: mcr.microsoft.com/playwright/mcp:latest@sha256:18c0a9c934004fe9580cc79f1e8e6e6cde7c667348b215335e8a23fd3e509804

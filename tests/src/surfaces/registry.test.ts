@@ -16,6 +16,12 @@ import {
 import { applySurfaceActions, resolveAdapters, type RealAdapterDeps } from '../../../src/surfaces/registry';
 import type { AdapterRun, SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
+import {
+  slackClosing,
+  slackPhaseOne,
+  TileDriver,
+  type TileDriverCall,
+} from '../../fixtures/browser-phase-split-2026-09-16';
 
 const now = Date.UTC(2026, 7, 29, 9);
 const ctx = {} as ActionCtx;
@@ -952,5 +958,270 @@ describe('applying surface actions', (): void => {
   it('reports the two surface verbs as unknown tools in mock mode', async (): Promise<void> => {
     const applied = await applySurfaceActions(ctx, 'mock', [], run, [comment]);
     expect(applied[0]).toMatchObject({ ok: false, reason: 'unknown tool', idempotencyKey: 'wi_1:run_1:0' });
+  });
+});
+
+describe('a browser session across the apply invocations of one run', (): void => {
+  const looker: SurfaceRecord = {
+    slug: 'looker',
+    displayName: 'Looker',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_fill_form'],
+    credentialId: 'cred-looker',
+    credentialKind: 'value',
+  };
+  const tileGrants = new Set(['looker:read', 'looker:write', 'boss:message', 'slack:write']);
+  const closingTile = slackClosing.slice(0, 3);
+
+  function tileDeps(driver: TileDriver, beforeTransport?: RealAdapterDeps['beforeTransport']): RealAdapterDeps {
+    return {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createMcpClient: (options: McpClientOptions): McpClientLike => driver.client(options.serverName),
+      fetch: async (): Promise<Response> =>
+        new Response(JSON.stringify({ ok: true, ts: '1.1' }), { status: 200 }),
+      now: (): number => now,
+      browserMcpUrl: 'http://playwright-mcp:8931/mcp',
+      ...(beforeTransport ? { beforeTransport } : {}),
+    };
+  }
+
+  const auto = { autoPhase: true, autonomousActions: true, now };
+
+  async function phaseOne(driver: TileDriver) {
+    return await applySurfaceActions(ctx, 'real', [looker], run, slackPhaseOne, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3]),
+    });
+  }
+
+  const sentIn = (driver: TileDriver, context: number): string[] =>
+    driver.calls.filter((call: TileDriverCall) => call.context === context).map((call) => call.tool);
+
+  // The second invocation's fill meets a new, blank browser unless the run's
+  // own sign-in is replayed first.
+  it('signs in again from the run\'s own landed rows before a closing set that starts with a fill', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    expect(first.every((row) => row.ok)).toBe(true);
+    expect(first[3]!.effect).toContain('visible figure 68%');
+
+    const closing = await applySurfaceActions(ctx, 'real', [looker], run, closingTile, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      idempotencyIndexOffset: 4,
+    });
+
+    expect(closing.map((row) => [row.ok, row.idempotencyKey])).toEqual([
+      [true, 'wi_1:run_1:4'],
+      [true, 'wi_1:run_1:5'],
+      [true, 'wi_1:run_1:6'],
+    ]);
+    expect(closing[2]!.effect).toContain('visible figure 74%');
+    expect(closing[0]).toMatchObject({
+      authority: 'autonomous',
+      sessionRestore: {
+        steps: [
+          { ok: true, idempotencyKey: 'wi_1:run_1:4.session-0', replayOf: 'wi_1:run_1:0', authority: 'autonomous' },
+          { ok: true, idempotencyKey: 'wi_1:run_1:4.session-1', replayOf: 'wi_1:run_1:1', authority: 'autonomous' },
+          { ok: true, idempotencyKey: 'wi_1:run_1:4.session-2', replayOf: 'wi_1:run_1:2', authority: 'autonomous' },
+        ],
+      },
+    });
+    expect(closing[1]).not.toHaveProperty('sessionRestore');
+    // The second invocation's browser was signed in by the replay, then saved.
+    expect(sentIn(driver, 2)).toEqual([
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_fill_form',
+      'browser_snapshot',
+      'browser_click',
+      'browser_snapshot',
+      'browser_fill_form',
+      'browser_snapshot',
+      'browser_click',
+      'browser_snapshot',
+    ]);
+    expect(driver.tile.value).toBe('74%');
+  });
+
+  it('refuses the replay and every later action on the surface when the write scope is revoked under autonomy', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    // The transport check as the backend runs it after the manager revoked
+    // looker:write with autonomous actions on: every write is refused.
+    const revoked: RealAdapterDeps['beforeTransport'] = async (action) =>
+      ['browser_fill_form', 'browser_click'].includes(String(action.args.tool))
+        ? 'no grant (looker:write)'
+        : undefined;
+    const closing = await applySurfaceActions(ctx, 'real', [looker], run, closingTile, {
+      ...auto,
+      deps: tileDeps(driver, revoked),
+      grants: new Set(['looker:read', 'boss:message']),
+      approvedIndexes: new Set([0, 1, 2]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      idempotencyIndexOffset: 4,
+    });
+    const reason = 'browser session could not be re-established: browser_fill_form no grant (looker:write)';
+    expect(closing[0]).toMatchObject({
+      ok: false,
+      reason,
+      sessionRestore: {
+        steps: [
+          { ok: true, replayOf: 'wi_1:run_1:0' },
+          { ok: false, reason: 'no grant (looker:write)', replayOf: 'wi_1:run_1:1' },
+        ],
+      },
+    });
+    expect(closing[1]).toMatchObject({ ok: false, reason });
+    expect(closing[2]).toMatchObject({ ok: false, reason });
+    // The replayed navigate is a read and went through; no fill was ever sent.
+    expect(sentIn(driver, 2)).toEqual(['browser_navigate']);
+    expect(driver.tile.value).toBe('68%');
+  });
+
+  it('refuses the rest of the surface\'s actions after a failed replay, and applies the other surfaces', async (): Promise<void> => {
+    const refuseSecondNavigate = (call: TileDriverCall): string | undefined =>
+      call.context === 2 && call.tool === 'browser_navigate' ? 'net::ERR_CONNECTION_REFUSED' : undefined;
+    const driver = new TileDriver('pipeline-tile-local', refuseSecondNavigate);
+    const first = await phaseOne(driver);
+    const closing = await applySurfaceActions(ctx, 'real', [looker, slack], run, slackClosing, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      idempotencyIndexOffset: 4,
+    });
+    const reason =
+      'browser session could not be re-established: browser_navigate net::ERR_CONNECTION_REFUSED';
+    expect(closing.slice(0, 3).map((row) => [row.ok, row.reason])).toEqual([
+      [false, reason],
+      [false, reason],
+      [false, reason],
+    ]);
+    expect(sentIn(driver, 2)).toEqual(['browser_navigate']);
+    // The manager DM is on another surface and is not held back by the tile.
+    expect(closing[3]).toMatchObject({ ok: true, authority: 'autonomous' });
+  });
+
+  it('signs in again before a leading navigate when the invocation does not sign in itself', async (): Promise<void> => {
+    // The diagnosis's closingWithNavigate: a bare re-navigate in a new
+    // browser lands on the sign-in page, so the run's sign-in is replayed first.
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    const closing = await applySurfaceActions(ctx, 'real', [looker], run, [slackPhaseOne[0]!, ...closingTile], {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      idempotencyIndexOffset: 4,
+    });
+    expect(closing.map((row) => row.ok)).toEqual([true, true, true, true]);
+    expect(closing[0]!.sessionRestore?.steps.map((step) => step.replayOf)).toEqual([
+      'wi_1:run_1:0',
+      'wi_1:run_1:1',
+      'wi_1:run_1:2',
+    ]);
+    expect(closing[3]!.effect).toContain('visible figure 74%');
+  });
+
+  it('leaves a leading navigate alone when the invocation signs in itself', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    const again = [...slackPhaseOne.slice(0, 3), ...closingTile];
+    const closing = await applySurfaceActions(ctx, 'real', [looker], run, again, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3, 4, 5]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      idempotencyIndexOffset: 4,
+    });
+    expect(closing.every((row) => row.ok)).toBe(true);
+    expect(closing.some((row) => 'sessionRestore' in row)).toBe(false);
+    expect(sentIn(driver, 2).filter((tool) => tool !== 'browser_snapshot')).toEqual([
+      'browser_navigate',
+      'browser_fill_form',
+      'browser_click',
+      'browser_fill_form',
+      'browser_click',
+    ]);
+  });
+
+  it('checks for a replay again when the first call on the surface did not land', async (): Promise<void> => {
+    // A first run whose opening navigate is refused before any browser opens:
+    // the sign-in that follows still needs the page, so the surface's own
+    // page is opened for it rather than typing into a blank one.
+    const driver = new TileDriver('pipeline-tile-local');
+    const outside: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'looker',
+        tool: 'browser_navigate',
+        toolArgsJson: JSON.stringify({ url: 'https://elsewhere.example/' }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [looker], run, [outside, ...slackPhaseOne.slice(1)], {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3]),
+    });
+    expect(applied[0]).toMatchObject({ ok: false });
+    expect(applied[0]!.reason).toContain('outside');
+    expect(applied.slice(1).map((row) => row.ok)).toEqual([true, true, true]);
+    expect(applied[1]!.sessionRestore?.steps.map((step) => [step.ok, step.replayOf])).toEqual([
+      [true, undefined],
+    ]);
+    expect(applied[3]!.effect).toContain('visible figure 68%');
+  });
+
+  it('re-opens the page before a closing set that signs in with no navigate (REVOPS-5, 16 September)', async (): Promise<void> => {
+    // Phase one navigated and read the sign-in page; the closing set signs
+    // in, refreshes and reads back, but never navigates.
+    const driver = new TileDriver('pipeline-tile-local');
+    const readOnly = [slackPhaseOne[0]!, slackPhaseOne[3]!];
+    const first = await applySurfaceActions(ctx, 'real', [looker], run, readOnly, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1]),
+    });
+    const closing = await applySurfaceActions(
+      ctx,
+      'real',
+      [looker],
+      run,
+      [...slackPhaseOne.slice(1, 3), ...closingTile],
+      {
+        ...auto,
+        deps: tileDeps(driver),
+        grants: tileGrants,
+        approvedIndexes: new Set([0, 1, 2, 3, 4]),
+        prerequisiteLedger: { actions: readOnly, applied: first },
+        idempotencyIndexOffset: 2,
+      },
+    );
+    expect(closing.map((row) => row.ok)).toEqual([true, true, true, true, true]);
+    expect(closing[0]!.sessionRestore?.steps.map((step) => step.replayOf)).toEqual(['wi_1:run_1:0']);
+    expect(closing[4]!.effect).toContain('visible figure 74%');
+  });
+
+  it('opens no second sign-in when the invocation starts with its own navigate', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    expect(first.some((row) => 'sessionRestore' in row)).toBe(false);
+    expect(sentIn(driver, 1)[0]).toBe('browser_navigate');
   });
 });

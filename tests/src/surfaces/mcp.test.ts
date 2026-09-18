@@ -25,6 +25,7 @@ import type {
   SurfaceRecord,
 } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
+import { slackPhaseOne, TileDriver, type TileDriverCall } from '../../fixtures/browser-phase-split-2026-09-16';
 
 /** This deployment runs the browser component, at the address the profile starts it on. */
 const DRIVER = DEFAULT_BROWSER_MCP_URL;
@@ -761,33 +762,42 @@ describe('the browser floor across one run', (): void => {
     } as MockAction;
   }
 
-  /** One driver whose snapshot is fixed and whose calls are recorded. */
+  /** What the driver answers for a page no navigate has opened: a new context is blank. */
+  const BLANK = '### Page\n- Page URL: about:blank\n### Snapshot\n```yaml\n```';
+
+  /**
+   * One driver whose calls are recorded. Every client it builds is a new
+   * browser context that starts blank, as the driver's `--isolated` mode does:
+   * the page is only there once that client has navigated to it.
+   */
   function driver(snapshot = PAGE) {
     const calls: Array<{ args: unknown; tool: string }> = [];
     const disconnects = { count: 0 };
     const clientsBuilt = { count: 0 };
-    const make = (tool: string) => ({
-      execute: async (args: unknown): Promise<unknown> => {
-        calls.push({ tool, args });
-        return {
-          content: [
-            {
-              type: 'text',
-              text:
-                tool === 'browser_snapshot'
-                  ? snapshot
-                  : tool === 'browser_navigate'
-                    ? '- Page URL: http://looker-tile:8080/'
-                    : 'ok',
-            },
-          ],
-        };
-      },
-    });
     const adapter = new McpAdapter([tile], {
       decrypt: async (): Promise<string> => 'pipeline-tile-local',
       createClient: (): McpClientLike => {
         clientsBuilt.count += 1;
+        const context = { page: undefined as string | undefined };
+        const make = (tool: string) => ({
+          execute: async (args: unknown): Promise<unknown> => {
+            calls.push({ tool, args });
+            if (tool === 'browser_navigate') context.page = snapshot;
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text:
+                    tool === 'browser_snapshot'
+                      ? (context.page ?? BLANK)
+                      : tool === 'browser_navigate'
+                        ? '- Page URL: http://looker-tile:8080/'
+                        : 'ok',
+                },
+              ],
+            };
+          },
+        });
         return {
           listTools: async () =>
             Object.fromEntries(
@@ -803,6 +813,8 @@ describe('the browser floor across one run', (): void => {
     });
     return { adapter, calls, clientsBuilt, disconnects };
   }
+
+  const open = call('browser_navigate', { url: 'http://looker-tile:8080/' });
 
   it('refuses every browser row with one code when the component is not running', async (): Promise<void> => {
     const built = { count: 0 };
@@ -911,6 +923,7 @@ describe('the browser floor across one run', (): void => {
 
   it('resolves the element a skill named against a snapshot it takes itself', async (): Promise<void> => {
     const { adapter, calls } = driver();
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     const applied = await adapter.apply(
       ctx,
       run,
@@ -919,14 +932,15 @@ describe('the browser floor across one run', (): void => {
       'k',
     );
     expect(applied.ok).toBe(true);
-    expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot', 'browser_click']);
-    expect(calls[1].args).toEqual({ element: 'Save', target: 'e23' });
+    expect(calls.map((c) => c.tool)).toEqual(['browser_navigate', 'browser_snapshot', 'browser_click']);
+    expect(calls[2].args).toEqual({ element: 'Save', target: 'e23' });
   });
 
   it('resolves one ref per form field and injects the credential into the value', async (): Promise<void> => {
     const { adapter, calls } = driver(
       ['- textbox "Username" [ref=e11]', '- textbox "Password" [ref=e14]'].join('\n'),
     );
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     await adapter.apply(
       ctx,
       run,
@@ -939,7 +953,7 @@ describe('the browser floor across one run', (): void => {
       0,
       'k',
     );
-    expect(calls[1].args).toEqual({
+    expect(calls[2].args).toEqual({
       fields: [
         { name: 'Username', target: 'e11', type: 'textbox', value: 'revops' },
         { name: 'Password', target: 'e14', type: 'textbox', value: 'pipeline-tile-local' },
@@ -949,6 +963,7 @@ describe('the browser floor across one run', (): void => {
 
   it('refuses plainly when the page has no such element, naming what it did offer', async (): Promise<void> => {
     const { adapter, calls } = driver();
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     const applied = await adapter.apply(
       ctx,
       run,
@@ -959,7 +974,7 @@ describe('the browser floor across one run', (): void => {
     expect(applied.ok).toBe(false);
     expect(applied.reason).toContain('no element called "Delete dashboard"');
     expect(applied.reason).toContain('Save');
-    expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot']);
+    expect(calls.map((c) => c.tool)).toEqual(['browser_navigate', 'browser_snapshot']);
   });
 
   it('redacts a credential echoed by the page when element resolution fails', async (): Promise<void> => {
@@ -968,6 +983,7 @@ describe('the browser floor across one run', (): void => {
         '\n',
       ),
     );
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     const applied = await adapter.apply(
       ctx,
       run,
@@ -982,14 +998,36 @@ describe('the browser floor across one run', (): void => {
 
   it('takes a fresh snapshot per element action, because the page moves', async (): Promise<void> => {
     const { adapter, calls } = driver();
-    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 0, 'k0');
-    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
+    await adapter.apply(ctx, run, open, 0, 'k-open');
+    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k0');
+    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 2, 'k1');
     expect(calls.map((c) => c.tool)).toEqual([
+      'browser_navigate',
       'browser_snapshot',
       'browser_click',
       'browser_snapshot',
       'browser_click',
     ]);
+  });
+
+  it('starts a new browser blank, so an element action before any navigate finds nothing', async (): Promise<void> => {
+    const first = driver();
+    await first.adapter.apply(ctx, run, open, 0, 'k-open');
+    await first.adapter.close();
+    // The next apply invocation of the same run builds a new adapter and so a
+    // new browser context: the page the first one opened is not there.
+    const second = driver();
+    const applied = await second.adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Save' }),
+      1,
+      'k1',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: 'the page has no element called "Save" (nothing named on the page)',
+    });
   });
 
   it('does not snapshot for a tool that addresses no element', async (): Promise<void> => {
@@ -1005,6 +1043,146 @@ describe('the browser floor across one run', (): void => {
   });
 });
 
+
+describe('signing a new browser in again for a run', (): void => {
+  const looker: SurfaceRecord = {
+    slug: 'looker',
+    displayName: 'Looker',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_fill_form'],
+    credentialId: 'cred-looker',
+    credentialKind: 'value',
+  };
+  const [navigate, signIn, clickSignIn] = slackPhaseOne;
+  const recipe = [
+    { action: navigate!, replayOf: 'wi:run:0', authority: 'autonomous' as const },
+    { action: signIn!, replayOf: 'wi:run:1', authority: 'autonomous' as const },
+    { action: clickSignIn!, replayOf: 'wi:run:2', authority: 'autonomous' as const },
+  ];
+  const fillCoverage: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'looker',
+      tool: 'browser_fill_form',
+      toolArgsJson: JSON.stringify({ fields: [{ name: 'Pipeline coverage', value: '74%' }] }),
+    },
+  };
+
+  function adapterFor(driver: TileDriver, beforeTransport?: BeforeSurfaceTransport): McpAdapter {
+    return new McpAdapter([looker], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (options: McpClientOptions): McpClientLike => driver.client(options.serverName),
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+      ...(beforeTransport ? { beforeTransport } : {}),
+    });
+  }
+
+  it('replays the sign-in on the run\'s browser, so the next action finds the signed-in page', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const adapter = adapterFor(driver);
+    const restored = await adapter.restoreSession(ctx, run, looker, recipe, 'wi:run:4');
+    expect(restored.ok).toBe(true);
+    expect(restored.steps.map((step) => [step.ok, step.idempotencyKey, step.replayOf, step.authority])).toEqual([
+      [true, 'wi:run:4.session-0', 'wi:run:0', 'autonomous'],
+      [true, 'wi:run:4.session-1', 'wi:run:1', 'autonomous'],
+      [true, 'wi:run:4.session-2', 'wi:run:2', 'autonomous'],
+    ]);
+    // The step keeps the placeholder the run recorded; the credential was typed, never kept.
+    expect(restored.steps[1]!.action).toEqual(signIn);
+    expect(JSON.stringify(restored)).not.toContain('pipeline-tile-local');
+    const applied = await adapter.apply(ctx, run, fillCoverage, 4, 'wi:run:4');
+    expect(applied.ok).toBe(true);
+    expect(new Set(driver.calls.map((call) => call.context))).toEqual(new Set([1]));
+    await adapter.close();
+  });
+
+  it('checks every replayed call at transport under the authority its row landed with', async (): Promise<void> => {
+    const seen: Array<{ tool: unknown; replay: unknown }> = [];
+    const driver = new TileDriver('pipeline-tile-local');
+    const adapter = adapterFor(driver, async (action, _surface, replay) => {
+      seen.push({ tool: action.args.tool, replay });
+      return undefined;
+    });
+    await adapter.restoreSession(
+      ctx,
+      run,
+      looker,
+      [recipe[0]!, { ...recipe[1]!, authority: 'manager' }, recipe[2]!],
+      'k',
+    );
+    await adapter.apply(ctx, run, fillCoverage, 4, 'k');
+    // Twice per call: before the page is read and again once the element is resolved.
+    expect(seen).toEqual([
+      { tool: 'browser_navigate', replay: { authority: 'autonomous' } },
+      { tool: 'browser_navigate', replay: { authority: 'autonomous' } },
+      { tool: 'browser_fill_form', replay: { authority: 'manager' } },
+      { tool: 'browser_fill_form', replay: { authority: 'manager' } },
+      { tool: 'browser_click', replay: { authority: 'autonomous' } },
+      { tool: 'browser_click', replay: { authority: 'autonomous' } },
+      { tool: 'browser_fill_form', replay: undefined },
+      { tool: 'browser_fill_form', replay: undefined },
+    ]);
+  });
+
+  it('stops at the first step that does not land and sends nothing after it', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const adapter = adapterFor(driver, async (action, _surface, replay) =>
+      replay && action.args.tool === 'browser_fill_form' ? 'no grant (looker:write)' : undefined,
+    );
+    const restored = await adapter.restoreSession(ctx, run, looker, recipe, 'wi:run:4');
+    expect(restored).toMatchObject({
+      ok: false,
+      reason: 'browser session could not be re-established: browser_fill_form no grant (looker:write)',
+    });
+    expect(restored.steps.map((step) => [step.ok, step.reason])).toEqual([
+      [true, undefined],
+      [false, 'no grant (looker:write)'],
+    ]);
+    expect(restored.steps[1]).not.toHaveProperty('authority');
+    expect(driver.calls.map((call: TileDriverCall) => call.tool)).toEqual(['browser_navigate']);
+  });
+
+  it('refuses a replayed navigate that would leave the surface, before any transport', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const outside: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'looker',
+        tool: 'browser_navigate',
+        toolArgsJson: JSON.stringify({ url: 'https://attacker.example/' }),
+      },
+    };
+    const restored = await adapterFor(driver).restoreSession(
+      ctx,
+      run,
+      looker,
+      [{ action: outside, replayOf: 'wi:run:0', authority: 'autonomous' }],
+      'wi:run:4',
+    );
+    expect(restored.ok).toBe(false);
+    expect(restored.steps[0]!.reason).toContain('outside');
+    expect(driver.calls).toEqual([]);
+  });
+
+  it('refuses a replayed call aimed at another surface', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const restored = await adapterFor(driver).restoreSession(
+      ctx,
+      run,
+      looker,
+      [{ action: commentCall, replayOf: 'wi:run:0', authority: 'manager' }],
+      'wi:run:4',
+    );
+    expect(restored).toMatchObject({ ok: false, steps: [{ ok: false, reason: 'a replayed call must target looker' }] });
+    expect(driver.calls).toEqual([]);
+  });
+});
 
 describe('provider error envelope variants', () => {
   it.each([
