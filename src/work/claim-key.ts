@@ -245,24 +245,21 @@ export const HELD_ELSEWHERE_LIMIT = 12;
 const HELD_TITLE_CHARS = 120;
 
 /**
- * The prompt section that tells the executor, before it authors, which
- * external items other work items hold and what has landed on them.
+ * One row per held item, as the prompt lists them: surface, item, whose work
+ * item has it, that work item and its state, and what it has landed.
  *
- * On 19 September an ask authored its thread reply and a note on FIN-1 in one
- * phase; the apply withholds the note, but a reply written before the apply
- * cannot know that. Told here, the reply says where the note is or will be.
- * Each row passes the structural redaction the ledger prompt applies.
+ * The rows alone are what a reply may cite as evidence; the rule printed
+ * beside them in the prompt is an instruction and vouches for nothing. Each
+ * row passes the structural redaction the ledger prompt applies.
  *
  * Args:
  *   items: The held items, already scrubbed of the owner's exact values.
  *
  * Returns:
- *   Prompt lines, empty when nothing is held elsewhere.
+ *   At most `HELD_ELSEWHERE_LIMIT` rows.
  */
-export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefined): string[] {
-  if (!items || items.length === 0) return [];
-  const shown = items.slice(0, HELD_ELSEWHERE_LIMIT);
-  const rows = shown.map((item, index): string => {
+export function heldElsewhereRows(items: readonly HeldExternalItem[] | undefined): string[] {
+  return (items ?? []).slice(0, HELD_ELSEWHERE_LIMIT).map((item, index): string => {
     const title = item.title.length > HELD_TITLE_CHARS ? `${item.title.slice(0, HELD_TITLE_CHARS)} ...` : item.title;
     const names = item.externalAlias ? `${item.externalId} (also ${item.externalAlias})` : item.externalId;
     const who = item.sameEmployee ? 'this employee' : item.holderName;
@@ -273,9 +270,28 @@ export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefine
       : finished ? 'no comment landed' : 'nothing landed yet';
     return redactTokenShapes(`  ${index}. ${item.sourceSystem} · ${names} · ${who} · "${title}" (${state}) · ${landed}`);
   });
+}
+
+/**
+ * The prompt section that tells the executor, before it authors, which
+ * external items other work items hold and what has landed on them.
+ *
+ * On 19 September an ask authored its thread reply and a note on FIN-1 in one
+ * phase; the apply withholds the note, but a reply written before the apply
+ * cannot know that. Told here, the reply says where the note is or will be.
+ *
+ * Args:
+ *   items: The held items, already scrubbed of the owner's exact values.
+ *
+ * Returns:
+ *   Prompt lines, empty when nothing is held elsewhere.
+ */
+export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefined): string[] {
+  if (!items || items.length === 0) return [];
+  const rows = heldElsewhereRows(items);
   return [
     '',
-    `--- External items other work items hold (${items.length}${items.length > shown.length ? `, first ${shown.length} shown` : ''}) ---`,
+    `--- External items other work items hold (${items.length}${items.length > rows.length ? `, first ${rows.length} shown` : ''}) ---`,
     'Each line: surface · item · whose work item has it · that work item and its state · what it has landed on the item. One work item writes an external item.',
     ...rows,
     'Do not author a comment, a state change or a thread reply addressed to an item listed here: it is withheld and never sent. When this work asks for something that belongs on one, say in your reply that the item has its own work item, with whom, and that it will be posted there; when a comment has landed, cite it by its id instead of posting another.',

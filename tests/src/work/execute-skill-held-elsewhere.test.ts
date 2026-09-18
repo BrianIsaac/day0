@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
-import { HELD_ELSEWHERE_LIMIT, heldElsewhereLines, type HeldExternalItem } from '../../../src/work/claim-key';
+import { HELD_ELSEWHERE_LIMIT, heldElsewhereLines, heldElsewhereRows, type HeldExternalItem } from '../../../src/work/claim-key';
 import type { ExecutionPlan, MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
 
 /**
@@ -116,6 +116,14 @@ describe('heldElsewhereLines', (): void => {
     expect(lines.filter((line) => /^ {2}\d+\. /.test(line))).toHaveLength(HELD_ELSEWHERE_LIMIT);
     expect(lines.join('\n')).toContain(`(${many.length}, first ${HELD_ELSEWHERE_LIMIT} shown)`);
     expect(Math.max(...lines.map((line) => line.length))).toBeLessThan(700);
+  });
+
+  it('offers the rows alone as evidence: the rule beside them is an instruction and vouches for nothing', (): void => {
+    const rows = heldElsewhereRows([waiting, landed]);
+    expect(rows).toHaveLength(2);
+    expect(rows.join('\n')).toContain(`landed comment ${FIRST_NOTE_ID}`);
+    expect(rows.join('\n')).not.toContain('Do not author');
+    expect(heldElsewhereLines([waiting, landed]).filter((line) => rows.includes(line))).toEqual(rows);
   });
 
   it('carries no secret-shaped value a title quotes', (): void => {

@@ -43,7 +43,7 @@ import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
-import { heldElsewhereLines, type HeldExternalItem } from './claim-key';
+import { heldElsewhereLines, heldElsewhereRows, type HeldExternalItem } from './claim-key';
 
 export { replyTargetLine };
 
@@ -2491,7 +2491,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     const claimEvidence: ClaimEvidence = {
       ledger: [
         ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
-        ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
+        ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
       ].join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
       managerFeedback: [
@@ -3167,7 +3167,7 @@ export async function runDependentSkill(
     ledger: [
       appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
       ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
-      ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
+      ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
     ].join('\n'),
     documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
     managerFeedback: [
