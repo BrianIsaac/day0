@@ -26,6 +26,7 @@ const roster = [
     roleLine: 'Own routine revenue operations work from Linear tickets for the RevOps team.',
     openCount: 3,
     parkedCount: 0,
+    stoppedCount: 0,
     needsYou: 1,
     docSourceCount: 1,
   },
@@ -37,6 +38,7 @@ const roster = [
     roleLine: 'Close the month for the finance team.',
     openCount: 2,
     parkedCount: 0,
+    stoppedCount: 0,
     needsYou: 2,
     docSourceCount: 1,
   },
@@ -48,6 +50,7 @@ const roster = [
     roleLine: 'charter pending',
     openCount: 0,
     parkedCount: 0,
+    stoppedCount: 0,
     needsYou: 0,
     docSourceCount: 0,
   },
@@ -270,6 +273,30 @@ describe('the employee list', (): void => {
       expect(list).toContain('0 open \u00b7 1 parked \u00b7 0 need you');
       expect(list).toContain('0 open \u00b7 0 need you');
       expect(list).toContain('Parked: waiting on a connection, a permission, a skill or a free slot');
+    } finally {
+      shownRoster = roster;
+    }
+  });
+
+  it('shows stopped work that still waits on the manager, as the 19 Sep second run left the company', (): void => {
+    shownRoster = [
+      { ...roster[0], name: 'Priya', openCount: 0, parkedCount: 0, stoppedCount: 2, needsYou: 2 },
+      { ...roster[1], name: 'Aiko', openCount: 1, parkedCount: 1, stoppedCount: 1, needsYou: 1 },
+      { ...roster[2], name: 'Mateo', openCount: 0, parkedCount: 0, stoppedCount: 0, needsYou: 0 },
+    ];
+    try {
+      const html = signedIn();
+      const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
+      expect(list).toContain('0 open \u00b7 2 stopped \u00b7 2 need you');
+      expect(list).toContain('1 open \u00b7 1 parked \u00b7 1 stopped \u00b7 1 needs you');
+      expect(list).toContain('0 open \u00b7 0 need you');
+      expect(list).toContain(
+        'title="Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
+      );
+      expect(list).toContain(
+        'title="Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release count under need you. Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
+      );
+      expect(list.match(/title="[^"]*Stopped/g)).toHaveLength(2);
     } finally {
       shownRoster = roster;
     }

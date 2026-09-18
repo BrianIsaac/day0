@@ -14,6 +14,10 @@ import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
 import { OPEN_WORK_STATES, PARKED_WORK_STATES, queuedAtCap, wakeQueuedWork } from './workLoop';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
+import {
+  providerReconciliationEntries,
+  retryRequiresProviderReconciliation,
+} from '../src/work/reconciliation';
 import { agentReadsSource } from './docSources';
 import { isEvaluationAgent } from './metrics';
 import {
@@ -86,6 +90,16 @@ const ROSTER_SCAN_LIMIT = 100;
  */
 const OPEN_STATE_READ_LIMIT = 100;
 
+/**
+ * Bound on the stopped-row read. Nothing caps how many rows an employee has
+ * in `failed`, and each carries its run's output, so the bound is lower than
+ * the open one and is the most the list can show.
+ */
+const STOPPED_READ_LIMIT = 25;
+
+/** How the reason on a row the manager's own rejection failed begins. */
+const MANAGER_REJECTION_PREFIX = 'rejected by the manager';
+
 /** Bound on the owner's documentation sources read for the count. */
 const DOC_SOURCE_READ_LIMIT = 100;
 
@@ -115,6 +129,7 @@ const rosterRowValidator = v.object({
   roleLine: v.string(),
   openCount: v.number(),
   parkedCount: v.number(),
+  stoppedCount: v.number(),
   needsYou: v.number(),
   docSourceCount: v.number(),
 });
@@ -214,35 +229,80 @@ function parkedRowNeedsManager(
 }
 
 /**
- * Count the employee's open work, its parked work, and the part of both
- * waiting on the manager.
+ * Whether a failed row's card still offers the manager a move.
+ *
+ * The card offers Retry on every failed row, and where a write may have
+ * landed it asks for the provider reconciliation first, which is also the
+ * manager's. The one row with neither is an interrupted apply whose ledger
+ * names nothing to verify: the confirmation and Retry are both disabled and
+ * `work.reconcileFailed` refuses, so nothing the manager does moves it.
+ *
+ * Args:
+ *   row: The failed row.
+ *
+ * Returns:
+ *   True when Retry is open, or the reconciliation that opens it is.
+ */
+function stoppedRowOffersMove(row: Doc<'workItems'>): boolean {
+  if (row.providerReconciliation) return true;
+  if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) return true;
+  return providerReconciliationEntries(row.output).length > 0;
+}
+
+/**
+ * Whether a stopped row waits on the manager.
+ *
+ * A run that stopped or failed leaves the next move to the manager: answer
+ * what it asked, direct it, or send it again. A row the manager's own
+ * rejection failed waits on nobody: Retry is there, but the last decision
+ * was theirs.
+ *
+ * Args:
+ *   row: A failed row whose card offers a move.
+ *
+ * Returns:
+ *   True when the row counts under needs-you.
+ */
+function stoppedRowNeedsManager(row: Doc<'workItems'>): boolean {
+  return row.skipReason?.startsWith(MANAGER_REJECTION_PREFIX) !== true;
+}
+
+/**
+ * Count the employee's open work, its parked work, its stopped work, and the
+ * part of the three waiting on the manager.
  *
  * Open rows hold a work-in-progress slot. Parked rows hold none: deferred,
- * waiting on a skill, or queued at the cap. Reads the state index once per
- * counted state, so finished work, however much of it there is, is never
- * read.
+ * waiting on a skill, or queued at the cap. Stopped rows are failed ones
+ * whose card still offers the manager a move. Reads the state index once per
+ * counted state, so completed, skipped and cancelled work, however much of
+ * it there is, is never read.
  *
  * Args:
  *   ctx: Query context.
  *   agentId: The employee.
  *
  * Returns:
- *   The open count, the parked count and the needs-you count.
+ *   The open, parked and stopped counts and the needs-you count.
  */
 async function workCounts(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-): Promise<{ openCount: number; parkedCount: number; needsYou: number }> {
-  const rowsIn = async (state: Doc<'workItems'>['state']): Promise<Doc<'workItems'>[]> =>
+): Promise<{ openCount: number; parkedCount: number; stoppedCount: number; needsYou: number }> {
+  const rowsIn = async (
+    state: Doc<'workItems'>['state'],
+    limit: number = OPEN_STATE_READ_LIMIT,
+  ): Promise<Doc<'workItems'>[]> =>
     await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-      .take(OPEN_STATE_READ_LIMIT);
-  const [open, parked, discovered] = await Promise.all([
-    Promise.all(OPEN_WORK_STATES.map(rowsIn)),
-    Promise.all(PARKED_WORK_STATES.map(rowsIn)),
+      .take(limit);
+  const [open, parked, discovered, failed] = await Promise.all([
+    Promise.all(OPEN_WORK_STATES.map((state) => rowsIn(state))),
+    Promise.all(PARKED_WORK_STATES.map((state) => rowsIn(state))),
     rowsIn('discovered'),
+    rowsIn('failed', STOPPED_READ_LIMIT),
   ]);
+  const stoppedRows = failed.filter(stoppedRowOffersMove);
   const openRows = open.flat();
   const parkedRows = parked.flat();
   // Several rows can wait on one skill, so each skill is read once.
@@ -258,17 +318,19 @@ async function workCounts(
   return {
     openCount: openRows.length,
     parkedCount: parkedRows.length + discovered.filter(queuedAtCap).length,
+    stoppedCount: stoppedRows.length,
     needsYou:
       openRows.filter((row) => NEEDS_MANAGER_STATES.has(row.state)).length +
-      parkedRows.filter((row) => parkedRowNeedsManager(row, skills, now)).length,
+      parkedRows.filter((row) => parkedRowNeedsManager(row, skills, now)).length +
+      stoppedRows.filter(stoppedRowNeedsManager).length,
   };
 }
 
 /**
  * The owner's employees, one row each, for the landing page: who they are,
- * the role the manager approved, the open and the parked work, what waits on
- * the manager,
- * whether they act on their own, and how much documentation they read.
+ * the role the manager approved, the open, parked and stopped work, what
+ * waits on the manager, whether they act on their own, and how much
+ * documentation they read.
  *
  * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
  * are left out. An anonymous caller gets an empty list.
