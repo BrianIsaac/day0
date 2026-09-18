@@ -110,7 +110,6 @@ export function scopeCandidates(
   fields: readonly ScopeField[],
 ): ScopeCandidate[] {
   const byPage: Array<{ page: ScopePage; candidates: ScopeCandidate[] }> = [];
-  const seen = new Set<string>();
   const add = (
     candidates: ScopeCandidate[],
     field: ScopeField,
@@ -119,9 +118,11 @@ export function scopeCandidates(
     quote: string,
   ): void => {
     const value = field === 'channel' ? raw.toLowerCase() : raw.trim();
-    const key = `${field}\0${value}\0${page.ref}`;
-    if (!value || seen.has(key)) return;
-    seen.add(key);
+    // Once per page: two sources may hold the same ref, and each is its own page.
+    const stated = candidates.some(
+      (candidate): boolean => candidate.field === field && candidate.value === value,
+    );
+    if (!value || stated) return;
     candidates.push({
       field,
       value,

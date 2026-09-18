@@ -216,6 +216,37 @@ describe('intake scope candidates', (): void => {
     }
   });
 
+  it('offers the same ref from two sources once each, in an order sync cannot change', (): void => {
+    const sourceA: ScopePage = {
+      sourceId: 'source-a',
+      ref: 'operations/handbook.md',
+      markdown: '- Team: `OPS`',
+    };
+    const sourceB: ScopePage = {
+      sourceId: 'source-b',
+      ref: 'operations/handbook.md',
+      markdown: 'Team identifier `OPS`',
+    };
+    for (const synced of [[sourceA, sourceB], [sourceB, sourceA]]) {
+      expect(scopeCandidates(synced, ['team'])).toEqual([
+        {
+          field: 'team',
+          value: 'OPS',
+          sourceId: 'source-a',
+          ref: 'operations/handbook.md',
+          quote: '- Team: `OPS`',
+        },
+        {
+          field: 'team',
+          value: 'OPS',
+          sourceId: 'source-b',
+          ref: 'operations/handbook.md',
+          quote: 'Team identifier `OPS`',
+        },
+      ]);
+    }
+  });
+
   it('does not turn a forbidden foreign project in a role handbook into a queue', (): void => {
     const candidates = scopeCandidates([{
       ref: 'finance/handbook.md',
