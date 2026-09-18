@@ -44,9 +44,53 @@ export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
 export const USERNAME_REFUSED = 'skill-supplied username refused';
 export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
+/**
+ * Why a write through a shared credential is refused when nothing in it could
+ * carry the employee's name: worded for the manager who reads it on the card,
+ * and for the employee, which reports it in its own closing message.
+ */
 export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
+  'refused before sending: under the shared credential this write would carry nothing naming the employee or the run. ' +
+  'A new ticket needs a title and a description for Day0 to sign; a change to an existing ticket needs an audit comment on it first';
+/** The same refusal as rows written before 19 Sep 2026 carry it. */
+export const LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION =
   'shared credential write without attributable content';
 export const REPLY_TARGET_REFUSED = 'chat reply does not match the work item reply target';
+
+/** Every reason the gate refuses a row by before anything is sent; several take a detail in brackets. */
+const GATE_REFUSAL_REASONS: readonly string[] = [
+  MALFORMED_ACTION,
+  NO_GRANT,
+  UNKNOWN_SURFACE,
+  SURFACE_NOT_CONNECTED,
+  TOOL_NOT_ALLOWED,
+  NOT_AUTOMATIC,
+  UNKNOWN_TOOL,
+  STATUS_WITHOUT_COMMENT,
+  TRAILER_REFUSED,
+  USERNAME_REFUSED,
+  MOCK_VERB_REFUSED,
+  SHARED_WRITE_WITHOUT_ATTRIBUTION,
+  LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION,
+  REPLY_TARGET_REFUSED,
+];
+const PATH_REFUSAL = /^(?:mcp\.call|http\.request) is not allowed on surface path /;
+
+/**
+ * Whether a ledger reason is one of the gate's own refusals: a rule stopped
+ * the row before an adapter ran, so nothing was sent and nothing is unknown
+ * at the provider. A provider's error, a timeout and a held row are not.
+ *
+ * Args:
+ *   reason: The reason on a ledger row.
+ *
+ * Returns:
+ *   True when the reason begins with one of the gate's refusal constants.
+ */
+export function isGateRefusal(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return GATE_REFUSAL_REASONS.some((known) => reason.startsWith(known)) || PATH_REFUSAL.test(reason);
+}
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
 export const SHARED_IDENTITY_ICON = ':briefcase:';

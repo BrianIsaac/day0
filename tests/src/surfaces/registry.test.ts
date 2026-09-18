@@ -526,7 +526,7 @@ describe('applying surface actions', (): void => {
 
     expect(applied[0]).toMatchObject({
       ok: false,
-      reason: 'shared credential write without attributable content',
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
     });
     expect(recorded.mcp).toHaveLength(0);
 
@@ -561,7 +561,7 @@ describe('applying surface actions', (): void => {
     expect(wrongTarget[0].ok).toBe(true);
     expect(wrongTarget[1]).toMatchObject({
       ok: false,
-      reason: 'shared credential write without attributable content',
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
     });
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
 
@@ -609,7 +609,7 @@ describe('applying surface actions', (): void => {
     );
     expect(genericHttp[0]).toMatchObject({
       ok: false,
-      reason: 'shared credential write without attributable content',
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
     });
     expect(httpRecorded.http).toHaveLength(0);
   });
