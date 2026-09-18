@@ -31,6 +31,7 @@
     "demo:bed": "tsx scripts/demo-bed.ts",
     "rehearse:real": "tsx scripts/rehearse-real.ts",
     "bed:company": "tsx --env-file-if-exists=.env.local scripts/bed/company.ts",
+    "bed:record-spans": "tsx scripts/bed/record-spans.ts",
     "test": "vitest run",
     "build": "next build",
     "start": "next start -p 3000",

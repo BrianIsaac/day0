@@ -22,12 +22,15 @@ import {
   structuralSystemCandidates,
   validateModelCandidates,
 } from '../../src/docs/system-discovery';
+import type { ModelSpan, SpanModel } from '../../src/redaction/client';
+import { MODEL_THRESHOLD, REQUESTED_LABELS } from '../../src/redaction/policy';
 import { PROVIDER_SHAPES, structuralSpans } from '../../src/redaction/structural';
 import { browserTitleMarker } from '../../src/surfaces/browser';
 import { documentedChannelNames } from '../../src/surfaces/slack-policy';
 import type { DocSourceRecord } from '../../src/docs/types';
+import { bedTexts, SPANS_PATH, textKey, type BedSpanRecording } from '../../scripts/bed/record-spans';
 import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
-import { RecordedSpanModel } from '../fixtures/redaction-double';
+import { loadSpanRecording, RecordedSpanModel } from '../fixtures/redaction-double';
 
 /**
  * The company bed's tracked pages, read the way documentation sync reads them.
@@ -242,6 +245,52 @@ describe('credentials on the pages', (): void => {
     expect(linear.credentials).toEqual([
       { label: 'linear service token', plaintext: CORPUS_SLOTS.linear_token },
     ]);
+  });
+});
+
+/** The deployed span model's answers for these pages, recorded by `pnpm bed:record-spans`. */
+class BedRecordingModel implements SpanModel {
+  readonly name = 'bed-recording';
+
+  constructor(private readonly recording: BedSpanRecording) {}
+
+  async spans(text: string, labels: readonly string[], threshold: number): Promise<ModelSpan[]> {
+    const recorded = this.recording.spans[textKey(text)];
+    if (!recorded) {
+      throw new Error(
+        'no recorded answer for this text: a bed page changed since the recording. Run ' +
+          '`DAY0_REDACTOR_URL=<reachable component> pnpm bed:record-spans` and read what it stores.',
+      );
+    }
+    return recorded.filter((span) => labels.includes(span.label) && span.score >= threshold);
+  }
+}
+
+describe('the deployed span model over the pages', (): void => {
+  const recording = JSON.parse(readFileSync(resolve(SPANS_PATH), 'utf8')) as BedSpanRecording;
+
+  it('was recorded from the corpus model, with the labels and threshold sync asks for, for every page as it is', (): void => {
+    expect(recording.model).toBe(loadSpanRecording().model);
+    expect(recording.labels).toEqual([...REQUESTED_LABELS]);
+    expect(recording.threshold).toBe(MODEL_THRESHOLD);
+    const missing = bedTexts(process.cwd()).filter((text) => recording.spans[textKey(text)] === undefined);
+    expect(missing.map((text) => text.split('\n')[0]), 'pages changed since `pnpm bed:record-spans`').toEqual([]);
+  });
+
+  it('stores the tile login on its two pages and nothing else, a channel name and a method name included', async (): Promise<void> => {
+    const options = { model: new BedRecordingModel(recording) };
+    const stored: Record<string, string[]> = {};
+    for (const bedPage of [...folderPages, ...notionPages]) {
+      const result = await redactCredentials(bedPage.markdown, bedPage.title, options);
+      if (result.credentials.length > 0) {
+        stored[bedPage.ref] = result.credentials.map((credential) => credential.plaintext);
+      }
+      expect(result.markdown.includes('#ops-requests') || !bedPage.markdown.includes('#ops-requests'), bedPage.ref).toBe(true);
+    }
+    expect(stored).toEqual({
+      'revops/runbooks/how-to-refresh-the-tile.md': [TILE_LOGIN],
+      'systems/looker-pipeline-tile.md': [TILE_LOGIN],
+    });
   });
 });
 
