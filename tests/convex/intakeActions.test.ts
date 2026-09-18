@@ -46,6 +46,8 @@ interface RuntimeHarness {
   seeds: Map<string, SeededCandidate>;
   /** Open decision requests per surface id, as the sweep would read them from Convex. */
   openRequests: Map<string, Array<{ ts: string }>>;
+  /** Bot identities intake read for rows connected before the probe stored one. */
+  botIdentities: Array<{ surfaceId: Id<'surfaces'>; generation: number; providerBotId: string }>;
 }
 
 /**
@@ -166,7 +168,15 @@ function runtimeHarness(
   const decisions: unknown[] = [];
   const seeds = new Map<string, SeededCandidate>();
   const openRequests = new Map<string, Array<{ ts: string }>>();
+  const botIdentities: RuntimeHarness['botIdentities'] = [];
   const runtime: IntakeRuntime = {
+    recordBotIdentity: async (record): Promise<void> => {
+      botIdentities.push(record);
+      const surface = surfaces.find(
+        (candidate: Doc<'surfaces'>): boolean => candidate._id === record.surfaceId,
+      );
+      if (surface) surface.providerBotId = record.providerBotId;
+    },
     listSurfaces: async (): Promise<Doc<'surfaces'>[]> => surfaces,
     listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
       surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.class === 'chat'),
@@ -215,7 +225,7 @@ function runtimeHarness(
     listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
       openRequests.get(String(surfaceId)) ?? [],
   };
-  return { decisionPolls, decisions, records, runtime, seeds, openRequests };
+  return { botIdentities, decisionPolls, decisions, records, runtime, seeds, openRequests };
 }
 
 const ONBOARDING = [
@@ -1085,6 +1095,7 @@ describe('real surface intake', (): void => {
       seed: vi.fn(),
       resolveDecision: vi.fn(),
       listOpenDecisionRequests: vi.fn(async (): Promise<Array<{ ts: string }>> => []),
+      recordBotIdentity: vi.fn(),
     };
     await expect(runIntakeSweep(runtime, { mode: 'mock' })).resolves.toEqual({
       candidates: 0,
@@ -2366,15 +2377,78 @@ describe("the app's own posts are never intake", (): void => {
     expect(seeded).toEqual([]);
   });
 
-  it('refuses to read work when the probe stored no app identity, and says what heals it', async (): Promise<void> => {
-    const { harness, seeded } = await sweep(
-      [customisedPost()],
+  /** A row a restored bed holds: connected before the probe stored a bot id. */
+  function legacySurfaces(): Doc<'surfaces'>[] {
+    return sharedKeySurfaces({
+      providerBotId: undefined,
+      probeGeneration: 4,
+      toolAllowlist: ['auth.test', 'conversations.list', 'conversations.history'],
+    });
+  }
+
+  /** Sweep with an `auth.test` answer beside the channel reads. */
+  async function sweepWithAuth(
+    auth: Record<string, unknown>,
+    surfaces: Doc<'surfaces'>[],
+  ): Promise<{ harness: RuntimeHarness; authCalls: number }> {
+    const harness = runtimeHarness(
+      surfaces,
+      [],
+      new Map([['credential-slack', 'slack-test-value']]),
+      employees,
+    );
+    let authCalls = 0;
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      fetcher: async (input: string | URL | Request): Promise<Response> => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith('/auth.test')) {
+          authCalls += 1;
+          return slackResponse(auth);
+        }
+        return path.endsWith('/conversations.list')
+          ? slackResponse({ ok: true, channels: [SHARED] })
+          : slackResponse({ ok: true, messages: [customisedPost()] });
+      },
+    });
+    return { harness, authCalls };
+  }
+
+  it('reads the bot id itself for a row connected before the probe stored one, once, and still ignores the app', async (): Promise<void> => {
+    const surfaces = legacySurfaces();
+    const { harness, authCalls } = await sweepWithAuth(
+      { ok: true, user_id: BOT_USER, bot_id: BOT_ID },
+      surfaces,
+    );
+    expect([...harness.seeds.values()]).toEqual([]);
+    expect(harness.records.map((record) => record.skipReason)).toEqual([undefined, undefined, undefined]);
+    expect(harness.botIdentities).toEqual(
+      surfaces.map((surface) => ({ surfaceId: surface._id, generation: 4, providerBotId: BOT_ID })),
+    );
+    expect(authCalls).toBe(3);
+    const again = await sweepWithAuth({ ok: false, error: 'not_called' }, surfaces);
+    expect(again.authCalls).toBe(0);
+  });
+
+  it('reads no work when the app identity cannot be established, and says what heals it', async (): Promise<void> => {
+    const refusal = 'intake failed: Slack probe stored no app identity; probe the surface again.';
+    const noBot = await sweepWithAuth({ ok: true, user_id: BOT_USER }, legacySurfaces());
+    const otherToken = await sweepWithAuth(
+      { ok: true, user_id: 'UOTHERBOT', bot_id: 'BOTHERAPP' },
+      legacySurfaces(),
+    );
+    const notAllowed = await sweepWithAuth(
+      { ok: true, user_id: BOT_USER, bot_id: BOT_ID },
       sharedKeySurfaces({ providerBotId: undefined }),
     );
-    expect(seeded).toEqual([]);
-    expect(harness.records.map((record) => record.skipReason)).toEqual(
-      employees.map(() => 'intake failed: Slack probe stored no app identity; probe the surface again.'),
-    );
+    for (const outcome of [noBot, otherToken, notAllowed]) {
+      expect([...outcome.harness.seeds.values()]).toEqual([]);
+      expect(outcome.harness.botIdentities).toEqual([]);
+      expect(outcome.harness.records.map((record) => record.skipReason)).toEqual(
+        employees.map(() => refusal),
+      );
+    }
+    expect(notAllowed.authCalls).toBe(0);
   });
 });
 
