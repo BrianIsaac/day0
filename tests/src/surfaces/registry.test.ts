@@ -1380,6 +1380,70 @@ describe('a browser session across the apply invocations of one run', (): void =
       expect(posted).toEqual([expect.objectContaining({ channel: MANAGER_DM })]);
     });
 
+    it('still sends a later message unrelated to the failed write', async (): Promise<void> => {
+      const recorded: Recorded = { mcp: [], http: [] };
+      const unrelated: MockAction = {
+        ...dm,
+        args: { ...dm.args, body: JSON.stringify({ channel: MANAGER_DM, text: "What time is tomorrow's stand-up?" }) },
+      };
+      const unrelatedStatement: MockAction = {
+        ...dm,
+        args: { ...dm.args, body: JSON.stringify({ channel: MANAGER_DM, text: "Tomorrow's stand-up is at noon." }) },
+      };
+      const applied = await applySurfaceActions(ctx, 'real', [linear, { ...slack, managerDmChannelId: MANAGER_DM }], run, [status, unrelated, unrelatedStatement], {
+        deps: deps(recorded),
+        grants: new Set(['linear:write', 'boss:message']),
+        approvedIndexes: new Set([0, 1, 2]),
+        autoPhase: true,
+        autonomousActions: true,
+        now,
+      });
+      expect(applied[0]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
+      for (const row of applied.slice(1)) {
+        expect(row).toMatchObject({ ok: true, authority: 'autonomous' });
+        expect(row).not.toHaveProperty('held');
+      }
+      expect(recorded.http).toHaveLength(2);
+    });
+
+    it('leaves a message before the failed write untouched', async (): Promise<void> => {
+      const recorded: Recorded = { mcp: [], http: [] };
+      const applied = await applySurfaceActions(ctx, 'real', [linear, { ...slack, managerDmChannelId: MANAGER_DM }], run, [dm, status], {
+        deps: deps(recorded),
+        grants: new Set(['linear:write', 'boss:message']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: true,
+        now,
+      });
+      expect(applied[0]).toMatchObject({ ok: true, authority: 'autonomous' });
+      expect(applied[1]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
+      expect(recorded.http).toHaveLength(1);
+    });
+
+    it('holds an ambiguous result message after a failed write even without matching words', async (): Promise<void> => {
+      const recorded: Recorded = { mcp: [], http: [] };
+      const failedFill: MockAction = {
+        tool: 'mcp.call',
+        args: { surface: 'looker', tool: 'browser_fill_form', toolArgsJson: '{"fields":[{"name":"Pipeline coverage","value":"74%"}]' },
+      };
+      const ambiguous: MockAction = {
+        ...dm,
+        args: { ...dm.args, body: JSON.stringify({ channel: MANAGER_DM, text: 'The figure is 74%.' }) },
+      };
+      const applied = await applySurfaceActions(ctx, 'real', [{ ...slack, managerDmChannelId: MANAGER_DM }], run, [failedFill, ambiguous], {
+        deps: deps(recorded),
+        grants: new Set(['boss:message']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: true,
+        now,
+      });
+      expect(applied[0]).toMatchObject({ ok: false });
+      expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD });
+      expect(recorded.http).toEqual([]);
+    });
+
     it('holds a ticket comment after a write whose outcome is unknown', async (): Promise<void> => {
       const recorded: Recorded = { mcp: [], http: [] };
       const timingOut: RealAdapterDeps = {
@@ -1388,7 +1452,11 @@ describe('a browser session across the apply invocations of one run', (): void =
           throw new Error('socket hang up');
         },
       };
-      const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [publicPost, comment], {
+      const dependentComment: MockAction = {
+        ...comment,
+        args: { ...comment.args, toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'The Slack post was sent.' }) },
+      };
+      const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [publicPost, dependentComment], {
         deps: timingOut,
         grants: new Set(['slack:write', 'linear:write']),
         approvedIndexes: new Set([0, 1]),

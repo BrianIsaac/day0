@@ -241,6 +241,38 @@ function writeDidNotLand(
   });
 }
 
+const RESULT_WORDS = /\b(?:done|ready|landed|applied|saved|sent|posted|recorded|updated|entered|clicked|refreshed|complete|completed|finished|closed|moved|verified|confirmed|changed|created|deleted|succeeded|successful|correct|current|processed|shows?|reads?|readback|figure|percent(?:age)?)\b/i;
+const AMBIGUOUS_REFERENCE = /\b(?:it|this|that|these|those|they|all|everything)\b/i;
+const ACTION_WORDS = new Set(['surface', 'tool', 'args', 'json', 'body', 'text', 'value', 'fields', 'name', 'method', 'path', 'request', 'http', 'call', 'secret']);
+
+function substantiveWords(value: string): Set<string> {
+  return new Set((value.toLowerCase().match(/[a-z][a-z0-9]{3,}/g) ?? []).filter((word) => !ACTION_WORDS.has(word)));
+}
+
+/** A narrow exception for messages with no shared subject or result language. */
+function independentMessage(
+  message: ParsedSurfaceAction,
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+): boolean {
+  const record = message.kind === 'mcp.call' ? message.toolArgs : message.bodyJson;
+  const text = ['text', 'body', 'message', 'content']
+    .map((key) => record?.[key])
+    .find((value): value is string => typeof value === 'string');
+  if (!text || RESULT_WORDS.test(text) || AMBIGUOUS_REFERENCE.test(text) || /\d/.test(text)) return false;
+  const words = substantiveWords(text);
+  if (words.size === 0) return false;
+  for (const [index, row] of applied.entries()) {
+    const action = parsed[index];
+    const possibleWrite = action ? actionIntent(action) === 'write' : isSurfaceTool(actions[index]?.tool ?? '');
+    if (!possibleWrite || (row.ok && !row.outcomeUnknown) || row.held) continue;
+    const failedWords = substantiveWords(JSON.stringify(actions[index]?.args ?? {}));
+    if ([...words].some((word) => failedWords.has(word))) return false;
+  }
+  return true;
+}
+
 /**
  * Re-establish a browser-driven surface's page before this invocation's first
  * call on it.
@@ -512,7 +544,11 @@ export async function applySurfaceActions(
       // A message was written beside the writes before them, before any
       // result existed; once one of those writes has not landed, the message
       // may report it as done, so it is held rather than sent.
-      if (isMessage(parsed.action, surface) && writeDidNotLand(applied, parsedByIndex, actions)) {
+      if (
+        isMessage(parsed.action, surface) &&
+        writeDidNotLand(applied, parsedByIndex, actions) &&
+        !independentMessage(parsed.action, actions, applied, parsedByIndex)
+      ) {
         applied.push({
           tool: action.tool,
           ok: true,
