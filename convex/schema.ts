@@ -689,6 +689,18 @@ export default defineSchema({
      * finds a claim by an alias through the work item's `by_claim_alias`.
      */
     aliases: v.optional(v.array(v.string())),
+    /**
+     * Set on a claim a work item took on something it writes rather than on
+     * the item it was discovered from: a documented page field of a
+     * browser-driven surface, which has no intake row of its own.
+     */
+    writeTarget: v.optional(v.object({ surface: v.string(), field: v.string() })),
+    /**
+     * When the holder of a write-target claim finished. A page field outlives
+     * the work that wrote it, so from then on the claim holds only against
+     * work items that already existed; later work may write the field again.
+     */
+    settledAt: v.optional(v.number()),
     claimedAt: v.number(),
     releasedAt: v.optional(v.number()),
   })
