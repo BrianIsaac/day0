@@ -61,7 +61,8 @@ import {
   retryRequiresProviderReconciliation,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
-import type { ArgumentRepairAttempt, MockAction } from '../../../src/work/types';
+import type { ArgumentRepairAttempt, MockAction, PlanObligations } from '../../../src/work/types';
+import { planObligations, transitionWithheld } from '../../../src/work/obligations';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
@@ -2207,16 +2208,42 @@ const TRANSITION_LABELS: Record<string, string> = {
 };
 
 /**
+ * What a planner and judgement disagreement on the ticket state means for
+ * the state change, as the exact-action gate applies it.
+ *
+ * Args:
+ *   steps: The plan's steps, which the declared rows must line up with.
+ *   obligations: The declared obligations carrying both readings.
+ *
+ * Returns:
+ *   One sentence: held for the manager, not held, or not read at all.
+ */
+function disagreementOutcome(steps: string[], obligations: PlanObligationsRow): string {
+  const plan = { steps, obligations: obligations as unknown as PlanObligations };
+  if (!planObligations(plan)) {
+    return 'These obligations no longer line up with the plan\'s steps, so the gates read neither and hold nothing on their account.';
+  }
+  return transitionWithheld(plan)
+    ? 'One of the two readings leaves the state change to you, so it is held for your decision whatever the autonomy switch says.'
+    : 'Neither reading leaves the state change to you, so it is not held on that account: the run carries it as the judgement read it, and it lands under the autonomy switch like any other write.';
+}
+
+/**
  * What the approved plan declares it owes, beside its steps: the reads the
  * closing gate will verify against the ledger and the plan's word on the
  * ticket state. Read-only, real mode only (a mock plan declares nothing).
  * When the judgement could not be reached the line says so, because the
  * gates then verify nothing about reads or the ticket state for this plan.
+ * When the planner and the judgement disagreed on the ticket state, whether
+ * the change is held is read from `transitionWithheld`, the gate's own test,
+ * so the card never claims a hold the gate does not apply.
  */
 export function PlanObligationsLine({
+  steps,
   obligations,
   failedOpen,
 }: {
+  steps: string[];
   obligations: PlanObligationsRow | undefined;
   failedOpen: string | undefined;
 }) {
@@ -2247,7 +2274,7 @@ export function PlanObligationsLine({
       {obligations.plannerTransition ? (
         <p className="text-[var(--color-warn)]">
           The planner declared the ticket state {TRANSITION_LABELS[obligations.plannerTransition] ?? obligations.plannerTransition};
-          the judgement read it differently, so the state change is held for you.
+          the judgement read it as {transition}. {disagreementOutcome(steps, obligations)}
         </p>
       ) : null}
       {obligations.failedOpen ? (
@@ -3117,7 +3144,7 @@ export function WorkItemCard({
             workItemId={item._id}
             redaction={plan.correctionsRedaction}
           />
-          <PlanObligationsLine obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
+          <PlanObligationsLine steps={plan.steps} obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
           {item.state === 'plan-pending' && item.planRejectedAt !== undefined ? (
             <p className="mt-2 text-[var(--color-warn)]">
               This plan was redrafted after you rejected an earlier plan. It waits for your approval even while autonomous actions are on.

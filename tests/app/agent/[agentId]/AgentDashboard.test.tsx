@@ -517,12 +517,13 @@ describe('sending a finished item back', (): void => {
     expect(judged).toContain('step 1 reads looker-pipeline-tile; step 2 reads linear');
     expect(judged).not.toContain('could not be reached');
 
+    const noSurface = { kind: 'report', reads: [], writes: [] };
     const disagreed = render({
       ...item('completed'),
-      plan: { ...plan, obligations: { steps: [], transition: 'conditional-on-evidence', transitionStep: 5, basis: 'judgement', plannerTransition: 'withheld' } },
+      plan: { ...plan, obligations: { steps: plan.steps.map(() => noSurface), transition: 'conditional-on-evidence', transitionStep: 5, basis: 'judgement', plannerTransition: 'withheld' } },
     } as unknown as Doc<'workItems'>);
     expect(disagreed).toContain('The planner declared the ticket state left where it is');
-    expect(disagreed).toContain('held for you');
+    expect(disagreed).toContain('held for your decision');
 
     const unchecked = render({
       ...item('completed'),
@@ -538,6 +539,47 @@ describe('sending a finished item back', (): void => {
     const mock = render({ ...item('completed'), plan } as unknown as Doc<'workItems'>);
     expect(mock).not.toContain('Declared obligations');
     expect(mock).not.toContain('Obligations not settled');
+  });
+
+  it('says a planner and judgement disagreement holds the state change only when the gate holds it (19 Sep run)', (): void => {
+    const base = { summary: 'Close status note.', riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' };
+    const read = { kind: 'read', reads: ['linear'], writes: [] };
+    const report = { kind: 'report', reads: [], writes: [] };
+    const slackWrite = { kind: 'write', reads: [], writes: ['slack'] };
+    const linearWrite = { kind: 'write', reads: [], writes: ['linear'] };
+    const linearMove = { kind: 'conditional-write', reads: [], writes: ['linear'] };
+    const card = (steps: string[], obligations: Record<string, unknown>): string =>
+      render({ ...item('completed'), plan: { ...base, steps, obligations: { basis: 'judgement', ...obligations } } } as unknown as Doc<'workItems'>);
+
+    // FIN-1: planner `promised`, judgement `conditional-on-evidence`; the move to Done landed autonomously.
+    const fin1 = card(['Read the step tickets', 'Compose the note', 'Comment on FIN-1', 'Move FIN-1 to Done', 'Answer close questions'], {
+      steps: [read, report, linearWrite, { ...linearMove, reads: ['linear'] }, { kind: 'conditional-write', reads: ['slack'], writes: ['slack'] }],
+      transition: 'conditional-on-evidence', transitionStep: 4, plannerTransition: 'promised',
+    });
+    expect(fin1).toContain('The planner declared the ticket state moved by the plan');
+    expect(fin1).toContain('the judgement read it as moved when what the run reads shows the condition holds');
+    expect(fin1).toContain('Neither reading leaves the state change to you, so it is not held on that account');
+    expect(fin1).not.toContain('held for you');
+
+    // The `#finance-close` ask: the planner left the move to the manager, the judgement did not; the gate held it.
+    const ask = card(['Read the close tickets', 'Draft to the manager', 'Reply in the thread', 'Comment on the status ticket', 'Move it to Done'], {
+      steps: [read, slackWrite, slackWrite, linearWrite, linearMove],
+      transition: 'conditional-on-evidence', transitionStep: 5, plannerTransition: 'conditional-on-manager',
+    });
+    expect(ask).toContain('The planner declared the ticket state moved only on your approval, held for you');
+    expect(ask).toContain('One of the two readings leaves the state change to you, so it is held for your decision');
+
+    // LOG-2: the judgement left the move to the manager, the planner did not; the gate held it.
+    const log2 = card(['Draft the notice', 'Draft to the manager', 'Comment on LOG-2', 'Move LOG-2 to Done'], {
+      steps: [report, slackWrite, linearMove, linearMove],
+      transition: 'conditional-on-manager', transitionStep: 4, plannerTransition: 'promised',
+    });
+    expect(log2).toContain('One of the two readings leaves the state change to you, so it is held for your decision');
+
+    // Obligations that no longer line up with the steps hold nothing at the gate, so the card claims no hold.
+    const unusable = card(['One step'], { steps: [], transition: 'conditional-on-evidence', transitionStep: 1, plannerTransition: 'withheld' });
+    expect(unusable).not.toContain('held for your decision');
+    expect(unusable).toContain('no longer line up with the plan');
   });
 
   it('shows what the manager answered at approval once the plan is running', (): void => {
