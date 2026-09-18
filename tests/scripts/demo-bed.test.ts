@@ -64,11 +64,16 @@ const READY: TierInputs = {
   probeTier: 1,
 };
 
+const PUBLISHED: Readonly<Record<string, string>> = {
+  backend: '127.0.0.1:47210->3210/tcp, 127.0.0.1:47211->3211/tcp',
+  'fake-slack': '127.0.0.1:47213->8090/tcp',
+};
+
 const RUNNING = (service: string, health: ServiceRow['health'] = 'healthy'): ServiceRow => ({
   service,
   state: 'running',
   health,
-  ports: service === 'backend' ? '127.0.0.1:47210->3210/tcp, 127.0.0.1:47211->3211/tcp' : '',
+  ports: PUBLISHED[service] ?? '',
 });
 
 const RUNG_SERVICES: ServiceRow[] = [
@@ -84,6 +89,7 @@ const RUNG_VALUES = {
   DAY0_SURFACE_MODE: 'real',
   DAY0_REDACTOR_URL: 'http://redactor:8000',
   CONVEX_PORT: '47210',
+  FAKE_SLACK_HOST_PORT: '47213',
 };
 
 describe('command line', (): void => {
@@ -580,6 +586,18 @@ describe('the offline rung refuses without the redactor', (): void => {
     const unpublished = offlineRungRefusal({ ...ready, services: [
       { ...RUNNING('backend'), ports: '' }, ...RUNG_SERVICES.slice(1)] });
     expect(unpublished).toContain('publish');
+  });
+
+  it("refuses when the file's Slack proof port is not this project's double", (): void => {
+    const drifted = offlineRungRefusal({
+      ...ready,
+      values: { ...RUNG_VALUES, FAKE_SLACK_HOST_PORT: '47223' },
+      ports: bedPorts({ ...RUNG_VALUES, FAKE_SLACK_HOST_PORT: '47223' }),
+    });
+    expect(drifted).toContain('fake-slack');
+    expect(drifted).toContain('47213');
+    expect(drifted).toContain('47223');
+    expect(drifted).toContain('provider call');
   });
 });
 

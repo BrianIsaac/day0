@@ -115,6 +115,9 @@ const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
 /** The backend's own port, which the compose file publishes `CONVEX_PORT` from. */
 const CONTAINER_BACKEND_PORT = 3210;
 
+/** The Slack double's own port, which the compose file publishes `FAKE_SLACK_HOST_PORT` from. */
+const CONTAINER_FAKE_SLACK_PORT = 8090;
+
 /**
  * Where the Slack double answers, as the deployment must address it.
  *
@@ -1161,6 +1164,16 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
       `the backend of project ${input.project} publishes ${CONTAINER_BACKEND_PORT} on host port ${published}, ` +
       `but ${ENV_FILE} addresses ${input.ports.backend}; the rung would write to whatever listens there. ` +
       `Set CONVEX_PORT and the two Convex URLs to ${published}, or bring the bed up from this file.`
+    );
+  }
+  const slack = publishedHostPort(row('fake-slack')?.ports ?? '', CONTAINER_FAKE_SLACK_PORT);
+  if (slack !== input.ports.fakeSlack) {
+    return (
+      `fake-slack in project ${input.project} publishes ${CONTAINER_FAKE_SLACK_PORT} on ` +
+      `${slack === undefined ? 'no host port' : `host port ${slack}`}, but ${ENV_FILE} addresses ` +
+      `${input.ports.fakeSlack}; the rung reads its provider call counts from there, so every ` +
+      'attempt would be measured against another project\'s double. Set FAKE_SLACK_HOST_PORT to ' +
+      `${slack ?? 'the port this project publishes'}, or bring the bed up from this file.`
     );
   }
   return undefined;
