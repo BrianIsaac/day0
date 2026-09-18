@@ -17,6 +17,7 @@ import { applySurfaceActions, resolveAdapters, type RealAdapterDeps } from '../.
 import type { AdapterRun, SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 import {
+  MANAGER_DM,
   slackClosing,
   slackPhaseOne,
   TileDriver,
@@ -1268,5 +1269,102 @@ describe('a browser session across the apply invocations of one run', (): void =
     const first = await phaseOne(driver);
     expect(first.some((row) => 'sessionRestore' in row)).toBe(false);
     expect(sentIn(driver, 1)[0]).toBe('browser_navigate');
+  });
+
+  describe('a message after a write in the same set that did not land', (): void => {
+    const WITHHELD =
+      'withheld: an earlier write in this set did not land, so this message could report it wrongly';
+    const managerSlack: SurfaceRecord = { ...slack, managerDmChannelId: MANAGER_DM };
+
+    /** The tile runtime with a fetch that records what reached Slack. */
+    function recordingDeps(driver: TileDriver, posted: unknown[]): RealAdapterDeps {
+      return {
+        ...tileDeps(driver),
+        fetch: async (_url: URL, init: RequestInit): Promise<Response> => {
+          posted.push(JSON.parse(String(init.body)));
+          return new Response(JSON.stringify({ ok: true, ts: '1.1' }), { status: 200 });
+        },
+      };
+    }
+
+    // 16 September: the closing fill and Save did not land, and the DM the
+    // model wrote beside them, before any result existed, told the manager
+    // "74% entered, Save clicked" anyway.
+    it.fails('holds the manager DM that follows a failed fill and Save, and never sends it', async (): Promise<void> => {
+      const refuseTheRefresh = (call: TileDriverCall): string | undefined =>
+        call.context === 2 &&
+        ((call.tool === 'browser_fill_form' && JSON.stringify(call.args).includes('Pipeline coverage')) ||
+          (call.tool === 'browser_click' && call.args.element === 'Save'))
+          ? 'Error: the element is detached from the page'
+          : undefined;
+      const driver = new TileDriver('pipeline-tile-local', refuseTheRefresh);
+      const first = await phaseOne(driver);
+      const posted: unknown[] = [];
+      const closing = await applySurfaceActions(ctx, 'real', [looker, managerSlack], run, slackClosing, {
+        ...auto,
+        deps: recordingDeps(driver, posted),
+        grants: tileGrants,
+        approvedIndexes: new Set([0, 1, 2, 3]),
+        prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+        idempotencyIndexOffset: 4,
+      });
+      expect(closing.slice(0, 2).map((row) => row.ok)).toEqual([false, false]);
+      // The read-back is a read: it still goes, and records the unchanged tile.
+      expect(closing[2]).toMatchObject({ ok: true });
+      expect(closing[2]!.effect).toContain('visible figure 68%');
+      expect(closing[3]).toMatchObject({
+        tool: 'http.request',
+        ok: true,
+        held: true,
+        reason: WITHHELD,
+        idempotencyKey: 'wi_1:run_1:7',
+      });
+      expect(closing[3]!.effect).toContain('74% entered, Save clicked');
+      expect(closing[3]).not.toHaveProperty('authority');
+      expect(posted).toEqual([]);
+    });
+
+    it('sends the manager DM after the fill and Save landed, as before', async (): Promise<void> => {
+      const driver = new TileDriver('pipeline-tile-local');
+      const first = await phaseOne(driver);
+      const posted: unknown[] = [];
+      const closing = await applySurfaceActions(ctx, 'real', [looker, managerSlack], run, slackClosing, {
+        ...auto,
+        deps: recordingDeps(driver, posted),
+        grants: tileGrants,
+        approvedIndexes: new Set([0, 1, 2, 3]),
+        prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+        idempotencyIndexOffset: 4,
+      });
+      expect(closing.map((row) => [row.ok, row.held])).toEqual([
+        [true, undefined],
+        [true, undefined],
+        [true, undefined],
+        [true, undefined],
+      ]);
+      expect(closing[3]).toMatchObject({ authority: 'autonomous' });
+      expect(posted).toEqual([expect.objectContaining({ channel: MANAGER_DM })]);
+    });
+
+    it.fails('holds a ticket comment after a write whose outcome is unknown', async (): Promise<void> => {
+      const recorded: Recorded = { mcp: [], http: [] };
+      const timingOut: RealAdapterDeps = {
+        ...deps(recorded),
+        fetch: async (): Promise<Response> => {
+          throw new Error('socket hang up');
+        },
+      };
+      const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [publicPost, comment], {
+        deps: timingOut,
+        grants: new Set(['slack:write', 'linear:write']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: true,
+        now,
+      });
+      expect(applied[0]).toMatchObject({ ok: false, outcomeUnknown: true });
+      expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD, idempotencyKey: 'wi_1:run_1:1' });
+      expect(recorded.mcp).toEqual([]);
+    });
   });
 });
