@@ -662,7 +662,7 @@ export function parseDockerPs(stdout: string): ServiceRow[] {
 }
 
 /**
- * The host port a container publishes one of its ports on.
+ * The unique IPv4 loopback-reachable host port a container publishes.
  *
  * Args:
  *   ports: `docker ps`'s ports column, `host:port->container/proto` entries.
@@ -672,13 +672,19 @@ export function parseDockerPs(stdout: string): ServiceRow[] {
  *   The host port, or undefined when that container port is not published.
  */
 export function publishedHostPort(ports: string, containerPort: number): number | undefined {
+  const bindings: Array<{ host: string; port: number }> = [];
   for (const entry of ports.split(',')) {
-    const match = /:(\d+)->(\d+)\/(?:tcp|udp)$/.exec(entry.trim());
-    if (match && Number.parseInt(match[2], 10) === containerPort) {
-      return Number.parseInt(match[1], 10);
+    const match = /^(.+):(\d+)->(\d+)\/tcp$/.exec(entry.trim());
+    if (match && Number.parseInt(match[3], 10) === containerPort) {
+      bindings.push({ host: match[1], port: Number.parseInt(match[2], 10) });
     }
   }
-  return undefined;
+  const matches = bindings.filter((binding) => binding.host === '127.0.0.1' ||
+    binding.host === '0.0.0.0');
+  if (matches.length === 0 || bindings.some((binding) =>
+      !['127.0.0.1', '0.0.0.0', '[::]', '::'].includes(binding.host))) return undefined;
+  const uniquePorts = new Set(bindings.map((binding) => binding.port));
+  return uniquePorts.size === 1 ? matches[0].port : undefined;
 }
 
 /**

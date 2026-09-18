@@ -673,6 +673,13 @@ describe('reading docker and the probes', (): void => {
     expect(publishedHostPort('3210/tcp', 3210)).toBeUndefined();
   });
 
+  it('does not mistake a non-loopback or ambiguous publication for the loopback backend', (): void => {
+    expect(publishedHostPort('192.0.2.10:47210->3210/tcp', 3210)).toBeUndefined();
+    expect(publishedHostPort('127.0.0.1:47210->3210/tcp, 127.0.0.1:47220->3210/tcp', 3210))
+      .toBeUndefined();
+    expect(publishedHostPort('127.0.0.1:47210->3210/udp', 3210)).toBeUndefined();
+  });
+
   it('reads the tier verdict off the arrival probe output', (): void => {
     expect(probeTier('...\ntier 1: host serves model from this network with a key\n')).toBe(1);
     expect(probeTier('tier 3: a required step failed; run the offline rung')).toBe(3);
