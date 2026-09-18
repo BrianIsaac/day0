@@ -293,4 +293,15 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     expect(guardReason(value)).toBe('hostname');
     expect(guardReason(value, { assigned: true })).toBeUndefined();
   });
+
+  it('keeps the full assigned secret when a span covers only its part after a hash or dot', (): void => {
+    const hashed = ['#', 'cobalt-harbor'].join('');
+    const hashText = `token: ${hashed}`;
+    expect(guardSecretSpan(hashText, spanOf(hashText, 'cobalt-harbor'), 'access token'))
+      .toEqual(spanOf(hashText, hashed));
+    const dotted = ['Cobalt', 'Harbor', 'Winter'].join('.');
+    const dotText = `token: ${dotted}`;
+    expect(guardSecretSpan(dotText, spanOf(dotText, 'Winter'), 'access token'))
+      .toEqual(spanOf(dotText, dotted));
+  });
 });

@@ -226,6 +226,18 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const hashed = text[tokenStart - 1] === '#' && !/[A-Za-z0-9_#]/.test(text[tokenStart - 2] ?? '');
   if (hashed && CHANNEL_REFERENCE.test(`#${token}`) && !assignedAt(tokenStart - 1) && !columnAssigned) return undefined;
   if (DOTTED_IDENTIFIER.test(token) && !assigned) return undefined;
+  const assignedTokenStart = hashed ? tokenStart - 1 : tokenStart;
+  if ((assignedAt(assignedTokenStart) || columnAssigned) &&
+    (start > assignedTokenStart || end < tokenEnd)) {
+    start = assignedTokenStart;
+    end = tokenEnd;
+    value = text.slice(start, end);
+    const terminal = TRAILING_PUNCTUATION.exec(value);
+    if (terminal) {
+      end -= terminal[0].length;
+      value = text.slice(start, end);
+    }
+  }
   // Some detectors return the assignment label rather than its value.
   // Only extend a password label across explicit assignment syntax.
   if (label === 'password' && PASSWORD_LABEL.test(value)) {
