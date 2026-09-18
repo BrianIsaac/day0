@@ -80,6 +80,8 @@ interface SlackProbeResult {
   managerUserId: string;
   managerName?: string;
   providerIdentityId: string;
+  /** The `bot_id` on everything this token posts; absent for a token that is not a bot's. */
+  providerBotId?: string;
   providerWorkspaceId?: string;
 }
 
@@ -824,6 +826,7 @@ export async function probeSlackSurface(
     managerUserId: managerId,
     managerName: managerDisplayName(lookup.user),
     providerIdentityId: auth.user_id,
+    providerBotId: typeof auth.bot_id === 'string' && auth.bot_id ? auth.bot_id : undefined,
     providerWorkspaceId: typeof auth.team_id === 'string' ? auth.team_id : undefined,
   };
 }
@@ -1017,6 +1020,20 @@ export async function runSurfaceProbe(
         managerName = slack.managerName;
         providerIdentityId = slack.providerIdentityId;
         providerWorkspaceId = slack.providerWorkspaceId;
+        // Before the connection is recorded, so the poll a fresh connection
+        // schedules already knows which posts are the app's own.
+        const botIdentityRecorded = await day0Step(
+          'record the app identity',
+          (): Promise<boolean> =>
+            ctx.runMutation(internal.intakeIdentity.recordBotIdentity, {
+              surfaceId,
+              generation,
+              providerBotId: slack.providerBotId,
+            }),
+        );
+        if (!botIdentityRecorded) {
+          return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
+        }
       } else {
         throw new Day0ProbeLimitation(
           `Day0 has no probe for surface path ${surface.path ?? 'unknown'}. ` +
