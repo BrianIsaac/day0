@@ -306,10 +306,9 @@ describe('resolving an element a skill named', (): void => {
     expect(resolveElementRef(two, 'Save')).toBeUndefined();
   });
 
-  // Red until containment compares whole words: on the exported sign-in page
-  // the brand mark's accessible name is the letter "L", which today stands
-  // for "Pipeline coverage" as the only candidate.
-  it.fails('does not let a one-letter brand mark stand for a field it does not name', (): void => {
+  // On the exported sign-in page the brand mark's accessible name is the
+  // letter "L", which substring containment let stand for "Pipeline coverage".
+  it('does not let a one-letter brand mark stand for a field it does not name', (): void => {
     expect(resolveElementRef(SIGN_IN_PAGE, 'Pipeline coverage')).toBeUndefined();
   });
 

@@ -149,6 +149,23 @@ function normaliseDescription(value: string): string {
   return value.replace(ROLE_WORDS, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function words(value: string): string[] {
+  return value.split(/[^\p{L}\p{N}]+/u).filter((word: string): boolean => word !== '');
+}
+
+/** Whether `inner`'s words appear, whole and in order, inside `outer`'s. */
+function containsWords(outer: string, inner: string): boolean {
+  const haystack = words(outer);
+  const needle = words(inner);
+  if (needle.length === 0 || needle.length > haystack.length) return false;
+  for (let start = 0; start + needle.length <= haystack.length; start += 1) {
+    if (needle.every((word: string, offset: number): boolean => haystack[start + offset] === word)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Find the element a human description names in a snapshot.
  *
@@ -156,6 +173,11 @@ function normaliseDescription(value: string): string {
  * then containment either way - a skill writing "Save" for a button labelled
  * "Save" and a skill writing "Save button" both have to land, and neither may
  * be allowed to match two different controls silently.
+ *
+ * Containment compares whole words. Where the element's name is the shorter
+ * of the two, only an element a person can act on is admitted: a page's
+ * brand mark named "L" is not "Pipeline coverage", and a lone label inside a
+ * longer description is not the control the description means.
  *
  * Args:
  *   snapshot: The text a `browser_snapshot` call returned.
@@ -186,7 +208,11 @@ export function resolveElementRef(
   return preferInteractive(
     elements.filter((e: SnapshotElement): boolean => {
       const name = normaliseDescription(e.name);
-      return name !== '' && loose !== '' && (name.includes(loose) || loose.includes(name));
+      if (name === '' || loose === '') return false;
+      return (
+        containsWords(name, loose) ||
+        (INTERACTIVE_ROLES.has(e.role) && containsWords(loose, name))
+      );
     }),
   );
 }
