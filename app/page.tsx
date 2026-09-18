@@ -653,8 +653,14 @@ function EmployeeList({ employees }: { employees: RosterRow[] | undefined }) {
   );
 }
 
+/** What "parked" means on the list, for the hover. */
+const PARKED_TITLE =
+  'Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release count under need you.';
+
 function EmployeeListRow({ employee }: { employee: RosterRow }) {
-  const queue = `${employee.openCount} open \u00b7 ${employee.needsYou} ${
+  // Parked work holds no slot, so it is named beside the open count and only when there is some.
+  const parked = employee.parkedCount > 0 ? ` \u00b7 ${employee.parkedCount} parked` : '';
+  const queue = `${employee.openCount} open${parked} \u00b7 ${employee.needsYou} ${
     employee.needsYou === 1 ? 'needs' : 'need'
   } you`;
   return (
@@ -676,6 +682,7 @@ function EmployeeListRow({ employee }: { employee: RosterRow }) {
         </div>
         <div className="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:col-start-auto sm:flex-col sm:items-end">
           <span
+            title={employee.parkedCount > 0 ? PARKED_TITLE : undefined}
             className={`text-sm tabular-nums ${
               employee.needsYou > 0 ? 'text-[var(--color-warn)]' : 'text-[var(--color-fg)]/70'
             }`}

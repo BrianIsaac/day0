@@ -12,7 +12,8 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
-import { OPEN_WORK_STATES, wakeQueuedWork } from './workLoop';
+import { OPEN_WORK_STATES, PARKED_WORK_STATES, queuedAtCap, wakeQueuedWork } from './workLoop';
+import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import { agentReadsSource } from './docSources';
 import { isEvaluationAgent } from './metrics';
 import {
@@ -91,6 +92,20 @@ const DOC_SOURCE_READ_LIMIT = 100;
 /** The open states that wait on the manager: a plan to approve, a held action set. */
 const NEEDS_MANAGER_STATES: ReadonlySet<string> = new Set(['plan-pending', 'actions-pending']);
 
+/**
+ * The skill states in which the next move on a skill is the manager's: a
+ * proposal to approve, and an authoring run to start or start again, which
+ * only the dashboard does. `registered` is absent: a row still parked behind
+ * a registered skill is released by no manager action.
+ */
+const SKILL_WAITS_ON_MANAGER_STATES: ReadonlySet<string> = new Set([
+  'proposed',
+  'approved',
+  'authoring',
+  'verified',
+  'failed',
+]);
+
 const rosterRowValidator = v.object({
   agentId: v.id('agents'),
   name: v.string(),
@@ -99,6 +114,7 @@ const rosterRowValidator = v.object({
   autonomous: v.boolean(),
   roleLine: v.string(),
   openCount: v.number(),
+  parkedCount: v.number(),
   needsYou: v.number(),
   docSourceCount: v.number(),
 });
@@ -168,47 +184,84 @@ async function approvedRoleLine(ctx: QueryCtx, agentId: Id<'agents'>): Promise<s
 }
 
 /**
- * Count the employee's open work and the part of it waiting on the manager.
+ * Whether only the manager can release a parked row.
  *
- * Reads the state index once per open state, so finished work, however much
- * of it there is, is never read.
+ * A deferral waits on a connection or a read grant, both the manager's to
+ * give. A row waiting on a skill is the manager's while the skill waits on a
+ * manager's click and no authoring run holds it; before a proposal exists,
+ * while a run is in flight, or once the skill is registered, it is not. A
+ * row queued at the cap is released by a slot freeing, and the rows holding
+ * the slots that wait on the manager are already counted.
+ *
+ * Args:
+ *   ctx: Query context.
+ *   row: The parked row.
+ *   now: The instant an authoring claim is judged against.
+ *
+ * Returns:
+ *   True when the row counts under needs-you.
+ */
+async function parkedRowNeedsManager(
+  ctx: QueryCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<boolean> {
+  if (row.state === 'deferred') return true;
+  if (row.state !== 'needs-skill' || !row.proposedSkillId) return false;
+  const skill = await ctx.db.get(row.proposedSkillId);
+  if (!skill || !SKILL_WAITS_ON_MANAGER_STATES.has(skill.state)) return false;
+  return !holdsLiveAuthoringClaim(skill, now);
+}
+
+/**
+ * Count the employee's open work, its parked work, and the part of both
+ * waiting on the manager.
+ *
+ * Open rows hold a work-in-progress slot. Parked rows hold none: deferred,
+ * waiting on a skill, or queued at the cap. Reads the state index once per
+ * counted state, so finished work, however much of it there is, is never
+ * read.
  *
  * Args:
  *   ctx: Query context.
  *   agentId: The employee.
  *
  * Returns:
- *   The open count and the needs-you count.
+ *   The open count, the parked count and the needs-you count.
  */
-async function openWorkCounts(
+async function workCounts(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-): Promise<{ openCount: number; needsYou: number }> {
-  const perState = await Promise.all(
-    OPEN_WORK_STATES.map(
-      async (state): Promise<[string, number]> => [
-        state,
-        (
-          await ctx.db
-            .query('workItems')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-            .take(OPEN_STATE_READ_LIMIT)
-        ).length,
-      ],
-    ),
+): Promise<{ openCount: number; parkedCount: number; needsYou: number }> {
+  const rowsIn = async (state: Doc<'workItems'>['state']): Promise<Doc<'workItems'>[]> =>
+    await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+      .take(OPEN_STATE_READ_LIMIT);
+  const [open, parked, discovered] = await Promise.all([
+    Promise.all(OPEN_WORK_STATES.map(rowsIn)),
+    Promise.all(PARKED_WORK_STATES.map(rowsIn)),
+    rowsIn('discovered'),
+  ]);
+  const openRows = open.flat();
+  const parkedRows = parked.flat();
+  const now = Date.now();
+  const releasedByManager = await Promise.all(
+    parkedRows.map((row) => parkedRowNeedsManager(ctx, row, now)),
   );
-  let openCount = 0;
-  let needsYou = 0;
-  for (const [state, count] of perState) {
-    openCount += count;
-    if (NEEDS_MANAGER_STATES.has(state)) needsYou += count;
-  }
-  return { openCount, needsYou };
+  return {
+    openCount: openRows.length,
+    parkedCount: parkedRows.length + discovered.filter(queuedAtCap).length,
+    needsYou:
+      openRows.filter((row) => NEEDS_MANAGER_STATES.has(row.state)).length +
+      releasedByManager.filter(Boolean).length,
+  };
 }
 
 /**
  * The owner's employees, one row each, for the landing page: who they are,
- * the role the manager approved, the open work, what waits on the manager,
+ * the role the manager approved, the open and the parked work, what waits on
+ * the manager,
  * whether they act on their own, and how much documentation they read.
  *
  * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
@@ -240,7 +293,7 @@ export const rosterForUser = query({
       agents.map(async (agent): Promise<RosterRow> => {
         const [roleLine, counts] = await Promise.all([
           approvedRoleLine(ctx, agent._id),
-          openWorkCounts(ctx, agent._id),
+          workCounts(ctx, agent._id),
         ]);
         return {
           agentId: agent._id,

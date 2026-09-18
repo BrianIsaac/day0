@@ -710,6 +710,87 @@ async function seedWork(
   });
 }
 
+/**
+ * Insert one work item that holds no slot: deferred, waiting on a skill, or
+ * in `discovered` with or without a queue verdict.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   agentId: The employee.
+ *   externalId: The provider item, as the run named it.
+ *   state: The row's state.
+ *   fields: The verdict and the skill the row waits on, when it has them.
+ *
+ * Returns:
+ *   The new work item id.
+ */
+async function seedParked(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  externalId: string,
+  state: Doc<'workItems'>['state'],
+  fields: { verdict?: Record<string, unknown>; proposedSkillId?: Id<'skills'> },
+): Promise<Id<'workItems'>> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId,
+        title: externalId,
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state,
+        observedAt: 1,
+        createdAt: 1,
+        ...fields,
+      }),
+  );
+}
+
+/**
+ * Insert one agent-authored skill, optionally held by an authoring run.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   agentId: The employee.
+ *   skill: The skill's state and, when a run holds it, when the run took it.
+ *
+ * Returns:
+ *   The new skill id.
+ */
+async function seedSkill(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  skill: { state: Doc<'skills'>['state']; claimedAt?: number },
+): Promise<Id<'skills'>> {
+  return await harness.run(async (ctx): Promise<Id<'skills'>> => {
+    const claim =
+      skill.claimedAt === undefined
+        ? {}
+        : {
+            authoringRunId: await ctx.db.insert('events', {
+              agentId,
+              type: 'skill.authoring-claimed',
+              payload: {},
+              createdAt: skill.claimedAt,
+            }),
+            authoringClaimedAt: skill.claimedAt,
+          };
+    return await ctx.db.insert('skills', {
+      agentId,
+      name: `synthetic-${skill.state}`,
+      description: 'Synthetic.',
+      body: '',
+      sourceType: 'agent-authored',
+      state: skill.state,
+      createdAt: 1,
+      ...claim,
+    });
+  });
+}
+
 describe('the employee roster', (): void => {
   it('does not mistake an ordinary employee for a trial because of the manager address', async (): Promise<void> => {
     vi.useFakeTimers();
@@ -819,6 +900,7 @@ describe('the employee roster', (): void => {
         autonomous: false,
         roleLine: 'charter pending',
         openCount: 0,
+        parkedCount: 0,
         needsYou: 0,
         docSourceCount: 1,
       },
@@ -830,6 +912,7 @@ describe('the employee roster', (): void => {
         autonomous: true,
         roleLine: 'Close the month for the finance team.',
         openCount: 3,
+        parkedCount: 0,
         needsYou: 1,
         docSourceCount: 2,
       },
@@ -842,6 +925,7 @@ describe('the employee roster', (): void => {
         roleLine:
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
         openCount: 3,
+        parkedCount: 0,
         needsYou: 2,
         docSourceCount: 2,
       },
@@ -857,11 +941,80 @@ describe('the employee roster', (): void => {
         autonomous: false,
         roleLine: 'charter pending',
         openCount: 1,
+        parkedCount: 0,
         needsYou: 1,
         docSourceCount: 1,
       },
     ]);
     await expect(harness.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
+  });
+
+  it('counts parked work beside open work, and under needs-you only what the manager alone can release (19 Sep run)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-18T19:26:17Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await deployEmployee(harness, 'owner', 'Priya');
+    const mateo = await deployEmployee(harness, 'owner', 'Mateo');
+    const aiko = await deployEmployee(harness, 'owner', 'Aiko');
+    const counts = async (): Promise<Record<string, [number, number, number]>> =>
+      Object.fromEntries(
+        (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+          (row): [string, [number, number, number]] => [row.name, [row.openCount, row.parkedCount, row.needsYou]],
+        ),
+      );
+
+    // The landing page as the run left it: every row read `0 open \u00b7 0 need you`.
+    const registered = await seedSkill(harness, aiko, { state: 'registered' });
+    const priyaRegistered = await seedSkill(harness, priya, { state: 'registered' });
+    await seedParked(harness, priya, 'REVOPS-27', 'deferred', {
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'looker-pipeline-tile' },
+    });
+    await seedParked(harness, priya, 'REVOPS-29', 'deferred', {
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar' },
+    });
+    await seedParked(harness, priya, 'C0BSF04TZ19:1789757860.970749', 'needs-skill', {
+      verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
+      proposedSkillId: priyaRegistered,
+    });
+    await seedParked(harness, aiko, 'LOG-1', 'needs-skill', {
+      verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
+      proposedSkillId: registered,
+    });
+    // Mateo mid-run: the ask waits for plan approval, FIN-1 waits behind the cap, FIN-2 waits for its evaluation.
+    await seedWork(harness, mateo, ['plan-pending']);
+    await seedParked(harness, mateo, 'FIN-1', 'discovered', {
+      verdict: { decision: 'queue', reason: 'WIP cap reached: supervised cold-start limit is 1', openClaims: 1 },
+    });
+    await seedParked(harness, mateo, 'FIN-2', 'discovered', {});
+    expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 1, 1], Aiko: [0, 1, 0] });
+
+    // A `needs-skill` row is the manager's to release while its skill waits on a manager's click.
+    const live = Date.now() - 60_000;
+    const lapsed = Date.now() - 11 * 60_000;
+    const waiting: Array<[string, Parameters<typeof seedSkill>[2], number]> = [
+      ['proposed', { state: 'proposed' }, 1],
+      ['approved', { state: 'approved' }, 1],
+      ['failed', { state: 'failed' }, 1],
+      ['verified', { state: 'verified' }, 1],
+      ['parked-unverified', { state: 'authoring' }, 1],
+      ['run-in-flight', { state: 'authoring', claimedAt: live }, 0],
+      ['run-gone', { state: 'authoring', claimedAt: lapsed }, 1],
+    ];
+    let expected = 0;
+    for (const [label, skill, needsYou] of waiting) {
+      const skillId = await seedSkill(harness, aiko, skill);
+      await seedParked(harness, aiko, `LOG-${label}`, 'needs-skill', {
+        verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
+        proposedSkillId: skillId,
+      });
+      expected += needsYou;
+    }
+    // No proposal exists yet: the proposal is the employee's own next step.
+    await seedParked(harness, aiko, 'LOG-unproposed', 'needs-skill', {
+      verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
+    });
+    expect((await counts()).Aiko).toEqual([0, 1 + waiting.length + 1, expected]);
   });
 
   it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {
