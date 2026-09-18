@@ -397,6 +397,8 @@ export default defineSchema({
     sourceCategory: v.string(),
     sourceSystem: v.string(),
     externalId: v.string(),
+    /** Fixed at intake so a card edit cannot change which provider item a retry holds. */
+    externalClaimKey: v.optional(v.string()),
     title: v.string(),
     contentSummary: v.string(),
     contentRefs: v.array(v.string()),

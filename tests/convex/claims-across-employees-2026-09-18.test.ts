@@ -380,6 +380,31 @@ describe('two employees of one owner reach one item', (): void => {
     ]);
   });
 
+  it('keeps the provider key an item had at intake when its surface disappears before the verdict', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const priya = await seedEmployee(harness, { name: 'Priya', surfaces: [{ kind: 'linear', slug: 'linear' }] });
+    const mateo = await seedEmployee(harness, { name: 'Mateo', surfaces: [{ kind: 'linear', slug: 'linear' }] });
+    const first = await seedIssue(harness, priya, 'linear');
+    const second = await seedIssue(harness, mateo, 'linear');
+    await harness.run(async (ctx) => {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', priya).eq('slug', 'linear'))
+        .unique();
+      if (!surface) throw new Error('surface missing');
+      await ctx.db.delete(surface._id);
+    });
+
+    await harness.mutation(internal.work.setVerdict, { workItemId: first, verdict: { decision: 'claim' } });
+    await harness.mutation(internal.work.setVerdict, { workItemId: second, verdict: { decision: 'claim' } });
+
+    expect((await readItem(harness, second)).skipReason).toContain('claimed-by-colleague: Priya');
+    expect((await claimsOf(harness)).filter((claim) => claim.releasedAt === undefined)).toEqual([
+      expect.objectContaining({ key: `linear:${ISSUE}`, workItemId: first }),
+    ]);
+  });
+
   it('keeps the claim of a completed item: a colleague reaching it later is refused', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -582,6 +607,36 @@ describe('releasing a claim', (): void => {
     expect(claims).toHaveLength(2);
     expect(claims.filter((claim) => claim.releasedAt === undefined)).toEqual([
       expect.objectContaining({ workItemId: held }),
+    ]);
+  });
+
+  it('refuses a cancelled item retry after its surface changes while a colleague holds the original provider item', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const priya = await seedEmployee(harness, { name: 'Priya', surfaces: [{ kind: 'linear', slug: 'linear' }] });
+    const mateo = await seedEmployee(harness, { name: 'Mateo', surfaces: [{ kind: 'linear', slug: 'linear' }] });
+    const first = await seedIssue(harness, priya, 'linear');
+    await drain(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.mutation(api.work.cancelPlan, { workItemId: first, reason: 'try later' });
+    const second = await seedIssue(harness, mateo, 'linear');
+    await drain(harness);
+    await harness.run(async (ctx) => {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', priya).eq('slug', 'linear'))
+        .unique();
+      if (!surface) throw new Error('surface missing');
+      await ctx.db.patch(surface._id, { endpoint: 'https://different.example.com/api' });
+    });
+
+    expect((await readItem(harness, second)).state).toBe('plan-pending');
+    await expect(owner.mutation(api.work.retryFailed, { workItemId: first })).rejects.toThrow(
+      'another employee holds this: Mateo',
+    );
+    expect((await claimsOf(harness)).filter((claim) => claim.releasedAt === undefined)).toEqual([
+      expect.objectContaining({ key: `linear:${ISSUE}`, workItemId: second }),
     ]);
   });
 

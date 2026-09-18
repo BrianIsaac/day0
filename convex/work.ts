@@ -300,8 +300,17 @@ export async function seedItemInTransaction(
     .filter((q) => q.eq(q.field('agentId'), args.agentId))
     .first();
   if (existing) return existing._id;
+  let externalClaimKey: string | undefined;
+  if (SURFACE_MODE === 'real') {
+    const surface = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.sourceSystem))
+      .first();
+    if (surface) externalClaimKey = providerItemKey(surface, args, SURFACE_MODE);
+  }
   const id = await ctx.db.insert('workItems', {
     ...args,
+    ...(externalClaimKey ? { externalClaimKey } : {}),
     state: 'discovered',
     observedAt: Date.now(),
     createdAt: Date.now(),
@@ -543,8 +552,8 @@ const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
  * The owner and key a row's provider item is claimed under, if it is claimed at all.
  *
  * Real mode only; a revocation trial row and an agent with no owner claim
- * nothing. The key is read from the surface the row came from, by slug,
- * while that surface is listed.
+ * nothing. A key captured with the item at intake survives later card edits;
+ * older rows without one use their current surface as a fallback.
  *
  * Args:
  *   ctx: Mutation context.
@@ -560,11 +569,13 @@ async function externalClaimScope(
   if (SURFACE_MODE !== 'real' || isRevocationTrialRow(row)) return undefined;
   const agent = await ctx.db.get(row.agentId);
   if (!agent?.userId) return undefined;
-  const surface = await ctx.db
-    .query('surfaces')
-    .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', row.sourceSystem))
-    .first();
-  const key = providerItemKey(surface ?? undefined, row, SURFACE_MODE);
+  const surface = row.externalClaimKey
+    ? undefined
+    : await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', row.sourceSystem))
+        .first();
+  const key = row.externalClaimKey ?? providerItemKey(surface ?? undefined, row, SURFACE_MODE);
   return key === undefined ? undefined : { userId: agent.userId, key };
 }
 
