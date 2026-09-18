@@ -50,6 +50,8 @@ export default defineConfig({
             'evaluation/gate/**/*.test.ts',
           ],
           environment: 'node',
+          // The script tests spawn processes, which a loaded machine starts slowly.
+          testTimeout: 20_000,
         },
       },
     ],

@@ -1200,7 +1200,9 @@ async function requeueWorkAfterRejection(
  * The first transition to `connected` also grants `<slug>:read` and re-admits
  * the work parked on this surface or skipped as out of scope, in the same
  * transaction, so a connected surface can never exist without its grant and
- * the hourly re-probe never grants again.
+ * the hourly re-probe never grants again. Only parked rows are re-admitted
+ * here: a row still being evaluated from a read taken before this write is
+ * caught where its verdict lands (`applyVerdict`), under this write's key.
  */
 export const recordConnected = internalMutation({
   args: {
