@@ -230,12 +230,12 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
 function writeDidNotLand(
   applied: readonly AppliedAction[],
   parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+  actions: readonly MockAction[],
 ): boolean {
   return applied.some((row, index) => {
     const action = parsed[index];
     return (
-      action !== undefined &&
-      actionIntent(action) === 'write' &&
+      (action ? actionIntent(action) === 'write' : isSurfaceTool(actions[index]?.tool ?? '')) &&
       (row.outcomeUnknown === true || (!row.ok && row.held !== true))
     );
   });
@@ -512,7 +512,7 @@ export async function applySurfaceActions(
       // A message was written beside the writes before them, before any
       // result existed; once one of those writes has not landed, the message
       // may report it as done, so it is held rather than sent.
-      if (isMessage(parsed.action, surface) && writeDidNotLand(applied, parsedByIndex)) {
+      if (isMessage(parsed.action, surface) && writeDidNotLand(applied, parsedByIndex, actions)) {
         applied.push({
           tool: action.tool,
           ok: true,

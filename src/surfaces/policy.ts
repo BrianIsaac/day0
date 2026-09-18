@@ -569,7 +569,11 @@ export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord)
 export function isMessage(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
   if (actionIntent(parsed) !== 'write') return false;
   if (isManagerDm(parsed, surface) || isAuditComment(parsed)) return true;
-  return parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  if (parsed.kind === 'mcp.call') return isMcpChatPost(parsed);
+  if (isChatPost(parsed, surface)) return true;
+  const path = parsed.path.split(/[?#]/, 1)[0]!.replace(/\/+$/, '');
+  return surface.class === 'kanban' && parsed.method === 'POST' && /(?:^|\/)comments?$/i.test(path) &&
+    parsed.body !== undefined;
 }
 
 /** Why a public chat reply escapes the source channel or thread, if it does. */

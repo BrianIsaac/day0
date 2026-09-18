@@ -383,6 +383,15 @@ describe('the manager DM grant', (): void => {
 });
 
 describe('telling a message from the work it reports on', (): void => {
+  it('recognises a documented API ticket comment as a message', (): void => {
+    const tickets: SurfaceRecord = { ...linear, path: 'documented-api', credentialKind: 'oauth' };
+    const post: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'linear', method: 'POST', path: '/issues/iss-1/comments', body: JSON.stringify({ body: 'The refresh landed.' }) },
+    };
+    expect(isMessage(parsed(post), tickets)).toBe(true);
+  });
+
   it('is the manager DM, a chat post or thread reply, or a ticket comment, and nothing else', (): void => {
     const mcpChat: SurfaceRecord = { ...slack, path: 'mcp', toolAllowlist: ['post_message'] };
     const mcpPost: MockAction = {

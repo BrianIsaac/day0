@@ -1400,5 +1400,54 @@ describe('a browser session across the apply invocations of one run', (): void =
       expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD, idempotencyKey: 'wi_1:run_1:1' });
       expect(recorded.mcp).toEqual([]);
     });
+
+    it('holds a message after a malformed surface write was refused', async (): Promise<void> => {
+      const recorded: Recorded = { mcp: [], http: [] };
+      const malformed: MockAction = {
+        tool: 'mcp.call',
+        args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{' },
+      };
+      const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [malformed, dm], {
+        deps: deps(recorded),
+        grants: new Set(['linear:write', 'boss:message']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: true,
+        now,
+      });
+      expect(applied[0]).toMatchObject({ ok: false });
+      expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD });
+      expect(recorded.http).toEqual([]);
+    });
+
+    it('holds a documented API ticket comment after an earlier write failed', async (): Promise<void> => {
+      const recorded: Recorded = { mcp: [], http: [] };
+      const ticketApi: SurfaceRecord = {
+        ...linear,
+        slug: 'ticket-api',
+        endpoint: 'https://tickets.example/api/',
+        path: 'documented-api',
+        toolAllowlist: ['issues/iss-1/comments'],
+        credentialKind: 'oauth',
+      };
+      const ticketComment: MockAction = {
+        tool: 'http.request',
+        args: {
+          surface: 'ticket-api', method: 'POST', path: '/issues/iss-1/comments',
+          body: JSON.stringify({ body: 'The refresh landed.' }),
+        },
+      };
+      const applied = await applySurfaceActions(ctx, 'real', [linear, ticketApi], run, [status, ticketComment], {
+        deps: deps(recorded),
+        grants: new Set(['linear:write', 'ticket-api:write']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: true,
+        now,
+      });
+      expect(applied[0]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
+      expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD });
+      expect(recorded.http).toEqual([]);
+    });
   });
 });
