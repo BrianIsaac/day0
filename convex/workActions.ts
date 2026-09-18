@@ -92,6 +92,7 @@ import {
   parseSurfaceAction,
   type ParsedSurfaceAction,
   pathRefusal,
+  replayAuthorityRefusal,
   surfaceRefusal,
   toolRefusal,
   UNKNOWN_SURFACE,
@@ -1588,14 +1589,20 @@ function surfaceAuthorityShape(surface: SurfaceRecord): string {
   });
 }
 
-/** Re-read every mutable authority input immediately before provider transport. */
+/**
+ * Re-read every mutable authority input immediately before provider transport.
+ *
+ * A replayed browser call (a sign-in repeated in a new invocation) is judged
+ * under the authority its original row landed with, not this phase's rule:
+ * a revoked scope blocks it whatever that authority was.
+ */
 function authorityBeforeTransport(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
   phase: 'auto' | 'approved',
   browserMcpUrl: string | undefined,
 ): BeforeSurfaceTransport {
-  return async (action, claimedSurface): Promise<string | undefined> => {
+  return async (action, claimedSurface, replay): Promise<string | undefined> => {
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok) return parsed.reason;
     const authority = await ctx.runQuery(internal.work.transportAuthority, {
@@ -1614,6 +1621,17 @@ function authorityBeforeTransport(
       mcpEndpointRefusal(surface) ??
       toolRefusal(parsed.action, surface);
     if (refusal) return refusal;
+    if (replay) {
+      const replayRefusal = replayAuthorityRefusal(parsed.action, surface, replay.authority, {
+        grants: new Set(authority.grants),
+        autonomousActions: authority.autonomousActions,
+        revokedScopes: new Set(authority.revokedScopes ?? []),
+      });
+      return (
+        replayRefusal ??
+        browserTransportRefusal(surface.path, browserMcpUrl, process.env.DAY0_BROWSER_MCP_URL)
+      );
+    }
     if (phase === 'auto' && !isAutomatic(parsed.action, surface, authority.autonomousActions)) {
       return NOT_AUTOMATIC;
     }

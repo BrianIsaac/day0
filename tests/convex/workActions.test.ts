@@ -76,7 +76,7 @@ import {
   RUN_4_LIST_ISSUES_EFFECT,
   RUN_4_TILE_READ_BACK,
 } from './fixtures/plan-obligations-2026-09-16';
-import { slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
+import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -3089,6 +3089,134 @@ describe('executing an approved plan through the gate', (): void => {
       repair: { toolArgsJson: '{"fullPage":true}' },
     });
     expect(JSON.stringify(row.output)).not.toContain('about:blank');
+  });
+
+  describe('a replayed sign-in under the authority it first landed with', (): void => {
+    const lookerSurface = {
+      slug: 'looker',
+      displayName: 'Looker',
+      class: 'analytics',
+      verdict: 'connected',
+      endpoint: 'http://looker-tile:8080/',
+      path: 'browser-driven',
+      toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'],
+      credentialId: 'cred-looker',
+      credentialLanded: true,
+      whereFound: [],
+      createdAt: 1,
+    };
+    const tilePlan = {
+      summary: 'Sign in, read the tile, refresh it to 74% and read it back.',
+      steps: ['Sign in and read the tile.', 'Fill 74% and save.', 'Read the figure back.'],
+      expectedOutputType: 'message' as const,
+      riskNotes: '',
+      reversibility: 'Re-enter the previous figure.',
+      estimatedMinutes: 5,
+      obligations: obligations([
+        { kind: 'read', reads: ['looker'] },
+        { kind: 'write', writes: ['looker'] },
+        { kind: 'read', reads: ['looker'] },
+      ]),
+    };
+    const closingTile = slackClosing.slice(0, 3);
+
+    beforeEach((): void => {
+      useSurfaceMode('real');
+      vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    });
+
+    async function signedInThenClosingHeld(autonomousActions: boolean) {
+      recorded.tileDriver = new TileDriver('plain-cred-looker');
+      recorded.skillOutput = {
+        draft: 'Signing in and reading the tile.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: slackPhaseOne,
+      };
+      recorded.dependentOutput = {
+        draft: 'Refreshing the tile to 74% and reading it back.',
+        notes: '',
+        actions: closingTile,
+        planStepOutcomes: [
+          { step: 1, status: 'satisfied', evidence: 'ledger rows 0 to 3' },
+          { step: 2, status: 'satisfied', evidence: 'actions 0 and 1 in this response' },
+          { step: 3, status: 'satisfied', evidence: 'action 2 in this response' },
+        ],
+      };
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { agentId, workItemId } = await seed(
+        harness,
+        'real',
+        ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write', 'looker:read', 'looker:write'],
+        { autonomousActions },
+      );
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('surfaces', { agentId, ...lookerSurface, lastVerifiedAt: Date.now() } as never);
+        await ctx.db.patch(workItemId, { plan: tilePlan });
+      });
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      const phaseOne = await readItem(harness, workItemId);
+      if (phaseOne.state === 'actions-pending') {
+        await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+          workItemId,
+          pendingRunId: phaseOne.pendingRunId!,
+          approvedIndexes: [0, 1, 2, 3],
+        });
+      }
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const authoring = await readItem(harness, workItemId);
+      expect(ledger(authoring).map((row) => [row.ok, row.authority])).toEqual(
+        Array(4).fill([true, autonomousActions ? 'autonomous' : 'manager']),
+      );
+      return { harness, agentId, workItemId, runId: authoring.executionRunId! };
+    }
+
+    async function approveClosing(harness: Harness, workItemId: Id<'workItems'>, runId: Id<'events'>) {
+      await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+      const held = await readItem(harness, workItemId);
+      expect(held.state).toBe('actions-pending');
+      await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: held.pendingRunId!,
+        approvedIndexes: [0, 1, 2],
+      });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      return await readItem(harness, workItemId);
+    }
+
+    it('refuses a manager-approved sign-in at transport once its write scope is revoked', async (): Promise<void> => {
+      const { harness, agentId, workItemId, runId } = await signedInThenClosingHeld(false);
+      await harness.withIdentity(OWNER).mutation(api.agents.revokeScope, { agentId, scope: 'looker:write' });
+      const row = await approveClosing(harness, workItemId, runId);
+      const reason = 'browser session could not be re-established: browser_fill_form no grant (looker:write)';
+      expect(ledger(row).slice(4, 7).map((entry) => [entry.ok, entry.reason])).toEqual([
+        [false, reason],
+        [false, reason],
+        [false, reason],
+      ]);
+      expect(ledger(row)[4]!.sessionRestore?.steps.map((step) => [step.ok, step.replayOf, step.reason])).toEqual([
+        [true, `${workItemId}:${runId}:0`, undefined],
+        [false, `${workItemId}:${runId}:1`, 'no grant (looker:write)'],
+      ]);
+      // The replayed navigate is a read and went through; nothing was typed.
+      const closingContext = Math.max(...recorded.tileDriver!.calls.map((call) => call.context));
+      expect(
+        recorded.tileDriver!.calls.filter((call) => call.context === closingContext).map((call) => call.tool),
+      ).toEqual(['browser_navigate']);
+      expect(recorded.tileDriver!.tile.value).toBe('68%');
+    });
+
+    it('refuses a sign-in the toggle authorised once the manager has turned the toggle off', async (): Promise<void> => {
+      const { harness, agentId, workItemId, runId } = await signedInThenClosingHeld(true);
+      await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: false }));
+      const row = await approveClosing(harness, workItemId, runId);
+      expect(ledger(row)[4]).toMatchObject({
+        ok: false,
+        reason: 'browser session could not be re-established: browser_navigate not an automatic action',
+      });
+      expect(recorded.tileDriver!.calls.every((call) => call.context === 1)).toBe(true);
+      expect(recorded.tileDriver!.tile.value).toBe('68%');
+    });
   });
 
   it('refuses retry when a provider transport fails after an approved request was sent', async (): Promise<void> => {
