@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import {
   mutation,
   query,
@@ -47,6 +47,56 @@ export const listForUser = query({
       .order('desc')
       .take(20);
   },
+});
+
+const agentStateValidator = v.union(
+  v.literal('deployed'),
+  v.literal('day-one-in-progress'),
+  v.literal('charter-pending'),
+  v.literal('active'),
+);
+
+/** The longest role line the roster shows, the ellipsis included. */
+export const ROLE_LINE_MAX = 90;
+
+const rosterRowValidator = v.object({
+  agentId: v.id('agents'),
+  name: v.string(),
+  avatarId: v.optional(v.string()),
+  state: agentStateValidator,
+  autonomous: v.boolean(),
+  roleLine: v.string(),
+  openCount: v.number(),
+  needsYou: v.number(),
+  docSourceCount: v.number(),
+});
+
+/** One employee as the landing page lists it. */
+export type RosterRow = Infer<typeof rosterRowValidator>;
+
+/**
+ * Fit a charter's function onto the roster's one line.
+ *
+ * Args:
+ *   text: The approved charter's `proposedFunction`.
+ *
+ * Returns:
+ *   The line as shown.
+ */
+export function clipRoleLine(text: string): string {
+  return text;
+}
+
+/**
+ * The owner's employees, one row each, for the landing page.
+ *
+ * Returns:
+ *   The rows, newest first.
+ */
+export const rosterForUser = query({
+  args: {},
+  returns: v.array(rosterRowValidator),
+  handler: async (): Promise<RosterRow[]> => [],
 });
 
 export const get = query({
@@ -253,12 +303,7 @@ export const permissionScopes = query({
 export const setState = internalMutation({
   args: {
     agentId: v.id('agents'),
-    state: v.union(
-      v.literal('deployed'),
-      v.literal('day-one-in-progress'),
-      v.literal('charter-pending'),
-      v.literal('active'),
-    ),
+    state: agentStateValidator,
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.agentId, { state: args.state });
