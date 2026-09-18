@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { PROFILES } from '../../../scripts/compose';
@@ -14,6 +14,10 @@ import { REAL_MODE_PROFILES } from '../../../scripts/setup';
 
 const COMPONENTS = readFileSync(
   new URL('../../../docs/running/components.md', import.meta.url),
+  'utf8',
+);
+const INTERFACES = readFileSync(
+  new URL('../../../docs/running/interfaces.md', import.meta.url),
   'utf8',
 );
 const COMPOSE = readFileSync(new URL('../../../docker-compose.yml', import.meta.url), 'utf8');
@@ -79,5 +83,31 @@ describe('the components page', (): void => {
 
   it('says how the redactor is warmed rather than downloaded', (): void => {
     expect(COMPONENTS).toContain('--warm-from');
+  });
+});
+
+/** The `module:function` names in the interfaces page's entry-point table. */
+function entryPoints(): Array<readonly [string, string]> {
+  const from = INTERFACES.indexOf('The entry points a reader is most likely to want:');
+  expect(from).toBeGreaterThan(0);
+  const rows = INTERFACES.slice(from, INTERFACES.indexOf('\n## ', from))
+    .split('\n')
+    .filter((line) => line.startsWith('|'))
+    .join('\n');
+  return [...rows.matchAll(/`([a-zA-Z]+):([a-zA-Z]+)`/g)].map(
+    ([, module, name]) => [module!, name!] as const,
+  );
+}
+
+describe('the interfaces page', (): void => {
+  it('names only entry points the backend still exports', (): void => {
+    const named = entryPoints();
+    expect(named.length).toBeGreaterThan(10);
+    const missing = named.filter(([module, name]) => {
+      const path = new URL(`../../../convex/${module}.ts`, import.meta.url);
+      if (!existsSync(path)) return true;
+      return !new RegExp(`export const ${name}\\b`).test(readFileSync(path, 'utf8'));
+    });
+    expect(missing.map((entry) => entry.join(':'))).toEqual([]);
   });
 });
