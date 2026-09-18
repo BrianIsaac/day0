@@ -18,6 +18,7 @@ import {
   observeModelCalls,
   type ModelCallReport,
 } from '../../../src/lib/model-call-telemetry';
+import { providerEndpointLabel } from '../../../src/lib/structured-fallback';
 
 /**
  * The retry wrapper reports every model call to the observer the loop step
@@ -45,6 +46,10 @@ async function collect<T>(fn: () => Promise<T>): Promise<{ reports: ModelCallRep
 }
 
 describe('model-call telemetry from the retry wrapper', (): void => {
+  it('keeps URL credentials and query values out of provider log labels', (): void => {
+    const endpoint = `https://operator:${secretToken}@relay.example/v1?key=${secretToken}`;
+    expect(providerEndpointLabel(endpoint)).toBe('relay.example');
+  });
   it('reports one attempt and the wall-clock duration of a call that succeeds first time', async (): Promise<void> => {
     vi.useFakeTimers();
     const generate = vi.fn(async (): Promise<{ object: { ok: true } }> => {

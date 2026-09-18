@@ -6,6 +6,7 @@ import { countProviderRequest } from './model-call-telemetry';
 import {
   classifyStructuredFailure,
   createFallbackMemo,
+  providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
 
@@ -252,7 +253,7 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
   }
   const model = args.model ?? MODEL;
   const key = jsonModeKey(model);
-  const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
+  const endpoint = providerEndpointLabel(env.OPENAI_BASE_URL);
   if (jsonModeMemo.begin(key) === 'prompt') {
     return { value: await runJsonCompletion('prompt', args), mode: 'prompt', fellBack: false };
   }

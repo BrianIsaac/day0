@@ -8,6 +8,7 @@ import { countingProviderRequests, reportModelCall } from './model-call-telemetr
 import {
   classifyStructuredFailure,
   createFallbackMemo,
+  providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
 
@@ -302,7 +303,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
   }
 
   const key = structuredModeKey(args.agent.name);
-  const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
+  const endpoint = providerEndpointLabel(env.OPENAI_BASE_URL);
   if (structuredModeMemo.begin(key) === 'prompt') {
     const generated = await generateObject<T>(args, 'prompt');
     return {
