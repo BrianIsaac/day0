@@ -109,12 +109,37 @@ export interface ActionOutcome {
    * attempt's outcome; nothing was applied twice.
    */
   repair?: ActionRepair;
+  /**
+   * The browser session this invocation re-established before sending this
+   * row, when it was the first action on a browser-driven surface and not a
+   * navigate. Each replayed transport call is its own nested row; the
+   * ledger's top-level rows stay index-aligned with the actions.
+   */
+  sessionRestore?: SessionRestore;
 }
 
 /** What the provider refused before the one bounded argument repair. */
 export interface ActionRepair {
   reason: string;
   toolArgsJson: string;
+}
+
+/** The replayed calls that signed a new browser in again before a row was sent. */
+export interface SessionRestore {
+  steps: SessionRestoreStep[];
+}
+
+/**
+ * One replayed transport call. Its key is the triggering row's key with
+ * `.session-<n>` appended, so it keeps the three colon-separated parts of a
+ * run key; its authority is the replayed row's own, checked again at
+ * transport.
+ */
+export interface SessionRestoreStep extends AppliedAction {
+  /** The key of the landed row this step replays; absent for the endpoint navigate added when the run never navigated. */
+  replayOf?: string;
+  /** The browser call replayed, as the run recorded it: a credential stays a `{{secret}}` placeholder. */
+  action: MockAction;
 }
 
 /** Who or what authorised an applied surface action. */
