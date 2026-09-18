@@ -320,6 +320,11 @@ describe('resolving an element a skill named', (): void => {
     });
   });
 
+  it('does not resolve a shorter generic name just because a role word was removed', (): void => {
+    const page = '- generic "Save" [ref=e1]';
+    expect(resolveElementRef(page, 'Save button')).toBeUndefined();
+  });
+
   it('still resolves a field whose name adds a unit to the description', (): void => {
     const page = ['- generic [ref=e4]: L', '- textbox "Pipeline coverage (%)" [ref=e24]'].join('\n');
     expect(resolveElementRef(page, 'Pipeline coverage')).toEqual({

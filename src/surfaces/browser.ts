@@ -196,13 +196,15 @@ export function resolveElementRef(
   const wanted = description.trim().toLowerCase();
   if (!wanted) return undefined;
   const loose = normaliseDescription(description);
+  const canUseShortName = (element: SnapshotElement): boolean =>
+    INTERACTIVE_ROLES.has(element.role) || words(element.name).length >= words(description).length;
 
   const exact = preferInteractive(
     elements.filter((e: SnapshotElement): boolean => e.name.toLowerCase() === wanted),
   );
   if (exact) return exact;
   const normalised = preferInteractive(
-    elements.filter((e: SnapshotElement): boolean => normaliseDescription(e.name) === loose),
+    elements.filter((e: SnapshotElement): boolean => normaliseDescription(e.name) === loose && canUseShortName(e)),
   );
   if (normalised) return normalised;
   return preferInteractive(
@@ -210,7 +212,7 @@ export function resolveElementRef(
       const name = normaliseDescription(e.name);
       if (name === '' || loose === '') return false;
       return (
-        containsWords(name, loose) ||
+        (canUseShortName(e) && containsWords(name, loose)) ||
         (INTERACTIVE_ROLES.has(e.role) && containsWords(loose, name))
       );
     }),
