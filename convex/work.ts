@@ -471,6 +471,46 @@ function reevaluationStamp(
   return { trigger, key, at, spent };
 }
 
+const scopeAdmissionValidator = v.object({
+  basis: v.string(),
+  namedBy: v.optional(v.string()),
+  overruled: v.optional(v.array(v.string())),
+});
+
+/**
+ * Keep the charter judgement that placed a row in scope, on the row.
+ *
+ * Written by the evaluation step before its verdict, real mode only. A later
+ * evaluation under the same charter holds it instead of asking again, so a
+ * re-evaluation a skill registration caused cannot change the row's mind
+ * about scope; `reevaluatePendingInTransaction` clears it from a skip a
+ * policy change sends back. The skip readings the judgement set aside go on
+ * the timeline as well, so a manager reading the card later can see the
+ * model said otherwise and why that did not stand.
+ */
+export const recordScopeAdmission = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    charterId: v.id('charters'),
+    admission: scopeAdmissionValidator,
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row || row.state !== 'discovered') return;
+    const at = Date.now();
+    await ctx.db.patch(args.workItemId, {
+      scopeAdmission: { charterId: args.charterId, at, ...args.admission },
+    });
+    if (!args.admission.overruled?.length) return;
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.scope-skip-overruled',
+      payload: { workItemId: args.workItemId, ...args.admission },
+      createdAt: at,
+    });
+  },
+});
+
 export interface ReevaluatePendingArgs {
   agentId: Id<'agents'>;
   trigger: ReevaluationTrigger;
@@ -594,6 +634,10 @@ export async function reevaluatePendingInTransaction(
         state: 'discovered',
         verdict: undefined,
         skipReason: undefined,
+        // A skip that returns is judged afresh, whatever the row was told
+        // before it; a deferral that returns waited on a connection, which
+        // the scope judgement never read, and keeps its in-scope verdict.
+        ...(row.state === 'skipped' ? { scopeAdmission: undefined } : {}),
         reevaluation: reevaluationStamp(row, args.trigger, args.key, now),
       });
       await ctx.db.insert('events', {

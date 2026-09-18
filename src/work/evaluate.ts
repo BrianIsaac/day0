@@ -1,4 +1,4 @@
-import { judgeScope, type ScopeJudgement } from './scope';
+import { judgeScope, type ItemSource, type ScopeJudgement } from './scope';
 import {
   AUTONOMOUS_WIP_LIMIT,
   COLD_START_WIP_LIMIT,
@@ -79,6 +79,13 @@ export interface EvaluationSurface extends SurfaceLiveness {
   class: string;
   endpoint?: string;
   discoveryEvidence?: readonly SurfaceDiscoveryEvidence[];
+  /** The team, projects and channels the manager approved for intake on this surface. */
+  intakeScope?: {
+    team?: { value: string };
+    project?: { value: string };
+    projects?: readonly { value: string }[];
+    channels?: readonly { value: string }[];
+  };
 }
 
 export interface EvalContext extends AgentContext {
@@ -98,6 +105,13 @@ export interface EvalContext extends AgentContext {
    * rule is left out and the plan gate still stands.
    */
   scopeWaived?: boolean;
+  /**
+   * Real mode: the row carries an in-scope judgement made against the charter
+   * that is still approved, so this evaluation holds it and asks no model:
+   * a skill registering, a slot freeing or a connection landing changes
+   * nothing the scope judgement reads.
+   */
+  scopeHeld?: boolean;
 }
 
 export { QUALITY_FIT_SKIP_PREFIX } from './types';
@@ -159,6 +173,62 @@ function namesDocumentedSystem(
     if (!currentlyNamed) return false;
     return candidateNamesSurface(candidateText, surface);
   });
+}
+
+/** The channel in a mention's title, `Slack mention in #team-asks`. */
+const MENTION_CHANNEL = /#([^\s#]+)/;
+
+/**
+ * Where a real-mode candidate came from, read off the rows.
+ *
+ * Intake reads a kanban surface only within its approved team and projects,
+ * so every ticket from it is from those; a mention carries its own channel.
+ * The boss's own asks and the mock tables have no such source.
+ *
+ * Args:
+ *   candidate: Work candidate being evaluated.
+ *   ctx: Evaluation mode, clock and declared surfaces.
+ *
+ * Returns:
+ *   The source, or undefined when the item did not come from a listed surface.
+ */
+function itemSource(candidate: WorkCandidate, ctx: EvalContext): ItemSource | undefined {
+  if (ctx.surfaceMode !== 'real' || candidate.sourceSystem === 'boss') return undefined;
+  const surface = surfaceForSource(candidate.sourceSystem, ctx.surfaces, ctx.now ?? Date.now());
+  if (!surface) return undefined;
+  const scope = surface.intakeScope;
+  const projects = [scope?.project, ...(scope?.projects ?? [])]
+    .filter((project): project is { value: string } => project !== undefined)
+    .map((project) => project.value);
+  const channel =
+    surface.class === 'chat'
+      ? (candidate.replyTarget?.channelName ?? MENTION_CHANNEL.exec(candidate.title)?.[1])
+      : undefined;
+  return {
+    surface: surface.displayName,
+    slug: surface.slug,
+    ...(scope?.team ? { team: scope.team.value } : {}),
+    ...(projects.length > 0 ? { projects } : {}),
+    ...(surface.class === 'chat' ? { mention: true } : {}),
+    ...(channel ? { channel } : {}),
+  };
+}
+
+/**
+ * The listed systems by whether a connection reaches them now, by display
+ * name and slug. A listed surface that is the same system as a connected one
+ * is reached through it, so it is not absent.
+ */
+function systemNames(ctx: EvalContext): { live: string[]; absent: string[] } {
+  const now = ctx.now ?? Date.now();
+  const names = (surfaces: readonly EvaluationSurface[]): string[] =>
+    surfaces.flatMap((surface) => [surface.displayName, surface.slug]);
+  const connected = ctx.surfaces.filter((surface): boolean => verdictFor(surface, now) === 'connected');
+  const absent = ctx.surfaces.filter(
+    (surface): boolean =>
+      !connected.includes(surface) && !connected.some((live) => sameEvaluationSystem(surface, live)),
+  );
+  return { live: names(connected), absent: names(absent) };
 }
 
 /** The surface slug convention, shared with the planner. */
@@ -315,10 +385,14 @@ export async function evaluateCandidate(
   lookups: EvaluateLookups,
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
+  const systems = ctx.surfaceMode === 'real' ? systemNames(ctx) : undefined;
   const scope = await judgeScope(candidate, ctx, {
     deferMockQualityFit: true,
     provenance: eligibleByProvenance(candidate, ctx),
     namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
+    source: itemSource(candidate, ctx),
+    liveSystems: systems?.live,
+    absentSystems: systems?.absent,
   });
   if (ctx.surfaceMode !== 'mock' || !scope.admitted) opts.onScopeJudgement?.(scope);
   if (!scope.admitted) {

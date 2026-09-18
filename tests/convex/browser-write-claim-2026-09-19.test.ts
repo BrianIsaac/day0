@@ -334,10 +334,14 @@ describe('one work item writes a documented page field (finding M, 19 September 
     const colleagueItem = await t.run(async (ctx) => {
       const holder = await ctx.db.get(revops27);
       const surface = await ctx.db.query('surfaces').withIndex('by_agent_slug', (q) => q.eq('agentId', holder!.agentId).eq('slug', SLUG)).first();
-      const { _id: _surfaceId, _creationTime: _surfaceCreated, ...card } = surface!;
+      const card: Record<string, unknown> = { ...surface! };
+      delete card._id;
+      delete card._creationTime;
       const agentId = await ctx.db.insert('agents', { bossEmail: 'boss@day0.local', name: 'Mateo', userId: 'owner', state: 'active', createdAt: 1 });
       await ctx.db.insert('surfaces', { ...card, agentId, slug: 'looker' } as never);
-      const { _id: _itemId, _creationTime: _itemCreated, ...item } = holder!;
+      const item: Record<string, unknown> = { ...holder! };
+      delete item._id;
+      delete item._creationTime;
       return await ctx.db.insert('workItems', { ...item, agentId, externalId: 'FIN-9', title: 'Quote pipeline coverage in the close pack' } as never);
     });
 

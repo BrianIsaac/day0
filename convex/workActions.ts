@@ -412,7 +412,14 @@ async function evaluateWorkItemHandler(
     internalCaller,
   });
   const candidate = rowToCandidate(item);
+  // A row judged in scope against the charter that is still the approved one
+  // is not judged again: a skill registering, a slot freeing or a connection
+  // landing changes nothing that judgement reads. A policy change clears the
+  // admission when it sends the row back, and an amendment is a new charter.
+  const scopeHeld =
+    surfaceConfig.mode === 'real' && item.scopeAdmission?.charterId === charterRow._id;
   let scopeJudgementUnavailable: string | undefined;
+  let scopeAdmission: { basis: string; namedBy?: string; overruled?: string[] } | undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'evaluation' } as const;
   const verdict = await recordingModelCalls(ctx, step, () => evaluateCandidate(
     candidate,
@@ -426,12 +433,28 @@ async function evaluateWorkItemHandler(
       surfaces,
       qualityFitWaived: item.qualityFitWaivedAt !== undefined,
       scopeWaived: item.scopeWaivedAt !== undefined,
+      scopeHeld,
     },
     lookups,
     {
       onScopeJudgement: (judgement): void => {
         if (judgement.admitted && judgement.failedOpen !== undefined) {
           scopeJudgementUnavailable = judgement.failedOpen;
+        }
+        // Only a reading of the charter is kept: the model's own in-scope
+        // judgement, or the skip readings a named source set aside. A waiver
+        // is already on the row, a held judgement is the one already kept,
+        // and a fail-open admission read nothing.
+        const judged =
+          judgement.admitted &&
+          (judgement.overruled !== undefined ||
+            (judgement.basis === 'charter-judgement' && judgement.failedOpen === undefined));
+        if (surfaceConfig.mode === 'real' && judged) {
+          scopeAdmission = {
+            basis: judgement.basis,
+            ...(judgement.namedBy !== undefined ? { namedBy: judgement.namedBy } : {}),
+            ...(judgement.overruled !== undefined ? { overruled: judgement.overruled } : {}),
+          };
         }
       },
     },
@@ -441,6 +464,13 @@ async function evaluateWorkItemHandler(
       agentId,
       type: 'work.scope-judgement-unavailable',
       payload: { workItemId: args.workItemId, cause: scopeJudgementUnavailable },
+    });
+  }
+  if (scopeAdmission !== undefined) {
+    await ctx.runMutation(internal.work.recordScopeAdmission, {
+      workItemId: args.workItemId,
+      charterId: charterRow._id,
+      admission: scopeAdmission,
     });
   }
   const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {

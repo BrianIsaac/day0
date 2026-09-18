@@ -272,7 +272,10 @@ describe('a connection that lands between an evaluation\'s read and its verdict'
 
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-pending');
-    expect(recorded.scopeCalls).toHaveLength(2);
+    // Two evaluations, one scope judgement: the second holds the in-scope
+    // verdict of the first, since a connection landing changes nothing that
+    // judgement reads (finding L, 19 Sep).
+    expect(recorded.scopeCalls).toHaveLength(1);
     const requeued = await eventsOf(harness, 'work.requeued');
     expect(requeued).toHaveLength(1);
     expect(requeued[0].payload).toMatchObject({
