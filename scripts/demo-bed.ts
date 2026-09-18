@@ -4,7 +4,7 @@
  *
  *   pnpm demo:bed snapshot                       # tar of a completed run's data volume, read-only
  *   pnpm demo:bed restore --snapshot <tar>       # that tar into a NEW volume for this project
- *   pnpm demo:bed up [--reset]                   # the real-mode stack from pre-pulled images
+ *   pnpm demo:bed up [--warm-from <p>] [--reset] # the real-mode stack from pre-pulled images
  *   pnpm demo:bed preflight [--video <file>]     # the checklist and the tier verdict
  *   pnpm demo:bed offline-rung                   # the revocation trial against the doubles
  *   pnpm demo:bed down [--volumes]               # stop it; drop this project's volumes if asked
@@ -12,9 +12,10 @@
  * The bed's contract is `.env.local` in this checkout, the same file every
  * other `pnpm` command reads, and the compose project is its
  * `COMPOSE_PROJECT_NAME` (or `--project`). Every subcommand refuses the two
- * projects whose volumes hold real runs (`day0`, `day0-demo-7c65e7`); the only
- * thing this file ever does to one of those volumes is mount it read-only for
- * `snapshot`.
+ * projects whose volumes hold real runs (`day0`, `day0-demo-7c65e7`) and the
+ * warm redactor project (`day0-redactor-warm`); the only thing this file ever
+ * does to one of those volumes is mount it read-only, for `snapshot` or for
+ * the redactor clone `up --warm-from` makes.
  *
  * Three things are deliberate about `up`. Images are never pulled
  * (`--pull never`): the venue network is not to be trusted with a 578 MB
@@ -33,6 +34,12 @@ import { connect } from 'node:net';
 import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PROFILES } from './compose';
+import {
+  requirementsDigests,
+  venvDevice,
+  venvStampCommand,
+  type VenvDevice,
+} from './redactor-device';
 
 const ENV_FILE = '.env.local';
 const COMPOSE_FILE = 'docker-compose.yml';
@@ -47,20 +54,69 @@ export const PROTECTED_VOLUMES: readonly string[] = PROTECTED_PROJECTS.flatMap(
   (project: string): string[] => [`${project}_convex_data`, `${project}_sandbox_socket`],
 );
 
+/**
+ * Projects whose volumes are only ever copied from (`--warm-from`). Not a real
+ * run, but nothing here starts, restores into, resets or removes them either;
+ * the list matches `READ_ONLY_PROJECTS` in `scripts/setup.ts`.
+ */
+export const READ_ONLY_PROJECTS: readonly string[] = ['day0-redactor-warm'];
+
 /** The completed run the demo restores by default. */
 export const DEFAULT_SNAPSHOT_SOURCE = 'day0-demo-7c65e7_convex_data';
 
+/** Where the redactor answers, as the deployment must address it. */
+export const REDACTOR_URL = 'http://redactor:8000';
+
+/** Why the redactor must answer before the rung runs. */
+const REDACTOR_WHY =
+  'real-mode documentation sync fails closed without it, so the rung stops at its folder sync';
+
+/** The fix when the redactor container is not healthy; the tier verdict's one-line form. */
+const REDACTOR_UNHEALTHY_FIX =
+  `the redactor is not healthy, and ${REDACTOR_WHY}; run pnpm demo:bed up --warm-from <warm project> ` +
+  'and wait for the redactor to report healthy';
+
+/** The fix when the backend has no redactor address to sync with. */
+const REDACTOR_UNWIRED_FIX =
+  `DAY0_REDACTOR_URL is empty in ${ENV_FILE} or on the deployment, so the backend has no redactor to ` +
+  `sync with; set it to ${REDACTOR_URL} and re-run pnpm demo:bed up`;
+
+/** What `pnpm eval:revocation` writes into `--out`, in `sha256sum` order. */
+export const RUNG_OUTPUT_FILES: readonly string[] = [
+  'commands.txt',
+  'trace-agent.json',
+  'trials.json',
+  'trials.md',
+];
+
 /**
  * What a demo bed runs: day0 itself, the sandbox that verifies a skill, the
- * two doubles the offline rung is measured against, and the browser component,
+ * two doubles the offline rung is measured against, the browser component,
  * without which the recorded run's tile card flips to `ungranted` on the first
- * re-probe after bring-up (seen 12 Sep 2026). The dashboard and the Notion
- * component are opt-in with `--profile`.
+ * re-probe after bring-up (seen 12 Sep 2026), and the redactor, without which
+ * real-mode documentation sync fails closed and the rung stops at its folder
+ * sync. The dashboard and the Notion component are opt-in with `--profile`.
  */
-export const BED_PROFILES: readonly string[] = ['real', 'sandbox', 'test', 'demo', 'browser'];
+export const BED_PROFILES: readonly string[] = [
+  'real',
+  'sandbox',
+  'test',
+  'demo',
+  'browser',
+  'redactor',
+];
+
+/** The redactor's cache volumes, in the order the compose file declares them. */
+const REDACTOR_VOLUME_SUFFIXES: readonly string[] = ['redactor_venv', 'redactor_models'];
 
 /** Where the bundled browser component answers, as the deployment must address it. */
 const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
+
+/** The backend's own port, which the compose file publishes `CONVEX_PORT` from. */
+const CONTAINER_BACKEND_PORT = 3210;
+
+/** The Slack double's own port, which the compose file publishes `FAKE_SLACK_HOST_PORT` from. */
+const CONTAINER_FAKE_SLACK_PORT = 8090;
 
 /**
  * Where the Slack double answers, as the deployment must address it.
@@ -165,6 +221,8 @@ export interface DemoBedOptions {
   probe: boolean;
   /** `up`: skip the checklist at the end. */
   preflight: boolean;
+  /** `up`: the project whose redactor volumes are cloned, read-only, into this one's. */
+  warmFrom?: string;
   /** `preflight`: the queued video file, when `.env.local` does not name one. */
   video?: string;
   /** `snapshot`: the volume to read. */
@@ -198,11 +256,13 @@ Options:
   --unlink               up --reset: also unlink documentation and purge credentials
   --no-probe             up/preflight: skip the model probe
   --no-preflight         up: skip the checklist
+  --warm-from <project>  up: clone that project's redactor volumes (read-only) into this one's
   --video <file>         preflight: the queued video (default: DAY0_DEMO_VIDEO in ${ENV_FILE})
   --from-volume <name>   snapshot: source volume (default: ${DEFAULT_SNAPSHOT_SOURCE})
   --snapshot <file>      snapshot: output path; restore: input path
   --replace              restore: drop an existing target volume first (never a protected one)
-  --out <dir>            offline-rung: results directory (default: ${KIT_DIR}/revocation-<stamp>)
+  --out <dir>            offline-rung: new results directory, SHA256SUMS included
+                         (default: ${KIT_DIR}/revocation-<stamp>; evidence: evaluation/results/revocation-<stamp>)
   --volumes              down: also remove this project's volumes
   --probe-timeout <s>    preflight: per-request ceiling for the probe (default 15)
 `;
@@ -279,6 +339,10 @@ export function parseDemoBedArguments(
       case '--no-preflight':
         options.preflight = false;
         break;
+      case '--warm-from':
+        options.warmFrom = valueOf(index, flag);
+        index += 1;
+        break;
       case '--video':
         options.video = valueOf(index, flag);
         index += 1;
@@ -339,6 +403,50 @@ export function assertNotProtected(name: string): void {
 }
 
 /**
+ * Refuse a project this kit may not run as: a protected one, or a read-only
+ * warm project. `assertNotProtected` stays the weaker check because the
+ * redactor clone reads a warm project's volumes through it.
+ *
+ * Args:
+ *   name: A compose project name.
+ *
+ * Raises:
+ *   Error: When the project is protected or read-only.
+ */
+export function assertBedProject(name: string): void {
+  assertNotProtected(name);
+  if (READ_ONLY_PROJECTS.includes(name)) {
+    throw new Error(
+      `"${name}" holds the warm redactor volumes this kit clones from (--warm-from). It is only ever read: ` +
+        'nothing here starts, restores into, resets or removes it. Pick another --project.',
+    );
+  }
+}
+
+/**
+ * Every volume `down --volumes` would remove for a project, each one checked.
+ *
+ * Args:
+ *   project: The compose project name.
+ *
+ * Returns:
+ *   The five volume names the compose file declares, prefixed with the project.
+ *
+ * Raises:
+ *   Error: When the project, or any of its volumes, is protected or read-only.
+ */
+export function projectVolumeNames(project: string): string[] {
+  assertBedProject(project);
+  return ['convex_data', 'sandbox_socket', 'model_data', 'redactor_venv', 'redactor_models'].map(
+    (suffix: string): string => {
+      const volume = `${project}_${suffix}`;
+      assertNotProtected(volume);
+      return volume;
+    },
+  );
+}
+
+/**
  * The data volume compose gives a project, which is where a restore lands.
  *
  * Args:
@@ -348,10 +456,10 @@ export function assertNotProtected(name: string): void {
  *   `<project>_convex_data`.
  *
  * Raises:
- *   Error: When the project is protected.
+ *   Error: When the project is protected or read-only.
  */
 export function restoreTargetVolume(project: string): string {
-  assertNotProtected(project);
+  assertBedProject(project);
   const volume = `${project}_convex_data`;
   assertNotProtected(volume);
   return volume;
@@ -522,13 +630,15 @@ export interface ServiceRow {
   service: string;
   state: string;
   health: 'healthy' | 'unhealthy' | 'starting' | 'none';
+  /** `docker ps`'s published ports column, empty when none are published. */
+  ports: string;
 }
 
 /**
  * Read `docker ps` output in the kit's tab-separated format.
  *
  * Args:
- *   stdout: Lines of `service<TAB>state<TAB>status`.
+ *   stdout: Lines of `service<TAB>state<TAB>status<TAB>ports`.
  *
  * Returns:
  *   One row per container.
@@ -539,7 +649,7 @@ export function parseDockerPs(stdout: string): ServiceRow[] {
     .map((line: string): string => line.trim())
     .filter(Boolean)
     .map((line: string): ServiceRow => {
-      const [service, state, status = ''] = line.split('\t');
+      const [service, state, status = '', ports = ''] = line.split('\t');
       const health: ServiceRow['health'] = status.includes('(healthy)')
         ? 'healthy'
         : status.includes('(unhealthy)')
@@ -547,8 +657,28 @@ export function parseDockerPs(stdout: string): ServiceRow[] {
           : status.includes('(health: starting)')
             ? 'starting'
             : 'none';
-      return { service, state, health };
+      return { service, state, health, ports: ports.trim() };
     });
+}
+
+/**
+ * The host port a container publishes one of its ports on.
+ *
+ * Args:
+ *   ports: `docker ps`'s ports column, `host:port->container/proto` entries.
+ *   containerPort: The container port to look for.
+ *
+ * Returns:
+ *   The host port, or undefined when that container port is not published.
+ */
+export function publishedHostPort(ports: string, containerPort: number): number | undefined {
+  for (const entry of ports.split(',')) {
+    const match = /:(\d+)->(\d+)\/(?:tcp|udp)$/.exec(entry.trim());
+    if (match && Number.parseInt(match[2], 10) === containerPort) {
+      return Number.parseInt(match[1], 10);
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -694,6 +824,10 @@ export interface TierInputs {
   slackDoubleWired: boolean;
   /** A rung has already run on this volume, so its trial ids are spent. */
   rungAlreadyRun: boolean;
+  /** The redactor container reports healthy; real-mode documentation sync fails closed without it. */
+  redactorHealthy: boolean;
+  /** `DAY0_REDACTOR_URL` names the redactor in the file and on the deployment. */
+  redactorWired: boolean;
   /**
    * What the *deployment* dials for a model, which is not always what the host
    * dials: the rung's onboarding runs inside the backend container.
@@ -739,18 +873,24 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
     name: 'Tier 2, the offline rung (pnpm eval:revocation; its measurements are model-free, its onboarding is not)',
     go:
       inputs.offlineRungReady &&
+      inputs.redactorHealthy &&
+      inputs.redactorWired &&
       inputs.slackDoubleWired &&
       !inputs.rungAlreadyRun &&
       !isOpenAi(inputs.rungModelRoute),
     reason: !inputs.offlineRungReady
       ? 'the backend, fake-slack or looker-tile is not up in real mode'
-      : !inputs.slackDoubleWired
-        ? `DAY0_TEST_SLACK_API_URL does not name the double, so the rung's Slack probe ends ungranted; set it to ${TEST_SLACK_API_URL} and re-run pnpm demo:bed up`
-        : inputs.rungAlreadyRun
-          ? 'this volume has already run the rung and its trial ids are spent; down --volumes, restore the snapshot again, then up'
-          : isOpenAi(inputs.rungModelRoute)
-            ? "the rung's onboarding would dial OpenAI, which is never called from the venue; point CONVEX_OPENAI_BASE_URL at the bundled model or the Featherless route"
-            : `backend, fake-slack and looker-tile are up in real mode, and the onboarding dials ${inputs.rungModelRoute}; model onboarding remains unverified by this checklist`,
+      : !inputs.redactorHealthy
+        ? REDACTOR_UNHEALTHY_FIX
+        : !inputs.redactorWired
+          ? REDACTOR_UNWIRED_FIX
+          : !inputs.slackDoubleWired
+            ? `DAY0_TEST_SLACK_API_URL does not name the double, so the rung's Slack probe ends ungranted; set it to ${TEST_SLACK_API_URL} and re-run pnpm demo:bed up`
+            : inputs.rungAlreadyRun
+              ? 'this volume has already run the rung and its trial ids are spent; down --volumes, restore the snapshot again, then up'
+              : isOpenAi(inputs.rungModelRoute)
+                ? "the rung's onboarding would dial OpenAI, which is never called from the venue; point CONVEX_OPENAI_BASE_URL at the bundled model or the Featherless route"
+                : `backend, fake-slack, looker-tile and the redactor are up in real mode, and the onboarding dials ${inputs.rungModelRoute}; model onboarding remains unverified by this checklist`,
   };
   let warm: TierVerdict;
   const missingSettings = (['OPENAI_MAX_OUTPUT_TOKENS', 'OPENAI_REASONING_EFFORT'] as const)
@@ -786,6 +926,329 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
     };
   }
   return [video, rung, warm];
+}
+
+/**
+ * Why a volume cannot be tarred now, if it cannot.
+ *
+ * A running container may be writing the SQLite files; a stopped one holds
+ * nothing open, so the protocol's "stop the backend for the seconds the
+ * snapshot takes" is enough.
+ *
+ * Args:
+ *   volume: The volume to read.
+ *   runningHolders: Names of running containers that have it mounted.
+ *
+ * Returns:
+ *   The refusal, or undefined when no running container holds it.
+ */
+export function snapshotRefusal(volume: string, runningHolders: readonly string[]): string | undefined {
+  if (runningHolders.length === 0) return undefined;
+  return (
+    `volume ${volume} is attached to the running ${runningHolders.join(', ')}. Stop that container first ` +
+    '(docker compose stop backend, or pnpm demo:bed down without --volumes) so the SQLite files are ' +
+    'quiescent; a tar of a live database is not a snapshot.'
+  );
+}
+
+export interface VolumeClone {
+  volume: string;
+  create: string[];
+  copy: string[];
+}
+
+export interface WarmRedactorInput {
+  /** The bed. */
+  project: string;
+  /** The project whose redactor volumes are copied; omitted means the bed's own must exist. */
+  warmFrom?: string;
+  /** `docker volume ls` on this machine. */
+  volumes: readonly string[];
+  /** The pinned node image to copy with. */
+  image: string;
+}
+
+export interface WarmRedactorPlan {
+  /** One create and one copy command per volume; empty when the bed's own are kept. */
+  clone: VolumeClone[];
+  /** The venv volume whose stamp says which wheels the redactor will find. */
+  sourceVenv: string;
+  /** What the terminal says about the choice. */
+  note: string;
+}
+
+/** Projects with both redactor volumes on this machine, sorted. */
+function warmProjects(volumes: readonly string[]): string[] {
+  const [venv, models] = REDACTOR_VOLUME_SUFFIXES;
+  return volumes
+    .filter((name: string): boolean => name.endsWith(`_${venv}`))
+    .map((name: string): string => name.slice(0, -(venv.length + 1)))
+    .filter((project: string): boolean => volumes.includes(`${project}_${models}`))
+    .sort();
+}
+
+/**
+ * How the bed gets a redactor that will not download at the venue.
+ *
+ * The images are never pulled; the redactor's wheels and model are the same
+ * hazard, so the bed's redactor volumes are either already there or cloned,
+ * read-only, from a warm project's, labelled as compose labels its own so
+ * `down --volumes` removes them with the rest. The command shapes match
+ * `redactorVolumeClone` in `scripts/rehearsal/docker.ts`.
+ *
+ * Args:
+ *   input: The bed, the warm project if any, the machine's volumes, the image.
+ *
+ * Returns:
+ *   The clone commands (none when the bed already has both volumes), the venv
+ *   volume to read the stamp from, and a line for the terminal.
+ *
+ * Raises:
+ *   Error: When the bed is protected or read-only, the warm project is
+ *     protected, is the bed itself or lacks a volume, or no warm project was
+ *     named and the bed has none of its own.
+ */
+export function warmRedactorPlan(input: WarmRedactorInput): WarmRedactorPlan {
+  assertBedProject(input.project);
+  if (input.warmFrom === input.project) {
+    throw new Error(`--warm-from ${input.warmFrom} names this bed's own project.`);
+  }
+  const own = REDACTOR_VOLUME_SUFFIXES.map((suffix: string): string => `${input.project}_${suffix}`);
+  if (own.every((volume: string): boolean => input.volumes.includes(volume))) {
+    return {
+      clone: [],
+      sourceVenv: own[0],
+      note: `${own.join(' and ')} are already present, so they are kept as they are${
+        input.warmFrom ? ` and --warm-from ${input.warmFrom} is not read` : ''
+      }`,
+    };
+  }
+  const candidates = warmProjects(input.volumes).filter(
+    (project: string): boolean => project !== input.project,
+  );
+  if (input.warmFrom === undefined) {
+    throw new Error(
+      `the redactor would install its wheels and fetch its model on first start (minutes, network), ` +
+        `because ${input.project} has no redactor volumes. Pass --warm-from <project> to clone a warm ` +
+        `project's volumes read-only; warm projects on this machine: ${
+          candidates.length > 0 ? candidates.join(', ') : 'none on this machine'
+        }.`,
+    );
+  }
+  assertNotProtected(input.warmFrom);
+  for (const suffix of REDACTOR_VOLUME_SUFFIXES) {
+    if (!input.volumes.includes(`${input.warmFrom}_${suffix}`)) {
+      throw new Error(
+        `--warm-from ${input.warmFrom}: no ${input.warmFrom}_${suffix} volume exists on this machine; ` +
+          `warm projects here: ${candidates.length > 0 ? candidates.join(', ') : 'none on this machine'}.`,
+      );
+    }
+  }
+  const clone = REDACTOR_VOLUME_SUFFIXES.map((suffix: string): VolumeClone => {
+    const volume = `${input.project}_${suffix}`;
+    return {
+      volume,
+      create: [
+        'volume',
+        'create',
+        '--label',
+        `com.docker.compose.project=${input.project}`,
+        '--label',
+        `com.docker.compose.volume=${suffix}`,
+        volume,
+      ],
+      copy: [
+        'run',
+        '--rm',
+        '-v',
+        `${input.warmFrom}_${suffix}:/from:ro`,
+        '-v',
+        `${volume}:/to`,
+        input.image,
+        'sh',
+        '-c',
+        'cp -a /from/. /to/',
+      ],
+    };
+  });
+  return {
+    clone,
+    sourceVenv: `${input.warmFrom}_${REDACTOR_VOLUME_SUFFIXES[0]}`,
+    note: `cloning ${input.warmFrom}'s redactor volumes (read-only) into ${input.project}'s`,
+  };
+}
+
+/**
+ * Why a venv must not be started on this bed, if it must not.
+ *
+ * The bed starts the redactor on the CPU (the compose default, no GPU
+ * overlay), and `redactor/start.sh` empties and rebuilds a venv whose stamp
+ * is not this checkout's CPU requirements digest: a download at the venue.
+ *
+ * Args:
+ *   device: What the venv's stamp says it was built for.
+ *   venv: The volume the stamp was read from, for the message.
+ *
+ * Returns:
+ *   The refusal, or undefined for a CPU venv of this checkout.
+ */
+export function redactorVenvRefusal(device: VenvDevice, venv: string): string | undefined {
+  switch (device) {
+    case 'cpu':
+      return undefined;
+    case 'cuda':
+      return (
+        `${venv} was built for CUDA, and the bed starts the redactor on the CPU: the start script would ` +
+        'empty it and download the CPU wheels. Warm a CPU venv first (MODEL_GPU=off pnpm redactor:up ' +
+        'under another project) and --warm-from that.'
+      );
+    case 'none':
+      return (
+        `${venv} has no requirements stamp, so the redactor would install its wheels and fetch its ` +
+        'model on first start (minutes, network). Clone a warm project with --warm-from.'
+      );
+    case 'unknown':
+      return (
+        `${venv} was built from a requirements file this checkout no longer has, so the start script ` +
+        'would rebuild it (a download). Re-warm the source project on this checkout first.'
+      );
+  }
+}
+
+export interface RungReadiness {
+  /** The bed. */
+  project: string;
+  /** Its containers, as `docker ps` lists them. */
+  services: readonly ServiceRow[];
+  /** What `.env.local` declares. */
+  values: Readonly<Record<string, string>>;
+  /** The host ports derived from the same file. */
+  ports: BedPorts;
+}
+
+/**
+ * Why the offline rung cannot run on this bed, if it cannot.
+ *
+ * The doubles must be running, the redactor healthy (real-mode documentation
+ * sync fails closed without it and the driver's folder sync would stop),
+ * the file must say real mode and name the redactor, and the project's own
+ * backend must be what publishes the port the file addresses, or the driver
+ * would deploy its agent on whatever listens there.
+ *
+ * Args:
+ *   input: The bed, its containers, the file and its ports.
+ *
+ * Returns:
+ *   The refusal naming the fix, or undefined when the rung may run.
+ */
+export function offlineRungRefusal(input: RungReadiness): string | undefined {
+  const row = (name: string): ServiceRow | undefined =>
+    input.services.find((candidate: ServiceRow): boolean => candidate.service === name);
+  for (const name of ['backend', 'fake-slack', 'looker-tile']) {
+    if (row(name)?.state !== 'running') {
+      return `${name} is not running in project ${input.project}; run pnpm demo:bed up first.`;
+    }
+  }
+  const redactorFix = redactorRefusal(row('redactor'), input.project);
+  if (redactorFix) return redactorFix;
+  if ((input.values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
+    return `DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`;
+  }
+  if (!input.values.DAY0_REDACTOR_URL) return `${REDACTOR_UNWIRED_FIX}.`;
+  const published = publishedHostPort(row('backend')?.ports ?? '', CONTAINER_BACKEND_PORT);
+  if (published === undefined) {
+    return `the backend of project ${input.project} does not publish port ${CONTAINER_BACKEND_PORT}, so nothing of this project serves ${ENV_FILE}'s port ${input.ports.backend}.`;
+  }
+  if (published !== input.ports.backend) {
+    return (
+      `the backend of project ${input.project} publishes ${CONTAINER_BACKEND_PORT} on host port ${published}, ` +
+      `but ${ENV_FILE} addresses ${input.ports.backend}; the rung would write to whatever listens there. ` +
+      `Set CONVEX_PORT and the two Convex URLs to ${published}, or bring the bed up from this file.`
+    );
+  }
+  const slack = publishedHostPort(row('fake-slack')?.ports ?? '', CONTAINER_FAKE_SLACK_PORT);
+  if (slack !== input.ports.fakeSlack) {
+    return (
+      `fake-slack in project ${input.project} publishes ${CONTAINER_FAKE_SLACK_PORT} on ` +
+      `${slack === undefined ? 'no host port' : `host port ${slack}`}, but ${ENV_FILE} addresses ` +
+      `${input.ports.fakeSlack}; the rung reads its provider call counts from there, so every ` +
+      'attempt would be measured against another project\'s double. Set FAKE_SLACK_HOST_PORT to ' +
+      `${slack ?? 'the port this project publishes'}, or bring the bed up from this file.`
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Why the redactor cannot serve the rung, if it cannot, with the fix for its state.
+ *
+ * Args:
+ *   redactor: The redactor's `docker ps` row, or undefined when there is none.
+ *   project: The bed, for the commands named.
+ *
+ * Returns:
+ *   The refusal, or undefined when the redactor reports healthy.
+ */
+export function redactorRefusal(redactor: ServiceRow | undefined, project: string): string | undefined {
+  if (redactor?.health === 'healthy') return undefined;
+  const logs = `docker compose -p ${project} --profile redactor logs redactor`;
+  if (!redactor) {
+    return (
+      `no redactor container in project ${project}, and ${REDACTOR_WHY}; run ` +
+      `pnpm demo:bed up --project ${project} --warm-from <warm project> and wait for it to report healthy.`
+    );
+  }
+  if (redactor.state !== 'running') {
+    return (
+      `the redactor is ${redactor.state} in project ${project}, and ${REDACTOR_WHY}; run ` +
+      `pnpm demo:bed up --project ${project} again (its volumes are kept) and wait for it to report healthy.`
+    );
+  }
+  if (redactor.health === 'starting') {
+    return (
+      `the redactor is still loading its model in project ${project}, and ${REDACTOR_WHY}; wait until ` +
+      `pnpm demo:bed preflight --project ${project} reports it healthy.`
+    );
+  }
+  return (
+    `the redactor is not healthy (${redactor.health}) in project ${project}, and ${REDACTOR_WHY}; read ${logs}.`
+  );
+}
+
+/**
+ * Why the rung may not write its evidence there, if it may not.
+ *
+ * A results directory is written once: the driver would overwrite the four
+ * files in place, and `evaluation/results/` is frozen evidence.
+ *
+ * Args:
+ *   out: The resolved `--out` directory.
+ *   exists: Whether anything is at that path.
+ *
+ * Returns:
+ *   The refusal, or undefined for a path nothing is at.
+ */
+export function rungOutputRefusal(out: string, exists: boolean): string | undefined {
+  if (!exists) return undefined;
+  return `${out} already exists; a results directory is written once. Pass --out <new directory>.`;
+}
+
+/**
+ * `SHA256SUMS` as `sha256sum` writes and `sha256sum -c` reads it.
+ *
+ * Args:
+ *   digests: One hex digest per file, in any order.
+ *
+ * Returns:
+ *   One `<digest>  <name>` line per file, sorted by name, newline-terminated.
+ */
+export function sha256SumsText(
+  digests: ReadonlyArray<{ name: string; digest: string }>,
+): string {
+  return [...digests]
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map(({ name, digest }): string => `${digest}  ${name}\n`)
+    .join('');
 }
 
 /* ------------------------------------------------------------------------- */
@@ -869,7 +1332,7 @@ function elapsed(startedAt: number): string {
  *   The keys to write, and nothing the file already answers.
  */
 function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPorts): void {
-  assertNotProtected(project);
+  assertBedProject(project);
   if (values.COMPOSE_PROJECT_NAME && values.COMPOSE_PROJECT_NAME !== project) {
     throw new Error(`The file names project ${values.COMPOSE_PROJECT_NAME}, not ${project}.`);
   }
@@ -908,12 +1371,45 @@ export function bedEnvDefaults(
     derived.NEXT_PUBLIC_CONVEX_SITE_URL = `http://127.0.0.1:${ports.site}`;
   if (profiles.includes('browser') && !values.DAY0_BROWSER_MCP_URL)
     derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
+  if (profiles.includes('redactor') && !values.DAY0_REDACTOR_URL)
+    derived.DAY0_REDACTOR_URL = REDACTOR_URL;
   if (profiles.includes('test')) {
     if (!values.DAY0_TEST_SLACK_API_URL) derived.DAY0_TEST_SLACK_API_URL = TEST_SLACK_API_URL;
     if (!values.DAY0_TEST_SLACK_AUTHORIZE_URL)
       derived.DAY0_TEST_SLACK_AUTHORIZE_URL = `http://127.0.0.1:${ports.fakeSlack}/oauth/v2/authorize`;
   }
   return derived;
+}
+
+/**
+ * The host addresses to put back after a push.
+ *
+ * `convex dev --once` writes its own `NEXT_PUBLIC_CONVEX_URL` and
+ * `NEXT_PUBLIC_CONVEX_SITE_URL` lines, and a self-hosted backend answers with
+ * its container ports, so a bed published on 47210/47211 ends the push
+ * declaring 3211; the checklist then refuses the file the push just wrote.
+ * The same correction `scripts/setup.ts` makes.
+ *
+ * Args:
+ *   values: The env file after the push.
+ *   ports: The host ports this bed publishes.
+ *
+ * Returns:
+ *   The lines to write; empty when the CLI left them alone.
+ */
+export function publicUrlCorrections(
+  values: Readonly<Record<string, string>>,
+  ports: BedPorts,
+): Record<string, string> {
+  const wanted: Record<string, string> = {
+    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports.backend}`,
+    NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${ports.site}`,
+  };
+  const corrections: Record<string, string> = {};
+  for (const [name, value] of Object.entries(wanted)) {
+    if ((values[name] ?? '') !== value) corrections[name] = value;
+  }
+  return corrections;
 }
 
 /** Everything the bed's child processes see: the shell, then the file, then the project. */
@@ -944,7 +1440,7 @@ function projectServices(project: string): ServiceRow[] | undefined {
       '--filter',
       `label=com.docker.compose.project=${project}`,
       '--format',
-      '{{.Label "com.docker.compose.service"}}\t{{.State}}\t{{.Status}}',
+      '{{.Label "com.docker.compose.service"}}\t{{.State}}\t{{.Status}}\t{{.Ports}}',
     ],
     { timeoutMs: 15_000 },
   );
@@ -956,16 +1452,73 @@ function volumeExists(name: string): boolean {
   return run('docker', ['volume', 'inspect', name], { timeoutMs: 15_000 }).status === 0;
 }
 
+/** Containers that have the volume mounted; stopped ones still pin it for `docker volume rm`. */
 function volumeInUse(name: string): string[] {
-  const result = run(
-    'docker',
-    ['ps', '-a', '--filter', `volume=${name}`, '--format', '{{.Names}}'],
-    { timeoutMs: 15_000 },
+  return volumeHolders(name, true);
+}
+
+/** Running containers that have the volume mounted, the ones that may be writing it. */
+function volumeHeldByRunning(name: string): string[] {
+  return volumeHolders(name, false);
+}
+
+function volumeHolders(name: string, includeStopped: boolean): string[] {
+  const result = must(
+    run(
+      'docker',
+      ['ps', ...(includeStopped ? ['-a'] : []), '--filter', `volume=${name}`, '--format', '{{.Names}}'],
+      { timeoutMs: 15_000 },
+    ),
+    'docker ps',
   );
   return result.stdout
     .split('\n')
     .map((line: string): string => line.trim())
     .filter(Boolean);
+}
+
+/** Every volume on this machine; empty when the daemon cannot be asked. */
+function volumeNames(): string[] {
+  const result = run('docker', ['volume', 'ls', '--format', '{{.Name}}'], { timeoutMs: 15_000 });
+  if (result.status !== 0) return [];
+  return result.stdout
+    .split('\n')
+    .map((line: string): string => line.trim())
+    .filter(Boolean);
+}
+
+/** The stamp on a venv volume, read through a read-only mount; `none` when the volume is empty. */
+function redactorVenvDevice(volume: string, image: string): VenvDevice {
+  const stamp = run('docker', venvStampCommand(volume, image), { timeoutMs: 120_000 });
+  return venvDevice(stamp.status === 0 ? stamp.stdout : undefined, requirementsDigests('.'));
+}
+
+async function waitForRedactor(project: string, timeoutMs: number = 600_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let announced = false;
+  for (;;) {
+    const row = (projectServices(project) ?? []).find(
+      (candidate: ServiceRow): boolean => candidate.service === 'redactor',
+    );
+    if (row?.health === 'healthy') return;
+    if (!row || row.state !== 'running') {
+      throw new Error(
+        `the redactor is ${row ? row.state : 'absent'} in project ${project}; read ` +
+          `docker compose -p ${project} --profile redactor logs redactor`,
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `the redactor did not report healthy within ${timeoutMs / 1000} s (last: ${row.health}); read ` +
+          `docker compose -p ${project} --profile redactor logs redactor`,
+      );
+    }
+    if (!announced) {
+      log('      waiting for the redactor to load its model (under a minute on a warm volume)');
+      announced = true;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000));
+  }
 }
 
 function sha256(path: string): string {
@@ -1039,13 +1592,8 @@ function deploymentEnv(env: Values): Values {
 function snapshot(options: DemoBedOptions): void {
   const source = options.fromVolume;
   if (!volumeExists(source)) throw new Error(`volume ${source} does not exist on this machine.`);
-  const users = volumeInUse(source);
-  if (users.length > 0) {
-    throw new Error(
-      `volume ${source} is attached to ${users.join(', ')}. Stop that backend first (without -v) so ` +
-        'the SQLite files are quiescent; a tar of a live database is not a snapshot.',
-    );
-  }
+  const refusal = snapshotRefusal(source, volumeHeldByRunning(source));
+  if (refusal) throw new Error(refusal);
   const target = resolve(options.snapshot ?? `${KIT_DIR}/snapshots/${source}-${stamp()}.tar.gz`);
   const directory = dirname(target);
   mkdirSync(directory, { recursive: true });
@@ -1067,6 +1615,7 @@ function snapshot(options: DemoBedOptions): void {
 /* --------------------------------- restore --------------------------------- */
 
 function restore(options: DemoBedOptions): void {
+  const target = restoreTargetVolume(options.project);
   if (!options.snapshot) throw new Error('restore needs --snapshot <file>.');
   const source = resolve(options.snapshot);
   if (!existsSync(source)) throw new Error(`${source} does not exist.`);
@@ -1081,7 +1630,6 @@ function restore(options: DemoBedOptions): void {
   } else {
     log(`note: no ${basename(sidecar)} beside the snapshot, so its integrity is not checked.`);
   }
-  const target = restoreTargetVolume(options.project);
   if (volumeExists(target)) {
     if (!options.replace) {
       throw new Error(
@@ -1124,7 +1672,7 @@ function restore(options: DemoBedOptions): void {
 /* ----------------------------------- up ------------------------------------ */
 
 async function up(options: DemoBedOptions): Promise<void> {
-  assertNotProtected(options.project);
+  assertBedProject(options.project);
   if (!existsSync(ENV_FILE)) {
     throw new Error(
       `${ENV_FILE} not found. Copy .env.example to ${ENV_FILE} and fill in the bed's values first.`,
@@ -1139,28 +1687,58 @@ async function up(options: DemoBedOptions): Promise<void> {
     );
   }
   const derived = bedEnvDefaults(options.project, options.profiles, values, ports);
-  if (Object.keys(derived).length > 0) {
-    writeEnvValues(derived);
-    log(`Wrote ${Object.keys(derived).join(', ')} to ${ENV_FILE}.`);
-  }
   if (values.CONVEX_DEPLOYMENT) {
     throw new Error(
       `${ENV_FILE} carries CONVEX_DEPLOYMENT=${values.CONVEX_DEPLOYMENT}. A self-hosted bed must not; ` +
         'remove that line (and any .convex/ directory an anonymous deployment left) before continuing.',
     );
   }
+
+  // Decided before anything is written: a bed that would download, or a
+  // warm project this kit may not read, is refused with the file untouched.
+  let plan: WarmRedactorPlan | undefined;
+  if (options.profiles.includes('redactor')) {
+    const image = tarImage();
+    const volumes = volumeNames();
+    if (volumes.length === 0) throw new Error('docker volume ls did not answer; is the daemon up?');
+    plan = warmRedactorPlan({
+      project: options.project,
+      warmFrom: options.warmFrom,
+      volumes,
+      image,
+    });
+    const refusal = redactorVenvRefusal(redactorVenvDevice(plan.sourceVenv, image), plan.sourceVenv);
+    if (refusal) throw new Error(refusal);
+  }
+
+  if (Object.keys(derived).length > 0) {
+    writeEnvValues(derived);
+    log(`Wrote ${Object.keys(derived).join(', ')} to ${ENV_FILE}.`);
+  }
   const env = bedEnvironment(options, readEnvFile());
 
   const startedAt = Date.now();
-  log(`[1/8] Keys: pnpm dev:no-auth-key (no-op when ${ENV_FILE} already has them)`);
+  log(`[1/10] Keys: pnpm dev:no-auth-key (no-op when ${ENV_FILE} already has them)`);
   must(
     run('pnpm', ['exec', 'tsx', 'scripts/dev-no-auth-key.ts', 'init'], { env, inherit: true }),
     'dev:no-auth-key',
   );
   values = readEnvFile();
 
+  log('[2/10] Redactor volumes: present, or cloned read-only from --warm-from, never downloaded');
+  if (plan) {
+    log(`      ${plan.note}`);
+    for (const step of plan.clone) {
+      must(run('docker', step.create, { timeoutMs: 60_000 }), `docker volume create ${step.volume}`);
+      must(run('docker', step.copy, { timeoutMs: 900_000 }), `copy into ${step.volume}`);
+      log(`      ${step.volume}`);
+    }
+  } else {
+    log('      the redactor profile is off, so nothing to prepare');
+  }
+
   log(
-    `[2/8] Documentation directory, then compose up (${options.profiles.join(', ')}), images never pulled`,
+    `[3/10] Documentation directory, then compose up (${options.profiles.join(', ')}), images never pulled`,
   );
   must(
     run('pnpm', ['exec', 'tsx', 'scripts/dev-docs-dir.ts'], {
@@ -1179,7 +1757,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   const version = await waitForBackend(ports.backend);
   log(`      backend ${version} on 127.0.0.1:${ports.backend} after ${elapsed(startedAt)}`);
 
-  log("[3/8] Admin key from the volume's own instance secret");
+  log("[4/10] Admin key from the volume's own instance secret");
   const keyResult = must(
     run(
       'docker',
@@ -1208,7 +1786,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   }
   values = readEnvFile();
 
-  log("[4/8] What the volume's deployment already carries");
+  log("[5/10] What the volume's deployment already carries");
   const deployment = deploymentEnv(bedEnvironment(options, values));
   const adopt = credentialKeyToAdopt(
     values.DAY0_CREDENTIAL_KEY ?? '',
@@ -1241,13 +1819,13 @@ async function up(options: DemoBedOptions): Promise<void> {
   if (!adopt && stale.length === 0) log('      nothing to adopt or clear');
   const pushEnv = bedEnvironment(options, values);
 
-  log('[5/8] Deployment env: ./scripts/sync-convex-env.sh');
+  log('[6/10] Deployment env: ./scripts/sync-convex-env.sh');
   must(
     run('bash', ['scripts/sync-convex-env.sh', ENV_FILE], { env: pushEnv, inherit: true }),
     'sync:env',
   );
 
-  log('[6/8] Functions: convex dev --once');
+  log('[7/10] Functions: convex dev --once');
   const pushStartedAt = Date.now();
   must(
     run('pnpm', ['exec', 'convex', 'dev', '--once', '--typecheck', 'disable'], {
@@ -1257,8 +1835,16 @@ async function up(options: DemoBedOptions): Promise<void> {
     'convex dev --once',
   );
   log(`      pushed in ${elapsed(pushStartedAt)}`);
+  const corrections = publicUrlCorrections(readEnvFile(), ports);
+  if (Object.keys(corrections).length > 0) {
+    writeEnvValues(corrections);
+    log(
+      `      the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's own ` +
+        'container ports; put back the host addresses this bed publishes',
+    );
+  }
 
-  log('[7/8] Restart the backend so the pushed env is what the modules read');
+  log('[8/10] Restart the backend so the pushed env is what the modules read');
   must(
     run('docker', [...composeArgs(options, ['real']), 'restart', 'backend'], {
       env: pushEnv,
@@ -1268,9 +1854,18 @@ async function up(options: DemoBedOptions): Promise<void> {
   );
   await waitForBackend(ports.backend);
 
+  log('[9/10] The redactor reports healthy, or real-mode documentation sync fails closed');
+  if (options.profiles.includes('redactor')) {
+    const redactorStartedAt = Date.now();
+    await waitForRedactor(options.project);
+    log(`      healthy after ${elapsed(redactorStartedAt)}`);
+  } else {
+    log('      the redactor profile is off; the offline rung will refuse');
+  }
+
   if (options.reset) {
     log(
-      `[8/8] Reset the local boss's agents${options.unlink ? ', documentation and credentials' : ''}`,
+      `[10/10] Reset the local boss's agents${options.unlink ? ', documentation and credentials' : ''}`,
     );
     const boss = await bossClient(values);
     if ('reason' in boss) throw new Error(`cannot reset: ${boss.reason}`);
@@ -1280,7 +1875,7 @@ async function up(options: DemoBedOptions): Promise<void> {
     });
     log(`      deleted ${result.deleted} agent(s), unlinked ${result.unlinkedSources} source(s)`);
   } else {
-    log("[8/8] No reset asked for; the volume's agents stay");
+    log("[10/10] No reset asked for; the volume's agents stay");
   }
   log(`Up in ${elapsed(startedAt)}.`);
   if (options.preflight) {
@@ -1549,6 +2144,44 @@ async function preflight(options: DemoBedOptions): Promise<number> {
       : 'playwright-mcp is not running; the recorded tile card flips to ungranted on the next probe',
   });
 
+  const redactorRow = services?.find((row: ServiceRow): boolean => row.service === 'redactor');
+  const redactorHealthy = redactorRow?.health === 'healthy';
+  const redactorWired =
+    !!values.DAY0_REDACTOR_URL &&
+    (Object.keys(deployment).length === 0 || !!deployment.DAY0_REDACTOR_URL);
+  items.push({
+    label: 'Redactor component',
+    status: redactorHealthy && redactorWired ? 'ok' : 'gap',
+    detail: [
+      redactorRefusal(redactorRow, options.project) ?? 'the redactor reports healthy',
+      ...(redactorHealthy
+        ? []
+        : [
+            `warm projects on this machine: ${
+              warmProjects(volumeNames())
+                .filter((project: string): boolean => project !== options.project)
+                .join(', ') || 'none'
+            }`,
+          ]),
+      redactorWired
+        ? `DAY0_REDACTOR_URL names ${values.DAY0_REDACTOR_URL}${Object.keys(deployment).length === 0 ? ' (deployment not read)' : ' on both sides'}`
+        : REDACTOR_UNWIRED_FIX,
+    ].join('\n'),
+  });
+
+  const backendRow = services?.find((row: ServiceRow): boolean => row.service === 'backend');
+  const publishedBackend = backendRow ? publishedHostPort(backendRow.ports, CONTAINER_BACKEND_PORT) : undefined;
+  items.push({
+    label: `Backend port belongs to project ${options.project}`,
+    status: publishedBackend === ports.backend ? 'ok' : 'gap',
+    detail:
+      publishedBackend === ports.backend
+        ? `its backend publishes ${CONTAINER_BACKEND_PORT} on 127.0.0.1:${ports.backend}, the port ${ENV_FILE} addresses`
+        : backendRow
+          ? `its backend publishes ${CONTAINER_BACKEND_PORT} on ${publishedBackend ?? 'no host port'}, but ${ENV_FILE} addresses ${ports.backend}; the rung would write to whatever listens there`
+          : `no backend container; ${ENV_FILE} addresses ${ports.backend}, which nothing of this project serves`,
+  });
+
   const rungReady =
     surfaceMode === 'real' && !!version && healthy('fake-slack') && healthy('looker-tile');
   const slackDouble = values.DAY0_TEST_SLACK_API_URL ?? '';
@@ -1632,6 +2265,8 @@ async function preflight(options: DemoBedOptions): Promise<number> {
     offlineRungReady: rungReady,
     slackDoubleWired: !!slackDouble,
     rungAlreadyRun: spent,
+    redactorHealthy,
+    redactorWired,
     rungModelRoute: deployment.OPENAI_BASE_URL ?? '',
     deploymentModelSettings: deployment,
     backendHealthy: !!version,
@@ -1646,22 +2281,20 @@ async function preflight(options: DemoBedOptions): Promise<number> {
 /* ------------------------------- offline rung ------------------------------ */
 
 async function offlineRung(options: DemoBedOptions): Promise<void> {
-  assertNotProtected(options.project);
+  assertBedProject(options.project);
   const values = readEnvFile();
-  assertBedTarget(options.project, values, bedPorts(values));
-  const services = projectServices(options.project) ?? [];
-  for (const name of ['backend', 'fake-slack', 'looker-tile']) {
-    if (
-      !services.some((row: ServiceRow): boolean => row.service === name && row.state === 'running')
-    ) {
-      throw new Error(
-        `${name} is not running in project ${options.project}; run pnpm demo:bed up first.`,
-      );
-    }
-  }
-  if ((values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
-    throw new Error(`DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`);
-  }
+  const ports = bedPorts(values);
+  assertBedTarget(options.project, values, ports);
+  const refusal = offlineRungRefusal({
+    project: options.project,
+    services: projectServices(options.project) ?? [],
+    values,
+    ports,
+  });
+  if (refusal) throw new Error(refusal);
+  const out = resolve(options.out ?? `${KIT_DIR}/revocation-${stamp()}`);
+  const outRefusal = rungOutputRefusal(out, existsSync(out));
+  if (outRefusal) throw new Error(outRefusal);
   const boss = await bossClient(values);
   if (!('reason' in boss)) {
     const { api } = await import('../convex/_generated/api');
@@ -1681,8 +2314,6 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
       );
     }
   }
-  const ports = bedPorts(values);
-  const out = resolve(options.out ?? `${KIT_DIR}/revocation-${stamp()}`);
   const env: Values = {
     ...bedEnvironment(options, values),
     DAY0_EVAL_COMPOSE_PROJECT: options.project,
@@ -1699,24 +2330,35 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
   const took = elapsed(startedAt);
   if (result.status !== 0)
     throw new Error(`eval:revocation failed after ${took} (status ${result.status}).`);
-  const report = `${out}/trials.md`;
+  const missing = RUNG_OUTPUT_FILES.filter((name: string): boolean => !existsSync(`${out}/${name}`));
+  if (missing.length > 0) {
+    throw new Error(`eval:revocation returned without writing ${missing.join(', ')} in ${out}.`);
+  }
+  writeFileSync(
+    `${out}/SHA256SUMS`,
+    sha256SumsText(
+      RUNG_OUTPUT_FILES.map((name: string): { name: string; digest: string } => ({
+        name,
+        digest: sha256(`${out}/${name}`),
+      })),
+    ),
+    'utf8',
+  );
   log('');
   log(`Wall clock: ${took}`);
-  if (existsSync(report))
-    for (const line of revocationSummary(readFileSync(report, 'utf8'))) log(line);
+  for (const line of revocationSummary(readFileSync(`${out}/trials.md`, 'utf8'))) log(line);
+  log(`Wrote ${out}/SHA256SUMS over ${RUNG_OUTPUT_FILES.join(', ')}; check with: (cd ${out} && sha256sum -c SHA256SUMS)`);
 }
 
 /* ---------------------------------- down ----------------------------------- */
 
 function down(options: DemoBedOptions): void {
-  assertNotProtected(options.project);
+  assertBedProject(options.project);
   const values = readEnvFile();
   const profiles = Object.keys(PROFILES);
   const args = [...composeArgs(options, profiles), 'down'];
   if (options.volumes) {
-    for (const suffix of ['convex_data', 'sandbox_socket', 'model_data']) {
-      assertNotProtected(`${options.project}_${suffix}`);
-    }
+    projectVolumeNames(options.project);
     args.push('--volumes');
   }
   must(
