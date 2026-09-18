@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 const README = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8');
 const EVALUATE = readFileSync(new URL('../../../src/work/evaluate.ts', import.meta.url), 'utf8');
 const AGENTS = readFileSync(new URL('../../../convex/agents.ts', import.meta.url), 'utf8');
+const DOC_SOURCES = readFileSync(new URL('../../../convex/docSources.ts', import.meta.url), 'utf8');
 
 /** Where the Chinese half of the README starts. */
 const CHINESE_HEADING = '\n## 中文说明\n';
@@ -113,5 +114,21 @@ describe('the grants a deploy seeds', (): void => {
     for (const scope of mockDeployScopes()) {
       expect(README).toContain(`\`${scope}\``);
     }
+  });
+});
+
+describe('what the company bed stores once both sources are linked', (): void => {
+  it('counts the source’s own connection secret, which linking an MCP source stores', (): void => {
+    // A reader who checks `npx convex data credentials` against this sentence
+    // finds a fourth row: linking an MCP source stores the secret typed into
+    // the form, under the source's label.
+    expect(DOC_SOURCES).toContain('label: `${input.label} connection secret`');
+    const { english, chinese } = halves();
+    for (const half of [english, chinese]) {
+      expect(half).not.toContain('are the only credentials stored');
+      expect(half).not.toContain('存储的凭据只有');
+    }
+    expect(english).toContain('connection secret is stored beside them');
+    expect(chinese).toContain('连接密钥');
   });
 });
