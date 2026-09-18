@@ -767,14 +767,15 @@ type SatisfiedTrigger = 'verdict-write' | 'check';
  *   now: The instant to judge surface liveness against.
  *
  * Returns:
- *   The key of what satisfies the verdict, or undefined while it still waits.
+ *   The key of what satisfies the verdict and what landed, in words for the
+ *   card, or undefined while it still waits.
  */
 async function waitSatisfiedBy(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   verdict: WaitingVerdict,
   now: number,
-): Promise<string | undefined> {
+): Promise<{ key: string; landed: string } | undefined> {
   if (verdict.decision === 'defer' && verdict.reason === 'awaiting-connection') {
     const missing = verdict.missingSurface;
     if (missing === undefined) return undefined;
@@ -792,7 +793,9 @@ async function waitSatisfiedBy(
         verdictFor(surface, now) === 'connected' &&
         missingSurfaceResolvedBy(missing, surface, surfaces),
     );
-    return live ? `surface:${live._id}:${live.lastVerifiedAt}` : undefined;
+    return live
+      ? { key: `surface:${live._id}:${live.lastVerifiedAt}`, landed: `${missing} connected` }
+      : undefined;
   }
   if (verdict.decision === 'defer' && verdict.reason === 'awaiting-permission') {
     const scopes = [...new Set(verdict.missingPermissions ?? [])].sort();
@@ -808,7 +811,7 @@ async function waitSatisfiedBy(
       if (!grant) return undefined;
       grants.push(grant._id);
     }
-    return `grants:${grants.join(',')}`;
+    return { key: `grants:${grants.join(',')}`, landed: `${scopes.join(', ')} granted` };
   }
   if (verdict.decision === 'needs-skill' && typeof verdict.suggestedSkillName === 'string') {
     const name = verdict.suggestedSkillName;
@@ -818,7 +821,9 @@ async function waitSatisfiedBy(
         .withIndex('by_agent_name', (index) => index.eq('agentId', agentId).eq('name', name))
         .collect()
     ).find((row) => row.state === 'registered');
-    return skill ? `skill:${skill._id}:${skill.registeredAt}` : undefined;
+    return skill
+      ? { key: `skill:${skill._id}:${skill.registeredAt}`, landed: `the skill ${name} registered` }
+      : undefined;
   }
   return undefined;
 }
@@ -913,13 +918,13 @@ export async function applyVerdict(
   if (SURFACE_MODE === 'real' && !isRevocationTrialRow(row)) {
     const at = Date.now();
     const waited = effective as WaitingVerdict;
-    const key = await waitSatisfiedBy(ctx, row.agentId, waited, at);
-    if (key !== undefined && row.reevaluation?.key !== key) {
-      readmission = { key, waited, at };
+    const satisfied = await waitSatisfiedBy(ctx, row.agentId, waited, at);
+    if (satisfied && row.reevaluation?.key !== satisfied.key) {
+      readmission = { key: satisfied.key, waited, at };
       effective = {
         decision: 'pending-reevaluation',
-        reason: `what the evaluation waited on landed while it ran: ${key}`,
-        superseded: proposed,
+        reason: `${satisfied.landed} while this was being evaluated`,
+        superseded: effective,
       };
     }
   }

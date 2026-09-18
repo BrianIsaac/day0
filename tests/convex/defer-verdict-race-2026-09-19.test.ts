@@ -317,7 +317,11 @@ describe('a connection that lands between an evaluation\'s read and its verdict'
       workItemId,
       verdict: deferOnTile,
     });
-    expect(first.decision).toBe('pending-reevaluation');
+    expect(first).toMatchObject({
+      decision: 'pending-reevaluation',
+      reason: 'looker-pipeline-tile connected while this was being evaluated',
+      superseded: deferOnTile,
+    });
     const readmitted = await readItem(harness, workItemId);
     expect(readmitted.state).toBe('discovered');
     expect(readmitted.reevaluation?.trigger).toBe('verdict-write');
@@ -418,7 +422,10 @@ describe('the other verdicts that wait on something', (): void => {
     const workItemId = await insertRow(harness, agentId, 'REVOPS-27');
 
     const first = await harness.mutation(internal.work.setVerdict, { workItemId, verdict });
-    expect(first.decision).toBe('pending-reevaluation');
+    expect(first).toMatchObject({
+      decision: 'pending-reevaluation',
+      reason: 'boss:message, linear:read granted while this was being evaluated',
+    });
     expect((await readItem(harness, workItemId)).state).toBe('discovered');
 
     const second = await harness.mutation(internal.work.setVerdict, { workItemId, verdict });
