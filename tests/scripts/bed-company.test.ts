@@ -15,6 +15,7 @@ import {
 } from '../../scripts/bed/company';
 import { MANIFEST_FILE } from '../../scripts/bed/docs';
 import { LABEL_DESCRIPTION, markedDescription } from '../../scripts/bed/linear';
+import { RETRY_PAUSE_MS } from '../../scripts/rehearsal/linear';
 import { comparePage, NOTION_READER_SCRIPT, parseNotionRead } from '../../scripts/bed/notion';
 import { loadBedSpec } from '../../scripts/bed/spec';
 import { DOCS_STUB } from '../../scripts/setup';
@@ -45,6 +46,14 @@ interface FakeIssue {
   comments: Array<{ id: string; body: string; createdAt: string }>;
 }
 
+/**
+ * One injected failure of a named document: a timeout before or after the
+ * call landed, or an HTTP answer with its own status, headers and body.
+ */
+type LinearFault =
+  | { kind: 'timeout'; landed?: boolean }
+  | { kind: 'status'; status: number; headers?: Record<string, string>; body?: unknown };
+
 class FakeLinear {
   teams = [
     { key: 'REVOPS', name: 'RevOps', project: 'Q3 close' },
@@ -61,6 +70,7 @@ class FakeLinear {
   issues: FakeIssue[] = [];
   operations: string[] = [];
   failOn?: string;
+  private faults = new Map<string, LinearFault[]>();
   private next = 1;
   private numbers = new Map<string, number>();
 
@@ -72,8 +82,33 @@ class FakeLinear {
     if (operation === this.failOn) {
       return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), { status: 200 });
     }
-    return new Response(JSON.stringify({ data: this.answer(operation, body.variables ?? {}) }), { status: 200 });
+    const fault = this.faults.get(operation)?.shift();
+    if (fault?.kind === 'timeout') {
+      if (fault.landed) this.answer(operation, body.variables ?? {});
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    }
+    if (fault?.kind === 'status') {
+      const text = typeof fault.body === 'string' ? fault.body : JSON.stringify(fault.body ?? {});
+      return new Response(text, { status: fault.status, headers: fault.headers });
+    }
+    let data: unknown;
+    try {
+      data = this.answer(operation, body.variables ?? {});
+    } catch (error) {
+      return new Response(JSON.stringify({ errors: [{ message: (error as Error).message }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data }), { status: 200 });
   }) as typeof fetch;
+
+  /** Fail the next calls of one named document, one fault per call, in order. */
+  fail(operation: string, ...faults: LinearFault[]): void {
+    this.faults.set(operation, [...(this.faults.get(operation) ?? []), ...faults]);
+  }
+
+  /** How many times a named document was sent. */
+  count(operation: string): number {
+    return this.operations.filter((candidate) => candidate === operation).length;
+  }
 
   addIssue(issue: Partial<FakeIssue> & { team: string; title: string }): FakeIssue {
     const number = (this.numbers.get(issue.team) ?? 0) + 1;
@@ -133,6 +168,7 @@ class FakeLinear {
         return { issueLabelCreate: { success: true, issueLabel: { id: label.id } } };
       }
       case 'BedLabelDelete':
+        if (!this.labels.some((label) => label.id === variables.id)) throw new Error('Entity not found: IssueLabel');
         this.labels = this.labels.filter((label) => label.id !== variables.id);
         for (const issue of this.issues) issue.labelIds = issue.labelIds.filter((id) => id !== variables.id);
         return { issueLabelDelete: { success: true } };
@@ -245,6 +281,8 @@ class FakeSlack {
   ims = [{ id: 'D1', is_im: true }];
   messages = new Map<string, FakeMessage[]>();
   deleted: Array<{ channel: string; ts: string }> = [];
+  /** Methods, or `method channel`, that answer an error instead. */
+  failing = new Set<string>();
 
   fetch: typeof fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     expect((init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${SLACK_TOKEN}`);
@@ -254,6 +292,7 @@ class FakeSlack {
     const reply = (value: unknown): Response => new Response(JSON.stringify(value), { status: 200, headers });
     const channel = url.searchParams.get('channel') ?? '';
     const all = this.messages.get(channel) ?? [];
+    if (this.failing.has(method) || this.failing.has(`${method} ${channel}`)) return reply({ ok: false, error: 'internal_error' });
     switch (method) {
       case 'auth.test':
         return reply({ ok: true, team: 'day0', user_id: BOT_USER, bot_id: BOT_ID });
@@ -280,6 +319,7 @@ class FakeSlack {
       }
       case 'chat.delete': {
         const body = JSON.parse(String(init?.body)) as { channel: string; ts: string };
+        if (this.failing.has(`chat.delete ${body.channel}`)) return reply({ ok: false, error: 'internal_error' });
         const list = this.messages.get(body.channel) ?? [];
         const target = list.find((message) => message.ts === body.ts);
         if (!target || target.bot_id !== BOT_ID || target.impersonated) return reply({ ok: false, error: 'cant_delete_message' });
@@ -308,6 +348,7 @@ interface Harness {
   linear: FakeLinear;
   slack: FakeSlack;
   clock: { now: number };
+  sleeps: number[];
 }
 
 const roots: string[] = [];
@@ -332,6 +373,7 @@ function harness(env: Record<string, string> = {}, docker: (args: string[]) => R
   const linear = new FakeLinear();
   const slack = new FakeSlack();
   const clock = { now: Date.parse('2026-09-18T01:00:00Z') };
+  const sleeps: number[] = [];
   const io: CompanyIo = {
     cwd: root,
     env: {
@@ -357,8 +399,12 @@ function harness(env: Record<string, string> = {}, docker: (args: string[]) => R
       logs.push(line);
     },
     now: (): number => clock.now,
+    sleep: async (ms: number): Promise<void> => {
+      sleeps.push(ms);
+      clock.now += ms;
+    },
   };
-  return { root, io, logs, runs, linear, slack, clock };
+  return { root, io, logs, runs, linear, slack, clock, sleeps };
 }
 
 async function run(h: Harness, argv: string[]): Promise<number> {
@@ -715,6 +761,229 @@ describe('teardown', (): void => {
     await run(h, ['seed']);
     await run(h, ['teardown']);
     expect(h.linear.labels).toEqual([{ id: 'label-own', name: 'day0-demo', description: 'made by hand' }]);
+  });
+});
+
+describe('a transient Linear failure in teardown and seed', (): void => {
+  const ONE_EACH = ['revops-tile', 'fin-status', 'fin-accruals', 'fin-bankrec', 'log-sh4471'];
+  const log = (h: Harness): string => h.logs.join('\n');
+  const marked = (h: Harness): FakeIssue[] => h.linear.issues.filter((issue) => issue.description.includes('day0-demo-key: '));
+  const allArchived = (h: Harness): boolean => marked(h).every((issue) => issue.archivedAt !== null);
+  const stateKept = (h: Harness): boolean => existsSync(join(h.root, STATE_FILE));
+  const later = (seconds: number): string => `${1789693200 + seconds}.000100`;
+  const timedOut = (): DOMException => new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+
+  async function seeded(): Promise<Harness> {
+    const h = harness();
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    h.linear.operations = [];
+    h.logs.length = 0;
+    return h;
+  }
+
+  it('retries the label delete that timed out, then cleans Slack and finishes first try (F4)', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.linear.fail('BedLabelDelete', { kind: 'timeout' });
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(log(h)).toContain('  note retrying label delete after a timeout');
+    expect(log(h)).toContain('  ok   deleted label day0-demo, which seed created');
+    expect(h.linear.labels).toEqual([]);
+    expect(allArchived(h)).toBe(true);
+    expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
+    expect(h.sleeps).toEqual([RETRY_PAUSE_MS]);
+    expect(log(h)).toContain('Torn down.');
+    expect(stateKept(h)).toBe(false);
+  });
+
+  it('reports a label the timed-out delete removed as gone, and never sends the delete twice', async (): Promise<void> => {
+    const h = await seeded();
+    h.linear.fail('BedLabelDelete', { kind: 'timeout', landed: true });
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.linear.count('BedLabelDelete')).toBe(1);
+    expect(log(h)).toContain('  note the first label delete landed before the timeout; not sent again');
+    expect(log(h)).not.toContain('GAP');
+    expect(h.linear.labels).toEqual([]);
+  });
+
+  it('does not archive a ticket twice when the first archive landed before the timeout', async (): Promise<void> => {
+    const h = await seeded();
+    h.linear.fail('BedIssueArchive', { kind: 'timeout', landed: true });
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.linear.count('BedIssueArchive')).toBe(ONE_EACH.length);
+    expect(log(h)).toMatch(/note retrying [A-Z]+-\d+ archive after a timeout/);
+    expect(log(h)).toMatch(/note the first [A-Z]+-\d+ archive landed before the timeout; not sent again/);
+    expect(allArchived(h)).toBe(true);
+  });
+
+  it('reads the bed again after a 503 whose body is not JSON', async (): Promise<void> => {
+    const h = await seeded();
+    h.linear.fail('BedIssues', { kind: 'status', status: 503, body: '<html>Service Unavailable</html>' });
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(log(h)).toContain('  note retrying ticket read after HTTP 503');
+    expect(allArchived(h)).toBe(true);
+  });
+
+  it('names a call that times out twice, still cleans Slack, keeps the state, and a second run finishes', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.linear.fail('BedLabelDelete', { kind: 'timeout' }, { kind: 'timeout' });
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(log(h)).toContain('  GAP  label delete failed twice: a timeout, then a timeout');
+    expect(h.linear.labels).toHaveLength(1);
+    expect(allArchived(h)).toBe(true);
+    expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
+    expect(stateKept(h)).toBe(true);
+    expect(log(h)).toContain('run teardown again');
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.linear.labels).toEqual([]);
+    expect(stateKept(h)).toBe(false);
+  });
+
+  it('archives the other tickets when one archive fails twice', async (): Promise<void> => {
+    const h = await seeded();
+    h.linear.fail('BedIssueArchive', { kind: 'timeout' }, { kind: 'timeout' });
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(marked(h).filter((issue) => issue.archivedAt === null)).toHaveLength(1);
+    expect(log(h)).toMatch(/GAP {2}[A-Z]+-\d+ archive failed twice: a timeout, then a timeout/);
+    expect(h.linear.labels).toEqual([]);
+    expect(stateKept(h)).toBe(true);
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(allArchived(h)).toBe(true);
+  });
+
+  it('does not wait out a rate limit longer than its cap; it says so and carries on to Slack', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.linear.fail('BedLabelDelete', { kind: 'status', status: 429, headers: { 'Retry-After': '1800' }, body: {} });
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(h.sleeps).toEqual([]);
+    expect(log(h)).toContain(
+      '  GAP  label delete failed: Linear asked to wait 1800 s after HTTP 429, longer than the 60 s a retry waits',
+    );
+    expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
+    expect(stateKept(h)).toBe(true);
+  });
+
+  it('cleans the other Slack conversations when one cannot be read or one delete fails', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('C1', { ts: later(5), text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('C3', { ts: later(6), text: `Accruals booked.\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', { ts: later(7), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.failing.add('conversations.history C1');
+    h.slack.failing.add('chat.delete C3');
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(log(h)).toContain('  GAP  #revops-asks was not read (Slack conversations.history: internal_error)');
+    expect(log(h)).toContain(`  GAP  #finance-close message ${later(6)} was not deleted (Slack chat.delete: internal_error)`);
+    expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(7) }]);
+    expect(stateKept(h)).toBe(true);
+    h.slack.failing.clear();
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.slack.deleted).toHaveLength(3);
+  });
+
+  it('removes the label a later seed made after a partial teardown kept the state file', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.failing.add('auth.test');
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(h.linear.labels).toEqual([]);
+    expect(stateKept(h)).toBe(true);
+    h.slack.failing.clear();
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(h.linear.labels).toHaveLength(1);
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.linear.labels).toEqual([]);
+  });
+
+  it('does not file a ticket twice when the first create landed before the timeout', async (): Promise<void> => {
+    const h = harness();
+    h.linear.fail('BedIssueCreate', { kind: 'timeout', landed: true });
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(h.linear.count('BedIssueCreate')).toBe(ONE_EACH.length);
+    for (const key of ONE_EACH) {
+      expect(h.linear.issues.filter((issue) => issue.description.endsWith(`day0-demo-key: ${key}`)), key).toHaveLength(1);
+    }
+    expect(log(h)).toContain('  note retrying revops-tile create after a timeout');
+    expect(log(h)).toContain('  note the first revops-tile create landed before the timeout; not sent again');
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(allArchived(h)).toBe(true);
+  });
+
+  it('waits out a 429 for as long as Retry-After says, once, then files the ticket', async (): Promise<void> => {
+    const h = harness();
+    h.linear.fail('BedIssueCreate', { kind: 'status', status: 429, headers: { 'Retry-After': '7' }, body: {} });
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(h.sleeps).toEqual([7_000]);
+    expect(log(h)).toContain('  note retrying revops-tile create after HTTP 429, in 7 s as Linear asked');
+    for (const key of ONE_EACH) {
+      expect(h.linear.issues.filter((issue) => issue.description.endsWith(`day0-demo-key: ${key}`)), key).toHaveLength(1);
+    }
+  });
+
+  it("waits for the end of Linear's rate-limit window on its 400 RATELIMITED answer", async (): Promise<void> => {
+    const h = harness();
+    h.linear.fail('BedLabelCreate', {
+      kind: 'status',
+      status: 400,
+      headers: { 'X-RateLimit-Requests-Reset': String(h.clock.now + 5_000) },
+      body: { errors: [{ message: 'Rate limit exceeded', extensions: { code: 'RATELIMITED' } }] },
+    });
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(h.sleeps).toEqual([5_000]);
+    expect(log(h)).toContain('  note retrying label create after a Linear rate limit, in 5 s as Linear asked');
+    expect(h.linear.labels).toHaveLength(1);
+  });
+
+  it('does not retry a 400 that says the request is wrong, and undoes the seed', async (): Promise<void> => {
+    const h = harness();
+    h.linear.fail('BedIssueCreate', {
+      kind: 'status',
+      status: 400,
+      body: { errors: [{ message: 'Argument Validation Error', extensions: { code: 'INVALID_INPUT' } }] },
+    });
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(1);
+    expect(h.linear.count('BedIssueCreate')).toBe(1);
+    expect(log(h)).not.toContain('retrying');
+    expect(h.sleeps).toEqual([]);
+    expect(log(h)).toContain('seed stopped: Linear: Argument Validation Error');
+    expect(h.linear.labels).toEqual([]);
+  });
+
+  it('records what seed filed even when Linear stops answering reads after the writes', async (): Promise<void> => {
+    const h = harness();
+    const original = h.linear.fetch;
+    let reads = 0;
+    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (String(init?.body).includes('query BedIssues') && ++reads > 1) throw timedOut();
+      return original(input, init);
+    }) as typeof fetch;
+    await run(h, ['seed', '--set', 'one-each']);
+    h.linear.fetch = original;
+    expect(stateKept(h)).toBe(true);
+    const recorded = (JSON.parse(readFileSync(join(h.root, STATE_FILE), 'utf8')) as { issueIds: string[] }).issueIds;
+    expect(recorded.sort()).toEqual(marked(h).map((issue) => issue.id).sort());
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(allArchived(h)).toBe(true);
+  });
+
+  it('records a ticket its undo could not archive, so teardown archives it', async (): Promise<void> => {
+    const h = harness();
+    const original = h.linear.fetch;
+    let creates = 0;
+    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (String(init?.body).includes('BedIssueCreate') && ++creates === 3) {
+        return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), { status: 200 });
+      }
+      return original(input, init);
+    }) as typeof fetch;
+    h.linear.fail('BedIssueArchive', { kind: 'timeout' }, { kind: 'timeout' });
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(1);
+    h.linear.fetch = original;
+    expect(marked(h).filter((issue) => issue.archivedAt === null)).toHaveLength(1);
+    expect(log(h)).toContain(`recorded in ${STATE_FILE} so teardown archives it`);
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(allArchived(h)).toBe(true);
+    expect(h.linear.labels).toEqual([]);
   });
 });
 
