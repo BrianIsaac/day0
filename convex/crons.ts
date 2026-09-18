@@ -41,6 +41,10 @@ crons.interval(
   {},
 );
 
+// With the intake poll: the server-driven work loop's recovery for a step
+// that died (real mode only; the mutation returns at once in mock mode).
+crons.interval('resume stalled work steps', { minutes: 5 }, internal.work.resumeStalledSteps, {});
+
 crons.interval(
   'poll manager decision replies',
   { seconds: 60 },

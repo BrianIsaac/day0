@@ -501,6 +501,7 @@ describe('the server drives the work loop in real mode', (): void => {
         trialId: 'rev-scope-01',
         kind: 'queued-read',
       });
+    await harness.mutation(internal.work.resumeStalledSteps, {});
     await harness.mutation(internal.work.setVerdict, {
       workItemId,
       verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['slack:read'] },
@@ -528,6 +529,7 @@ describe('the server drives the work loop in real mode', (): void => {
       plan: { summary: 'x', steps: ['x'], expectedOutputType: 'message', riskNotes: '', reversibility: 'r', estimatedMinutes: 1 },
     });
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await harness.mutation(internal.work.resumeStalledSteps, {});
 
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
     expect((await scheduledNames(harness)).filter((name) => name.startsWith('workActions:'))).toEqual(

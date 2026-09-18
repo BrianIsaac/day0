@@ -17,6 +17,7 @@ import {
   claimLoopStepInTransaction,
   OPEN_WORK_STATES,
   openSlotCount,
+  resumeStalledStepsInTransaction,
   scheduleNextStep,
   type StepClaim,
 } from './workLoop';
@@ -1638,6 +1639,16 @@ export const claimLoopStep = internalMutation({
   },
   handler: async (ctx, args): Promise<StepClaim> =>
     await claimLoopStepInTransaction(ctx, args.workItemId, args.step, Date.now()),
+});
+
+/**
+ * The stalled-step sweep, run with the five-minute intake poll; see
+ * `resumeStalledStepsInTransaction`. Real mode only.
+ */
+export const resumeStalledSteps = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ rescheduled: number }> =>
+    await resumeStalledStepsInTransaction(ctx, Date.now()),
 });
 
 /**

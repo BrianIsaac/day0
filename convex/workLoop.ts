@@ -231,3 +231,74 @@ export async function scheduleNextStep(ctx: MutationCtx, row: LoopRow): Promise<
       await wakeQueuedWork(ctx, row.agentId);
   }
 }
+
+/** Rows of one state read per employee in one sweep; the rest wait for the next. */
+const SWEEP_BATCH = 100;
+
+/**
+ * Reschedule every step the loop lost, for every employee.
+ *
+ * Scheduling shares the transaction of each transition, so what is lost is
+ * a step that ran and died: an action killed at its time limit, a model call
+ * that threw, a backend restarted mid-run. Such a step holds its claim until
+ * the lease passes, so a live run is never doubled. A ready row with no live
+ * claim gets its step again: a discovered row not queued at the cap is
+ * evaluated, a claimed row without a plan is drafted, an approved plan is
+ * executed. A row that is ready but has no claim at all may only be waiting
+ * in the scheduler; the claim or the state check turns the duplicate into a
+ * few reads. Last, when nothing was evaluated and the employee has a free
+ * slot, the oldest discovered row gets it, which recovers a wake-up lost with
+ * a step that died after freeing the slot.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   now: The instant to judge claims against.
+ *
+ * Returns:
+ *   How many steps were scheduled.
+ */
+export async function resumeStalledStepsInTransaction(
+  ctx: MutationCtx,
+  now: number,
+): Promise<{ rescheduled: number }> {
+  if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
+  let rescheduled = 0;
+  for (const agent of await ctx.db.query('agents').collect()) {
+    const ready = async (state: 'discovered' | 'claimed' | 'plan-approved') =>
+      (
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
+          .take(SWEEP_BATCH)
+      ).filter((row) => !isRevocationTrialRow(row));
+    let evaluated = false;
+    for (const row of await ready('discovered')) {
+      if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
+      if ((row.verdict as { decision?: unknown } | undefined)?.decision === 'queue') continue;
+      await scheduleEvaluation(ctx, row._id);
+      evaluated = true;
+      rescheduled += 1;
+    }
+    for (const row of await ready('claimed')) {
+      if (row.plan !== undefined || holdsLiveStepClaim(row, 'draft', now)) continue;
+      await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, {
+        workItemId: row._id,
+      });
+      rescheduled += 1;
+    }
+    for (const row of await ready('plan-approved')) {
+      await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
+        workItemId: row._id,
+      });
+      rescheduled += 1;
+    }
+    if (!evaluated) {
+      const next = await nextRowForFreeSlot(ctx, agent._id, now);
+      if (next) {
+        await scheduleEvaluation(ctx, next);
+        rescheduled += 1;
+      }
+    }
+  }
+  return { rescheduled };
+}
