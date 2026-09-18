@@ -255,6 +255,33 @@ describe('the protected volumes and projects', (): void => {
 });
 
 describe('snapshot and restore run through a throwaway container', (): void => {
+  it('refuses a snapshot without its checksum sidecar before Docker', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-sidecar-'));
+    const bin = join(scratch, 'bin');
+    const calls = join(scratch, 'docker-calls');
+    mkdirSync(bin);
+    const docker = join(bin, 'docker');
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
+    chmodSync(docker, 0o755);
+    writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
+    writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
+    try {
+      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'), [
+        join(process.cwd(), 'scripts/demo-bed.ts'), 'restore', '--project', 'day0-p11r-test',
+        '--snapshot', 'snapshot.tar.gz',
+      ], {
+        cwd: scratch,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('checksum sidecar');
+      expect(existsSync(calls)).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('discards a tar if a holder starts while the snapshot runs', (): void => {
     const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-race-'));
     const bin = join(scratch, 'bin');

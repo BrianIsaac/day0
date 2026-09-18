@@ -1696,16 +1696,15 @@ function restore(options: DemoBedOptions): void {
   const source = resolve(options.snapshot);
   if (!existsSync(source)) throw new Error(`${source} does not exist.`);
   const sidecar = `${source}.sha256`;
-  if (existsSync(sidecar)) {
-    const expected = readFileSync(sidecar, 'utf8').trim().split(/\s+/)[0];
-    const actual = sha256(source);
-    if (expected !== actual) {
-      throw new Error(`${source} does not match ${sidecar}: expected ${expected}, got ${actual}.`);
-    }
-    log(`Checksum matches ${basename(sidecar)}.`);
-  } else {
-    log(`note: no ${basename(sidecar)} beside the snapshot, so its integrity is not checked.`);
+  if (!existsSync(sidecar)) {
+    throw new Error(`checksum sidecar ${sidecar} is missing; create a fresh snapshot before restoring.`);
   }
+  const expected = readFileSync(sidecar, 'utf8').trim().split(/\s+/)[0];
+  const actual = sha256(source);
+  if (expected !== actual) {
+    throw new Error(`${source} does not match ${sidecar}: expected ${expected}, got ${actual}.`);
+  }
+  log(`Checksum matches ${basename(sidecar)}.`);
   if (volumeExists(target)) {
     if (!options.replace) {
       throw new Error(
