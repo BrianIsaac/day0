@@ -550,16 +550,6 @@ export const grantScope = internalMutation({
 });
 
 /**
- * The manager's switch: whether the agent may act on connected systems
- * without asking.
- *
- * Owner-scoped, real mode only: the hosted mock has no gate for the switch
- * to change, so it is refused there before the ownership check, and the
- * header keeps its static label. Off is the deploy default (an absent field
- * reads as off). Every change that changes anything is an event; setting
- * the value the row already has records nothing.
- */
-/**
  * Choose how the manager hears about run outcomes: as each run finishes, or
  * in one hourly digest. Decision requests are sent at once either way.
  */
@@ -584,6 +574,16 @@ export const setManagerNotifications = mutation({
   },
 });
 
+/**
+ * The manager's switch: whether the agent may act on connected systems
+ * without asking.
+ *
+ * Owner-scoped, real mode only: the hosted mock has no gate for the switch
+ * to change, so it is refused there before the ownership check, and the
+ * header keeps its static label. Off is the deploy default (an absent field
+ * reads as off). Every change that changes anything is an event; setting
+ * the value the row already has records nothing.
+ */
 export const setAutonomousActions = mutation({
   args: { agentId: v.id('agents'), on: v.boolean() },
   handler: async (
