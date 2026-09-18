@@ -86,7 +86,9 @@ vi.mock('convex/react', () => ({
       };
     }
     if (name === 'docSources:listMine') return [];
-    return 0;
+    // Every other query is still loading, so the test does not depend on
+    // what the rest of the page reads.
+    return undefined;
   },
   useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
 }));
