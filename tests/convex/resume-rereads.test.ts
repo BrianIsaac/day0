@@ -1,5 +1,7 @@
 /** @vitest-environment node */
 
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -9,7 +11,7 @@ import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import type { AppliedAction } from '../../src/surfaces/types';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { MockAction } from '../../src/work/types';
-import { MANAGER_DM, slackPlan, TileDriver } from '../fixtures/browser-phase-split-2026-09-16';
+import { MANAGER_DM, slackClosing, slackPlan, TileDriver } from '../fixtures/browser-phase-split-2026-09-16';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
@@ -42,6 +44,8 @@ const recorded = vi.hoisted(() => ({
 
 const REPLY_CHANNEL = 'C0BSF04TZ19';
 const REPLY_THREAD = '1787746453.202809';
+const RECORDED_ITEM = 'n57d5ekg1grzcgk9atf2698mgn8ehqq9';
+const RECORDING_EXPORT = 'docs/plans/progress/recording-run-2026-09-17/export.zip';
 
 /** The closing phase's view of the ledger: the section the prompt renders it in, to the end. */
 function ledgerSection(prompt: string): string {
@@ -427,6 +431,46 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     const [reply] = repliesInThread();
     expect(reply).toContain('currently shows 74%');
     expect(reply).not.toContain('68%');
+  }, 30_000);
+
+  it.skipIf(!existsSync(RECORDING_EXPORT))('replays the failed Slack item directly from the 17 September export', async (): Promise<void> => {
+    const lines = execFileSync('unzip', ['-p', RECORDING_EXPORT, 'events/documents.jsonl'], {
+      encoding: 'utf8',
+    }).trim().split('\n');
+    const failed = lines.map((line) => JSON.parse(line) as {
+      type: string;
+      payload?: { workItemId?: string; output?: { actions: MockAction[]; applied: AppliedAction[] } };
+    }).find((event) => event.type === 'work.failed' && event.payload?.workItemId === RECORDED_ITEM);
+    expect(failed?.payload?.output).toBeDefined();
+
+    const t = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await seed(t);
+    const exported = failed!.payload!.output!;
+    expect(exported.actions.slice(4)).toEqual(slackClosing);
+    expect(exported.applied[7]).toMatchObject({ ok: true, authority: 'autonomous' });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason: FIRST_FAILURE_2026_09_17,
+        output: {
+          ...exported,
+          applied: exported.applied.map((row) => ({
+            ...row,
+            idempotencyKey: row.idempotencyKey.replace(RECORDED_ITEM, workItemId),
+          })),
+        },
+      });
+    });
+    saveSeventyFour();
+
+    const resumed = await retryAtClosing(t, workItemId);
+    const reread = ledger(resumed)[4]!;
+    expect(reread).toMatchObject({ ok: true, refreshed: { previous: { effect: expect.stringContaining('about:blank') } } });
+    expect(reread.effect).toContain('visible figure 74%');
+    await t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(repliesInThread()).toEqual([expect.stringContaining('currently shows 74%')]);
+    expect(repliesInThread()[0]).not.toContain('68%');
   }, 30_000);
 
   it('records a refreshed read under the authority of the carried read', async (): Promise<void> => {
