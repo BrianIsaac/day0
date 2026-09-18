@@ -9,11 +9,18 @@
  */
 
 import { containsProvenanceTrailer } from '../../src/surfaces/policy';
-import { SlackClient } from '../rehearsal/slack';
+import {
+  DEFAULT_SLACK_RETRY_IO,
+  requestSlack,
+  retrySlackOnce,
+  SlackClient,
+  type SlackAnswer,
+  type SlackRetryIo,
+} from '../rehearsal/slack';
 
 export { SlackClient };
+export type { SlackRetryIo };
 
-const API = 'https://slack.com/api/';
 const MAX_PAGES = 20;
 
 /**
@@ -44,12 +51,6 @@ export interface BedMessage {
   text: string;
   user?: string;
   botId?: string;
-}
-
-interface SlackAnswer {
-  ok: boolean;
-  error?: string;
-  [key: string]: unknown;
 }
 
 /**
@@ -86,17 +87,10 @@ async function slackGet(
   token: string,
   method: string,
   params: Record<string, string>,
+  retry: SlackRetryIo = DEFAULT_SLACK_RETRY_IO,
+  now: () => number = Date.now,
 ): Promise<SlackAnswer> {
-  const url = new URL(method, API);
-  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-  const response = await fetchImpl(url.toString(), {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(30_000),
-  });
-  const answer = (await response.json()) as SlackAnswer;
-  if (!answer.ok) throw new Error(`Slack ${method}: ${answer.error ?? `HTTP ${response.status}`}`);
-  return answer;
+  return await retrySlackOnce(`Slack ${method}`, retry, () => requestSlack(fetchImpl, token, method, params, undefined, now));
 }
 
 function nextCursor(answer: SlackAnswer): string | undefined {
@@ -119,6 +113,8 @@ export async function listConversations(
   fetchImpl: typeof fetch,
   token: string,
   types: string,
+  retry: SlackRetryIo = DEFAULT_SLACK_RETRY_IO,
+  now: () => number = Date.now,
 ): Promise<BedChannel[]> {
   const channels: BedChannel[] = [];
   let cursor: string | undefined;
@@ -128,7 +124,7 @@ export async function listConversations(
       exclude_archived: 'true',
       limit: '200',
       ...(cursor ? { cursor } : {}),
-    });
+    }, retry, now);
     for (const raw of (answer.channels ?? []) as Array<Record<string, unknown>>) {
       if (typeof raw.id !== 'string') continue;
       channels.push({
@@ -176,6 +172,8 @@ export async function conversationMessages(
   token: string,
   channel: string,
   oldest?: string,
+  retry: SlackRetryIo = DEFAULT_SLACK_RETRY_IO,
+  now: () => number = Date.now,
 ): Promise<BedMessage[]> {
   const bound = oldest === undefined ? Number.NEGATIVE_INFINITY : Number.parseFloat(oldest);
   const messages: BedMessage[] = [];
@@ -187,7 +185,7 @@ export async function conversationMessages(
       channel,
       limit: '200',
       ...(cursor ? { cursor } : {}),
-    });
+    }, retry, now);
     for (const raw of (answer.messages ?? []) as Array<Record<string, unknown>>) {
       const message = asMessage(channel, raw);
       if (!message) continue;
@@ -209,7 +207,7 @@ export async function conversationMessages(
         ts: thread,
         limit: '200',
         ...(cursor ? { cursor } : {}),
-      });
+      }, retry, now);
       for (const raw of (answer.messages ?? []) as Array<Record<string, unknown>>) {
         const message = asMessage(channel, raw);
         // The thread's parent comes back first in every replies page.

@@ -77,6 +77,7 @@ import {
   strayAsks,
   type BedChannel,
   type BedMessage,
+  type SlackRetryIo,
 } from './slack';
 import {
   BED_CHANNELS,
@@ -610,9 +611,17 @@ interface SlackView {
   channels: Map<string, BedChannel>;
 }
 
+function slackRetry(io: CompanyIo, report: Report): SlackRetryIo {
+  return {
+    say: (line: string): void => report.line('note', line),
+    sleep: (ms: number): Promise<void> => io.sleep(ms),
+  };
+}
+
 async function slackView(io: CompanyIo, token: string, report: Report, check: boolean): Promise<SlackView> {
   const recorder = scopeRecordingFetch(io.fetch);
-  const auth = await new SlackClient(token, recorder.fetch).authTest();
+  const retry = slackRetry(io, report);
+  const auth = await new SlackClient(token, recorder.fetch, retry, (): number => io.now()).authTest();
   report.line('ok', `the token is the bot ${auth.userId} in workspace ${auth.team}`);
   if (check) {
     const scopes = recorder.scopes();
@@ -626,7 +635,7 @@ async function slackView(io: CompanyIo, token: string, report: Report, check: bo
       if (missing.length === 0) report.line('ok', `the app has ${REQUIRED_SCOPES.join(', ')}`);
     }
   }
-  const visible = await listConversations(io.fetch, token, 'public_channel');
+  const visible = await listConversations(io.fetch, token, 'public_channel', retry, (): number => io.now());
   const channels = new Map<string, BedChannel>();
   for (const channel of visible) if (BED_CHANNELS.includes(channel.name)) channels.set(channel.name, channel);
   return { token, botId: auth.botId, botUserId: auth.userId, channels };
@@ -640,6 +649,7 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
     return;
   }
   const view = await slackView(io, token, report, true);
+  const retry = slackRetry(io, report);
   for (const name of BED_CHANNELS) {
     const channel = view.channels.get(name);
     if (!channel) {
@@ -647,7 +657,7 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
     } else if (!channel.isMember) {
       report.line('gap', `the bot is not in #${name}: /invite it there`);
     } else {
-      const messages = await conversationMessages(io.fetch, token, channel.id);
+      const messages = await conversationMessages(io.fetch, token, channel.id, undefined, retry, (): number => io.now());
       const asks = strayAsks(messages, view.botUserId);
       const own = messages.filter((message) => message.botId === view.botId && containsProvenanceTrailer(message.text));
       report.line('ok', `#${name}, the bot a member`);
@@ -665,20 +675,21 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
 }
 
 async function deleteBedMessages(io: CompanyIo, view: SlackView, epoch: string, report: Report): Promise<void> {
+  const retry = slackRetry(io, report);
   const conversations: BedChannel[] = [...view.channels.values()].filter((channel) => channel.isMember);
   try {
-    conversations.push(...(await listConversations(io.fetch, view.token, 'im')));
+    conversations.push(...(await listConversations(io.fetch, view.token, 'im', retry, (): number => io.now())));
   } catch (error) {
     report.line('note', `the bot's direct messages were not read (${(error as Error).message}); only the channels were cleaned`);
   }
-  const client = new SlackClient(view.token, io.fetch);
+  const client = new SlackClient(view.token, io.fetch, retry, (): number => io.now());
   let deleted = 0;
   // One conversation or message that fails is a gap of its own; the others are still cleaned.
   for (const conversation of conversations) {
     const where = conversation.name ? `#${conversation.name}` : `DM ${conversation.id}`;
     let messages: BedMessage[];
     try {
-      messages = await conversationMessages(io.fetch, view.token, conversation.id, epoch);
+      messages = await conversationMessages(io.fetch, view.token, conversation.id, epoch, retry, (): number => io.now());
     } catch (error) {
       report.line('gap', `${where} was not read (${(error as Error).message})`);
       continue;

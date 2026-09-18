@@ -882,6 +882,99 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(h.slack.deleted).toHaveLength(3);
   });
 
+  it('honours Retry-After once when a Slack conversation read is rate-limited', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    const original = h.slack.fetch;
+    let limited = false;
+    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      if (!limited && url.pathname.endsWith('/conversations.history') && url.searchParams.get('channel') === 'D1') {
+        limited = true;
+        return new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+          status: 429,
+          headers: { 'Retry-After': '7' },
+        });
+      }
+      return await original(input, init);
+    }) as typeof fetch;
+
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(log(h)).toContain('  note retrying Slack conversations.history after HTTP 429, in 7 s as Slack asked');
+    expect(h.sleeps).toEqual([7_000]);
+    expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
+  });
+
+  it('reports a timed-out Slack delete that landed and does not count it twice', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    const original = h.slack.fetch;
+    let deletes = 0;
+    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/chat.delete')) {
+        deletes += 1;
+        if (deletes === 1) {
+          await original(input, init);
+          throw timedOut();
+        }
+        return new Response(JSON.stringify({ ok: false, error: 'message_not_found' }));
+      }
+      return await original(input, init);
+    }) as typeof fetch;
+
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(deletes).toBe(2);
+    expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
+    expect(h.sleeps).toEqual([2_000]);
+    expect(log(h)).toContain('  note retrying Slack chat.delete after a timeout');
+    expect(log(h)).toContain('  note the first Slack chat.delete landed before the timeout; not sent again');
+    expect(log(h)).toContain('Torn down.');
+  });
+
+  it('continues after a Slack read fails twice, keeps the state, and finishes on the next teardown', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('C1', { ts: later(5), text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('C3', { ts: later(6), text: `Accruals booked.\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', { ts: later(7), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    const original = h.slack.fetch;
+    let failures = 0;
+    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      if (
+        failures < 2 &&
+        url.pathname.endsWith('/conversations.history') &&
+        url.searchParams.get('channel') === 'C1'
+      ) {
+        failures += 1;
+        return new Response('<html>unavailable</html>', { status: 503 });
+      }
+      return await original(input, init);
+    }) as typeof fetch;
+
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(log(h)).toContain('  note retrying Slack conversations.history after HTTP 503');
+    expect(log(h)).toContain(
+      '  GAP  #revops-asks was not read (Slack conversations.history failed twice: HTTP 503, then HTTP 503)',
+    );
+    expect(h.slack.deleted).toEqual([
+      { channel: 'C3', ts: later(6) },
+      { channel: 'D1', ts: later(7) },
+    ]);
+    expect(stateKept(h)).toBe(true);
+    expect(log(h)).toContain(`1 gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`);
+
+    h.logs.length = 0;
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.slack.deleted).toEqual([
+      { channel: 'C3', ts: later(6) },
+      { channel: 'D1', ts: later(7) },
+      { channel: 'C1', ts: later(5) },
+    ]);
+    expect(stateKept(h)).toBe(false);
+    expect(log(h)).toContain('Torn down.');
+  });
+
   it('removes the label a later seed made after a partial teardown kept the state file', async (): Promise<void> => {
     const h = await seeded();
     h.slack.failing.add('auth.test');

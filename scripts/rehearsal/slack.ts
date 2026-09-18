@@ -15,7 +15,7 @@ export interface SlackMessage {
   user?: string;
 }
 
-interface SlackAnswer {
+export interface SlackAnswer {
   ok: boolean;
   error?: string;
   [key: string]: unknown;
@@ -40,7 +40,7 @@ export class SlackRequestError extends Error {
   }
 }
 
-const DEFAULT_RETRY_IO: SlackRetryIo = {
+export const DEFAULT_SLACK_RETRY_IO: SlackRetryIo = {
   say: (): void => undefined,
   sleep: async (ms: number): Promise<void> => await new Promise((done) => setTimeout(done, ms)),
 };
@@ -100,12 +100,76 @@ export async function retrySlackOnce<T>(
   }
 }
 
+export async function requestSlack(
+  fetchImpl: typeof fetch,
+  token: string,
+  method: string,
+  params: Record<string, string> = {},
+  body?: Record<string, unknown>,
+  now: () => number = Date.now,
+): Promise<SlackAnswer> {
+  const url = new URL(method, API);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetchImpl(url.toString(), {
+      method: body ? 'POST' : 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { 'Content-Type': 'application/json; charset=utf-8' } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+    });
+    text = await response.text();
+  } catch (error) {
+    throw transportFailure(error);
+  }
+  let answer: SlackAnswer | undefined;
+  try {
+    answer = JSON.parse(text) as SlackAnswer;
+  } catch {
+    answer = undefined;
+  }
+  const reason = `HTTP ${response.status}`;
+  const code = answer?.error;
+  if (response.status === 429 || response.status >= 500) {
+    throw new SlackRequestError(
+      `Slack ${method}: ${code ?? reason}`,
+      reason,
+      true,
+      retryAfterMs(response.headers.get('retry-after'), now()),
+      response.status,
+      code,
+    );
+  }
+  if (!response.ok) {
+    throw new SlackRequestError(`Slack ${method}: ${code ?? reason}`, reason, false, undefined, response.status, code);
+  }
+  if (!answer) {
+    throw new SlackRequestError(`Slack ${method}: ${reason} with invalid JSON`, reason, false, undefined, response.status);
+  }
+  if (!answer.ok) {
+    const transient = code === 'ratelimited';
+    throw new SlackRequestError(
+      `Slack ${method}: ${code ?? reason}`,
+      transient ? 'a Slack rate limit' : reason,
+      transient,
+      retryAfterMs(response.headers.get('retry-after'), now()),
+      response.status,
+      code,
+    );
+  }
+  return answer;
+}
+
 /** A Web API client over one bot token and an injectable fetch. */
 export class SlackClient {
   constructor(
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
-    private readonly retry: SlackRetryIo = DEFAULT_RETRY_IO,
+    private readonly retry: SlackRetryIo = DEFAULT_SLACK_RETRY_IO,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -114,60 +178,7 @@ export class SlackClient {
     params: Record<string, string> = {},
     body?: Record<string, unknown>,
   ): Promise<SlackAnswer> {
-    const url = new URL(method, API);
-    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-    let response: Response;
-    let text: string;
-    try {
-      response = await this.fetchImpl(url.toString(), {
-        method: body ? 'POST' : 'GET',
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          ...(body ? { 'Content-Type': 'application/json; charset=utf-8' } : {}),
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
-      });
-      text = await response.text();
-    } catch (error) {
-      throw transportFailure(error);
-    }
-    let answer: SlackAnswer | undefined;
-    try {
-      answer = JSON.parse(text) as SlackAnswer;
-    } catch {
-      answer = undefined;
-    }
-    const reason = `HTTP ${response.status}`;
-    const code = answer?.error;
-    if (response.status === 429 || response.status >= 500) {
-      throw new SlackRequestError(
-        `Slack ${method}: ${code ?? reason}`,
-        reason,
-        true,
-        retryAfterMs(response.headers.get('retry-after'), this.now()),
-        response.status,
-        code,
-      );
-    }
-    if (!response.ok) {
-      throw new SlackRequestError(`Slack ${method}: ${code ?? reason}`, reason, false, undefined, response.status, code);
-    }
-    if (!answer) {
-      throw new SlackRequestError(`Slack ${method}: ${reason} with invalid JSON`, reason, false, undefined, response.status);
-    }
-    if (!answer.ok) {
-      const transient = code === 'ratelimited';
-      throw new SlackRequestError(
-        `Slack ${method}: ${code ?? reason}`,
-        transient ? 'a Slack rate limit' : reason,
-        transient,
-        retryAfterMs(response.headers.get('retry-after'), this.now()),
-        response.status,
-        code,
-      );
-    }
-    return answer;
+    return await requestSlack(this.fetchImpl, this.token, method, params, body, this.now);
   }
 
   private async call(
