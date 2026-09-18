@@ -14,7 +14,12 @@ import {
   keptCorrectionsTitle,
   type KeptCorrection,
 } from '../../../../app/agent/[agentId]/corrections-panel';
-import { ManagerFeedbackNote, WorkItemCard } from '../../../../app/agent/[agentId]/AgentDashboard';
+import {
+  cancelPlanRequest,
+  ManagerFeedbackNote,
+  PlanApprovalForm,
+  WorkItemCard,
+} from '../../../../app/agent/[agentId]/AgentDashboard';
 
 /**
  * A kept correction on the employee's dashboard, and the line on a later
@@ -160,7 +165,62 @@ describe('the plan card line for an applied correction', (): void => {
   });
 });
 
-describe('the manager feedback note', (): void => {
+describe('cancelling a plan with a reason, and retrying it', (): void => {
+  it('gives the plan card\'s cancel a reason field, and sends the reason only when one is written', (): void => {
+    const markup = renderToStaticMarkup(
+      <PlanApprovalForm riskNotes="" questions={[]} onApprove={noop} onCancel={noop} />,
+    );
+    expect(markup).toContain('aria-label="reason for cancelling the plan"');
+    expect(markup).toContain('>Cancel<');
+    const workItemId = 'w5' as Id<'workItems'>;
+    expect(cancelPlanRequest(workItemId, 'Comment instead.')).toEqual({ workItemId, reason: 'Comment instead.' });
+    expect(cancelPlanRequest(workItemId, '   ')).toEqual({ workItemId });
+  });
+
+  it('offers Retry on a cancelled plan, saying a new plan comes back to the manager', (): void => {
+    const item = {
+      _id: 'w5',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'cancelled',
+      title: 'Exception: SH-4533 missed the vessel',
+      contentSummary: 'Notify the customer of the new sailing.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'LOG-5',
+      observedAt: 1,
+      contentRefs: [],
+      skipReason: 'plan cancelled by the manager: comment on the ticket instead',
+      managerFeedback: { reason: 'Comment on the ticket instead.', at: 2, kind: 'plan-rejection' },
+      plan: {
+        summary: 'Email the customer the new sailing directly.',
+        steps: ['Email the customer.'],
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+        expectedOutputType: 'message',
+      },
+    } as unknown as Doc<'workItems'>;
+    const markup = renderToStaticMarkup(
+      <WorkItemCard
+        item={item}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={noop}
+        onCancelPlan={noop}
+        onRetryFailed={noop}
+        onReconcileFailed={resolved}
+        onApproveActions={resolved}
+        onRejectActions={resolved}
+        onResendDecision={resolved}
+      />,
+    );
+    expect(markup).toContain('>Retry<');
+    expect(markup).toContain('the plan comes back to you before anything runs');
+    expect(markup).toContain('aria-label="note for the retry"');
+    expect(markup).toContain('Plan rejection reason');
+  });
+
   it('labels a plan rejection reason as its own kind of feedback', (): void => {
     const markup = renderToStaticMarkup(
       <ManagerFeedbackNote feedback={{ reason: 'Comment on the ticket instead.', at: 2, kind: 'plan-rejection' }} />,
