@@ -140,14 +140,20 @@ export function collectLedgerObservations(
       });
     });
   };
-  for (const event of events) {
+  for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     const workItemId = asString(payload?.workItemId);
     if (workItemId && payload?.output !== undefined) {
       add(workItemId, payload.output, event.createdAt);
     }
   }
-  for (const item of workItems) add(item._id, item.output, null);
+  for (const item of [...workItems].sort(
+    (left, right) =>
+      left._creationTime - right._creationTime ||
+      (left._id < right._id ? -1 : left._id > right._id ? 1 : 0),
+  )) {
+    add(item._id, item.output, null);
+  }
   return [...observations.values()];
 }
 
@@ -158,7 +164,11 @@ export function collectLedgerObservations(
  * the backend's creation order or an export's id order.
  */
 function byWriteOrder(left: Doc<'events'>, right: Doc<'events'>): number {
-  return left.createdAt - right.createdAt || left._creationTime - right._creationTime;
+  return (
+    left.createdAt - right.createdAt ||
+    left._creationTime - right._creationTime ||
+    (left._id < right._id ? -1 : left._id > right._id ? 1 : 0)
+  );
 }
 
 interface DecisionTotals {

@@ -972,4 +972,29 @@ describe('the figures do not depend on the order the rows are read in', (): void
       expect(idOrder).toEqual(indexOrder);
     },
   );
+
+  it('uses backend write order for duplicate ledger observations in reversed and shuffled reads', (): void => {
+    const row = (effect?: string): Record<string, unknown> => ({
+      tool: 'mcp.call',
+      ok: true,
+      authority: 'manager',
+      idempotencyKey: 'wi:run-1:0',
+      ...(effect === undefined ? {} : { effect }),
+    });
+    const first = event(1, 'work.failed', { workItemId: 'wi', output: { applied: [row()] } }, 5_000);
+    const second = event(
+      2,
+      'work.completed',
+      { workItemId: 'wi', output: { applied: [row('landed')] } },
+      5_000,
+    );
+    const other = event(3, 'agent.autonomy-changed', { from: false, to: true }, 6_000);
+    const written = computeAgentMetrics([first, second, other], [], []);
+    const reversed = computeAgentMetrics([other, second, first], [], []);
+    const shuffled = computeAgentMetrics([second, other, first], [], []);
+
+    expect(written.auditTrail).toEqual({ complete: 0, total: 1, fraction: 0 });
+    expect(reversed).toEqual(written);
+    expect(shuffled).toEqual(written);
+  });
 });
