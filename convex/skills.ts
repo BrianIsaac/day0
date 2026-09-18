@@ -538,21 +538,16 @@ export const reject = mutation({
       );
     }
     await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
-    if (row.proposedFor) {
-      const sourceWork = await ctx.db.get(row.proposedFor);
-      if (sourceWork && sourceWork.agentId !== row.agentId) {
-        throw new Error('skill and work item belong to different agents');
-      }
-      const stillWaitingForThisProposal =
-        sourceWork?.state === 'needs-skill' &&
-        (!sourceWork.proposedSkillId || sourceWork.proposedSkillId === args.skillId);
-      if (stillWaitingForThisProposal) {
-        await ctx.db.patch(row.proposedFor, {
-          state: 'cancelled',
-          skipReason: skillRejectedReason(row.name),
-        });
-        await scheduleNextStep(ctx, { ...sourceWork, state: 'cancelled' });
-      }
+    // Every row still waiting for this proposal leaves `needs-skill` with the
+    // reason on its card. A row that has moved on, or is now linked to a
+    // different proposal, is not this rejection's to cancel.
+    for (const waiting of await waitingRows(ctx, row)) {
+      if (waiting.state !== 'needs-skill') continue;
+      await ctx.db.patch(waiting._id, {
+        state: 'cancelled',
+        skipReason: skillRejectedReason(row.name),
+      });
+      await scheduleNextStep(ctx, { ...waiting, state: 'cancelled' });
     }
     await ctx.db.insert('events', {
       agentId: row.agentId,

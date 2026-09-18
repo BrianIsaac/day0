@@ -365,24 +365,21 @@ async function seedLinkedPair(
 }
 
 describe('a proposal the manager rejects while several items wait for it', (): void => {
-  it.fails(
-    'releases every waiting item with the reason the card shows',
-    async (): Promise<void> => {
-      useSurfaceMode('real');
-      vi.useFakeTimers();
-      const harness = convexTest(contractSchema(), allConvexModules());
-      const { first, second, skillId } = await seedTwoWaitingForOneSkill(harness);
+  it('releases every waiting item with the reason the card shows', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { first, second, skillId } = await seedTwoWaitingForOneSkill(harness);
 
-      await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
+    await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
 
-      for (const workItemId of [first, second]) {
-        expect(await readItem(harness, workItemId)).toMatchObject({
-          state: 'cancelled',
-          skipReason: 'skill proposal "kanban-comment-and-close" rejected by the manager',
-        });
-      }
-    },
-  );
+    for (const workItemId of [first, second]) {
+      expect(await readItem(harness, workItemId)).toMatchObject({
+        state: 'cancelled',
+        skipReason: 'skill proposal "kanban-comment-and-close" rejected by the manager',
+      });
+    }
+  });
 
   it('keeps an item that is now linked to a different proposal', async (): Promise<void> => {
     useSurfaceMode('real');
