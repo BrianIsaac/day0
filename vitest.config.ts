@@ -19,6 +19,10 @@ export default defineConfig({
           name: 'convex',
           include: ['tests/convex/**/*.test.ts'],
           environment: 'edge-runtime',
+          // The first test of a file that resets the module registry imports
+          // every Convex module again: over a second on a quiet machine, and
+          // past the 5 s default when several suites share the cores.
+          testTimeout: 20_000,
         },
       },
       {
