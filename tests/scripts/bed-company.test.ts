@@ -699,6 +699,16 @@ describe('check', (): void => {
     expect(exec.options).toMatchObject({ env: { DAY0_BED_NOTION_TOKEN: NOTION_TOKEN }, input: NOTION_READER_SCRIPT });
   });
 
+  it('prints each provider result under its own heading', async (): Promise<void> => {
+    const h = await readyBed();
+    expect(await run(h, ['check'])).toBe(0);
+    for (const heading of ['Linear', 'Slack', 'Notion']) {
+      const index = h.logs.indexOf(heading);
+      expect(index, `${heading} heading`).toBeGreaterThan(-1);
+      expect(h.logs[index + 1], `${heading} first result`).toMatch(/^  (?:ok|GAP|note)/);
+    }
+  });
+
   it('names every hand step still owed and how to make it', async (): Promise<void> => {
     const h = harness({}, (args) =>
       args.includes('exec')

@@ -641,9 +641,13 @@ function checkFolder(io: CompanyIo, report: Report): void {
 export async function runCheck(io: CompanyIo, report: Report): Promise<number> {
   const spec = loadBedSpec(io.cwd);
   checkFolder(io, report);
-  for (const part of [checkLinear(io, spec, report), checkSlack(io, report), checkNotion(io, report)]) {
+  for (const read of [
+    (): Promise<void> => checkLinear(io, spec, report),
+    (): Promise<void> => checkSlack(io, report),
+    (): Promise<void> => checkNotion(io, report),
+  ]) {
     try {
-      await part;
+      await read();
     } catch (error) {
       report.line('gap', `could not be read: ${(error as Error).message}`);
     }
