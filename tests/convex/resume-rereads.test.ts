@@ -481,6 +481,27 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(before.skipReason).not.toBe(stopped.skipReason);
   }, 30_000);
 
+  it('counts the stopped re-read and its landed sign-in replay in the audit ledger', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await seed(t);
+    await failAtClosingWithTheTileDown(t, workItemId);
+    let signedIn = false;
+    recorded.driver = new TileDriver('plain-cred-looker', (call) => {
+      if (call.tool === 'browser_click' && call.args.element === 'Sign in') signedIn = true;
+      return signedIn && call.tool === 'browser_snapshot' ? 'snapshot unavailable' : undefined;
+    });
+    saveSeventyFour();
+
+    const stopped = await retryAtClosing(t, workItemId);
+    expect(stopped.state).toBe('failed');
+    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
+    const observed = collectLedgerObservations(events, [stopped]);
+    const key = (stopped.output as { failedReread: { applied: AppliedAction[] } }).failedReread.applied[0]!.idempotencyKey;
+    expect(key).toMatch(new RegExp(`^${workItemId}:[^:]+:3$`));
+    expect(observed.filter((row) => row.entry.idempotencyKey === key)).toHaveLength(1);
+    expect(observed.filter((row) => row.sessionRestoreOf === key)).toHaveLength(3);
+  }, 30_000);
+
   // The carried ledger holds a landed refresh: the re-read replays the
   // sign-in and reads the page, and never enters or saves a figure again.
   it('sends nothing on resume but the carried read and the sign-in it needs', async (): Promise<void> => {
