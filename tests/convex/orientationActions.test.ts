@@ -7,7 +7,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
-import { getFunctionName } from 'convex/server';
+import { getFunctionName, makeFunctionReference } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
@@ -1827,6 +1827,77 @@ describe('each employee reads its own role', (): void => {
       'northstar-crm': 'declared',
       netledger: 'absent',
     });
+  });
+
+  it.fails("orients one system the charter does not name when the manager proposes it", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await orientDeclared(harness, agents.finance!);
+    const before = await surfacesBySlug(harness, agents.finance!);
+    expect(before['looker-pipeline-tile'].verdict).toBe('declared');
+
+    const requestProposal = makeFunctionReference<'mutation', { surfaceId: Id<'surfaces'> }, null>(
+      'surfaces:requestProposal',
+    );
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      harness
+        .withIdentity({ subject: 'other-owner' })
+        .mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id }),
+    ).rejects.toThrow();
+    await expect(
+      owner.mutation(requestProposal, { surfaceId: before.linear._id }),
+    ).rejects.toThrow('Only a declared system can be proposed; this one is proposed.');
+    await owner.mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const after = await surfacesBySlug(harness, agents.finance!);
+    expect(after['looker-pipeline-tile']).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+    });
+    // Only the one surface the manager asked for; the rest still wait.
+    expect(after['northstar-crm'].verdict).toBe('declared');
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (index) => index.eq('agentId', agents.finance!))
+          .collect(),
+    );
+    expect(
+      events
+        .filter((event): boolean => event.type === 'surface.proposal-requested')
+        .map((event): unknown => event.payload),
+    ).toEqual([{ surfaceId: before['looker-pipeline-tile']._id, slug: 'looker-pipeline-tile' }]);
+
+    // Rejected, the card goes back under the row, one click from a card again.
+    await owner.mutation(api.surfaces.reject, {
+      surfaceId: after['looker-pipeline-tile']._id,
+      reason: 'Not this role.',
+    });
+    await expect(
+      owner.action(api.surfaces.reorient, { agentId: agents.finance! }),
+    ).resolves.toEqual({ scheduled: 0 });
+  });
+
+  it.fails('refuses to propose outside real mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    const tile = (await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile'];
+    await expect(
+      harness
+        .withIdentity({ subject: 'owner' })
+        .mutation(
+          makeFunctionReference<'mutation', { surfaceId: Id<'surfaces'> }, null>(
+            'surfaces:requestProposal',
+          ),
+          { surfaceId: tile._id },
+        ),
+    ).rejects.toThrow('Surface proposal is a local real-mode feature');
   });
 
   it('orients every documented system, as before, when the charter names no work system', async (): Promise<void> => {
