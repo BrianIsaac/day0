@@ -917,3 +917,59 @@ describe('supervision figures for a company of employees', (): void => {
     await expect(harness.query(api.metrics.forOwner, {})).resolves.toBeNull();
   });
 });
+
+describe('the figures do not depend on the order the rows are read in', (): void => {
+  // An export lists rows by id, the backend's index by creation time, and
+  // events written in one mutation share a createdAt millisecond.
+  const event = (
+    creationTime: number,
+    type: string,
+    payload: Record<string, unknown>,
+    createdAt: number,
+  ): Doc<'events'> =>
+    ({
+      _id: `event-${creationTime}`,
+      _creationTime: creationTime,
+      agentId: 'agent',
+      type,
+      payload,
+      createdAt,
+    }) as unknown as Doc<'events'>;
+
+  it.fails(
+    'pairs a decision with a request written in the same millisecond however the two are listed',
+    (): void => {
+      const request = event(
+        1,
+        'work.decision-requesting',
+        { workItemId: 'wi', decisionId: 'd', kind: 'plan' },
+        5_000,
+      );
+      const approved = event(
+        2,
+        'work.plan-approved',
+        { workItemId: 'wi', decidedVia: 'channel' },
+        5_000,
+      );
+      const later = [
+        event(
+          3,
+          'work.decision-requesting',
+          { workItemId: 'wi2', decisionId: 'd2', kind: 'plan' },
+          6_000,
+        ),
+        event(4, 'work.plan-approved', { workItemId: 'wi2', decidedVia: 'channel' }, 9_000),
+      ];
+
+      const indexOrder = computeAgentMetrics([request, approved, ...later], [], []);
+      const idOrder = computeAgentMetrics([approved, request, ...later], [], []);
+
+      expect(indexOrder.decisions).toMatchObject({
+        requested: 2,
+        approved: 2,
+        medianLatencyMs: 1_500,
+      });
+      expect(idOrder).toEqual(indexOrder);
+    },
+  );
+});
