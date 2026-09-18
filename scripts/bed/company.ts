@@ -30,7 +30,14 @@ import { replaceSpans, structuralSpans } from '../../src/redaction/structural';
 import { containsProvenanceTrailer } from '../../src/surfaces/policy';
 import { composeArguments } from '../compose';
 import { UndoLedger } from '../rehearsal/cleanup';
-import { deleteComment, readComments } from '../rehearsal/linear';
+import {
+  deleteComment,
+  readComments,
+  retryOnce,
+  type IssueComment,
+  type LinearRequestError,
+  type RetryIo,
+} from '../rehearsal/linear';
 import { DOCS_STUB } from '../setup';
 import { applyDocs, planDocs, readManifest, trackedPages, type DocsPlan } from './docs';
 import {
@@ -48,6 +55,8 @@ import {
   unarchiveIssue,
   updateIssue,
   type BedIssue,
+  type BedLabel,
+  type ProjectIssue,
   type Workspace,
 } from './linear';
 import {
@@ -308,6 +317,121 @@ export function runDocs(io: CompanyIo, options: CompanyOptions, report: Report):
 // ---------------------------------------------------------------------------
 // Linear
 
+/**
+ * The bed's Linear calls, each retried once on a transient failure with the
+ * retry named in the report. A write whose first attempt may have landed
+ * before the failure re-reads first and is sent again only when it did not,
+ * so an archive, a create or a delete is never done twice.
+ */
+class BedLinear {
+  private readonly retry: RetryIo;
+
+  constructor(
+    private readonly client: LinearClient,
+    io: CompanyIo,
+    private readonly report: Report,
+  ) {
+    this.retry = {
+      say: (line: string): void => report.line('note', line),
+      sleep: (ms: number): Promise<void> => io.sleep(ms),
+    };
+  }
+
+  private landed(what: string, failure: LinearRequestError): void {
+    const reason = failure.reason.replace(/^an? /, '');
+    this.report.line('note', `the first ${what} landed before the ${reason}; not sent again`);
+  }
+
+  private async issue(id: string): Promise<BedIssue | undefined> {
+    return (await readBedIssues(this.client)).find((issue: BedIssue): boolean => issue.id === id);
+  }
+
+  workspace(keys: readonly string[]): Promise<Workspace> {
+    return retryOnce('workspace read', this.retry, () => readWorkspace(this.client, keys));
+  }
+
+  issues(): Promise<BedIssue[]> {
+    return retryOnce('ticket read', this.retry, () => readBedIssues(this.client));
+  }
+
+  foreignIssues(projectIds: readonly string[]): Promise<ProjectIssue[]> {
+    return retryOnce('project ticket read', this.retry, () => readForeignIssues(this.client, projectIds));
+  }
+
+  label(name: string): Promise<BedLabel | undefined> {
+    return retryOnce('label read', this.retry, () => readLabel(this.client, name));
+  }
+
+  createLabel(name: string): Promise<string> {
+    const what = 'label create';
+    return retryOnce(what, this.retry, () => createLabel(this.client, name), async (failure): Promise<string> => {
+      const found = await readLabel(this.client, name);
+      if (found?.description !== LABEL_DESCRIPTION) return await createLabel(this.client, name);
+      this.landed(what, failure);
+      return found.id;
+    });
+  }
+
+  deleteLabel(name: string, id: string): Promise<void> {
+    const what = 'label delete';
+    return retryOnce(what, this.retry, () => deleteLabel(this.client, id), async (failure): Promise<void> => {
+      if ((await readLabel(this.client, name))?.id === id) return await deleteLabel(this.client, id);
+      this.landed(what, failure);
+    });
+  }
+
+  createIssue(key: string, input: Record<string, unknown>): Promise<{ id: string; identifier: string }> {
+    const what = `${key} create`;
+    return retryOnce(what, this.retry, () => createIssue(this.client, input), async (failure) => {
+      const found = (await readBedIssues(this.client)).find((issue: BedIssue): boolean => issue.key === key);
+      if (!found) return await createIssue(this.client, input);
+      this.landed(what, failure);
+      return { id: found.id, identifier: found.identifier };
+    });
+  }
+
+  updateIssue(issue: { id: string; identifier: string }, input: Record<string, unknown>): Promise<void> {
+    // The same fields set twice leave the issue as once, so the update is simply sent again.
+    return retryOnce(`${issue.identifier} update`, this.retry, () => updateIssue(this.client, issue.id, input));
+  }
+
+  archive(issue: { id: string; identifier: string }): Promise<void> {
+    const what = `${issue.identifier} archive`;
+    return retryOnce(what, this.retry, () => archiveIssue(this.client, issue.id), async (failure): Promise<void> => {
+      if (!(await this.issue(issue.id))?.archived) return await archiveIssue(this.client, issue.id);
+      this.landed(what, failure);
+    });
+  }
+
+  unarchive(issue: { id: string; identifier: string }): Promise<void> {
+    const what = `${issue.identifier} unarchive`;
+    return retryOnce(what, this.retry, () => unarchiveIssue(this.client, issue.id), async (failure): Promise<void> => {
+      if ((await this.issue(issue.id))?.archived !== false) return await unarchiveIssue(this.client, issue.id);
+      this.landed(what, failure);
+    });
+  }
+
+  comments(issue: { id: string; identifier: string }): Promise<IssueComment[]> {
+    return retryOnce(`${issue.identifier} comment read`, this.retry, () => readComments(this.client, issue.id));
+  }
+
+  deleteComment(issue: { id: string; identifier: string }, commentId: string): Promise<void> {
+    const what = `${issue.identifier} comment delete`;
+    return retryOnce(what, this.retry, () => deleteComment(this.client, commentId), async (failure): Promise<void> => {
+      const comments = await readComments(this.client, issue.id);
+      if (comments.some((comment: IssueComment): boolean => comment.id === commentId)) {
+        return await deleteComment(this.client, commentId);
+      }
+      this.landed(what, failure);
+    });
+  }
+}
+
+/** The bed's Linear calls over this run's key and clock. */
+function bedLinear(io: CompanyIo, key: string, report: Report): BedLinear {
+  return new BedLinear(new LinearClient(key, io.fetch, (): number => io.now()), io, report);
+}
+
 interface TeamTarget {
   teamId: string;
   projectId: string;
@@ -422,8 +546,8 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined
     report.line('gap', `${LINEAR_KEY_ENV} is not set in ${ENV_FILE}: add a Linear personal API key from the demo workspace`);
     return;
   }
-  const client = new LinearClient(key, io.fetch);
-  const workspace = await readWorkspace(client, spec.teams.map((team) => team.key));
+  const linear = bedLinear(io, key, report);
+  const workspace = await linear.workspace(spec.teams.map((team) => team.key));
   report.line('ok', `the key is ${workspace.viewer.name}'s, in workspace ${workspace.organization}`);
   const gaps = workspaceGaps(spec, workspace);
   for (const gap of gaps) report.line('gap', gap);
@@ -433,9 +557,9 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined
       report.line('ok', `team ${team.key} with project "${team.project}" and states ${spec.states.join(', ')}`);
     }
   }
-  const label = await readLabel(client, spec.label);
+  const label = await linear.label(spec.label);
   report.line(label ? 'ok' : 'note', label ? `label ${spec.label}` : `label ${spec.label} is missing; seed creates it`);
-  const { byKey, duplicates } = issuesByKey(await readBedIssues(client));
+  const { byKey, duplicates } = issuesByKey(await linear.issues());
   for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
   if (!readState(io)) {
     for (const issue of byKey.values()) {
@@ -467,7 +591,7 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined
     }
   }
   const projectIds = [...targets.values()].map((target) => target.projectId);
-  for (const foreign of await readForeignIssues(client, projectIds)) {
+  for (const foreign of await linear.foreignIssues(projectIds)) {
     report.line(
       'gap',
       `${foreign.identifier} "${foreign.title}" is in project "${foreign.projectName}" and is not a bed ticket; intake would read it. Archive it, or move it to another project, by hand`,
@@ -703,34 +827,34 @@ async function linearForWrite(
   io: CompanyIo,
   spec: BedSpec,
   report: Report,
-): Promise<{ client: LinearClient; targets: Map<string, TeamTarget> } | undefined> {
+): Promise<{ linear: BedLinear; targets: Map<string, TeamTarget> } | undefined> {
   const key = io.env[LINEAR_KEY_ENV]?.trim();
   if (!key) {
     report.line('gap', `${LINEAR_KEY_ENV} is not set in ${ENV_FILE}`);
     return undefined;
   }
-  const client = new LinearClient(key, io.fetch);
-  const workspace = await readWorkspace(client, spec.teams.map((team) => team.key));
+  const linear = bedLinear(io, key, report);
+  const workspace = await linear.workspace(spec.teams.map((team) => team.key));
   const gaps = workspaceGaps(spec, workspace);
   for (const gap of gaps) report.line('gap', gap);
   if (gaps.length > 0) {
     report.say('  Nothing was changed: the teams, projects and states are made by hand first.');
     return undefined;
   }
-  return { client, targets: teamTargets(spec, workspace) };
+  return { linear, targets: teamTargets(spec, workspace) };
 }
 
-async function ensureLabel(client: LinearClient, spec: BedSpec, undo: UndoLedger, report: Report): Promise<string> {
-  const existing = await readLabel(client, spec.label);
+async function ensureLabel(linear: BedLinear, spec: BedSpec, undo: UndoLedger, report: Report): Promise<string> {
+  const existing = await linear.label(spec.label);
   if (existing) return existing.id;
-  const id = await createLabel(client, spec.label);
-  undo.register(`delete label ${spec.label}`, () => deleteLabel(client, id));
+  const id = await linear.createLabel(spec.label);
+  undo.register(`delete label ${spec.label}`, () => linear.deleteLabel(spec.label, id));
   report.line('ok', `created label ${spec.label}`);
   return id;
 }
 
 async function fileTicket(
-  client: LinearClient,
+  linear: BedLinear,
   ticket: BedTicket,
   existing: BedIssue | undefined,
   target: TeamTarget,
@@ -740,7 +864,7 @@ async function fileTicket(
 ): Promise<void> {
   const stateId = target.states.get(ticket.state)!;
   if (!existing) {
-    const created = await createIssue(client, {
+    const created = await linear.createIssue(ticket.key, {
       teamId: target.teamId,
       projectId: target.projectId,
       title: ticket.title,
@@ -748,24 +872,22 @@ async function fileTicket(
       stateId,
       labelIds: [labelId],
     });
-    undo.register(`archive ${created.identifier}`, () => archiveIssue(client, created.id));
+    undo.register(`archive ${created.identifier}`, () => linear.archive(created));
     report.line('ok', `created ${ticket.key} as ${created.identifier} "${ticket.title}" (${ticket.state})`);
     return;
   }
   if (existing.archived) {
-    await unarchiveIssue(client, existing.id);
-    undo.register(`archive ${existing.identifier} again`, () => archiveIssue(client, existing.id));
+    await linear.unarchive(existing);
+    undo.register(`archive ${existing.identifier} again`, () => linear.archive(existing));
     report.line('ok', `unarchived ${ticket.key} ${existing.identifier}`);
   }
   const input = resetInput(existing, ticket, { teamId: target.teamId, projectId: target.projectId, stateId, labelId });
   if (Object.keys(input).length > 0) {
-    await updateIssue(client, existing.id, input);
+    await linear.updateIssue(existing, input);
     report.line('ok', `put ${ticket.key} ${existing.identifier} back (${Object.keys(input).join(', ')})`);
   }
-  const trailers = (await readComments(client, existing.id)).filter((comment) =>
-    containsProvenanceTrailer(comment.body),
-  );
-  for (const comment of trailers) await deleteComment(client, comment.id);
+  const trailers = (await linear.comments(existing)).filter((comment) => containsProvenanceTrailer(comment.body));
+  for (const comment of trailers) await linear.deleteComment(existing, comment.id);
   report.line(
     'ok',
     `${ticket.key} ${existing.identifier} is "${ticket.title}" (${ticket.state}), unassigned${trailers.length > 0 ? `; deleted ${trailers.length} comment(s) with a provenance trailer` : ''}`,
@@ -782,10 +904,10 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
   report.section('Linear');
   if (!slackToken) report.line('gap', `${SLACK_TOKEN_ENV} is not set in ${ENV_FILE}`);
   if (!project) report.line('gap', `COMPOSE_PROJECT_NAME is not set in ${ENV_FILE}: run ./setup.sh first`);
-  const linear = await linearForWrite(io, spec, report);
-  if (!linear || !slackToken || !project) return 1;
-  const { client, targets } = linear;
-  const { byKey, duplicates } = issuesByKey(await readBedIssues(client));
+  const forWrite = await linearForWrite(io, spec, report);
+  if (!forWrite || !slackToken || !project) return 1;
+  const { linear, targets } = forWrite;
+  const { byKey, duplicates } = issuesByKey(await linear.issues());
   if (duplicates.length > 0) {
     for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
     return 1;
@@ -800,14 +922,14 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
   const undo = new UndoLedger();
   let createdLabelId: string | undefined;
   try {
-    const priorLabel = await readLabel(client, spec.label);
-    const labelId = await ensureLabel(client, spec, undo, report);
+    const priorLabel = await linear.label(spec.label);
+    const labelId = await ensureLabel(linear, spec, undo, report);
     if (!priorLabel) createdLabelId = labelId;
     for (const ticket of spec.tickets) {
       const existing = byKey.get(ticket.key);
       if (!toFile.includes(ticket)) {
         if (existing && !existing.archived) {
-          await archiveIssue(client, existing.id);
+          await linear.archive(existing);
           report.line(
             'ok',
             set === undefined
@@ -817,7 +939,7 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
         }
         continue;
       }
-      await fileTicket(client, ticket, existing, targets.get(ticket.team)!, labelId, undo, report);
+      await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, undo, report);
     }
   } catch (error) {
     report.line('gap', `seed stopped: ${(error as Error).message}`);
@@ -827,7 +949,7 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
     return 1;
   }
 
-  const currentIssues = await readBedIssues(client);
+  const currentIssues = await linear.issues();
   const activated = currentIssues.filter((issue) => {
     const before = byKey.get(issue.key);
     return !issue.archived && (!before || before.archived);
@@ -876,9 +998,10 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     report.line('gap', `run seed first so ${STATE_FILE} records which late ticket this clone may tear down`);
     return 1;
   }
-  const linear = await linearForWrite(io, spec, report);
-  if (!linear) return 1;
-  const { byKey, duplicates } = issuesByKey(await readBedIssues(linear.client));
+  const forWrite = await linearForWrite(io, spec, report);
+  if (!forWrite) return 1;
+  const { linear, targets } = forWrite;
+  const { byKey, duplicates } = issuesByKey(await linear.issues());
   if (duplicates.length > 0) {
     for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
     return 1;
@@ -890,8 +1013,8 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
   }
   const undo = new UndoLedger();
   try {
-    const labelId = await ensureLabel(linear.client, spec, undo, report);
-    await fileTicket(linear.client, ticket, existing, linear.targets.get(ticket.team)!, labelId, undo, report);
+    const labelId = await ensureLabel(linear, spec, undo, report);
+    await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, undo, report);
   } catch (error) {
     report.line('gap', `post stopped: ${(error as Error).message}`);
     for (const result of await undo.runAll()) {
@@ -899,7 +1022,7 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     }
     return 1;
   }
-  const filed = (await readBedIssues(linear.client)).find((issue) => issue.key === key && !issue.archived);
+  const filed = (await linear.issues()).find((issue) => issue.key === key && !issue.archived);
   if (filed && (!existing || existing.archived)) {
     writeState(io, { ...state, issueIds: [...new Set([...state.issueIds, filed.id])] });
   }
@@ -917,16 +1040,16 @@ export async function runTeardown(io: CompanyIo, report: Report): Promise<number
   } else if (!state) {
     report.line('note', `no seed is recorded in ${STATE_FILE} on this clone, so no Linear ticket is this clone's to archive`);
   } else {
-    const client = new LinearClient(key, io.fetch);
-    const issues = await readBedIssues(client);
+    const linear = bedLinear(io, key, report);
+    const issues = await linear.issues();
     const ownedIds = new Set(state.issueIds);
     for (const issue of issues.filter((candidate) => ownedIds.has(candidate.id) && !candidate.archived)) {
-      await archiveIssue(client, issue.id);
+      await linear.archive(issue);
       report.line('ok', `archived ${issue.key} ${issue.identifier}`);
     }
-    const label = state.labelId ? await readLabel(client, spec.label) : undefined;
+    const label = state.labelId ? await linear.label(spec.label) : undefined;
     if (label && label.id === state.labelId && label.description === LABEL_DESCRIPTION) {
-      await deleteLabel(client, label.id);
+      await linear.deleteLabel(spec.label, label.id);
       report.line('ok', `deleted label ${spec.label}, which seed created`);
     }
   }

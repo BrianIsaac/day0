@@ -781,7 +781,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     return h;
   }
 
-  it.fails('retries the label delete that timed out, then cleans Slack and finishes first try (F4)', async (): Promise<void> => {
+  it('retries the label delete that timed out, then cleans Slack and finishes first try (F4)', async (): Promise<void> => {
     const h = await seeded();
     h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
     h.linear.fail('BedLabelDelete', { kind: 'timeout' });
@@ -796,7 +796,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(stateKept(h)).toBe(false);
   });
 
-  it.fails('reports a label the timed-out delete removed as gone, and never sends the delete twice', async (): Promise<void> => {
+  it('reports a label the timed-out delete removed as gone, and never sends the delete twice', async (): Promise<void> => {
     const h = await seeded();
     h.linear.fail('BedLabelDelete', { kind: 'timeout', landed: true });
     expect(await run(h, ['teardown'])).toBe(0);
@@ -806,7 +806,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(h.linear.labels).toEqual([]);
   });
 
-  it.fails('does not archive a ticket twice when the first archive landed before the timeout', async (): Promise<void> => {
+  it('does not archive a ticket twice when the first archive landed before the timeout', async (): Promise<void> => {
     const h = await seeded();
     h.linear.fail('BedIssueArchive', { kind: 'timeout', landed: true });
     expect(await run(h, ['teardown'])).toBe(0);
@@ -816,7 +816,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(allArchived(h)).toBe(true);
   });
 
-  it.fails('reads the bed again after a 503 whose body is not JSON', async (): Promise<void> => {
+  it('reads the bed again after a 503 whose body is not JSON', async (): Promise<void> => {
     const h = await seeded();
     h.linear.fail('BedIssues', { kind: 'status', status: 503, body: '<html>Service Unavailable</html>' });
     expect(await run(h, ['teardown'])).toBe(0);
@@ -882,7 +882,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(h.slack.deleted).toHaveLength(3);
   });
 
-  it.fails('does not file a ticket twice when the first create landed before the timeout', async (): Promise<void> => {
+  it('does not file a ticket twice when the first create landed before the timeout', async (): Promise<void> => {
     const h = harness();
     h.linear.fail('BedIssueCreate', { kind: 'timeout', landed: true });
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
@@ -896,7 +896,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(allArchived(h)).toBe(true);
   });
 
-  it.fails('waits out a 429 for as long as Retry-After says, once, then files the ticket', async (): Promise<void> => {
+  it('waits out a 429 for as long as Retry-After says, once, then files the ticket', async (): Promise<void> => {
     const h = harness();
     h.linear.fail('BedIssueCreate', { kind: 'status', status: 429, headers: { 'Retry-After': '7' }, body: {} });
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
@@ -907,7 +907,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     }
   });
 
-  it.fails("waits for the end of Linear's rate-limit window on its 400 RATELIMITED answer", async (): Promise<void> => {
+  it("waits for the end of Linear's rate-limit window on its 400 RATELIMITED answer", async (): Promise<void> => {
     const h = harness();
     h.linear.fail('BedLabelCreate', {
       kind: 'status',
