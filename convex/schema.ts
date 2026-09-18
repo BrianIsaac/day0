@@ -526,9 +526,10 @@ export default defineSchema({
      */
     scopeWaivedAt: v.optional(v.number()),
     /**
-     * The last policy change that sent this row back to `discovered`: the
-     * trigger, its idempotency key and when. The same key never re-admits the
-     * row twice.
+     * What last sent this row back to `discovered`: a policy change, or the
+     * thing a verdict waited on landing (`verdict-write` when the verdict was
+     * written, `check` on Check for new work), with its idempotency key and
+     * when. The same key never re-admits the row twice.
      */
     reevaluation: v.optional(
       v.object({ trigger: v.string(), key: v.string(), at: v.number() }),
