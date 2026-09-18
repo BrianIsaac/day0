@@ -119,6 +119,31 @@ describe('the steps that re-establish a browser session', (): void => {
     );
   });
 
+  it('refuses a click separated from a credential fill by a held or failed row', (): void => {
+    const actions = [navigate(), signIn, fillCoverage, clickSignIn];
+    const separated = run(actions);
+    for (const intervening of [
+      { ...landed('wi:run:2'), ok: false, reason: 'provider refused' },
+      { ...landed('wi:run:2'), held: true, reason: 'awaiting approval' },
+    ]) {
+      separated.applied[2] = intervening;
+      expect(() => sessionRecipe('looker', separated, ENDPOINT)).toThrow('incomplete sign-in');
+    }
+  });
+
+  it('selects only the second of two complete sign-ins', (): void => {
+    const recipe = sessionRecipe(
+      'looker',
+      run([navigate(), signIn, clickSignIn, signIn, clickSignIn, snapshot]),
+      ENDPOINT,
+    );
+    expect(tools(recipe)).toEqual([
+      ['browser_navigate', 'wi:run:0'],
+      ['browser_fill_form', 'wi:run:3'],
+      ['browser_click', 'wi:run:4'],
+    ]);
+  });
+
   it('ignores held, awaiting, refused and failed rows, and other surfaces', (): void => {
     const actions = [
       navigate(),

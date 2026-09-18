@@ -122,6 +122,14 @@ function latestRunRows(rows: readonly BrowserRow[]): BrowserRow[] {
 const isNavigate = (row: BrowserRow): boolean => row.tool === 'browser_navigate';
 const isCredentialFill = (row: BrowserRow): boolean => signsIn(row.action, String(row.action.args.surface));
 
+function directlyAfter(before: BrowserRow | undefined, after: BrowserRow | undefined): boolean {
+  if (!before || !after || before.runId !== after.runId) return false;
+  if (Number.isFinite(before.sub)) {
+    return after.index === before.index && after.sub === before.sub + 1;
+  }
+  return after.sub === Number.POSITIVE_INFINITY && after.index === before.index + 1;
+}
+
 function clickName(row: BrowserRow | undefined): string | undefined {
   if (row?.tool !== 'browser_click') return undefined;
   try {
@@ -172,14 +180,24 @@ export function signsIn(action: MockAction | undefined, slug: string): boolean {
 function lastSignIn(rows: readonly BrowserRow[]): number[] {
   let last = -1;
   rows.forEach((row, position): void => {
-    if (isCredentialFill(row) && SIGN_IN_CONTROL.test(clickName(rows[position + 1]) ?? '')) {
+    if (
+      isCredentialFill(row) &&
+      directlyAfter(row, rows[position + 1]) &&
+      SIGN_IN_CONTROL.test(clickName(rows[position + 1]) ?? '')
+    ) {
       last = position;
     }
   });
   if (last < 0) return [];
   const picked = [last, last + 1];
   let first = last;
-  while (first >= 2 && NEXT_CONTROL.test(clickName(rows[first - 1]) ?? '') && isCredentialFill(rows[first - 2]!)) {
+  while (
+    first >= 2 &&
+    directlyAfter(rows[first - 2], rows[first - 1]) &&
+    directlyAfter(rows[first - 1], rows[first]) &&
+    NEXT_CONTROL.test(clickName(rows[first - 1]) ?? '') &&
+    isCredentialFill(rows[first - 2]!)
+  ) {
     first -= 2;
     picked.unshift(first, first + 1);
   }
