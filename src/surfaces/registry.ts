@@ -334,8 +334,8 @@ export async function applySurfaceActions(
     const parsed = parseSurfaceAction(action);
     return parsed.ok ? parsed.action : undefined;
   });
-  // Browser-driven surfaces this invocation has already sent something to,
-  // with the reason the session could not be re-established when it could not.
+  // Browser-driven surfaces whose page this invocation has open, and those
+  // whose session could not be re-established, with the reason.
   const browserSessions = new Map<string, { failure?: string }>();
   try {
     for (const [index, action] of actions.entries()) {
@@ -473,20 +473,21 @@ export async function applySurfaceActions(
         continue;
       }
       const adapterRun = { ...run, agentName: run.agentName ?? 'Day0' };
+      const browserDriven = surface.path === 'browser-driven' && parsed.action.kind === 'mcp.call';
       let restored: SessionRestoreResult | undefined;
-      if (surface.path === 'browser-driven' && parsed.action.kind === 'mcp.call') {
+      if (browserDriven) {
         const session = browserSessions.get(surface.slug);
         if (session?.failure) {
           applied.push(refused(action.tool, session.failure, idempotencyKey));
           continue;
         }
         if (!session) {
-          browserSessions.set(surface.slug, {});
           // A new invocation is a new browser, blank and signed out: the run's
           // own sign-in is replayed before anything that needs the page. A
           // leading navigate lands signed out too, unless this invocation
           // signs in on the surface itself.
-          const navigates = parsed.action.tool === 'browser_navigate';
+          const navigates =
+            parsed.action.kind === 'mcp.call' && parsed.action.tool === 'browser_navigate';
           const signsInItself =
             navigates &&
             actions
@@ -537,6 +538,11 @@ export async function applySurfaceActions(
       );
       const stamped = authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome;
       applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);
+      // The page is open once a replay or a call has landed on it; until then
+      // the next call on the surface is checked for a replay again.
+      if (browserDriven && (restored?.ok === true || outcome.ok)) {
+        browserSessions.set(surface.slug, {});
+      }
     }
   } finally {
     // The browser floor holds one live browser per run and surface for this

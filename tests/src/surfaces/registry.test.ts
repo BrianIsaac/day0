@@ -1159,6 +1159,34 @@ describe('a browser session across the apply invocations of one run', (): void =
     ]);
   });
 
+  it('checks for a replay again when the first call on the surface did not land', async (): Promise<void> => {
+    // A first run whose opening navigate is refused before any browser opens:
+    // the sign-in that follows still needs the page, so the surface's own
+    // page is opened for it rather than typing into a blank one.
+    const driver = new TileDriver('pipeline-tile-local');
+    const outside: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'looker',
+        tool: 'browser_navigate',
+        toolArgsJson: JSON.stringify({ url: 'https://elsewhere.example/' }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [looker], run, [outside, ...slackPhaseOne.slice(1)], {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3]),
+    });
+    expect(applied[0]).toMatchObject({ ok: false });
+    expect(applied[0]!.reason).toContain('outside');
+    expect(applied.slice(1).map((row) => row.ok)).toEqual([true, true, true]);
+    expect(applied[1]!.sessionRestore?.steps.map((step) => [step.ok, step.replayOf])).toEqual([
+      [true, undefined],
+    ]);
+    expect(applied[3]!.effect).toContain('visible figure 68%');
+  });
+
   it('opens no second sign-in when the invocation starts with its own navigate', async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);
