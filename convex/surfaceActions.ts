@@ -30,6 +30,7 @@ import {
   documentedChannelNames,
   type ChannelMembership,
 } from '../src/surfaces/slack-policy';
+import { approvedChannelNames } from '../src/surfaces/intake-scope';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
@@ -1003,7 +1004,11 @@ export async function runSurfaceProbe(
           context.agent.bossEmail,
           pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
           undefined,
-          documentedChannelNames(pages),
+          // The channels this employee will read are the approved ones, so
+          // those are the ones whose invite the card asks for.
+          surface.intakeScope
+            ? approvedChannelNames(surface.intakeScope)
+            : documentedChannelNames(pages),
         );
         toolAllowlist = slack.toolAllowlist;
         channelsNotJoined = slack.channelsNotJoined;

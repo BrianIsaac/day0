@@ -697,7 +697,7 @@ describe('surface probe action state', (): void => {
     },
   );
 
-  it.fails('checks invites for the approved channels only, not every handbook\'s', async (): Promise<void> => {
+  it('checks invites for the approved channels only, not every handbook\'s', async (): Promise<void> => {
     const agentId = 'test-agent-id' as Id<'agents'>;
     const surfaceId = 'test-surface-id' as Id<'surfaces'>;
     const surface = {
