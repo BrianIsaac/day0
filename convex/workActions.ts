@@ -57,7 +57,7 @@ import {
   type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import { withheldByClaimReason, writeTargetIds } from '../src/work/claim-key';
+import { withheldByClaim, withheldByClaimReason, writeTargetIds } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -1279,7 +1279,11 @@ export function blockedPlanReason(
       const row = run.applied[index];
       return row?.ok === true && row.held !== true;
     };
-    const everyActionLanded = run.actions.every((_action, index) => landed(index));
+    // A write withheld for another work item's claim is that item's to land;
+    // it is not work this run left undone.
+    const everyActionLanded = run.actions.every(
+      (_action, index) => landed(index) || withheldByClaim(run.applied[index]),
+    );
     const closePromised =
       run.plan.expectedOutputType === 'ticket-update' && transitionPromised(run.plan);
     const transitionLanded = run.actions.some((action, index): boolean => {

@@ -9,7 +9,9 @@ import schema from '../../convex/schema';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
-import type { MockAction } from '../../src/work/types';
+import { withheldByClaimReason } from '../../src/work/claim-key';
+import type { ExecutionPlan, MockAction } from '../../src/work/types';
+import { blockedPlanReason } from '../../convex/workActions';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -397,5 +399,19 @@ describe('a write to an external item another work item holds (finding D, 19 Sep
     expect(done.state).toBe('completed');
     expect(ledger(done)[3]).toMatchObject({ ok: true, held: true });
     expect(ledger(done)[3]!.reason).toContain(ASK_TITLE);
+  });
+
+  it('does not fail a closing phase over a step the holder did: a claim-withheld write is accounted for, a plain held one is not', (): void => {
+    const plan = { summary: 'Answer the ask.', steps: ['Read', 'Reply', 'Post the note'], expectedOutputType: 'message' } as unknown as ExecutionPlan;
+    const outcomes = [{ step: 3, status: 'blocked' as const, evidence: 'the note on FIN-1 was withheld' }];
+    const actions = [LIST, threadReply(ASK_CHANNEL, ASK_TS), NOTE_ON_TICKET];
+    const landed = { tool: 'mcp.call', ok: true, idempotencyKey: 'k' };
+    const byClaim = {
+      ...landed, held: true,
+      reason: withheldByClaimReason({ target: 'FIN-1', holderName: 'Mateo', sameEmployee: true, title: TICKET_TITLE, state: 'completed' }),
+    };
+    expect(blockedPlanReason(outcomes, { plan, actions, applied: [landed, landed, byClaim] })).toBeUndefined();
+    const byManager = { ...landed, held: true, reason: 'not approved by the manager' };
+    expect(blockedPlanReason(outcomes, { plan, actions, applied: [landed, landed, byManager] })).toContain('remained blocked');
   });
 });
