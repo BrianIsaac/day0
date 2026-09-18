@@ -1728,6 +1728,12 @@ function restore(options: DemoBedOptions): void {
 
 async function up(options: DemoBedOptions): Promise<void> {
   assertBedProject(options.project);
+  if (options.warmFrom !== undefined) {
+    assertNotProtected(options.warmFrom);
+    if (options.warmFrom === options.project) {
+      throw new Error(`--warm-from ${options.warmFrom} names this bed's own project.`);
+    }
+  }
   if (!existsSync(ENV_FILE)) {
     throw new Error(
       `${ENV_FILE} not found. Copy .env.example to ${ENV_FILE} and fill in the bed's values first.`,

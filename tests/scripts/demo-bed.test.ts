@@ -593,6 +593,32 @@ describe('the warm redactor volumes', (): void => {
     })).toThrow('protected');
   });
 
+  it('refuses a protected warm source before Docker is asked for volumes', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-warm-'));
+    const bin = join(scratch, 'bin');
+    const calls = join(scratch, 'docker-calls');
+    mkdirSync(bin);
+    const docker = join(bin, 'docker');
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
+    chmodSync(docker, 0o755);
+    writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
+    writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    try {
+      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'),
+        [join(process.cwd(), 'scripts/demo-bed.ts'), 'up', '--project', 'day0-p11r-test',
+          '--warm-from', 'day0'], {
+          cwd: scratch,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+          encoding: 'utf8',
+        });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('protected');
+      expect(existsSync(calls)).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a venv the start script would empty and rebuild at the venue', (): void => {
     expect(redactorVenvRefusal('cpu', 'day0-redactor-warm_redactor_venv')).toBeUndefined();
     expect(redactorVenvRefusal('cuda', 'day0-redactor-warm_redactor_venv')).toMatch(/CUDA[\s\S]*CPU/);
