@@ -44,7 +44,10 @@ The protocol is two endpoints of JSON over HTTP/1.0:
 
 Whether a run counts as verification is decided by the caller, not here: this
 reports what happened and `src/lib/skill-sandbox.ts` applies the same rule to
-both backends.
+both backends. In real mode the `smokeTest` it is handed is the harness from
+`src/work/smoke-harness.ts` with the author's program embedded, so what runs
+here is the harness's test of the author's `run()`; this service does not
+know or care which it was given.
 
     python3 skill_sandbox.py            serve
     python3 skill_sandbox.py --health   probe the socket (the container's healthcheck)

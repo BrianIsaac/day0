@@ -1420,9 +1420,9 @@ export function RegisteredSkillsPanel({
               >
                 {s.sourceType === 'builtin' ? 'builtin' : 'authored'}
               </span>
-              <div className="flex-1">
-                <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
-                <div className="text-[var(--color-muted)] text-xs">{s.description}</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
+                <div className="text-[var(--color-muted)] text-xs break-words">{s.description}</div>
               </div>
               {s.sourceType === 'agent-authored' ? (
                 <button
@@ -1451,9 +1451,12 @@ export function RegisteredSkillsPanel({
             {unregistered.map((s) => (
               <li key={s._id}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1">
-                    <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
-                    <div className="text-[var(--color-muted)] text-xs">
+                  {/* A traceback's caret line has no break opportunity: without
+                      min-w-0 the column keeps its full width and pushes Retry
+                      past the card's edge. */}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
+                    <div className="text-[var(--color-muted)] text-xs break-words">
                       {/* Three different things, and the row used to say the
                           first for two of them: a run working on it now, whose
                           log is the previous attempt's; a run that died holding

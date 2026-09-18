@@ -1,10 +1,13 @@
 import { parser as pythonParser } from '@lezer/python';
+import type { SurfaceMode } from '../lib/surface-mode';
 import { redactStructural } from '../redaction/redact';
 
 /**
  * The preflight on an authored smoke test, run before either sandbox spends
- * a run: the source must parse as Python 3.12 and carry the two landmarks
- * the sandbox reads back, `run(inputs: dict) -> dict` and a printed line.
+ * a run: the source must parse as Python 3.12 and carry the landmarks the
+ * sandbox reads back, `run(inputs: dict) -> dict` and, in mock mode, a
+ * printed line. In real mode the harness calls `run()` and prints its own
+ * lines, so the author is told to print nothing and is not refused for it.
  *
  * A refusal names the form: the first parse error's line and column and the
  * offending line, so the retry corrects that line rather than guessing. The
@@ -57,12 +60,13 @@ function quotedLine(source: string, offset: number): { line: number; column: num
  *
  * Args:
  *   source: Python source, already unwrapped from any fence.
+ *   mode: The deployment's surface mode; real mode needs no printed line.
  *
  * Returns:
- *   The reason, or undefined when the source parses and carries both
- *   landmarks.
+ *   The reason, or undefined when the source parses and carries the
+ *   landmarks its mode needs.
  */
-export function smokeTestPreflightReason(source: string): string | undefined {
+export function smokeTestPreflightReason(source: string, mode: SurfaceMode = 'mock'): string | undefined {
   const tree = pythonParser.parse(source);
   const cursor = tree.cursor();
   do {
@@ -79,7 +83,7 @@ export function smokeTestPreflightReason(source: string): string | undefined {
   if (!runSignature.test(source)) {
     return 'smoke test is not valid Python 3.12 source: it must define run(inputs: dict) -> dict';
   }
-  if (!/\bprint\s*\(|\bsys\.stdout\.write\s*\(/.test(source)) {
+  if (mode === 'mock' && !/\bprint\s*\(|\bsys\.stdout\.write\s*\(/.test(source)) {
     return 'smoke test is not valid Python 3.12 source: it must print a success line';
   }
   return undefined;

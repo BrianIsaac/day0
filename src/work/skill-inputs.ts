@@ -119,6 +119,56 @@ export function undeclaredSkillInputs(body: string): string[] {
 const READ_BY_THE_EXECUTOR =
   'read it from the candidate body, its Refs line or the runbook for this run; the skill body carries no value for it';
 
+/** Where a declaration added for the author says its value comes from. */
+const ADDED_DECLARATION_SOURCE = 'read it from the candidate body, its Refs line or the runbook for this run';
+
+/**
+ * Declare every placeholder a body uses but does not declare.
+ *
+ * An author that writes `<closing-state-name>` in an example and never lists
+ * it under `## Inputs` has written a procedure the executor can still bind:
+ * any input the candidate row does not settle is read from the candidate or
+ * its runbook at execution, which is exactly what `bindSkillInputs` tells the
+ * executor for it. So real mode declares it in those words instead of refusing
+ * the skill, and says so in the log. Each goes on its own list line after the
+ * section's last non-blank line, so the author's declarations keep their
+ * place; a body with no section gets one at its end.
+ *
+ * Args:
+ *   body: SKILL.md markdown.
+ *
+ * Returns:
+ *   The body with every used placeholder declared, and the names this added
+ *   in order of first use; the body unchanged when nothing was missing.
+ */
+export function declareUndeclaredInputs(body: string): { body: string; declared: string[] } {
+  const missing = undeclaredSkillInputs(body);
+  if (missing.length === 0) return { body, declared: [] };
+  const lines = missing.map((name: string): string => `- \`<${name}>\`: ${ADDED_DECLARATION_SOURCE}.`).join('\n');
+  const section = INPUTS_SECTION.exec(body);
+  if (!section) return { body: `${body.trimEnd()}\n\n## Inputs\n\n${lines}\n`, declared: missing };
+  const contentStart = section.index + section[0].length - section[1]!.length;
+  const at = contentStart + section[1]!.trimEnd().length;
+  return { body: `${body.slice(0, at)}\n${lines}${body.slice(at)}`, declared: missing };
+}
+
+/**
+ * What the log says when real mode declared inputs for the author.
+ *
+ * Args:
+ *   names: The placeholder names declared, without brackets.
+ *
+ * Returns:
+ *   One line for the verification log.
+ */
+export function declaredInputsNote(names: readonly string[]): string {
+  const quoted = names.map((name: string): string => `\`<${name}>\``);
+  const list = quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}` : quoted[0]!;
+  return quoted.length > 1
+    ? `SKILL.md used ${list} without declaring them; each was declared under \`## Inputs\` as read from the candidate or its runbook at execution`
+    : `SKILL.md used ${list} without declaring it; it was declared under \`## Inputs\` as read from the candidate or its runbook at execution`;
+}
+
 /**
  * Bind a skill's declared inputs from the candidate for one run.
  *
