@@ -406,7 +406,7 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, report: Report): Promis
   const label = await readLabel(client, spec.label);
   report.line(label ? 'ok' : 'note', label ? `label ${spec.label}` : `label ${spec.label} is missing; seed creates it`);
   const { byKey, duplicates } = issuesByKey(await readBedIssues(client));
-  for (const duplicate of duplicates) report.line('gap', `${duplicate}: archive one by hand`);
+  for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
   if (!readState(io)) {
     for (const issue of byKey.values()) {
       if (!issue.archived) report.line('gap', `${issue.identifier} is an active marked ticket from another clone: archive it there before this clone seeds`);
@@ -745,7 +745,7 @@ export async function runSeed(io: CompanyIo, report: Report): Promise<number> {
   const { client, targets } = linear;
   const { byKey, duplicates } = issuesByKey(await readBedIssues(client));
   if (duplicates.length > 0) {
-    for (const duplicate of duplicates) report.line('gap', `${duplicate}: archive one by hand`);
+    for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
     return 1;
   }
   if (!previous) {
@@ -832,7 +832,7 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
   if (!linear) return 1;
   const { byKey, duplicates } = issuesByKey(await readBedIssues(linear.client));
   if (duplicates.length > 0) {
-    for (const duplicate of duplicates) report.line('gap', `${duplicate}: archive one by hand`);
+    for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
     return 1;
   }
   const existing = byKey.get(key);

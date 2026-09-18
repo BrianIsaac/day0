@@ -748,6 +748,26 @@ describe('check', (): void => {
     expect(gaps).toContain('looker-tile is not running in day0-bed-test');
   });
 
+  it('does not tell the operator to archive a duplicate that is already archived', async (): Promise<void> => {
+    const h = harness();
+    h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'Older duplicate',
+      description: markedDescription('Earlier bed', 'revops-tile'),
+      archivedAt: '2026-09-17T00:00:00.000Z',
+    });
+    h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'Newer duplicate',
+      description: markedDescription('Another bed', 'revops-tile'),
+      archivedAt: '2026-09-18T00:00:00.000Z',
+    });
+    expect(await run(h, ['check'])).toBe(1);
+    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
+    expect(gaps).toContain('remove the marker from one or delete it by hand');
+    expect(gaps).not.toContain('archive one by hand');
+  });
+
   it('tells a refused Notion secret from a component that is not running', async (): Promise<void> => {
     const refused = harness({}, (args) =>
       args.includes('exec')
