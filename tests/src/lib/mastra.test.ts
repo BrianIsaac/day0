@@ -11,7 +11,11 @@ import {
   resetStructuredModeMemo,
   withModelRetry,
 } from '../../../src/lib/mastra';
-import { observeModelCalls, type ModelCallReport } from '../../../src/lib/model-call-telemetry';
+import {
+  countProviderRequest,
+  observeModelCalls,
+  type ModelCallReport,
+} from '../../../src/lib/model-call-telemetry';
 
 /**
  * The retry wrapper reports every model call to the observer the loop step
@@ -180,6 +184,55 @@ describe('model-call telemetry from the retry wrapper', (): void => {
       ),
     ]);
     expect(seen).toEqual({ a: 2, b: 1 });
+  });
+
+  it('counts the provider requests a call made, including the ones the SDK retried inside it', async (): Promise<void> => {
+    // The AI SDK retries a 503 twice of its own accord inside one attempt of
+    // ours, so a call that took minutes would otherwise read as one slow call
+    // rather than as retries. Observed on a real backend, 18 September 2026.
+    const generate = vi.fn(async (): Promise<{ object: { ok: true } }> => {
+      countProviderRequest();
+      countProviderRequest();
+      countProviderRequest();
+      return { object: { ok: true } };
+    });
+    const agent = { name: 'day0-scope-judgement', generate } as unknown as Agent;
+
+    const { reports } = await collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }));
+
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ attempts: 1, retries: 0, providerCalls: 3 });
+  });
+
+  it('counts each attempt\'s provider requests into the one report', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const generate = vi
+      .fn()
+      .mockImplementationOnce(async (): Promise<never> => {
+        countProviderRequest();
+        throw { statusCode: 503, message: 'service unavailable' };
+      })
+      .mockImplementationOnce(async (): Promise<{ object: { ok: true } }> => {
+        countProviderRequest();
+        countProviderRequest();
+        return { object: { ok: true } };
+      });
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+    vi.spyOn(console, 'warn').mockImplementation((): void => {});
+
+    const pending = collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    const { reports } = await pending;
+
+    expect(reports[0]).toMatchObject({ attempts: 2, retries: 1, providerCalls: 3 });
+  });
+
+  it('omits the provider count when nothing counted, rather than reporting a wrong one', async (): Promise<void> => {
+    const generate = vi.fn().mockResolvedValue({ text: 'done' });
+    const agent = { name: 'day0-good-habits', generate } as unknown as Agent;
+
+    const { reports } = await collect(() => agentText({ agent, user: SECRET_PROMPT }));
+    expect(reports[0]).not.toHaveProperty('providerCalls');
   });
 
   it('never lets a failing observer fail the call it observed', async (): Promise<void> => {

@@ -4,7 +4,7 @@ import type { MastraModelConfig } from '@mastra/core/llm';
 import { env } from '../env';
 import { languageModel, MODEL, modelProviderClient } from './openai';
 import { log } from './logger';
-import { reportModelCall } from './model-call-telemetry';
+import { countingProviderRequests, reportModelCall } from './model-call-telemetry';
 import {
   classifyStructuredFailure,
   createFallbackMemo,
@@ -94,30 +94,35 @@ async function withRetry<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const startedAt = Date.now();
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
-    try {
-      const value = await fn();
-      await reportModelCall(call.agent, attempt + 1, startedAt);
-      return value;
-    } catch (err) {
-      lastErr = err;
-      if (!isTransientApiError(err) || attempt === MODEL_RETRY_POLICY.maxAttempts - 1) {
-        await reportModelCall(call.agent, attempt + 1, startedAt, err);
-        throw err;
+  // The counter spans every attempt, so one report says how many requests
+  // this call put on the provider, the SDK's own retries included.
+  const counter = { count: 0 };
+  return await countingProviderRequests(counter, async (): Promise<T> => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
+      try {
+        const value = await fn();
+        await reportModelCall(call.agent, attempt + 1, startedAt, counter.count);
+        return value;
+      } catch (err) {
+        lastErr = err;
+        if (!isTransientApiError(err) || attempt === MODEL_RETRY_POLICY.maxAttempts - 1) {
+          await reportModelCall(call.agent, attempt + 1, startedAt, counter.count, err);
+          throw err;
+        }
+        const delay = Math.min(
+          MODEL_RETRY_POLICY.baseDelayMs * 2 ** attempt,
+          MODEL_RETRY_POLICY.maxDelayMs,
+        );
+        console.warn(
+          `[mastra] ${call.label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
+          err,
+        );
+        await new Promise((r) => setTimeout(r, delay));
       }
-      const delay = Math.min(
-        MODEL_RETRY_POLICY.baseDelayMs * 2 ** attempt,
-        MODEL_RETRY_POLICY.maxDelayMs,
-      );
-      console.warn(
-        `[mastra] ${call.label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
-        err,
-      );
-      await new Promise((r) => setTimeout(r, delay));
     }
-  }
-  throw lastErr;
+    throw lastErr;
+  });
 }
 
 /** Apply the same transient provider retry policy to any Mastra generation shape. */

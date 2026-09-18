@@ -34,6 +34,13 @@ export interface ModelCallReport {
   errorName?: string;
   /** The HTTP status the provider answered, when the error carried one. */
   statusCode?: number;
+  /**
+   * Requests this call actually sent to the provider, when the provider
+   * client counted them. Higher than `attempts` when the model SDK retried
+   * inside one of ours, which is the difference between a slow call and a
+   * retried one.
+   */
+  providerCalls?: number;
 }
 
 export type ModelCallObserver = (report: ModelCallReport) => void | Promise<void>;
@@ -66,13 +73,62 @@ export async function observeModelCalls<T>(observer: ModelCallObserver, fn: () =
   return await modelCallObservers.run(observer, fn);
 }
 
-function reportFor(agent: string, attempts: number, startedAt: number, err?: unknown): ModelCallReport {
+/** A live count of the provider requests one model call has sent. */
+export interface ProviderRequestCounter {
+  count: number;
+}
+
+/**
+ * Count the provider requests one model call sends, for its report.
+ *
+ * The counter is passed in rather than returned, because the report is
+ * written from inside the call - on the attempt that settled it - rather than
+ * after it.
+ *
+ * Args:
+ *   counter: Incremented once per provider request the call sends.
+ *   fn: The call, its retries included.
+ *
+ * Returns:
+ *   What the call returned.
+ */
+export async function countingProviderRequests<T>(
+  counter: ProviderRequestCounter,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return await providerRequestCounts.run(counter, fn);
+}
+
+/**
+ * Provider requests counted for the call the current async context is in.
+ *
+ * The model SDK retries a 429 or a 503 twice of its own accord inside one
+ * attempt of the wrapper's, so without this a call that spent minutes on
+ * three requests reads as one slow call. The provider client increments
+ * this per request it sends; nothing about the request is recorded.
+ */
+const providerRequestCounts = new AsyncLocalStorage<{ count: number }>();
+
+/** Count one provider request against the model call in progress. */
+export function countProviderRequest(): void {
+  const counter = providerRequestCounts.getStore();
+  if (counter) counter.count += 1;
+}
+
+function reportFor(
+  agent: string,
+  attempts: number,
+  startedAt: number,
+  providerCalls: number,
+  err?: unknown,
+): ModelCallReport {
   const report: ModelCallReport = {
     agent,
     attempts,
     retries: attempts - 1,
     durationMs: Date.now() - startedAt,
     outcome: 'ok',
+    ...(providerCalls > 0 ? { providerCalls } : {}),
   };
   if (err === undefined) return report;
   const error = err as { name?: unknown; statusCode?: unknown };
@@ -90,18 +146,20 @@ function reportFor(agent: string, attempts: number, startedAt: number, err?: unk
  *   agent: The agent name or retry label.
  *   attempts: Provider calls made.
  *   startedAt: When the first attempt began.
+ *   providerCalls: Requests the provider client counted, or 0 when it did not.
  *   err: What the last attempt threw, when the call failed.
  */
 export async function reportModelCall(
   agent: string,
   attempts: number,
   startedAt: number,
+  providerCalls: number,
   err?: unknown,
 ): Promise<void> {
   const observer = modelCallObservers.getStore();
   if (!observer) return;
   try {
-    await observer(reportFor(agent, attempts, startedAt, err));
+    await observer(reportFor(agent, attempts, startedAt, providerCalls, err));
   } catch (observerError) {
     console.warn(`[mastra] model-call observer failed for ${agent}`, observerError);
   }
