@@ -663,14 +663,15 @@ function firstWords(text: string): string {
  * Report the standing asks against the sitting the check is for.
  *
  * The asks are posted once, by a person, and left standing, so every new
- * full-run deployment reads them on its first poll. For the full seed each of
- * the file's asks must therefore be there, once, and nothing else may mention
- * the bot. A named set is a sitting of one task per employee, where any
- * standing mention would add an item, so there each one is a gap.
+ * deployment reads them on its first poll. The full seed expects every ask of
+ * the file; a named set expects only the asks whose row names it, which for
+ * one-each is the single ask that is revenue operations' task. Each expected
+ * ask must be there once, and any other message that mentions the bot is a
+ * gap, because a new deployment would take it up as work.
  *
  * Args:
  *   asks: The asks `slack-asks.md` lists.
- *   standing: Per bed channel, the mentions intake would read, oldest first.
+ *   standing: Per bed channel that was read, the mentions intake would read, oldest first.
  *   own: Per bed channel, mentions the app's own token posted with no trailer.
  *   set: The named set the check is for, or undefined for the full seed.
  *   report: Where the lines go.
@@ -682,20 +683,10 @@ function reportStandingAsks(
   set: string | undefined,
   report: Report,
 ): void {
-  if (set !== undefined) {
-    for (const [name, messages] of standing) {
-      for (const message of messages) {
-        report.line(
-          'gap',
-          `#${name} holds a standing message that mentions the bot (ts ${message.ts}: "${firstWords(message.text)}"); the ${set} sitting files one task per employee and this would add an item on camera. Delete it by hand before the sitting, and post it again afterwards for the full run`,
-        );
-      }
-    }
-    return;
-  }
+  const expected = set === undefined ? asks : asks.filter((ask) => ask.sets.includes(set));
   const matched = new Set<BedMessage>();
   let present = 0;
-  for (const ask of asks) {
+  for (const ask of expected) {
     // A channel the check could not read has its own gap above; its ask is unknown, not missing.
     if (!standing.has(ask.channel)) continue;
     const found = (standing.get(ask.channel) ?? []).find(
@@ -715,21 +706,35 @@ function reportStandingAsks(
       }`,
     );
   }
+  const kept = expected.map((ask) => `#${ask.channel}`).join(', ');
   for (const [name, messages] of standing) {
     for (const message of messages) {
       if (matched.has(message)) continue;
+      const found = `(ts ${message.ts}: "${firstWords(message.text)}")`;
       report.line(
         'gap',
-        `#${name} holds a message that mentions the bot and is not one of the standing asks (ts ${message.ts}: "${firstWords(message.text)}"); a new deployment reads it as work. Delete it by hand`,
+        set === undefined
+          ? `#${name} holds a message that mentions the bot and is not one of the standing asks ${found}; a new deployment reads it as work. Delete it by hand`
+          : `#${name} holds a standing message that mentions the bot ${found}; the ${set} sitting keeps only the ${kept || 'tickets and no'} ask and this would add an item on camera. Delete it by hand before the sitting, and post it again afterwards for the full run`,
       );
     }
   }
-  report.line(
-    present === asks.length ? 'ok' : 'note',
-    present === asks.length
-      ? `all ${numberWord(asks.length)} of slack-asks.md's asks are standing; a new deployment's first poll reads them`
-      : `${present} of slack-asks.md's ${asks.length} asks are standing`,
-  );
+  const complete = present === expected.length;
+  if (set === undefined) {
+    report.line(
+      complete ? 'ok' : 'note',
+      complete
+        ? `all ${numberWord(asks.length)} of slack-asks.md's asks are standing; a new deployment's first poll reads them`
+        : `${present} of slack-asks.md's ${asks.length} asks are standing`,
+    );
+  } else if (expected.length > 0) {
+    report.line(
+      complete ? 'ok' : 'note',
+      complete
+        ? `the ${numberWord(expected.length)} standing ask${expected.length === 1 ? '' : 's'} the ${set} sitting keeps ${expected.length === 1 ? 'is' : 'are'} there`
+        : `${present} of the ${expected.length} standing ask(s) the ${set} sitting keeps ${present === 1 ? 'is' : 'are'} there`,
+    );
+  }
 }
 
 async function checkSlack(io: CompanyIo, set: string | undefined, report: Report): Promise<void> {

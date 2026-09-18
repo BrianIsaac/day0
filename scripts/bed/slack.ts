@@ -247,6 +247,8 @@ export function bedMessages(messages: readonly BedMessage[], botId: string, epoc
 export interface StandingAsk {
   channel: string;
   text: string;
+  /** The named sets of `linear.json` whose sitting keeps this ask; the full run keeps every ask. */
+  sets: string[];
 }
 
 /**
@@ -256,7 +258,8 @@ export interface StandingAsk {
  *   markdown: The content of `bed/company/slack-asks.md`.
  *
  * Returns:
- *   Each row's channel without the hash and its text without the `@bot` mention, in file order.
+ *   Each row's channel without the hash, its text without the `@bot` mention, and the named
+ *   sets its "Sittings" cell lists in backticks beside `full`, in file order.
  *
  * Raises:
  *   Error: If the file lists no ask, so a check never calls an empty table complete.
@@ -267,7 +270,9 @@ export function standingAsksFromFile(markdown: string): StandingAsk[] {
     const cells = line.split('|').map((cell: string): string => cell.trim());
     const channel = /^`#([a-z0-9_-]+)`$/.exec(cells[2] ?? '')?.[1];
     const text = /^@bot\s+(.+)$/.exec(cells[3] ?? '')?.[1];
-    if (/^\d+$/.test(cells[1] ?? '') && channel && text) asks.push({ channel, text });
+    if (!/^\d+$/.test(cells[1] ?? '') || !channel || !text) continue;
+    const sittings = [...(cells[5] ?? '').matchAll(/`([a-z0-9-]+)`/g)].map((match): string => match[1]!);
+    asks.push({ channel, text, sets: sittings.filter((name: string): boolean => name !== 'full') });
   }
   if (asks.length === 0) throw new Error('bed/company/slack-asks.md lists no ask.');
   return asks;
