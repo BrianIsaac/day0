@@ -30,7 +30,14 @@ import { replaceSpans, structuralSpans } from '../../src/redaction/structural';
 import { containsProvenanceTrailer } from '../../src/surfaces/policy';
 import { composeArguments } from '../compose';
 import { UndoLedger } from '../rehearsal/cleanup';
-import { deleteComment, readComments } from '../rehearsal/linear';
+import {
+  deleteComment,
+  readComments,
+  retryOnce,
+  type IssueComment,
+  type LinearRequestError,
+  type RetryIo,
+} from '../rehearsal/linear';
 import { DOCS_STUB } from '../setup';
 import { applyDocs, planDocs, readManifest, trackedPages, type DocsPlan } from './docs';
 import {
@@ -48,6 +55,8 @@ import {
   unarchiveIssue,
   updateIssue,
   type BedIssue,
+  type BedLabel,
+  type ProjectIssue,
   type Workspace,
 } from './linear';
 import {
@@ -67,6 +76,8 @@ import {
   slackTs,
   strayAsks,
   type BedChannel,
+  type BedMessage,
+  type SlackRetryIo,
 } from './slack';
 import {
   BED_CHANNELS,
@@ -118,6 +129,7 @@ export interface CompanyIo {
   run(command: string, args: readonly string[], options?: RunOptions): RunResult;
   log(line: string): void;
   now(): number;
+  sleep(ms: number): Promise<void>;
 }
 
 const USAGE = `Usage: pnpm bed:company <verb>
@@ -247,7 +259,9 @@ function docsTarget(io: CompanyIo): string {
 interface CompanyState {
   epoch: string;
   issueIds: string[];
+  issueKeys: string[];
   labelId?: string;
+  ownsLabel: boolean;
 }
 
 function readState(io: CompanyIo): CompanyState | undefined {
@@ -258,7 +272,9 @@ function readState(io: CompanyIo): CompanyState | undefined {
   return {
     epoch: parsed.epoch,
     issueIds: Array.isArray(parsed.issueIds) ? parsed.issueIds.filter((id): id is string => typeof id === 'string') : [],
+    issueKeys: Array.isArray(parsed.issueKeys) ? parsed.issueKeys.filter((key): key is string => typeof key === 'string') : [],
     labelId: typeof parsed.labelId === 'string' ? parsed.labelId : undefined,
+    ownsLabel: parsed.ownsLabel === true,
   };
 }
 
@@ -306,6 +322,121 @@ export function runDocs(io: CompanyIo, options: CompanyOptions, report: Report):
 
 // ---------------------------------------------------------------------------
 // Linear
+
+/**
+ * The bed's Linear calls, each retried once on a transient failure with the
+ * retry named in the report. A write whose first attempt may have landed
+ * before the failure re-reads first and is sent again only when it did not,
+ * so an archive, a create or a delete is never done twice.
+ */
+class BedLinear {
+  private readonly retry: RetryIo;
+
+  constructor(
+    private readonly client: LinearClient,
+    io: CompanyIo,
+    private readonly report: Report,
+  ) {
+    this.retry = {
+      say: (line: string): void => report.line('note', line),
+      sleep: (ms: number): Promise<void> => io.sleep(ms),
+    };
+  }
+
+  private landed(what: string, failure: LinearRequestError): void {
+    const reason = failure.reason.replace(/^an? /, '');
+    this.report.line('note', `the first ${what} landed before the ${reason}; not sent again`);
+  }
+
+  private async issue(id: string): Promise<BedIssue | undefined> {
+    return (await readBedIssues(this.client)).find((issue: BedIssue): boolean => issue.id === id);
+  }
+
+  workspace(keys: readonly string[]): Promise<Workspace> {
+    return retryOnce('workspace read', this.retry, () => readWorkspace(this.client, keys));
+  }
+
+  issues(): Promise<BedIssue[]> {
+    return retryOnce('ticket read', this.retry, () => readBedIssues(this.client));
+  }
+
+  foreignIssues(projectIds: readonly string[]): Promise<ProjectIssue[]> {
+    return retryOnce('project ticket read', this.retry, () => readForeignIssues(this.client, projectIds));
+  }
+
+  label(name: string): Promise<BedLabel | undefined> {
+    return retryOnce('label read', this.retry, () => readLabel(this.client, name));
+  }
+
+  createLabel(name: string): Promise<string> {
+    const what = 'label create';
+    return retryOnce(what, this.retry, () => createLabel(this.client, name), async (failure): Promise<string> => {
+      const found = await readLabel(this.client, name);
+      if (found?.description !== LABEL_DESCRIPTION) return await createLabel(this.client, name);
+      this.landed(what, failure);
+      return found.id;
+    });
+  }
+
+  deleteLabel(name: string, id: string): Promise<void> {
+    const what = 'label delete';
+    return retryOnce(what, this.retry, () => deleteLabel(this.client, id), async (failure): Promise<void> => {
+      if ((await readLabel(this.client, name))?.id === id) return await deleteLabel(this.client, id);
+      this.landed(what, failure);
+    });
+  }
+
+  createIssue(key: string, input: Record<string, unknown>): Promise<{ id: string; identifier: string }> {
+    const what = `${key} create`;
+    return retryOnce(what, this.retry, () => createIssue(this.client, input), async (failure) => {
+      const found = (await readBedIssues(this.client)).find((issue: BedIssue): boolean => issue.key === key);
+      if (!found) return await createIssue(this.client, input);
+      this.landed(what, failure);
+      return { id: found.id, identifier: found.identifier };
+    });
+  }
+
+  updateIssue(issue: { id: string; identifier: string }, input: Record<string, unknown>): Promise<void> {
+    // The same fields set twice leave the issue as once, so the update is simply sent again.
+    return retryOnce(`${issue.identifier} update`, this.retry, () => updateIssue(this.client, issue.id, input));
+  }
+
+  archive(issue: { id: string; identifier: string }): Promise<void> {
+    const what = `${issue.identifier} archive`;
+    return retryOnce(what, this.retry, () => archiveIssue(this.client, issue.id), async (failure): Promise<void> => {
+      if (!(await this.issue(issue.id))?.archived) return await archiveIssue(this.client, issue.id);
+      this.landed(what, failure);
+    });
+  }
+
+  unarchive(issue: { id: string; identifier: string }): Promise<void> {
+    const what = `${issue.identifier} unarchive`;
+    return retryOnce(what, this.retry, () => unarchiveIssue(this.client, issue.id), async (failure): Promise<void> => {
+      if ((await this.issue(issue.id))?.archived !== false) return await unarchiveIssue(this.client, issue.id);
+      this.landed(what, failure);
+    });
+  }
+
+  comments(issue: { id: string; identifier: string }): Promise<IssueComment[]> {
+    return retryOnce(`${issue.identifier} comment read`, this.retry, () => readComments(this.client, issue.id));
+  }
+
+  deleteComment(issue: { id: string; identifier: string }, commentId: string): Promise<void> {
+    const what = `${issue.identifier} comment delete`;
+    return retryOnce(what, this.retry, () => deleteComment(this.client, commentId), async (failure): Promise<void> => {
+      const comments = await readComments(this.client, issue.id);
+      if (comments.some((comment: IssueComment): boolean => comment.id === commentId)) {
+        return await deleteComment(this.client, commentId);
+      }
+      this.landed(what, failure);
+    });
+  }
+}
+
+/** The bed's Linear calls over this run's key and clock. */
+function bedLinear(io: CompanyIo, key: string, report: Report): BedLinear {
+  return new BedLinear(new LinearClient(key, io.fetch, (): number => io.now()), io, report);
+}
 
 interface TeamTarget {
   teamId: string;
@@ -421,8 +552,8 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined
     report.line('gap', `${LINEAR_KEY_ENV} is not set in ${ENV_FILE}: add a Linear personal API key from the demo workspace`);
     return;
   }
-  const client = new LinearClient(key, io.fetch);
-  const workspace = await readWorkspace(client, spec.teams.map((team) => team.key));
+  const linear = bedLinear(io, key, report);
+  const workspace = await linear.workspace(spec.teams.map((team) => team.key));
   report.line('ok', `the key is ${workspace.viewer.name}'s, in workspace ${workspace.organization}`);
   const gaps = workspaceGaps(spec, workspace);
   for (const gap of gaps) report.line('gap', gap);
@@ -432,9 +563,9 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined
       report.line('ok', `team ${team.key} with project "${team.project}" and states ${spec.states.join(', ')}`);
     }
   }
-  const label = await readLabel(client, spec.label);
+  const label = await linear.label(spec.label);
   report.line(label ? 'ok' : 'note', label ? `label ${spec.label}` : `label ${spec.label} is missing; seed creates it`);
-  const { byKey, duplicates } = issuesByKey(await readBedIssues(client));
+  const { byKey, duplicates } = issuesByKey(await linear.issues());
   for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
   if (!readState(io)) {
     for (const issue of byKey.values()) {
@@ -466,7 +597,7 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined
     }
   }
   const projectIds = [...targets.values()].map((target) => target.projectId);
-  for (const foreign of await readForeignIssues(client, projectIds)) {
+  for (const foreign of await linear.foreignIssues(projectIds)) {
     report.line(
       'gap',
       `${foreign.identifier} "${foreign.title}" is in project "${foreign.projectName}" and is not a bed ticket; intake would read it. Archive it, or move it to another project, by hand`,
@@ -484,9 +615,17 @@ interface SlackView {
   channels: Map<string, BedChannel>;
 }
 
+function slackRetry(io: CompanyIo, report: Report): SlackRetryIo {
+  return {
+    say: (line: string): void => report.line('note', line),
+    sleep: (ms: number): Promise<void> => io.sleep(ms),
+  };
+}
+
 async function slackView(io: CompanyIo, token: string, report: Report, check: boolean): Promise<SlackView> {
   const recorder = scopeRecordingFetch(io.fetch);
-  const auth = await new SlackClient(token, recorder.fetch).authTest();
+  const retry = slackRetry(io, report);
+  const auth = await new SlackClient(token, recorder.fetch, retry, (): number => io.now()).authTest();
   report.line('ok', `the token is the bot ${auth.userId} in workspace ${auth.team}`);
   if (check) {
     const scopes = recorder.scopes();
@@ -500,7 +639,7 @@ async function slackView(io: CompanyIo, token: string, report: Report, check: bo
       if (missing.length === 0) report.line('ok', `the app has ${REQUIRED_SCOPES.join(', ')}`);
     }
   }
-  const visible = await listConversations(io.fetch, token, 'public_channel');
+  const visible = await listConversations(io.fetch, token, 'public_channel', retry, (): number => io.now());
   const channels = new Map<string, BedChannel>();
   for (const channel of visible) if (BED_CHANNELS.includes(channel.name)) channels.set(channel.name, channel);
   return { token, botId: auth.botId, botUserId: auth.userId, channels };
@@ -514,6 +653,7 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
     return;
   }
   const view = await slackView(io, token, report, true);
+  const retry = slackRetry(io, report);
   for (const name of BED_CHANNELS) {
     const channel = view.channels.get(name);
     if (!channel) {
@@ -521,7 +661,7 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
     } else if (!channel.isMember) {
       report.line('gap', `the bot is not in #${name}: /invite it there`);
     } else {
-      const messages = await conversationMessages(io.fetch, token, channel.id);
+      const messages = await conversationMessages(io.fetch, token, channel.id, undefined, retry, (): number => io.now());
       const asks = strayAsks(messages, view.botUserId);
       const own = messages.filter((message) => message.botId === view.botId && containsProvenanceTrailer(message.text));
       report.line('ok', `#${name}, the bot a member`);
@@ -539,24 +679,37 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
 }
 
 async function deleteBedMessages(io: CompanyIo, view: SlackView, epoch: string, report: Report): Promise<void> {
+  const retry = slackRetry(io, report);
   const conversations: BedChannel[] = [...view.channels.values()].filter((channel) => channel.isMember);
   try {
-    conversations.push(...(await listConversations(io.fetch, view.token, 'im')));
+    conversations.push(...(await listConversations(io.fetch, view.token, 'im', retry, (): number => io.now())));
   } catch (error) {
-    report.line('note', `the bot's direct messages were not read (${(error as Error).message}); only the channels were cleaned`);
+    report.line('gap', `the bot's direct messages were not read (${(error as Error).message}); only the channels were cleaned`);
   }
-  const client = new SlackClient(view.token, io.fetch);
+  const client = new SlackClient(view.token, io.fetch, retry, (): number => io.now());
   let deleted = 0;
+  // One conversation or message that fails is a gap of its own; the others are still cleaned.
   for (const conversation of conversations) {
-    const messages = await conversationMessages(io.fetch, view.token, conversation.id, epoch);
+    const where = conversation.name ? `#${conversation.name}` : `DM ${conversation.id}`;
+    let messages: BedMessage[];
+    try {
+      messages = await conversationMessages(io.fetch, view.token, conversation.id, epoch, retry, (): number => io.now());
+    } catch (error) {
+      report.line('gap', `${where} was not read (${(error as Error).message})`);
+      continue;
+    }
     for (const message of bedMessages(messages, view.botId, epoch)) {
       try {
         await client.deleteMessage(conversation.id, message.ts);
         deleted += 1;
       } catch (error) {
-        if (!(error as Error).message.includes('cant_delete_message')) throw error;
-        const where = conversation.name ? `#${conversation.name}` : `DM ${conversation.id}`;
-        report.line('gap', `${where} message ${message.ts} cannot be deleted by the bot token after a customised post: delete that exact message by hand in Slack, then retry teardown`);
+        const reason = (error as Error).message;
+        report.line(
+          'gap',
+          reason.includes('cant_delete_message')
+            ? `${where} message ${message.ts} cannot be deleted by the bot token after a customised post: delete that exact message by hand in Slack, then retry teardown`
+            : `${where} message ${message.ts} was not deleted (${reason})`,
+        );
       }
     }
   }
@@ -702,44 +855,131 @@ async function linearForWrite(
   io: CompanyIo,
   spec: BedSpec,
   report: Report,
-): Promise<{ client: LinearClient; targets: Map<string, TeamTarget> } | undefined> {
+): Promise<{ linear: BedLinear; targets: Map<string, TeamTarget> } | undefined> {
   const key = io.env[LINEAR_KEY_ENV]?.trim();
   if (!key) {
     report.line('gap', `${LINEAR_KEY_ENV} is not set in ${ENV_FILE}`);
     return undefined;
   }
-  const client = new LinearClient(key, io.fetch);
-  const workspace = await readWorkspace(client, spec.teams.map((team) => team.key));
+  const linear = bedLinear(io, key, report);
+  const workspace = await linear.workspace(spec.teams.map((team) => team.key));
   const gaps = workspaceGaps(spec, workspace);
   for (const gap of gaps) report.line('gap', gap);
   if (gaps.length > 0) {
     report.say('  Nothing was changed: the teams, projects and states are made by hand first.');
     return undefined;
   }
-  return { client, targets: teamTargets(spec, workspace) };
+  return { linear, targets: teamTargets(spec, workspace) };
 }
 
-async function ensureLabel(client: LinearClient, spec: BedSpec, undo: UndoLedger, report: Report): Promise<string> {
-  const existing = await readLabel(client, spec.label);
+/**
+ * What one seed or post has written so far: the tickets it made active, which
+ * this clone may archive at teardown, the label it created, and the undo that
+ * takes its writes back when a later call fails. A write the undo cannot take
+ * back is kept, so the state file records it for teardown.
+ */
+class BedWrites {
+  readonly activated: string[] = [];
+  createdLabelId?: string;
+  private readonly undo = new UndoLedger();
+  private readonly strandedIssues: Array<{ id: string; identifier: string }> = [];
+  private strandedLabelId?: string;
+
+  constructor(private readonly linear: BedLinear) {}
+
+  /** A ticket this run created or unarchived; the undo archives it. */
+  activatedIssue(issue: { id: string; identifier: string }, undoLabel: string): void {
+    this.activated.push(issue.id);
+    this.undo.register(undoLabel, async (): Promise<void> => {
+      try {
+        await this.linear.archive(issue);
+      } catch (error) {
+        this.strandedIssues.push(issue);
+        throw error;
+      }
+    });
+  }
+
+  /** The label this run created; the undo deletes it. */
+  createdLabel(name: string, id: string): void {
+    this.createdLabelId = id;
+    this.undo.register(`delete label ${name}`, async (): Promise<void> => {
+      try {
+        await this.linear.deleteLabel(name, id);
+      } catch (error) {
+        this.strandedLabelId = id;
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Report the failure, take back what this run wrote, and record in the
+   * state file whatever the undo could not, so teardown removes it.
+   *
+   * Args:
+   *   io: The machine.
+   *   verb: `seed` or `post`, for the report.
+   *   error: What stopped the run.
+   *   previous: The state file as the run found it.
+   *   labelName: The bed's label name, for the report.
+   *   report: The report.
+   */
+  async rollBack(
+    io: CompanyIo,
+    verb: string,
+    error: unknown,
+    previous: CompanyState | undefined,
+    labelName: string,
+    report: Report,
+  ): Promise<void> {
+    report.line('gap', `${verb} stopped: ${(error as Error).message}`);
+    for (const result of await this.undo.runAll()) {
+      report.line(result.ok ? 'ok' : 'gap', `undo: ${result.label}${result.ok ? '' : ` failed (${result.error})`}`);
+    }
+    if (this.strandedIssues.length === 0 && this.strandedLabelId === undefined) return;
+    writeState(io, {
+      epoch: previous?.epoch ?? slackTs(io.now()),
+      issueIds: [...new Set([...(previous?.issueIds ?? []), ...this.strandedIssues.map((issue) => issue.id)])],
+      issueKeys: previous?.issueKeys ?? [],
+      labelId: this.strandedLabelId ?? previous?.labelId,
+      ownsLabel: previous?.ownsLabel === true || this.strandedLabelId !== undefined,
+    });
+    for (const issue of this.strandedIssues) {
+      report.line('note', `${issue.identifier} is recorded in ${STATE_FILE} so teardown archives it`);
+    }
+    if (this.strandedLabelId !== undefined) {
+      report.line('note', `label ${labelName} is recorded in ${STATE_FILE} so teardown deletes it`);
+    }
+  }
+}
+
+async function ensureLabel(
+  linear: BedLinear,
+  spec: BedSpec,
+  existing: BedLabel | undefined,
+  writes: BedWrites,
+  report: Report,
+): Promise<string> {
   if (existing) return existing.id;
-  const id = await createLabel(client, spec.label);
-  undo.register(`delete label ${spec.label}`, () => deleteLabel(client, id));
+  const id = await linear.createLabel(spec.label);
+  writes.createdLabel(spec.label, id);
   report.line('ok', `created label ${spec.label}`);
   return id;
 }
 
 async function fileTicket(
-  client: LinearClient,
+  linear: BedLinear,
   ticket: BedTicket,
   existing: BedIssue | undefined,
   target: TeamTarget,
   labelId: string,
-  undo: UndoLedger,
+  writes: BedWrites,
   report: Report,
 ): Promise<void> {
   const stateId = target.states.get(ticket.state)!;
   if (!existing) {
-    const created = await createIssue(client, {
+    const created = await linear.createIssue(ticket.key, {
       teamId: target.teamId,
       projectId: target.projectId,
       title: ticket.title,
@@ -747,24 +987,22 @@ async function fileTicket(
       stateId,
       labelIds: [labelId],
     });
-    undo.register(`archive ${created.identifier}`, () => archiveIssue(client, created.id));
+    writes.activatedIssue(created, `archive ${created.identifier}`);
     report.line('ok', `created ${ticket.key} as ${created.identifier} "${ticket.title}" (${ticket.state})`);
     return;
   }
   if (existing.archived) {
-    await unarchiveIssue(client, existing.id);
-    undo.register(`archive ${existing.identifier} again`, () => archiveIssue(client, existing.id));
+    await linear.unarchive(existing);
+    writes.activatedIssue(existing, `archive ${existing.identifier} again`);
     report.line('ok', `unarchived ${ticket.key} ${existing.identifier}`);
   }
   const input = resetInput(existing, ticket, { teamId: target.teamId, projectId: target.projectId, stateId, labelId });
   if (Object.keys(input).length > 0) {
-    await updateIssue(client, existing.id, input);
+    await linear.updateIssue(existing, input);
     report.line('ok', `put ${ticket.key} ${existing.identifier} back (${Object.keys(input).join(', ')})`);
   }
-  const trailers = (await readComments(client, existing.id)).filter((comment) =>
-    containsProvenanceTrailer(comment.body),
-  );
-  for (const comment of trailers) await deleteComment(client, comment.id);
+  const trailers = (await linear.comments(existing)).filter((comment) => containsProvenanceTrailer(comment.body));
+  for (const comment of trailers) await linear.deleteComment(existing, comment.id);
   report.line(
     'ok',
     `${ticket.key} ${existing.identifier} is "${ticket.title}" (${ticket.state}), unassigned${trailers.length > 0 ? `; deleted ${trailers.length} comment(s) with a provenance trailer` : ''}`,
@@ -781,10 +1019,10 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
   report.section('Linear');
   if (!slackToken) report.line('gap', `${SLACK_TOKEN_ENV} is not set in ${ENV_FILE}`);
   if (!project) report.line('gap', `COMPOSE_PROJECT_NAME is not set in ${ENV_FILE}: run ./setup.sh first`);
-  const linear = await linearForWrite(io, spec, report);
-  if (!linear || !slackToken || !project) return 1;
-  const { client, targets } = linear;
-  const { byKey, duplicates } = issuesByKey(await readBedIssues(client));
+  const forWrite = await linearForWrite(io, spec, report);
+  if (!forWrite || !slackToken || !project) return 1;
+  const { linear, targets } = forWrite;
+  const { byKey, duplicates } = issuesByKey(await linear.issues());
   if (duplicates.length > 0) {
     for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
     return 1;
@@ -796,17 +1034,32 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
       return 1;
     }
   }
-  const undo = new UndoLedger();
-  let createdLabelId: string | undefined;
+  const writes = new BedWrites(linear);
+  let recorded = previous;
   try {
-    const priorLabel = await readLabel(client, spec.label);
-    const labelId = await ensureLabel(client, spec, undo, report);
-    if (!priorLabel) createdLabelId = labelId;
+    const existingLabel = await linear.label(spec.label);
+    recorded = {
+      epoch: previous?.epoch ?? slackTs(io.now()),
+      issueIds: previous?.issueIds ?? [],
+      issueKeys: [
+        ...new Set([
+          ...(previous?.issueKeys ?? []),
+          ...toFile
+            .filter((ticket) => byKey.get(ticket.key)?.archived !== false)
+            .map((ticket) => ticket.key),
+        ]),
+      ],
+      labelId: previous?.labelId,
+      ownsLabel: previous?.ownsLabel === true || existingLabel === undefined,
+    };
+    // Persist deterministic ownership before a provider write can land without returning.
+    writeState(io, recorded);
+    const labelId = await ensureLabel(linear, spec, existingLabel, writes, report);
     for (const ticket of spec.tickets) {
       const existing = byKey.get(ticket.key);
       if (!toFile.includes(ticket)) {
         if (existing && !existing.archived) {
-          await archiveIssue(client, existing.id);
+          await linear.archive(existing);
           report.line(
             'ok',
             set === undefined
@@ -816,25 +1069,19 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
         }
         continue;
       }
-      await fileTicket(client, ticket, existing, targets.get(ticket.team)!, labelId, undo, report);
+      await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, writes, report);
     }
   } catch (error) {
-    report.line('gap', `seed stopped: ${(error as Error).message}`);
-    for (const result of await undo.runAll()) {
-      report.line(result.ok ? 'ok' : 'gap', `undo: ${result.label}${result.ok ? '' : ` failed (${result.error})`}`);
-    }
+    await writes.rollBack(io, 'seed', error, recorded, spec.label, report);
     return 1;
   }
 
-  const currentIssues = await readBedIssues(client);
-  const activated = currentIssues.filter((issue) => {
-    const before = byKey.get(issue.key);
-    return !issue.archived && (!before || before.archived);
-  });
+  // Recorded from seed's own writes: a read here that failed would leave filed tickets no clone owns.
   const state: CompanyState = {
-    epoch: previous?.epoch ?? slackTs(io.now()),
-    issueIds: [...new Set([...(previous?.issueIds ?? []), ...activated.map((issue) => issue.id)])],
-    labelId: previous?.labelId ?? createdLabelId,
+    ...recorded!,
+    issueIds: [...new Set([...recorded!.issueIds, ...writes.activated])],
+    // A label seed made supersedes the recorded one, which must already be gone for seed to make it.
+    labelId: writes.createdLabelId ?? recorded!.labelId,
   };
   writeState(io, state);
   report.section('Slack');
@@ -875,9 +1122,10 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     report.line('gap', `run seed first so ${STATE_FILE} records which late ticket this clone may tear down`);
     return 1;
   }
-  const linear = await linearForWrite(io, spec, report);
-  if (!linear) return 1;
-  const { byKey, duplicates } = issuesByKey(await readBedIssues(linear.client));
+  const forWrite = await linearForWrite(io, spec, report);
+  if (!forWrite) return 1;
+  const { linear, targets } = forWrite;
+  const { byKey, duplicates } = issuesByKey(await linear.issues());
   if (duplicates.length > 0) {
     for (const duplicate of duplicates) report.line('gap', `${duplicate}: remove the marker from one or delete it by hand; archiving alone keeps it in the bed's read`);
     return 1;
@@ -887,22 +1135,73 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     report.line('ok', `${key} is already filed as ${existing.identifier} (${existing.stateName}); nothing changed`);
     return 0;
   }
-  const undo = new UndoLedger();
+  const writes = new BedWrites(linear);
+  let recorded = state;
   try {
-    const labelId = await ensureLabel(linear.client, spec, undo, report);
-    await fileTicket(linear.client, ticket, existing, linear.targets.get(ticket.team)!, labelId, undo, report);
+    const existingLabel = await linear.label(spec.label);
+    recorded = {
+      ...state,
+      issueKeys: [...new Set([...state.issueKeys, ...(existing?.archived !== false ? [ticket.key] : [])])],
+      ownsLabel: state.ownsLabel || existingLabel === undefined,
+    };
+    writeState(io, recorded);
+    const labelId = await ensureLabel(linear, spec, existingLabel, writes, report);
+    await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, writes, report);
   } catch (error) {
-    report.line('gap', `post stopped: ${(error as Error).message}`);
-    for (const result of await undo.runAll()) {
-      report.line(result.ok ? 'ok' : 'gap', `undo: ${result.label}${result.ok ? '' : ` failed (${result.error})`}`);
-    }
+    await writes.rollBack(io, 'post', error, recorded, spec.label, report);
     return 1;
   }
-  const filed = (await readBedIssues(linear.client)).find((issue) => issue.key === key && !issue.archived);
-  if (filed && (!existing || existing.archived)) {
-    writeState(io, { ...state, issueIds: [...new Set([...state.issueIds, filed.id])] });
-  }
+  writeState(io, {
+    ...recorded,
+    issueIds: [...new Set([...recorded.issueIds, ...writes.activated])],
+    labelId: writes.createdLabelId ?? recorded.labelId,
+  });
   return 0;
+}
+
+/** What failed, said once: a retry's own line already names the call. */
+function failure(what: string, error: unknown): string {
+  const message = (error as Error).message;
+  return message.startsWith(what) ? message : `${what} failed: ${message}`;
+}
+
+/**
+ * Archive this clone's tickets and delete the label seed made. Each call that
+ * fails even after its retry is one gap line and the rest still run, so one
+ * failure never leaves the Slack half untouched.
+ */
+async function teardownLinear(linear: BedLinear, spec: BedSpec, state: CompanyState, report: Report): Promise<void> {
+  let issues: BedIssue[] = [];
+  try {
+    issues = await linear.issues();
+  } catch (error) {
+    report.line('gap', `${failure('ticket read', error)}; no ticket was archived`);
+  }
+  const ownedIds = new Set(state.issueIds);
+  const ownedKeys = new Set(state.issueKeys);
+  for (const issue of issues.filter((candidate) => (ownedIds.has(candidate.id) || ownedKeys.has(candidate.key)) && !candidate.archived)) {
+    try {
+      await linear.archive(issue);
+      report.line('ok', `archived ${issue.key} ${issue.identifier}`);
+    } catch (error) {
+      report.line('gap', failure(`${issue.identifier} archive`, error));
+    }
+  }
+  if (!state.labelId && !state.ownsLabel) return;
+  let label: BedLabel | undefined;
+  try {
+    label = await linear.label(spec.label);
+  } catch (error) {
+    report.line('gap', failure('label read', error));
+    return;
+  }
+  if (!label || label.description !== LABEL_DESCRIPTION || (!state.ownsLabel && label.id !== state.labelId)) return;
+  try {
+    await linear.deleteLabel(spec.label, label.id);
+    report.line('ok', `deleted label ${spec.label}, which seed created`);
+  } catch (error) {
+    report.line('gap', failure('label delete', error));
+  }
 }
 
 /** `teardown`: archive the bed's tickets and delete the bed's bot messages. */
@@ -916,18 +1215,7 @@ export async function runTeardown(io: CompanyIo, report: Report): Promise<number
   } else if (!state) {
     report.line('note', `no seed is recorded in ${STATE_FILE} on this clone, so no Linear ticket is this clone's to archive`);
   } else {
-    const client = new LinearClient(key, io.fetch);
-    const issues = await readBedIssues(client);
-    const ownedIds = new Set(state.issueIds);
-    for (const issue of issues.filter((candidate) => ownedIds.has(candidate.id) && !candidate.archived)) {
-      await archiveIssue(client, issue.id);
-      report.line('ok', `archived ${issue.key} ${issue.identifier}`);
-    }
-    const label = state.labelId ? await readLabel(client, spec.label) : undefined;
-    if (label && label.id === state.labelId && label.description === LABEL_DESCRIPTION) {
-      await deleteLabel(client, label.id);
-      report.line('ok', `deleted label ${spec.label}, which seed created`);
-    }
+    await teardownLinear(bedLinear(io, key, report), spec, state, report);
   }
   report.section('Slack');
   const token = io.env[SLACK_TOKEN_ENV]?.trim();
@@ -937,11 +1225,17 @@ export async function runTeardown(io: CompanyIo, report: Report): Promise<number
   } else if (!epoch) {
     report.line('note', `no seed is recorded in ${STATE_FILE} on this clone, so no Slack message is the bed's to delete`);
   } else {
-    await deleteBedMessages(io, await slackView(io, token, report, false), epoch, report);
+    try {
+      await deleteBedMessages(io, await slackView(io, token, report, false), epoch, report);
+    } catch (error) {
+      report.line('gap', `Slack: ${(error as Error).message}`);
+    }
     if (report.gaps === 0) rmSync(join(io.cwd, STATE_FILE));
   }
   report.say('');
-  report.say(report.gaps === 0 ? 'Torn down.' : `${report.gaps} gap(s) above.`);
+  if (report.gaps === 0) report.say('Torn down.');
+  else if (state) report.say(`${report.gaps} gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`);
+  else report.say(`${report.gaps} gap(s) above.`);
   return report.gaps === 0 ? 0 : 1;
 }
 
@@ -1000,6 +1294,7 @@ export function consoleIo(cwd: string = process.cwd()): CompanyIo {
       console.log(line);
     },
     now: (): number => Date.now(),
+    sleep: (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms)),
   };
 }
 
