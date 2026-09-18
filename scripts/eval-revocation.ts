@@ -100,14 +100,22 @@ interface EventRow {
   createdAt: number;
 }
 
-interface WorkRow {
+/** What the driver reads of a trial row. */
+export interface WorkRow {
   _id: string;
   state: string;
   pendingRunId?: string;
+  approvedIndexes?: number[];
   verdict?: unknown;
   output?: unknown;
   skipReason?: string;
 }
+
+/**
+ * Which step of the product a trial's attempt ends in: the evaluation's
+ * permission gate, or the apply path.
+ */
+export type TrialSettlement = 'evaluation' | 'apply';
 
 interface CliOptions {
   outDirectory: string;
@@ -247,6 +255,70 @@ function ledger(row: WorkRow): Array<Record<string, unknown>> {
     : [];
 }
 
+/**
+ * Why a row ended where it did, as the row itself records it.
+ *
+ * Args:
+ *   row: The trial row.
+ *
+ * Returns:
+ *   The verdict's reason with what it names as missing, else the skip reason.
+ */
+function endReason(row: WorkRow): string {
+  const verdict = record(row.verdict);
+  if (typeof verdict.reason === 'string' && verdict.reason.length > 0) {
+    const named = [
+      ...(Array.isArray(verdict.missingPermissions) ? verdict.missingPermissions : []),
+      verdict.missingSurface,
+    ].filter((value): value is string => typeof value === 'string');
+    return `${verdict.reason}${named.length > 0 ? ` (${named.join(', ')})` : ''}`;
+  }
+  return row.skipReason ?? 'no reason recorded';
+}
+
+/**
+ * Read a trial row the driver is waiting on: settled, still in flight, or
+ * ended somewhere the trial cannot measure.
+ *
+ * A trial attempt ends in one of two places. A queued read ends at the
+ * evaluation's permission gate, `deferred` for `awaiting-permission`; every
+ * other kind ends in the apply path, `completed` or `failed`. Any other end is
+ * not an outcome of the containment being measured - a skip by the scope
+ * judgement, a deferral for a connection, a row parked for the manager or at
+ * the capacity limit - and no amount of waiting turns it into one, so it stops
+ * the rung at once with the row's own reason rather than running out a timeout
+ * that says nothing.
+ *
+ * Args:
+ *   row: The trial row as the deployment holds it now.
+ *   settlement: Where this trial's attempt ends.
+ *   trialId: The trial, for the error.
+ *
+ * Returns:
+ *   The row once it holds its outcome, undefined while the attempt is in flight.
+ *
+ * Raises:
+ *   Error: If the row ended anywhere else, naming the state and its reason.
+ */
+export function settledTrialRow(
+  row: WorkRow,
+  settlement: TrialSettlement,
+  trialId: string,
+): WorkRow | undefined {
+  if (settlement === 'evaluation') {
+    const verdict = record(row.verdict);
+    if (row.state === 'deferred' && verdict.reason === 'awaiting-permission') return row;
+    if (row.state === 'discovered' && row.verdict === undefined) return undefined;
+    throw new Error(
+      `${trialId} ended ${row.state}, not deferred awaiting-permission: ${endReason(row)}`,
+    );
+  }
+  if (row.state === 'completed' || row.state === 'failed') return row;
+  if (row.state === 'executing') return undefined;
+  if (row.state === 'actions-pending' && row.approvedIndexes !== undefined) return undefined;
+  throw new Error(`${trialId} ended ${row.state}, not completed or failed: ${endReason(row)}`);
+}
+
 function reasonCode(reason: string): RevocationAttempt['refusalCode'] | undefined {
   if (reason.startsWith('awaiting-permission')) return 'AWAITING_PERMISSION';
   if (reason.startsWith('no grant')) return 'NO_GRANT';
@@ -351,11 +423,14 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     );
   const workState = async (workItemId: Id<'workItems'>): Promise<WorkRow> =>
     (await client.query(api.revocationEvaluation.trialState, { workItemId })) as WorkRow;
-  const terminal = async (workItemId: Id<'workItems'>): Promise<WorkRow> =>
-    await waitFor(`terminal work item ${workItemId}`, async () => {
-      const row = await workState(workItemId);
-      return ['completed', 'failed', 'deferred'].includes(row.state) ? row : undefined;
-    });
+  const terminal = async (
+    workItemId: Id<'workItems'>,
+    settlement: TrialSettlement,
+    trialId: string,
+  ): Promise<WorkRow> =>
+    await waitFor(`terminal work item ${workItemId} of ${trialId}`, async () =>
+      settledTrialRow(await workState(workItemId), settlement, trialId),
+    );
   const workEvent = async (workItemId: string, types: readonly string[]): Promise<EventRow> =>
     await waitFor(`outcome event for ${workItemId}`, async () =>
       (await recent()).find(
@@ -403,7 +478,11 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     before: ProviderSnapshot;
     attemptedAt: number;
   }): Promise<RevocationAttempt> => {
-    const row = await terminal(args.workItemId);
+    const row = await terminal(
+      args.workItemId,
+      args.checkpoint === 'evaluation' ? 'evaluation' : 'apply',
+      args.id,
+    );
     const event = await workEvent(args.workItemId, [
       'work.completed',
       'work.failed',
@@ -461,7 +540,12 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     const before = await provider();
     const revoked = await revoke('slack:read', trialId);
     const attemptedAt = Date.now();
-    await client.action(api.workActions.evaluateWorkItem, { workItemId: seeded.workItemId });
+    const evaluated = await client.action(api.workActions.evaluateWorkItem, {
+      workItemId: seeded.workItemId,
+    });
+    if (evaluated.decision.startsWith('noop-')) {
+      throw new Error(`${trialId} was not evaluated: ${evaluated.decision}`);
+    }
     const attempt = await attempted({
       id: `${trialId}-attempt`,
       checkpoint: 'evaluation',
