@@ -44,9 +44,58 @@ export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
 export const USERNAME_REFUSED = 'skill-supplied username refused';
 export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
+/**
+ * Why a write through a shared credential is refused when nothing in it could
+ * carry the employee's name: worded for the manager who reads it on the card,
+ * and for the employee, which reports it in its own closing message.
+ */
 export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
+  'refused before sending: under the shared credential this write would carry nothing naming the employee or the run. ' +
+  'A new ticket needs a title and a description for Day0 to sign; a change to an existing ticket needs an audit comment on it first';
+/** The same refusal as rows written before 19 Sep 2026 carry it. */
+export const LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION =
   'shared credential write without attributable content';
 export const REPLY_TARGET_REFUSED = 'chat reply does not match the work item reply target';
+
+/** Every reason the gate refuses a row by before anything is sent; several take a detail in brackets. */
+const GATE_REFUSAL_REASONS: readonly string[] = [
+  MALFORMED_ACTION,
+  NO_GRANT,
+  UNKNOWN_SURFACE,
+  SURFACE_NOT_CONNECTED,
+  TOOL_NOT_ALLOWED,
+  NOT_AUTOMATIC,
+  UNKNOWN_TOOL,
+  STATUS_WITHOUT_COMMENT,
+  TRAILER_REFUSED,
+  USERNAME_REFUSED,
+  MOCK_VERB_REFUSED,
+  SHARED_WRITE_WITHOUT_ATTRIBUTION,
+  LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION,
+  REPLY_TARGET_REFUSED,
+];
+const PATH_REFUSAL = /^(?:mcp\.call|http\.request) is not allowed on surface path /;
+
+/**
+ * Whether a ledger reason is one of the gate's own refusals: a rule stopped
+ * the row before an adapter ran, so nothing was sent and nothing is unknown
+ * at the provider. A provider's error, a timeout and a held row are not.
+ *
+ * Args:
+ *   reason: The reason on a ledger row.
+ *
+ * Returns:
+ *   True when the reason is one of the gate's refusal constants, with or without its detail.
+ */
+export function isGateRefusal(reason: string | undefined): boolean {
+  if (!reason) return false;
+  // The constant alone, or with its bracketed detail: a provider's own words
+  // may open the same way ("unknown tool save_isue") and are not the gate's.
+  return (
+    GATE_REFUSAL_REASONS.some((known) => reason === known || reason.startsWith(`${known} (`)) ||
+    PATH_REFUSAL.test(reason)
+  );
+}
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
 export const SHARED_IDENTITY_ICON = ':briefcase:';
@@ -177,9 +226,16 @@ const MCP_CHAT_POST_TOOLS = new Set([
   'create_message',
   'slack_post_message',
 ]);
+/**
+ * Verbs a tool that files a new record is named with. A ticket create is told
+ * by its name as well as its arguments, so a bulk delete that happens to carry
+ * a title and a description is never read as one.
+ */
+const CREATE_TOOL_WORDS = new Set(['save', 'create', 'add', 'file', 'upsert']);
 /** The argument names a ticket write names its ticket under. */
 export const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'];
 const TRAILER_MARK = /--\s[^\n]*\(Day0\)\s·\srun\s/;
+const TRAILER_END = /(?:^|\n)--\s[^\n]*\(Day0\)\s·\srun\s[^\s/]+\/[^\s/]+\s*$/;
 
 export type JsonObject = Record<string, unknown>;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -1144,6 +1200,21 @@ export function containsProvenanceTrailer(text: string): boolean {
 }
 
 /**
+ * Whether text ends with a provenance trailer, as the server leaves it: the
+ * trailer is always the last line of what it signs. A trailer quoted in the
+ * middle of someone's words is not a signature.
+ *
+ * Args:
+ *   text: A comment body, a message or a ticket description.
+ *
+ * Returns:
+ *   True when the last line is a trailer.
+ */
+export function endsWithProvenanceTrailer(text: string): boolean {
+  return TRAILER_END.test(text);
+}
+
+/**
  * Whether an MCP tool writes a comment or message.
  *
  * Args:
@@ -1291,12 +1362,56 @@ function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean 
   );
 }
 
+/**
+ * Whether an MCP call files a new ticket with words of its own.
+ *
+ * Exactly this: a write on a ticket surface, by a tool named for creating,
+ * that names no existing ticket and carries both a title and a description.
+ * The description is authored content, so the server can sign it as it signs
+ * a comment. A create with no description has nothing to sign, and a write
+ * that names a ticket is a change to it, which the audit-comment rule covers.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: Its surface.
+ *
+ * Returns:
+ *   True for a described ticket create.
+ */
+export function isTicketCreate(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
+  if (parsed.kind !== 'mcp.call' || surface.class !== 'kanban') return false;
+  if (actionIntent(parsed) !== 'write' || COMMENT_TOOL.test(parsed.tool)) return false;
+  if (targetIssue(parsed) !== undefined) return false;
+  const tokens = operationTokens(parsed.tool);
+  if (!tokens.some((token) => CREATE_TOOL_WORDS.has(token))) return false;
+  if (tokens.some((token) => COMPOUND_TOOL_WORDS.has(token))) return false;
+  if (tokens.some((token) => HTTP_MUTATION_WORDS.has(token) && !CREATE_TOOL_WORDS.has(token))) {
+    return false;
+  }
+  const { title, description } = parsed.toolArgs;
+  return (
+    typeof title === 'string' &&
+    title.trim() !== '' &&
+    typeof description === 'string' &&
+    description.trim() !== ''
+  );
+}
+
 /** A skill-supplied provenance field that the server will refuse at apply. */
 export function provenanceRefusal(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
 ): string | undefined {
   if (parsed.kind === 'mcp.call') {
+    if (isTicketCreate(parsed, surface)) {
+      // The signature is the last line of the description; a trailer anywhere
+      // else in the create, its title included, could name another employee.
+      return Object.values(parsed.toolArgs).some(
+        (value) => typeof value === 'string' && containsProvenanceTrailer(value),
+      )
+        ? TRAILER_REFUSED
+        : undefined;
+    }
     if (isMcpChatPost(parsed)) {
       const message = MESSAGE_KEYS.map((key) => parsed.toolArgs[key]).find(
         (value): value is string => typeof value === 'string',
@@ -1320,8 +1435,10 @@ export function provenanceRefusal(
 /**
  * Whether a shared-credential write lacks content that identifies its actor and run.
  *
- * Comments and chat messages receive the server-side trailer directly. An
- * issue mutation may instead rely on a landed, trailer-bearing comment on
+ * Comments and chat messages receive the server-side trailer directly, and so
+ * does the description of a ticket create (`isTicketCreate`): it is authored
+ * content, and signed it names the employee and the run on the ticket itself.
+ * An issue mutation may instead rely on a landed, trailer-bearing comment on
  * the same issue earlier in this run (the status-change rule is the common
  * case). Other writes through shared credentials are refused because the
  * provider would otherwise record an action attributable only to the shared
@@ -1346,6 +1463,7 @@ export function sharedWriteWithoutAttribution(
   if (surface.path === 'browser-driven') return false;
   if (isAuditComment(parsed)) return false;
   if (parsed.kind === 'mcp.call' && isMcpChatPost(parsed)) return false;
+  if (isTicketCreate(parsed, surface)) return false;
   if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);
   if (targetIssue(parsed) === undefined) return true;
   return !hasLandedAuditComment(parsed, index, earlier, ledger);
@@ -1354,13 +1472,13 @@ export function sharedWriteWithoutAttribution(
 /**
  * Apply the provenance rules to one action.
  *
- * A comment or message written through a shared credential ends with the
- * trailer naming the employee and the run; a message through a shared chat
- * credential also carries the employee's name and icon so it stays
- * attributable. Both are added by the server, never by the skill: a
- * skill-supplied trailer or `username` is refused rather than merged, because
- * either could name another employee. A dedicated `oauth` app posts as itself,
- * so nothing is added for it.
+ * A comment, a message or the description of a new ticket written through a
+ * shared credential ends with the trailer naming the employee and the run; a
+ * message through a shared chat credential also carries the employee's name
+ * and icon so it stays attributable. Both are added by the server, never by
+ * the skill: a skill-supplied trailer or `username` is refused rather than
+ * merged, because either could name another employee. A dedicated `oauth` app
+ * posts as itself, so nothing is added for it.
  *
  * Args:
  *   parsed: A parsed surface action.
@@ -1394,6 +1512,17 @@ export function applyProvenance(
             ...parsed.toolArgs,
             [messageKey]: `${String(parsed.toolArgs[messageKey])}\n\n${trailer}`,
           },
+        },
+      };
+    }
+    if (isTicketCreate(parsed, surface)) {
+      if (!shared) return { ok: true, action: parsed };
+      const description = parsed.toolArgs.description as string;
+      return {
+        ok: true,
+        action: {
+          ...parsed,
+          toolArgs: { ...parsed.toolArgs, description: `${description}\n\n${trailer}` },
         },
       };
     }

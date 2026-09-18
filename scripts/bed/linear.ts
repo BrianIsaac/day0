@@ -8,6 +8,7 @@
  * answer each named document.
  */
 
+import { endsWithProvenanceTrailer } from '../../src/surfaces/policy';
 import { LinearClient } from '../rehearsal/linear';
 
 export { LinearClient };
@@ -54,6 +55,15 @@ export interface ProjectIssue {
   identifier: string;
   title: string;
   projectName: string;
+}
+
+/** A ticket a Day0 run filed: its description ends with the server's provenance trailer. */
+export interface RunIssue {
+  id: string;
+  identifier: string;
+  title: string;
+  /** When Linear says it was created, as an ISO timestamp. */
+  createdAt: string;
 }
 
 export interface BedLabel {
@@ -113,6 +123,20 @@ const BED_ISSUES = `query BedIssues($after: String) {
 const PROJECT_ISSUES = `query BedProjectIssues($projectIds: [ID!]!, $after: String) {
   issues(filter: { project: { id: { in: $projectIds } } }, first: ${PAGE_SIZE}, after: $after) {
     nodes { id identifier title description project { name } }
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+
+/** What every provenance trailer contains; the filter narrows the read, the last line decides. */
+const TRAILER_FRAGMENT = '(Day0) · run ';
+
+const RUN_ISSUES = `query BedRunIssues($teamIds: [ID!]!, $after: String) {
+  issues(
+    filter: { team: { id: { in: $teamIds } }, description: { contains: "${TRAILER_FRAGMENT}" } }
+    first: ${PAGE_SIZE}
+    after: $after
+  ) {
+    nodes { id identifier title description createdAt }
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -324,6 +348,42 @@ export async function readForeignIssues(
     after = data.issues.pageInfo.endCursor;
   }
   throw new Error(`Linear listed more than ${MAX_PAGES * PAGE_SIZE} issues in the bed's projects.`);
+}
+
+/**
+ * The unarchived tickets in the bed's teams that a Day0 run filed.
+ *
+ * An employee whose charter says to triage asks into tickets files one under
+ * the shared key, and the server signs its description. Such a ticket carries
+ * no bed marker and may sit in no project, so neither other read finds it.
+ *
+ * Args:
+ *   client: The client.
+ *   teamIds: The bed's teams.
+ *
+ * Returns:
+ *   The tickets whose description ends with a provenance trailer and carries
+ *   no bed marker; one that only quotes a trailer is not among them.
+ */
+export async function readRunIssues(client: LinearClient, teamIds: readonly string[]): Promise<RunIssue[]> {
+  if (teamIds.length === 0) return [];
+  const issues: RunIssue[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const data = await client.request<{
+      issues: {
+        nodes: Array<{ id: string; identifier: string; title: string; description: string | null; createdAt: string }>;
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      };
+    }>(RUN_ISSUES, { teamIds: [...teamIds], after: after ?? null });
+    for (const node of data.issues.nodes) {
+      if (markerKey(node.description) || !endsWithProvenanceTrailer(node.description ?? '')) continue;
+      issues.push({ id: node.id, identifier: node.identifier, title: node.title, createdAt: node.createdAt });
+    }
+    if (!data.issues.pageInfo.hasNextPage || !data.issues.pageInfo.endCursor) return issues;
+    after = data.issues.pageInfo.endCursor;
+  }
+  throw new Error(`Linear listed more than ${MAX_PAGES * PAGE_SIZE} run-filed issues in the bed's teams.`);
 }
 
 /** Create one issue and return its id and identifier. */

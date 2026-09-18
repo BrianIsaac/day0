@@ -83,7 +83,7 @@ import {
   scrubbedCorrectionEntries,
   type PlannerCorrection,
 } from '../src/work/corrections';
-import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
+import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
@@ -1543,7 +1543,8 @@ export const authorDependentActions = internalAction({
       }
       if (dependent.actions.length === 0) {
         const finalOutput = flattenedDependentOutput(dependent, []);
-        const reason = (initial.resumedClosing ? undefined : initial.initialFailure) ?? blockedPlanReason(output.planStepOutcomes);
+        const failure = (initial.resumedClosing ? undefined : initial.initialFailure) ?? blockedPlanReason(output.planStepOutcomes);
+        const reason = failure ? (gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? failure) : undefined;
         if (reason) {
           await ctx.runMutation(internal.work.setFailed, {
             workItemId: args.workItemId,
@@ -2338,13 +2339,14 @@ async function finishRun(
         applied: finalOutput.applied,
       });
     if (finalReason) {
+      const ended = gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? finalReason;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId,
-        reason: finalReason,
+        reason: ended,
         runId: claim.runId,
         output: finalOutput,
       });
-      return { ok: false, reason: finalReason };
+      return { ok: false, reason: ended };
     }
     await ctx.runMutation(internal.work.setCompleted, {
       workItemId,
@@ -2375,13 +2377,14 @@ async function finishRun(
     // A prerequisite failure with nothing landed leaves the closing phase
     // nothing to audit and the manager nothing to decide: the run stops here.
     if (reason && landedWork({ ...output, applied: settled }, surfaces).length === 0) {
+      const ended = gateRefusalStop(output.actions, settled) ?? reason;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId,
-        reason,
+        reason: ended,
         runId: claim.runId,
         output: { ...output, applied: settled },
       });
-      return { ok: false, reason };
+      return { ok: false, reason: ended };
     }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId,
@@ -2405,13 +2408,14 @@ async function finishRun(
     };
   }
   if (reason) {
+    const ended = gateRefusalStop(output.actions, settled) ?? reason;
     await ctx.runMutation(internal.work.setFailed, {
       workItemId,
-      reason,
+      reason: ended,
       runId: claim.runId,
       output: { ...output, applied: settled },
     });
-    return { ok: false, reason };
+    return { ok: false, reason: ended };
   }
   if (claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
     const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
