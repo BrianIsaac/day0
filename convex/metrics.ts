@@ -151,6 +151,16 @@ export function collectLedgerObservations(
   return [...observations.values()];
 }
 
+/**
+ * Events in the order they happened: by `createdAt`, and events one
+ * mutation wrote in the same millisecond in the order the backend wrote
+ * them. The figures then do not depend on the order the rows were read in,
+ * the backend's creation order or an export's id order.
+ */
+function byWriteOrder(left: Doc<'events'>, right: Doc<'events'>): number {
+  return left.createdAt - right.createdAt || left._creationTime - right._creationTime;
+}
+
 interface DecisionTotals {
   requested: number;
   approved: number;
@@ -247,7 +257,7 @@ function decisionTotals(
     }
     return id;
   };
-  for (const event of [...events].sort((left, right) => left.createdAt - right.createdAt)) {
+  for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     if (event.type === 'work.decision-requesting') {
       const workItemId = asString(payload?.workItemId);
@@ -334,7 +344,7 @@ function actionMetrics(
   const refused = new Set<string>();
   const refusalObservations = new Map<string, { reason: string; at: number }>();
   const lastPending = new Map<string, { payload: UnknownRecord; at: number }>();
-  for (const event of [...events].sort((left, right) => left.createdAt - right.createdAt)) {
+  for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     if (!payload) continue;
     if (event.type === 'work.actions-auto-applying' || event.type === 'work.actions-pending') {

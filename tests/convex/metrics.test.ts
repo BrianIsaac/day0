@@ -936,7 +936,7 @@ describe('the figures do not depend on the order the rows are read in', (): void
       createdAt,
     }) as unknown as Doc<'events'>;
 
-  it.fails(
+  it(
     'pairs a decision with a request written in the same millisecond however the two are listed',
     (): void => {
       const request = event(

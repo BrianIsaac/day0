@@ -153,7 +153,11 @@ async function exportDirectory(harness: ReturnType<typeof convexTest>): Promise<
     mkdirSync(join(directory, table));
     writeFileSync(
       join(directory, table, 'documents.jsonl'),
-      rows[table].map((row) => `${JSON.stringify(row)}\n`).join(''),
+      // By id, as a Convex snapshot export lists them, not in creation order.
+      [...rows[table]]
+        .sort((left, right) => (left._id < right._id ? -1 : 1))
+        .map((row) => `${JSON.stringify(row)}\n`)
+        .join(''),
     );
   }
   return directory;
