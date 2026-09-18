@@ -1881,9 +1881,7 @@ export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | u
       <p className="text-[10px] text-[var(--color-muted)] break-words">
         {failed
           ? `A new browser opens for every apply of a run, so Day0 tried the run's own landed ${replayed} again before this row and stopped: this row and the rest on the surface were not sent.`
-          : `A new browser opens for every apply of a run, so the run's own landed ${replayed} ${
-              restore.steps.length === 1 ? 'was' : 'were'
-            } sent again before this row. Nothing that changed the system was repeated.`}
+          : `A new browser opens for every apply of a run. Day0 sent the page restoration calls shown above before this row; this row's action was not replayed.`}
       </p>
       {failed ? (
         <p className="text-[10px] text-[var(--color-warn)] break-words">

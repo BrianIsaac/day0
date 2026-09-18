@@ -354,7 +354,7 @@ describe('a browser signed in again before a row', (): void => {
     );
     expect(markup).toContain('signed in again first: navigate, fill, click (replays of rows 0 to 2)');
     expect(markup).toContain(
-      'the run&#x27;s own landed navigate and sign-in were sent again before this row. Nothing that changed the system was repeated.',
+      'Day0 sent the page restoration calls shown above before this row; this row&#x27;s action was not replayed.',
     );
   });
 
@@ -386,7 +386,7 @@ describe('a browser signed in again before a row', (): void => {
       <SessionRestoreNote restore={{ steps: [step(navigate, 'wi:run:0')] }} />,
     );
     expect(markup).toContain('opened the page again first: navigate (replays of row 0)');
-    expect(markup).toContain('the run&#x27;s own landed navigate was sent again before this row.');
+    expect(markup).toContain('this row&#x27;s action was not replayed.');
   });
 
   it('stays silent on a row sent without a replay', (): void => {
