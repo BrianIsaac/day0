@@ -65,6 +65,20 @@ describe('the smoke test preflight', (): void => {
     expect(bounded).toContain('…');
   });
 
+  it('needs no printed line in real mode, where the harness prints one per case', (): void => {
+    const cases = [
+      'def run(inputs: dict) -> dict:',
+      '    return {"actions": [{"tool": "mcp.call", "args": {"value": inputs["requested_value"]}}]}',
+      'CASES = [{"requested_value": "61%"}, {"requested_value": "58%"}]',
+    ].join('\n');
+    expect(smokeTestPreflightReason(cases, 'real')).toBeUndefined();
+    expect(smokeTestPreflightReason(cases, 'mock')).toContain('must print a success line');
+    expect(smokeTestPreflightReason(cases)).toContain('must print a success line');
+    expect(smokeTestPreflightReason('def main(inputs: dict) -> dict:\n    return {}\n', 'real')).toContain(
+      'must define run(inputs: dict) -> dict',
+    );
+  });
+
   it('does not unwrap a fence itself: the caller decides and records it', (): void => {
     expect(smokeTestPreflightReason('```python\n' + program + '\n```')).toContain('does not parse at line 1, column 1');
   });

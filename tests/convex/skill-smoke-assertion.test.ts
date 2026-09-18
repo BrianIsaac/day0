@@ -88,7 +88,7 @@ describe("the rehearsal's kanban-comment-and-close authoring (F2, 18 Sep)", (): 
     expect(verification.result.stderr).toContain('AssertionError');
   });
 
-  it.fails('registers first time in real mode: no assertion the author wrote decides the verdict', async (): Promise<void> => {
+  it('registers first time in real mode: no assertion the author wrote decides the verdict', async (): Promise<void> => {
     const ids = rehearsalSmokeIds();
     const smokeTest = reconstructedSmokeTest(ids);
 

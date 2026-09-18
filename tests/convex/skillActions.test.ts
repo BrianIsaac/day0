@@ -5,10 +5,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
   AUTHOR_SYSTEM,
+  AUTHOR_SYSTEM_REAL,
   authorSchema,
+  authorSchemaFor,
+  authorSystemFor,
   buildAuthorPrompt,
   verifyAuthoredSkill,
 } from '../../convex/skillActions';
+import { harnessedSmokeTest } from '../../src/work/smoke-harness';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import { clipRefusedDraft, REFUSED_DRAFT_CHARS, REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
@@ -103,6 +107,35 @@ describe('skill author prompts', (): void => {
     expect(AUTHOR_SYSTEM).toContain('Call run() once for each of two different representative input dicts');
     expect(AUTHOR_SYSTEM).toContain('none of them the values of the work item that first needed this skill');
     expect(AUTHOR_SYSTEM).not.toContain('Call run() once.');
+  });
+
+  it('asks a real-mode author for run() and its CASES only, because the harness calls and checks', (): void => {
+    expect(authorSystemFor('mock')).toBe(AUTHOR_SYSTEM);
+    const real = authorSystemFor('real');
+    expect(real).toBe(AUTHOR_SYSTEM_REAL);
+    expect(real).toContain('reads every value it needs from `inputs`');
+    expect(real).toContain('Define `CASES`, a list of two different representative input dicts');
+    expect(real).toContain('none of them the values of the work item that first needed this skill');
+    expect(real).toContain('no call to run(), no assertion, no check and no print() at the top level');
+    expect(real).toContain('The harness calls run() once per case and checks the results itself');
+    expect(real).not.toContain('Call run() once for each of two different representative input dicts');
+    expect(real).not.toContain('print() one concise success line per call');
+    // Everything but the smoke-test contract is the mock prompt, word for word.
+    const [mockHead, mockTail] = AUTHOR_SYSTEM.split('You also produce a small Python smoke test');
+    expect(real.startsWith(mockHead!)).toBe(true);
+    expect(real.endsWith(mockTail!.slice(mockTail!.indexOf('Discipline:')))).toBe(true);
+  });
+
+  it('describes the real-mode smoke test in the schema the author answers with', (): void => {
+    expect(authorSchemaFor('mock')).toBe(authorSchema);
+    const real = z.toJSONSchema(authorSchemaFor('real')) as {
+      properties: Record<string, { description?: string }>;
+    };
+    const mock = z.toJSONSchema(authorSchema) as { properties: Record<string, { description?: string }> };
+    expect(real.properties.body).toEqual(mock.properties.body);
+    expect(real.properties.smokeTest?.description).toContain('CASES, a list of two different representative input dicts');
+    expect(real.properties.smokeTest?.description).toContain('the verification harness calls run() once per case');
+    expect(real.properties.smokeTest?.description).not.toContain('print one success line');
   });
 
   it('puts the shape and the execution inputs in front of the author', (): void => {
@@ -360,6 +393,45 @@ describe('skill author prompts', (): void => {
       ),
     ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest, unwrapped: false });
     expect(verify).toHaveBeenCalledOnce();
+  });
+
+  it('hands the sandbox the harness around the author program in real mode, and keeps the author program', async (): Promise<void> => {
+    const sandboxResult: SkillSandboxRun = {
+      backend: 'local',
+      sandboxId: 'local:run-4',
+      stdout: 'case 1\ncase 2\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+    const verify = vi.fn(async (): Promise<SkillSandboxRun> => sandboxResult);
+    const program = [
+      'def run(inputs: dict) -> dict:',
+      '    return {"actions": [{"action": "mcp.call", "tool": "save_comment", "id": inputs["record-id"]}]}',
+      'CASES = [{"record-id": "OPS-1"}, {"record-id": "OPS-2"}]',
+    ].join('\n');
+
+    await expect(
+      verifyAuthoredSkill(
+        { skillName: 's', skillBody: '# s', smokeTest: '```python\n' + program + '\n```' },
+        verify,
+        'real',
+      ),
+    ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest: program, unwrapped: true });
+    expect(verify).toHaveBeenCalledWith({ skillName: 's', skillBody: '# s', smokeTest: harnessedSmokeTest(program) });
+  });
+
+  it('refuses a real-mode program without the run landmark before the sandbox, and needs no print', async (): Promise<void> => {
+    const verify = vi.fn<() => Promise<SkillSandboxRun>>();
+
+    await expect(
+      verifyAuthoredSkill(
+        { skillName: 's', skillBody: '# s', smokeTest: 'def main(inputs: dict) -> dict:\n    return {}\nCASES = []\n' },
+        verify,
+        'real',
+      ),
+    ).resolves.toEqual({ ok: false, reason: expect.stringContaining('must define run(inputs: dict) -> dict') });
+    expect(verify).not.toHaveBeenCalled();
   });
 
   it('names the missing landmark when a parsable program lacks the contract', async (): Promise<void> => {
