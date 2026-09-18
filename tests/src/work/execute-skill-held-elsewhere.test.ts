@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import { HELD_ELSEWHERE_LIMIT, heldElsewhereLines, heldElsewhereRows, type HeldExternalItem } from '../../../src/work/claim-key';
-import type { ExecutionPlan, MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
+import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
 
 /**
  * Finding D of the 19 September full run, from the executor's side. The
@@ -213,3 +213,118 @@ describe('the external items other work items hold, in the executor prompts', ()
     expect(supported.actions).toEqual([reply]);
   });
 });
+
+/**
+ * The second full run (19 September, second sitting). The `#finance-close`
+ * ask's closing phase was told FIN-1 had its own work item (the row was
+ * `claimed` when the phase was authored) and still authored the reply beside
+ * two writes to FIN-1, as its approved plan's steps 4 and 5 said to. The guard
+ * withheld the writes; the reply was the status lines alone. The actions below
+ * are the ones that phase authored, from the work item's row in the export.
+ */
+describe('the reply authored beside a write another work item holds (19 Sep, the #finance-close ask)', (): void => {
+  const STATUS_LINES = 'Accruals booked: FIN-2 Accruals booked for September, Done\nBank reconciliation: FIN-3 Bank reconciliation for September, In Progress\nNot done yet: Bank reconciliation (FIN-3, In Progress)';
+  const runAsk: WorkCandidate = {
+    ...ask,
+    externalId: 'C0C2P932A2H:1789761522.764859',
+    contentSummary: '<@U0BTFK6FLNL> can you post where the September close stands?',
+    replyTarget: { channel: 'C0C2P932A2H', threadTs: '1789761522.764859' },
+  };
+  const runPlan: ExecutionPlan = {
+    ...plan,
+    steps: [
+      "Read the FIN / September close tickets in Linear (list_issues, then get_issue as needed) to find the step tickets and the status ticket titled 'Post the September close status note'.",
+      'Compose the status note per the runbook format.',
+      'Emit a chat.postMessage reply into the originating #finance-close thread (channel C0C2P932A2H, thread_ts 1789761522.764859) with the note lines.',
+      'Emit a save_comment on the status ticket with the note as the body.',
+      'Emit a save_issue moving the status ticket to Done, only after the note comment is posted and approved.',
+    ],
+  };
+  const listIssues = { tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ team: 'FIN', project: 'September close', limit: 50 }) } };
+  const replyWith = (text: string) => ({
+    tool: 'http.request' as const,
+    args: {
+      surface: 'slack', method: 'POST' as const, path: '/chat.postMessage',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}', 'Content-Type': 'application/json; charset=utf-8' }),
+      body: JSON.stringify({ channel: 'C0C2P932A2H', thread_ts: '1789761522.764859', text }),
+    },
+  });
+  const saveComment = { tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'FIN-1', body: STATUS_LINES }) } };
+  const saveIssue = { tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'FIN-1', state: 'Done' }) } };
+  const outcomes = runPlan.steps.map((_step, index) => ({ step: index + 1, status: 'satisfied', basis: 'ledger', evidence: 'Applied ledger row 0: list_issues on linear returned FIN-2 and FIN-3.' }));
+  const authoredInTheRun = { draft: 'September close status note.', notes: '', procedureTrails: [], planStepOutcomes: outcomes, actions: [replyWith(STATUS_LINES), saveComment, saveIssue] };
+  const live = { verdict: 'connected' as const, credentialLanded: true, lastVerifiedAt: 1 };
+  const surfaces = [
+    { slug: 'slack', displayName: 'Slack', class: 'chat', path: 'documented-api', endpoint: 'https://slack.com/api/', toolAllowlist: ['chat.postMessage'], ...live },
+    { slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp', endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['list_issues', 'save_comment', 'save_issue'], ...live },
+  ];
+  const claimedTicket: HeldExternalItem = { ...waiting, state: 'claimed', unclaimed: undefined };
+  const closing = (heldElsewhere: HeldExternalItem[], corrections: string[] = []) => runDependentSkill({
+    skill, plan: runPlan, candidate: runAsk, charter, mockEnv, mode: 'real', surfaces: surfaces as never, heldElsewhere,
+    initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [listIssues], procedureTrails: [] },
+    initialLedger: [{
+      tool: 'mcp.call', ok: true, idempotencyKey: 'k:0',
+      effect: 'list_issues on linear · {"issues":[{"id":"FIN-2","title":"Accruals booked for September","status":"Done"},{"id":"FIN-3","title":"Bank reconciliation for September","status":"In Progress"},{"id":"FIN-1","title":"Post the September close status note","status":"Todo"}]}',
+    }],
+    onAuditCorrection: async (_indices, reason): Promise<void> => { corrections.push(reason); },
+  });
+  const repliesOf = (actions: readonly MockAction[]): string[] =>
+    actions.filter((action) => action.args.surface === 'slack').map((action) => (JSON.parse(String(action.args.body)) as { text: string }).text);
+
+  beforeEach((): void => {
+    recorded.users.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('sends the set back when its reply does not say where the note is, naming the item, its work item and what to say', async (): Promise<void> => {
+    const said = `${STATUS_LINES}\nFIN-1 has its own work item with me, so the status note will be posted there.`;
+    recorded.outputs.push(authoredInTheRun, { ...authoredInTheRun, actions: [replyWith(said), saveComment, saveIssue] });
+    const output = await closing([claimedTicket]);
+
+    expect(recorded.users).toHaveLength(2);
+    expect(recorded.users[1]).toContain('the reply does not say where it is');
+    expect(recorded.users[1]).toContain(`FIN-1 has its own work item with this employee, "${TICKET_TITLE}" (claimed)`);
+    expect(repliesOf(output.actions)).toEqual([said]);
+  });
+
+  it('says it for an executor that still does not, in the reply itself, and records the correction', async (): Promise<void> => {
+    const corrections: string[] = [];
+    recorded.outputs.push(authoredInTheRun, authoredInTheRun);
+    const output = await closing([claimedTicket], corrections);
+
+    const [reply] = repliesOf(output.actions);
+    expect(reply).toContain(STATUS_LINES);
+    expect(reply).toContain(`FIN-1 has its own work item ("${TICKET_TITLE}"); what this request asked for on FIN-1 will be posted there.`);
+    expect(output.actions).toHaveLength(3);
+    expect(corrections.join('\n')).toContain('held-item reply completed');
+  });
+
+  it('cites the note once the holder has landed it, and names a colleague who holds the item', async (): Promise<void> => {
+    recorded.outputs.push(authoredInTheRun, authoredInTheRun);
+    const posted: HeldExternalItem = { ...claimedTicket, state: 'completed', sameEmployee: false, holderName: 'Aiko', landedComment: FIRST_NOTE_ID };
+    const [reply] = repliesOf((await closing([posted])).actions);
+    expect(reply).toContain(`FIN-1 has its own work item with Aiko ("${TICKET_TITLE}"); it is posted there as comment ${FIRST_NOTE_ID}.`);
+  });
+
+  it('reads a reply authored in phase one beside the write the same way (the first sitting\'s shape)', async (): Promise<void> => {
+    const corrections: string[] = [];
+    const authored = { ...phaseOne, actions: [replyWith(STATUS_LINES), saveComment] };
+    recorded.outputs.push(authored, authored);
+    const output = await runSkill({
+      skill, plan: runPlan, candidate: runAsk, charter, mockEnv, mode: 'real', surfaces: surfaces as never, heldElsewhere: [claimedTicket],
+      onAuditCorrection: async (_indices, reason): Promise<void> => { corrections.push(reason); },
+    });
+    expect(recorded.users[1]).toContain('the reply does not say where it is');
+    const replies = repliesOf(output.actions);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toContain('FIN-1 has its own work item');
+    expect(corrections.join('\n')).toContain('held-item reply completed');
+  });
+
+  it('leaves a set alone when nothing it writes is held elsewhere, or when its reply already says so', async (): Promise<void> => {
+    recorded.outputs.push(authoredInTheRun);
+    expect(repliesOf((await closing([landed])).actions)).toEqual([STATUS_LINES]);
+    expect(recorded.users).toHaveLength(1);
+  });
+});
+

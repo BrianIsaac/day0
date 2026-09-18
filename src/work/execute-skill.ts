@@ -43,7 +43,7 @@ import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
-import { heldElsewhereLines, heldElsewhereRows, type HeldExternalItem } from './claim-key';
+import { heldElsewhereLines, heldElsewhereRows, heldItemReplyFindings, withHeldItemsSaid, type HeldExternalItem } from './claim-key';
 
 export { replyTargetLine };
 
@@ -1160,6 +1160,28 @@ async function withholdUnsupported<T extends CorrectableOutput>(
     );
   }
   return corrected;
+}
+
+/** The audit record of a reply Day0 completed with where a held item's work is. */
+export const HELD_ITEM_REPLY_COMPLETED = 'held-item reply completed';
+
+/**
+ * After the one repair: a set that still writes to an item another work item
+ * holds, beside a reply that does not say where that work is, has the
+ * sentence added to the reply, and the addition is recorded. Real mode only.
+ */
+async function sayHeldItems<T extends CorrectableOutput>(
+  output: T,
+  args: Pick<RunSkillArgs, 'heldElsewhere' | 'surfaces' | 'candidate' | 'onAuditCorrection'>,
+): Promise<T> {
+  const findings = heldItemReplyFindings(output.actions, args.heldElsewhere, args.surfaces ?? []);
+  if (findings.length === 0) return output;
+  const actions = withHeldItemsSaid(output.actions, findings, args.surfaces ?? [], args.candidate.replyTarget);
+  await args.onAuditCorrection?.(
+    [],
+    `${HELD_ITEM_REPLY_COMPLETED}: ${findings.map((finding) => finding.sentence).join(' ')}`,
+  );
+  return { ...output, actions };
 }
 
 /** A ticket as the comment-before-status rule keys it: the surface and the issue an action addresses. */
@@ -2512,6 +2534,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       ...trailAttention.issues,
       ...deferralAudit(output, candidate, deferralContext),
       ...claimIssues(output.actions),
+      ...heldItemReplyFindings(output.actions, args.heldElsewhere, chatSurfaces).map((finding) => finding.issue),
     ];
     if (issues.length === 0) {
       return trailAttention.limitations.length > 0
@@ -2573,11 +2596,12 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     if (kept.length > 0) {
       await args.onAuditCorrection?.([], `${DEFERRALS_KEPT}: ${kept.join('; ')}`);
     }
-    return await withholdUnsupported(
+    const supported = await withholdUnsupported(
       corrected,
       (actions) => unsupportedClaimFindings(actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces)),
       args.onAuditCorrection,
     );
+    return await sayHeldItems(supported, args);
   }
 
   const issues = mockActionContractIssues(output, candidate, plan, procedureContract);
@@ -3190,6 +3214,9 @@ export async function runDependentSkill(
     ...trailAttention.issues,
     ...claimFindings(output.actions).map((finding) => finding.issue),
     ...gateIssues(output),
+    ...(mode === 'real'
+      ? heldItemReplyFindings(output.actions, args.heldElsewhere, args.surfaces ?? []).map((finding) => finding.issue)
+      : []),
   ];
   if (issues.length > 0) {
     const repairPrompt = [
@@ -3240,6 +3267,7 @@ export async function runDependentSkill(
         `${WITHHELD_BY_EVIDENCE}: ${orphaned.map((refusal) => refusal.reason).join('; ')}`,
       );
     }
+    if (mode === 'real') output = await sayHeldItems(output, args);
   }
   return trailAttention.limitations.length > 0
     ? { ...output, procedureTrailLimitations: trailAttention.limitations }

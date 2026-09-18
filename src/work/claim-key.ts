@@ -3,11 +3,15 @@ import { redactTokenShapes } from '../surfaces/redact';
 import {
   ISSUE_KEYS,
   actionIntent,
+  isSurfaceTool,
   messageTarget,
+  parseSurfaceAction,
   targetIssueReferences,
   type ParsedHttpRequest,
   type ParsedSurfaceAction,
 } from '../surfaces/policy';
+import { messageTexts } from './evidence-claims';
+import type { MockAction } from './types';
 
 /** What a provider item's identity is read from on the surface that found it. */
 export interface ClaimKeySurface {
@@ -296,4 +300,158 @@ export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefine
     ...rows,
     'Do not author a comment, a state change or a thread reply addressed to an item listed here: it is withheld and never sent. When this work asks for something that belongs on one, say in your reply that the item has its own work item, with whom, and that it will be posted there; when a comment has landed, cite it by its id instead of posting another.',
   ];
+}
+
+/** A set whose reply does not say where a write it makes to a held item is, or will be. */
+export interface HeldItemReplyFinding {
+  item: HeldExternalItem;
+  /** The line the executor is sent back with. */
+  issue: string;
+  /** The sentence added to the reply when the executor still does not say it. */
+  sentence: string;
+}
+
+function parsedOn(
+  action: MockAction,
+  surfaces: ReadonlyArray<{ slug: string; class: string }>,
+): { parsed: ParsedSurfaceAction; surface: { slug: string; class: string } } | undefined {
+  if (!isSurfaceTool(action.tool)) return undefined;
+  const result = parseSurfaceAction(action);
+  if (!result.ok) return undefined;
+  const surface = surfaces.find((row) => row.slug === result.action.surface);
+  return surface ? { parsed: result.action, surface } : undefined;
+}
+
+/** The chat messages of a set that are sent: a reply into a thread another item holds is not. */
+function sentMessages(
+  actions: readonly MockAction[],
+  held: readonly HeldExternalItem[],
+  surfaces: ReadonlyArray<{ slug: string; class: string }>,
+): number[] {
+  const heldNames = new Set(held.flatMap((item) => [item.externalId, item.externalAlias ?? item.externalId]));
+  return actions.flatMap((action, index): number[] => {
+    const on = parsedOn(action, surfaces);
+    if (!on || on.surface.class !== 'chat' || actionIntent(on.parsed) !== 'write') return [];
+    return writeTargetIds(on.parsed, on.surface).some((target) => heldNames.has(target)) ? [] : [index];
+  });
+}
+
+/**
+ * The held items a set writes to without its reply saying where that work is.
+ *
+ * On 19 September (second sitting) the `#finance-close` ask was told FIN-1 had
+ * its own work item and still authored the note on FIN-1 beside its thread
+ * reply, as its approved plan said to. The apply withheld the note, and the
+ * reply was the status lines alone: the person who asked was told nothing of
+ * where the note would be. The rule in the prompt is advice; this is the check
+ * behind it. A set that writes a ticket another work item holds, and sends a
+ * chat message, owes that message the item's name with either the words
+ * `work item` or the id of the comment the holder landed.
+ *
+ * Args:
+ *   actions: The set as the executor authored it.
+ *   held: The items other work items hold, as the prompt listed them.
+ *   surfaces: The agent's surfaces, for the class of each one addressed.
+ *
+ * Returns:
+ *   One finding per held item the set writes to and no sent message accounts for.
+ */
+export function heldItemReplyFindings(
+  actions: readonly MockAction[],
+  held: readonly HeldExternalItem[] | undefined,
+  surfaces: ReadonlyArray<{ slug: string; class: string }>,
+): HeldItemReplyFinding[] {
+  if (!held || held.length === 0) return [];
+  const messages = sentMessages(actions, held, surfaces).flatMap((index) => messageTexts(actions[index]!));
+  if (messages.length === 0) return [];
+  const written = new Set<string>();
+  for (const action of actions) {
+    const on = parsedOn(action, surfaces);
+    if (!on || on.surface.class === 'chat') continue;
+    for (const target of writeTargetIds(on.parsed, on.surface)) written.add(target.toLowerCase());
+  }
+  return held.slice(0, HELD_ELSEWHERE_LIMIT).flatMap((item): HeldItemReplyFinding[] => {
+    const names = [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])].map((name) => name.toLowerCase());
+    if (!names.some((name) => written.has(name))) return [];
+    const said = messages.some((text) => {
+      const lower = text.toLowerCase();
+      if (!names.some((name) => lower.includes(name))) return false;
+      return lower.includes('work item') || (item.landedComment !== undefined && lower.includes(item.landedComment.toLowerCase()));
+    });
+    if (said) return [];
+    const who = item.sameEmployee ? 'this employee' : item.holderName;
+    const where = item.landedComment
+      ? `cite comment ${item.landedComment}, which that work item landed on ${item.externalId}, instead of reporting a note of your own`
+      : `say that ${item.externalId} has its own work item and that what was asked for will be posted there`;
+    const title = item.title.length > HELD_TITLE_CHARS ? `${item.title.slice(0, HELD_TITLE_CHARS)} ...` : item.title;
+    return [{
+      item,
+      issue: redactTokenShapes(
+        `this set writes to ${item.externalId}, and the reply does not say where it is: ${item.externalId} has its own work item with ${who}, "${title}" (${item.state}), so a write to it from here is withheld and never sent. In the chat reply, ${where}; never say this work posted it.`,
+      ),
+      sentence: redactTokenShapes(
+        `${item.externalId} has its own work item${item.sameEmployee ? '' : ` with ${item.holderName}`} ("${title}"); ${
+          item.landedComment
+            ? `it is posted there as comment ${item.landedComment}.`
+            : `what this request asked for on ${item.externalId} will be posted there.`
+        }`,
+      ),
+    }];
+  });
+}
+
+function withMessageAppended(action: MockAction, sentence: string): MockAction | undefined {
+  const [text] = messageTexts(action);
+  const payload = action.tool === 'http.request' ? action.args?.body : action.args?.toolArgsJson;
+  if (text === undefined || typeof payload !== 'string') return undefined;
+  let record: unknown;
+  try {
+    record = JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return undefined;
+  const entry = Object.entries(record).find(([, value]) => value === text);
+  if (!entry) return undefined;
+  const next = JSON.stringify({ ...record, [entry[0]]: `${text}\n\n${sentence}` });
+  return { ...action, args: { ...action.args, ...(action.tool === 'http.request' ? { body: next } : { toolArgsJson: next }) } };
+}
+
+/**
+ * Say where the work is, in the reply itself, for an executor that was sent
+ * back once and still does not. The sentences are Day0's, built from the
+ * holding work items' rows, and are added to the message that answers the
+ * work item's own thread when the set has one, else to its first message.
+ *
+ * Args:
+ *   actions: The set after its one repair.
+ *   findings: What `heldItemReplyFindings` still finds in it.
+ *   surfaces: The agent's surfaces.
+ *   replyTarget: The thread the work item answers, when it came from chat.
+ *
+ * Returns:
+ *   The set with the sentences added, or unchanged when no message can carry them.
+ */
+export function withHeldItemsSaid(
+  actions: readonly MockAction[],
+  findings: readonly HeldItemReplyFinding[],
+  surfaces: ReadonlyArray<{ slug: string; class: string }>,
+  replyTarget?: { channel: string; threadTs?: string },
+): MockAction[] {
+  if (findings.length === 0) return [...actions];
+  const candidates = sentMessages(actions, findings.map((finding) => finding.item), surfaces);
+  const thread = replyTarget?.threadTs ? `${replyTarget.channel}/${replyTarget.threadTs}` : undefined;
+  const ordered = [
+    ...candidates.filter((index) => {
+      const on = parsedOn(actions[index]!, surfaces);
+      return thread !== undefined && on !== undefined && messageTarget(on.parsed) === thread;
+    }),
+    ...candidates,
+  ];
+  const sentence = findings.map((finding) => finding.sentence).join(' ');
+  for (const index of ordered) {
+    const appended = withMessageAppended(actions[index]!, sentence);
+    if (appended) return actions.map((action, at) => (at === index ? appended : action));
+  }
+  return [...actions];
 }
