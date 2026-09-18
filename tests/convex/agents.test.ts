@@ -721,6 +721,9 @@ describe('the employee roster', (): void => {
     await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
       bossEmail: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
     });
+    await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
+      bossEmail: 'eval-revocation-20260918t090000@day0.local',
+    });
     await deployEmployee(harness, 'owner', 'Day0 evaluation 1', {
       bossEmail: 'eval-day0-r1-1758150000000@day0.local',
     });
@@ -728,6 +731,9 @@ describe('the employee roster', (): void => {
     expect((await owner.query(api.agents.rosterForUser, {})).map((row) => row.agentId)).toEqual([
       ordinary,
     ]);
+    const supervision = await owner.query(api.metrics.forOwner, {});
+    expect(supervision?.employees.map((row) => row.agentId)).toEqual([ordinary]);
+    expect(supervision?.excludedAgents).toBe(3);
   });
 
   it('does not let a caller with an empty subject read malformed owner rows', async (): Promise<void> => {

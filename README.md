@@ -800,7 +800,7 @@ It resolves values the way the running app does, which matters more than it soun
 | `baselineActions.ts` (Node) | Deploys and runs the ordinary-agent control arm directly against the same mock adapters |
 | `revocationEvaluation.ts` | Builds deterministic real-mode containment trials and persists their transport checkpoints and outcomes |
 | `revocationEvaluationActions.ts` (Node) | Drives the live revocation trials across the credential-access and authority-recheck boundary |
-| `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger |
+| `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger, per employee (`forAgent`) and for the owner's company (`forOwner`) |
 | `ownership.ts` | Shared caller and per-agent ownership guards for queries, mutations and actions |
 | `crons.ts` | Recovery, documentation sync, surface re-probe, work intake and stalled work-step recovery, manager-decision and hourly manager-digest schedules |
 | `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 22 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |

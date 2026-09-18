@@ -15,7 +15,6 @@ import {
   cancelledReason,
   decisionAttribution,
   failedItemReason,
-  formatMetricDuration,
   landedHeadline,
   ManagerFeedbackNote,
   MetricsCard,
@@ -29,6 +28,7 @@ import {
   PermissionRows,
   ProviderReconciliationControl,
 } from '../../app/agent/[agentId]/AgentDashboard';
+import { formatMetricDuration } from '../../app/metric-format';
 import type { AgentMetrics } from '../../convex/metrics';
 import type { Doc } from '../../convex/_generated/dataModel';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';

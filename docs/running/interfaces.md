@@ -33,6 +33,7 @@ The entry points a reader is most likely to want:
 | `surfaces:approveByManager`, `surfaces:approveByIt` | mutation | The two approvals a connection card needs |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |
 | `metrics:forAgent` | query | The Supervision card's numbers, derived from the event ledger |
+| `metrics:forOwner` | query | Every employee's Supervision numbers and the company row: decisions and their waits pooled for the one manager, each employee's time to an approved charter quoted and never summed, evaluation agents and baseline arms left out |
 | `exportActions:exportForAgent` | action | The whole event trail and ledger as JSON, credential values removed |
 | `reset:deleteMyData` | mutation | Deletes the caller's agents and their rows in the enumerated tables |
 
@@ -166,7 +167,7 @@ An applied action is recorded as an `AppliedAction` (`src/surfaces/types.ts`):
 | `redaction` | `structural-only` when the redaction component was not available |
 | `repair` | the one argument-name repair made before the hold, if any |
 
-Rows live on the work item's `output.applied` and in the `work.completed` event, and `convex/metrics.ts` de-duplicates them by idempotency key to derive the Supervision card. `exportActions:exportForAgent` returns the agent, its events, its ledger and the names of the credentials it held, with owner addresses dropped, token shapes scrubbed and every credential value the owner stored removed before the JSON leaves the backend. The internal query it wraps, `events:exportForAgent`, is not callable from outside.
+Rows live on the work item's `output.applied` and in the `work.completed` event, and `convex/metrics.ts` de-duplicates them by idempotency key to derive the Supervision card. A browser call replayed to sign in again is a row of its own, nested under the row that needed the page: it counts toward the audit trail and never as an automatic action. `pnpm metrics:recompute <export.zip>` recomputes `metrics:forOwner` from a Convex snapshot export (`npx convex export`) with the same functions, for one owner (`--owner`, the local no-auth subject by default), and with `--expect <file.json>` fails on any figure that differs from the file. `exportActions:exportForAgent` returns the agent, its events, its ledger and the names of the credentials it held, with owner addresses dropped, token shapes scrubbed and every credential value the owner stored removed before the JSON leaves the backend. The internal query it wraps, `events:exportForAgent`, is not callable from outside.
 
 ## Permission grants
 

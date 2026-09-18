@@ -15,6 +15,7 @@ import {
   type AgentAvatarPet,
 } from '@/agent/avatar-pets';
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
+import { CompanySupervision } from './CompanySupervision';
 import { CursorToggle } from './CursorToggle';
 import { PageMotion } from './PageMotion';
 
@@ -509,6 +510,8 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
       </section>
 
       <EmployeeList employees={roster} />
+
+      <CompanySupervision />
 
       <OfficeWorld agents={roster} />
 

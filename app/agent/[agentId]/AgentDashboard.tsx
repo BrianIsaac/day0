@@ -71,6 +71,7 @@ import {
   type ManagerNotificationMode,
 } from '../../../src/work/manager-notes';
 import type { AgentMetrics } from '../../../convex/metrics';
+import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -3503,18 +3504,6 @@ function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   );
 }
 
-export function formatMetricDuration(milliseconds: number | null): string {
-  if (milliseconds === null) return 'not yet';
-  const totalSeconds = Math.round(milliseconds / 1_000);
-  if (totalSeconds < 60) return `${totalSeconds} s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds} s`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes === 0 ? `${hours} h` : `${hours} h ${remainingMinutes} min`;
-}
-
 function metricValue(value: string | undefined): string {
   return value ?? 'loading…';
 }
@@ -3535,11 +3524,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       ? 'not yet'
       : String(metrics.actions.blockedAfterRevocation)
     : undefined;
-  const completeness = metrics
-    ? metrics.auditTrail.fraction === null
-      ? 'not yet'
-      : `${Math.round(metrics.auditTrail.fraction * 100)}% (${metrics.auditTrail.complete}/${metrics.auditTrail.total})`
-    : undefined;
+  const completeness = metrics ? formatAuditTrail(metrics.auditTrail) : undefined;
   const rows = [
     {
       label: 'time to first approved charter',

@@ -51,6 +51,24 @@ const roster = [
 ];
 let shownRoster = roster;
 
+const oneEmployeeMetrics = {
+  charter: { timeToFirstDraftedMs: 30_000, timeToFirstApprovedMs: 67_000, revisions: 0, requestChanges: 0 },
+  decisions: {
+    requested: 2, approved: 2, rejected: 0, partiallyApproved: 0, cancelled: 0,
+    medianLatencyMs: 48_000, p90LatencyMs: 49_000,
+    byVia: {
+      dashboard: { decided: 2, medianLatencyMs: 48_000, p90LatencyMs: 49_000 },
+      channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+    },
+  },
+  actions: { autoApplied: 25, sessionRestores: 0, held: 1, approved: 1, rejected: 0, refused: 0,
+    blockedAfterRevocation: null, firstBlockAfterRevocationMs: null },
+  surfaces: { approved: 3, rejected: 0, absent: 1 },
+  skills: { approved: 3, rejected: 0 },
+  autonomyChanges: 1,
+  auditTrail: { complete: 26, total: 26, fraction: 1 },
+};
+
 vi.mock('convex/react', () => ({
   useQuery: (reference: FunctionReference<'query'>) => {
     if (!authState.signedIn) return undefined;
@@ -61,6 +79,23 @@ vi.mock('convex/react', () => ({
     if (name === 'agents:rosterForUser') {
       if (!authState.rosterAvailable) throw new Error('Function agents:rosterForUser is unavailable');
       return shownRoster;
+    }
+    if (name === 'metrics:forOwner' && shownRoster.length === 1) {
+      return {
+        employees: [{ agentId: shownRoster[0].agentId, name: shownRoster[0].name, deployedAt: 1, metrics: oneEmployeeMetrics }],
+        company: {
+          employees: 1,
+          charter: { timesToFirstApprovedMs: [67_000], medianTimeToFirstApprovedMs: 67_000, approvedEmployees: 1 },
+          decisions: oneEmployeeMetrics.decisions,
+          actions: oneEmployeeMetrics.actions,
+          surfaces: oneEmployeeMetrics.surfaces,
+          skills: oneEmployeeMetrics.skills,
+          autonomyChanges: 1,
+          auditTrail: oneEmployeeMetrics.auditTrail,
+        },
+        excludedAgents: 0,
+        omittedEmployees: 0,
+      };
     }
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
     return 0;
@@ -223,7 +258,9 @@ describe('the employee list', (): void => {
     shownRoster = [roster[0]];
     authState.signedIn = true;
     try {
-      expect(renderToStaticMarkup(<LandingPage />)).toMatchSnapshot();
+      const html = renderToStaticMarkup(<LandingPage />);
+      expect(html).toContain('Company supervision');
+      expect(html).toMatchSnapshot();
     } finally {
       shownRoster = roster;
       authState.signedIn = false;
