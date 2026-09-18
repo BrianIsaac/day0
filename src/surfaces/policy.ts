@@ -31,6 +31,13 @@ export const HELD_WITHHELD_TRANSITION =
 export const HELD_WRITE = 'write held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
 export const AWAITING_APPROVAL = "awaiting the manager's approval";
+/**
+ * Why a message is not sent after a write in its set did not land: it was
+ * authored beside that write, before any result existed, so it may report
+ * the write as done.
+ */
+export const WITHHELD_AFTER_FAILED_WRITE =
+  'withheld: an earlier write in this set did not land, so this message could report it wrongly';
 export const NOT_AUTOMATIC = 'not an automatic action';
 export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
@@ -545,6 +552,24 @@ export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord)
   if (hasThreadTarget(parsed)) return false;
   const posts = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
   return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
+}
+
+/**
+ * Whether an action puts words in front of a person: the manager DM, a chat
+ * post or thread reply, or a comment on a ticket. A message reports on the
+ * work; it is not the work.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   True for a message.
+ */
+export function isMessage(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
+  if (actionIntent(parsed) !== 'write') return false;
+  if (isManagerDm(parsed, surface) || isAuditComment(parsed)) return true;
+  return parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
 }
 
 /** Why a public chat reply escapes the source channel or thread, if it does. */

@@ -10,11 +10,13 @@ import { MOCK_TOOLS, mockAdapter } from './mock';
 import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
 import {
   applyProvenance,
+  actionIntent,
   AWAITING_APPROVAL,
   describeAction,
   grantRefusal,
   HELD_NOT_APPROVED,
   isAutomatic,
+  isMessage,
   isSurfaceTool,
   mockVerbRefusal,
   needsStandingGrant,
@@ -32,6 +34,7 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
   UNKNOWN_TOOL,
+  WITHHELD_AFTER_FAILED_WRITE,
   type ParsedSurfaceAction,
 } from './policy';
 import type {
@@ -209,6 +212,24 @@ export async function readSurfaceSnapshot(
 
 function refused(tool: string, reason: string, idempotencyKey: string): AppliedAction {
   return { tool, ok: false, reason, idempotencyKey };
+}
+
+/**
+ * Whether a write earlier in the set did not land: the provider refused it,
+ * a rule refused it, or its outcome is unknown. A held row is not a failure.
+ */
+function writeDidNotLand(
+  applied: readonly AppliedAction[],
+  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+): boolean {
+  return applied.some((row, index) => {
+    const action = parsed[index];
+    return (
+      action !== undefined &&
+      actionIntent(action) === 'write' &&
+      (row.outcomeUnknown === true || (!row.ok && row.held !== true))
+    );
+  });
 }
 
 /**
@@ -476,6 +497,20 @@ export async function applySurfaceActions(
       );
       if (!provenance.ok) {
         applied.push(refused(action.tool, provenance.reason, idempotencyKey));
+        continue;
+      }
+      // A message was written beside the writes before them, before any
+      // result existed; once one of those writes has not landed, the message
+      // may report it as done, so it is held rather than sent.
+      if (isMessage(parsed.action, surface) && writeDidNotLand(applied, parsedByIndex)) {
+        applied.push({
+          tool: action.tool,
+          ok: true,
+          held: true,
+          reason: WITHHELD_AFTER_FAILED_WRITE,
+          effect: describeAction(action),
+          idempotencyKey,
+        });
         continue;
       }
       const adapterRun = { ...run, agentName: run.agentName ?? 'Day0' };

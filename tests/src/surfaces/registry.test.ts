@@ -269,8 +269,9 @@ describe('applying surface actions', (): void => {
       args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ project: 'Q3 close' }) },
     };
     // A verdict written while the switch was on lists the comment and the public
-    // post as approved; with the switch off now the backstop refuses them.
-    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, comment, dm, publicPost, status], {
+    // post as approved; with the switch off now the backstop refuses them. The
+    // DM goes first: after a refused write it would be held.
+    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, dm, comment, publicPost, status], {
       deps: deps(recorded),
       grants,
       approvedIndexes: new Set([0, 1, 2, 3]),
@@ -281,8 +282,8 @@ describe('applying surface actions', (): void => {
     });
     expect(applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason, entry.authority])).toEqual([
       [true, false, undefined, 'standing'],
-      [false, false, NOT_AUTOMATIC, undefined],
       [true, false, undefined, 'standing'],
+      [false, false, NOT_AUTOMATIC, undefined],
       [false, false, NOT_AUTOMATIC, undefined],
       [true, true, AWAITING_APPROVAL, undefined],
     ]);
@@ -345,8 +346,9 @@ describe('applying surface actions', (): void => {
     // The trailer and the shared identity are still added by the server.
     expect((recorded.http[1].body as { text: string; username: string }).text).toContain('-- Priya (Day0) · run wi_1/run_1');
 
-    // A read and the DM still need their own grants under the switch.
-    const noGrants = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, dm, comment], {
+    // A read and the DM still need their own grants under the switch; the
+    // comment goes before the refused DM, which would otherwise hold it.
+    const noGrants = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, comment, dm], {
       deps: deps(recorded),
       grants: new Set(),
       approvedIndexes: new Set([0, 1, 2]),
@@ -356,8 +358,8 @@ describe('applying surface actions', (): void => {
     });
     expect(noGrants.map((entry) => [entry.ok, entry.reason])).toEqual([
       [false, 'no grant (linear:read)'],
-      [false, 'no grant (boss:message)'],
       [true, undefined],
+      [false, 'no grant (boss:message)'],
     ]);
 
     // The manager's approval by index records its own authority.
@@ -1156,8 +1158,13 @@ describe('a browser session across the apply invocations of one run', (): void =
       [false, reason],
     ]);
     expect(sentIn(driver, 2)).toEqual(['browser_navigate']);
-    // The manager DM is on another surface and is not held back by the tile.
-    expect(closing[3]).toMatchObject({ ok: true, authority: 'autonomous' });
+    // The DM is on another surface, so the tile's failure does not refuse it;
+    // it reports the fill and Save that did not land, so it is held, not sent.
+    expect(closing[3]).toMatchObject({
+      ok: true,
+      held: true,
+      reason: 'withheld: an earlier write in this set did not land, so this message could report it wrongly',
+    });
   });
 
   it('signs in again before a leading navigate when the invocation does not sign in itself', async (): Promise<void> => {
@@ -1290,7 +1297,7 @@ describe('a browser session across the apply invocations of one run', (): void =
     // 16 September: the closing fill and Save did not land, and the DM the
     // model wrote beside them, before any result existed, told the manager
     // "74% entered, Save clicked" anyway.
-    it.fails('holds the manager DM that follows a failed fill and Save, and never sends it', async (): Promise<void> => {
+    it('holds the manager DM that follows a failed fill and Save, and never sends it', async (): Promise<void> => {
       const refuseTheRefresh = (call: TileDriverCall): string | undefined =>
         call.context === 2 &&
         ((call.tool === 'browser_fill_form' && JSON.stringify(call.args).includes('Pipeline coverage')) ||
@@ -1319,7 +1326,6 @@ describe('a browser session across the apply invocations of one run', (): void =
         reason: WITHHELD,
         idempotencyKey: 'wi_1:run_1:7',
       });
-      expect(closing[3]!.effect).toContain('74% entered, Save clicked');
       expect(closing[3]).not.toHaveProperty('authority');
       expect(posted).toEqual([]);
     });
@@ -1346,7 +1352,7 @@ describe('a browser session across the apply invocations of one run', (): void =
       expect(posted).toEqual([expect.objectContaining({ channel: MANAGER_DM })]);
     });
 
-    it.fails('holds a ticket comment after a write whose outcome is unknown', async (): Promise<void> => {
+    it('holds a ticket comment after a write whose outcome is unknown', async (): Promise<void> => {
       const recorded: Recorded = { mcp: [], http: [] };
       const timingOut: RealAdapterDeps = {
         ...deps(recorded),
