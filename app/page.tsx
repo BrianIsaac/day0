@@ -513,7 +513,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
       <OfficeWorld agents={roster} />
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold mb-1">Reset demo</h2>
             <p className="text-xs text-[var(--color-muted)]">
@@ -536,7 +536,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
               ((agents?.length ?? 0) === 0 &&
                 (!alsoUnlinkDocumentation || (docSources?.length ?? 0) === 0))
             }
-            className="px-4 py-2 rounded-lg border border-[var(--color-danger)]/40 text-[var(--color-danger)] text-xs hover:bg-[var(--color-danger)]/10 disabled:opacity-50"
+            className="shrink-0 whitespace-nowrap px-4 py-2 rounded-lg border border-[var(--color-danger)]/40 text-[var(--color-danger)] text-xs hover:bg-[var(--color-danger)]/10 disabled:opacity-50"
           >
             {resetting ? 'Resetting…' : 'Reset everything'}
           </button>
