@@ -2259,6 +2259,65 @@ describe('each employee reads its own approved queues', (): void => {
     ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
     expect(unbounded.records[0].skipReason).toContain('cannot be bounded to team FIN');
   });
+
+  it("asks Linear for a ticket's other name when the schema lets intake choose fields (19 Sep, FIN-1)", async (): Promise<void> => {
+    // FIN-1 as Linear's MCP server printed it in the run of 19 Sep, and the
+    // arguments the run's surface row recorded for `list_issues`. The server
+    // returns only the fields a caller names, so a name intake does not ask
+    // for never reaches the seed.
+    const fin1: Record<string, unknown> = {
+      id: 'FIN-1',
+      uuid: '8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1',
+      title: 'Post the September close status note',
+      description: 'Post the close status note for the September close on this ticket.\n\nday0-demo-key: fin-status',
+      priority: { value: 0, name: 'No priority' },
+      url: 'https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note',
+      gitBranchName: 'brian/fin-1-post-the-september-close-status-note',
+      createdAt: '2026-09-18T18:25:26.000Z',
+      updatedAt: '2026-09-18T21:13:58.000Z',
+      status: 'Todo',
+      statusType: 'unstarted',
+      labels: ['day0-demo'],
+      createdBy: 'Brian',
+      project: 'September close',
+      team: 'Finance close',
+    };
+    const liveArguments = ['assignee', 'createdAt', 'cursor', 'cycle', 'delegate', 'fields', 'includeArchived', 'label', 'limit', 'orderBy', 'parentId', 'priority', 'project', 'query', 'release', 'state', 'team', 'updatedAt'];
+    const properties: Record<string, unknown> = Object.fromEntries(liveArguments.map((name) => [name, {}]));
+    properties.fields = { type: 'array', items: { type: 'string', enum: Object.keys(fin1) } };
+    const requested: unknown[] = [];
+    const harness = runtimeHarness(
+      [companySurfaces()[1]],
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [financeAgent],
+    );
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        makeMcpClient: () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: { surface: { list_issues: { inputSchema: { properties } } } },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              requested.push(args.fields);
+              const fields = Array.isArray(args.fields) ? (args.fields as string[]) : Object.keys(fin1);
+              return { issues: [Object.fromEntries(fields.map((name) => [name, fin1[name]]))] };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 1 });
+
+    expect(requested[0]).toEqual(expect.arrayContaining(['id', 'uuid']));
+    expect([...harness.seeds.values()]).toEqual([
+      expect.objectContaining({ externalId: 'FIN-1', externalAlias: fin1.uuid }),
+    ]);
+  });
 });
 
 describe("the app's own posts are never intake", (): void => {

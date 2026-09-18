@@ -275,9 +275,16 @@ export interface LinearListRequest {
   checkpointEnforced: boolean;
 }
 
-/** Issue fields intake reads, requested by name when the schema lets a caller choose. */
+/**
+ * Issue fields intake reads, requested by name when the schema lets a caller
+ * choose. A named selection returns nothing else, so the item's other name
+ * (`uuid` beside an identifier `id`, `identifier` beside a UUID `id`) is asked
+ * for here or `linearCandidate` never sees it and no alias is stored.
+ */
 const LINEAR_ISSUE_FIELDS = [
   'id',
+  'uuid',
+  'identifier',
   'title',
   'description',
   'url',

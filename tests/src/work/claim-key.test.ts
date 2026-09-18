@@ -1,11 +1,21 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseSurfaceAction, type ParsedSurfaceAction } from '../../../src/surfaces/policy';
+import type { MockAction } from '../../../src/work/types';
 import {
+  browserFieldId,
+  documentedBrowserFields,
+  heldElsewhereLines,
+  heldItemReplyFindings,
+  plannedWriteTargets,
   providerItemKey,
+  withHeldItemsSaid,
   withheldByClaim,
   withheldByClaimReason,
   writeTargetIds,
   type ClaimKeySurface,
+  type HeldExternalItem,
 } from '../../../src/work/claim-key';
 
 const linear: ClaimKeySurface = {
@@ -209,3 +219,84 @@ describe('withheldByClaimReason', (): void => {
     expect(withheldByClaim({ held: true, reason: withheldByClaimReason(waiting) })).toBe(true);
   });
 });
+
+/**
+ * Finding M of the second full run (19 September): the tile's one documented
+ * field, read from the tracked runbook the bed syncs, and the run's own
+ * action shapes.
+ */
+describe('a documented page field of a browser-driven surface', (): void => {
+  const SLUG = 'looker-pipeline-tile';
+  const runbook = readFileSync(join(process.cwd(), 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'), 'utf8');
+  const system = readFileSync(join(process.cwd(), 'bed/company/folder/systems/looker-pipeline-tile.md'), 'utf8');
+  const tileSurface: ClaimKeySurface = { slug: SLUG, class: 'analytics', path: 'browser-driven', endpoint: 'http://looker-tile:8080/' };
+  const tile = (tool: string, toolArgs: Record<string, unknown>): MockAction => ({
+    tool: 'mcp.call', args: { surface: SLUG, tool, toolArgsJson: JSON.stringify(toolArgs) },
+  });
+  const parsedOf = (action: MockAction): ParsedSurfaceAction => {
+    const result = parseSurfaceAction(action);
+    if (!result.ok) throw new Error(result.reason);
+    return result.action;
+  };
+  const signIn = tile('browser_fill_form', { fields: [{ name: 'Username', value: 'revops' }, { name: 'Password', value: '{{secret}}' }] });
+  const fill = tile('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '74%' }] });
+  const save = tile('browser_click', { element: 'Save' });
+
+  it('reads the fields from the documented action shapes, never the sign-in form, and nothing for another surface', (): void => {
+    expect(documentedBrowserFields([{ body: system }, { body: runbook }], SLUG)).toEqual(['Pipeline coverage']);
+    expect(documentedBrowserFields([{ body: runbook }], 'looker')).toEqual([]);
+    expect(documentedBrowserFields([{ body: '```json\n{ not json\n```\n```json\n{"args":{"surface":"x"}}\n```' }], SLUG)).toEqual([]);
+  });
+
+  it('is taken by a plan that declares an unconditional write to the surface, not by one that writes only if a read says so', (): void => {
+    const pages = [{ body: runbook }];
+    const surfaces = [tileSurface, linear];
+    const write = { steps: [{ kind: 'write', writes: [SLUG] }, { kind: 'write', writes: ['linear'] }] };
+    expect(plannedWriteTargets(write, surfaces, pages)).toEqual([{ surfaceSlug: SLUG, field: 'Pipeline coverage' }]);
+    expect(plannedWriteTargets({ steps: [{ kind: 'conditional-write', writes: [SLUG] }, { kind: 'read', writes: [] }] }, surfaces, pages)).toEqual([]);
+    expect(plannedWriteTargets(undefined, surfaces, pages)).toEqual([]);
+    expect(plannedWriteTargets(write, surfaces, [])).toEqual([]);
+  });
+
+  it('is what a fill addresses, under one key whatever the case; the sign-in, a click and a read address nothing', (): void => {
+    expect(writeTargetIds(parsedOf(fill), tileSurface)).toEqual(['pipeline coverage']);
+    expect(writeTargetIds(parsedOf(tile('browser_fill_form', { fields: [{ name: ' PIPELINE Coverage ', value: '74%' }] })), tileSurface)).toEqual(['pipeline coverage']);
+    expect(writeTargetIds(parsedOf(signIn), tileSurface)).toEqual([]);
+    expect(writeTargetIds(parsedOf(save), tileSurface)).toEqual([]);
+    expect(writeTargetIds(parsedOf(tile('browser_snapshot', {})), tileSurface)).toEqual([]);
+    expect(providerItemKey(tileSurface, { sourceSystem: SLUG, externalId: browserFieldId('Pipeline coverage') }, 'real')).toBe(
+      'http://looker-tile:8080|pipeline coverage',
+    );
+  });
+
+  const held: HeldExternalItem = {
+    externalId: 'Pipeline coverage', sourceSystem: SLUG, holderName: 'Priya', sameEmployee: true,
+    title: 'Refresh the Looker pipeline tile', state: 'executing', pageField: true,
+  };
+
+  it('is listed for the other work items with the rule that they read the page', (): void => {
+    const text = heldElsewhereLines([held]).join('\n');
+    expect(text).toContain(`${SLUG} · page field "Pipeline coverage" · this employee · "Refresh the Looker pipeline tile" (executing) · that work item writes it; read the page for its value`);
+    expect(text).toContain('A page field listed here is filled and saved by its holder alone');
+    // A list of tickets alone reads as it did before.
+    expect(heldElsewhereLines([{ ...held, pageField: undefined }]).join('\n')).not.toContain('page field');
+  });
+
+  it('owes the reply whose work the field is, as a held ticket does', (): void => {
+    const surfaces = [tileSurface, slack('T1')];
+    const reply = (text: string): MockAction => ({
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: JSON.stringify({ channel: 'C0BSF04TZ19', thread_ts: '1789761481.815889', text }) },
+    });
+    const said = 'Pipeline coverage is confirmed at 74% on the Looker pipeline tile.';
+    const [finding] = heldItemReplyFindings([signIn, fill, save, reply(said)], [held], surfaces);
+    expect(finding!.issue).toContain('this set fills "Pipeline coverage" on looker-pipeline-tile');
+    const completed = withHeldItemsSaid([signIn, fill, save, reply(said)], [finding!], surfaces, { channel: 'C0BSF04TZ19', threadTs: '1789761481.815889' });
+    expect(JSON.parse(String(completed[3]!.args.body)).text).toBe(
+      `${said}\n\nPipeline coverage on looker-pipeline-tile is refreshed by its own work item ("Refresh the Looker pipeline tile"); it was not written from this request.`,
+    );
+    // A set that only reads the tile owes nothing.
+    expect(heldItemReplyFindings([signIn, tile('browser_snapshot', {}), reply(said)], [held], surfaces)).toEqual([]);
+  });
+});
+

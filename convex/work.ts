@@ -51,6 +51,7 @@ import {
 } from '../src/work/types';
 import {
   HELD_ELSEWHERE_LIMIT,
+  browserFieldId,
   providerItemKey,
   writeTargetIds,
   type HeldExternalItem,
@@ -330,7 +331,7 @@ async function rememberExternalAlias(
     .filter((q) => q.eq(q.field('releasedAt'), undefined))
     .collect();
   for (const claim of held) {
-    if (!claim.aliases?.includes(externalClaimAlias)) {
+    if (claim.writeTarget === undefined && !claim.aliases?.includes(externalClaimAlias)) {
       await ctx.db.patch(claim._id, { aliases: [...(claim.aliases ?? []), externalClaimAlias] });
     }
   }
@@ -919,6 +920,7 @@ export const writeClaimHolder = internalQuery({
       for (const claim of live) {
         const holding = await ctx.db.get(claim.workItemId);
         if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) continue;
+        if (!holdsAgainst(claim, row)) continue;
         return await holderOf(target, holding, false);
       }
       // The work items discovered from the item under either of its names:
@@ -957,6 +959,134 @@ export const writeClaimHolder = internalQuery({
 });
 
 /**
+ * Whether a live claim holds against a work item.
+ *
+ * A claim on the item a row was discovered from holds against everything. A
+ * write-target claim whose holder has finished holds only against work that
+ * already existed then: the four items of 19 September all wanted the one
+ * refresh, and the three that did not make it must not repeat it, while a
+ * ticket raised next week for a new figure is new work on the same field.
+ *
+ * Args:
+ *   claim: The live claim.
+ *   row: The work item asking.
+ *
+ * Returns:
+ *   False only for a settled write-target claim and a row created after it settled.
+ */
+function holdsAgainst(claim: Doc<'externalClaims'>, row: Doc<'workItems'>): boolean {
+  return claim.writeTarget === undefined || claim.settledAt === undefined || row._creationTime < claim.settledAt;
+}
+
+/** The most write targets one work item takes; a surface documents a handful of fields. */
+const WRITE_TARGET_CLAIMS = 8;
+
+/**
+ * Take the owner-wide claim on the documented page fields a work item's
+ * approved plan writes, before it authors.
+ *
+ * A page field of a browser-driven surface has no intake row, so
+ * `takeExternalClaim` never reaches it. The key is the one a ticket on an
+ * unrecognised provider gets, the surface's origin and the item, with the
+ * documented field as the item: two employees whose cards name the dashboard
+ * differently still meet on it. The first work item to ask holds the field;
+ * a later one is not refused anything here. It is told in its prompt
+ * (`itemsHeldElsewhere`) and its fill and Save are withheld at the apply
+ * (`writeClaimHolder`), so it reads the page instead. A holder that is gone,
+ * cancelled or skipped is released, and a finished one gives way to work
+ * created after it finished.
+ *
+ * Args:
+ *   workItemId: The work item about to author.
+ *   targets: The documented fields (`plannedWriteTargets`).
+ *
+ * Returns:
+ *   The keys this work item holds after the call.
+ */
+export const takeWriteTargetClaims = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    targets: v.array(v.object({ surfaceSlug: v.string(), field: v.string() })),
+  },
+  handler: async (ctx, args): Promise<string[]> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    const agent = await ctx.db.get(row.agentId);
+    const userId = agent?.userId;
+    if (!userId) return [];
+    const now = Date.now();
+    const held: string[] = [];
+    for (const target of args.targets.slice(0, WRITE_TARGET_CLAIMS)) {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', target.surfaceSlug))
+        .first();
+      if (!surface || surface.path !== 'browser-driven') continue;
+      const key = providerItemKey(
+        surface,
+        { sourceSystem: surface.slug, externalId: browserFieldId(target.field) },
+        SURFACE_MODE,
+      );
+      if (key === undefined) continue;
+      const live = await ctx.db
+        .query('externalClaims')
+        .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
+        .filter((q) => q.eq(q.field('releasedAt'), undefined))
+        .collect();
+      let taken = false;
+      for (const claim of live) {
+        if (claim.workItemId === row._id) {
+          if (claim.settledAt !== undefined) await ctx.db.patch(claim._id, { settledAt: undefined });
+          held.push(key);
+          taken = true;
+          continue;
+        }
+        const holding = await ctx.db.get(claim.workItemId);
+        if (!holding || RELEASED_HOLDER_STATES.has(holding.state) || !holdsAgainst(claim, row)) {
+          await releaseClaim(ctx, claim, now);
+          continue;
+        }
+        taken = true;
+      }
+      if (taken) continue;
+      await ctx.db.insert('externalClaims', {
+        userId,
+        key,
+        agentId: row.agentId,
+        workItemId: row._id,
+        writeTarget: { surface: surface.slug, field: target.field },
+        claimedAt: now,
+      });
+      held.push(key);
+    }
+    return held;
+  },
+});
+
+/**
+ * Stamp a finished work item's write-target claims settled.
+ *
+ * Called where a row completes or fails. The claims stay live, so the work
+ * that ran beside the holder still reads the page instead of writing it.
+ *
+ * Args:
+ *   ctx: Mutation context of the transition.
+ *   workItemId: The work item that finished.
+ *   now: The time it finished.
+ */
+async function settleWriteTargetClaims(ctx: MutationCtx, workItemId: Id<'workItems'>, now: number): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const held = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of held) {
+    if (claim.writeTarget !== undefined) await ctx.db.patch(claim._id, { settledAt: now });
+  }
+}
+
+/**
  * The states read for the executor's list of items held elsewhere, work in
  * flight first and finished work last, so a bounded list keeps what is about
  * to write ahead of what already has.
@@ -973,6 +1103,13 @@ const HELD_ELSEWHERE_STATES: ReadonlyArray<Doc<'workItems'>['state']> = [
   'completed',
   'failed',
 ];
+/** States a row can hold a write-target claim in: it is taken when execution begins. */
+const WRITE_TARGET_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'executing',
+  'actions-pending',
+  'completed',
+  'failed',
+]);
 /** States in which a row has not taken its claim yet. */
 const UNCLAIMED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['discovered', 'deferred', 'needs-skill']);
 /** The most employees of one owner read for the list, the asking one first. */
@@ -1022,7 +1159,29 @@ export const itemsHeldElsewhere = internalQuery({
           .take(HELD_ELSEWHERE_LIMIT - held.length);
         for (const holding of rows) {
           if (held.length >= HELD_ELSEWHERE_LIMIT) break;
-          if (holding._id === row._id || holding.externalClaimKey === undefined) continue;
+          if (holding._id === row._id) continue;
+          if (WRITE_TARGET_HOLDER_STATES.has(state) && !isRevocationTrialRow(holding)) {
+            const fields = await ctx.db
+              .query('externalClaims')
+              .withIndex('by_work_item', (q) => q.eq('workItemId', holding._id))
+              .filter((q) => q.eq(q.field('releasedAt'), undefined))
+              .take(WRITE_TARGET_CLAIMS + 1);
+            for (const claim of fields) {
+              if (claim.writeTarget === undefined || !holdsAgainst(claim, row)) continue;
+              if (held.length >= HELD_ELSEWHERE_LIMIT) break;
+              held.push({
+                externalId: claim.writeTarget.field,
+                sourceSystem: claim.writeTarget.surface,
+                holderName: employee.name,
+                sameEmployee: employee._id === row.agentId,
+                title: holding.title,
+                state: holding.state,
+                pageField: true,
+              });
+            }
+            if (held.length >= HELD_ELSEWHERE_LIMIT) break;
+          }
+          if (holding.externalClaimKey === undefined) continue;
           if (own.has(holding.externalClaimKey) || isRevocationTrialRow(holding)) continue;
           if (state === 'failed') {
             const claimed = await ctx.db
@@ -2936,6 +3095,7 @@ export const setCompleted = internalMutation({
         `cannot complete a work item with ${failed.length} action(s) that did not change the work environment`,
       );
     }
+    await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'completed',
       output: args.output,
@@ -3020,6 +3180,7 @@ export const setFailed = internalMutation({
     const landed = landedWork(args.output, surfaces);
     const stopped = args.stopped ?? landed.length === 0;
     const reason = stopped ? stoppedReason(args.reason) : args.reason;
+    await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
       skipReason: reason,
@@ -3808,6 +3969,7 @@ async function rejectActionsInTransaction(
           ),
         }
       : undefined;
+  await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
   await ctx.db.patch(args.workItemId, {
     state: 'failed',
     skipReason,
@@ -4181,6 +4343,7 @@ export const recoverInterruptedApply = internalMutation({
         }),
       };
     });
+    await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
       skipReason: INTERRUPTED_APPLY_REASON,
