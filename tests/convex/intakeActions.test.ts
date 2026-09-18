@@ -2031,6 +2031,97 @@ describe('each employee reads its own approved queues', (): void => {
     }
   });
 
+  it('reads each of the three company roles from only its approved queues', async (): Promise<void> => {
+    const logisticsAgent: Doc<'agents'> = {
+      ...agentRow(), _id: id<'agents'>('agent-logistics'), name: 'Aiko',
+    };
+    const logisticsRef = 'logistics/handbook.md';
+    const logisticsLinear = surfaceRow('linear', 'Linear', 'kanban', {
+      _id: id<'surfaces'>('surface-Aiko-linear'), agentId: logisticsAgent._id,
+      credentialId: id<'credentials'>('credential-Aiko-linear'),
+      endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['list_issues'],
+      intakeScope: {
+        team: scoped('LOG', logisticsRef, '- Team: `LOG`'),
+        project: scoped('Shipment exceptions', logisticsRef, '- Project: `Shipment exceptions`'),
+      },
+    });
+    const logisticsSlack = surfaceRow('slack', 'Slack', 'chat', {
+      _id: id<'surfaces'>('surface-Aiko-slack'), agentId: logisticsAgent._id,
+      credentialId: id<'credentials'>('credential-Aiko-slack'),
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT', providerWorkspaceId: 'TKESTREL',
+      intakeScope: { channels: ['logistics-desk', 'ops-requests'].map((name) =>
+        scoped(name, logisticsRef, '- Channels: #logistics-desk, #ops-requests')) },
+    });
+    const pageRows = [
+      REVOPS_PAGE, FINANCE_PAGE, companyPage(logisticsRef), LINEAR_PAGE, SLACK_PAGE,
+    ].map((page): Doc<'docPages'> => pageRow(page.ref, page.title, page.markdown));
+    const harness = runtimeHarness(
+      [...companySurfaces(), logisticsLinear, logisticsSlack],
+      pageRows,
+      new Map([...companyCredentials(),
+        ['credential-Aiko-linear', 'Aiko-linear-value'],
+        ['credential-Aiko-slack', 'Aiko-slack-value'],
+      ]),
+      [revopsAgent, financeAgent, logisticsAgent],
+    );
+    const linearCalls: Array<{ credential: string; team: unknown; project: unknown }> = [];
+    const history: Array<{ credential: string; channel: string }> = [];
+    const channels = [
+      'revops-asks', 'revops', 'finance-close', 'logistics-desk', 'ops-requests',
+    ].map((name) => ({ name, id: `C-${name}` }));
+    await expect(runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      fetcher: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/conversations.list')) {
+          return slackResponse({ ok: true, channels, response_metadata: { next_cursor: '' } });
+        }
+        history.push({
+          credential: String(new Headers(init?.headers).get('Authorization')).replace('Bearer ', ''),
+          channel: url.searchParams.get('channel') ?? '',
+        });
+        return slackResponse({ ok: true, messages: [] });
+      },
+      makeMcpClient: (_endpoint: URL, credential: string) => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: { surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } } },
+          errors: {},
+        }),
+        toolFromDefinition: async () => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            linearCalls.push({ credential, team: args.team, project: args.project });
+            return { issues: [{
+              id: `${args.team}-1`, title: `Ticket for ${args.team}`,
+              url: `https://linear.app/kestrel/issue/${args.team}-1`,
+              team: { key: args.team }, project: { name: args.project },
+            }] };
+          },
+        }),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+    })).resolves.toMatchObject({ candidates: 3, polled: 6 });
+    expect(linearCalls).toEqual([
+      { credential: 'Priya-linear-value', team: 'REVOPS', project: 'Q3 close' },
+      { credential: 'Mateo-linear-value', team: 'FIN', project: 'September close' },
+      { credential: 'Aiko-linear-value', team: 'LOG', project: 'Shipment exceptions' },
+    ]);
+    expect(history).toEqual([
+      { credential: 'Priya-slack-value', channel: 'C-revops-asks' },
+      { credential: 'Priya-slack-value', channel: 'C-ops-requests' },
+      { credential: 'Mateo-slack-value', channel: 'C-finance-close' },
+      { credential: 'Mateo-slack-value', channel: 'C-ops-requests' },
+      { credential: 'Aiko-slack-value', channel: 'C-logistics-desk' },
+      { credential: 'Aiko-slack-value', channel: 'C-ops-requests' },
+    ]);
+    expect([...harness.seeds.values()].map((seed) => [seed.agentId, seed.sourceSystem, seed.externalId])).toEqual([
+      [revopsAgent._id, 'linear', 'REVOPS-1'],
+      [financeAgent._id, 'linear', 'FIN-1'],
+      [logisticsAgent._id, 'linear', 'LOG-1'],
+    ]);
+  });
+
   it('reads nothing from an empty approved scope and says why, before any credential is used', async (): Promise<void> => {
     const surfaces = companySurfaces().map(
       (surface): Doc<'surfaces'> => ({ ...surface, intakeScope: {} }),
