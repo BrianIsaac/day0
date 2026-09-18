@@ -48,6 +48,38 @@ export const surfaceForOrientation = internalQuery({
   },
 });
 
+/** What orientation reads of the employee's charter. */
+export interface OrientationCharter {
+  proposedFunction?: string;
+  namedSystems: Array<{ name: string; class: string; whereMentioned: string }>;
+}
+
+/**
+ * Return the role and named systems of an agent's newest approved charter.
+ *
+ * An amendment inserts an approved row that supersedes the last, so the
+ * newest approved row is the charter in force; a draft awaiting approval
+ * decides nothing.
+ */
+export const charterForOrientation = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<OrientationCharter | null> => {
+    const rows = await ctx.db
+      .query('charters')
+      .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+      .order('desc')
+      .collect();
+    const charter = rows.find((row): boolean => row.approved);
+    if (!charter) return null;
+    const body = charter.body as Partial<OrientationCharter> | null;
+    return {
+      proposedFunction:
+        typeof body?.proposedFunction === 'string' ? body.proposedFunction : undefined,
+      namedSystems: Array.isArray(body?.namedSystems) ? body.namedSystems : [],
+    };
+  },
+});
+
 /**
  * Decide whether a surface belongs in the hourly provider re-probe.
  *

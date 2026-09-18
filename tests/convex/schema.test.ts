@@ -116,6 +116,68 @@ describe('surface connection evidence persistence', (): void => {
       lastPolledAt: 200,
     });
   });
+
+  it('keeps each approved intake bound with the page line that states it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const stored = await harness.run(async (ctx): Promise<Doc<'surfaces'> | null> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Schema scope test',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'proposed',
+        whereFound: [],
+        credentialLanded: false,
+        intakeScope: {
+          team: { value: 'FIN', ref: 'finance/handbook.md', quote: '- Team: `FIN`' },
+          project: {
+            value: 'September close',
+            ref: 'finance/handbook.md',
+            quote: '- Project: `September close`',
+          },
+        },
+        createdAt: 1,
+      });
+      return await ctx.db.get(surfaceId);
+    });
+    expect(stored?.intakeScope?.project).toEqual({
+      value: 'September close',
+      ref: 'finance/handbook.md',
+      quote: '- Project: `September close`',
+    });
+
+    await expect(
+      harness.run(async (ctx): Promise<void> => {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Schema scope test',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'proposed',
+          whereFound: [],
+          credentialLanded: false,
+          intakeScope: {
+            channels: [{ value: 'finance-close', ref: 'finance/handbook.md' }],
+          } as unknown as Doc<'surfaces'>['intakeScope'],
+          createdAt: 1,
+        });
+      }),
+    ).rejects.toThrow();
+  });
 });
 
 describe('exact-action gate schema', (): void => {

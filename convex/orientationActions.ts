@@ -11,6 +11,18 @@ import type { Doc, Id } from './_generated/dataModel';
 import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import { storedCredentialGuardReason } from './credentialCryptoActions';
 import { browserTitleMarker } from '../src/surfaces/browser';
+import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
+import {
+  groundScopePicks,
+  scopeCandidates,
+  scopeFieldsFor,
+  sentenceScopePicks,
+  type IntakeScope,
+  type ScopeCandidate,
+  type ScopeField,
+  type ScopePick,
+  type ScopeValue,
+} from '../src/surfaces/intake-scope';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -816,6 +828,215 @@ function fallbackDraft(surface: Doc<'surfaces'>, relevantText: string): Orientat
 /** How long one surface's model call may take before literal evidence decides alone. */
 export const MODEL_BUDGET_MS = 120_000;
 
+export const intakeScopePickSchema = z.object({
+  picks: z.array(
+    z.object({
+      field: z.enum(['team', 'project', 'channel']),
+      value: z.string(),
+      ref: z.string(),
+    }),
+  ),
+  reasoning: z.string(),
+});
+
+type IntakeScopeModelAnswer = z.infer<typeof intakeScopePickSchema>;
+
+const intakeScopeAgent = makeAgent(
+  'intake-scope',
+  [
+    'You choose which documented work queues one digital employee reads in one workplace system.',
+    "You receive the employee's role, the manager's own words about the system, and the candidate values the team documentation states, each with the page it is on and that page's line.",
+    "Several teams share this documentation; each team has its own queues. Pick only the values where this employee's own work arrives, as its role and the manager's words describe it, and leave out every other team's.",
+    'A channel the documentation says every team reads carries requests for each of them; pick it when the manager names it for this role. A channel the manager describes only as where the team talks is not where its work arrives.',
+    'Pick at most one team and one project. Copy each value exactly as the candidate states it and give the ref of the page the candidate is on. Never pick a value that is not a candidate.',
+    'When nothing belongs to this role, pick nothing.',
+  ].join('\n'),
+);
+
+/** What the intake-scope pick is asked about one surface. */
+export interface IntakeScopeQuestion {
+  system: string;
+  surfaceClass: string;
+  fields: readonly ScopeField[];
+  /** The role as the approved charter states it. */
+  role?: string;
+  /** The manager's own sentences about this system, from the charter. */
+  sentences: readonly string[];
+  candidates: readonly ScopeCandidate[];
+}
+
+/** The picks for one surface, and a note when the model did not make them. */
+export interface IntakeScopeDraft {
+  picks: ScopePick[];
+  note?: string;
+}
+
+/**
+ * Render the pick's question: the role, the manager's words and the candidates.
+ *
+ * Args:
+ *   question: The surface, its role and its documented candidates.
+ *
+ * Returns:
+ *   The user message for the intake-scope model.
+ */
+export function intakeScopePrompt(question: IntakeScopeQuestion): string {
+  const label = (candidate: ScopeCandidate): string =>
+    candidate.field === 'channel' ? `#${candidate.value}` : `\`${candidate.value}\``;
+  return [
+    `Intake scope for: ${question.system} (${question.surfaceClass})`,
+    `Fields to pick: ${question.fields.join(', ')}`,
+    `Role: ${question.role?.trim() || 'not recorded in the charter'}`,
+    `The manager's words about ${question.system}:`,
+    ...(question.sentences.length > 0
+      ? question.sentences.map((sentence): string => `- ${sentence}`)
+      : ['- none; the manager asked for this card without naming the system in the charter']),
+    'Candidates (field, value, page ref: the page line):',
+    ...question.candidates.map(
+      (candidate): string =>
+        `- ${candidate.field} ${label(candidate)} on ${candidate.ref}: ${candidate.quote}`,
+    ),
+  ]
+    .join('\n')
+    .slice(0, 32_000);
+}
+
+/**
+ * Ask which documented queues belong to this employee's role.
+ *
+ * The model only chooses among the candidates; the caller keeps a pick only
+ * when its cited page states it. When the model fails, times out or answers
+ * out of shape, the values the manager's own words name decide instead, and
+ * the note says so.
+ *
+ * Args:
+ *   question: The surface, its role and its documented candidates.
+ *   budgetMs: Longest wait for the model before falling back.
+ *
+ * Returns:
+ *   The picks, with a note when they did not come from the model.
+ */
+export async function pickIntakeScope(
+  question: IntakeScopeQuestion,
+  budgetMs: number = MODEL_BUDGET_MS,
+): Promise<IntakeScopeDraft> {
+  const fallback = (reason: string): IntakeScopeDraft => {
+    const picks = sentenceScopePicks(question.sentences, question.candidates);
+    return {
+      picks,
+      note:
+        picks.length > 0
+          ? `The model did not pick this role's queues (${reason}); the scope holds the documented values the manager's own words name.`
+          : `The model did not pick this role's queues (${reason}), and the manager's own words name none of the documented values, so nothing was picked.`,
+    };
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<'timeout'>((resolve): void => {
+    timer = setTimeout((): void => resolve('timeout'), budgetMs);
+  });
+  const model = agentJson<IntakeScopeModelAnswer>({
+    agent: intakeScopeAgent,
+    schema: intakeScopePickSchema,
+    user: intakeScopePrompt(question),
+  });
+  try {
+    const outcome = await Promise.race([model, budget]);
+    if (outcome === 'timeout') {
+      model.catch((): void => undefined);
+      return fallback(`no answer within ${Math.round(budgetMs / 1000)} s`);
+    }
+    const parsed = intakeScopePickSchema.safeParse(outcome);
+    if (!parsed.success) return fallback('its answer was not a list of picks');
+    return {
+      picks: parsed.data.picks.filter((pick): boolean => question.fields.includes(pick.field)),
+    };
+  } catch (error) {
+    return fallback(safeFailureMessage(error, '', 'no detail'));
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** The stored form of a scope value, its page's source as a document id. */
+type StoredScopeValue = Omit<ScopeValue, 'sourceId'> & { sourceId?: Id<'docSources'> };
+
+/** The stored form of a whole scope. */
+export type StoredIntakeScope = NonNullable<Doc<'surfaces'>['intakeScope']>;
+
+/**
+ * Convert a scope read from pages to the row's stored form.
+ *
+ * Args:
+ *   scope: A grounded scope; every source id came from a stored page.
+ *
+ * Returns:
+ *   The same scope with each source id typed as the page's document id.
+ */
+function storedScope(scope: IntakeScope): StoredIntakeScope {
+  const value = (item: ScopeValue): StoredScopeValue => ({
+    value: item.value,
+    ...(item.sourceId === undefined ? {} : { sourceId: item.sourceId as Id<'docSources'> }),
+    ref: item.ref,
+    quote: item.quote,
+  });
+  return {
+    ...(scope.team ? { team: value(scope.team) } : {}),
+    ...(scope.project ? { project: value(scope.project) } : {}),
+    ...(scope.channels ? { channels: scope.channels.map(value) } : {}),
+    ...(scope.notes && scope.notes.length > 0 ? { notes: scope.notes } : {}),
+  };
+}
+
+/**
+ * Decide the queues a work-bearing card reads, grounded on its pages.
+ *
+ * Args:
+ *   surface: The declared surface.
+ *   pages: The pages that name the system.
+ *   role: The approved charter's statement of the role.
+ *   pick: The intake-scope collaborator.
+ *
+ * Returns:
+ *   The scope for the card, or undefined for a surface that bears no work.
+ */
+async function orientIntakeScope(
+  surface: Doc<'surfaces'>,
+  pages: readonly Doc<'docPages'>[],
+  role: string | undefined,
+  pick: OrientationDependencies['pickScope'],
+): Promise<StoredIntakeScope | undefined> {
+  const fields = scopeFieldsFor(surface.class);
+  if (fields.length === 0) return undefined;
+  const candidates = scopeCandidates(
+    pages.map((page) => ({
+      sourceId: String(page.sourceId),
+      ref: page.ref,
+      markdown: page.markdown,
+    })),
+    fields,
+  );
+  if (candidates.length === 0) {
+    const what = fields.includes('channel') ? 'a channel' : 'a team or project';
+    return { notes: [`No page naming ${surface.displayName} states ${what} for intake to read.`] };
+  }
+  const drafted = await pick({
+    system: surface.displayName,
+    surfaceClass: surface.class,
+    fields,
+    role,
+    // The charter's entry quotes the manager's sentence about this system.
+    sentences: (surface.discoveryEvidence ?? [])
+      .filter((item): boolean => item.kind === 'charter' && item.current)
+      .map((item): string => item.quote),
+    candidates,
+  });
+  const grounded = groundScopePicks(drafted.picks, candidates);
+  return storedScope({
+    ...grounded,
+    notes: [...(drafted.note ? [drafted.note] : []), ...(grounded.notes ?? [])],
+  });
+}
+
 /** A draft together with where it came from. */
 export interface OrientationDraftResult {
   draft: OrientationDraft;
@@ -1062,21 +1283,33 @@ export function selectEvidence(
   );
 }
 
-/** Outcome of one isolated orientation job. */
+/**
+ * Outcome of one isolated orientation job. `not-in-charter` is a declared
+ * system the employee's charter does not name: it stays declared, and the
+ * card lists it for the manager to propose by hand.
+ */
 export interface OrientationOutcome {
-  outcome: 'proposed' | 'absent' | 'skipped' | 'failed';
+  outcome: 'proposed' | 'absent' | 'skipped' | 'failed' | 'not-in-charter';
   surfaceId: Id<'surfaces'>;
+}
+
+/** How one orientation run was asked for. */
+export interface OrientationRequest {
+  /** The manager asked for this one surface's card, so the charter need not name it. */
+  requested?: boolean;
 }
 
 /** Collaborators a test can replace to drive one orientation run. */
 export interface OrientationDependencies {
   draft: typeof draftOrientation;
   registry: typeof discoverRegistryEndpoint;
+  pickScope: (question: IntakeScopeQuestion) => Promise<IntakeScopeDraft>;
 }
 
 const orientationDependencies: OrientationDependencies = {
   draft: draftOrientation,
   registry: discoverRegistryEndpoint,
+  pickScope: pickIntakeScope,
 };
 
 /** The subset of the action context one orientation run needs. */
@@ -1085,10 +1318,18 @@ export type OrientationCtx = Pick<ActionCtx, 'runQuery' | 'runMutation'>;
 /**
  * Orient one declared system from owner-linked documentation.
  *
+ * Only a system the employee's charter names is oriented: with one company
+ * documentation set, every role's systems are declared on every employee,
+ * and a card for each would have every employee ask for every role's
+ * access. A charter that names no work system orients everything, as
+ * before, and the manager's own request orients the one surface it names.
+ * The check comes before any page is read or any model is called.
+ *
  * Args:
  *   ctx: Action context.
  *   surfaceId: Declared surface to orient.
  *   dependencies: Model and registry collaborators.
+ *   asked: Whether the manager asked for this surface by hand.
  *
  * Returns:
  *   The outcome recorded on the surface.
@@ -1100,12 +1341,22 @@ export async function orientSurface(
   ctx: OrientationCtx,
   surfaceId: Id<'surfaces'>,
   dependencies: OrientationDependencies = orientationDependencies,
+  asked: OrientationRequest = {},
 ): Promise<OrientationOutcome> {
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context || context.surface.verdict !== 'declared') {
     return { outcome: 'skipped', surfaceId };
   }
   const surface = context.surface;
+  const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, {
+    agentId: surface.agentId,
+  });
+  if (
+    !asked.requested &&
+    awaitsManagerProposal(surface, charterNamesWorkSystems(charter?.namedSystems))
+  ) {
+    return { outcome: 'not-in-charter', surfaceId };
+  }
   const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
     agentId: surface.agentId,
   });
@@ -1225,6 +1476,12 @@ export async function orientSurface(
       );
     }
   }
+  const intakeScope = await orientIntakeScope(
+    surface,
+    matches,
+    charter?.proposedFunction,
+    dependencies.pickScope,
+  );
   const { sourceId: _sourceId, summary: _summary, ...requestCredential } = credential;
   void _sourceId;
   void _summary;
@@ -1270,6 +1527,7 @@ export async function orientSurface(
       ? stored ? undefined : 'Ask the system administrator to land a valid credential; the stored marker could not be resolved.'
       : credential.summary,
     expiresInDays: draft.expiresInDays,
+    intakeScope,
   });
   return { outcome: recorded ? 'proposed' : 'skipped', surfaceId: surface._id };
 }
@@ -1279,15 +1537,18 @@ export async function orientSurface(
  *
  * Each scheduled invocation owns one surface, so a slow model or provider
  * call cannot fail charter approval or prevent the other systems orienting.
- * Only surface ids cross the scheduler boundary. A run that throws leaves
+ * Only surface ids cross the scheduler boundary, with `requested` set when
+ * the manager asked for this surface's card by hand. A run that throws leaves
  * its surface `declared` with the failure as its reason, so the card says
  * what happened and the re-run control applies.
  */
 export const orientOne = internalAction({
-  args: { surfaceId: v.id('surfaces') },
+  args: { surfaceId: v.id('surfaces'), requested: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<OrientationOutcome> => {
     try {
-      return await orientSurface(ctx, args.surfaceId);
+      return await orientSurface(ctx, args.surfaceId, orientationDependencies, {
+        requested: args.requested === true,
+      });
     } catch (error) {
       await ctx.runMutation(internal.surfaces.recordOrientationFailure, {
         surfaceId: args.surfaceId,
@@ -1314,8 +1575,13 @@ export const run = internalAction({
       internal.orientationData.surfacesForAgent,
       args,
     );
+    const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, args);
+    const namesSystems = charterNamesWorkSystems(charter?.namedSystems);
+    // A system the charter does not name waits for the manager's Propose;
+    // scheduling it here would only be a job that decides to do nothing.
     const declared = surfaces.filter(
-      (surface: Doc<'surfaces'>): boolean => surface.verdict === 'declared',
+      (surface: Doc<'surfaces'>): boolean =>
+        surface.verdict === 'declared' && !awaitsManagerProposal(surface, namesSystems),
     );
     let scheduled = 0;
     for (const surface of declared) {

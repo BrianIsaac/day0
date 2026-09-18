@@ -19,6 +19,7 @@ import {
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
 import { reevaluatePendingInTransaction } from './work';
+import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 
 const surfaceVerdict = v.union(
@@ -502,7 +503,12 @@ export async function reconcileDocumentedSystems(
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
-/** Store an evidence-backed connect request. */
+/**
+ * Store an evidence-backed connect request.
+ *
+ * A work-bearing card carries the queues its employee will read; they are
+ * approved with the rest of the card and replaced only by a new proposal.
+ */
 export const propose = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -516,6 +522,7 @@ export const propose = internalMutation({
     credentialKind: v.optional(credentialKind),
     credentialLocation: v.optional(v.string()),
     expiresInDays: v.number(),
+    intakeScope: schema.tables.surfaces.validator.fields.intakeScope,
   },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
@@ -542,6 +549,7 @@ export const propose = internalMutation({
       credentialRef: undefined,
       expiresAt: now + args.expiresInDays * 24 * 60 * 60 * 1_000,
       reason: undefined,
+      intakeScope: args.intakeScope,
     });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
@@ -629,6 +637,49 @@ export async function scheduleOrientationFor(
   await ctx.db.patch(surface._id, { orientationJobId });
   return true;
 }
+
+/**
+ * Ask for the card of one documented system the charter does not name.
+ *
+ * Orientation leaves such a system declared and the card lists it under the
+ * others; this is the manager's click that orients that one surface. The
+ * card it files still needs the manager and IT to approve it. Nothing is
+ * stored on the row: a rejected or failed card goes back to waiting, one
+ * click from a card again, and a pending job for the surface is replaced
+ * so the request is not swallowed by a run that would skip it.
+ */
+export const requestProposal = mutation({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<null> => {
+    assertRealMode('Surface proposal');
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    await assertOwnsAgent(ctx, surface.agentId);
+    if (surface.verdict !== 'declared') {
+      throw new Error(`Only a declared system can be proposed; this one is ${surface.verdict}.`);
+    }
+    if (surface.orientationJobId) {
+      const job = await ctx.db.system.get(surface.orientationJobId);
+      if (job?.state.kind === 'inProgress') {
+        throw new Error('Orientation is already running for this system; its card follows.');
+      }
+      if (job?.state.kind === 'pending') await ctx.scheduler.cancel(job._id);
+    }
+    const orientationJobId = await ctx.scheduler.runAfter(
+      0,
+      internal.orientationActions.orientOne,
+      { surfaceId: surface._id, requested: true },
+    );
+    await ctx.db.patch(surface._id, { orientationJobId });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.proposal-requested',
+      payload: { surfaceId: surface._id, slug: surface.slug },
+      createdAt: Date.now(),
+    });
+    return null;
+  },
+});
 
 /**
  * Record that an orientation job failed before it could decide.
@@ -1361,6 +1412,7 @@ export const reject = mutation({
       channelsNotJoined: undefined,
       waterfallPosition: undefined,
       intakeSkipReason: undefined,
+      intakeScope: undefined,
       lastPolledAt: undefined,
       credentialLanded: false,
       lastVerifiedAt: undefined,

@@ -30,6 +30,7 @@ import {
   DEFAULT_BROWSER_MCP_URL,
 } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
+import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
@@ -695,6 +696,68 @@ describe('surface probe action state', (): void => {
       expect(probeSlack).toHaveBeenCalledOnce();
     },
   );
+
+  it("checks invites for the approved channels only, not every handbook's", async (): Promise<void> => {
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'approved',
+      path: 'documented-api',
+      endpoint: 'https://slack.com/api/',
+      pathCandidates: [{ path: 'documented-api', endpoint: 'https://slack.com/api/' }],
+      credentialId: 'test-credential-id',
+      credentialLanded: false,
+      managerApprovedAt: 2,
+      itApprovedAt: 3,
+      whereFound: [],
+      intakeScope: {
+        channels: ['finance-close', 'ops-requests'].map((value) => ({
+          value,
+          ref: 'finance/handbook.md',
+          quote: '- Channels: #finance-close, #ops-requests',
+        })),
+      },
+      createdAt: 1,
+    };
+    const pages = ['revops/handbook.md', 'finance/handbook.md'].map((ref) => ({
+      ...companyPage(ref),
+      sourceId: 'source-folder',
+    }));
+    const probeSlack = vi.fn(async () => ({
+      toolAllowlist: ['auth.test'],
+      channelsNotJoined: [],
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      providerIdentityId: 'UBOT',
+    }));
+    await runSurfaceProbe(
+      {
+        runMutation: async (
+          _reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
+          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if ('verifiedAt' in args) return true;
+          return null;
+        },
+        runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
+          'surfaceId' in args
+            ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
+            : pages,
+        runAction: fakeRunAction('slack-contract-value'),
+      } as unknown as ActionCtx,
+      surfaceId,
+      false,
+      { probeBrowser: vi.fn(), probeMcp: vi.fn(), probeSlack, now: (): number => 1_000 },
+    );
+    expect(probeSlack).toHaveBeenCalledOnce();
+    expect((probeSlack.mock.calls[0] as unknown[])[4]).toEqual(['finance-close', 'ops-requests']);
+  });
 
   it('uses mocked decrypt and provider contracts without leaking the value', async (): Promise<void> => {
     const credential = 'local-test-value-held-only-by-action';
