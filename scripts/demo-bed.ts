@@ -78,8 +78,8 @@ const REDACTOR_UNHEALTHY_FIX =
 
 /** The fix when the backend has no redactor address to sync with. */
 const REDACTOR_UNWIRED_FIX =
-  `DAY0_REDACTOR_URL is empty in ${ENV_FILE} or on the deployment, so the backend has no redactor to ` +
-  `sync with; set it to ${REDACTOR_URL} and re-run pnpm demo:bed up`;
+  `DAY0_REDACTOR_URL must be ${REDACTOR_URL} in ${ENV_FILE} and on the deployment, so the backend ` +
+  `syncs through this project's healthy redactor; set it and re-run pnpm demo:bed up`;
 
 /** What `pnpm eval:revocation` writes into `--out`, in `sha256sum` order. */
 export const RUNG_OUTPUT_FILES: readonly string[] = [
@@ -1138,6 +1138,8 @@ export interface RungReadiness {
   values: Readonly<Record<string, string>>;
   /** The URL currently held by this volume's deployment, read from Convex. */
   deploymentSlackUrl: string;
+  /** The redactor URL currently held by this volume's deployment. */
+  deploymentRedactorUrl: string;
   /** The host ports derived from the same file. */
   ports: BedPorts;
 }
@@ -1170,7 +1172,8 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
   if ((input.values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
     return `DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`;
   }
-  if (!input.values.DAY0_REDACTOR_URL) return `${REDACTOR_UNWIRED_FIX}.`;
+  if (input.values.DAY0_REDACTOR_URL !== REDACTOR_URL ||
+      input.deploymentRedactorUrl !== REDACTOR_URL) return `${REDACTOR_UNWIRED_FIX}.`;
   if (input.values.DAY0_TEST_SLACK_API_URL !== TEST_SLACK_API_URL ||
       input.deploymentSlackUrl !== TEST_SLACK_API_URL) {
     return `DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} in ${ENV_FILE} and on this ` +
@@ -1365,6 +1368,9 @@ function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPo
   if (values.CONVEX_DEPLOYMENT) throw new Error('A demo bed cannot target CONVEX_DEPLOYMENT.');
   if (values.DAY0_TEST_SLACK_API_URL && values.DAY0_TEST_SLACK_API_URL !== TEST_SLACK_API_URL) {
     throw new Error(`DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} for the trial copy.`);
+  }
+  if (values.DAY0_REDACTOR_URL && values.DAY0_REDACTOR_URL !== REDACTOR_URL) {
+    throw new Error(`DAY0_REDACTOR_URL must be ${REDACTOR_URL} for the trial copy.`);
   }
   for (const [key, port] of [
     ['CONVEX_SELF_HOSTED_URL', ports.backend],
@@ -2211,8 +2217,8 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   const redactorRow = services?.find((row: ServiceRow): boolean => row.service === 'redactor');
   const redactorHealthy = redactorRow?.health === 'healthy';
   const redactorWired =
-    !!values.DAY0_REDACTOR_URL &&
-    (Object.keys(deployment).length === 0 || !!deployment.DAY0_REDACTOR_URL);
+    values.DAY0_REDACTOR_URL === REDACTOR_URL &&
+    deployment.DAY0_REDACTOR_URL === REDACTOR_URL;
   items.push({
     label: 'Redactor component',
     status: redactorHealthy && redactorWired ? 'ok' : 'gap',
@@ -2228,7 +2234,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
             }`,
           ]),
       redactorWired
-        ? `DAY0_REDACTOR_URL names ${values.DAY0_REDACTOR_URL}${Object.keys(deployment).length === 0 ? ' (deployment not read)' : ' on both sides'}`
+        ? `DAY0_REDACTOR_URL names ${REDACTOR_URL} on both sides`
         : REDACTOR_UNWIRED_FIX,
     ].join('\n'),
   });
@@ -2357,6 +2363,7 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
     services,
     values,
     deploymentSlackUrl: TEST_SLACK_API_URL,
+    deploymentRedactorUrl: REDACTOR_URL,
     ports,
   };
   const localRefusal = offlineRungRefusal(readiness);
@@ -2365,6 +2372,7 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
   const refusal = offlineRungRefusal({
     ...readiness,
     deploymentSlackUrl: deployment.DAY0_TEST_SLACK_API_URL ?? '',
+    deploymentRedactorUrl: deployment.DAY0_REDACTOR_URL ?? '',
   });
   if (refusal) throw new Error(refusal);
   const out = resolve(options.out ?? `${KIT_DIR}/revocation-${stamp()}`);

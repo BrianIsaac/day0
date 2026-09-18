@@ -459,7 +459,7 @@ describe('the env file', (): void => {
       { DAY0_TEST_SLACK_API_URL: 'https://slack.com/api/' }, ports)).toThrow('DAY0_TEST_SLACK_API_URL');
   });
 
-  it('points the deployment at the redactor whenever the redactor profile runs, never overwriting', (): void => {
+  it('points the deployment at this redactor and refuses a different address', (): void => {
     const ports = bedPorts({});
     expect(REDACTOR_URL).toBe('http://redactor:8000');
     expect(bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports).DAY0_REDACTOR_URL).toBe(
@@ -469,8 +469,10 @@ describe('the env file', (): void => {
       'DAY0_REDACTOR_URL',
     );
     expect(
-      bedEnvDefaults('day0-a7-abc123', BED_PROFILES, { DAY0_REDACTOR_URL: 'http://r:1' }, ports),
+      bedEnvDefaults('day0-a7-abc123', BED_PROFILES, { DAY0_REDACTOR_URL: REDACTOR_URL }, ports),
     ).not.toHaveProperty('DAY0_REDACTOR_URL');
+    expect(() => bedEnvDefaults('day0-a7-abc123', BED_PROFILES,
+      { DAY0_REDACTOR_URL: 'http://r:1' }, ports)).toThrow(REDACTOR_URL);
   });
 
   it('puts back the public URLs the Convex CLI rewrites to container ports during a push', (): void => {
@@ -687,6 +689,7 @@ describe('the warm redactor volumes', (): void => {
 describe('the offline rung refuses without the redactor', (): void => {
   const ready = { project: 'day0-p11-abc123', services: RUNG_SERVICES, values: RUNG_VALUES,
     deploymentSlackUrl: 'http://fake-slack:8090/api/',
+    deploymentRedactorUrl: 'http://redactor:8000',
     ports: bedPorts(RUNG_VALUES) };
 
   it('runs when the doubles, the redactor and the seam are all there', (): void => {
@@ -721,6 +724,14 @@ describe('the offline rung refuses without the redactor', (): void => {
     const refusal = offlineRungRefusal({ ...ready, values: { ...RUNG_VALUES, DAY0_REDACTOR_URL: '' } });
     expect(refusal).toContain('DAY0_REDACTOR_URL');
     expect(refusal).toContain(REDACTOR_URL);
+  });
+
+  it('refuses a healthy redactor that the backend does not actually address', (): void => {
+    expect(offlineRungRefusal({ ...ready, values: {
+      ...RUNG_VALUES, DAY0_REDACTOR_URL: 'http://other-redactor:8000',
+    } })).toContain(REDACTOR_URL);
+    expect(offlineRungRefusal({ ...ready, deploymentRedactorUrl: 'http://other-redactor:8000' }))
+      .toContain(REDACTOR_URL);
   });
 
   it('refuses a live Slack route in either the file or the restored deployment', (): void => {
