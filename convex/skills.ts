@@ -214,6 +214,47 @@ async function requeueWaitingWork(
 }
 
 /**
+ * Re-queue a row whose `needs-skill` verdict names a skill that has registered.
+ *
+ * An evaluation reads the skill list, spends its time in a model, and writes
+ * its verdict afterwards. A registration that lands in between has already
+ * re-queued the rows waiting then, so this row arrives at a callable skill
+ * with nobody left to move it. It is sent back once per registration, keyed
+ * on the row's `reevaluation` record. A second `needs-skill` naming the same
+ * registration means the skill does not cover the row, and the row says so
+ * instead of being evaluated for ever.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   skill: The registered skill the verdict names.
+ *   workItemId: The row the verdict was written on.
+ */
+async function requeueLinkedAfterRegistration(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+  workItemId: Id<'workItems'>,
+): Promise<void> {
+  const item = await ctx.db.get(workItemId);
+  if (!item || item.state !== 'needs-skill') return;
+  const key = `skill-registered:${skill._id}:${skill.registeredAt ?? 0}`;
+  if (item.reevaluation?.key === key) {
+    await applyVerdict(ctx, workItemId, {
+      decision: 'needs-skill',
+      reason: `registered skill "${skill.name}" was tried and does not cover this item`,
+    });
+    return;
+  }
+  await ctx.db.patch(workItemId, {
+    proposedSkillId: skill._id,
+    reevaluation: { trigger: 'skill-registered', key, at: Date.now() },
+  });
+  await applyVerdict(ctx, workItemId, {
+    decision: 'pending-reevaluation',
+    reason: 'skill registered, ready to retry',
+  });
+}
+
+/**
  * The target surface named by the work, falling back to its intake source.
  *
  * Args:
@@ -411,11 +452,19 @@ export const propose = internalMutation({
     const proposedScopes = targetSurface
       ? [...new Set([...requestedScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
       : requestedScopes;
-    const existing = await ctx.db
-      .query('skills')
-      .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
-      .first();
-    if (existing && existing.state !== 'rejected' && existing.state !== 'failed') {
+    // The live row of this name, wherever it sits among rejected and failed
+    // ones: reading the oldest row alone meant that once a failed proposal
+    // existed, every later item inserted a fresh duplicate beside the live one.
+    const existing = (
+      await ctx.db
+        .query('skills')
+        .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
+        .collect()
+    ).find((row: Doc<'skills'>): boolean => row.state !== 'rejected' && row.state !== 'failed');
+    if (existing) {
+      if (existing.state === 'registered') {
+        await requeueLinkedAfterRegistration(ctx, existing, args.workItemId);
+      }
       if (existing.state === 'proposed') {
         if (
           existing.targetSurface &&

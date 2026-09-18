@@ -20,6 +20,8 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const recorded = vi.hoisted(() => ({
   scopeCalls: [] as string[],
+  /** Holds the charter judgement open until the test releases it. */
+  scopeGate: undefined as Promise<void> | undefined,
   planCalls: [] as string[],
 }));
 
@@ -28,6 +30,7 @@ vi.mock('../../src/lib/mastra', () => ({
   agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
+      await recorded.scopeGate;
       return { inScope: true, fit: true, reason: 'ticket notes are the charter work' };
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
@@ -58,6 +61,7 @@ const OWNER = { subject: 'owner' };
 
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
+  recorded.scopeGate = undefined;
   recorded.planCalls.length = 0;
   vi.useRealTimers();
   restoreSurfaceMode();
@@ -543,57 +547,51 @@ describe('an item linked to a skill after it registered', (): void => {
     );
   }
 
-  it.fails(
-    're-queues it at once instead of parking it behind a skill that is already callable',
-    async (): Promise<void> => {
-      useSurfaceMode('real');
-      vi.useFakeTimers();
-      const harness = convexTest(contractSchema(), allConvexModules());
-      const agentId = await seedEmployee(harness);
-      const { skillId } = await seedLinkedPair(harness, agentId, 'registered');
-      const late = await seedLateItem(harness, agentId);
+  it('re-queues it at once instead of parking it behind a skill that is already callable', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { skillId } = await seedLinkedPair(harness, agentId, 'registered');
+    const late = await seedLateItem(harness, agentId);
 
-      await expect(proposeFor(harness, agentId, late)).resolves.toBe(skillId);
-      await harness.mutation(internal.work.setProposedSkill, { workItemId: late, skillId });
+    await expect(proposeFor(harness, agentId, late)).resolves.toBe(skillId);
+    await harness.mutation(internal.work.setProposedSkill, { workItemId: late, skillId });
 
-      expect(await readItem(harness, late)).toMatchObject({
-        state: 'discovered',
-        verdict: { decision: 'pending-reevaluation' },
-        proposedSkillId: skillId,
-      });
-      expect(await pendingEvaluations(harness)).toEqual([String(late)]);
-    },
-  );
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'pending-reevaluation' },
+      proposedSkillId: skillId,
+    });
+    expect(await pendingEvaluations(harness)).toEqual([String(late)]);
+  });
 
-  it.fails(
-    're-queues it once per registration, so a skill that does not cover it cannot loop',
-    async (): Promise<void> => {
-      useSurfaceMode('real');
-      vi.useFakeTimers();
-      const harness = convexTest(contractSchema(), allConvexModules());
-      const agentId = await seedEmployee(harness);
-      const { skillId } = await seedLinkedPair(harness, agentId, 'registered');
-      const late = await seedLateItem(harness, agentId);
-      await proposeFor(harness, agentId, late);
-      // The evaluator says needs-skill again, naming the same registered skill.
-      await harness.mutation(internal.work.setVerdict, {
-        workItemId: late,
-        verdict: {
-          decision: 'needs-skill',
-          reason: 'no registered skill covers this; agent will propose "kanban-comment-and-close"',
-          suggestedSkillName: 'kanban-comment-and-close',
-        },
-      });
+  it('re-queues it once per registration, so a skill that does not cover it cannot loop', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { skillId } = await seedLinkedPair(harness, agentId, 'registered');
+    const late = await seedLateItem(harness, agentId);
+    await proposeFor(harness, agentId, late);
+    // The evaluator says needs-skill again, naming the same registered skill.
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: late,
+      verdict: {
+        decision: 'needs-skill',
+        reason: 'no registered skill covers this; agent will propose "kanban-comment-and-close"',
+        suggestedSkillName: 'kanban-comment-and-close',
+      },
+    });
 
-      await expect(proposeFor(harness, agentId, late)).resolves.toBe(skillId);
+    await expect(proposeFor(harness, agentId, late)).resolves.toBe(skillId);
 
-      const parked = await readItem(harness, late);
-      expect(parked.state).toBe('needs-skill');
-      expect((parked.verdict as { reason: string }).reason).toBe(
-        'registered skill "kanban-comment-and-close" was tried and does not cover this item',
-      );
-    },
-  );
+    const parked = await readItem(harness, late);
+    expect(parked.state).toBe('needs-skill');
+    expect((parked.verdict as { reason: string }).reason).toBe(
+      'registered skill "kanban-comment-and-close" was tried and does not cover this item',
+    );
+  });
 
   it('is caught by the registration itself when the link had not landed yet', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -607,6 +605,42 @@ describe('an item linked to a skill after it registered', (): void => {
     await register(harness, skillId, runId);
 
     expect((await readItem(harness, unlinked)).state).toBe('discovered');
+  });
+});
+
+describe('an evaluation that straddles the registration', (): void => {
+  it('is re-evaluated once its late verdict lands, and ends up behind the cap like the others', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, first, second, skillId } = await seedTwoWaitingForOneSkill(harness);
+    const runId = await approveAndClaim(harness, skillId);
+    let release = (): void => {};
+    recorded.scopeGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    // The third ticket's evaluation has read the skill list and is in the model.
+    const late = await seedTicket(harness, agentId, 'LOG-3');
+    vi.advanceTimersByTime(0);
+    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1));
+    await register(harness, skillId, runId);
+    expect((await readItem(harness, late)).state).toBe('discovered');
+    release();
+    await drain(harness);
+
+    expect((await readItem(harness, first)).state).toBe('plan-pending');
+    expect(await readItem(harness, second)).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'queue' },
+    });
+    const settled = await readItem(harness, late);
+    expect(settled).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'queue' },
+      proposedSkillId: skillId,
+    });
+    expect(settled.reevaluation?.trigger).toBe('skill-registered');
   });
 });
 
@@ -640,35 +674,32 @@ describe('two proposals of one name', (): void => {
     expect((await readItem(harness, failed.second)).state).toBe('discovered');
   });
 
-  it.fails(
-    'links a later item to the live proposal, not to a new one beside it',
-    async (): Promise<void> => {
-      useSurfaceMode('real');
-      vi.useFakeTimers();
-      const harness = convexTest(contractSchema(), allConvexModules());
-      const agentId = await seedEmployee(harness);
-      const failed = await seedLinkedPair(harness, agentId, 'failed');
-      const args = {
-        agentId,
-        name: 'kanban-comment-and-close',
-        description: 'Comment on and close a ticket.',
-        rationale: 'No skill covers a ticket comment yet.',
-        requiredScopes: ['linear:read', 'linear:write'],
-        surfaceClass: 'kanban',
-        operation: 'comment-and-close',
-      };
+  it('links a later item to the live proposal, not to a new one beside it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const failed = await seedLinkedPair(harness, agentId, 'failed');
+    const args = {
+      agentId,
+      name: 'kanban-comment-and-close',
+      description: 'Comment on and close a ticket.',
+      rationale: 'No skill covers a ticket comment yet.',
+      requiredScopes: ['linear:read', 'linear:write'],
+      surfaceClass: 'kanban',
+      operation: 'comment-and-close',
+    };
 
-      const live = await harness.mutation(internal.skills.propose, {
-        ...args,
-        workItemId: failed.first,
-      });
-      const again = await harness.mutation(internal.skills.propose, {
-        ...args,
-        workItemId: failed.second,
-      });
+    const live = await harness.mutation(internal.skills.propose, {
+      ...args,
+      workItemId: failed.first,
+    });
+    const again = await harness.mutation(internal.skills.propose, {
+      ...args,
+      workItemId: failed.second,
+    });
 
-      expect(live).not.toBe(failed.skillId);
-      expect(again).toBe(live);
-    },
-  );
+    expect(live).not.toBe(failed.skillId);
+    expect(again).toBe(live);
+  });
 });
