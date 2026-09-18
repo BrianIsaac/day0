@@ -116,7 +116,6 @@ async function withRetry<T>(
         );
         console.warn(
           `[mastra] ${call.label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
-          err,
         );
         await new Promise((r) => setTimeout(r, delay));
       }
@@ -326,7 +325,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
         baseUrl: endpoint,
         model: MODEL,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         hint: 'set OPENAI_JSON_MODE=prompt to pin the fallback if this server never honours it',
       });
       throw err;
@@ -334,7 +332,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
     let generated: GeneratedObject<T>;
     try {
       generated = await generateObject<T>(args, 'prompt');
-    } catch (withoutParameter) {
+    } catch {
       structuredModeMemo.inconclusive(key);
       log.warn(
         'structured-output: prompt injection failed the same way, so response_format was not the cause',
@@ -343,8 +341,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
           baseUrl: endpoint,
           model: MODEL,
           evidence: failure.evidence,
-          cause: (err as Error).message,
-          promptModeCause: (withoutParameter as Error).message,
         },
       );
       throw err;
@@ -362,7 +358,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
           baseUrl: endpoint,
           model: MODEL,
           evidence: failure.evidence,
-          cause: (err as Error).message,
         },
       );
       return {
@@ -380,7 +375,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
         baseUrl: endpoint,
         model: MODEL,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         retriesNativeInMs: structuredModeMemo.retriesNativeIn(key),
       },
     );

@@ -57,6 +57,10 @@ const STORAGE_KEY = Symbol.for('day0.model-call-observers');
 const modelCallObservers: AsyncLocalStorage<ModelCallObserver> = ((
   globalThis as { [STORAGE_KEY]?: AsyncLocalStorage<ModelCallObserver> }
 )[STORAGE_KEY] ??= new AsyncLocalStorage<ModelCallObserver>());
+const REQUIRED_KEY = Symbol.for('day0.model-call-observer-required');
+const requiredObserverScopes: AsyncLocalStorage<boolean> = ((
+  globalThis as { [REQUIRED_KEY]?: AsyncLocalStorage<boolean> }
+)[REQUIRED_KEY] ??= new AsyncLocalStorage<boolean>());
 
 /**
  * Run a loop step with every model call inside it reported to `observer`.
@@ -70,7 +74,7 @@ const modelCallObservers: AsyncLocalStorage<ModelCallObserver> = ((
  *   Whatever the step returns.
  */
 export async function observeModelCalls<T>(observer: ModelCallObserver, fn: () => Promise<T>): Promise<T> {
-  return await modelCallObservers.run(observer, fn);
+  return await requiredObserverScopes.run(true, () => modelCallObservers.run(observer, fn));
 }
 
 /** A live count of the provider requests one model call has sent. */
@@ -107,7 +111,10 @@ export async function countingProviderRequests<T>(
  * three requests reads as one slow call. The provider client increments
  * this per request it sends; nothing about the request is recorded.
  */
-const providerRequestCounts = new AsyncLocalStorage<{ count: number }>();
+const REQUEST_COUNT_KEY = Symbol.for('day0.provider-request-counts');
+const providerRequestCounts: AsyncLocalStorage<ProviderRequestCounter> = ((
+  globalThis as { [REQUEST_COUNT_KEY]?: AsyncLocalStorage<ProviderRequestCounter> }
+)[REQUEST_COUNT_KEY] ??= new AsyncLocalStorage<ProviderRequestCounter>());
 
 /** Count one provider request against the model call in progress. */
 export function countProviderRequest(): void {
@@ -132,7 +139,7 @@ function reportFor(
   };
   if (err === undefined) return report;
   const error = err as { name?: unknown; statusCode?: unknown };
-  const errorName = err instanceof Error ? err.name : undefined;
+  const errorName = err instanceof Error ? (err.name === 'TimeoutError' ? 'TimeoutError' : 'Error') : undefined;
   report.outcome = errorName === 'TimeoutError' ? 'timed-out' : 'failed';
   if (errorName !== undefined) report.errorName = errorName;
   if (typeof error.statusCode === 'number') report.statusCode = error.statusCode;
@@ -157,11 +164,13 @@ export async function reportModelCall(
   err?: unknown,
 ): Promise<void> {
   const observer = modelCallObservers.getStore();
-  if (!observer) return;
+  if (!observer) {
+    if (requiredObserverScopes.getStore()) throw new Error('model-call observer missing in an observed scope');
+    return;
+  }
   try {
     await observer(reportFor(agent, attempts, startedAt, providerCalls, err));
-  } catch (observerError) {
-    console.warn(`[mastra] model-call observer failed for ${agent}`, observerError);
+  } catch {
+    console.warn(`[mastra] model-call observer failed for ${agent}`);
   }
 }
-

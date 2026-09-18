@@ -267,7 +267,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
         baseUrl: endpoint,
         model,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         hint: 'set OPENAI_JSON_MODE=prompt to pin the fallback if this server never honours it',
       });
       throw err;
@@ -275,7 +274,7 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
     let value: TParsed;
     try {
       value = await runJsonCompletion('prompt', args);
-    } catch (withoutParameter) {
+    } catch {
       // Dropping the parameter changed nothing, so the parameter was not the
       // problem. The original failure is the one worth reporting; the second
       // is a symptom of the same cause.
@@ -286,8 +285,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
           baseUrl: endpoint,
           model,
           evidence: failure.evidence,
-          cause: (err as Error).message,
-          promptModeCause: (withoutParameter as Error).message,
         },
       );
       throw err;
@@ -304,7 +301,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
           baseUrl: endpoint,
           model,
           evidence: failure.evidence,
-          cause: (err as Error).message,
         },
       );
       return { value, mode: 'prompt', fellBack: true };
@@ -316,7 +312,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
         baseUrl: endpoint,
         model,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         retriesNativeInMs: jsonModeMemo.retriesNativeIn(key),
       },
     );
