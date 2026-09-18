@@ -214,3 +214,41 @@ it('leaves a stored channel name or method name out of exact removal while every
   await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: '#ops-requests' });
   expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toContain('#ops-requests');
 });
+
+it('keeps explicitly assigned name-shaped tokens in owner-wide removal after page storage', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
+    userId: 'owner', label: 'Access', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+  }));
+  const cases = [
+    { value: ['#', 'cobalt', 'harbor'].join(''), line: 'Service token:', swallowed: false },
+    { value: ['Cobalt', 'Harbor', 'Winter'].join('.'), line: 'Service token:', swallowed: false },
+    { value: ['winter', 'spring'].join('.'), line: 'Service token:', swallowed: false },
+    { value: ['#', 'silver', 'meadow'].join(''), line: 'token:', swallowed: true },
+    { value: ['Silver', 'Meadow', 'Spring'].join('.'), line: '| Bot |', swallowed: false },
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const text = entry.line === '| Bot |'
+      ? `| Service | Service token |\n|---|---|\n| Bot | ${entry.value} |`
+      : `${entry.line} ${entry.value}`;
+    const model = new ScriptedSpanModel((body) => {
+      const candidate = entry.swallowed ? text : entry.value;
+      const start = body.indexOf(candidate);
+      return start < 0 ? [] : [{ start, end: start + candidate.length, label: 'access token', score: 0.99 }];
+    });
+    const extracted = await redactCredentials(text, 'Access', { model });
+    expect(extracted.credentials).toHaveLength(1);
+    await harness.action(internal.credentials.store, {
+      userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: `page-${index}.md` },
+    });
+  }
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  for (const { value } of cases) {
+    expect(known.includes(value)).toBe(true);
+    const repeated = `The same token is mentioned here: ${value}`;
+    const result = await redactCredentials(repeated, 'Other page', {
+      model: new ScriptedSpanModel(() => []), known,
+    });
+    expect(result.markdown.includes(value)).toBe(false);
+  }
+});

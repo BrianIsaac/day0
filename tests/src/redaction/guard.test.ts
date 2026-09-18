@@ -279,4 +279,18 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     const swallowed = `password: ${dotted}`;
     expect(guardSecretSpan(swallowed, { start: 0, end: swallowed.length }, 'password')).toEqual(spanOf(swallowed, dotted));
   });
+
+  it('keeps a name-shaped token in a credential table column', (): void => {
+    const value = ['#', 'cobalt', 'harbor'].join('');
+    const table = `| Service | Service token |\n|---|---|\n| Bot | ${value} |`;
+    expect(guardSecretSpan(table, spanOf(table, value), 'access token')).toEqual(spanOf(table, value));
+  });
+
+  it('keeps a lowercase dotted password when its label assigns it explicitly', (): void => {
+    const value = ['winter', 'spring'].join('.');
+    const text = `Password: ${value}`;
+    expect(guardSecretSpan(text, spanOf(text, value), 'password')).toEqual(spanOf(text, value));
+    expect(guardReason(value)).toBe('hostname');
+    expect(guardReason(value, { assigned: true })).toBeUndefined();
+  });
 });

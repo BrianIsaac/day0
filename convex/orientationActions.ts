@@ -76,6 +76,7 @@ type StoredCredentialSummary = {
   status?: 'suspect' | 'superseded';
   ciphertext?: string;
   iv?: string;
+  explicitlyAssigned?: boolean;
 };
 
 /** The stored row an orientation run attaches to a surface. */

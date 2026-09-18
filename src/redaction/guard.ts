@@ -67,7 +67,7 @@ export interface GuardContext {
 }
 
 /** The shapes that are names, and so do not apply under an explicit assignment. */
-const NAME_SHAPES: ReadonlySet<string> = new Set(['permission scope', 'channel reference', 'dotted identifier']);
+const NAME_SHAPES: ReadonlySet<string> = new Set(['permission scope', 'channel reference', 'hostname', 'dotted identifier']);
 
 /**
  * Whether one shape rejects a value where it sits.
@@ -216,14 +216,15 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     /^\s*[\],'"`]/.test(text.slice(tokenEnd));
   const assignedAt = (index: number): boolean =>
     SECRET_ASSIGNMENT.test(text.slice(0, index)) || PASSWORD_ASSIGNMENT.test(text.slice(0, index));
-  const assigned = assignedAt(tokenStart);
+  const columnAssigned = inCredentialColumn(text, start, end);
+  const assigned = assignedAt(tokenStart) || columnAssigned;
   if (scope && scopeContext && !assigned && text[tokenEnd] !== '@') return undefined;
   // A partial span of a channel reference (`ops-requests` of `#ops-requests`)
   // or of a dotted name (`lookupByEmail` of `users.lookupByEmail`) is the
   // whole name's to judge, and a name is not a secret unless a label says so.
   const token = text.slice(tokenStart, tokenEnd);
   const hashed = text[tokenStart - 1] === '#' && !/[A-Za-z0-9_#]/.test(text[tokenStart - 2] ?? '');
-  if (hashed && CHANNEL_REFERENCE.test(`#${token}`) && !assignedAt(tokenStart - 1)) return undefined;
+  if (hashed && CHANNEL_REFERENCE.test(`#${token}`) && !assignedAt(tokenStart - 1) && !columnAssigned) return undefined;
   if (DOTTED_IDENTIFIER.test(token) && !assigned) return undefined;
   // Some detectors return the assignment label rather than its value.
   // Only extend a password label across explicit assignment syntax.
@@ -262,7 +263,7 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     return undefined;
   }
   if (NEVER_REDACT.has(value)) return undefined;
-  const assignedValue = assignedAt(start);
+  const assignedValue = assignedAt(start) || columnAssigned;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (shape.name === 'permission scope') return false;
     if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
@@ -271,6 +272,12 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     return shapeRejects(shape, value, assignedValue);
   });
   return rejected ? undefined : { start, end };
+}
+
+/** Preserve the explicit page context that a generated credential label cannot encode. */
+export function explicitlyAssignedCredential(text: string, start: number, end: number): boolean {
+  const before = text.slice(0, start);
+  return SECRET_ASSIGNMENT.test(before) || PASSWORD_ASSIGNMENT.test(before) || inCredentialColumn(text, start, end);
 }
 
 /**

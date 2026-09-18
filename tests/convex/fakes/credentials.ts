@@ -18,6 +18,7 @@ export const store = internalAction({
     kind: credentialKind,
     label: v.string(),
     plaintext: v.optional(v.string()),
+    explicitlyAssigned: v.optional(v.boolean()),
     source: v.union(
       v.object({ sourceId: v.id('docSources'), ref: v.string() }),
       v.literal('entered'),
