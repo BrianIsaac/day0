@@ -1,17 +1,19 @@
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import {
   mutation,
   query,
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
-import { wakeQueuedWork } from './workLoop';
+import { OPEN_WORK_STATES, wakeQueuedWork } from './workLoop';
+import { agentReadsSource } from './docSources';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -46,6 +48,223 @@ export const listForUser = query({
       .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
       .order('desc')
       .take(20);
+  },
+});
+
+const agentStateValidator = v.union(
+  v.literal('deployed'),
+  v.literal('day-one-in-progress'),
+  v.literal('charter-pending'),
+  v.literal('active'),
+);
+
+/** The longest role line the roster shows, the ellipsis included. */
+const ROLE_LINE_MAX = 90;
+
+/** The role line of an employee whose charter the manager has not approved. */
+const CHARTER_PENDING_ROLE_LINE = 'charter pending';
+
+/** The role line of an approved charter whose body states no function. */
+const ROLE_NOT_STATED = 'role not stated';
+
+/** The most employees the landing page lists, as `listForUser` returns. */
+const ROSTER_LIMIT = 20;
+
+/**
+ * How many of the owner's agent rows the roster reads to find its employees.
+ * Evaluation agents are deployed under the owner's own subject, so they are
+ * skipped inside this window rather than taking one of the twenty places.
+ */
+const ROSTER_SCAN_LIMIT = 100;
+
+/**
+ * Bound on each open-state read. Open rows are held to the work-in-progress
+ * cap (`AUTONOMOUS_WIP_LIMIT` across all five states), so the bound keeps
+ * the read finite and is never the count.
+ */
+const OPEN_STATE_READ_LIMIT = 100;
+
+/** Bound on the owner's documentation sources read for the count. */
+const DOC_SOURCE_READ_LIMIT = 100;
+
+/** The open states that wait on the manager: a plan to approve, a held action set. */
+const NEEDS_MANAGER_STATES: ReadonlySet<string> = new Set(['plan-pending', 'actions-pending']);
+
+const rosterRowValidator = v.object({
+  agentId: v.id('agents'),
+  name: v.string(),
+  avatarId: v.optional(v.string()),
+  state: agentStateValidator,
+  autonomous: v.boolean(),
+  roleLine: v.string(),
+  openCount: v.number(),
+  needsYou: v.number(),
+  docSourceCount: v.number(),
+});
+
+/** One employee as the landing page lists it. */
+type RosterRow = Infer<typeof rosterRowValidator>;
+
+/**
+ * Whether an agent row belongs to an evaluation run rather than the company.
+ *
+ * Both harnesses deploy under the operator's own subject: the revocation
+ * trial as `eval-revocation-<stamp>@day0.local` (`scripts/eval-revocation.ts`)
+ * and the semifinal as `eval-<run>-<time>@day0.local`
+ * (`scripts/eval-semifinal.ts`), whose control arm is also `baseline`.
+ *
+ * Args:
+ *   agent: The agent row's boss address and arm.
+ *
+ * Returns:
+ *   True for an evaluation agent.
+ */
+function isEvaluationAgent(agent: Pick<Doc<'agents'>, 'bossEmail' | 'arm'>): boolean {
+  if (agent.arm === 'baseline') return true;
+  return agent.bossEmail.startsWith('eval-') && agent.bossEmail.endsWith('@day0.local');
+}
+
+/**
+ * Fit a charter's function onto the roster's one line.
+ *
+ * Whitespace is collapsed. A line longer than `ROLE_LINE_MAX` is cut at the
+ * last space that leaves room for the ellipsis, dropping any punctuation the
+ * cut leaves hanging; a single word too long for the line is cut where it
+ * must be.
+ *
+ * Args:
+ *   text: The approved charter's `proposedFunction`.
+ *
+ * Returns:
+ *   The line as shown, at most `ROLE_LINE_MAX` characters.
+ */
+export function clipRoleLine(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  if (line.length <= ROLE_LINE_MAX) return line;
+  // One character past the kept length, so a space right after it counts as a boundary.
+  const window = line.slice(0, ROLE_LINE_MAX);
+  const boundary = window.lastIndexOf(' ');
+  const kept = boundary > 0 ? window.slice(0, boundary) : line.slice(0, ROLE_LINE_MAX - 1);
+  return `${kept.replace(/[\s,;:.\u2013\u2014-]+$/, '')}\u2026`;
+}
+
+/**
+ * The role line from the newest charter the manager approved.
+ *
+ * An amendment is approved on insert, so it wins at once; a draft awaiting
+ * approval never shows; a draft sent back is deleted, which leaves the
+ * employee pending again.
+ *
+ * Args:
+ *   ctx: Query context.
+ *   agentId: The employee.
+ *
+ * Returns:
+ *   The clipped role line, or the pending or not-stated line.
+ */
+async function approvedRoleLine(ctx: QueryCtx, agentId: Id<'agents'>): Promise<string> {
+  const charters = ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc');
+  for await (const charter of charters) {
+    if (!charter.approved) continue;
+    const proposedFunction = (charter.body as { proposedFunction?: unknown } | null)
+      ?.proposedFunction;
+    return typeof proposedFunction === 'string' && proposedFunction.trim() !== ''
+      ? clipRoleLine(proposedFunction)
+      : ROLE_NOT_STATED;
+  }
+  return CHARTER_PENDING_ROLE_LINE;
+}
+
+/**
+ * Count the employee's open work and the part of it waiting on the manager.
+ *
+ * Reads the state index once per open state, so finished work, however much
+ * of it there is, is never read.
+ *
+ * Args:
+ *   ctx: Query context.
+ *   agentId: The employee.
+ *
+ * Returns:
+ *   The open count and the needs-you count.
+ */
+async function openWorkCounts(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+): Promise<{ openCount: number; needsYou: number }> {
+  const perState = await Promise.all(
+    OPEN_WORK_STATES.map(
+      async (state): Promise<[string, number]> => [
+        state,
+        (
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+            .take(OPEN_STATE_READ_LIMIT)
+        ).length,
+      ],
+    ),
+  );
+  let openCount = 0;
+  let needsYou = 0;
+  for (const [state, count] of perState) {
+    openCount += count;
+    if (NEEDS_MANAGER_STATES.has(state)) needsYou += count;
+  }
+  return { openCount, needsYou };
+}
+
+/**
+ * The owner's employees, one row each, for the landing page: who they are,
+ * the role the manager approved, the open work, what waits on the manager,
+ * whether they act on their own, and how much documentation they read.
+ *
+ * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
+ * are left out. An anonymous caller gets an empty list.
+ *
+ * Returns:
+ *   At most `ROSTER_LIMIT` rows, newest first.
+ */
+export const rosterForUser = query({
+  args: {},
+  returns: v.array(rosterRowValidator),
+  handler: async (ctx): Promise<RosterRow[]> => {
+    const identity = await getCaller(ctx);
+    if (!identity) return [];
+    const agents = (
+      await ctx.db
+        .query('agents')
+        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .order('desc')
+        .take(ROSTER_SCAN_LIMIT)
+    )
+      .filter((agent) => !isEvaluationAgent(agent))
+      .slice(0, ROSTER_LIMIT);
+    const sources = await ctx.db
+      .query('docSources')
+      .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+      .take(DOC_SOURCE_READ_LIMIT);
+    return await Promise.all(
+      agents.map(async (agent): Promise<RosterRow> => {
+        const [roleLine, counts] = await Promise.all([
+          approvedRoleLine(ctx, agent._id),
+          openWorkCounts(ctx, agent._id),
+        ]);
+        return {
+          agentId: agent._id,
+          name: agent.name,
+          ...(agent.avatarId !== undefined ? { avatarId: agent.avatarId } : {}),
+          state: agent.state,
+          autonomous: autonomousActionsOn(agent),
+          roleLine,
+          ...counts,
+          docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
+        };
+      }),
+    );
   },
 });
 
@@ -253,12 +472,7 @@ export const permissionScopes = query({
 export const setState = internalMutation({
   args: {
     agentId: v.id('agents'),
-    state: v.union(
-      v.literal('deployed'),
-      v.literal('day-one-in-progress'),
-      v.literal('charter-pending'),
-      v.literal('active'),
-    ),
+    state: agentStateValidator,
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.agentId, { state: args.state });
@@ -336,16 +550,6 @@ export const grantScope = internalMutation({
 });
 
 /**
- * The manager's switch: whether the agent may act on connected systems
- * without asking.
- *
- * Owner-scoped, real mode only: the hosted mock has no gate for the switch
- * to change, so it is refused there before the ownership check, and the
- * header keeps its static label. Off is the deploy default (an absent field
- * reads as off). Every change that changes anything is an event; setting
- * the value the row already has records nothing.
- */
-/**
  * Choose how the manager hears about run outcomes: as each run finishes, or
  * in one hourly digest. Decision requests are sent at once either way.
  */
@@ -370,6 +574,16 @@ export const setManagerNotifications = mutation({
   },
 });
 
+/**
+ * The manager's switch: whether the agent may act on connected systems
+ * without asking.
+ *
+ * Owner-scoped, real mode only: the hosted mock has no gate for the switch
+ * to change, so it is refused there before the ownership check, and the
+ * header keeps its static label. Off is the deploy default (an absent field
+ * reads as off). Every change that changes anything is an event; setting
+ * the value the row already has records nothing.
+ */
 export const setAutonomousActions = mutation({
   args: { agentId: v.id('agents'), on: v.boolean() },
   handler: async (

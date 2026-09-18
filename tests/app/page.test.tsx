@@ -16,11 +16,48 @@ vi.mock('@clerk/nextjs', () => ({
   useUser: () => ({ user: authState.signedIn ? { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' } : undefined }),
 }));
 
+/** The signed-in owner's company as `agents.rosterForUser` returns it, newest first. */
+const roster = [
+  {
+    agentId: 'synthetic-owner-agent',
+    name: 'Recorded colleague',
+    state: 'active',
+    autonomous: true,
+    roleLine: 'Own routine revenue operations work from Linear tickets for the RevOps team.',
+    openCount: 3,
+    needsYou: 1,
+    docSourceCount: 1,
+  },
+  {
+    agentId: 'synthetic-finance-agent',
+    name: 'Finance colleague',
+    state: 'active',
+    autonomous: false,
+    roleLine: 'Close the month for the finance team.',
+    openCount: 2,
+    needsYou: 2,
+    docSourceCount: 1,
+  },
+  {
+    agentId: 'synthetic-new-agent',
+    name: 'New colleague',
+    state: 'deployed',
+    autonomous: false,
+    roleLine: 'charter pending',
+    openCount: 0,
+    needsYou: 0,
+    docSourceCount: 0,
+  },
+];
+
 vi.mock('convex/react', () => ({
   useQuery: (reference: FunctionReference<'query'>) => {
     if (!authState.signedIn) return undefined;
     const name = getFunctionName(reference);
-    if (name === 'agents:listForUser') return [{ _id: 'synthetic-owner-agent', name: 'Recorded colleague', state: 'active', createdAt: 1 }];
+    if (name === 'agents:listForUser') {
+      return roster.map((row) => ({ _id: row.agentId, name: row.name, state: row.state, createdAt: 1 }));
+    }
+    if (name === 'agents:rosterForUser') return roster;
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
     return 0;
   },
@@ -142,5 +179,39 @@ describe('signed-in landing', () => {
     } finally {
       authState.signedIn = false;
     }
+  });
+});
+
+describe('the employee list', (): void => {
+  const signedIn = (): string => {
+    authState.signedIn = true;
+    try {
+      return renderToStaticMarkup(<LandingPage />);
+    } finally {
+      authState.signedIn = false;
+    }
+  };
+
+  it('shows every employee above the office: role, queue, what needs the manager, autonomy', (): void => {
+    const html = signedIn();
+    const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
+    expect(html.indexOf('Your employees')).toBeGreaterThan(-1);
+    expect(html.indexOf('Your employees')).toBeLessThan(html.indexOf('Mini office world'));
+    for (const row of roster) {
+      expect(list).toContain(`href="/agent/${row.agentId}"`);
+      expect(list).toContain(row.name);
+      expect(list).toContain(row.roleLine);
+    }
+    expect(list).toContain('3 open \u00b7 1 needs you');
+    expect(list).toContain('2 open \u00b7 2 need you');
+    expect(list).toContain('0 open \u00b7 0 need you');
+    expect(list.match(/acts on its own/g)).toHaveLength(1);
+    expect(list.match(/asks first/g)).toHaveLength(2);
+  });
+
+  it('puts the role line on each office name plate', (): void => {
+    const html = signedIn();
+    const office = html.slice(html.indexOf('Mini office world'), html.indexOf('Reset demo'));
+    for (const row of roster) expect(office).toContain(row.roleLine);
   });
 });
