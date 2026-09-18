@@ -229,6 +229,19 @@ describe('the Day-1 chat route', (): void => {
     expect(body.tools.map((t) => t.function.name)).toContain('dayOneComplete');
   });
 
+  it('answers 503 before any stream opens when no model is configured', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: '' });
+    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.resetModules();
+    const { POST: unconfigured } = await import('../../../../../app/api/voice/chat/route');
+
+    const response = await unconfigured(day1Request({ messages: [] }));
+
+    expect(POST).toBeDefined();
+    expect(response.status).toBe(503);
+    expect(sent).toHaveLength(0);
+  });
+
   it('refuses a body with no messages array before calling the model', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
@@ -263,6 +276,8 @@ it('cancels a stalled provider at the 60-second route deadline', async () => {
     expect(providerSignal?.aborted).toBe(true);
     expect(timeout).toHaveBeenCalledWith(60_000);
     await body;
+    // A turn the deadline emptied is not asked again: there is no time left.
+    expect(fetch).toHaveBeenCalledTimes(1);
   } finally {
     deadline.abort();
     timeout.mockRestore();

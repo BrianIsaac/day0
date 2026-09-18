@@ -83,31 +83,34 @@ export async function POST(req: Request): Promise<Response> {
     : body.messages;
 
   const messages = await convertToModelMessages(uiMessages);
-  // One model call. `dayOneTurnStream` makes it a second time when the first
-  // ends having said nothing, and holds `dayOneComplete` until the manager has
-  // answered topic 7.
-  const attempt = () =>
-    streamText({
-      abortSignal,
-      model: languageModel(),
-      system: SYSTEM_PROMPT,
-      messages,
-      ...streamCallOptions({
-        maxOutputTokens: DAY_ONE_MAX_OUTPUT_TOKENS,
-        openai: { promptCacheKey: 'day0-day1-system-v1' },
-      }),
-      tools: {
-        dayOneComplete: tool({
-          description: 'Call this when all seven topics have been covered and the 1:1 is finished.',
-          inputSchema: z.object({
-            closingLine: z.string().describe('A friendly closing sentence the agent says.'),
-          }),
-        }),
-      },
-      stopWhen: hasToolCall('dayOneComplete'),
-      maxRetries: 3,
-    }).toUIMessageStream();
   try {
+    // Resolved here, not inside the stream: a missing key is a 503 the room
+    // can read, where a throw inside the stream is a dropped connection.
+    const model = languageModel();
+    // One model call. `dayOneTurnStream` makes it a second time when the first
+    // ends having said nothing, and holds `dayOneComplete` until the manager has
+    // answered topic 7.
+    const attempt = () =>
+      streamText({
+        abortSignal,
+        model,
+        system: SYSTEM_PROMPT,
+        messages,
+        ...streamCallOptions({
+          maxOutputTokens: DAY_ONE_MAX_OUTPUT_TOKENS,
+          openai: { promptCacheKey: 'day0-day1-system-v1' },
+        }),
+        tools: {
+          dayOneComplete: tool({
+            description: 'Call this when all seven topics have been covered and the 1:1 is finished.',
+            inputSchema: z.object({
+              closingLine: z.string().describe('A friendly closing sentence the agent says.'),
+            }),
+          }),
+        },
+        stopWhen: hasToolCall('dayOneComplete'),
+        maxRetries: 3,
+      }).toUIMessageStream();
     return createUIMessageStreamResponse({
       stream: dayOneTurnStream({
         attempt,
@@ -118,7 +121,7 @@ export async function POST(req: Request): Promise<Response> {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return Response.json(
-      { error: 'agent unavailable — please retry', detail: msg },
+      { error: 'agent unavailable', detail: msg },
       { status: 503 },
     );
   }
