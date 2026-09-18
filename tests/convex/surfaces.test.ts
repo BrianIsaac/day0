@@ -1866,6 +1866,7 @@ describe('surface approval state machine', (): void => {
   });
 
   it('requeues work parked on a rejected duplicate when the documented surface exists', async (): Promise<void> => {
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const [duplicateId, workItemId] = await harness.run(
@@ -1956,6 +1957,15 @@ describe('surface approval state machine', (): void => {
     const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
     expect(item).toMatchObject({ state: 'discovered' });
     expect(item).not.toHaveProperty('verdict');
+    // The server evaluates the requeued row; no page has to be open for it.
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(
+      jobs
+        .filter((job) => job.name === 'workActions:evaluateWorkItemInternal')
+        .map((job) => job.args),
+    ).toEqual([[{ workItemId }]]);
   });
 
   it('allows rejection of an approved surface and refuses it elsewhere', async (): Promise<void> => {

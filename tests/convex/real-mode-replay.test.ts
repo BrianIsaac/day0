@@ -487,6 +487,7 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     recorded.closingReply = undefined;
     recorded.prewritten = false;
     recorded.repairClosing = false;
+    vi.useRealTimers();
     restoreSurfaceMode();
   });
 
@@ -504,15 +505,20 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       });
     });
 
+    // The retry resumes at plan-approved; the server runs the plan and its apply.
     await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
-    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
-    await new Promise(resolve => setTimeout(resolve, 0));
-    await t.finishInProgressScheduledFunctions();
+    for (let round = 0; round < 20; round += 1) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await t.finishInProgressScheduledFunctions();
+    }
     expect(recorded.model.some(call => call.agent.endsWith('-initial'))).toBe(true);
     expect(recorded.model.some(call => call.agent.endsWith('-dependent'))).toBe(false);
   });
 
   it.each([[false, false], [true, false], [true, true]])('resumes the 16 September closing failure; comment landed: %s, omitted: %s', async (commentLanded, omitComment) => {
+    // The retry below also schedules the server's run of the plan; this replay
+    // drives each phase itself, so the scheduler's jobs never fire.
+    vi.useFakeTimers();
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(t);
     recorded.closingReply = omitComment ? { ...auditClosing, actions: auditClosing.actions.slice(1) } : auditClosing;
@@ -616,6 +622,9 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
   }, 30_000);
 
   it('plans without the ownership gate, holds the tile batch in phase one, repairs the read once, and closes from the read-back', async (): Promise<void> => {
+    // The approval below also schedules the server's run of the plan; this
+    // replay drives each phase itself, so the scheduler's jobs never fire.
+    vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness);
 
