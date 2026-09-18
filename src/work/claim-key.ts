@@ -174,6 +174,11 @@ export interface WriteClaimHolder {
   state: string;
   /** The provider id of the last comment the holder landed on the item. */
   landedComment?: string;
+  /**
+   * True when the holder was discovered from the item and has not claimed it
+   * yet: the item is its work all the same, whichever of the two writes first.
+   */
+  unclaimed?: boolean;
 }
 
 /** How the ledger line of a write withheld for another work item's claim begins. */
@@ -182,6 +187,10 @@ export const WITHHELD_BY_CLAIM_PREFIX = "withheld for another work item's claim:
 /**
  * The ledger line of a write withheld because another work item holds its target.
  *
+ * A holder that has not claimed the item yet has landed nothing to cite, so
+ * the line says where the write will be made instead: the item has a work
+ * item of its own, and with whom.
+ *
  * Args:
  *   holder: The holding work item.
  *
@@ -189,8 +198,12 @@ export const WITHHELD_BY_CLAIM_PREFIX = "withheld for another work item's claim:
  *   The reason, naming the holder, its state and the comment it landed.
  */
 export function withheldByClaimReason(holder: WriteClaimHolder): string {
-  const owner = holder.sameEmployee ? "this employee's" : `${holder.holderName}'s`;
   const landed = holder.landedComment ? `, which landed comment ${holder.landedComment} on it` : '';
+  if (holder.unclaimed) {
+    const who = holder.sameEmployee ? 'this employee' : holder.holderName;
+    return `${WITHHELD_BY_CLAIM_PREFIX}${holder.target} has its own work item with ${who}, "${holder.title}" (${holder.state})${landed}; ${landed ? 'it is written there' : 'it will be written there'}, and one work item writes an external item, so this write is not sent`;
+  }
+  const owner = holder.sameEmployee ? "this employee's" : `${holder.holderName}'s`;
   return `${WITHHELD_BY_CLAIM_PREFIX}${holder.target} is held by ${owner} work item "${holder.title}" (${holder.state})${landed}; one work item writes an external item, so this write is not sent`;
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseSurfaceAction, type ParsedSurfaceAction } from '../../../src/surfaces/policy';
 import {
   providerItemKey,
+  withheldByClaim,
   withheldByClaimReason,
   writeTargetIds,
   type ClaimKeySurface,
@@ -191,5 +192,14 @@ describe('withheldByClaimReason', (): void => {
     expect(withheldByClaimReason({ ...holder, sameEmployee: false, state: 'executing' })).toContain(
       'held by Mateo\'s work item "Post the note" (executing);',
     );
+  });
+
+  it('says where the write will be made when the holder has not claimed the item yet', (): void => {
+    const waiting = { ...holder, state: 'discovered', unclaimed: true };
+    expect(withheldByClaimReason(waiting)).toBe(
+      'withheld for another work item\'s claim: FIN-1 has its own work item with this employee, "Post the note" (discovered); it will be written there, and one work item writes an external item, so this write is not sent',
+    );
+    expect(withheldByClaimReason({ ...waiting, sameEmployee: false })).toContain('has its own work item with Mateo, "Post the note"');
+    expect(withheldByClaim({ held: true, reason: withheldByClaimReason(waiting) })).toBe(true);
   });
 });

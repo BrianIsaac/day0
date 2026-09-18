@@ -558,6 +558,19 @@ export interface ClaimHolder {
 const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['cancelled', 'skipped']);
 
 /**
+ * A row in one of these states that never claimed its item will not write it:
+ * a failed row that took no claim failed before there was anything to land.
+ */
+const NEVER_CLAIMED_DEAD_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'cancelled',
+  'skipped',
+  'failed',
+]);
+
+/** The most work items read for one provider item: one per employee that discovered it. */
+const DISCOVERED_FROM_LIMIT = 32;
+
+/**
  * The owner and key a row's provider item is claimed under, if it is claimed at all.
  *
  * Real mode only; a revocation trial row and an agent with no owner claim
@@ -729,7 +742,16 @@ function landedCommentOn(holding: Doc<'workItems'>): string | undefined {
  * note on it and both moved it to Done, under two different claims. The
  * apply path asks here before a write is sent, across every employee of the
  * owner. A completed or failed holder still holds; a cancelled or skipped
- * one does not, whether or not its claim was stamped released. Nothing is
+ * one does not, whether or not its claim was stamped released.
+ *
+ * A claim is not the whole of it. In that run the ask was approved at
+ * 03:03:42 and wrote FIN-1; FIN-1's own item took its claim at 03:03:59, so
+ * for seventeen seconds nobody held the key. The item a live work item was
+ * discovered from is that work item's to write from the moment it is
+ * discovered, claimed or not, so whichever of the two reaches its apply
+ * first, one of them writes. A row that never claimed and is skipped,
+ * cancelled or failed will not write it and holds nothing. The writer is
+ * never withheld from the item it was itself discovered from. Nothing is
  * released here: this is a read.
  *
  * Args:
@@ -753,28 +775,48 @@ export const writeClaimHolder = internalQuery({
       .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', args.surfaceSlug))
       .first();
     if (!surface) return null;
+    const holderOf = async (
+      target: string,
+      holding: Doc<'workItems'>,
+      unclaimed: boolean,
+    ): Promise<WriteClaimHolder> => {
+      const holder = await ctx.db.get(holding.agentId);
+      const landedComment = landedCommentOn(holding);
+      return {
+        target,
+        holderName: holder?.name ?? 'another employee',
+        sameEmployee: holding.agentId === row.agentId,
+        title: holding.title,
+        state: holding.state,
+        ...(landedComment ? { landedComment } : {}),
+        ...(unclaimed ? { unclaimed: true } : {}),
+      };
+    };
     for (const target of args.targets) {
       const key = providerItemKey(surface, { sourceSystem: surface.slug, externalId: target }, SURFACE_MODE);
-      if (key === undefined) continue;
+      if (key === undefined || row.externalClaimKey === key) continue;
       const live = await ctx.db
         .query('externalClaims')
         .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
         .filter((q) => q.eq(q.field('releasedAt'), undefined))
         .collect();
+      if (live.some((claim) => claim.workItemId === row._id)) continue;
       for (const claim of live) {
-        if (claim.workItemId === row._id) break;
         const holding = await ctx.db.get(claim.workItemId);
         if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) continue;
-        const holder = await ctx.db.get(claim.agentId);
-        const landedComment = landedCommentOn(holding);
-        return {
-          target,
-          holderName: holder?.name ?? 'another employee',
-          sameEmployee: claim.agentId === row.agentId,
-          title: holding.title,
-          state: holding.state,
-          ...(landedComment ? { landedComment } : {}),
-        };
+        return await holderOf(target, holding, false);
+      }
+      const claimed = new Set(live.map((claim) => claim.workItemId));
+      const discoveredFrom = await ctx.db
+        .query('workItems')
+        .withIndex('by_claim_key', (q) => q.eq('externalClaimKey', key))
+        .take(DISCOVERED_FROM_LIMIT);
+      for (const holding of discoveredFrom) {
+        if (holding._id === row._id || claimed.has(holding._id)) continue;
+        if (NEVER_CLAIMED_DEAD_STATES.has(holding.state) || isRevocationTrialRow(holding)) continue;
+        const employee = await ctx.db.get(holding.agentId);
+        if (employee?.userId !== userId) continue;
+        return await holderOf(target, holding, true);
       }
     }
     return null;

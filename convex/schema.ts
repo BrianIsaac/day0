@@ -650,7 +650,9 @@ export default defineSchema({
       'decision.channel',
     ])
     .index('by_skill', ['skillId'])
-    .index('by_extId', ['sourceSystem', 'externalId']),
+    .index('by_extId', ['sourceSystem', 'externalId'])
+    /** Every work item discovered from one provider item, across employees. */
+    .index('by_claim_key', ['externalClaimKey']),
 
   /**
    * Which employee holds an item of the owner's own systems: one live row per
