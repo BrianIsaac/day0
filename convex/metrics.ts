@@ -587,8 +587,9 @@ export interface CompanySelection {
 /**
  * Whether an agent row belongs to an evaluation run rather than the company.
  *
- * Match the generated address and name together: an ordinary manager may
- * also have an address beginning with `eval-`.
+ * Match an evaluation name and its reserved address together: an ordinary
+ * manager may also have an address beginning with `eval-`. The revocation
+ * trial's driver and manual review beds use different timestamp formats.
  *
  * Args:
  *   agent: The agent row's boss address, name and arm.
@@ -598,10 +599,11 @@ export interface CompanySelection {
  */
 export function isEvaluationAgent(agent: Pick<Doc<'agents'>, 'bossEmail' | 'name' | 'arm'>): boolean {
   if (agent.arm === 'baseline') return true;
+  if (!agent.bossEmail.startsWith('eval-') || !agent.bossEmail.endsWith('@day0.local')) {
+    return false;
+  }
   if (agent.name === 'Day0 revocation evaluation') {
-    return /^eval-revocation-\d{4}-\d{2}-\d{2}t\d{2}-\d{2}-\d{2}z@day0\.local$/.test(
-      agent.bossEmail,
-    );
+    return agent.bossEmail.startsWith('eval-revocation-');
   }
   return (
     /^Day0 evaluation [1-9]\d*$/.test(agent.name) &&
