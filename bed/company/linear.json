@@ -1,6 +1,9 @@
 {
   "label": "day0-demo",
   "states": ["Todo", "In Progress", "Done"],
+  "sets": {
+    "one-each": ["revops-tile", "fin-status", "log-sh4471"]
+  },
   "teams": [
     { "key": "REVOPS", "name": "Revenue operations", "project": "Q3 close" },
     { "key": "FIN", "name": "Finance close", "project": "September close" },

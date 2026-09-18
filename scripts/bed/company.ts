@@ -3,9 +3,10 @@
  * `pnpm bed:company <verb>`: the company bed, from a fresh clone.
  *
  *   docs [--replace]   copy bed/company/folder/ into the documentation folder
- *   check              what the hand steps have made, and what is still missing
- *   seed               the demo tickets created or put back, bot cleanup
- *                      attempted, the tile restarted at its seeded figure
+ *   check [--set <n>]  what the hand steps have made, and what is still missing
+ *   seed [--set <n>]   the demo tickets created or put back, bot cleanup
+ *                      attempted, the tile restarted at its seeded figure;
+ *                      with a set, only that set's tickets and the rest archived
  *   post <key>         file a late ticket at its protocol step (log-sh4480)
  *   teardown           archive this clone's tickets and attempt bot cleanup
  *
@@ -74,6 +75,7 @@ import {
   loadBedSpec,
   NOTION_TOKEN_ENV,
   SLACK_TOKEN_ENV,
+  ticketsToFile,
   type BedSpec,
   type BedTicket,
 } from './spec';
@@ -88,6 +90,8 @@ export type CompanyVerb = (typeof VERBS)[number];
 export interface CompanyOptions {
   verb?: CompanyVerb;
   key?: string;
+  /** A named set from `linear.json`: check and seed act on that set only. */
+  set?: string;
   replace: boolean;
   help: boolean;
 }
@@ -121,11 +125,13 @@ const USAGE = `Usage: pnpm bed:company <verb>
   docs [--replace]   copy bed/company/folder/ into the documentation folder
                      (DAY0_DOCS_HOST_DIR, default ./docs-local); refuses to
                      overwrite a page it did not write unless --replace
-  check              read back the Linear teams, the Slack channels and app,
+  check [--set <n>]  read back the Linear teams, the Slack channels and app,
                      the Notion pages and the tile, and say what is missing
-  seed               create the demo tickets that are missing, put every one
+  seed [--set <n>]   create the demo tickets that are missing, put every one
                      back to its tracked state, attempt bot message cleanup,
-                     and restart the tile so it reads 68%
+                     and restart the tile so it reads 68%; with --set, file
+                     only that named set from bed/company/linear.json and
+                     archive every other bed ticket
   post <key>         file a late ticket at its protocol step (log-sh4480)
   teardown           archive this clone's tickets and attempt bot cleanup
 
@@ -146,14 +152,22 @@ The hand steps are in bed/company/notion/README.md and the README's "The company
  *   The verb and its options.
  *
  * Raises:
- *   Error: On an unknown verb or flag, or `post` without a key.
+ *   Error: On an unknown verb or flag, `post` without a key, or `--set` without a name.
  */
 export function parseCompanyArguments(argv: readonly string[]): CompanyOptions {
   const options: CompanyOptions = { replace: false, help: false };
+  let wantsSet = false;
   for (const argument of argv) {
     if (argument === '--') continue;
+    if (wantsSet) {
+      if (argument.startsWith('-')) throw new Error('--set needs a set name.');
+      options.set = argument;
+      wantsSet = false;
+      continue;
+    }
     if (argument === '--help' || argument === '-h') options.help = true;
     else if (argument === '--replace') options.replace = true;
+    else if (argument === '--set') wantsSet = true;
     else if (argument.startsWith('-')) throw new Error(`Unknown option "${argument}".`);
     else if (options.verb === undefined) {
       if (!(VERBS as readonly string[]).includes(argument)) {
@@ -163,7 +177,11 @@ export function parseCompanyArguments(argv: readonly string[]): CompanyOptions {
     } else if (options.verb === 'post' && options.key === undefined) options.key = argument;
     else throw new Error(`Unexpected argument "${argument}".`);
   }
+  if (wantsSet) throw new Error('--set needs a set name.');
   if (options.replace && options.verb !== 'docs') throw new Error('--replace belongs to docs.');
+  if (options.set !== undefined && options.verb !== 'check' && options.verb !== 'seed') {
+    throw new Error('--set belongs to check and seed.');
+  }
   if (options.verb === 'post' && options.key === undefined) throw new Error('post needs a ticket key.');
   return options;
 }
@@ -385,8 +403,19 @@ function issuesByKey(issues: readonly BedIssue[]): { byKey: Map<string, BedIssue
   return { byKey, duplicates };
 }
 
-async function checkLinear(io: CompanyIo, spec: BedSpec, report: Report): Promise<void> {
+/** What a seed with this set files, said once so the operator knows what check expects. */
+function seedExpectation(spec: BedSpec, set: string | undefined, toFile: readonly BedTicket[]): string {
+  if (set !== undefined) {
+    return `seed --set ${set} files ${toFile.map((ticket) => ticket.key).join(', ')}; every other ticket stays unfiled`;
+  }
+  const late = spec.tickets.filter((ticket) => ticket.late).map((ticket) => ticket.key);
+  const count = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'][toFile.length] ?? String(toFile.length);
+  return `seed files the ${count} tickets${late.length > 0 ? `; post files ${late.join(', ')} at its protocol step` : ''}`;
+}
+
+async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined, report: Report): Promise<void> {
   report.section('Linear');
+  const toFile = ticketsToFile(spec, set);
   const key = io.env[LINEAR_KEY_ENV]?.trim();
   if (!key) {
     report.line('gap', `${LINEAR_KEY_ENV} is not set in ${ENV_FILE}: add a Linear personal API key from the demo workspace`);
@@ -412,9 +441,18 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, report: Report): Promis
       if (!issue.archived) report.line('gap', `${issue.identifier} is an active marked ticket from another clone: archive it there before this clone seeds`);
     }
   }
+  report.line('note', seedExpectation(spec, set, toFile));
   for (const ticket of spec.tickets) {
     const issue = byKey.get(ticket.key);
-    if (!issue || issue.archived) {
+    const filed = issue !== undefined && !issue.archived;
+    if (set !== undefined && !toFile.includes(ticket)) {
+      report.line(
+        filed ? 'note' : 'ok',
+        filed
+          ? `${ticket.key} is outside the set ${set} and filed as ${issue.identifier}; seed --set ${set} archives it`
+          : `${ticket.key} is outside the set ${set} and not filed`,
+      );
+    } else if (!filed) {
       report.line(
         ticket.late ? 'ok' : 'note',
         ticket.late
@@ -638,11 +676,12 @@ function checkFolder(io: CompanyIo, report: Report): void {
 // verbs
 
 /** `check`: read back every hand step and every file, and name each gap. */
-export async function runCheck(io: CompanyIo, report: Report): Promise<number> {
+export async function runCheck(io: CompanyIo, set: string | undefined, report: Report): Promise<number> {
   const spec = loadBedSpec(io.cwd);
+  ticketsToFile(spec, set);
   checkFolder(io, report);
   for (const read of [
-    (): Promise<void> => checkLinear(io, spec, report),
+    (): Promise<void> => checkLinear(io, spec, set, report),
     (): Promise<void> => checkSlack(io, report),
     (): Promise<void> => checkNotion(io, report),
   ]) {
@@ -654,7 +693,8 @@ export async function runCheck(io: CompanyIo, report: Report): Promise<number> {
   }
   checkTile(io, report);
   report.say('');
-  report.say(report.gaps === 0 ? 'All green: the company bed is ready for seed.' : `${report.gaps} gap(s) above.`);
+  const seed = set === undefined ? 'seed' : `seed --set ${set}`;
+  report.say(report.gaps === 0 ? `All green: the company bed is ready for ${seed}.` : `${report.gaps} gap(s) above.`);
   return report.gaps === 0 ? 0 : 1;
 }
 
@@ -732,8 +772,9 @@ async function fileTicket(
 }
 
 /** `seed`: the tickets created or put back, the bed's messages deleted, the tile restarted. */
-export async function runSeed(io: CompanyIo, report: Report): Promise<number> {
+export async function runSeed(io: CompanyIo, set: string | undefined, report: Report): Promise<number> {
   const spec = loadBedSpec(io.cwd);
+  const toFile = ticketsToFile(spec, set);
   const previous = readState(io);
   const slackToken = io.env[SLACK_TOKEN_ENV]?.trim();
   const project = composeProject(io);
@@ -763,10 +804,15 @@ export async function runSeed(io: CompanyIo, report: Report): Promise<number> {
     if (!priorLabel) createdLabelId = labelId;
     for (const ticket of spec.tickets) {
       const existing = byKey.get(ticket.key);
-      if (ticket.late) {
+      if (!toFile.includes(ticket)) {
         if (existing && !existing.archived) {
           await archiveIssue(client, existing.id);
-          report.line('ok', `archived ${ticket.key} ${existing.identifier}; post files it at its protocol step`);
+          report.line(
+            'ok',
+            set === undefined
+              ? `archived ${ticket.key} ${existing.identifier}; post files it at its protocol step`
+              : `archived ${ticket.key} ${existing.identifier}; it is outside the set ${set}`,
+          );
         }
         continue;
       }
@@ -809,7 +855,8 @@ export async function runSeed(io: CompanyIo, report: Report): Promise<number> {
       : `looker-tile did not restart in ${project}: ${(restart.stderr || restart.stdout).trim().split('\n').pop() ?? ''}`,
   );
   report.say('');
-  report.say(report.gaps === 0 ? 'Seeded.' : `${report.gaps} gap(s) above.`);
+  const seeded = set === undefined ? 'Seeded.' : `Seeded the set ${set}: ${toFile.map((ticket) => ticket.key).join(', ')}.`;
+  report.say(report.gaps === 0 ? seeded : `${report.gaps} gap(s) above.`);
   return report.gaps === 0 ? 0 : 1;
 }
 
@@ -915,9 +962,9 @@ export async function runCompany(options: CompanyOptions, io: CompanyIo): Promis
       case 'docs':
         return runDocs(io, options, report);
       case 'check':
-        return await runCheck(io, report);
+        return await runCheck(io, options.set, report);
       case 'seed':
-        return await runSeed(io, report);
+        return await runSeed(io, options.set, report);
       case 'post':
         return await runPost(io, options.key!, report);
       case 'teardown':

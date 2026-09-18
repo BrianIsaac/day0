@@ -535,7 +535,7 @@ describe('a named set of tickets', (): void => {
       })
       .map((ticket) => ticket.key);
 
-  it.fails('tracks the one-each set: one ticket per team, none of them late', (): void => {
+  it('tracks the one-each set: one ticket per team, none of them late', (): void => {
     const raw = JSON.parse(readFileSync(resolve('bed/company/linear.json'), 'utf8')) as {
       sets?: Record<string, string[]>;
     };
@@ -546,7 +546,7 @@ describe('a named set of tickets', (): void => {
     expect(tickets.every((ticket) => !ticket.late && ticket.state === 'Todo')).toBe(true);
   });
 
-  it.fails('refuses a set that names a ticket it does not declare, or a late one', (): void => {
+  it('refuses a set that names a ticket it does not declare, or a late one', (): void => {
     const h = harness();
     const path = join(h.root, 'bed', 'company', 'linear.json');
     const tracked = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
@@ -556,7 +556,7 @@ describe('a named set of tickets', (): void => {
     expect(() => loadBedSpec(h.root)).toThrow('set late names log-sh4480, a late ticket that post files');
   });
 
-  it.fails('takes --set for check and seed only, and always with a name', (): void => {
+  it('takes --set for check and seed only, and always with a name', (): void => {
     expect(parseCompanyArguments(['seed', '--set', 'one-each'])).toMatchObject({ verb: 'seed', set: 'one-each' });
     expect(parseCompanyArguments(['--', 'check', '--set', 'one-each'])).toMatchObject({ verb: 'check', set: 'one-each' });
     expect(() => parseCompanyArguments(['seed', '--set'])).toThrow('--set needs a set name');
@@ -564,7 +564,7 @@ describe('a named set of tickets', (): void => {
     expect(() => parseCompanyArguments(['post', 'log-sh4480', '--set', 'one-each'])).toThrow('--set belongs to check and seed');
   });
 
-  it.fails('files only the set, and a second seed with it changes nothing', async (): Promise<void> => {
+  it('files only the set, and a second seed with it changes nothing', async (): Promise<void> => {
     const h = harness();
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
     expect(filed(h)).toEqual(ONE_EACH);
@@ -578,7 +578,7 @@ describe('a named set of tickets', (): void => {
     expect(writes(h)).toEqual([]);
   });
 
-  it.fails('archives the tickets outside the set that an earlier full seed filed', async (): Promise<void> => {
+  it('archives the tickets outside the set that an earlier full seed filed', async (): Promise<void> => {
     const h = harness();
     expect(await run(h, ['seed'])).toBe(0);
     expect(await run(h, ['post', 'log-sh4480'])).toBe(0);
@@ -591,7 +591,7 @@ describe('a named set of tickets', (): void => {
     expect(filed(h)).toHaveLength(9);
   });
 
-  it.fails('refuses a set it does not know before any write, naming the sets it has', async (): Promise<void> => {
+  it('refuses a set it does not know before any write, naming the sets it has', async (): Promise<void> => {
     const h = harness();
     expect(await run(h, ['seed', '--set', 'three-tasks'])).toBe(1);
     expect(writes(h)).toEqual([]);
@@ -600,7 +600,7 @@ describe('a named set of tickets', (): void => {
     expect(await run(h, ['check', '--set', 'three-tasks'])).toBe(1);
   });
 
-  it.fails('checks the bed for the set, and says which tickets it expects', async (): Promise<void> => {
+  it('checks the bed for the set, and says which tickets it expects', async (): Promise<void> => {
     const h = harness();
     await run(h, ['docs']);
     h.logs.length = 0;
