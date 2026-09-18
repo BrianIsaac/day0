@@ -8,11 +8,10 @@ import {
   agentJson,
   agentText,
   MODEL_CALL_TIMEOUT_MS,
-  observeModelCalls,
   resetStructuredModeMemo,
   withModelRetry,
-  type ModelCallReport,
 } from '../../../src/lib/mastra';
+import { observeModelCalls, type ModelCallReport } from '../../../src/lib/model-call-telemetry';
 
 /**
  * The retry wrapper reports every model call to the observer the loop step
