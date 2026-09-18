@@ -4,10 +4,10 @@
  *
  *   docs [--replace]   copy bed/company/folder/ into the documentation folder
  *   check              what the hand steps have made, and what is still missing
- *   seed               the demo tickets created or put back, the bed's bot
- *                      messages deleted, the tile restarted at its seeded figure
+ *   seed               the demo tickets created or put back, bot cleanup
+ *                      attempted, the tile restarted at its seeded figure
  *   post <key>         file a late ticket at its protocol step (log-sh4480)
- *   teardown           archive the demo tickets and delete the bed's bot messages
+ *   teardown           archive this clone's tickets and attempt bot cleanup
  *
  * The Linear teams, projects and states, the Slack channels and app, and the
  * Notion pages are made by hand, once (bed/company/notion/README.md and the
@@ -124,10 +124,10 @@ const USAGE = `Usage: pnpm bed:company <verb>
   check              read back the Linear teams, the Slack channels and app,
                      the Notion pages and the tile, and say what is missing
   seed               create the demo tickets that are missing, put every one
-                     back to its tracked state, delete the bed's own bot
-                     messages, and restart the tile so it reads 68%
+                     back to its tracked state, attempt bot message cleanup,
+                     and restart the tile so it reads 68%
   post <key>         file a late ticket at its protocol step (log-sh4480)
-  teardown           archive the demo tickets and delete the bed's bot messages
+  teardown           archive this clone's tickets and attempt bot cleanup
 
 Tokens are read from .env.local and never printed:
   ${LINEAR_KEY_ENV}    a Linear personal API key in the demo workspace
@@ -494,7 +494,7 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
         );
       }
       if (own.length > 0) {
-        report.line('note', `#${name} holds ${own.length} message(s) the bot posted with a provenance trailer; seed deletes those posted since this clone's first seed`);
+        report.line('note', `#${name} holds ${own.length} message(s) the bot posted with a provenance trailer; seed attempts to delete those posted since this clone's first seed, but Slack refuses deletion of customised posts`);
       }
     }
   }
@@ -512,8 +512,14 @@ async function deleteBedMessages(io: CompanyIo, view: SlackView, epoch: string, 
   for (const conversation of conversations) {
     const messages = await conversationMessages(io.fetch, view.token, conversation.id, epoch);
     for (const message of bedMessages(messages, view.botId, epoch)) {
-      await client.deleteMessage(conversation.id, message.ts);
-      deleted += 1;
+      try {
+        await client.deleteMessage(conversation.id, message.ts);
+        deleted += 1;
+      } catch (error) {
+        if (!(error as Error).message.includes('cant_delete_message')) throw error;
+        const where = conversation.name ? `#${conversation.name}` : `DM ${conversation.id}`;
+        report.line('gap', `${where} message ${message.ts} cannot be deleted by the bot token after a customised post: delete that exact message by hand in Slack, then retry teardown`);
+      }
     }
   }
   report.line('ok', `deleted ${deleted} message(s) the bot posted with a provenance trailer since ${epoch}`);
@@ -881,7 +887,7 @@ export async function runTeardown(io: CompanyIo, report: Report): Promise<number
     report.line('note', `no seed is recorded in ${STATE_FILE} on this clone, so no Slack message is the bed's to delete`);
   } else {
     await deleteBedMessages(io, await slackView(io, token, report, false), epoch, report);
-    rmSync(join(io.cwd, STATE_FILE));
+    if (report.gaps === 0) rmSync(join(io.cwd, STATE_FILE));
   }
   report.say('');
   report.say(report.gaps === 0 ? 'Torn down.' : `${report.gaps} gap(s) above.`);

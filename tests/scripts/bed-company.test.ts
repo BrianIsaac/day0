@@ -229,6 +229,7 @@ interface FakeMessage {
   user?: string;
   bot_id?: string;
   thread_ts?: string;
+  impersonated?: boolean;
 }
 
 class FakeSlack {
@@ -281,7 +282,7 @@ class FakeSlack {
         const body = JSON.parse(String(init?.body)) as { channel: string; ts: string };
         const list = this.messages.get(body.channel) ?? [];
         const target = list.find((message) => message.ts === body.ts);
-        if (!target || target.bot_id !== BOT_ID) return reply({ ok: false, error: 'cant_delete_message' });
+        if (!target || target.bot_id !== BOT_ID || target.impersonated) return reply({ ok: false, error: 'cant_delete_message' });
         this.messages.set(body.channel, list.filter((message) => message.ts !== body.ts));
         this.deleted.push(body);
         return reply({ ok: true });
@@ -523,6 +524,20 @@ describe('seed', (): void => {
 });
 
 describe('teardown', (): void => {
+  it('keeps retry state and identifies a customised bot post that Slack will not delete', async (): Promise<void> => {
+    const h = harness();
+    expect(await run(h, ['seed'])).toBe(0);
+    const later = `${1789693200 + 5}.000100`;
+    h.slack.post('C1', { ts: later, text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID, impersonated: true });
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(h.slack.deleted).toEqual([]);
+    expect(h.logs.join('\n')).toContain(`#revops-asks message ${later} cannot be deleted by the bot token`);
+    expect(existsSync(join(h.root, STATE_FILE))).toBe(true);
+    h.slack.messages.set('C1', []);
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(existsSync(join(h.root, STATE_FILE))).toBe(false);
+  });
+
   it('does not archive a marked ticket from an earlier clone before this clone seeds', async (): Promise<void> => {
     const h = harness();
     const prior = h.linear.addIssue({

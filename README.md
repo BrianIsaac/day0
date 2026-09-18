@@ -514,7 +514,7 @@ pnpm bed:company check    # every hand step read back; each gap says how to clos
 pnpm bed:company seed     # tickets created or put back, the bed's bot messages deleted, the tile back at 68%
 ```
 
-`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` owns only what carries its marker: a ticket is the bed's when its description ends in `day0-demo-key: <key>`, and it deletes only comments and bot messages carrying the server's provenance trailer, the messages only since this clone's first seed. Run it before every take. During the run, `pnpm bed:company post log-sh4480` files the one late ticket at its step; afterwards, `pnpm bed:company teardown` archives the demo tickets and deletes the bed's bot messages, leaving Linear and Slack as `seed` found them.
+`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` uses tickets whose descriptions end in `day0-demo-key: <key>` and refuses active marked tickets from another clone. It deletes comments with the server's provenance trailer and attempts to delete the bot's trailer messages posted since this clone's first seed. Run it before every take. During the run, `pnpm bed:company post log-sh4480` files the one late ticket at its step; afterwards, `pnpm bed:company teardown` archives only tickets this clone activated and attempts to delete its bot messages. Slack refuses `chat.delete` for posts with a customised employee name or icon. Teardown names each refused channel message and timestamp, keeps the clone's state, and exits with a gap; delete those exact messages by hand in Slack, then run teardown again. Earlier runs' messages remain outside this clone's cleanup window.
 
 On `/documentation`, link the folder (`.`) and the Notion source. Thirteen folder pages and three Notion pages (the parent and its two) sync, and the tile's login and the Linear token are the only credentials stored.
 
@@ -1495,7 +1495,7 @@ pnpm bed:company check    # 逐项读回手工步骤；每个缺口都会说明�
 pnpm bed:company seed     # 创建或复位工单，删除演示环境的 bot 消息，tile 回到 68%
 ```
 
-`check` 读取 Linear 的 team、project 与状态，频道与应用的 scope，经由内置 Notion 组件读取的 Notion 页面（除 token 行外逐行与 `bed/company/notion/` 比较），以及 tile。`seed` 只处理带有其标记的内容：描述以 `day0-demo-key: <key>` 结尾的工单才属于演示环境；它只删除带有服务端来源标记（provenance trailer）的评论和 bot 消息，而消息只限本 clone 首次 seed 之后发出的。每次录制前运行一次。运行期间，`pnpm bed:company post log-sh4480` 在对应步骤提交那张迟到的工单；结束后，`pnpm bed:company teardown` 归档演示工单并删除演示环境的 bot 消息，使 Linear 和 Slack 回到 `seed` 之前的样子。
+`check` 读取 Linear 的 team、project 与状态，频道与应用的 scope，经由内置 Notion 组件读取的 Notion 页面（除 token 行外逐行与 `bed/company/notion/` 比较），以及 tile。`seed` 使用描述以 `day0-demo-key: <key>` 结尾的工单；若另一 clone 留下仍启用的标记工单，则拒绝改动。它删除带服务端来源标记的评论，并尝试删除本 clone 首次 seed 之后由 bot 发送、带来源标记的消息。每次录制前运行一次。运行期间，`pnpm bed:company post log-sh4480` 在对应步骤提交迟到工单；结束后，`pnpm bed:company teardown` 只归档本 clone 激活的工单，并尝试删除本 clone 的 bot 消息。Slack 不允许 bot 用 `chat.delete` 删除带自定义员工姓名或头像的消息；teardown 会列出每条无法删除的消息所在频道和时间戳，保留本 clone 的状态并报告缺口。请在 Slack 中手动删除这些确切消息，再次运行 teardown。较早运行的消息不在本 clone 的清理范围内。
 
 在 `/documentation` 上链接文件夹（`.`）和 Notion 来源。同步后有十三个文件夹页面和三个 Notion 页面（父页面及其两个子页面），存储的凭据只有 tile 的登录和 Linear token。
 
