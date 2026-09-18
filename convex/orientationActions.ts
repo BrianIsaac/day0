@@ -13,6 +13,7 @@ import { storedCredentialGuardReason } from './credentialCryptoActions';
 import { browserTitleMarker } from '../src/surfaces/browser';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
 import {
+  channelDescriptions,
   groundScopePicks,
   scopeCandidates,
   roleScopeCandidates,
@@ -20,6 +21,7 @@ import {
   sentenceScopePicks,
   type IntakeScope,
   type ScopeCandidate,
+  type ScopeDescription,
   type ScopeField,
   type ScopePick,
   type ScopeValue,
@@ -837,17 +839,24 @@ export const intakeScopePickSchema = z.object({
 
 type IntakeScopeModelAnswer = z.infer<typeof intakeScopePickSchema>;
 
-const intakeScopeAgent = makeAgent(
-  'intake-scope',
-  [
-    'You choose which documented work queues one digital employee reads in one workplace system.',
-    "You receive the employee's role, the manager's own words about the system, and the candidate values the team documentation states, each numbered, with the page it is on and that page's line.",
-    "Several teams share this documentation; each team has its own queues. Pick only the values where this employee's own work arrives, as its role and the manager's words describe it, and leave out every other team's.",
-    'A channel the documentation says every team reads carries requests for each of them; pick it when the manager names it for this role. A channel the manager describes only as where the team talks is not where its work arrives.',
-    'Pick at most one team and one project. Answer each pick with the number in square brackets before its candidate. Never answer a number that is not on the list.',
-    'When nothing belongs to this role, pick nothing.',
-  ].join('\n'),
-);
+/**
+ * The intake-scope pick's standing instructions.
+ *
+ * The channel rule judges only on what the question shows: the role, the
+ * manager's words and the pages' own description of each channel. A rule
+ * about what "the documentation says" with no such text in the question left
+ * documented request channels unpicked in most calls.
+ */
+export const INTAKE_SCOPE_INSTRUCTIONS = [
+  'You choose which documented work queues one digital employee reads in one workplace system.',
+  "You receive the employee's role, the manager's own words about the system, and the candidate values the team documentation states, each numbered, with the page it is on and that page's line. For channels you also receive what the same pages say about the channels, in the pages' own words.",
+  "Several teams share this documentation; each team has its own queues. Pick only the values where this employee's own work arrives, as its role and the manager's words describe it, and leave out every other team's.",
+  "Pick every channel where requests or questions for this employee arrive: one the role or the manager's words say it works or answers in, one the pages say receives requests for its team, and a shared request channel the whole company uses when the manager names it for this role. Leave out a channel only when the manager and the pages both describe it as nothing more than where the team talks among itself.",
+  'Pick at most one team and one project. Answer each pick with the number in square brackets before its candidate. Never answer a number that is not on the list.',
+  'When nothing belongs to this role, pick nothing.',
+].join('\n');
+
+const intakeScopeAgent = makeAgent('intake-scope', INTAKE_SCOPE_INSTRUCTIONS);
 
 /** What the intake-scope pick is asked about one surface. */
 export interface IntakeScopeQuestion {
@@ -860,6 +869,8 @@ export interface IntakeScopeQuestion {
   sentences: readonly string[];
   /** The values offered, numbered from 1 in this order. */
   candidates: readonly ScopeCandidate[];
+  /** What the offered channels' own pages say about them; none for a team or project. */
+  descriptions?: readonly ScopeDescription[];
 }
 
 /** The picks for one surface, and a note when the model did not make them. */
@@ -894,6 +905,12 @@ export function intakeScopePrompt(question: IntakeScopeQuestion): string {
       (candidate, index): string =>
         `[${index + 1}] ${candidate.field} ${label(candidate)} on ${candidate.ref}: ${candidate.quote}`,
     ),
+    ...(question.descriptions?.length
+      ? [
+          'What the same pages say about these channels:',
+          ...question.descriptions.map((item): string => `- ${item.ref}: ${item.text}`),
+        ]
+      : []),
   ]
     .join('\n')
     .slice(0, 32_000);
@@ -1030,6 +1047,7 @@ async function orientIntakeScope(
     // The charter's entry quotes the manager's sentence about this system.
     sentences,
     candidates: roleCandidates,
+    descriptions: channelDescriptions(scopePages, roleCandidates),
   });
   // The pick is offered only this role's candidates, so a number can never
   // reach another role's handbook.

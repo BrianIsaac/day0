@@ -24,6 +24,7 @@ import {
   extractCredentialFinding,
   explicitlyDeniesSurface,
   hostCarriesSlug,
+  INTAKE_SCOPE_INSTRUCTIONS,
   isCredentialSafeEndpoint,
   isBrowserLoginCredential,
   isPrivateHost,
@@ -2253,6 +2254,48 @@ describe('each employee reads its own role', (): void => {
       'Dropped pick 1: #finance-close was already picked.',
       'Dropped pick 99: no documented value was offered under that number.',
     ]);
+  });
+
+  it("shows the pick what the role's own page says about each channel, and asks for no judgement on text it is not shown", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = companyScopeModel;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, ROLE_CHARTERS);
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+
+    const slackFor = (role: CompanyRole): string =>
+      model.scopePrompts.find(
+        (prompt): boolean =>
+          prompt.includes('Fields to pick: channel') &&
+          prompt.includes(ROLE_CHARTERS[role].proposedFunction),
+      ) ?? '';
+    expect(slackFor('finance')).toContain(
+      [
+        'What the same pages say about these channels:',
+        "- finance/handbook.md: `#finance-close` is the team channel, where the rest of the company asks how the close is going; `#ops-requests` is the company's shared request channel. Drafts, questions and escalations go to the manager DM.",
+      ].join('\n'),
+    );
+    expect(slackFor('logistics')).toContain(
+      "- logistics/handbook.md: `#logistics-desk` is the desk's channel, where the warehouse and the account team raise and follow exceptions;",
+    );
+    expect(slackFor('revops')).toContain(
+      '- revops/handbook.md: `#revops-asks` receives requests for the team, `#revops` is the team channel,',
+    );
+    // Another role's prose never reaches the question, and a kanban card has none.
+    expect(slackFor('finance')).not.toMatch(/revops|logistics-desk/);
+    expect(
+      model.scopePrompts.filter((prompt): boolean => prompt.includes('Fields to pick: team, project'))
+        .some((prompt): boolean => prompt.includes('What the same pages say')),
+    ).toBe(false);
+
+    expect(INTAKE_SCOPE_INSTRUCTIONS).toContain(
+      "what the same pages say about the channels, in the pages' own words",
+    );
+    expect(INTAKE_SCOPE_INSTRUCTIONS).toContain(
+      'Leave out a channel only when the manager and the pages both describe it as nothing more than where the team talks among itself.',
+    );
+    expect(INTAKE_SCOPE_INSTRUCTIONS).not.toContain('A channel the documentation says every team reads');
   });
 
   it("never reaches another role's queue, whatever numbers the model answers", async (): Promise<void> => {

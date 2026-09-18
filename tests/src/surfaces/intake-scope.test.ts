@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   approvedChannelNames,
   approvedLinearScope,
+  channelDescriptions,
   emptyScopeReason,
   groundScopePicks,
   presentIntakeScope,
@@ -378,6 +379,70 @@ describe('grounding a pick on its candidate', (): void => {
       ]);
     }
     expect(sentenceScopePicks([], scopeCandidates(pages('revops-first'), ['channel']))).toEqual([]);
+  });
+});
+
+describe("what a channel's page says about it", (): void => {
+  const all = [REVOPS, FINANCE, LOGISTICS].map(folderPage);
+  const offered = (root: string): ScopeCandidate[] =>
+    scopeCandidates(all, ['channel']).filter((candidate): boolean => candidate.ref.startsWith(root));
+
+  it('gives the paragraph describing the offered channels, whole, from their own page only', (): void => {
+    expect(channelDescriptions(all, offered('finance/'))).toEqual([
+      {
+        ref: 'finance/handbook.md',
+        text:
+          "`#finance-close` is the team channel, where the rest of the company asks how the close is going; `#ops-requests` is the company's shared request channel. Drafts, questions and escalations go to the manager DM.",
+      },
+      {
+        ref: 'finance/handbook.md',
+        text: '- Slack: `#finance-close`, `#ops-requests` and the manager DM.',
+      },
+    ]);
+    const logistics = channelDescriptions(all, offered('logistics/'));
+    expect(logistics[0]).toEqual({
+      ref: 'logistics/handbook.md',
+      text:
+        "`#logistics-desk` is the desk's channel, where the warehouse and the account team raise and follow exceptions; `#ops-requests` is the company's shared request channel. Questions for the desk lead, drafts and escalations go to the manager DM.",
+    });
+    expect(logistics.every((item): boolean => item.ref === 'logistics/handbook.md')).toBe(true);
+    expect(channelDescriptions(all, offered('revops/'))[0].text).toContain(
+      '`#revops-asks` receives requests for the team, `#revops` is the team channel',
+    );
+  });
+
+  it('never repeats the label line, a fenced block or a line shaped like a secret, and stays bounded', (): void => {
+    const page: ScopePage = {
+      sourceId: 'source-folder',
+      ref: 'ops/handbook.md',
+      markdown: [
+        '# Ops handbook',
+        '',
+        '- Channels: #ops-desk, #ops-chat',
+        '',
+        '```',
+        '#ops-desk is described inside a fence',
+        '```',
+        '',
+        `#ops-desk posts with the bot token ${['xoxb', '1'.repeat(12), '2'.repeat(12), 'a'.repeat(24)].join('-')}.`,
+        '',
+        '#ops-desknot is another channel and #ops-desk-archive another still.',
+        '',
+        `#ops-desk takes requests. ${'It is busy. '.repeat(80)}`,
+        '',
+        ...Array.from({ length: 12 }, (_item, index): string => `Note ${index}: ask in #ops-chat.\n`),
+      ].join('\n'),
+    };
+    const descriptions = channelDescriptions([page], scopeCandidates([page], ['channel']));
+    expect(descriptions).toHaveLength(6);
+    expect(descriptions[0].text.startsWith('#ops-desk takes requests.')).toBe(true);
+    expect(descriptions[0].text.length).toBeLessThanOrEqual(400);
+    const text = descriptions.map((item): string => item.text).join('\n');
+    expect(text).not.toMatch(/Channels:|inside a fence|xoxb-|ops-desknot/);
+  });
+
+  it('describes nothing for a team or project, whose own line already states it alone', (): void => {
+    expect(channelDescriptions(all, scopeCandidates(all, ['team', 'project']))).toEqual([]);
   });
 });
 

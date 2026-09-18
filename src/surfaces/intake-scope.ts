@@ -32,6 +32,12 @@ export interface ScopeCandidate extends ScopeValue {
   field: ScopeField;
 }
 
+/** What a page says about the channels it offers, beyond the line that lists them. */
+export interface ScopeDescription {
+  ref: string;
+  text: string;
+}
+
 /** The stored shape of `surfaces.intakeScope`. */
 export interface IntakeScope {
   team?: ScopeValue;
@@ -66,8 +72,12 @@ const CHANNELS_LABEL = /^\s*(?:[-*+]\s+)?Channels?\s*:/i;
 const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const FORBIDDEN_QUEUE_LINE = /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
+const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+/;
+const HEADING = /^\s{0,3}#{1,6}\s/;
 const MAX_NOTE_VALUE = 80;
 const MAX_DROP_NOTES = 8;
+const MAX_DESCRIPTIONS = 6;
+const MAX_DESCRIPTION_LENGTH = 400;
 
 /**
  * The scope fields a surface of one class is bounded by.
@@ -87,6 +97,25 @@ export function scopeFieldsFor(surfaceClass: string): ScopeField[] {
 /** Order two strings by code unit, the same on every machine. */
 function byCodeUnit(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** A page's lines outside fenced code blocks, in order. */
+function unfencedLines(markdown: string): string[] {
+  const lines: string[] = [];
+  let fence: { marker: string; length: number } | undefined;
+  for (const line of markdown.split(/\r?\n/)) {
+    const fenceMatch = CODE_FENCE.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (!fence) fence = { marker, length: fenceMatch[1].length };
+      else if (fence.marker === marker && fenceMatch[1].length >= fence.length) fence = undefined;
+      // A fence boundary separates the prose on either side of it.
+      lines.push('');
+      continue;
+    }
+    if (!fence) lines.push(line);
+  }
+  return lines;
 }
 
 /**
@@ -135,16 +164,7 @@ export function scopeCandidates(
   for (const page of pages) {
     const candidates: ScopeCandidate[] = [];
     byPage.push({ page, candidates });
-    let fence: { marker: string; length: number } | undefined;
-    for (const line of page.markdown.split(/\r?\n/)) {
-      const fenceMatch = CODE_FENCE.exec(line);
-      if (fenceMatch) {
-        const marker = fenceMatch[1][0];
-        if (!fence) fence = { marker, length: fenceMatch[1].length };
-        else if (fence.marker === marker && fenceMatch[1].length >= fence.length) fence = undefined;
-        continue;
-      }
-      if (fence) continue;
+    for (const line of unfencedLines(page.markdown)) {
       const quote = line.trim();
       if (!quote || containsTokenShape(quote) || FORBIDDEN_QUEUE_LINE.test(quote)) continue;
       for (const field of fields) {
@@ -167,6 +187,73 @@ export function scopeCandidates(
         byCodeUnit(left.page.sourceId ?? '', right.page.sourceId ?? ''),
     )
     .flatMap((item): ScopeCandidate[] => item.candidates);
+}
+
+/**
+ * What each offered channel's own page says about it, beyond its label line.
+ *
+ * A `Channels:` line states several channels at once and says nothing about
+ * any of them, so whoever picks among them needs the page's prose: which one
+ * receives requests, which one the whole company shares, which one is only
+ * where the team talks. A team or project line states its value alone, so
+ * those get none. Only pages an offered channel is on are read, so another
+ * role's handbook is never quoted; a passage carrying anything shaped like a
+ * secret is never quoted; and the passages are few and short.
+ *
+ * Args:
+ *   pages: The pages the candidates were read from.
+ *   candidates: The candidates offered for one surface.
+ *
+ * Returns:
+ *   Each paragraph or list item naming an offered channel, whole, in the
+ *   order the candidates' pages are offered and then the page's own order.
+ */
+export function channelDescriptions(
+  pages: readonly ScopePage[],
+  candidates: readonly ScopeCandidate[],
+): ScopeDescription[] {
+  const described: ScopeDescription[] = [];
+  const channels = candidates.filter((candidate): boolean => candidate.field === 'channel');
+  const read = new Set<ScopePage>();
+  for (const offered of channels) {
+    const page = pages.find(
+      (item): boolean => item.ref === offered.ref && item.sourceId === offered.sourceId,
+    );
+    if (!page || read.has(page)) continue;
+    read.add(page);
+    const mentions = channels
+      .filter((item): boolean => item.ref === page.ref && item.sourceId === page.sourceId)
+      .map((item): RegExp => new RegExp(`(?<![a-z0-9_-])#${escaped(item.value)}(?![a-z0-9_-])`, 'i'));
+    for (const passage of passages(page.markdown)) {
+      if (CHANNELS_LABEL.test(passage) || containsTokenShape(passage)) continue;
+      if (!mentions.some((mention): boolean => mention.test(passage))) continue;
+      described.push({ ref: page.ref, text: passage.slice(0, MAX_DESCRIPTION_LENGTH) });
+      if (described.length === MAX_DESCRIPTIONS) return described;
+    }
+  }
+  return described;
+}
+
+/** A page's paragraphs, list items and headings outside code, each joined onto one line. */
+function passages(markdown: string): string[] {
+  const found: string[] = [];
+  let current: string[] = [];
+  const close = (): void => {
+    if (current.length > 0) found.push(current.join(' '));
+    current = [];
+  };
+  for (const line of unfencedLines(markdown)) {
+    const text = line.trim();
+    if (!text) {
+      close();
+      continue;
+    }
+    if (LIST_ITEM.test(line) || HEADING.test(line)) close();
+    current.push(text);
+    if (HEADING.test(line)) close();
+  }
+  close();
+  return found;
 }
 
 /** How a note names one value, bounded so a model's output cannot flood the card. */
