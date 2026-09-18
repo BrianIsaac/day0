@@ -299,6 +299,13 @@ describe('the reply authored beside a write another work item holds (19 Sep, the
     expect(corrections.join('\n')).toContain('held-item reply completed');
   });
 
+  it('still says it when the repaired set drops the writes and its reply says nothing of them', async (): Promise<void> => {
+    recorded.outputs.push(authoredInTheRun, { ...authoredInTheRun, actions: [replyWith(STATUS_LINES)] });
+    const output = await closing([claimedTicket]);
+    expect(output.actions).toHaveLength(1);
+    expect(repliesOf(output.actions)[0]).toContain(`FIN-1 has its own work item ("${TICKET_TITLE}")`);
+  });
+
   it('cites the note once the holder has landed it, and names a colleague who holds the item', async (): Promise<void> => {
     recorded.outputs.push(authoredInTheRun, authoredInTheRun);
     const posted: HeldExternalItem = { ...claimedTicket, state: 'completed', sameEmployee: false, holderName: 'Aiko', landedComment: FIRST_NOTE_ID };

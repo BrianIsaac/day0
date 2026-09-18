@@ -328,6 +328,36 @@ describe('one work item writes a documented page field (finding M, 19 September 
     expect(live.map((claim) => claim.workItemId)).toEqual([later]);
   }, 30_000);
 
+  it('holds across employees whose cards name the dashboard differently: the key is the origin and the field', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { revops27 } = await seed(t);
+    const colleagueItem = await t.run(async (ctx) => {
+      const holder = await ctx.db.get(revops27);
+      const surface = await ctx.db.query('surfaces').withIndex('by_agent_slug', (q) => q.eq('agentId', holder!.agentId).eq('slug', SLUG)).first();
+      const { _id: _surfaceId, _creationTime: _surfaceCreated, ...card } = surface!;
+      const agentId = await ctx.db.insert('agents', { bossEmail: 'boss@day0.local', name: 'Mateo', userId: 'owner', state: 'active', createdAt: 1 });
+      await ctx.db.insert('surfaces', { ...card, agentId, slug: 'looker' } as never);
+      const { _id: _itemId, _creationTime: _itemCreated, ...item } = holder!;
+      return await ctx.db.insert('workItems', { ...item, agentId, externalId: 'FIN-9', title: 'Quote pipeline coverage in the close pack' } as never);
+    });
+
+    expect(await t.mutation(internal.work.takeWriteTargetClaims, {
+      workItemId: revops27, targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
+    })).toEqual(['http://looker-tile:8080|pipeline coverage']);
+    // The colleague asks for the same field through its own card and is given nothing.
+    expect(await t.mutation(internal.work.takeWriteTargetClaims, {
+      workItemId: colleagueItem, targets: [{ surfaceSlug: 'looker', field: 'pipeline coverage' }],
+    })).toEqual([]);
+    expect(await t.query(internal.work.writeClaimHolder, {
+      workItemId: colleagueItem, surfaceSlug: 'looker', targets: ['pipeline coverage'],
+    })).toMatchObject({ holderName: 'Priya', sameEmployee: false, title: 'Refresh the Looker pipeline tile' });
+    // The claim is taken as execution begins, and that is when the colleague's prompt lists it.
+    await t.run(async (ctx) => await ctx.db.patch(revops27, { state: 'executing' }));
+    expect(await t.query(internal.work.itemsHeldElsewhere, { workItemId: colleagueItem })).toEqual([
+      expect.objectContaining({ externalId: 'Pipeline coverage', sourceSystem: SLUG, holderName: 'Priya', sameEmployee: false, pageField: true }),
+    ]);
+  });
+
   it('takes nothing in mock mode', async (): Promise<void> => {
     restoreSurfaceMode();
     useSurfaceMode('mock');

@@ -476,6 +476,8 @@ function sentMessages(
  *   actions: The set as the executor authored it.
  *   held: The items other work items hold, as the prompt listed them.
  *   surfaces: The agent's surfaces, for the class of each one addressed.
+ *   alreadyOwed: Held items an earlier response of this phase wrote to. A
+ *     repaired set that drops the write still owes the reply where the work is.
  *
  * Returns:
  *   One finding per held item the set writes to and no sent message accounts for.
@@ -484,6 +486,7 @@ export function heldItemReplyFindings(
   actions: readonly MockAction[],
   held: readonly HeldExternalItem[] | undefined,
   surfaces: ReadonlyArray<{ slug: string; class: string; path?: string }>,
+  alreadyOwed: readonly HeldExternalItem[] = [],
 ): HeldItemReplyFinding[] {
   if (!held || held.length === 0) return [];
   const messages = sentMessages(actions, held, surfaces).flatMap((index) => messageTexts(actions[index]!));
@@ -496,7 +499,7 @@ export function heldItemReplyFindings(
   }
   return held.slice(0, HELD_ELSEWHERE_LIMIT).flatMap((item): HeldItemReplyFinding[] => {
     const names = [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])].map((name) => name.toLowerCase());
-    if (!names.some((name) => written.has(name))) return [];
+    if (!alreadyOwed.includes(item) && !names.some((name) => written.has(name))) return [];
     const said = messages.some((text) => {
       const lower = text.toLowerCase();
       if (!names.some((name) => lower.includes(name))) return false;

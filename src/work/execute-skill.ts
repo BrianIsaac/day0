@@ -1173,10 +1173,15 @@ export const HELD_ITEM_REPLY_COMPLETED = 'held-item reply completed';
 async function sayHeldItems<T extends CorrectableOutput>(
   output: T,
   args: Pick<RunSkillArgs, 'heldElsewhere' | 'surfaces' | 'candidate' | 'onAuditCorrection'>,
+  firstResponse: readonly MockAction[],
 ): Promise<T> {
-  const findings = heldItemReplyFindings(output.actions, args.heldElsewhere, args.surfaces ?? []);
+  const surfaces = args.surfaces ?? [];
+  const owed = heldItemReplyFindings(firstResponse, args.heldElsewhere, surfaces).map((finding) => finding.item);
+  const findings = heldItemReplyFindings(output.actions, args.heldElsewhere, surfaces, owed);
   if (findings.length === 0) return output;
-  const actions = withHeldItemsSaid(output.actions, findings, args.surfaces ?? [], args.candidate.replyTarget);
+  const actions = withHeldItemsSaid(output.actions, findings, surfaces, args.candidate.replyTarget);
+  // No message could carry the sentence (none has a text field to add to): nothing was changed, so nothing is recorded.
+  if (actions.every((action, index) => action === output.actions[index])) return output;
   await args.onAuditCorrection?.(
     [],
     `${HELD_ITEM_REPLY_COMPLETED}: ${findings.map((finding) => finding.sentence).join(' ')}`,
@@ -2601,7 +2606,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       (actions) => unsupportedClaimFindings(actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces)),
       args.onAuditCorrection,
     );
-    return await sayHeldItems(supported, args);
+    return await sayHeldItems(supported, args, output.actions);
   }
 
   const issues = mockActionContractIssues(output, candidate, plan, procedureContract);
@@ -3205,6 +3210,7 @@ export async function runDependentSkill(
   const gateIssues = (candidate: DependentExecutionOutput): string[] => args.closingGate?.(candidate) ?? [];
 
   let output = materialiseDependent(raw);
+  const firstResponse = output.actions;
   let trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
     mode,
     surfaces: args.surfaces ?? [],
@@ -3267,7 +3273,7 @@ export async function runDependentSkill(
         `${WITHHELD_BY_EVIDENCE}: ${orphaned.map((refusal) => refusal.reason).join('; ')}`,
       );
     }
-    if (mode === 'real') output = await sayHeldItems(output, args);
+    if (mode === 'real') output = await sayHeldItems(output, args, firstResponse);
   }
   return trailAttention.limitations.length > 0
     ? { ...output, procedureTrailLimitations: trailAttention.limitations }
