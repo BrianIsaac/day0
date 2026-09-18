@@ -3,6 +3,7 @@
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
+import type { FunctionReturnType } from 'convex/server';
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
@@ -22,6 +23,9 @@ interface Boss {
   email: string | undefined;
   firstName: string | undefined;
 }
+
+/** One employee as `agents.rosterForUser` returns it. */
+type RosterRow = FunctionReturnType<typeof api.agents.rosterForUser>[number];
 
 export default function LandingPage() {
   return (
@@ -370,7 +374,10 @@ function SurfaceNode({
 
 function SignedInDashboard({ boss }: { boss: Boss }) {
   const router = useRouter();
+  // The roster is the company the page shows; the raw list still decides
+  // whether Reset has anything to wipe, evaluation agents included.
   const agents = useQuery(api.agents.listForUser);
+  const roster = useQuery(api.agents.rosterForUser);
   const docSources = useQuery(api.docSources.listMine);
   const deploy = useMutation(api.agents.deploy);
   const reset = useMutation(api.reset.deleteMyData);
@@ -438,7 +445,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
           </p>
         </div>
         <AgentAvatarRail
-          agents={agents ?? []}
+          employees={roster ?? []}
           previewAvatar={selectedAvatar}
           previewLabel={workerName}
         />
@@ -501,10 +508,12 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         {error ? <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p> : null}
       </section>
 
-      <OfficeWorld agents={agents} docSourceCount={docSources?.length ?? 0} />
+      <EmployeeList employees={roster} />
+
+      <OfficeWorld agents={roster} />
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold mb-1">Reset demo</h2>
             <p className="text-xs text-[var(--color-muted)]">
@@ -527,7 +536,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
               ((agents?.length ?? 0) === 0 &&
                 (!alsoUnlinkDocumentation || (docSources?.length ?? 0) === 0))
             }
-            className="px-4 py-2 rounded-lg border border-[var(--color-danger)]/40 text-[var(--color-danger)] text-xs hover:bg-[var(--color-danger)]/10 disabled:opacity-50"
+            className="shrink-0 whitespace-nowrap px-4 py-2 rounded-lg border border-[var(--color-danger)]/40 text-[var(--color-danger)] text-xs hover:bg-[var(--color-danger)]/10 disabled:opacity-50"
           >
             {resetting ? 'Resetting…' : 'Reset everything'}
           </button>
@@ -617,13 +626,86 @@ type OfficeStyle = CSSProperties & {
   '--walk-duration'?: string;
 };
 
-function OfficeWorld({
-  agents,
-  docSourceCount,
-}: {
-  agents: Doc<'agents'>[] | undefined;
-  docSourceCount: number;
-}) {
+function EmployeeList({ employees }: { employees: RosterRow[] | undefined }) {
+  return (
+    <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+        <h2 className="text-sm font-semibold">Your employees</h2>
+        <span className="text-[10px] text-[var(--color-muted)]">
+          {employees ? `${employees.length} total` : 'loading'}
+        </span>
+      </div>
+      {employees && employees.length > 0 ? (
+        <ul className="divide-y divide-[var(--color-border)]">
+          {employees.map((employee) => (
+            <EmployeeListRow key={employee.agentId} employee={employee} />
+          ))}
+        </ul>
+      ) : employees ? (
+        <p className="px-5 py-4 text-sm text-[var(--color-muted)]">
+          No employees yet. Deploy one above.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function EmployeeListRow({ employee }: { employee: RosterRow }) {
+  const queue = `${employee.openCount} open \u00b7 ${employee.needsYou} ${
+    employee.needsYou === 1 ? 'needs' : 'need'
+  } you`;
+  return (
+    <li>
+      <Link
+        href={`/agent/${employee.agentId}`}
+        className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 px-5 py-3 transition hover:bg-[var(--color-bg)]/60 sm:grid-cols-[auto_1fr_auto]"
+      >
+        <AgentPixelAvatar
+          avatar={avatarById(employee.avatarId)}
+          state={employee.state}
+          label={employee.name}
+        />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{employee.name}</p>
+          <p className="mt-0.5 text-sm leading-snug text-[var(--color-fg)]/70">
+            {employee.roleLine}
+          </p>
+        </div>
+        <div className="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:col-start-auto sm:flex-col sm:items-end">
+          <span
+            className={`text-sm tabular-nums ${
+              employee.needsYou > 0 ? 'text-[var(--color-warn)]' : 'text-[var(--color-fg)]/70'
+            }`}
+          >
+            {queue}
+          </span>
+          <AutonomyBadge autonomous={employee.autonomous} />
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+function AutonomyBadge({ autonomous }: { autonomous: boolean }) {
+  return (
+    <span
+      title={
+        autonomous
+          ? 'Autonomous actions on: acts on connected systems without asking'
+          : 'Autonomous actions off: writes wait for your approval'
+      }
+      className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+        autonomous
+          ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+          : 'border-[var(--color-border)] text-[var(--color-fg)]/70'
+      }`}
+    >
+      {autonomous ? 'acts on its own' : 'asks first'}
+    </span>
+  );
+}
+
+function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
   const visibleAgents = agents ?? [];
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
@@ -640,7 +722,7 @@ function OfficeWorld({
 
         for (const agent of currentAgents) {
           if (!agentIsWorking(agent.state)) {
-            next[agent._id] = randomOfficePoint(current[agent._id]);
+            next[agent.agentId] = randomOfficePoint(current[agent.agentId]);
           }
         }
 
@@ -686,13 +768,9 @@ function OfficeWorld({
 
         {visibleAgents.map((agent, index) => (
           <OfficeAgent
-            key={agent._id}
+            key={agent.agentId}
             agent={agent}
-            destination={agentDestinations[agent._id]}
-            docSourceCount={
-              agent.docSourceIds?.length ??
-              Math.max(0, docSourceCount - (agent.excludedDocSourceIds?.length ?? 0))
-            }
+            destination={agentDestinations[agent.agentId]}
             index={index}
           />
         ))}
@@ -780,18 +858,15 @@ function rectStyle(rect: { left: number; top: number; width: number; height: num
 function OfficeAgent({
   agent,
   destination,
-  docSourceCount,
   index,
 }: {
-  agent: Doc<'agents'>;
+  agent: RosterRow;
   destination: OfficePoint | undefined;
-  docSourceCount: number;
   index: number;
 }) {
-  const openWorkCount = useQuery(api.work.countOpenForAgent, { agentId: agent._id });
-  const working = agentIsWorking(agent.state, openWorkCount);
+  const working = agentIsWorking(agent.state, agent.openCount);
   const desk = OFFICE_DESKS[index % OFFICE_DESKS.length];
-  const seed = hashString(`${agent._id}:${agent.name}`);
+  const seed = hashString(`${agent.agentId}:${agent.name}`);
   const idleSpot = OFFICE_IDLE_SPOTS[seed % OFFICE_IDLE_SPOTS.length];
   const idleX = destination?.x ?? clamp(idleSpot.x + ((seed >> 5) % 13) - 6, 8, 92);
   const idleY = destination?.y ?? clamp(idleSpot.y + ((seed >> 11) % 11) - 5, 12, 90);
@@ -805,7 +880,7 @@ function OfficeAgent({
 
   return (
     <Link
-      href={`/agent/${agent._id}`}
+      href={`/agent/${agent.agentId}`}
       className={`day0-office-agent absolute z-10 -translate-x-1/2 -translate-y-1/2 outline-none ${
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
@@ -818,11 +893,14 @@ function OfficeAgent({
           state={agent.state}
           label={agent.name}
         />
-        <div className="day0-pixel-nameplate mt-1 max-w-28 truncate px-2 py-1 text-center text-[10px] text-[var(--color-fg)]">
-          {agent.name}
+        <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center">
+          <div className="truncate text-[10px] text-[var(--color-fg)]">{agent.name}</div>
+          <div className="truncate text-[9px] text-[var(--color-fg)]/70" title={agent.roleLine}>
+            {agent.roleLine}
+          </div>
         </div>
         <div className="mt-1 rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-[9px] text-[var(--color-muted)]">
-          reads {docSourceCount} {docSourceCount === 1 ? 'location' : 'locations'}
+          reads {agent.docSourceCount} {agent.docSourceCount === 1 ? 'location' : 'locations'}
         </div>
       </div>
     </Link>
@@ -902,26 +980,25 @@ function AvatarPicker({
 }
 
 function AgentAvatarRail({
-  agents,
+  employees,
   previewAvatar,
   previewLabel,
 }: {
-  agents: Doc<'agents'>[];
+  employees: RosterRow[];
   previewAvatar: AgentAvatarPet;
   previewLabel: string;
 }) {
-  const shownAgents = agents.slice(0, 5);
-  const hasAgents = shownAgents.length > 0;
+  const shown = employees.slice(0, 5);
 
   return (
     <div className="flex min-h-14 items-center justify-start -space-x-2 sm:justify-end">
-      {hasAgents ? (
-        shownAgents.map((agent) => (
+      {shown.length > 0 ? (
+        shown.map((employee) => (
           <AgentPixelAvatar
-            key={agent._id}
-            avatar={avatarById(agent.avatarId)}
-            state={agent.state}
-            label={agent.name}
+            key={employee.agentId}
+            avatar={avatarById(employee.avatarId)}
+            state={employee.state}
+            label={employee.name}
             compact
           />
         ))

@@ -1,4 +1,5 @@
 import { convexTest } from 'convex-test';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -69,6 +70,18 @@ describe('reset documentation retention', (): void => {
 });
 
 describe('reset completeness', (): void => {
+  it('keeps the README table and reset counts aligned with the schema', (): void => {
+    const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+    const total = Object.keys(schema.tables).length;
+    const agentOwned = agentKeyedTables().length + 1;
+    const enumerated = AGENT_KEYED_TABLES.length;
+    expect(readme).toContain(`The schema contains ${total} tables: ${agentOwned} carry per-agent or agent-owned runtime state`);
+    expect(readme).toContain(`from ${enumerated} explicitly enumerated related tables`);
+    expect(readme).toContain(`in ${enumerated} enumerated related tables`);
+    expect(readme).toContain('| `externalClaims` |');
+    expect(readme).toContain('| `corrections` |');
+  });
+
   it('clears every agent-keyed table the schema declares, and names them all', async (): Promise<void> => {
     const tables = agentKeyedTables();
     expect(tables).toContain('managerDecisionNotices');

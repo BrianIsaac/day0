@@ -1,14 +1,16 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { clipRoleLine } from '../../convex/agents';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { autonomousActionsOn } from '../../src/work/autonomy';
 import { evaluateCandidate, type EvalContext } from '../../src/work/evaluate';
 import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
+import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -614,4 +616,400 @@ describe('the autonomous-actions switch', (): void => {
     expect(changes.map((event) => event.payload)).toEqual([{ from: 'per-run', to: 'digest', reason: 'set by the manager' }]);
   });
 
+});
+
+type Harness = TestConvex<typeof schema>;
+
+/**
+ * Deploy one employee through the public mutation, as the landing page does.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   subject: Owner subject the deploy runs as.
+ *   name: Display name, also the avatar id's suffix.
+ *   options: Boss address and documentation exclusions, when not the default.
+ *
+ * Returns:
+ *   The new agent id.
+ */
+async function deployEmployee(
+  harness: Harness,
+  subject: string,
+  name: string,
+  options: { bossEmail?: string; excludedDocSourceIds?: Id<'docSources'>[] } = {},
+): Promise<Id<'agents'>> {
+  return await harness.withIdentity({ subject }).mutation(api.agents.deploy, {
+    bossEmail: options.bossEmail ?? 'boss@day0.local',
+    name,
+    avatarId: `avatar-${name.toLowerCase()}`,
+    excludedDocSourceIds: options.excludedDocSourceIds,
+  });
+}
+
+/**
+ * Write one charter row for an employee and move the employee to the state
+ * the row implies.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   agentId: The employee.
+ *   body: Charter body; `proposedFunction` is what the roster reads.
+ *   approved: Whether the manager has approved the row.
+ *
+ * Returns:
+ *   The new charter id.
+ */
+async function seedCharter(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  body: unknown,
+  approved: boolean,
+): Promise<Id<'charters'>> {
+  return await harness.run(async (ctx): Promise<Id<'charters'>> => {
+    const charterId = await ctx.db.insert('charters', {
+      agentId,
+      version: '0.0',
+      body,
+      approved,
+      ...(approved ? { approvedAt: 3 } : {}),
+      createdAt: 2,
+    });
+    await ctx.db.patch(agentId, { state: approved ? 'active' : 'charter-pending' });
+    return charterId;
+  });
+}
+
+/**
+ * Insert one work item per state for an employee.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   agentId: The employee.
+ *   states: One state per row.
+ */
+async function seedWork(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  states: Doc<'workItems'>['state'][],
+): Promise<void> {
+  await harness.run(async (ctx): Promise<void> => {
+    for (const [index, state] of states.entries()) {
+      await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: `${agentId}-${index}`,
+        title: `Synthetic item ${index}`,
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state,
+        observedAt: 1,
+        createdAt: 1,
+      });
+    }
+  });
+}
+
+describe('the employee roster', (): void => {
+  it('does not mistake an ordinary employee for a trial because of the manager address', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const ordinary = await deployEmployee(harness, 'owner', 'Evaluation coordinator', {
+      bossEmail: 'eval-payroll@day0.local',
+    });
+    await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
+      bossEmail: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
+    });
+    await deployEmployee(harness, 'owner', 'Day0 evaluation 1', {
+      bossEmail: 'eval-day0-r1-1758150000000@day0.local',
+    });
+
+    expect((await owner.query(api.agents.rosterForUser, {})).map((row) => row.agentId)).toEqual([
+      ordinary,
+    ]);
+  });
+
+  it('does not let a caller with an empty subject read malformed owner rows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Malformed owner',
+        userId: '',
+        state: 'deployed',
+        createdAt: 1,
+      });
+    });
+    await expect(
+      harness.withIdentity({ subject: '' }).query(api.agents.rosterForUser, {}),
+    ).resolves.toEqual([]);
+  });
+
+  it('shows each of the owner\'s employees with its role, open work, what needs the manager and its autonomy, and nobody else', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    await seedSource(harness, 'owner', 'Company handbook');
+    const financeNotes = await seedSource(harness, 'owner', 'Finance notes');
+    await seedSource(harness, 'stranger', 'Stranger docs');
+
+    const priya = await deployEmployee(harness, 'owner', 'Priya');
+    const mateo = await deployEmployee(harness, 'owner', 'Mateo');
+    const aiko = await deployEmployee(harness, 'owner', 'Aiko', {
+      excludedDocSourceIds: [financeNotes],
+    });
+    const trial = await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
+      bossEmail: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
+    });
+    await deployEmployee(harness, 'owner', 'Day0 evaluation 1', {
+      bossEmail: 'eval-day0-r1-1758150000000@day0.local',
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Ordinary agent evaluation 1',
+        userId: 'owner',
+        state: 'active',
+        arm: 'baseline',
+        createdAt: 1,
+      });
+    });
+    const stranger = await deployEmployee(harness, 'stranger', 'Somebody else');
+
+    await seedCharter(harness, priya, runThroughBody(), true);
+    await seedCharter(
+      harness,
+      mateo,
+      { ...runThroughBody(), proposedFunction: 'Close the month for the finance team.' },
+      true,
+    );
+    await seedCharter(
+      harness,
+      aiko,
+      { ...runThroughBody(), proposedFunction: 'Run the logistics desk.' },
+      false,
+    );
+    await seedWork(harness, priya, [
+      'claimed',
+      'plan-pending',
+      'actions-pending',
+      'completed',
+      'discovered',
+      'failed',
+    ]);
+    await seedWork(harness, mateo, ['executing', 'plan-approved', 'plan-pending', 'skipped']);
+    await seedWork(harness, trial, ['actions-pending']);
+    await seedWork(harness, stranger, ['plan-pending']);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.mutation(api.agents.setAutonomousActions, { agentId: mateo, on: true });
+
+    await expect(owner.query(api.agents.rosterForUser, {})).resolves.toEqual([
+      {
+        agentId: aiko,
+        name: 'Aiko',
+        avatarId: 'avatar-aiko',
+        state: 'charter-pending',
+        autonomous: false,
+        roleLine: 'charter pending',
+        openCount: 0,
+        needsYou: 0,
+        docSourceCount: 1,
+      },
+      {
+        agentId: mateo,
+        name: 'Mateo',
+        avatarId: 'avatar-mateo',
+        state: 'active',
+        autonomous: true,
+        roleLine: 'Close the month for the finance team.',
+        openCount: 3,
+        needsYou: 1,
+        docSourceCount: 2,
+      },
+      {
+        agentId: priya,
+        name: 'Priya',
+        avatarId: 'avatar-priya',
+        state: 'active',
+        autonomous: false,
+        roleLine:
+          'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
+        openCount: 3,
+        needsYou: 2,
+        docSourceCount: 2,
+      },
+    ]);
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).query(api.agents.rosterForUser, {}),
+    ).resolves.toEqual([
+      {
+        agentId: stranger,
+        name: 'Somebody else',
+        avatarId: 'avatar-somebody else',
+        state: 'deployed',
+        autonomous: false,
+        roleLine: 'charter pending',
+        openCount: 1,
+        needsYou: 1,
+        docSourceCount: 1,
+      },
+    ]);
+    await expect(harness.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
+  });
+
+  it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const roleLines = async (): Promise<Record<string, string>> =>
+      Object.fromEntries(
+        (await owner.query(api.agents.rosterForUser, {})).map((row): [string, string] => [
+          row.name,
+          row.roleLine,
+        ]),
+      );
+
+    const priya = await deployEmployee(harness, 'owner', 'Priya');
+    await seedCharter(
+      harness,
+      priya,
+      { ...runThroughBody(), proposedFunction: 'Own routine revenue operations work.' },
+      true,
+    );
+    await owner.mutation(api.charters.amend, {
+      agentId: priya,
+      changes: [{ kind: 'edit-function', text: 'Own the RevOps queue in Linear.' }],
+    });
+    await expect(roleLines()).resolves.toEqual({ Priya: 'Own the RevOps queue in Linear.' });
+
+    await seedCharter(
+      harness,
+      priya,
+      { ...runThroughBody(), proposedFunction: 'A redraft nobody approved.' },
+      false,
+    );
+    await expect(roleLines()).resolves.toMatchObject({ Priya: 'Own the RevOps queue in Linear.' });
+
+    const aiko = await deployEmployee(harness, 'owner', 'Aiko');
+    const draft = await seedCharter(
+      harness,
+      aiko,
+      { ...runThroughBody(), proposedFunction: 'Run the logistics desk.' },
+      false,
+    );
+    await expect(roleLines()).resolves.toMatchObject({ Aiko: 'charter pending' });
+    await owner.mutation(api.charters.requestChanges, { charterId: draft });
+    await expect(roleLines()).resolves.toMatchObject({ Aiko: 'charter pending' });
+
+    const mateo = await deployEmployee(harness, 'owner', 'Mateo');
+    await seedCharter(harness, mateo, { version: '0.0' }, true);
+    await expect(roleLines()).resolves.toMatchObject({ Mateo: 'role not stated' });
+  });
+
+  it('lists at most 20 employees, newest first, and an evaluation agent never takes a place', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const employees: Id<'agents'>[] = [];
+    for (let index = 1; index <= 21; index += 1) {
+      employees.push(await deployEmployee(harness, 'owner', `Employee ${index}`));
+    }
+    for (let index = 1; index <= 3; index += 1) {
+      await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
+        bossEmail: `eval-revocation-2026-09-18t07-00-0${index}z@day0.local`,
+      });
+    }
+
+    const roster = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.agents.rosterForUser, {});
+    expect(roster.map((row) => row.agentId)).toEqual(employees.slice(1).reverse());
+  });
+
+  it('handles 20 employees and 500 items while counting only linked documentation', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sources = await harness.run(async (ctx): Promise<Id<'docSources'>[]> => {
+      const ids: Id<'docSources'>[] = [];
+      for (let index = 0; index < 100; index += 1) {
+        ids.push(
+          await ctx.db.insert('docSources', {
+            userId: 'owner',
+            label: `Source ${index}`,
+            kind: 'folder',
+            locator: `source-${index}`,
+            status: 'synced',
+            createdAt: 1,
+            updatedAt: 1,
+          }),
+        );
+      }
+      return ids;
+    });
+    const employees = await harness.run(async (ctx): Promise<Id<'agents'>[]> => {
+      const ids: Id<'agents'>[] = [];
+      for (let index = 0; index < 20; index += 1) {
+        ids.push(
+          await ctx.db.insert('agents', {
+            bossEmail: 'boss@day0.local',
+            name: `Employee ${index}`,
+            userId: 'owner',
+            state: 'active',
+            ...(index === 0 ? { excludedDocSourceIds: [sources[0]] } : {}),
+            createdAt: 1,
+          }),
+        );
+      }
+      return ids;
+    });
+    const states: Doc<'workItems'>['state'][] = [
+      'claimed',
+      'plan-pending',
+      'plan-approved',
+      'executing',
+      'actions-pending',
+      ...Array.from({ length: 20 }, (): Doc<'workItems'>['state'] => 'completed'),
+    ];
+    for (const agentId of employees) await seedWork(harness, agentId, states);
+
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const roster = await owner.query(api.agents.rosterForUser, {});
+    expect(roster).toHaveLength(20);
+    expect(roster.map((row) => [row.openCount, row.needsYou])).toEqual(
+      Array.from({ length: 20 }, () => [5, 2]),
+    );
+    expect(roster.find((row) => row.agentId === employees[0])?.docSourceCount).toBe(99);
+    expect(roster.filter((row) => row.agentId !== employees[0]).every((row) => row.docSourceCount === 100)).toBe(true);
+
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(sources[0]);
+    });
+    const afterUnlink = await owner.query(api.agents.rosterForUser, {});
+    expect(afterUnlink.every((row) => row.docSourceCount === 99)).toBe(true);
+  });
+
+  it('clips a long role line at a word boundary to 90 characters', (): void => {
+    const cases: Array<[string, string]> = [
+      [
+        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
+        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
+      ],
+      [
+        'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices, and prepare the close pack.',
+        'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices\u2026',
+      ],
+      ['  Close the month,\n every month,   for the finance team. ', 'Close the month, every month, for the finance team.'],
+      [`${'a'.repeat(44)} ${'b'.repeat(45)}`, `${'a'.repeat(44)} ${'b'.repeat(45)}`],
+      ['x'.repeat(120), `${'x'.repeat(89)}\u2026`],
+    ];
+    for (const [text, expected] of cases) {
+      expect(clipRoleLine(text)).toBe(expected);
+      expect(clipRoleLine(text).length).toBeLessThanOrEqual(90);
+    }
+  });
+
+  it('does not split a surrogate pair when one long role word must be clipped', (): void => {
+    const glyph = '\u{1F600}';
+    expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
+  });
 });
