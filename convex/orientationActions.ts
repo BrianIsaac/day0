@@ -11,6 +11,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import { storedCredentialGuardReason } from './credentialCryptoActions';
 import { browserTitleMarker } from '../src/surfaces/browser';
+import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -1062,10 +1063,20 @@ export function selectEvidence(
   );
 }
 
-/** Outcome of one isolated orientation job. */
+/**
+ * Outcome of one isolated orientation job. `not-in-charter` is a declared
+ * system the employee's charter does not name: it stays declared, and the
+ * card lists it for the manager to propose by hand.
+ */
 export interface OrientationOutcome {
-  outcome: 'proposed' | 'absent' | 'skipped' | 'failed';
+  outcome: 'proposed' | 'absent' | 'skipped' | 'failed' | 'not-in-charter';
   surfaceId: Id<'surfaces'>;
+}
+
+/** How one orientation run was asked for. */
+export interface OrientationRequest {
+  /** The manager asked for this one surface's card, so the charter need not name it. */
+  requested?: boolean;
 }
 
 /** Collaborators a test can replace to drive one orientation run. */
@@ -1085,10 +1096,18 @@ export type OrientationCtx = Pick<ActionCtx, 'runQuery' | 'runMutation'>;
 /**
  * Orient one declared system from owner-linked documentation.
  *
+ * Only a system the employee's charter names is oriented: with one company
+ * documentation set, every role's systems are declared on every employee,
+ * and a card for each would have every employee ask for every role's
+ * access. A charter that names no work system orients everything, as
+ * before, and the manager's own request orients the one surface it names.
+ * The check comes before any page is read or any model is called.
+ *
  * Args:
  *   ctx: Action context.
  *   surfaceId: Declared surface to orient.
  *   dependencies: Model and registry collaborators.
+ *   asked: Whether the manager asked for this surface by hand.
  *
  * Returns:
  *   The outcome recorded on the surface.
@@ -1100,12 +1119,22 @@ export async function orientSurface(
   ctx: OrientationCtx,
   surfaceId: Id<'surfaces'>,
   dependencies: OrientationDependencies = orientationDependencies,
+  asked: OrientationRequest = {},
 ): Promise<OrientationOutcome> {
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context || context.surface.verdict !== 'declared') {
     return { outcome: 'skipped', surfaceId };
   }
   const surface = context.surface;
+  const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, {
+    agentId: surface.agentId,
+  });
+  if (
+    !asked.requested &&
+    awaitsManagerProposal(surface, charterNamesWorkSystems(charter?.namedSystems))
+  ) {
+    return { outcome: 'not-in-charter', surfaceId };
+  }
   const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
     agentId: surface.agentId,
   });
@@ -1314,8 +1343,13 @@ export const run = internalAction({
       internal.orientationData.surfacesForAgent,
       args,
     );
+    const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, args);
+    const namesSystems = charterNamesWorkSystems(charter?.namedSystems);
+    // A system the charter does not name waits for the manager's Propose;
+    // scheduling it here would only be a job that decides to do nothing.
     const declared = surfaces.filter(
-      (surface: Doc<'surfaces'>): boolean => surface.verdict === 'declared',
+      (surface: Doc<'surfaces'>): boolean =>
+        surface.verdict === 'declared' && !awaitsManagerProposal(surface, namesSystems),
     );
     let scheduled = 0;
     for (const surface of declared) {

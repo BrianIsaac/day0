@@ -1219,6 +1219,7 @@ describe('orientation run', (): void => {
             agent: await harness.run(async (ctx) => await ctx.db.get(agentId)),
           };
         }
+        if (name.includes('charterForOrientation')) return null;
         if (name.includes('pagesForAgent')) {
           return await harness.query(internal.orientationData.pagesForAgent, {
             agentId: (args as { agentId: Id<'agents'> }).agentId,
@@ -1758,7 +1759,7 @@ describe('each employee reads its own role', (): void => {
     useSurfaceMode('real');
   });
 
-  it.fails("proposes only the systems each employee's charter names over one company page set", async (): Promise<void> => {
+  it("proposes only the systems each employee's charter names over one company page set", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
     const harness = convexTest(schema, orientationModules());
@@ -1801,6 +1802,31 @@ describe('each employee reads its own role', (): void => {
         .map((event): string => (event.payload as { verdict: string }).verdict)
         .sort(),
     ).toEqual(['absent', 'proposed', 'proposed']);
+  });
+
+  it('schedules orientation only for the systems the charter names', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await expect(
+      harness.action(internal.orientationActions.run, { agentId: agents.finance! }),
+    ).resolves.toEqual({ scheduled: 3 });
+    const surfaces = await surfacesBySlug(harness, agents.finance!);
+    expect(
+      Object.entries(surfaces)
+        .filter(([, surface]): boolean => surface.orientationJobId !== undefined)
+        .map(([slug]): string => slug)
+        .sort(),
+    ).toEqual(['linear', 'netledger', 'slack']);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(verdicts(await surfacesBySlug(harness, agents.finance!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'declared',
+      'northstar-crm': 'declared',
+      netledger: 'absent',
+    });
   });
 
   it('orients every documented system, as before, when the charter names no work system', async (): Promise<void> => {
