@@ -33,13 +33,13 @@ function valuesOn(candidates: readonly ScopeCandidate[], field: string, ref: str
 }
 
 describe('intake scope candidates', (): void => {
-  it.fails('reads the fields a work-bearing class has, and none for any other class', (): void => {
+  it('reads the fields a work-bearing class has, and none for any other class', (): void => {
     expect(scopeFieldsFor('kanban')).toEqual(['team', 'project']);
     expect(scopeFieldsFor('chat')).toEqual(['channel']);
     expect(scopeFieldsFor('analytics')).toEqual([]);
   });
 
-  it.fails('extracts each documented value per page, with the line that states it', (): void => {
+  it('extracts each documented value per page, with the line that states it', (): void => {
     const linear = scopeCandidates(pages('revops-first'), ['team', 'project']);
     expect(valuesOn(linear, 'team', 'revops/handbook.md')).toEqual(['REVOPS']);
     expect(valuesOn(linear, 'project', 'revops/handbook.md')).toEqual(['Q3 close']);
@@ -80,7 +80,7 @@ describe('intake scope candidates', (): void => {
     expect(slack.some((candidate): boolean => candidate.field !== 'channel')).toBe(false);
   });
 
-  it.fails('reads a project named inline and a team named by its identifier', (): void => {
+  it('reads a project named inline and a team named by its identifier', (): void => {
     const candidates = scopeCandidates(
       [
         {
@@ -103,7 +103,7 @@ describe('intake scope candidates', (): void => {
 });
 
 describe('grounding a pick on its page line', (): void => {
-  it.fails('keeps a pick only when the cited page states the value, and says why it dropped the rest', (): void => {
+  it('keeps a pick only when the cited page states the value, and says why it dropped the rest', (): void => {
     const candidates = scopeCandidates(pages('revops-first'), ['team', 'project']);
     const scope = groundScopePicks(
       [
@@ -127,7 +127,7 @@ describe('grounding a pick on its page line', (): void => {
     ]);
   });
 
-  it.fails('never takes a value that differs from the page by case or by invention', (): void => {
+  it('never takes a value that differs from the page by case or by invention', (): void => {
     const candidates = scopeCandidates(pages('finance-first'), ['team', 'project']);
     const scope = groundScopePicks(
       [
@@ -141,7 +141,7 @@ describe('grounding a pick on its page line', (): void => {
     expect(scope.notes).toHaveLength(2);
   });
 
-  it.fails('keeps one team and one project, and every grounded channel once', (): void => {
+  it('keeps one team and one project, and every grounded channel once', (): void => {
     const linear = scopeCandidates(pages('revops-first'), ['team', 'project']);
     const twoProjects = groundScopePicks(
       [
@@ -171,7 +171,7 @@ describe('grounding a pick on its page line', (): void => {
     ]);
   });
 
-  it.fails('gives each role its own project whichever handbook comes first', (): void => {
+  it('gives each role its own project whichever handbook comes first', (): void => {
     for (const order of ['revops-first', 'finance-first'] as const) {
       const candidates = scopeCandidates(pages(order), ['team', 'project']);
       const finance = groundScopePicks(
@@ -192,7 +192,7 @@ describe('grounding a pick on its page line', (): void => {
     }
   });
 
-  it.fails("takes the channels the manager's sentence names, and no other role's", (): void => {
+  it("takes the channels the manager's sentence names, and no other role's", (): void => {
     for (const order of ['revops-first', 'finance-first'] as const) {
       const candidates = scopeCandidates(pages(order), ['channel']);
       const finance = groundScopePicks(
@@ -203,6 +203,10 @@ describe('grounding a pick on its page line', (): void => {
         candidates,
       );
       expect(approvedChannelNames(finance)).toEqual(['finance-close', 'ops-requests']);
+      expect(finance.channels?.map((channel): string => channel.ref)).toEqual([
+        'finance/handbook.md',
+        'finance/handbook.md',
+      ]);
     }
     expect(sentenceScopePicks([], scopeCandidates(pages('revops-first'), ['channel']))).toEqual([]);
   });
@@ -220,14 +224,14 @@ describe('the scope an approved card reads', (): void => {
     candidates,
   );
 
-  it.fails('reads the stored values, and nothing from an empty scope', (): void => {
+  it('reads the stored values, and nothing from an empty scope', (): void => {
     expect(approvedLinearScope(finance)).toEqual({ team: 'FIN', project: 'September close' });
     expect(approvedChannelNames(finance)).toEqual(['finance-close', 'ops-requests']);
     expect(approvedLinearScope({})).toEqual({});
     expect(approvedChannelNames({})).toEqual([]);
   });
 
-  it.fails('presents the reads line with its quotes, and says why an empty scope reads nothing', (): void => {
+  it('presents the reads line with its quotes, and says why an empty scope reads nothing', (): void => {
     expect(presentIntakeScope('Linear', 'kanban', finance)).toEqual({
       line: 'Reads: Linear team FIN, project September close',
       empty: false,
@@ -249,7 +253,7 @@ describe('the scope an approved card reads', (): void => {
     );
   });
 
-  it.fails('names a value whose page line has changed since the card was approved', (): void => {
+  it('names a value whose page line has changed since the card was approved', (): void => {
     const edited = pages('revops-first').map(
       (page): ScopePage =>
         page.ref === 'finance/handbook.md'
