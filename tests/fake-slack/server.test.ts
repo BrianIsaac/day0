@@ -1,11 +1,29 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createServer, type AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const SERVER = fileURLToPath(new URL('../../fake-slack/server.js', import.meta.url));
-const PORT = 8124;
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = '';
 let child: ChildProcess;
+
+/**
+ * A port nothing listens on. A fixed port let two checkouts running this
+ * file at once share one server, and each read the other's call counts.
+ *
+ * Returns:
+ *   The port the operating system handed out.
+ */
+async function freePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', (): void => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close((): void => resolve(port));
+    });
+  });
+}
 
 async function ready(): Promise<void> {
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -37,8 +55,10 @@ async function api(
 }
 
 beforeAll(async (): Promise<void> => {
+  const port = await freePort();
+  BASE = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, FAKE_SLACK_PORT: String(PORT) },
+    env: { ...process.env, FAKE_SLACK_PORT: String(port) },
     stdio: 'ignore',
   });
   await ready();

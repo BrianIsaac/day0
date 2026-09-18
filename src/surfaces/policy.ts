@@ -177,7 +177,8 @@ const MCP_CHAT_POST_TOOLS = new Set([
   'create_message',
   'slack_post_message',
 ]);
-const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'];
+/** The argument names a ticket write names its ticket under. */
+export const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'];
 const TRAILER_MARK = /--\s[^\n]*\(Day0\)\s·\srun\s/;
 
 export type JsonObject = Record<string, unknown>;
