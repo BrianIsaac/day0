@@ -18,6 +18,8 @@ import {
 } from '../evaluation/revocation/report';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { MODEL } from '../src/lib/openai';
+import { BASE_PROFILE } from './compose';
+import { BED_PROFILES } from './demo-bed';
 
 const POLL_MS = 50;
 const WAIT_MS = 30_000;
@@ -101,6 +103,54 @@ async function atomicWrite(path: string, content: string): Promise<void> {
 
 function currentCommit(): string {
   return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+}
+
+/**
+ * What the trial ran on, for the evidence file's `configuration` block.
+ *
+ * The components are the kit's own list rather than a copy of it. This trial
+ * is run by `pnpm demo:bed offline-rung`, which starts every profile in
+ * `BED_PROFILES` and refuses the rung unless each one answers - the redactor
+ * included, since the revocation kit added it - so a second list here is a
+ * record that goes stale the next time the bed changes and says the trial ran
+ * on a stack it did not. A bed brought up with an extra opt-in profile records
+ * only the ones the kit always starts.
+ *
+ * Args:
+ *   composeProject: The Compose project the bed runs under.
+ *
+ * Returns:
+ *   The configuration block recorded beside the trials.
+ */
+export function trialConfiguration(composeProject: string): RevocationEvidence['configuration'] {
+  return {
+    commit: currentCommit(),
+    surfaceMode: 'real',
+    model: MODEL,
+    composeProject,
+    profiles: [...BED_PROFILES],
+    folderDocumentation: 'docs-local/ mounted read-only at /docs',
+    fakeProviders: ['fake-slack', 'looker-tile'],
+    daytonaBlanked: true,
+    onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
+  };
+}
+
+/**
+ * The `--profile` flags that bring up the stack `trialConfiguration` records.
+ *
+ * The evidence carries the commands that repeat the trial, so they name the
+ * same components the configuration does; a reader who brings up fewer than
+ * the rung needs is refused by it rather than told why. The base profile is
+ * left out because every compose invocation adds it.
+ *
+ * Returns:
+ *   The flags, in the order the kit starts the components.
+ */
+export function bedComposeFlags(): string {
+  return BED_PROFILES.filter((profile: string): boolean => profile !== BASE_PROFILE)
+    .map((profile: string): string => `--profile ${profile}`)
+    .join(' ');
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -661,17 +711,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     schemaVersion: 1,
     experiment: 'day0-live-revocation-containment',
     generatedAt: new Date().toISOString(),
-    configuration: {
-      commit: currentCommit(),
-      surfaceMode: 'real',
-      model: MODEL,
-      composeProject: options.composeProject,
-      profiles: ['real', 'test', 'demo', 'browser', 'sandbox'],
-      folderDocumentation: 'docs-local/ mounted read-only at /docs',
-      fakeProviders: ['fake-slack', 'looker-tile'],
-      daytonaBlanked: true,
-      onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
-    },
+    configuration: trialConfiguration(options.composeProject),
     setup: {
       agentId,
       charterId: charter._id,
@@ -698,12 +738,12 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     `FAKE_SLACK_HOST_PORT=${process.env.FAKE_SLACK_HOST_PORT ?? '8090'}`,
   ].join(' ');
   const commands = [
-    `${composePrefix} pnpm convex:up --profile test --profile demo --profile browser --profile sandbox`,
+    `${composePrefix} pnpm convex:up ${bedComposeFlags()}`,
     `${composePrefix} pnpm convex:admin-key  # captured directly into ignored .env.local; value never logged`,
     'pnpm sync:env',
     'pnpm exec convex dev --once --typecheck disable',
     `DAY0_EVAL_COMPOSE_PROJECT=${options.composeProject} FAKE_SLACK_PROOF_URL=${options.fakeSlackUrl} pnpm eval:revocation -- --out ${options.outDirectory}`,
-    `${composePrefix} pnpm convex:down --profile test --profile demo --profile browser --profile sandbox -- -v`,
+    `${composePrefix} pnpm convex:down ${bedComposeFlags()} -- -v`,
   ];
   await Promise.all([
     atomicWrite(`${outDirectory}/trials.json`, `${JSON.stringify(evidence, null, 2)}\n`),
