@@ -76,6 +76,7 @@ import {
   RUN_4_LIST_ISSUES_EFFECT,
   RUN_4_TILE_READ_BACK,
 } from './fixtures/plan-obligations-2026-09-16';
+import { slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -115,6 +116,8 @@ const recorded = vi.hoisted(() => ({
   /** What the mocked argument repair answers; undefined means the model produced nothing usable. */
   repairedToolArgsJson: undefined as string | undefined,
   repairRequests: [] as Array<{ tool: string; reason: string }>,
+  /** A stateful browser driver for the looker surface; absent, every client sees the fixed page. */
+  tileDriver: undefined as undefined | import('../fixtures/browser-phase-split-2026-09-16').TileDriver,
 }));
 
 const skillOutput: ExecutionOutput = {
@@ -502,77 +505,80 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/surfaces/mcp')>();
   return {
     ...original,
-    createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
-      listTools: async () => {
-        await recorded.afterToolList?.();
-        return Object.fromEntries(
-          [
-            'save_comment',
-            'save_issue',
-            'get_issue',
-            'list_comments',
-            'browser_navigate',
-            'browser_fill_form',
-            'browser_click',
-            'browser_snapshot',
-          ].map((tool) => [
-            `${options.serverName}_${tool}`,
-            {
-              execute: async (args: unknown): Promise<unknown> => {
-                recorded.mcp.push({
-                  server: options.serverName,
-                  tool,
-                  args,
-                  bearer: options.bearer ?? '',
-                });
-                if (recorded.failMcpAfterRequest) {
-                  throw new Error('socket closed after provider accepted the request');
-                }
-                if (recorded.failedMcpTool === tool) {
-                  return {
-                    isError: true,
-                    content: [{ type: 'text', text: `${tool} failed: snapshot timed out` }],
-                  };
-                }
-                if (tool === 'get_issue' && 'issueId' in (args as Record<string, unknown>)) {
-                  return {
-                    isError: false,
-                    content: [
-                      {
-                        type: 'text',
-                        text: JSON.stringify({
-                          error: true,
-                          message: 'Tool input validation failed: unknown argument issueId',
-                        }),
-                      },
-                    ],
-                  };
-                }
-                if (tool === 'get_issue' && recorded.issueRecordText !== undefined) {
-                  return { content: [{ type: 'text', text: recorded.issueRecordText }] };
-                }
-                const text =
-                  tool === 'browser_navigate'
-                    ? '- Page URL: http://looker-tile:8080/'
-                    : tool === 'browser_snapshot'
-                      ? [
-                          '- textbox "Username" [ref=e11]',
-                          '- textbox "Password" [ref=e14]',
-                          '- button "Sign in" [ref=e15]',
-                          '- textbox "Pipeline coverage" [ref=e21]',
-                          '- button "Save" [ref=e23]',
-                          '- generic [ref=e30]: visible figure 74%',
-                          '- generic [ref=e31]: Last updated by revops at 2026-08-29 17:24:02 UTC',
-                        ].join('\n')
-                      : JSON.stringify({ id: `${tool}-id` });
-                return { content: [{ type: 'text', text }] };
-              },
-            },
-          ]),
-        );
-      },
-      disconnect: async (): Promise<void> => {},
-    }),
+    createMastraMcpClient: (options: McpClientOptions): McpClientLike =>
+      recorded.tileDriver && options.serverName === 'looker'
+        ? recorded.tileDriver.client(options.serverName)
+        : {
+          listTools: async () => {
+            await recorded.afterToolList?.();
+            return Object.fromEntries(
+              [
+                'save_comment',
+                'save_issue',
+                'get_issue',
+                'list_comments',
+                'browser_navigate',
+                'browser_fill_form',
+                'browser_click',
+                'browser_snapshot',
+              ].map((tool) => [
+                `${options.serverName}_${tool}`,
+                {
+                  execute: async (args: unknown): Promise<unknown> => {
+                    recorded.mcp.push({
+                      server: options.serverName,
+                      tool,
+                      args,
+                      bearer: options.bearer ?? '',
+                    });
+                    if (recorded.failMcpAfterRequest) {
+                      throw new Error('socket closed after provider accepted the request');
+                    }
+                    if (recorded.failedMcpTool === tool) {
+                      return {
+                        isError: true,
+                        content: [{ type: 'text', text: `${tool} failed: snapshot timed out` }],
+                      };
+                    }
+                    if (tool === 'get_issue' && 'issueId' in (args as Record<string, unknown>)) {
+                      return {
+                        isError: false,
+                        content: [
+                          {
+                            type: 'text',
+                            text: JSON.stringify({
+                              error: true,
+                              message: 'Tool input validation failed: unknown argument issueId',
+                            }),
+                          },
+                        ],
+                      };
+                    }
+                    if (tool === 'get_issue' && recorded.issueRecordText !== undefined) {
+                      return { content: [{ type: 'text', text: recorded.issueRecordText }] };
+                    }
+                    const text =
+                      tool === 'browser_navigate'
+                        ? '- Page URL: http://looker-tile:8080/'
+                        : tool === 'browser_snapshot'
+                          ? [
+                              '- textbox "Username" [ref=e11]',
+                              '- textbox "Password" [ref=e14]',
+                              '- button "Sign in" [ref=e15]',
+                              '- textbox "Pipeline coverage" [ref=e21]',
+                              '- button "Save" [ref=e23]',
+                              '- generic [ref=e30]: visible figure 74%',
+                              '- generic [ref=e31]: Last updated by revops at 2026-08-29 17:24:02 UTC',
+                            ].join('\n')
+                          : JSON.stringify({ id: `${tool}-id` });
+                    return { content: [{ type: 'text', text }] };
+                  },
+                },
+              ]),
+            );
+          },
+          disconnect: async (): Promise<void> => {},
+          },
   };
 });
 
@@ -626,6 +632,7 @@ afterEach((): void => {
   recorded.additionalModelCalls = 0;
   recorded.repairedToolArgsJson = undefined;
   recorded.repairRequests.length = 0;
+  recorded.tileDriver = undefined;
   restoreSurfaceMode();
 });
 
@@ -3021,6 +3028,67 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
     expect(ledger(row)[0]).toMatchObject({ ok: false });
     expect(ledger(row)[0].repair).toBeUndefined();
+  });
+
+  // Red until the read repair passes the run's earlier rows: today the
+  // repaired snapshot is applied by a call of its own, in a new browser that
+  // never signed in, and reads about:blank.
+  it.fails('reads the signed-in page when it repairs a browser snapshot the driver refused', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    const refuseFullPage = (call: TileDriverCall): string | undefined =>
+      call.tool === 'browser_snapshot' && 'fullPage' in call.args
+        ? 'Tool input validation failed: unknown argument fullPage'
+        : undefined;
+    recorded.tileDriver = new TileDriver('plain-cred-looker', refuseFullPage);
+    recorded.skillOutput = {
+      draft: 'Signing in to the tile and reading the figure.',
+      notes: '',
+      actions: [
+        ...slackPhaseOne.slice(0, 3),
+        {
+          tool: 'mcp.call',
+          args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{"fullPage":true}' },
+        },
+      ],
+    };
+    recorded.repairedToolArgsJson = '{}';
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(
+      harness,
+      'real',
+      ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write', 'looker:read', 'looker:write'],
+      { autonomousActions: true },
+    );
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(recorded.repairRequests).toEqual([
+      { tool: 'browser_snapshot', reason: 'Tool input validation failed: unknown argument fullPage' },
+    ]);
+    expect(ledger(row)[3]).toMatchObject({
+      ok: true,
+      effect: 'browser_snapshot on looker · visible figure 68%',
+      repair: { toolArgsJson: '{"fullPage":true}' },
+    });
+    expect(JSON.stringify(row.output)).not.toContain('about:blank');
   });
 
   it('refuses retry when a provider transport fails after an approved request was sent', async (): Promise<void> => {
