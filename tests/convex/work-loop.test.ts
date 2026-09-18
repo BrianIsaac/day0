@@ -467,6 +467,31 @@ describe('the server drives the work loop in real mode', (): void => {
     ]);
   });
 
+  it('hands the slots the autonomy switch adds to the work queued at the supervised cap', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const first = await seedTicket(harness, agentId, 'REVOPS-28');
+    await drain(harness);
+    const second = await seedTicket(harness, agentId, 'REVOPS-29');
+    const third = await seedTicket(harness, agentId, 'REVOPS-30');
+    await drain(harness);
+    expect((await readItem(harness, first)).state).toBe('plan-pending');
+    expect((await readItem(harness, second)).verdict).toMatchObject({ decision: 'queue' });
+    expect((await readItem(harness, third)).verdict).toMatchObject({ decision: 'queue' });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.agents.setAutonomousActions, { agentId, on: true });
+    await drain(harness);
+
+    for (const workItemId of [second, third]) {
+      expect((await readItem(harness, workItemId)).state).toBe('completed');
+    }
+    expect((await readItem(harness, first)).state).toBe('plan-pending');
+  });
+
   it('takes a retried failed row back to execution', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

@@ -202,7 +202,20 @@ async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>)
   await ctx.scheduler.runAfter(0, internal.workActions.evaluateWorkItemInternal, { workItemId });
 }
 
-async function wakeQueuedWork(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
+/**
+ * Hand a free slot to the work waiting for one, if the employee has a slot.
+ *
+ * Called by every transition that may free a slot, and by the autonomy
+ * switch, which raises the cap without moving any row. The row it wakes
+ * wakes the next one when its own verdict lands, so several free slots fill
+ * one after another. Real mode only.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   agentId: The employee.
+ */
+export async function wakeQueuedWork(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
   const next = await nextRowForFreeSlot(ctx, agentId, Date.now());
   if (next) await scheduleEvaluation(ctx, next);
 }
