@@ -129,6 +129,7 @@ import base64
 import copy
 import inspect
 import json
+import linecache
 import re
 import sys
 import traceback
@@ -136,6 +137,10 @@ import traceback
 AUTHORED_FILE = "authored_smoke.py"
 AUTHORED = base64.b64decode("__DAY0_AUTHORED_SOURCE__").decode("utf-8")
 CONTRACT = json.loads(base64.b64decode("__DAY0_SMOKE_CONTRACT__").decode("utf-8"))
+# The author's file exists only in this string. Registered here, a traceback
+# prints the line under each of its frames, which is what a failed first
+# attempt is diagnosed from.
+linecache.cache[AUTHORED_FILE] = (len(AUTHORED), None, AUTHORED.splitlines(True), AUTHORED_FILE)
 MIN_CASES = 2
 DEFINITIONS = (
     ast.Import,

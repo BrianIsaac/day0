@@ -251,6 +251,8 @@ describe('the real-mode smoke harness', (): void => {
       expect(run.exitCode).toBe(1);
       expect(run.stderr).toContain('smoke harness: run() raised KeyError on case 2');
       expect(run.stderr).toContain('File "authored_smoke.py", line 8, in run');
+      // The line itself, as Python prints it under a frame: the author's file exists only inside the harness.
+      expect(run.stderr).toContain('"toolArgsJson": json.dumps({"issueId": record, "body": inputs["requested-value"]})},');
       expect(run.stderr).not.toMatch(/File "smoke\.py"/);
       expect(verdict(run).failureReason).toBe('smoke test exited 1');
     });
