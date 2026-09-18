@@ -76,7 +76,6 @@ import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
 import {
   scrubbedCorrectionEntries,
-  selectCorrections,
   type PlannerCorrection,
 } from '../src/work/corrections';
 import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
@@ -1939,10 +1938,11 @@ async function plannerCorrections(
   item: Doc<'workItems'>,
   knownValues: readonly string[],
 ): Promise<{ entries: PlannerCorrection[]; redaction?: 'structural-only' }> {
-  const rows: Doc<'corrections'>[] = await ctx.runQuery(internal.corrections.activeForAgent, {
+  const selected: Doc<'corrections'>[] = await ctx.runQuery(internal.corrections.selectedForCandidate, {
     agentId: item.agentId,
+    sourceCategory: item.sourceCategory,
+    sourceSystem: item.sourceSystem,
   });
-  const selected = selectCorrections(rows, item);
   if (selected.length === 0) return { entries: [] };
   return await scrubbedCorrectionEntries(selected, { model: spanModelFromEnv(), known: knownValues });
 }

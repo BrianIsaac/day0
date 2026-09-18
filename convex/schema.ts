@@ -716,7 +716,8 @@ export default defineSchema({
     appliedTo: v.array(v.id('workItems')),
   })
     .index('by_agent', ['agentId'])
-    .index('by_agent_active', ['agentId', 'retiredAt']),
+    .index('by_agent_active', ['agentId', 'retiredAt'])
+    .index('by_agent_active_createdAt', ['agentId', 'retiredAt', 'createdAt']),
 
   /** One idempotent manager-DM acknowledgement per parsed provider reply. */
   managerDecisionNotices: defineTable({

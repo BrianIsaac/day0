@@ -600,6 +600,79 @@ describe('a kept correction cannot change authority', (): void => {
   });
 });
 
+describe('selection beyond the dashboard read window', (): void => {
+  it('finds an older matching correction behind 200 newer unrelated ones', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const sourceWorkItemId = await seedStoppedTicketOne(harness, agentId);
+    const relevant = 'Use the customs hold notice the manager chose.';
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('corrections', {
+        agentId,
+        workItemId: sourceWorkItemId,
+        kind: 'retry-note',
+        text: relevant,
+        itemTitle: 'An earlier logistics ticket',
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        surfaces: ['linear'],
+        createdAt: 1,
+        appliedTo: [],
+      });
+      for (let index = 0; index < 200; index += 1) {
+        await ctx.db.insert('corrections', {
+          agentId,
+          workItemId: sourceWorkItemId,
+          kind: 'retry-note',
+          text: `Unrelated chat guidance ${index}`,
+          itemTitle: 'Another kind of work',
+          sourceCategory: 'event-stream',
+          sourceSystem: 'slack',
+          surfaces: ['slack'],
+          createdAt: index + 2,
+          appliedTo: [],
+        });
+      }
+    });
+
+    await seedTicket(harness, agentId, 'LOG-202', 'Exception: SH-4600 held at customs');
+    await drain(harness);
+
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).toContain(relevant);
+  });
+
+  it('passes only the newest matching rows that fit the 3,000-character prompt budget', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const sourceWorkItemId = await seedStoppedTicketOne(harness, agentId);
+    const ids = await harness.run(async (ctx) => {
+      const inserted: Id<'corrections'>[] = [];
+      for (let index = 0; index < 6; index += 1) {
+        inserted.push(await ctx.db.insert('corrections', {
+          agentId,
+          workItemId: sourceWorkItemId,
+          kind: 'retry-note',
+          text: String.fromCharCode(65 + index).repeat(1_000),
+          itemTitle: 'Earlier logistics ticket',
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          surfaces: ['linear'],
+          createdAt: index + 1,
+          appliedTo: [],
+        }));
+      }
+      return inserted;
+    });
+
+    await seedTicket(harness, agentId, 'LOG-203', 'Exception: SH-4601 held at customs');
+    await drain(harness);
+
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(offeredIds(plannerPrompt)).toEqual(ids.slice(3).reverse());
+  });
+});
+
 describe('the manager\'s other written reasons are kept too', (): void => {
   it('keeps a rejection reason given on held actions', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());

@@ -3,18 +3,19 @@ import { internalQuery, mutation, query, type MutationCtx } from './_generated/s
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { correctionSurfaces, type CorrectionKind } from '../src/work/corrections';
+import { CORRECTIONS_MAX, CORRECTIONS_MAX_CHARS, correctionSurfaces, type CorrectionKind } from '../src/work/corrections';
+import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
 
 /**
  * The manager's corrections, kept per employee and fed back into its later
  * work. The work transitions that take the manager's words keep them here;
- * the planner reads the active ones through `activeForAgent`, the executor
+ * the planner reads the matching active ones through `selectedForCandidate`, the executor
  * the ones its approved plan applied through `forPlan`, and the dashboard
  * lists and retires them. Selection is `src/work/corrections.ts`.
  */
 
-/** The most corrections one read returns per employee, newest first. */
+/** The most corrections the dashboard returns per employee, newest first. */
 export const CORRECTIONS_READ = 200;
 
 /**
@@ -101,15 +102,31 @@ export const listForAgent = query({
   },
 });
 
-/** The employee's active corrections, newest first, for the planner's selection. */
-export const activeForAgent = internalQuery({
-  args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'corrections'>[]> =>
-    await ctx.db
+/** The newest matching corrections, with the prompt bound applied during the indexed scan. */
+export const selectedForCandidate = internalQuery({
+  args: {
+    agentId: v.id('agents'),
+    sourceCategory: v.string(),
+    sourceSystem: v.string(),
+  },
+  handler: async (ctx, args): Promise<Doc<'corrections'>[]> => {
+    const slug = surfaceSlug(args.sourceSystem);
+    const selected: Doc<'corrections'>[] = [];
+    let remaining = CORRECTIONS_MAX_CHARS;
+    for await (const row of ctx.db
       .query('corrections')
-      .withIndex('by_agent_active', (q) => q.eq('agentId', args.agentId).eq('retiredAt', undefined))
-      .order('desc')
-      .take(CORRECTIONS_READ),
+      .withIndex('by_agent_active_createdAt', (q) =>
+        q.eq('agentId', args.agentId).eq('retiredAt', undefined),
+      )
+      .order('desc')) {
+      if (row.sourceCategory !== args.sourceCategory && !row.surfaces.includes(slug)) continue;
+      if (row.text.length > remaining) continue;
+      selected.push(row);
+      remaining -= row.text.length;
+      if (selected.length === CORRECTIONS_MAX || remaining === 0) break;
+    }
+    return selected;
+  },
 });
 
 /**
