@@ -8,7 +8,7 @@ import { getFunctionName, type FunctionReference } from 'convex/server';
  * before sign-in. Clerk and Convex are replaced so the signed-out hero renders
  * exactly as it would for a stranger, and the copy can be checked as text.
  */
-const authState = vi.hoisted(() => ({ loaded: true, signedIn: false }));
+const authState = vi.hoisted(() => ({ loaded: true, signedIn: false, rosterAvailable: true }));
 
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
@@ -49,15 +49,19 @@ const roster = [
     docSourceCount: 0,
   },
 ];
+let shownRoster = roster;
 
 vi.mock('convex/react', () => ({
   useQuery: (reference: FunctionReference<'query'>) => {
     if (!authState.signedIn) return undefined;
     const name = getFunctionName(reference);
     if (name === 'agents:listForUser') {
-      return roster.map((row) => ({ _id: row.agentId, name: row.name, state: row.state, createdAt: 1 }));
+      return shownRoster.map((row) => ({ _id: row.agentId, name: row.name, state: row.state, createdAt: 1 }));
     }
-    if (name === 'agents:rosterForUser') return roster;
+    if (name === 'agents:rosterForUser') {
+      if (!authState.rosterAvailable) throw new Error('Function agents:rosterForUser is unavailable');
+      return shownRoster;
+    }
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
     return 0;
   },
@@ -213,5 +217,30 @@ describe('the employee list', (): void => {
     const html = signedIn();
     const office = html.slice(html.indexOf('Mini office world'), html.indexOf('Reset demo'));
     for (const row of roster) expect(office).toContain(row.roleLine);
+  });
+
+  it('keeps the hosted one-employee landing under a snapshot', (): void => {
+    shownRoster = [roster[0]];
+    authState.signedIn = true;
+    try {
+      expect(renderToStaticMarkup(<LandingPage />)).toMatchSnapshot();
+    } finally {
+      shownRoster = roster;
+      authState.signedIn = false;
+    }
+  });
+
+  it('confines a missing roster function to the signed-in landing', (): void => {
+    authState.signedIn = true;
+    authState.rosterAvailable = false;
+    try {
+      expect(() => renderToStaticMarkup(<LandingPage />)).toThrow(
+        'Function agents:rosterForUser is unavailable',
+      );
+    } finally {
+      authState.signedIn = false;
+      authState.rosterAvailable = true;
+    }
+    expect(renderToStaticMarkup(<LandingPage />)).toContain('Try the demo');
   });
 });

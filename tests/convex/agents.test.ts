@@ -927,6 +927,67 @@ describe('the employee roster', (): void => {
     expect(roster.map((row) => row.agentId)).toEqual(employees.slice(1).reverse());
   });
 
+  it('handles 20 employees and 500 items while counting only linked documentation', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sources = await harness.run(async (ctx): Promise<Id<'docSources'>[]> => {
+      const ids: Id<'docSources'>[] = [];
+      for (let index = 0; index < 100; index += 1) {
+        ids.push(
+          await ctx.db.insert('docSources', {
+            userId: 'owner',
+            label: `Source ${index}`,
+            kind: 'folder',
+            locator: `source-${index}`,
+            status: 'synced',
+            createdAt: 1,
+            updatedAt: 1,
+          }),
+        );
+      }
+      return ids;
+    });
+    const employees = await harness.run(async (ctx): Promise<Id<'agents'>[]> => {
+      const ids: Id<'agents'>[] = [];
+      for (let index = 0; index < 20; index += 1) {
+        ids.push(
+          await ctx.db.insert('agents', {
+            bossEmail: 'boss@day0.local',
+            name: `Employee ${index}`,
+            userId: 'owner',
+            state: 'active',
+            ...(index === 0 ? { excludedDocSourceIds: [sources[0]] } : {}),
+            createdAt: 1,
+          }),
+        );
+      }
+      return ids;
+    });
+    const states: Doc<'workItems'>['state'][] = [
+      'claimed',
+      'plan-pending',
+      'plan-approved',
+      'executing',
+      'actions-pending',
+      ...Array.from({ length: 20 }, (): Doc<'workItems'>['state'] => 'completed'),
+    ];
+    for (const agentId of employees) await seedWork(harness, agentId, states);
+
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const roster = await owner.query(api.agents.rosterForUser, {});
+    expect(roster).toHaveLength(20);
+    expect(roster.map((row) => [row.openCount, row.needsYou])).toEqual(
+      Array.from({ length: 20 }, () => [5, 2]),
+    );
+    expect(roster.find((row) => row.agentId === employees[0])?.docSourceCount).toBe(99);
+    expect(roster.filter((row) => row.agentId !== employees[0]).every((row) => row.docSourceCount === 100)).toBe(true);
+
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(sources[0]);
+    });
+    const afterUnlink = await owner.query(api.agents.rosterForUser, {});
+    expect(afterUnlink.every((row) => row.docSourceCount === 99)).toBe(true);
+  });
+
   it('clips a long role line at a word boundary to 90 characters', (): void => {
     const cases: Array<[string, string]> = [
       [
