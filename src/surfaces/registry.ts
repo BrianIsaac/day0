@@ -7,7 +7,7 @@ import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
 import { MOCK_TOOLS, mockAdapter } from './mock';
-import { sessionRecipe } from './browser-session';
+import { sessionRecipe, signsIn } from './browser-session';
 import {
   applyProvenance,
   AWAITING_APPROVAL,
@@ -213,13 +213,15 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
 
 /**
  * Re-establish a browser-driven surface's page before this invocation's first
- * call on it, when that call is not itself a navigate.
+ * call on it.
  *
  * The recipe is read from the run's own earlier rows only: the prerequisite
  * ledger and the rows this phase carries before the index. Every step is
  * checked here under the authority it first landed with, and again by the
  * adapter at transport; the endpoint navigate the recipe adds when the run
- * never navigated runs under this invocation's authority.
+ * never navigated runs under this invocation's authority. Before a call that
+ * is itself a navigate only a sign-in is worth replaying, so a recipe without
+ * one is not sent.
  */
 async function restoreBrowserSession(
   ctx: ActionCtx,
@@ -228,7 +230,12 @@ async function restoreBrowserSession(
   surface: SurfaceRecord,
   earlier: { actions: readonly MockAction[]; applied: ReadonlyArray<AppliedAction | undefined> },
   idempotencyKey: string,
-  live: { grants: ReadonlySet<string>; autonomousActions: boolean; authority?: ActionAuthority },
+  live: {
+    grants: ReadonlySet<string>;
+    autonomousActions: boolean;
+    authority?: ActionAuthority;
+    signInOnly: boolean;
+  },
 ): Promise<SessionRestoreResult | undefined> {
   if (!adapter.restoreSession) return undefined;
   const recipe = sessionRecipe(surface.slug, earlier, surface.endpoint).map(
@@ -238,6 +245,9 @@ async function restoreBrowserSession(
     }),
   );
   if (recipe.length === 0) return undefined;
+  if (live.signInOnly && !recipe.some((step) => signsIn(step.action, surface.slug))) {
+    return undefined;
+  }
   for (const [n, step] of recipe.entries()) {
     const parsed = parseSurfaceAction(step.action);
     const refusal = parsed.ok
@@ -473,8 +483,20 @@ export async function applySurfaceActions(
         if (!session) {
           browserSessions.set(surface.slug, {});
           // A new invocation is a new browser, blank and signed out: the run's
-          // own sign-in is replayed before anything that needs the page.
-          if (parsed.action.tool !== 'browser_navigate') {
+          // own sign-in is replayed before anything that needs the page. A
+          // leading navigate lands signed out too, unless this invocation
+          // signs in on the surface itself.
+          const navigates = parsed.action.tool === 'browser_navigate';
+          const signsInItself =
+            navigates &&
+            actions
+              .slice(index)
+              .some(
+                (later, offset): boolean =>
+                  options.priorLedger?.[index + offset] === undefined &&
+                  signsIn(later, surface.slug),
+              );
+          if (!signsInItself) {
             restored = await restoreBrowserSession(
               ctx,
               adapter,
@@ -488,7 +510,12 @@ export async function applySurfaceActions(
                 ],
               },
               idempotencyKey,
-              { grants: options.grants ?? new Set(), autonomousActions, authority },
+              {
+                grants: options.grants ?? new Set(),
+                autonomousActions,
+                authority,
+                signInOnly: navigates,
+              },
             );
             if (restored && !restored.ok) {
               browserSessions.set(surface.slug, { failure: restored.reason });

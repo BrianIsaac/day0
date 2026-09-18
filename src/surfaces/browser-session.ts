@@ -115,6 +115,28 @@ const isCredentialFill = (row: BrowserRow): boolean =>
   row.tool === 'browser_fill_form' && SECRET_PLACEHOLDER.test(row.toolArgsJson);
 
 /**
+ * Whether an action types the surface's credential into a form: a sign-in.
+ *
+ * Args:
+ *   action: The action, if any.
+ *   slug: The browser-driven surface.
+ *
+ * Returns:
+ *   True for a `browser_fill_form` on the surface that carries `{{secret}}`.
+ */
+export function signsIn(action: MockAction | undefined, slug: string): boolean {
+  if (!action) return false;
+  const parsed = parseSurfaceAction(action);
+  return (
+    parsed.ok &&
+    parsed.action.kind === 'mcp.call' &&
+    parsed.action.surface === slug &&
+    parsed.action.tool === 'browser_fill_form' &&
+    SECRET_PLACEHOLDER.test(action.args.toolArgsJson ?? '')
+  );
+}
+
+/**
  * The positions of the run's last sign-in: its credential fills, each with
  * the click directly after it. A sign-in that spans two pages is one run of
  * fill and click pairs; a run that signed in twice restores the later one.

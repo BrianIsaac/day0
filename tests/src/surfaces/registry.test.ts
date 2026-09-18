@@ -1114,6 +1114,51 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(closing[3]).toMatchObject({ ok: true, authority: 'autonomous' });
   });
 
+  it('signs in again before a leading navigate when the invocation does not sign in itself', async (): Promise<void> => {
+    // The diagnosis's closingWithNavigate: a bare re-navigate in a new
+    // browser lands on the sign-in page, so the run's sign-in is replayed first.
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    const closing = await applySurfaceActions(ctx, 'real', [looker], run, [slackPhaseOne[0]!, ...closingTile], {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      idempotencyIndexOffset: 4,
+    });
+    expect(closing.map((row) => row.ok)).toEqual([true, true, true, true]);
+    expect(closing[0]!.sessionRestore?.steps.map((step) => step.replayOf)).toEqual([
+      'wi_1:run_1:0',
+      'wi_1:run_1:1',
+      'wi_1:run_1:2',
+    ]);
+    expect(closing[3]!.effect).toContain('visible figure 74%');
+  });
+
+  it('leaves a leading navigate alone when the invocation signs in itself', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    const again = [...slackPhaseOne.slice(0, 3), ...closingTile];
+    const closing = await applySurfaceActions(ctx, 'real', [looker], run, again, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2, 3, 4, 5]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      idempotencyIndexOffset: 4,
+    });
+    expect(closing.every((row) => row.ok)).toBe(true);
+    expect(closing.some((row) => 'sessionRestore' in row)).toBe(false);
+    expect(sentIn(driver, 2).filter((tool) => tool !== 'browser_snapshot')).toEqual([
+      'browser_navigate',
+      'browser_fill_form',
+      'browser_click',
+      'browser_fill_form',
+      'browser_click',
+    ]);
+  });
+
   it('opens no second sign-in when the invocation starts with its own navigate', async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sessionRecipe, type SessionRecipeStep } from '../../../src/surfaces/browser-session';
+import { sessionRecipe, signsIn, type SessionRecipeStep } from '../../../src/surfaces/browser-session';
 import type { ActionAuthority, AppliedAction } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
@@ -217,5 +217,16 @@ describe('the steps that re-establish a browser session', (): void => {
       ['browser_fill_form', 'wi:run:1'],
       ['browser_click', 'wi:run:2'],
     ]);
+  });
+});
+
+describe('telling a sign-in from any other fill', (): void => {
+  it('is a credential fill on the surface, and nothing else', (): void => {
+    expect(signsIn(signIn, 'looker')).toBe(true);
+    expect(signsIn(call('browser_fill_form', { fields: [{ name: 'Email', value: '{{ secret:looker }}' }] }), 'looker')).toBe(true);
+    expect(signsIn(fillCoverage, 'looker')).toBe(false);
+    expect(signsIn(clickSignIn, 'looker')).toBe(false);
+    expect(signsIn(signIn, 'other')).toBe(false);
+    expect(signsIn(undefined, 'looker')).toBe(false);
   });
 });
