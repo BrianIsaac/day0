@@ -644,17 +644,41 @@ export const finishPlanGroundingRead = internalMutation({
   },
 });
 
+/**
+ * The plan as stored: a plan may say it applied only this employee's own
+ * active corrections, so any other id is dropped, and each one kept lists
+ * the work item it was applied to. A plan that names none is stored as
+ * drafted.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item whose plan is being stored.
+ *   drafted: The plan the planner returned.
+ *
+ * Returns:
+ *   The plan to store and the corrections it applied.
+ */
+async function withAppliedCorrections(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  drafted: unknown,
+): Promise<{ plan: ExecutionPlan; applied: Id<'corrections'>[] }> {
+  const plan = drafted as ExecutionPlan;
+  if (!plan || typeof plan !== 'object' || plan.appliedCorrections === undefined) {
+    return { plan, applied: [] };
+  }
+  const { appliedCorrections, ...rest } = plan;
+  const applied = await markCorrectionsAppliedInTransaction(ctx, row, appliedCorrections);
+  return { plan: applied.length > 0 ? { ...rest, appliedCorrections: applied } : rest, applied };
+}
+
 export const setPlan = internalMutation({
   args: { workItemId: v.id('workItems'), plan: v.any() },
   handler: async (ctx, args): Promise<{ stored: boolean }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'claimed') return { stored: false };
-    // A plan may say it applied only this employee's own active corrections;
-    // any other id is dropped before the plan is stored.
-    const { appliedCorrections, ...drafted } = (args.plan ?? {}) as ExecutionPlan;
-    const applied = await markCorrectionsAppliedInTransaction(ctx, row, appliedCorrections ?? []);
-    const plan = applied.length > 0 ? { ...drafted, appliedCorrections: applied } : drafted;
+    const { plan, applied } = await withAppliedCorrections(ctx, row, args.plan);
     await ctx.db.patch(args.workItemId, {
       plan,
       state: 'plan-pending',
@@ -674,7 +698,7 @@ export const setPlan = internalMutation({
         payload: {
           workItemId: args.workItemId,
           correctionIds: applied,
-          ...(drafted.correctionsRedaction ? { redaction: drafted.correctionsRedaction } : {}),
+          ...(plan.correctionsRedaction ? { redaction: plan.correctionsRedaction } : {}),
         },
         createdAt: Date.now(),
       });

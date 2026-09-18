@@ -437,6 +437,32 @@ describe('a note on item one changes the plan of item two', (): void => {
     expect(await eventsOf(harness, 'work.corrections-applied')).toEqual([]);
   });
 
+  it('stores a plan that names no correction exactly as drafted', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'LOG-6',
+          title: 'Exception: SH-4540 short-shipped',
+          contentSummary: 'Notify the customer.',
+          contentRefs: [],
+          state: 'claimed',
+          verdict: { decision: 'claim' },
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+
+    await harness.mutation(internal.work.setPlan, { workItemId, plan: ticketOnePlan });
+
+    expect((await readItem(harness, workItemId)).plan).toEqual(ticketOnePlan);
+    expect(await eventsOf(harness, 'work.corrections-applied')).toEqual([]);
+  });
+
   it('stops feeding a correction back once the manager retires it', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
