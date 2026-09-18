@@ -83,26 +83,41 @@ export function scopeFieldsFor(surfaceClass: string): ScopeField[] {
   return [];
 }
 
+/** Order two strings by code unit, the same on every machine. */
+function byCodeUnit(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 /**
  * Read the documented intake values of each page, with the line stating each.
  *
  * A line that carries anything shaped like a secret is never quoted, so no
- * candidate can carry one onto a card.
+ * candidate can carry one onto a card. The page stating the most values comes
+ * first, then pages by ref, so a value stated on several pages is offered
+ * first from its fullest statement and the order never depends on the order
+ * the pages were synced in.
  *
  * Args:
  *   pages: Pages that name the system, in any order.
  *   fields: The fields to read.
  *
  * Returns:
- *   One candidate per field, value and page, from the first line stating it.
+ *   One candidate per field, value and page, from the first line stating it,
+ *   page by page.
  */
 export function scopeCandidates(
   pages: readonly ScopePage[],
   fields: readonly ScopeField[],
 ): ScopeCandidate[] {
-  const candidates: ScopeCandidate[] = [];
+  const byPage: Array<{ page: ScopePage; candidates: ScopeCandidate[] }> = [];
   const seen = new Set<string>();
-  const add = (field: ScopeField, raw: string, page: ScopePage, quote: string): void => {
+  const add = (
+    candidates: ScopeCandidate[],
+    field: ScopeField,
+    raw: string,
+    page: ScopePage,
+    quote: string,
+  ): void => {
     const value = field === 'channel' ? raw.toLowerCase() : raw.trim();
     const key = `${field}\0${value}\0${page.ref}`;
     if (!value || seen.has(key)) return;
@@ -116,6 +131,8 @@ export function scopeCandidates(
     });
   };
   for (const page of pages) {
+    const candidates: ScopeCandidate[] = [];
+    byPage.push({ page, candidates });
     let fence: { marker: string; length: number } | undefined;
     for (const line of page.markdown.split(/\r?\n/)) {
       const fenceMatch = CODE_FENCE.exec(line);
@@ -131,16 +148,23 @@ export function scopeCandidates(
       for (const field of fields) {
         if (field === 'channel') {
           if (!CHANNELS_LABEL.test(line)) continue;
-          for (const match of line.matchAll(CHANNEL_NAME)) add(field, match[1], page, quote);
+          for (const match of line.matchAll(CHANNEL_NAME)) add(candidates, field, match[1], page, quote);
           continue;
         }
         for (const grammar of FIELD_GRAMMARS[field]) {
-          for (const match of line.matchAll(grammar)) add(field, match[1], page, quote);
+          for (const match of line.matchAll(grammar)) add(candidates, field, match[1], page, quote);
         }
       }
     }
   }
-  return candidates;
+  return byPage
+    .sort(
+      (left, right): number =>
+        right.candidates.length - left.candidates.length ||
+        byCodeUnit(left.page.ref, right.page.ref) ||
+        byCodeUnit(left.page.sourceId ?? '', right.page.sourceId ?? ''),
+    )
+    .flatMap((item): ScopeCandidate[] => item.candidates);
 }
 
 /** How a note names one value, bounded so a model's output cannot flood the card. */

@@ -196,7 +196,7 @@ describe('intake scope candidates', (): void => {
     ]);
   });
 
-  it.fails('offers the page stating the most first, whatever order the pages were synced in', (): void => {
+  it('offers the page stating the most first, whatever order the pages were synced in', (): void => {
     // Rehearsal 1 synced the close status note runbook before the finance
     // handbook; both state `September close`, and a model that picks every
     // number keeps whichever is offered first.
