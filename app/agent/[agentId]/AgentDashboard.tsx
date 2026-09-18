@@ -2974,6 +2974,11 @@ export function WorkItemCard({
             redaction={plan.correctionsRedaction}
           />
           <PlanObligationsLine obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
+          {item.state === 'plan-pending' && item.planRejectedAt !== undefined ? (
+            <p className="mt-2 text-[var(--color-warn)]">
+              This plan was redrafted after you rejected an earlier plan. It waits for your approval even while autonomous actions are on.
+            </p>
+          ) : null}
           {item.state === 'plan-pending' ? (
             <PlanApprovalForm
               key={item._id}
@@ -3183,7 +3188,7 @@ export function WorkItemCard({
           {cancelledPlan ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               {autonomousActions
-                ? 'Retry drafts a new plan and your reason goes with it; autonomous actions are on, so the new plan runs once it is drafted.'
+                ? 'Retry drafts a new plan and your reason goes with it; the plan comes back to you before anything runs, even while autonomous actions are on.'
                 : 'Retry drafts a new plan and your reason goes with it; the plan comes back to you before anything runs.'}
             </p>
           ) : null}

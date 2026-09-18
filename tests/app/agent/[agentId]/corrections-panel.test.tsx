@@ -217,8 +217,50 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
     );
     expect(markup).toContain('>Retry<');
     expect(markup).toContain('the plan comes back to you before anything runs');
+    expect(markup).not.toContain('even while autonomous actions are on');
     expect(markup).toContain('aria-label="note for the retry"');
     expect(markup).toContain('Plan rejection reason');
+  });
+
+  it('shows that a rejected plan redraft waits for approval with autonomy on', (): void => {
+    const item = {
+      _id: 'w5',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'plan-pending',
+      title: 'Exception: SH-4533 missed the vessel',
+      contentSummary: 'Notify the customer of the new sailing.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'LOG-5',
+      observedAt: 1,
+      contentRefs: [],
+      planRejectedAt: 2,
+      plan: {
+        summary: 'Comment on the ticket instead.',
+        steps: ['Comment on the ticket.'],
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+        expectedOutputType: 'message',
+      },
+    } as unknown as Doc<'workItems'>;
+    const markup = renderToStaticMarkup(
+      <WorkItemCard
+        item={item}
+        surfaces={[]}
+        autonomousActions={true}
+        onApprovePlan={noop}
+        onCancelPlan={noop}
+        onRetryFailed={noop}
+        onReconcileFailed={resolved}
+        onApproveActions={resolved}
+        onRejectActions={resolved}
+        onResendDecision={resolved}
+      />,
+    );
+    expect(markup).toContain('It waits for your approval even while autonomous actions are on.');
+    expect(markup).toContain('>Approve plan<');
   });
 
   it('labels a plan rejection reason as its own kind of feedback', (): void => {

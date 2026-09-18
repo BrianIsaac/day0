@@ -618,6 +618,23 @@ describe('retrying a cancelled plan', (): void => {
     expect(promptsOf((name) => name.startsWith('day0-skill-'))).toEqual([]);
   });
 
+  it('holds a redraft for the manager even when autonomous actions are on and the cancel had no reason', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: true }));
+    const workItemId = await seedPendingPlan(harness, agentId);
+
+    await harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await drain(harness);
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-pending');
+    expect((row.plan as ExecutionPlan).summary).toBe('Send the customs-hold notice and set the follow-up.');
+    expect(await eventsOf(harness, 'work.plan-approved')).toEqual([]);
+    expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
+  });
+
   it('drafts the new plan with the manager\'s reason in front of the planner', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);

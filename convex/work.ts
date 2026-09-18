@@ -725,7 +725,7 @@ export const decidePlan = internalMutation({
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'plan-pending') return { approved: false };
     const agent = await ctx.db.get(row.agentId);
-    if (!agent || !autonomousActionsOn(agent)) {
+    if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
     }
@@ -1656,6 +1656,7 @@ async function cancelPlanInTransaction(
   await ctx.db.patch(row._id, {
     state: 'cancelled',
     skipReason,
+    ...(SURFACE_MODE === 'real' ? { planRejectedAt: Date.now() } : {}),
     // Kept in full, as a rejection reason is, for the plan Retry drafts next.
     ...(feedback
       ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'plan-rejection' as const } }

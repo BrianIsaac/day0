@@ -492,6 +492,8 @@ export default defineSchema({
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),
+    /** A manager rejected an earlier plan for this item; its redraft needs explicit approval. */
+    planRejectedAt: v.optional(v.number()),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),
