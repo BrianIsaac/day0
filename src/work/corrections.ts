@@ -13,6 +13,8 @@
  * here, in code, and never by a model.
  */
 
+import type { SpanModel } from '../redaction/client';
+import { redactText } from '../redaction/redact';
 import { surfaceSlug } from '../surfaces/slug';
 import { managerFeedbackLabel, type ManagerFeedbackKind } from './manager-feedback';
 import type { ExecutionPlan } from './types';
@@ -117,6 +119,45 @@ export function correctionEntry(
     when: `${new Date(record.createdAt).toISOString().slice(0, 16)}Z`,
     text: record.text,
   };
+}
+
+/**
+ * The prompt entries for kept corrections, scrubbed at prompt assembly.
+ *
+ * A correction is stored as the manager wrote it, as `managerFeedback` is;
+ * before a prompt carries it, its text and the title of the item it came
+ * from pass the owner's stored values, the structural grammar and the span
+ * model, the way a grounding read does. Without the model the first two
+ * still run and the result says so.
+ *
+ * Args:
+ *   rows: The corrections, in prompt order.
+ *   options: The span model, when one is configured, and the owner's stored values.
+ *
+ * Returns:
+ *   The entries, and `structural-only` when the model was not consulted.
+ */
+export async function scrubbedCorrectionEntries(
+  rows: ReadonlyArray<Pick<CorrectionRecord, '_id' | 'kind' | 'itemTitle' | 'createdAt' | 'text'>>,
+  options: { model?: SpanModel; known?: readonly string[] },
+): Promise<{ entries: PlannerCorrection[]; redaction?: 'structural-only' }> {
+  let degraded = false;
+  const scrub = async (value: string): Promise<string> => {
+    const result = await redactText(value, 'prompt', {
+      model: options.model,
+      known: options.known ?? [],
+      onUnavailable: 'structural',
+    });
+    degraded = degraded || result.degraded !== undefined;
+    return result.text;
+  };
+  const entries: PlannerCorrection[] = [];
+  for (const row of rows) {
+    const text = await scrub(row.text);
+    const itemTitle = await scrub(row.itemTitle);
+    entries.push(correctionEntry({ ...row, text, itemTitle }));
+  }
+  return degraded ? { entries, redaction: 'structural-only' } : { entries };
 }
 
 /**

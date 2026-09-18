@@ -194,7 +194,7 @@ vi.mock('../../src/lib/mastra', () => ({
         recorded.planCalls += 1;
         return {
           ...(recorded.planCalls === 1 ? gatedPlan : cleanPlan),
-          stepObligations: null, transition: null, transitionStep: null,
+          stepObligations: null, transition: null, transitionStep: null, appliedCorrections: null,
         } as T;
       }
       if (name === 'day0-plan-obligations') return cleanPlanObligations as T;

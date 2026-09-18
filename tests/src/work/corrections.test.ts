@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import {
   appliedCorrectionIds,
   CORRECTIONS_HEADING,
@@ -8,6 +9,7 @@ import {
   correctionSurfaces,
   plannerCorrectionLines,
   executorCorrectionLines,
+  scrubbedCorrectionEntries,
   selectCorrections,
   type CorrectionRecord,
 } from '../../../src/work/corrections';
@@ -165,5 +167,31 @@ describe('the surfaces a correction is kept against', (): void => {
         },
       }),
     ).toEqual(['linear', 'looker-pipeline-tile', 'slack']);
+  });
+});
+
+describe('the scrub at prompt assembly', (): void => {
+  it('removes a stored value and a credential shape from the text and the title, and says the model was not consulted', async (): Promise<void> => {
+    const row = correction({
+      _id: 'c1',
+      text: 'Use portal password hunter2 and token xoxb-1234567890-abcdefghij for the carrier.',
+      itemTitle: 'Exception: SH-4471 (portal hunter2)',
+    });
+    const scrubbed = await scrubbedCorrectionEntries([row], { known: ['hunter2'] });
+    expect(scrubbed.redaction).toBe('structural-only');
+    expect(scrubbed.entries[0]?.text).not.toContain('hunter2');
+    expect(scrubbed.entries[0]?.text).not.toContain('xoxb-1234567890-abcdefghij');
+    expect(scrubbed.entries[0]?.from).not.toContain('hunter2');
+    expect(row.text).toContain('hunter2');
+  });
+
+  it('consults the span model when one is configured', async (): Promise<void> => {
+    const scrubbed = await scrubbedCorrectionEntries(
+      [correction({ _id: 'c1', text: 'The carrier portal password is Tr0ub4dor&3, ask Priya.' })],
+      { model: new RecordedSpanModel() },
+    );
+    expect(scrubbed.redaction).toBeUndefined();
+    expect(scrubbed.entries[0]?.text).not.toContain('Tr0ub4dor&3');
+    expect(scrubbed.entries[0]?.text).toContain('Priya');
   });
 });

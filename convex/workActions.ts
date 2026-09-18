@@ -74,6 +74,11 @@ import {
 } from '../src/work/skill-shape';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
+import {
+  scrubbedCorrectionEntries,
+  selectCorrections,
+  type PlannerCorrection,
+} from '../src/work/corrections';
 import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
@@ -499,6 +504,7 @@ async function draftPlanHandler(
   if (!agent) return { ok: false, reason: 'agent not found' };
   const candidate = rowToCandidate(item);
   const grounding = await planGrounding(ctx, agentId, internalCaller);
+  const knownValues = await knownValuesForAgent(ctx, agent);
   const record =
     SURFACE_MODE === 'real' && agent
       ? await readCandidateRecord(ctx, {
@@ -508,9 +514,10 @@ async function draftPlanHandler(
           autonomousActions: autonomousActionsOn(agent),
           candidate,
           surfaces: grounding.surfaces ?? [],
-          knownValues: await knownValuesForAgent(ctx, agent),
+          knownValues,
         })
       : undefined;
+  const corrections = SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
   const plan = await draftExecutionPlan({
     candidate,
     charter: charterRow.body as Charter,
@@ -518,6 +525,12 @@ async function draftPlanHandler(
     surfaceMode: SURFACE_MODE,
     ...grounding,
     ...(record ? { record } : {}),
+    ...(corrections && corrections.entries.length > 0
+      ? {
+          corrections: corrections.entries,
+          ...(corrections.redaction ? { correctionsRedaction: corrections.redaction } : {}),
+        }
+      : {}),
     onObligationEvent: async (event) => {
       await ctx.runMutation(internal.events.log, {
         agentId,
@@ -1857,6 +1870,32 @@ async function readCandidateRecord(
     const { surface, tool, subject } = read;
     return { surface, tool, subject, unavailable: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * The manager's corrections a later item is planned with: this employee's
+ * active ones of the item's kind, selected in code and scrubbed for the
+ * prompt. The scope judgement never reads them; scope is the charter's.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   item: The work item about to be planned.
+ *   knownValues: The owner's stored values, resolved once by the calling action.
+ *
+ * Returns:
+ *   The prompt entries, and whether the scrub ran without the span model.
+ */
+async function plannerCorrections(
+  ctx: ActionCtx,
+  item: Doc<'workItems'>,
+  knownValues: readonly string[],
+): Promise<{ entries: PlannerCorrection[]; redaction?: 'structural-only' }> {
+  const rows: Doc<'corrections'>[] = await ctx.runQuery(internal.corrections.activeForAgent, {
+    agentId: item.agentId,
+  });
+  const selected = selectCorrections(rows, item);
+  if (selected.length === 0) return { entries: [] };
+  return await scrubbedCorrectionEntries(selected, { model: spanModelFromEnv(), known: knownValues });
 }
 
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {

@@ -341,7 +341,7 @@ describe('a note on item one changes the plan of item two', (): void => {
     expect(correction.retiredAt).toBeUndefined();
   });
 
-  // Red until the planner and the executor read corrections.
+  // Red until the executor carries the corrections its plan applied.
   it.fails('drafts item two with the note, stores that it applied it, and carries it to the executor', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -463,8 +463,7 @@ describe('a note on item one changes the plan of item two', (): void => {
     expect((await correctionsOf(harness, agentId))[0]?.retiredAt).toBeUndefined();
   });
 
-  // Red until the planner reads corrections.
-  it.fails('keeps the note as written and scrubs a stored value out of the prompt', async (): Promise<void> => {
+  it('keeps the note as written and scrubs a stored value out of the prompt', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
     const withToken = `${NOTE} The carrier portal token is xoxb-1234567890-abcdefghij.`;
@@ -591,8 +590,7 @@ describe('retrying a cancelled plan', (): void => {
     expect(promptsOf((name) => name.startsWith('day0-skill-'))).toEqual([]);
   });
 
-  // Red until the planner reads corrections.
-  it.fails('drafts the new plan with the manager\'s reason in front of the planner', async (): Promise<void> => {
+  it('drafts the new plan with the manager\'s reason in front of the planner', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
     const workItemId = await seedPendingPlan(harness, agentId);
