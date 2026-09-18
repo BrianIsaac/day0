@@ -304,6 +304,7 @@ export function parseDemoBedArguments(
     volumes: false,
     probeTimeout: 15,
   };
+  let projectExplicit = false;
   const valueOf = (index: number, flag: string): string => {
     const value = words[index + 1];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value.`);
@@ -314,6 +315,7 @@ export function parseDemoBedArguments(
     switch (flag) {
       case '--project':
         options.project = valueOf(index, flag);
+        projectExplicit = true;
         index += 1;
         break;
       case '--profile': {
@@ -380,6 +382,9 @@ export function parseDemoBedArguments(
     throw new Error(
       `No compose project: set COMPOSE_PROJECT_NAME in ${ENV_FILE} or pass --project <name>.`,
     );
+  }
+  if (options.command === 'snapshot' && projectExplicit) {
+    throw new Error('snapshot does not take --project; choose the read-only source with --from-volume.');
   }
   return options;
 }
@@ -1345,11 +1350,15 @@ function elapsed(startedAt: number): string {
  * Returns:
  *   The keys to write, and nothing the file already answers.
  */
-function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPorts): void {
+function assertProjectMatch(project: string, values: Readonly<Values>): void {
   assertBedProject(project);
   if (values.COMPOSE_PROJECT_NAME && values.COMPOSE_PROJECT_NAME !== project) {
     throw new Error(`The file names project ${values.COMPOSE_PROJECT_NAME}, not ${project}.`);
   }
+}
+
+function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPorts): void {
+  assertProjectMatch(project, values);
   if (values.CONVEX_DEPLOYMENT) throw new Error('A demo bed cannot target CONVEX_DEPLOYMENT.');
   if (values.DAY0_TEST_SLACK_API_URL && values.DAY0_TEST_SLACK_API_URL !== TEST_SLACK_API_URL) {
     throw new Error(`DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} for the trial copy.`);
@@ -1661,6 +1670,7 @@ function snapshot(options: DemoBedOptions): void {
 
 function restore(options: DemoBedOptions): void {
   const target = restoreTargetVolume(options.project);
+  assertProjectMatch(options.project, readEnvFile());
   if (!options.snapshot) throw new Error('restore needs --snapshot <file>.');
   const source = resolve(options.snapshot);
   if (!existsSync(source)) throw new Error(`${source} does not exist.`);
@@ -2411,6 +2421,7 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
 function down(options: DemoBedOptions): void {
   assertBedProject(options.project);
   const values = readEnvFile();
+  assertProjectMatch(options.project, values);
   const profiles = Object.keys(PROFILES);
   const args = [...composeArgs(options, profiles), 'down'];
   if (options.volumes) {

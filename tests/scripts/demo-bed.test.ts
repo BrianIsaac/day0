@@ -111,6 +111,8 @@ describe('command line', (): void => {
       'day0-final',
     );
     expect(() => parseDemoBedArguments(['up'], {})).toThrow('COMPOSE_PROJECT_NAME');
+    expect(() => parseDemoBedArguments(['snapshot', '--project', 'day0'], {}))
+      .toThrow('snapshot does not take --project');
   });
 
   it('drops the separator pnpm inserts and reads the flags each subcommand takes', (): void => {
@@ -211,6 +213,37 @@ describe('the protected volumes and projects', (): void => {
 });
 
 describe('snapshot and restore run through a throwaway container', (): void => {
+  it('refuses a protected project in the file before restore or down can call Docker', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-contract-'));
+    const bin = join(scratch, 'bin');
+    const calls = join(scratch, 'docker-calls');
+    mkdirSync(bin);
+    const docker = join(bin, 'docker');
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
+    chmodSync(docker, 0o755);
+    writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0\n');
+    writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
+    const command = join(process.cwd(), 'node_modules/.bin/tsx');
+    const script = join(process.cwd(), 'scripts/demo-bed.ts');
+    try {
+      for (const args of [
+        ['restore', '--project', 'day0-p11r-a18', '--snapshot', 'snapshot.tar.gz'],
+        ['down', '--project', 'day0-p11r-a18', '--volumes'],
+      ]) {
+        const result = spawnSync(command, [script, ...args], {
+          cwd: scratch,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+          encoding: 'utf8',
+        });
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain('file names project day0');
+        expect(existsSync(calls)).toBe(false);
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('refuses an output outside its snapshot directory before calling Docker', (): void => {
     const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-snapshot-'));
     const bin = join(scratch, 'bin');
