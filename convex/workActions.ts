@@ -54,8 +54,10 @@ import { asAgentId } from '../src/lib/ids';
 import {
   applySurfaceActions,
   readSurfaceSnapshot,
+  type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
+import { withheldByClaimReason, writeTargetIds } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -1745,6 +1747,7 @@ export const applyApprovedActions = internalAction({
           autoPhase: claim.phase === 'auto',
           autonomousActions: claim.autonomousActions,
           replyTarget: claim.replyTarget,
+          ...(SURFACE_MODE === 'real' ? { claimHold: heldByAnotherWorkItem(ctx, args.workItemId) } : {}),
         }),
         output.argumentRepairs,
       );
@@ -1816,6 +1819,29 @@ export const applyApprovedActions = internalAction({
     }
   },
 });
+
+/**
+ * The apply path's read of the owner-wide claims, for the items a set writes.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   workItemId: The work item whose set is being applied.
+ *
+ * Returns:
+ *   The check `applySurfaceActions` makes before a write is sent.
+ */
+function heldByAnotherWorkItem(ctx: ActionCtx, workItemId: Id<'workItems'>): ClaimHold {
+  return async (parsed, surface): Promise<string | undefined> => {
+    const targets = writeTargetIds(parsed, surface);
+    if (targets.length === 0) return undefined;
+    const holder = await ctx.runQuery(internal.work.writeClaimHolder, {
+      workItemId,
+      surfaceSlug: surface.slug,
+      targets,
+    });
+    return holder ? withheldByClaimReason(holder) : undefined;
+  };
+}
 
 /**
  * The runtime the real-mode adapters run in: credentials decrypted through

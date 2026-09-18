@@ -68,6 +68,9 @@ export interface RealAdapterDeps {
   knownValues?: readonly string[];
 }
 
+/** The reason a write is withheld for another work item's claim on its target, or undefined. */
+export type ClaimHold = (action: ParsedSurfaceAction, surface: SurfaceRecord) => Promise<string | undefined>;
+
 export interface ApplyOptions {
   /** Real-mode adapter dependencies; required whenever `mode` is `real`. */
   deps?: RealAdapterDeps;
@@ -113,6 +116,13 @@ export interface ApplyOptions {
   autonomousActions?: boolean;
   /** Exact source channel and thread when the work item is a chat reply. */
   replyTarget?: ReplyTarget;
+  /**
+   * Why a write is withheld because another work item holds the external
+   * item it addresses, if one does. Asked for each write that would be sent
+   * or left to the manager, as late as the row is reached; a reason records
+   * the row as held and nothing is sent. Real mode supplies it.
+   */
+  claimHold?: ClaimHold;
   /**
    * The runs whose prerequisite ledger this run resumed at its closing phase.
    * Their landed browser rows re-establish this run's session as its own
@@ -221,6 +231,24 @@ export async function readSurfaceSnapshot(
 
 function refused(tool: string, reason: string, idempotencyKey: string): AppliedAction {
   return { tool, ok: false, reason, idempotencyKey };
+}
+
+/** A row that is accounted for and was not sent, with why. */
+function heldRow(action: MockAction, reason: string, idempotencyKey: string): AppliedAction {
+  return { tool: action.tool, ok: true, held: true, reason, effect: describeAction(action), idempotencyKey };
+}
+
+/** Why another work item's claim withholds a surface write, if it does. */
+async function claimHoldFor(
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+  claimHold: ClaimHold | undefined,
+): Promise<string | undefined> {
+  if (!claimHold || !isSurfaceTool(action.tool)) return undefined;
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok || actionIntent(parsed.action) !== 'write') return undefined;
+  const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+  return surface ? await claimHold(parsed.action, surface) : undefined;
 }
 
 /**
@@ -423,6 +451,13 @@ export async function applySurfaceActions(
       }
       if (options.approvedIndexes && !options.approvedIndexes.has(index)) {
         const deferred = options.deferredIndexes?.has(index) === true;
+        // A write another work item's claim withholds is not left for the
+        // manager to decide: approving it could not send it.
+        const claimed = deferred ? await claimHoldFor(action, surfaces, options.claimHold) : undefined;
+        if (claimed) {
+          applied.push(heldRow(action, claimed, idempotencyKey));
+          continue;
+        }
         applied.push({
           tool: action.tool,
           ok: true,
@@ -502,6 +537,13 @@ export async function applySurfaceActions(
       }
       if (autoPhase && !isAutomatic(parsed.action, surface, autonomousActions)) {
         applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
+        continue;
+      }
+      // Before the comment-before-status rule: a status change whose comment
+      // the same claim withheld is withheld with it, not refused for lacking it.
+      const claimed = await claimHoldFor(action, surfaces, options.claimHold);
+      if (claimed) {
+        applied.push(heldRow(action, claimed, idempotencyKey));
         continue;
       }
       if (statusChangeWithoutComment(
