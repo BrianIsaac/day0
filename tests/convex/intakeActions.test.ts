@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import {
   compareProviderTs,
   issueProject,
+  issueTeamLabels,
   linearCandidate,
   linearListArguments,
   mcpIssuePage,
@@ -1179,6 +1180,7 @@ describe('intake provider contracts', (): void => {
         after: 'cursor-2',
       },
       projectEnforced: true,
+      teamEnforced: true,
       checkpointEnforced: true,
     });
     expect(
@@ -1187,7 +1189,12 @@ describe('intake provider contracts', (): void => {
         { project: 'Q3 close' },
         Date.parse('2026-08-26T01:00:00.000Z'),
       ),
-    ).toEqual({ args: { limit: 100 }, projectEnforced: false, checkpointEnforced: false });
+    ).toEqual({
+      args: { limit: 100 },
+      projectEnforced: false,
+      teamEnforced: false,
+      checkpointEnforced: false,
+    });
     expect(
       (): LinearListRequest =>
         linearListArguments(
@@ -1215,6 +1222,15 @@ describe('intake provider contracts', (): void => {
         { project: 'Q3 close' },
       ).args,
     ).toEqual({ project: 'Q3 close' });
+    expect(
+      linearListArguments({ properties: { team: {}, project: {}, limit: {} } }, { team: 'FIN' }).args,
+    ).toEqual({ team: 'FIN', limit: 100 });
+    expect(issueTeamLabels({ id: 'FIN-4', team: 'Finance close' })).toEqual(['finance close', 'fin']);
+    expect(issueTeamLabels({ id: 'uuid-1', team: { key: 'LOG', name: 'Logistics desk' } })).toEqual([
+      'log',
+      'logistics desk',
+    ]);
+    expect(issueTeamLabels({ id: '0d3c5b4e-8f5e-4a0e-9d37-6f1f0b7b9a11' })).toEqual([]);
     expect(issueProject({ project: { name: 'Q3 close', id: 'p1' } })).toBe('Q3 close');
     expect(issueProject({ project: 'Q3 close' })).toBe('Q3 close');
     expect(issueProject({ projectName: 'Q3 close' })).toBe('Q3 close');
@@ -1811,7 +1827,7 @@ describe('each employee reads its own approved queues', (): void => {
     );
   }
 
-  it.fails('bounds each list_issues call to its own team and project, whichever handbook comes first', async (): Promise<void> => {
+  it('bounds each list_issues call to its own team and project, whichever handbook comes first', async (): Promise<void> => {
     for (const order of ['revops-first', 'finance-first'] as const) {
       const harness = runtimeHarness(companySurfaces(), companyPageRows(order), companyCredentials(), [
         revopsAgent,
@@ -1850,7 +1866,7 @@ describe('each employee reads its own approved queues', (): void => {
     }
   });
 
-  it.fails("reads only the approved channels, so finance never reads #revops-asks", async (): Promise<void> => {
+  it("reads only the approved channels, so finance never reads #revops-asks", async (): Promise<void> => {
     for (const order of ['revops-first', 'finance-first'] as const) {
       const harness = runtimeHarness(companySurfaces(), companyPageRows(order), companyCredentials(), [
         revopsAgent,
@@ -1908,7 +1924,7 @@ describe('each employee reads its own approved queues', (): void => {
     }
   });
 
-  it.fails('reads nothing from an empty approved scope and says why, before any credential is used', async (): Promise<void> => {
+  it('reads nothing from an empty approved scope and says why, before any credential is used', async (): Promise<void> => {
     const surfaces = companySurfaces().map((surface): Doc<'surfaces'> => ({ ...surface, intakeScope: {} }));
     const decrypted: string[] = [];
     const harness = runtimeHarness(surfaces, companyPageRows('revops-first'), companyCredentials(), [
@@ -1940,7 +1956,7 @@ describe('each employee reads its own approved queues', (): void => {
     ]);
   });
 
-  it.fails('bounds intake to the approved team itself when the schema takes no team argument', async (): Promise<void> => {
+  it('bounds intake to the approved team itself when the schema takes no team argument', async (): Promise<void> => {
     const finance = companySurfaces()[1];
     const issue = (identifier: string, team: unknown): Record<string, unknown> => ({
       id: identifier,
