@@ -76,7 +76,9 @@ print(code,end='')
   }
 }
 
-describe('arrival probe response paths', () => {
+// Every case runs the probe script with its one-second network timeouts, so the slowest takes
+// over three seconds alone and overran the default five in a full run on a loaded machine.
+describe('arrival probe response paths', { timeout: 30_000 }, () => {
   it('bounds certificate inspection when TCP connects but TLS stalls', () => {
     const result = exercise('tls');
     expect(result.stdout).toContain('Summary');
