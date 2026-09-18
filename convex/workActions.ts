@@ -250,18 +250,20 @@ function buildLookups(args: {
   agentId: Id<'agents'>;
   registeredSkills: SimpleSkillRow[];
   grantedScopes: Set<string>;
+  internalCaller: boolean;
 }): EvaluateLookups {
   return {
     hasGrantForScope: async (scope) => args.grantedScopes.has(scope),
     findExistingClaim: async (sourceSystem, externalId) => {
-      return await args.ctx.runQuery(api.work.findExistingClaim, {
-        agentId: args.agentId,
-        sourceSystem,
-        externalId,
-      });
+      const lookup = { agentId: args.agentId, sourceSystem, externalId };
+      return args.internalCaller
+        ? await args.ctx.runQuery(internal.work.findExistingClaimInternal, lookup)
+        : await args.ctx.runQuery(api.work.findExistingClaim, lookup);
     },
     countOpenClaims: async () => {
-      return await args.ctx.runQuery(api.work.countOpenForAgent, { agentId: args.agentId });
+      return args.internalCaller
+        ? await args.ctx.runQuery(internal.work.countOpenForAgentInternal, { agentId: args.agentId })
+        : await args.ctx.runQuery(api.work.countOpenForAgent, { agentId: args.agentId });
     },
     findMatchingSkill: async (candidate, charter, shape) => {
       void charter;
@@ -271,186 +273,287 @@ function buildLookups(args: {
   };
 }
 
+/**
+ * Evaluate one discovered work item and store the verdict.
+ *
+ * The dashboard's public action and the server loop's internal one share
+ * this handler; `internalCaller` swaps the ownership-checked reads for
+ * internal ones, since a scheduled step has no caller. In real mode the step
+ * claims the row first, so a second run arriving while this one holds the
+ * model call returns at once.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The work item.
+ *   internalCaller: Whether the caller is the scheduler rather than a page.
+ *
+ * Returns:
+ *   The stored decision, or a `noop-` reason when the step was not this run's.
+ */
+async function evaluateWorkItemHandler(
+  ctx: ActionCtx,
+  args: { workItemId: Id<'workItems'> },
+  internalCaller = false,
+): Promise<{ decision: string }> {
+  const item: Doc<'workItems'> | null = internalCaller
+    ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
+    : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
+  if (!item) throw new Error('workItem not found');
+  const agentId = item.agentId;
+  // Race-tolerance: the dashboard's auto-progress useEffect can fire
+  // evaluateWorkItem after the item already moved past `discovered`
+  // (e.g. evaluator + draftPlan on the same render tick). The
+  // findExistingClaim self-match below would otherwise see the
+  // item's own `claimed` state and stomp the verdict back to skip.
+  // No-op cleanly in that case — same posture as draftPlan and
+  // executeApprovedPlan (lines below).
+  if (item.state !== 'discovered') {
+    return { decision: `noop-state=${item.state}` };
+  }
+  if (SURFACE_MODE === 'real') {
+    const claim = await ctx.runMutation(internal.work.claimLoopStep, {
+      workItemId: args.workItemId,
+      step: 'evaluation',
+    });
+    if (!claim.claimed) return { decision: `noop-${claim.reason}` };
+  }
+  const charterRow = internalCaller
+    ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
+    : await ctx.runQuery(api.charters.latest, { agentId });
+  if (!charterRow || !charterRow.approved) {
+    throw new Error('cannot evaluate: charter not approved');
+  }
+  const charter = charterRow.body as Charter;
+  const [agent, agentsMd, skillRows, grantRows, surfaceConfig, surfaces] = internalCaller
+    ? await Promise.all([
+        ctx.runQuery(internal.agents.getInternal, { agentId }),
+        ctx.runQuery(internal.workspace.readFileInternal, { agentId, fileName: 'AGENTS.md' }),
+        ctx.runQuery(internal.skills.registeredInternal, { agentId }),
+        ctx.runQuery(internal.agents.grantedScopes, { agentId }),
+        { mode: SURFACE_MODE },
+        ctx.runQuery(internal.orientationData.surfacesForAgent, { agentId }),
+      ])
+    : await Promise.all([
+        ctx.runQuery(api.agents.get, { agentId }),
+        ctx.runQuery(api.workspace.readFile, {
+          agentId,
+          fileName: 'AGENTS.md',
+        }),
+        ctx.runQuery(api.skills.registered, { agentId }),
+        ctx.runQuery(internal.agents.grantedScopes, { agentId }),
+        ctx.runQuery(api.config.surfaceMode, {}),
+        ctx.runQuery(api.surfaces.listForAgent, { agentId }),
+      ]);
+  if (!agent) throw new Error('agent not found');
+  const registeredSkills: SimpleSkillRow[] = skillRows.map((s: Doc<'skills'>) => ({
+    _id: s._id,
+    name: s.name,
+    description: s.description,
+    body: s.body,
+    requiredScopes: s.requiredScopes,
+    targetSurface: s.targetSurface,
+    surfaceClass: s.surfaceClass,
+    operation: s.operation,
+  }));
+  const grantedScopes = new Set<string>(grantRows.map((g) => g.scope));
+
+  const lookups = buildLookups({
+    ctx,
+    agentId,
+    registeredSkills,
+    grantedScopes,
+    internalCaller,
+  });
+  const candidate = rowToCandidate(item);
+  let scopeJudgementUnavailable: string | undefined;
+  const verdict = await evaluateCandidate(
+    candidate,
+    {
+      agentId: asAgentId(agentId),
+      charter,
+      agentsMd: agentsMd ?? '',
+      bossLabel: charter.approvalChain.boss,
+      autonomousActions: autonomousActionsOn(agent),
+      surfaceMode: surfaceConfig.mode,
+      surfaces,
+      qualityFitWaived: item.qualityFitWaivedAt !== undefined,
+      scopeWaived: item.scopeWaivedAt !== undefined,
+    },
+    lookups,
+    {
+      onScopeJudgement: (judgement): void => {
+        if (judgement.admitted && judgement.failedOpen !== undefined) {
+          scopeJudgementUnavailable = judgement.failedOpen;
+        }
+      },
+    },
+  );
+  if (scopeJudgementUnavailable !== undefined) {
+    await ctx.runMutation(internal.events.log, {
+      agentId,
+      type: 'work.scope-judgement-unavailable',
+      payload: { workItemId: args.workItemId, cause: scopeJudgementUnavailable },
+    });
+  }
+  const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {
+    workItemId: args.workItemId,
+    verdict,
+  });
+
+  // For needs-skill, propose a new skill row immediately.
+  if (storedVerdict.decision === 'needs-skill' && verdict.decision === 'needs-skill') {
+    const required = inferRequiredPermissions(candidate);
+    const writeScope = `${candidate.sourceSystem}:write`;
+    const requiredScopes = [...new Set([...required, writeScope])];
+    const shape = verdict.suggestedSkillShape;
+    const skillId = await ctx.runMutation(internal.skills.propose, {
+      agentId,
+      workItemId: args.workItemId,
+      name: verdict.suggestedSkillName,
+      description: skillDescriptionFor(shape),
+      rationale: verdict.suggestedSkillRationale,
+      requiredScopes,
+      surfaceClass: shape.surfaceClass,
+      operation: shape.operation,
+    });
+    await ctx.runMutation(internal.work.setProposedSkill, {
+      workItemId: args.workItemId,
+      skillId,
+    });
+  }
+
+  return { decision: storedVerdict.decision };
+}
+
 export const evaluateWorkItem = action({
   args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ decision: string }> =>
+    await evaluateWorkItemHandler(ctx, args),
+});
+
+/** The server loop's evaluation step, scheduled when a row enters `discovered`. */
+export const evaluateWorkItemInternal = internalAction({
+  args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ decision: string }> => {
-    const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
-      workItemId: args.workItemId,
-    });
-    if (!item) throw new Error('workItem not found');
-    const agentId = item.agentId;
-    // Race-tolerance: the dashboard's auto-progress useEffect can fire
-    // evaluateWorkItem after the item already moved past `discovered`
-    // (e.g. evaluator + draftPlan on the same render tick). The
-    // findExistingClaim self-match below would otherwise see the
-    // item's own `claimed` state and stomp the verdict back to skip.
-    // No-op cleanly in that case — same posture as draftPlan and
-    // executeApprovedPlan (lines below).
-    if (item.state !== 'discovered') {
-      return { decision: `noop-state=${item.state}` };
-    }
-    const charterRow = await ctx.runQuery(api.charters.latest, {
-      agentId,
-    });
-    if (!charterRow || !charterRow.approved) {
-      throw new Error('cannot evaluate: charter not approved');
-    }
-    const charter = charterRow.body as Charter;
-    const [agent, agentsMd, skillRows, grantRows, surfaceConfig, surfaces] = await Promise.all([
-      ctx.runQuery(api.agents.get, { agentId }),
-      ctx.runQuery(api.workspace.readFile, {
-        agentId,
-        fileName: 'AGENTS.md',
-      }),
-      ctx.runQuery(api.skills.registered, { agentId }),
-      ctx.runQuery(internal.agents.grantedScopes, { agentId }),
-      ctx.runQuery(api.config.surfaceMode, {}),
-      ctx.runQuery(api.surfaces.listForAgent, { agentId }),
-    ]);
-    const registeredSkills: SimpleSkillRow[] = skillRows.map((s: Doc<'skills'>) => ({
-      _id: s._id,
-      name: s.name,
-      description: s.description,
-      body: s.body,
-      requiredScopes: s.requiredScopes,
-      targetSurface: s.targetSurface,
-      surfaceClass: s.surfaceClass,
-      operation: s.operation,
-    }));
-    const grantedScopes = new Set<string>(grantRows.map((g) => g.scope));
-
-    const lookups = buildLookups({
-      ctx,
-      agentId,
-      registeredSkills,
-      grantedScopes,
-    });
-    const candidate = rowToCandidate(item);
-    let scopeJudgementUnavailable: string | undefined;
-    const verdict = await evaluateCandidate(
-      candidate,
-      {
-        agentId: asAgentId(agentId),
-        charter,
-        agentsMd: agentsMd ?? '',
-        bossLabel: charter.approvalChain.boss,
-        autonomousActions: autonomousActionsOn(agent),
-        surfaceMode: surfaceConfig.mode,
-        surfaces,
-        qualityFitWaived: item.qualityFitWaivedAt !== undefined,
-        scopeWaived: item.scopeWaivedAt !== undefined,
-      },
-      lookups,
-      {
-        onScopeJudgement: (judgement): void => {
-          if (judgement.admitted && judgement.failedOpen !== undefined) {
-            scopeJudgementUnavailable = judgement.failedOpen;
-          }
-        },
-      },
-    );
-    if (scopeJudgementUnavailable !== undefined) {
-      await ctx.runMutation(internal.events.log, {
-        agentId,
-        type: 'work.scope-judgement-unavailable',
-        payload: { workItemId: args.workItemId, cause: scopeJudgementUnavailable },
-      });
-    }
-    const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {
-      workItemId: args.workItemId,
-      verdict,
-    });
-
-    // For needs-skill, propose a new skill row immediately.
-    if (storedVerdict.decision === 'needs-skill' && verdict.decision === 'needs-skill') {
-      const required = inferRequiredPermissions(candidate);
-      const writeScope = `${candidate.sourceSystem}:write`;
-      const requiredScopes = [...new Set([...required, writeScope])];
-      const shape = verdict.suggestedSkillShape;
-      const skillId = await ctx.runMutation(internal.skills.propose, {
-        agentId,
-        workItemId: args.workItemId,
-        name: verdict.suggestedSkillName,
-        description: skillDescriptionFor(shape),
-        rationale: verdict.suggestedSkillRationale,
-        requiredScopes,
-        surfaceClass: shape.surfaceClass,
-        operation: shape.operation,
-      });
-      await ctx.runMutation(internal.work.setProposedSkill, {
-        workItemId: args.workItemId,
-        skillId,
-      });
-    }
-
-    return { decision: storedVerdict.decision };
+    if (SURFACE_MODE !== 'real') return { decision: 'noop-mode=mock' };
+    return await evaluateWorkItemHandler(ctx, args, true);
   },
 });
 
+/**
+ * Draft the plan for one claimed work item, and continue into execution when
+ * the autonomous switch approves it at the decision boundary.
+ *
+ * Shared by the dashboard's public action and the server loop's internal one,
+ * as `evaluateWorkItemHandler` is; the execution it chains into reads the
+ * same way its caller did.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The work item.
+ *   internalCaller: Whether the caller is the scheduler rather than a page.
+ *
+ * Returns:
+ *   Whether a plan was stored, and the execution's result when it continued.
+ */
+async function draftPlanHandler(
+  ctx: ActionCtx,
+  args: { workItemId: Id<'workItems'> },
+  internalCaller = false,
+): Promise<{ ok: boolean; reason?: string }> {
+  const item: Doc<'workItems'> | null = internalCaller
+    ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
+    : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
+  if (!item) return { ok: false, reason: 'workItem not found' };
+  const agentId = item.agentId;
+  // Race-tolerant: the dashboard's auto-progress useEffect can fire
+  // draftPlan after the state has already moved past 'claimed' (e.g.
+  // a stale render, or an evaluator stomp). Treat the mismatch as a
+  // no-op rather than an error so the React tree doesn't surface it
+  // as a fatal Console Error.
+  if (item.state !== 'claimed') {
+    return { ok: false, reason: `state is ${item.state}; expected claimed` };
+  }
+  if (SURFACE_MODE === 'real') {
+    const claim = await ctx.runMutation(internal.work.claimLoopStep, {
+      workItemId: args.workItemId,
+      step: 'draft',
+    });
+    if (!claim.claimed) {
+      return {
+        ok: false,
+        reason:
+          claim.reason === 'claimed'
+            ? 'another draft of this work item is running'
+            : `${claim.reason}; expected claimed`,
+      };
+    }
+  }
+  const charterRow = internalCaller
+    ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
+    : await ctx.runQuery(api.charters.latest, { agentId });
+  if (!charterRow) return { ok: false, reason: 'no charter' };
+  const agent = internalCaller
+    ? await ctx.runQuery(internal.agents.getInternal, { agentId })
+    : await ctx.runQuery(api.agents.get, { agentId });
+  if (!agent) return { ok: false, reason: 'agent not found' };
+  const candidate = rowToCandidate(item);
+  const grounding = await planGrounding(ctx, agentId, internalCaller);
+  const record =
+    SURFACE_MODE === 'real' && agent
+      ? await readCandidateRecord(ctx, {
+          workItemId: args.workItemId,
+          agentId,
+          agentName: agent.name,
+          autonomousActions: autonomousActionsOn(agent),
+          candidate,
+          surfaces: grounding.surfaces ?? [],
+          knownValues: await knownValuesForAgent(ctx, agent),
+        })
+      : undefined;
+  const plan = await draftExecutionPlan({
+    candidate,
+    charter: charterRow.body as Charter,
+    autonomousActions: autonomousActionsOn(agent),
+    surfaceMode: SURFACE_MODE,
+    ...grounding,
+    ...(record ? { record } : {}),
+    onObligationEvent: async (event) => {
+      await ctx.runMutation(internal.events.log, {
+        agentId,
+        type: event.type,
+        payload: { workItemId: args.workItemId, ...event.payload },
+      });
+    },
+  });
+  const stored = await ctx.runMutation(internal.work.setPlan, {
+    workItemId: args.workItemId,
+    plan,
+  });
+  if (!stored.stored) {
+    return { ok: false, reason: 'another draft stored a plan for this work item first' };
+  }
+  const decision = await ctx.runMutation(internal.work.decidePlan, {
+    workItemId: args.workItemId,
+  });
+  if (decision.approved) {
+    return await executeApprovedPlanHandler(ctx, args, internalCaller);
+  }
+  return { ok: true };
+}
+
 export const draftPlan = action({
   args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> =>
+    await draftPlanHandler(ctx, args),
+});
+
+/** The server loop's drafting step, scheduled when a row enters `claimed` without a plan. */
+export const draftPlanInternal = internalAction({
+  args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
-    const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
-      workItemId: args.workItemId,
-    });
-    if (!item) return { ok: false, reason: 'workItem not found' };
-    const agentId = item.agentId;
-    // Race-tolerant: the dashboard's auto-progress useEffect can fire
-    // draftPlan after the state has already moved past 'claimed' (e.g.
-    // a stale render, or an evaluator stomp). Treat the mismatch as a
-    // no-op rather than an error so the React tree doesn't surface it
-    // as a fatal Console Error.
-    if (item.state !== 'claimed') {
-      return { ok: false, reason: `state is ${item.state}; expected claimed` };
-    }
-    const charterRow = await ctx.runQuery(api.charters.latest, {
-      agentId,
-    });
-    if (!charterRow) return { ok: false, reason: 'no charter' };
-    const agent = await ctx.runQuery(api.agents.get, { agentId });
-    const candidate = rowToCandidate(item);
-    const grounding = await planGrounding(ctx, agentId);
-    const record =
-      SURFACE_MODE === 'real' && agent
-        ? await readCandidateRecord(ctx, {
-            workItemId: args.workItemId,
-            agentId,
-            agentName: agent.name,
-            autonomousActions: autonomousActionsOn(agent),
-            candidate,
-            surfaces: grounding.surfaces ?? [],
-            knownValues: await knownValuesForAgent(ctx, agent),
-          })
-        : undefined;
-    const plan = await draftExecutionPlan({
-      candidate,
-      charter: charterRow.body as Charter,
-      autonomousActions: autonomousActionsOn(agent),
-      surfaceMode: SURFACE_MODE,
-      ...grounding,
-      ...(record ? { record } : {}),
-      onObligationEvent: async (event) => {
-        await ctx.runMutation(internal.events.log, {
-          agentId,
-          type: event.type,
-          payload: { workItemId: args.workItemId, ...event.payload },
-        });
-      },
-    });
-    const stored = await ctx.runMutation(internal.work.setPlan, {
-      workItemId: args.workItemId,
-      plan,
-    });
-    if (!stored.stored) {
-      return { ok: false, reason: 'another draft stored a plan for this work item first' };
-    }
-    const decision = await ctx.runMutation(internal.work.decidePlan, {
-      workItemId: args.workItemId,
-    });
-    if (decision.approved) {
-      return await executeApprovedPlanHandler(ctx, args);
-    }
-    return { ok: true };
+    if (SURFACE_MODE !== 'real') return { ok: false, reason: 'the server loop is real-mode only' };
+    return await draftPlanHandler(ctx, args, true);
   },
 });
 
@@ -1654,6 +1757,7 @@ function authorityBeforeTransport(
  * Args:
  *   ctx: Convex action context.
  *   agentId: The agent whose surfaces and documentation are read.
+ *   internalCaller: Whether the documentation is read without a caller, for a scheduled step.
  *
  * Returns:
  *   The planner's grounding, or an empty object outside real mode.
@@ -1661,11 +1765,14 @@ function authorityBeforeTransport(
 async function planGrounding(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
+  internalCaller: boolean,
 ): Promise<Pick<DraftPlanArgs, 'surfaces' | 'documents'>> {
   if (SURFACE_MODE !== 'real') return {};
   const [surfaces, snapshot] = await Promise.all([
     loadSurfaces(ctx, agentId),
-    readSurfaceSnapshot(ctx, agentId, 'mock', []),
+    internalCaller
+      ? ctx.runQuery(internal.mock.snapshotInternal, { agentId })
+      : readSurfaceSnapshot(ctx, agentId, 'mock', []),
   ]);
   return {
     surfaces,

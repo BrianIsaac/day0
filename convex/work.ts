@@ -7,11 +7,13 @@ import {
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
+import { claimLoopStepInTransaction, type StepClaim } from './workLoop';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,
@@ -573,6 +575,9 @@ export async function applyVerdict(
     verdict: effective,
     state: nextState,
     ...(skipReason ? { skipReason } : {}),
+    // The verdict ends the evaluation step; a row queued at the cap must be
+    // evaluable again the moment a slot frees.
+    ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
   });
   await ctx.db.insert('events', {
     agentId: row.agentId,
@@ -639,7 +644,11 @@ export const setPlan = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'claimed') return { stored: false };
-    await ctx.db.patch(args.workItemId, { plan: args.plan, state: 'plan-pending' });
+    await ctx.db.patch(args.workItemId, {
+      plan: args.plan,
+      state: 'plan-pending',
+      ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
+    });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.plan-drafted',
@@ -1616,6 +1625,19 @@ export const cancelPlan = mutation({
     await cancelPlanInTransaction(ctx, row, 'dashboard', args.reason ?? '');
     return { ok: true };
   },
+});
+
+/**
+ * Claim the evaluation or the draft of one row for the run about to make its
+ * model call, in real mode; see `claimLoopStepInTransaction`.
+ */
+export const claimLoopStep = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    step: v.union(v.literal('evaluation'), v.literal('draft')),
+  },
+  handler: async (ctx, args): Promise<StepClaim> =>
+    await claimLoopStepInTransaction(ctx, args.workItemId, args.step, Date.now()),
 });
 
 /**
@@ -3114,49 +3136,68 @@ export const setProposedSkill = internalMutation({
   },
 });
 
+const OPEN_CLAIM_STATES = new Set([
+  'claimed',
+  'plan-pending',
+  'plan-approved',
+  'executing',
+  'actions-pending',
+]);
+
+async function countOpenForAgentImpl(ctx: QueryCtx, agentId: Id<'agents'>): Promise<number> {
+  const open = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
+    .collect();
+  return open.filter((w) => OPEN_CLAIM_STATES.has(w.state)).length;
+}
+
+async function findExistingClaimImpl(
+  ctx: QueryCtx,
+  args: { agentId: Id<'agents'>; sourceSystem: string; externalId: string },
+): Promise<{ state: Doc<'workItems'>['state'] } | null> {
+  const row = await ctx.db
+    .query('workItems')
+    .withIndex('by_extId', (q) =>
+      q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
+    )
+    .filter((q) => q.eq(q.field('agentId'), args.agentId))
+    .first();
+  if (!row) return null;
+  if (!OPEN_CLAIM_STATES.has(row.state)) return null;
+  return { state: row.state };
+}
+
 export const countOpenForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<number> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const open = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
-      .collect();
-    const openStates = new Set([
-      'claimed',
-      'plan-pending',
-      'plan-approved',
-      'executing',
-      'actions-pending',
-    ]);
-    return open.filter((w) => openStates.has(w.state)).length;
+    return await countOpenForAgentImpl(ctx, args.agentId);
   },
 });
 
+/** The same count for a scheduled work-loop step, which has no caller to check. */
+export const countOpenForAgentInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<number> => await countOpenForAgentImpl(ctx, args.agentId),
+});
+
+const existingClaimArgs = {
+  agentId: v.id('agents'),
+  sourceSystem: v.string(),
+  externalId: v.string(),
+};
+
 export const findExistingClaim = query({
-  args: {
-    agentId: v.id('agents'),
-    sourceSystem: v.string(),
-    externalId: v.string(),
-  },
+  args: existingClaimArgs,
   handler: async (ctx, args) => {
     await assertOwnsAgent(ctx, args.agentId);
-    const row = await ctx.db
-      .query('workItems')
-      .withIndex('by_extId', (q) =>
-        q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
-      )
-      .filter((q) => q.eq(q.field('agentId'), args.agentId))
-      .first();
-    if (!row) return null;
-    const claimedStates = [
-      'claimed',
-      'plan-pending',
-      'plan-approved',
-      'executing',
-      'actions-pending',
-    ];
-    if (!claimedStates.includes(row.state)) return null;
-    return { state: row.state };
+    return await findExistingClaimImpl(ctx, args);
   },
+});
+
+/** The same lookup for a scheduled work-loop step, which has no caller to check. */
+export const findExistingClaimInternal = internalQuery({
+  args: existingClaimArgs,
+  handler: async (ctx, args) => await findExistingClaimImpl(ctx, args),
 });
