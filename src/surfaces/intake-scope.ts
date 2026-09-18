@@ -6,10 +6,10 @@ import { containsTokenShape } from './redact';
  * With one documentation set carrying a handbook per role, every page names
  * some team's project and channels. The candidates are read per page, each
  * with the line that states it; orientation picks the ones that belong to
- * the employee's role; a pick survives only when its cited page states the
- * value; and the manager and IT approve the result with the card. Intake
- * then reads the approved values and nothing else, so a later page edit
- * never widens what an employee reads.
+ * the employee's role by their numbers, so every kept value, page and line
+ * is the candidate's own; and the manager and IT approve the result with
+ * the card. Intake then reads the approved values and nothing else, so a
+ * later page edit never widens what an employee reads.
  */
 
 export type ScopeField = 'team' | 'project' | 'channel';
@@ -41,11 +41,9 @@ export interface IntakeScope {
   notes?: string[];
 }
 
-/** A value orientation chose, with the page it says the value is on. */
+/** A candidate orientation chose, by its number in the list it was offered, from 1. */
 export interface ScopePick {
-  field: ScopeField;
-  value: string;
-  ref: string;
+  candidate: number;
 }
 
 export interface IntakeScopePresentation {
@@ -145,11 +143,6 @@ export function scopeCandidates(
   return candidates;
 }
 
-/** A channel pick without its hash, in Slack's lower case. */
-function channelName(value: string): string {
-  return value.trim().replace(/^#/, '').toLowerCase();
-}
-
 /** How a note names one value, bounded so a model's output cannot flood the card. */
 function valueLabel(field: ScopeField, value: string): string {
   const shown = value.replace(/`/g, '').slice(0, MAX_NOTE_VALUE);
@@ -157,16 +150,17 @@ function valueLabel(field: ScopeField, value: string): string {
 }
 
 /**
- * Keep the picks their cited pages state, and say why each other one went.
+ * Resolve each numbered pick to its candidate, and say why each other one went.
  *
- * A pick is kept only when a candidate of the same field on the cited page
- * carries exactly that value: a value on no page, on another page, or
- * differing in case is dropped. Intake reads one team and one project, so a
- * second is dropped too; every grounded channel is kept once.
+ * A pick names a candidate by its number in the list it was offered, so the
+ * value, page and line kept are the candidate's own and nothing a model
+ * restated is compared. A number the list does not have, or one given twice,
+ * is dropped. Intake reads one team, and projects from one page, so any other
+ * is dropped too; every picked channel is kept once.
  *
  * Args:
- *   picks: Values orientation chose, each with the page it cites.
- *   candidates: Every documented candidate for the surface.
+ *   picks: Numbered picks into `candidates`.
+ *   candidates: The candidates the picks were offered, in the order numbered.
  *
  * Returns:
  *   The scope to put on the card, with a note for every dropped pick.
@@ -179,32 +173,33 @@ export function groundScopePicks(
   const channels: ScopeValue[] = [];
   const projects: ScopeValue[] = [];
   const notes: string[] = [];
+  const picked = new Set<number>();
   for (const pick of picks) {
-    const value = pick.field === 'channel' ? channelName(pick.value) : pick.value.trim();
-    const grounded = candidates.find(
-      (candidate): boolean =>
-        candidate.field === pick.field && candidate.ref === pick.ref && candidate.value === value,
-    );
+    const number = pick.candidate;
+    const grounded = Number.isInteger(number) ? candidates[number - 1] : undefined;
     if (!grounded) {
-      notes.push(
-        `Dropped ${valueLabel(pick.field, value)}: ${pick.ref.slice(0, MAX_NOTE_VALUE)} does not state it.`,
-      );
+      notes.push(`Dropped pick ${number}: no documented value was offered under that number.`);
       continue;
     }
-    const { field: _field, ...kept } = grounded;
-    void _field;
-    if (pick.field === 'channel') {
+    const { field, ...kept } = grounded;
+    const value = kept.value;
+    if (picked.has(number)) {
+      notes.push(`Dropped pick ${number}: ${valueLabel(field, value)} was already picked.`);
+      continue;
+    }
+    picked.add(number);
+    if (field === 'channel') {
       if (!channels.some((channel): boolean => channel.value === value)) channels.push(kept);
       continue;
     }
-    if (pick.field === 'project') {
+    if (field === 'project') {
       const first = scope.project;
       if (!first) scope.project = kept;
       else if (first.value !== value && first.ref === kept.ref && first.sourceId === kept.sourceId) {
         if (!projects.some((project): boolean => project.value === value)) projects.push(kept);
       } else if (first.value !== value) {
         notes.push(
-          `Dropped ${valueLabel(pick.field, value)}: intake reads projects from ${first.ref}, not another role's page.`,
+          `Dropped ${valueLabel(field, value)}: intake reads projects from ${first.ref}, not another role's page.`,
         );
       }
       continue;
@@ -214,7 +209,7 @@ export function groundScopePicks(
       scope.team = kept;
     } else if (current.value !== value) {
       notes.push(
-        `Dropped ${valueLabel(pick.field, value)}: intake reads one ${pick.field}, and \`${current.value}\` was picked first.`,
+        `Dropped ${valueLabel(field, value)}: intake reads one ${field}, and \`${current.value}\` was picked first.`,
       );
     }
   }
@@ -235,16 +230,16 @@ function escaped(value: string): string {
  * The fallback when orientation's model does not pick: a team or project
  * counts when the sentence carries it exactly, as a whole word; a channel
  * when the sentence carries it with its hash. The picks follow the sentence,
- * and a value stated on several pages cites the page stating most of what
- * the sentence names, so the result does not depend on the order pages were
- * synced in.
+ * and a value stated on several pages comes first from the page stating most
+ * of what the sentence names, so the result does not depend on the order
+ * pages were synced in.
  *
  * Args:
  *   sentences: The manager's sentences about the system.
  *   candidates: Every documented candidate for the surface.
  *
  * Returns:
- *   One pick per named candidate, citing that candidate's page.
+ *   One numbered pick into `candidates` per named candidate.
  */
 export function sentenceScopePicks(
   sentences: readonly string[],
@@ -253,13 +248,13 @@ export function sentenceScopePicks(
   const text = sentences.join('\n');
   if (!text.trim()) return [];
   const named = candidates.flatMap(
-    (candidate): Array<{ candidate: ScopeCandidate; at: number }> => {
+    (candidate, index): Array<{ candidate: ScopeCandidate; number: number; at: number }> => {
       const pattern =
         candidate.field === 'channel'
           ? new RegExp(`(?<![a-z0-9_-])#${escaped(candidate.value)}(?![a-z0-9_-])`, 'i')
           : new RegExp(`(?<![A-Za-z0-9_#-])${escaped(candidate.value)}(?![A-Za-z0-9_-])`);
       const at = pattern.exec(text)?.index;
-      return at === undefined ? [] : [{ candidate, at }];
+      return at === undefined ? [] : [{ candidate, number: index + 1, at }];
     },
   );
   const pageScore = new Map<string, number>();
@@ -272,13 +267,7 @@ export function sentenceScopePicks(
         left.at - right.at ||
         (pageScore.get(right.candidate.ref) ?? 0) - (pageScore.get(left.candidate.ref) ?? 0),
     )
-    .map(
-      ({ candidate }): ScopePick => ({
-        field: candidate.field,
-        value: candidate.value,
-        ref: candidate.ref,
-      }),
-    );
+    .map(({ number }): ScopePick => ({ candidate: number }));
 }
 
 /** Keep candidate lines under the handbook identified by the charter's role and queue words. */
@@ -290,12 +279,12 @@ export function roleScopeCandidates(
 ): ScopeCandidate[] {
   const refs = [...new Set(candidates.map((candidate): string => candidate.ref))];
   if (refs.length <= 1) return [...candidates];
-  const named = sentenceScopePicks(sentences, candidates);
   const namedByRef = new Map<string, Set<string>>();
-  for (const pick of named) {
-    const values = namedByRef.get(pick.ref) ?? new Set<string>();
-    values.add(`${pick.field}\0${pick.value}`);
-    namedByRef.set(pick.ref, values);
+  for (const pick of sentenceScopePicks(sentences, candidates)) {
+    const named = candidates[pick.candidate - 1];
+    const values = namedByRef.get(named.ref) ?? new Set<string>();
+    values.add(`${named.field}\0${named.value}`);
+    namedByRef.set(named.ref, values);
   }
   const roleWords = [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
     .filter((word): boolean => word.length >= 5 && !['about', 'after', 'before', 'their', 'these', 'those', 'would', 'could', 'should', 'coordinator', 'manager', 'employee'].includes(word));

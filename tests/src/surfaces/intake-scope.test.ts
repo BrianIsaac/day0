@@ -211,51 +211,38 @@ describe('intake scope candidates', (): void => {
   });
 });
 
-describe('grounding a pick on its page line', (): void => {
-  it('keeps a pick only when the cited page states the value, and says why it dropped the rest', (): void => {
+describe('grounding a pick on its candidate', (): void => {
+  it('keeps each numbered pick as its candidate states it, with the line that states it', (): void => {
     const candidates = scopeCandidates(pages('revops-first'), ['team', 'project']);
     const scope = groundScopePicks(
       [
-        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
-        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
-        { field: 'project', value: 'Q4 plan', ref: 'finance/handbook.md' },
-        { field: 'team', value: 'FIN', ref: 'revops/handbook.md' },
+        { candidate: numberOf(candidates, 'team', 'FIN', 'finance/handbook.md') },
+        { candidate: numberOf(candidates, 'project', 'September close', 'finance/handbook.md') },
       ],
       candidates,
     );
-    expect(scope.team).toEqual({
-      value: 'FIN',
-      sourceId: 'source-folder',
-      ref: 'finance/handbook.md',
-      quote: '- Team: `FIN`',
+    expect(scope).toEqual({
+      team: {
+        value: 'FIN',
+        sourceId: 'source-folder',
+        ref: 'finance/handbook.md',
+        quote: '- Team: `FIN`',
+      },
+      project: {
+        value: 'September close',
+        sourceId: 'source-folder',
+        ref: 'finance/handbook.md',
+        quote: '- Project: `September close`',
+      },
     });
-    expect(scope.project?.value).toBe('September close');
-    expect(scope.notes).toEqual([
-      'Dropped project `Q4 plan`: finance/handbook.md does not state it.',
-      'Dropped team `FIN`: revops/handbook.md does not state it.',
-    ]);
   });
 
-  it('never takes a value that differs from the page by case or by invention', (): void => {
-    const candidates = scopeCandidates(pages('finance-first'), ['team', 'project']);
-    const scope = groundScopePicks(
-      [
-        { field: 'project', value: 'september close', ref: 'finance/handbook.md' },
-        { field: 'team', value: 'FINANCE', ref: 'finance/handbook.md' },
-      ],
-      candidates,
-    );
-    expect(scope.team).toBeUndefined();
-    expect(scope.project).toBeUndefined();
-    expect(scope.notes).toHaveLength(2);
-  });
-
-  it('keeps one team and one project, and every grounded channel once', (): void => {
+  it('keeps one team and one project, and every picked channel once', (): void => {
     const linear = scopeCandidates(pages('revops-first'), ['team', 'project']);
     const twoProjects = groundScopePicks(
       [
-        { field: 'project', value: 'Q3 close', ref: 'revops/handbook.md' },
-        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
+        { candidate: numberOf(linear, 'project', 'Q3 close', 'revops/handbook.md') },
+        { candidate: numberOf(linear, 'project', 'September close', 'finance/handbook.md') },
       ],
       linear,
     );
@@ -267,17 +254,18 @@ describe('grounding a pick on its page line', (): void => {
     const slack = scopeCandidates(pages('revops-first'), ['channel']);
     const channels = groundScopePicks(
       [
-        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
-        { field: 'channel', value: 'ops-requests', ref: 'finance/handbook.md' },
-        { field: 'channel', value: 'ops-requests', ref: 'revops/handbook.md' },
-        { field: 'channel', value: 'revops-asks', ref: 'finance/handbook.md' },
+        { candidate: numberOf(slack, 'channel', 'finance-close', 'finance/handbook.md') },
+        { candidate: numberOf(slack, 'channel', 'ops-requests', 'finance/handbook.md') },
+        { candidate: numberOf(slack, 'channel', 'ops-requests', 'revops/handbook.md') },
       ],
       slack,
     );
     expect(approvedChannelNames(channels)).toEqual(['finance-close', 'ops-requests']);
-    expect(channels.notes).toEqual([
-      'Dropped #revops-asks: finance/handbook.md does not state it.',
+    expect(channels.channels?.map((channel): string => channel.ref)).toEqual([
+      'finance/handbook.md',
+      'finance/handbook.md',
     ]);
+    expect(channels.notes).toBeUndefined();
   });
 
   it('gives each role its own project whichever handbook comes first', (): void => {
@@ -312,14 +300,7 @@ describe('grounding a pick on its page line', (): void => {
       }],
       ['team', 'project'],
     );
-    const scope = groundScopePicks(
-      [
-        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
-        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
-        { field: 'project', value: 'October close', ref: 'finance/handbook.md' },
-      ],
-      candidates,
-    );
+    const scope = groundScopePicks([{ candidate: 1 }, { candidate: 2 }, { candidate: 3 }], candidates);
     expect(approvedLinearScope(scope)).toEqual({
       team: 'FIN',
       project: 'September close',
@@ -350,7 +331,7 @@ describe('grounding a pick on its page line', (): void => {
 });
 
 describe('a pick names its candidate by number', (): void => {
-  it.fails("grounds rehearsal 1's picks, whatever the model restated beside the number", (): void => {
+  it("grounds rehearsal 1's picks, whatever the model restated beside the number", (): void => {
     // Priya's Linear card and Aiko's Slack card on 18 September: the right
     // values, each ref carrying the candidate's page line after it, as the
     // rows' `surfaces.intakeScope.notes` recorded them.
@@ -405,7 +386,7 @@ describe('a pick names its candidate by number', (): void => {
     });
   });
 
-  it.fails('takes the value, page and line from the numbered candidate, never from the restatement', (): void => {
+  it('takes the value, page and line from the numbered candidate, never from the restatement', (): void => {
     const candidates = scopeCandidates(pages('revops-first'), ['team', 'project']);
     const answered: AnsweredPick[] = [
       {
@@ -425,7 +406,7 @@ describe('a pick names its candidate by number', (): void => {
     expect(scope.notes).toBeUndefined();
   });
 
-  it.fails('drops a number outside the list, and a number given twice, each with a note', (): void => {
+  it('drops a number outside the list, and a number given twice, each with a note', (): void => {
     const candidates = scopeCandidates([folderPage(FINANCE)], ['team', 'project']);
     const fin = numberOf(candidates, 'team', 'FIN', 'finance/handbook.md');
     const answered: AnsweredPick[] = [
@@ -457,10 +438,10 @@ describe('the scope an approved card reads', (): void => {
   const candidates = scopeCandidates(pages('revops-first'), ['team', 'project', 'channel']);
   const finance = groundScopePicks(
     [
-      { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
-      { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
-      { field: 'channel', value: 'finance-close', ref: 'finance/handbook.md' },
-      { field: 'channel', value: 'ops-requests', ref: 'finance/handbook.md' },
+      { candidate: numberOf(candidates, 'team', 'FIN', 'finance/handbook.md') },
+      { candidate: numberOf(candidates, 'project', 'September close', 'finance/handbook.md') },
+      { candidate: numberOf(candidates, 'channel', 'finance-close', 'finance/handbook.md') },
+      { candidate: numberOf(candidates, 'channel', 'ops-requests', 'finance/handbook.md') },
     ],
     candidates,
   );

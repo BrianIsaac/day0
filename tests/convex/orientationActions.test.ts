@@ -1819,58 +1819,61 @@ function verdicts(surfaces: Record<string, Doc<'surfaces'>>): Record<string, str
 
 /**
  * What a faithful picker answers for each manager sentence in the company:
- * the role's own team, project and request channels, each cited on its
- * handbook. Finance's answer also carries a project no page states, which
- * grounding must drop.
+ * the numbers of the role's own team, project and request channels. Finance's
+ * answer also carries a project no page states, which it can only answer as a
+ * number the list does not have, and grounding must drop.
  */
 function companyScopeModel(user: string): Record<string, unknown> {
-  const answers: Array<[string, Array<{ field: string; value: string; ref: string }>]> = [
+  const answers: Array<[string, Array<{ field: string; value: string }>]> = [
     [
       'team REVOPS, project Q3 close',
       [
-        { field: 'team', value: 'REVOPS', ref: 'revops/handbook.md' },
-        { field: 'project', value: 'Q3 close', ref: 'revops/handbook.md' },
+        { field: 'team', value: 'REVOPS' },
+        { field: 'project', value: 'Q3 close' },
       ],
     ],
     [
       'team FIN, project September close',
       [
-        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
-        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
-        { field: 'project', value: 'Q4 plan', ref: 'finance/handbook.md' },
+        { field: 'team', value: 'FIN' },
+        { field: 'project', value: 'September close' },
+        { field: 'project', value: 'Q4 plan' },
       ],
     ],
     [
       'team LOG, project Shipment exceptions',
       [
-        { field: 'team', value: 'LOG', ref: 'logistics/handbook.md' },
-        { field: 'project', value: 'Shipment exceptions', ref: 'logistics/handbook.md' },
+        { field: 'team', value: 'LOG' },
+        { field: 'project', value: 'Shipment exceptions' },
       ],
     ],
     [
       'Asks come in on Slack in #revops-asks',
       [
-        { field: 'channel', value: '#revops-asks', ref: 'revops/handbook.md' },
-        { field: 'channel', value: '#ops-requests', ref: 'revops/handbook.md' },
+        { field: 'channel', value: '#revops-asks' },
+        { field: 'channel', value: '#ops-requests' },
       ],
     ],
     [
       '#finance-close is ours',
       [
-        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
-        { field: 'channel', value: '#ops-requests', ref: 'finance/handbook.md' },
+        { field: 'channel', value: '#finance-close' },
+        { field: 'channel', value: '#ops-requests' },
       ],
     ],
     [
       "#logistics-desk is the desk's channel",
       [
-        { field: 'channel', value: 'logistics-desk', ref: 'logistics/handbook.md' },
-        { field: 'channel', value: 'ops-requests', ref: 'logistics/handbook.md' },
+        { field: 'channel', value: 'logistics-desk' },
+        { field: 'channel', value: 'ops-requests' },
       ],
     ],
   ];
   const picks = answers.find(([sentence]): boolean => user.includes(sentence))?.[1] ?? [];
-  return { picks, reasoning: 'Picked from the role and the manager sentence.' };
+  return {
+    picks: picks.map((pick) => ({ candidate: offeredNumber(user, pick.field, pick.value) ?? 99 })),
+    reasoning: 'Picked from the role and the manager sentence.',
+  };
 }
 
 /**
@@ -2128,7 +2131,7 @@ describe('each employee reads its own role', (): void => {
         ref: 'finance/handbook.md',
         quote: '- Project: `September close`',
       },
-      notes: ['Dropped project `Q4 plan`: finance/handbook.md does not state it.'],
+      notes: ['Dropped pick 99: no documented value was offered under that number.'],
     });
     expect(approvedLinearScope(revops.linear.intakeScope!)).toEqual({
       team: 'REVOPS',
@@ -2173,7 +2176,7 @@ describe('each employee reads its own role', (): void => {
     expect(financeLinear).toContain('`September close` on finance/handbook.md');
   });
 
-  it.fails("grounds rehearsal 1's picks, whatever the model restated beside the number", async (): Promise<void> => {
+  it("grounds rehearsal 1's picks, whatever the model restated beside the number", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
     model.scopeFor = rehearsalScopeModel;
@@ -2212,7 +2215,7 @@ describe('each employee reads its own role', (): void => {
     });
   });
 
-  it.fails("numbers each candidate the pick is offered, and offers only this role's", async (): Promise<void> => {
+  it("numbers each candidate the pick is offered, and offers only this role's", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
     model.scopeFor = companyScopeModel;
@@ -2230,7 +2233,7 @@ describe('each employee reads its own role', (): void => {
     expect(offered.every((line): boolean => / on revops\//.test(line))).toBe(true);
   });
 
-  it.fails('drops a number the pick was not offered, and a number given twice, and says so', async (): Promise<void> => {
+  it('drops a number the pick was not offered, and a number given twice, and says so', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
     model.scopeFor = (user: string): Record<string, unknown> => ({
@@ -2249,29 +2252,6 @@ describe('each employee reads its own role', (): void => {
       'Dropped pick 1: #finance-close was already picked.',
       'Dropped pick 99: no documented value was offered under that number.',
     ]);
-  });
-
-  it('drops a grounded queue from another role when the picker cites its real handbook', async (): Promise<void> => {
-    stubRegistry();
-    model.pathFor = companyPath;
-    model.scopeFor = () => ({
-      picks: [
-        { field: 'channel', value: '#revops-asks', ref: 'revops/handbook.md' },
-        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
-        { field: 'channel', value: '#ops-requests', ref: 'finance/handbook.md' },
-      ],
-      reasoning: 'The other handbook has a valid channel line.',
-    });
-    const harness = convexTest(schema, orientationModules());
-    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
-    await orientDeclared(harness, agents.finance!);
-    const finance = await surfacesBySlug(harness, agents.finance!);
-    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual([
-      'finance-close', 'ops-requests',
-    ]);
-    expect(finance.slack.intakeScope?.notes).toContain(
-      'Dropped #revops-asks: revops/handbook.md is outside this role’s handbook.',
-    );
   });
 
   it("falls back to the values the manager's own words name when the model does not pick", async (): Promise<void> => {
@@ -2322,7 +2302,7 @@ describe('each employee reads its own role', (): void => {
     expect(model.scopePrompts).toHaveLength(0);
   });
 
-  it('falls back when the picker answers out of shape or not at all, and keeps only the asked fields', async (): Promise<void> => {
+  it('falls back when the picker answers out of shape or not at all, and passes its numbers on', async (): Promise<void> => {
     vi.useRealTimers();
     const candidates = scopeCandidates(
       [companyPage('finance/handbook.md'), companyPage('revops/handbook.md')].map((page) => ({
@@ -2342,7 +2322,10 @@ describe('each employee reads its own role', (): void => {
     model.scopeFor = (): Record<string, unknown> => ({ team: 'FIN' });
     const shapeless = await pickIntakeScope(question, 1_000);
     expect(shapeless.note).toContain('its answer was not a list of picks');
-    expect(shapeless.picks.map((pick): string => pick.value)).toEqual(['FIN', 'September close']);
+    expect(shapeless.picks.map((pick): string => candidates[pick.candidate - 1].value)).toEqual([
+      'FIN',
+      'September close',
+    ]);
 
     model.scopeFor = async (): Promise<Record<string, unknown>> =>
       await new Promise<never>((): void => undefined);
@@ -2351,15 +2334,21 @@ describe('each employee reads its own role', (): void => {
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(silent.note).toContain('no answer within');
 
+    // A value restated instead of a number is out of shape, whatever it says.
     model.scopeFor = (): Record<string, unknown> => ({
-      picks: [
-        { field: 'channel', value: 'finance-close', ref: 'finance/handbook.md' },
-        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
-      ],
+      picks: [{ field: 'team', value: 'FIN', ref: 'finance/handbook.md' }],
+      reasoning: 'The role is finance close.',
+    });
+    expect((await pickIntakeScope(question, 1_000)).note).toContain(
+      'its answer was not a list of picks',
+    );
+
+    model.scopeFor = (): Record<string, unknown> => ({
+      picks: [{ candidate: 2 }, { candidate: 1 }],
       reasoning: 'The role is finance close.',
     });
     await expect(pickIntakeScope(question, 1_000)).resolves.toEqual({
-      picks: [{ field: 'team', value: 'FIN', ref: 'finance/handbook.md' }],
+      picks: [{ candidate: 2 }, { candidate: 1 }],
     });
 
     model.scopeFor = undefined;
