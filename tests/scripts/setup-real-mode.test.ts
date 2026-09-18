@@ -711,6 +711,13 @@ describe('the three ways to run it, in what the setup prints', (): void => {
 });
 
 describe('--company', (): void => {
+  const owedTokenGaps = [
+    '  GAP  DAY0_BED_LINEAR_API_KEY is not set in .env.local: add a Linear personal API key',
+    '  GAP  DAY0_BED_SLACK_BOT_TOKEN is not set in .env.local: add the shared bot token',
+    '  GAP  DAY0_BED_NOTION_TOKEN is not set in .env.local: add the Notion secret',
+    '3 gap(s) above.',
+  ].join('\n');
+
   function companyHarness(failing: { match: string; status: number; stderr: string }[] = []) {
     const h = harness({
       environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
@@ -762,19 +769,47 @@ describe('--company', (): void => {
   });
 
   it('says the gaps are the hand steps still owed without failing the setup', async (): Promise<void> => {
-    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: '' }]);
+    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: owedTokenGaps }]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
-    expect(h.output.join('\n')).toContain('the gaps above are the hand steps still owed');
+    const printed = h.output.join('\n');
+    expect(printed).toContain('the gaps above are the hand steps still owed');
+    expect(printed).toContain('GAP  DAY0_BED_LINEAR_API_KEY');
   });
 
   it('runs that check with pnpm silent, so its gaps do not print a failed command', async (): Promise<void> => {
-    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: '' }]);
+    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: owedTokenGaps }]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
     // The gaps are the hand steps the reader still owes, and the setup says so
     // itself; pnpm's own `ELIFECYCLE Command failed with exit code 1` above
     // that line reads as a broken setup instead.
     expect(ran(h)).toContain('pnpm --reporter=silent run bed:company check');
     expect(ran(h)).not.toContain('\npnpm run bed:company check');
+  });
+
+  it('fails setup and shows a missing team instead of calling it an owed hand step', async (): Promise<void> => {
+    const gap = '  GAP  team FIN is missing from the Linear workspace';
+    const h = companyHarness([{
+      match: 'bed:company check',
+      status: 1,
+      stderr: `${gap}\n1 gap(s) above.`,
+    }]);
+    expect(await runSetup(realRoute({ company: true }), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(gap);
+    expect(printed).not.toContain('the gaps above are the hand steps still owed');
+  });
+
+  it('fails setup and shows a wrong token even when another token is still owed', async (): Promise<void> => {
+    const wrong = '  GAP  DAY0_BED_LINEAR_API_KEY did not authenticate with Linear';
+    const h = companyHarness([{
+      match: 'bed:company check',
+      status: 1,
+      stderr: `${owedTokenGaps.split('\n').slice(1, 3).join('\n')}\n${wrong}\n3 gap(s) above.`,
+    }]);
+    expect(await runSetup(realRoute({ company: true }), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(wrong);
+    expect(printed).toContain('Fix the GAP lines above');
   });
 
   it('is refused in mock mode before anything is written', async (): Promise<void> => {

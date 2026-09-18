@@ -1874,6 +1874,16 @@ function step(
   return io.run(command, args, options);
 }
 
+function onlyOwedCompanyTokenGaps(output: string): boolean {
+  const gaps = [...output.matchAll(/^\s*GAP\s+(.+)$/gm)].map((match) => match[1]!);
+  const summary = /^(\d+) gap\(s\) above\.$/m.exec(output);
+  if (gaps.length === 0 || Number(summary?.[1]) !== gaps.length) return false;
+  const names = gaps.map((gap) =>
+    /^DAY0_BED_(LINEAR_API_KEY|SLACK_BOT_TOKEN|NOTION_TOKEN) is not set in \.env\.local:/.exec(gap)?.[1],
+  );
+  return names.every((name) => name !== undefined) && new Set(names).size === names.length;
+}
+
 /** One failed step, printed with the state it leaves behind and how to resume. */
 function reportFailure(io: SetupIo, what: string, result: RunResult, project: string, mode: SetupMode): void {
   io.log('');
@@ -2540,13 +2550,25 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         'pnpm bed:company check',
         bedCheckCommand.command,
         bedCheckCommand.args,
-        streamed,
+        { ...streamed, inherit: false },
       );
+      const bedCheckOutput = `${bedCheck.stdout}${bedCheck.stderr}`;
+      for (const line of bedCheckOutput.trimEnd().split('\n')) {
+        if (line) io.log(line);
+      }
       if (bedCheck.status !== 0) {
-        io.log(
-          '    The setup itself is done; the gaps above are the hand steps still owed. Run ' +
-            '`pnpm bed:company check` again after each, then `pnpm bed:company seed`.',
-        );
+        if (onlyOwedCompanyTokenGaps(bedCheckOutput)) {
+          io.log(
+            '    The setup itself is done; the gaps above are the hand steps still owed. Run ' +
+              '`pnpm bed:company check` again after each, then `pnpm bed:company seed`.',
+          );
+        } else {
+          io.log(
+            '    The company bed check found a gap beyond the token hand steps. ' +
+              'Fix the GAP lines above, then run `pnpm bed:company check` again.',
+          );
+          return 1;
+        }
       }
     }
 
