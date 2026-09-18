@@ -17,6 +17,7 @@ export interface ClaimKeyItem {
 
 /** Linear's own domain; its MCP server and its GraphQL API both sit under it. */
 const LINEAR_DOMAIN = 'linear.app';
+const SLACK_DOMAIN = 'slack.com';
 
 /**
  * Whether an endpoint host is Linear's.
@@ -29,6 +30,10 @@ const LINEAR_DOMAIN = 'linear.app';
  */
 function isLinearHost(host: string): boolean {
   return host === LINEAR_DOMAIN || host.endsWith(`.${LINEAR_DOMAIN}`);
+}
+
+function isSlackHost(host: string): boolean {
+  return host === SLACK_DOMAIN || host.endsWith(`.${SLACK_DOMAIN}`);
 }
 
 /**
@@ -80,7 +85,7 @@ export function providerItemKey(
   if (mode !== 'real') return undefined;
   const origin = httpOrigin(surface?.endpoint);
   if (origin && isLinearHost(origin.hostname)) return `linear:${item.externalId}`;
-  if (surface?.class === 'chat' && surface.path === 'documented-api' && surface.providerWorkspaceId) {
+  if (origin && isSlackHost(origin.hostname) && surface?.class === 'chat' && surface.providerWorkspaceId) {
     return `slack:${surface.providerWorkspaceId}:${item.externalId}`;
   }
   if (origin) return `${origin.origin}|${item.externalId}`;

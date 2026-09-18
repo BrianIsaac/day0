@@ -73,6 +73,17 @@ describe('providerItemKey', (): void => {
     ).toBe(key);
   });
 
+  it('gives one Slack message one key over its API and browser surface', (): void => {
+    const browser = {
+      ...slack('T0COMPANY', 'slack-browser'),
+      path: 'browser-driven',
+      endpoint: 'https://app.slack.com/client/T0COMPANY/C0OPSREQ',
+    };
+    expect(providerItemKey(browser, { sourceSystem: 'slack-browser', externalId: ASK }, 'real')).toBe(
+      `slack:T0COMPANY:${ASK}`,
+    );
+  });
+
   it('keys any other surface by its endpoint origin and the external id', (): void => {
     expect(providerItemKey(jira, { sourceSystem: 'jira', externalId: 'OPS-12' }, 'real')).toBe(
       'https://acme.atlassian.net|OPS-12',

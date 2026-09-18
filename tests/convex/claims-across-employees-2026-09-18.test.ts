@@ -95,7 +95,7 @@ const OPS_ASK_TITLE = 'Slack mention in #ops-requests';
 const ISSUE = '6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f';
 const ISSUE_TITLE = 'Post the Q3 close summary for the board pack';
 
-type SurfaceSpec = { kind: 'slack'; slug?: string; workspace?: string } | { kind: 'linear'; slug: string };
+type SurfaceSpec = { kind: 'slack'; slug?: string; workspace?: string; path?: string; endpoint?: string } | { kind: 'linear'; slug: string };
 
 /**
  * One employee with an approved charter that covers close summaries, the
@@ -165,8 +165,8 @@ async function seedEmployee(
           displayName: 'Slack',
           class: 'chat',
           verdict: 'connected',
-          endpoint: 'https://slack.com/api/',
-          path: 'documented-api',
+          endpoint: surface.endpoint ?? 'https://slack.com/api/',
+          path: surface.path ?? 'documented-api',
           toolAllowlist: ['conversations.list', 'conversations.history', 'chat.postMessage'],
           credentialId: 'cred-slack',
           providerIdentityId: 'U0DAY0BOT',
@@ -325,6 +325,35 @@ describe('two employees of one owner reach one item', (): void => {
       workItemId: holder._id,
     });
     expect(claims[0]).not.toHaveProperty('releasedAt');
+  });
+
+  it('claims one Slack ask once over an API card and a browser card', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const apiEmployee = await seedEmployee(harness, { name: 'Priya' });
+    const browserEmployee = await seedEmployee(harness, {
+      name: 'Mateo',
+      surfaces: [{
+        kind: 'slack',
+        slug: 'slack-browser',
+        path: 'browser-driven',
+        endpoint: 'https://app.slack.com/client/T0COMPANY/C0OPSREQ',
+      }],
+    });
+    const first = await seedAsk(harness, apiEmployee);
+    const second = await seedAsk(harness, browserEmployee, 'slack-browser');
+    await harness.mutation(internal.work.setVerdict, { workItemId: first, verdict: { decision: 'claim' } });
+    await harness.mutation(internal.work.setVerdict, { workItemId: second, verdict: { decision: 'claim' } });
+
+    expect((await readItem(harness, first)).state).toBe('claimed');
+    expect(await readItem(harness, second)).toMatchObject({
+      state: 'skipped',
+      skipReason: expect.stringContaining('claimed-by-colleague: Priya'),
+    });
+    expect((await claimsOf(harness)).filter((claim) => claim.releasedAt === undefined)).toEqual([
+      expect.objectContaining({ key: `slack:${WORKSPACE}:${OPS_ASK}`, workItemId: first }),
+    ]);
   });
 
   it('claims one Linear ticket once when two cards name Linear by different slugs', async (): Promise<void> => {
