@@ -1,6 +1,11 @@
 'use client';
 
-import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
+import {
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
+  OUT_OF_SCOPE_SKIP_PREFIX,
+  QUALITY_FIT_SKIP_PREFIX,
+} from '@/work/types';
+import Link from 'next/link';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -2093,6 +2098,30 @@ export function cancelledReason(item: {
   return 'cancelled by the manager';
 }
 
+/**
+ * The colleague a claim-refused skip names, for the card's link to them.
+ *
+ * Args:
+ *   item: The work item's state and verdict.
+ *
+ * Returns:
+ *   The holding employee, or undefined for any other row.
+ */
+export function colleagueHolding(
+  item: Pick<Doc<'workItems'>, 'state' | 'verdict'>,
+): { agentId: string; name: string } | undefined {
+  if (item.state !== 'skipped') return undefined;
+  const verdict = item.verdict as
+    | { reason?: unknown; claimedBy?: { agentId?: unknown; name?: unknown } }
+    | undefined;
+  const holder = verdict?.claimedBy;
+  if (typeof verdict?.reason !== 'string' || !verdict.reason.startsWith(CLAIMED_BY_COLLEAGUE_SKIP_PREFIX)) {
+    return undefined;
+  }
+  if (typeof holder?.agentId !== 'string' || typeof holder.name !== 'string') return undefined;
+  return { agentId: holder.agentId, name: holder.name };
+}
+
 /** Show a manager's full rejection while keeping later failure reasons current. */
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
 export function clipLedgerRow(text: string | undefined): string | undefined {
@@ -2721,6 +2750,9 @@ export function WorkItemCard({
   // documented systems; Retry is the manager saying the work is theirs to give.
   const outOfScopeSkipped = skipVerdictReason?.startsWith(OUT_OF_SCOPE_SKIP_PREFIX) === true;
   const skipWaivable = qualityFitSkipped || outOfScopeSkipped;
+  // Refused at the claim: the colleague who holds the item works it, and the
+  // row comes back by itself if they let it go, so there is no Retry here.
+  const heldByColleague = colleagueHolding(item);
   const [retryNote, setRetryNote] = useState('');
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   const awaitingSurface =
@@ -2796,6 +2828,16 @@ export function WorkItemCard({
               <a href="#surfaces" className="text-[var(--color-accent)] underline">
                 Surfaces tab
               </a>
+            </span>
+          ) : heldByColleague ? (
+            <span className="text-[var(--color-fg)]">
+              skip · another employee holds this:{' '}
+              <Link
+                href={`/agent/${heldByColleague.agentId}`}
+                className="text-[var(--color-accent)] underline"
+              >
+                {heldByColleague.name}
+              </Link>
             </span>
           ) : (
             <span className="text-[var(--color-fg)]">

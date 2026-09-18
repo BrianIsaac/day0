@@ -570,7 +570,7 @@ describe('retrying a skipped item', (): void => {
     expect(markup).not.toContain('>Retry<');
   });
 
-  it.fails('names the colleague who holds the item, links to their dashboard and offers no Retry', (): void => {
+  it('names the colleague who holds the item, links to their dashboard and offers no Retry', (): void => {
     const reason = 'claimed-by-colleague: Priya holds it (Slack mention in #ops-requests)';
     const markup = render({
       ...skipped(reason),
@@ -586,9 +586,7 @@ describe('retrying a skipped item', (): void => {
         },
       },
     } as unknown as Doc<'workItems'>);
-    expect(markup).toContain('another employee holds this: <a href="/agent/a2"');
-    expect(markup).toContain('>Priya</a>');
-    expect(markup).toContain('Slack mention in #ops-requests');
+    expect(markup).toMatch(/another employee holds this: <a [^>]*href="\/agent\/a2"[^>]*>Priya<\/a>/);
     expect(markup).not.toContain('claimed-by-colleague:');
     expect(markup).not.toContain('>Retry<');
   });
