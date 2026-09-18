@@ -192,7 +192,7 @@ describe('the employee list', (): void => {
     }
   };
 
-  it.fails('shows every employee above the office: role, queue, what needs the manager, autonomy', (): void => {
+  it('shows every employee above the office: role, queue, what needs the manager, autonomy', (): void => {
     const html = signedIn();
     const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
     expect(html.indexOf('Your employees')).toBeGreaterThan(-1);
@@ -209,7 +209,7 @@ describe('the employee list', (): void => {
     expect(list.match(/asks first/g)).toHaveLength(2);
   });
 
-  it.fails('puts the role line on each office name plate', (): void => {
+  it('puts the role line on each office name plate', (): void => {
     const html = signedIn();
     const office = html.slice(html.indexOf('Mini office world'), html.indexOf('Reset demo'));
     for (const row of roster) expect(office).toContain(row.roleLine);
