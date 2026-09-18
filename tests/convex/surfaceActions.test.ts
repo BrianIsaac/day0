@@ -338,7 +338,7 @@ describe('Slack documented API probing', (): void => {
       const url = String(input);
       calls.push({ method: init?.method ?? 'GET', url, body: init?.body as string | undefined });
       if (url.endsWith('/auth.test')) {
-        return slackResponse({ ok: true, user_id: 'UBOT', team_id: 'TWORKSPACE' });
+        return slackResponse({ ok: true, user_id: 'UBOT', bot_id: 'BBOT', team_id: 'TWORKSPACE' });
       }
       if (url.includes('/users.lookupByEmail')) {
         return slackResponse({
@@ -371,6 +371,7 @@ describe('Slack documented API probing', (): void => {
       managerUserId: 'UMANAGER',
       managerName: 'Brian Isaac',
       providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
       providerWorkspaceId: 'TWORKSPACE',
     });
     expect(calls[1]?.url).toContain('email=boss%40day0.local');
@@ -676,7 +677,7 @@ describe('surface probe action state', (): void => {
             args: Record<string, unknown>,
           ): Promise<unknown> => {
             if (Object.keys(args).length === 1) return { surface, generation: 1 };
-            if ('verifiedAt' in args) return true;
+            if ('verifiedAt' in args || 'providerBotId' in args) return true;
             return null;
           },
           runQuery: async (
@@ -696,6 +697,79 @@ describe('surface probe action state', (): void => {
       expect(probeSlack).toHaveBeenCalledOnce();
     },
   );
+
+  it("stores the app's bot id before the connection is recorded, and stops when superseded", async (): Promise<void> => {
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const endpoint = 'https://slack.com/api/';
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'approved',
+      path: 'documented-api',
+      endpoint,
+      pathCandidates: [{ path: 'documented-api', endpoint }],
+      credentialId: 'test-credential-id',
+      credentialLanded: false,
+      managerApprovedAt: 2,
+      itApprovedAt: 3,
+      whereFound: [],
+      createdAt: 1,
+    };
+    const probeSlack = vi.fn(async () => ({
+      toolAllowlist: ['auth.test'],
+      channelsNotJoined: [],
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+    }));
+    const run = async (identityStored: boolean): Promise<{ outcome: unknown; writes: string[] }> => {
+      const writes: string[] = [];
+      const outcome = await runSurfaceProbe(
+        {
+          runMutation: async (
+            _reference: unknown,
+            args: Record<string, unknown>,
+          ): Promise<unknown> => {
+            if (Object.keys(args).length === 1) return { surface, generation: 1 };
+            if ('providerBotId' in args) {
+              writes.push(`identity ${String(args.providerBotId)} at generation ${String(args.generation)}`);
+              return identityStored;
+            }
+            if ('verifiedAt' in args) {
+              writes.push('connected');
+              return true;
+            }
+            return null;
+          },
+          runQuery: async (
+            _reference: unknown,
+            args: Record<string, unknown>,
+          ): Promise<unknown> =>
+            'surfaceId' in args
+              ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
+              : [],
+          runAction: fakeRunAction('slack-contract-value'),
+        } as unknown as ActionCtx,
+        surfaceId,
+        false,
+        { probeBrowser: vi.fn(), probeMcp: vi.fn(), probeSlack, now: (): number => 1_000 },
+      );
+      return { outcome, writes };
+    };
+
+    const stored = await run(true);
+    expect(stored.outcome).toMatchObject({ verdict: 'connected' });
+    expect(stored.writes).toEqual(['identity BBOT at generation 1', 'connected']);
+
+    const superseded = await run(false);
+    expect(superseded.outcome).toMatchObject({ verdict: 'skipped' });
+    expect(superseded.writes).toEqual(['identity BBOT at generation 1']);
+  });
 
   it("checks invites for the approved channels only, not every handbook's", async (): Promise<void> => {
     const agentId = 'test-agent-id' as Id<'agents'>;

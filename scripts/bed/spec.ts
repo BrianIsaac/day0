@@ -116,7 +116,7 @@ export function companyHandSteps(spec: BedSpec): string[] {
   const teams = spec.teams.map((team) => `${team.key} (${team.name}, project "${team.project}")`).join(', ');
   return [
     `1. Linear, as a workspace admin: the teams ${teams}, each with the workflow states ${spec.states.join(', ')}.`,
-    `2. Slack: the public channels ${BED_CHANNELS.map((name) => `#${name}`).join(', ')}, and one shared bot app with chat:write.customize, invited to all five.`,
+    `2. Slack: the public channels ${BED_CHANNELS.map((name) => `#${name}`).join(', ')}, and one shared bot app with chat:write.customize, invited to all five. Then the asks of ${BED_DIR}/slack-asks.md, posted once as yourself and left standing (that file says which a demo sitting keeps).`,
     `3. Notion: the two pages in ${BED_DIR}/notion/, pasted under one parent page shared with the integration (${BED_DIR}/notion/README.md).`,
     `4. .env.local: ${LINEAR_KEY_ENV}, ${SLACK_TOKEN_ENV} and ${NOTION_TOKEN_ENV}.`,
     'Then `pnpm bed:company check` until it is all green, and `pnpm bed:company seed`.',

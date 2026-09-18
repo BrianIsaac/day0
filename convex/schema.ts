@@ -273,6 +273,11 @@ export default defineSchema({
       v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),
     ),
     providerIdentityId: v.optional(v.string()),
+    /** The `bot_id` the chat provider stamps on everything this credential
+     * posts, read once at connection beside `providerIdentityId`. A post sent
+     * under a customised display name carries no user id, so this is the only
+     * mark intake has that the app itself wrote it. */
+    providerBotId: v.optional(v.string()),
     providerWorkspaceId: v.optional(v.string()),
     /** Phase 3 - the dedicated provider app this employee registered for
      * itself from the procedure its documentation describes. Present from the

@@ -92,6 +92,12 @@ export interface IntakeRuntime {
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
   /** Decision requests that landed on this surface and are still undecided. */
   listOpenDecisionRequests(surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>>;
+  /** Keep the bot id intake read for a row connected before the probe stored one. */
+  recordBotIdentity(record: {
+    surfaceId: Id<'surfaces'>;
+    generation: number;
+    providerBotId: string;
+  }): Promise<void>;
 }
 
 export interface IntakeDependencies {
@@ -139,6 +145,9 @@ interface SlackMessage {
   text: string;
   ts: string;
   user?: string;
+  /** The posting app's bot id; the only author mark on a post sent under a customised name. */
+  botId?: string;
+  appId?: string;
   /** The parent message when the mention itself sits inside a thread. */
   threadTs?: string;
 }
@@ -777,7 +786,7 @@ async function pollLinear(
 async function slackGet(
   fetcher: IntakeFetcher,
   credential: string,
-  method: 'conversations.list' | 'conversations.history' | 'conversations.replies',
+  method: 'auth.test' | 'conversations.list' | 'conversations.history' | 'conversations.replies',
   query: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const url = new URL(`https://slack.com/api/${method}`);
@@ -901,6 +910,8 @@ async function slackHistory(
         ts: row.ts,
         text: row.text,
         user: typeof row.user === 'string' ? row.user : undefined,
+        botId: typeof row.bot_id === 'string' ? row.bot_id : undefined,
+        appId: typeof row.app_id === 'string' ? row.app_id : undefined,
         threadTs: typeof row.thread_ts === 'string' ? row.thread_ts : undefined,
       });
     }
@@ -1064,6 +1075,73 @@ export function slackCandidate(
 }
 
 /**
+ * Whether the connected app itself posted a message, under whatever name.
+ *
+ * A post sent with a customised display name carries no `user`, so the bot's
+ * user id alone never matches it. Every employee posts that way, and siblings
+ * on a shared key are one app, so without the app's own identity an employee's
+ * post in a shared channel reads as an ask to its siblings and to itself.
+ * Another app's post and a person's message match none of the three.
+ *
+ * Args:
+ *   message: One channel history row.
+ *   surface: Connected Slack surface with the identity its probe stored.
+ *
+ * Returns:
+ *   True when the message is the app's own.
+ */
+function postedByConnectedApp(
+  message: SlackMessage,
+  surface: Doc<'surfaces'>,
+  botId: string,
+): boolean {
+  if (message.user !== undefined && message.user === surface.providerIdentityId) return true;
+  if (message.botId === botId) return true;
+  return message.appId !== undefined && message.appId === surface.provisioning?.appId;
+}
+
+const NO_APP_IDENTITY = 'Slack probe stored no app identity; probe the surface again.';
+
+/**
+ * The connected app's bot id: the one the probe stored, or, for a row connected
+ * before the probe stored it, the one the credential itself reports now.
+ *
+ * A restored bed holds such rows, and its first poll must not wait an hour for
+ * the re-probe. The answer is trusted only when it names the bot user the probe
+ * did store, so a credential changed since never lends its identity to the row;
+ * it is then kept, so this is asked once. Anything short of that reads no work:
+ * without the identity the app's own customised posts cannot be told from asks.
+ *
+ * Args:
+ *   surface: Connected Slack surface.
+ *   credential: Decrypted bot token.
+ *   fetcher: HTTP implementation.
+ *   remember: Persists an identity read here against the row's probe generation.
+ *
+ * Returns:
+ *   The bot id Slack stamps on everything this app posts.
+ *
+ * Raises:
+ *   Error: If the identity is neither stored nor establishable.
+ */
+async function connectedBotId(
+  surface: Doc<'surfaces'>,
+  credential: string,
+  fetcher: IntakeFetcher,
+  remember: (providerBotId: string, generation: number) => Promise<void>,
+): Promise<string> {
+  if (surface.providerBotId) return surface.providerBotId;
+  if (!surface.toolAllowlist?.includes('auth.test') || surface.probeGeneration === undefined) {
+    throw new Error(NO_APP_IDENTITY);
+  }
+  const auth = await slackGet(fetcher, credential, 'auth.test', {});
+  if (auth.user_id !== surface.providerIdentityId) throw new Error(NO_APP_IDENTITY);
+  if (typeof auth.bot_id !== 'string' || !auth.bot_id) throw new Error(NO_APP_IDENTITY);
+  await remember(auth.bot_id, surface.probeGeneration);
+  return auth.bot_id;
+}
+
+/**
  * Poll documented Slack channels for exact mentions of the connected bot.
  *
  * Args:
@@ -1084,6 +1162,7 @@ async function pollSlack(
   fetcher: IntakeFetcher,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
   include: { decisions: boolean; work: boolean },
+  rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const requiredMethods = include.work
     ? ['conversations.list', 'conversations.history']
@@ -1097,6 +1176,7 @@ async function pollSlack(
   if (include.work) {
     if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
     if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
+    const botId = await connectedBotId(surface, credential, fetcher, rememberBotId);
     const names = surface.intakeScope
       ? approvedChannelNames(surface.intakeScope)
       : slackChannelsFromPages(pages);
@@ -1106,7 +1186,7 @@ async function pollSlack(
     for (const channel of channels) {
       const messages = await slackHistory(fetcher, credential, channel.id, surface.lastPolledAt);
       for (const message of messages) {
-        if (!message.text.includes(mention) || message.user === surface.providerIdentityId) continue;
+        if (!message.text.includes(mention) || postedByConnectedApp(message, surface, botId)) continue;
         candidates.push(slackCandidate(message, channel, surface, observedAt));
       }
     }
@@ -1165,6 +1245,7 @@ async function pollChat(
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
   include: { decisions: boolean; work: boolean },
+  rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const polled = await (async (): Promise<ChatPollResult> => {
     if (surface.path === 'documented-api') {
@@ -1176,6 +1257,7 @@ async function pollChat(
         fetcher,
         listOpenRequests,
         include,
+        rememberBotId,
       );
     }
     if (surface.path === 'mcp') {
@@ -1227,6 +1309,15 @@ async function seedCandidate(
     requester: candidate.requester,
     replyTarget: candidate.replyTarget,
   });
+}
+
+/** Bind the runtime's identity write to one surface. */
+function rememberBotId(
+  runtime: IntakeRuntime,
+  surfaceId: Id<'surfaces'>,
+): (providerBotId: string, generation: number) => Promise<void> {
+  return (providerBotId: string, generation: number): Promise<void> =>
+    runtime.recordBotIdentity({ surfaceId, generation, providerBotId });
 }
 
 /**
@@ -1373,6 +1464,7 @@ export async function runIntakeSweep(
                 makeMcpClient,
                 () => runtime.listOpenDecisionRequests(surface._id),
                 { decisions: false, work: true },
+                rememberBotId(runtime, surface._id),
               )
             : undefined;
         const mapped = chat
@@ -1446,6 +1538,7 @@ export async function runDecisionSweep(
         makeMcpClient,
         () => runtime.listOpenDecisionRequests(surface._id),
         { decisions: true, work: false },
+        rememberBotId(runtime, surface._id),
       );
       for (const reply of chat.decisionReplies) {
         await runtime.resolveDecision({ surfaceId: surface._id, ...reply });
@@ -1494,6 +1587,9 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     },
     listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
       await ctx.runQuery(internal.work.openDecisionRequests, { surfaceId }),
+    recordBotIdentity: async (record): Promise<void> => {
+      await ctx.runMutation(internal.intakeIdentity.recordBotIdentity, record);
+    },
   };
 }
 
