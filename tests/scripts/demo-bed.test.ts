@@ -162,6 +162,48 @@ describe('command line', (): void => {
 });
 
 describe('the protected volumes and projects', (): void => {
+  it('refuses every protected CLI project and file contract before Docker', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-guard-'));
+    const bin = join(scratch, 'bin');
+    const calls = join(scratch, 'docker-calls');
+    mkdirSync(bin);
+    const docker = join(bin, 'docker');
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
+    chmodSync(docker, 0o755);
+    writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
+    const command = join(process.cwd(), 'node_modules/.bin/tsx');
+    const script = join(process.cwd(), 'scripts/demo-bed.ts');
+    const invoke = (args: string[]): void => {
+      const result = spawnSync(command, [script, ...args], {
+        cwd: scratch,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+        encoding: 'utf8',
+      });
+      expect([1, 2], args.join(' ')).toContain(result.status);
+      expect(result.stderr, args.join(' ')).toMatch(/protected|only ever read|file names project|COMPOSE_PROJECT_NAME=|snapshot does not take --project/);
+      expect(existsSync(calls), args.join(' ')).toBe(false);
+    };
+    try {
+      for (const protectedProject of [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS]) {
+        writeFileSync(join(scratch, '.env.local'), `COMPOSE_PROJECT_NAME=${protectedProject}\n`);
+        invoke(['up', '--project', protectedProject]);
+        invoke(['restore', '--project', protectedProject, '--snapshot', 'snapshot.tar.gz']);
+        invoke(['down', '--project', protectedProject, '--volumes']);
+        invoke(['preflight', '--project', protectedProject, '--no-probe']);
+        invoke(['offline-rung', '--project', protectedProject, '--out', 'results']);
+        invoke(['snapshot', '--project', protectedProject]);
+        invoke(['up', '--project', 'day0-p11r-test']);
+        invoke(['restore', '--project', 'day0-p11r-test', '--snapshot', 'snapshot.tar.gz']);
+        invoke(['down', '--project', 'day0-p11r-test', '--volumes']);
+        invoke(['preflight', '--project', 'day0-p11r-test', '--no-probe']);
+        invoke(['offline-rung', '--project', 'day0-p11r-test', '--out', 'results']);
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('names the four volumes the brief protects and the two projects that own them', (): void => {
     expect([...PROTECTED_VOLUMES].sort()).toEqual([
       'day0-demo-7c65e7_convex_data',
