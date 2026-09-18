@@ -88,6 +88,7 @@ const RUNG_SERVICES: ServiceRow[] = [
 const RUNG_VALUES = {
   DAY0_SURFACE_MODE: 'real',
   DAY0_REDACTOR_URL: 'http://redactor:8000',
+  DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/',
   CONVEX_PORT: '47210',
   FAKE_SLACK_HOST_PORT: '47213',
 };
@@ -327,7 +328,7 @@ describe('the env file', (): void => {
     expect(derived.DAY0_TEST_SLACK_AUTHORIZE_URL).toBe('http://127.0.0.1:44090/oauth/v2/authorize');
   });
 
-  it('leaves the Slack seam alone without the test profile, and never overwrites a value', (): void => {
+  it('leaves a correct Slack seam alone and refuses an unsafe address', (): void => {
     const ports = bedPorts({});
     expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(
       'DAY0_TEST_SLACK_API_URL',
@@ -336,10 +337,12 @@ describe('the env file', (): void => {
       bedEnvDefaults(
         'day0-a7-abc123',
         BED_PROFILES,
-        { DAY0_TEST_SLACK_API_URL: 'http://fake-slack/api/' },
+        { DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/' },
         ports,
       ),
     ).not.toHaveProperty('DAY0_TEST_SLACK_API_URL');
+    expect(() => bedEnvDefaults('day0-a7-abc123', BED_PROFILES,
+      { DAY0_TEST_SLACK_API_URL: 'https://slack.com/api/' }, ports)).toThrow('DAY0_TEST_SLACK_API_URL');
   });
 
   it('points the deployment at the redactor whenever the redactor profile runs, never overwriting', (): void => {
@@ -534,6 +537,7 @@ describe('the warm redactor volumes', (): void => {
 
 describe('the offline rung refuses without the redactor', (): void => {
   const ready = { project: 'day0-p11-abc123', services: RUNG_SERVICES, values: RUNG_VALUES,
+    deploymentSlackUrl: 'http://fake-slack:8090/api/',
     ports: bedPorts(RUNG_VALUES) };
 
   it('runs when the doubles, the redactor and the seam are all there', (): void => {
@@ -568,6 +572,15 @@ describe('the offline rung refuses without the redactor', (): void => {
     const refusal = offlineRungRefusal({ ...ready, values: { ...RUNG_VALUES, DAY0_REDACTOR_URL: '' } });
     expect(refusal).toContain('DAY0_REDACTOR_URL');
     expect(refusal).toContain(REDACTOR_URL);
+  });
+
+  it('refuses a live Slack route in either the file or the restored deployment', (): void => {
+    const live = 'https://slack.com/api/';
+    expect(offlineRungRefusal({ ...ready, values: {
+      ...RUNG_VALUES, DAY0_TEST_SLACK_API_URL: live,
+    } })).toContain('DAY0_TEST_SLACK_API_URL');
+    expect(offlineRungRefusal({ ...ready, deploymentSlackUrl: live })).toContain('DAY0_TEST_SLACK_API_URL');
+    expect(offlineRungRefusal({ ...ready, deploymentSlackUrl: '' })).toContain('DAY0_TEST_SLACK_API_URL');
   });
 
   it('still refuses a missing double or mock mode, as before', (): void => {

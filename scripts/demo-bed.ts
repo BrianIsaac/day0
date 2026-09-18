@@ -1122,6 +1122,8 @@ export interface RungReadiness {
   services: readonly ServiceRow[];
   /** What `.env.local` declares. */
   values: Readonly<Record<string, string>>;
+  /** The URL currently held by this volume's deployment, read from Convex. */
+  deploymentSlackUrl: string;
   /** The host ports derived from the same file. */
   ports: BedPorts;
 }
@@ -1155,6 +1157,12 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
     return `DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`;
   }
   if (!input.values.DAY0_REDACTOR_URL) return `${REDACTOR_UNWIRED_FIX}.`;
+  if (input.values.DAY0_TEST_SLACK_API_URL !== TEST_SLACK_API_URL ||
+      input.deploymentSlackUrl !== TEST_SLACK_API_URL) {
+    return `DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} in ${ENV_FILE} and on this ` +
+      `project's deployment before the rung runs. Set it in ${ENV_FILE}, then run pnpm demo:bed up ` +
+      `--project ${input.project} to push it to the restored copy.`;
+  }
   const published = publishedHostPort(row('backend')?.ports ?? '', CONTAINER_BACKEND_PORT);
   if (published === undefined) {
     return `the backend of project ${input.project} does not publish port ${CONTAINER_BACKEND_PORT}, so nothing of this project serves ${ENV_FILE}'s port ${input.ports.backend}.`;
@@ -1337,6 +1345,9 @@ function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPo
     throw new Error(`The file names project ${values.COMPOSE_PROJECT_NAME}, not ${project}.`);
   }
   if (values.CONVEX_DEPLOYMENT) throw new Error('A demo bed cannot target CONVEX_DEPLOYMENT.');
+  if (values.DAY0_TEST_SLACK_API_URL && values.DAY0_TEST_SLACK_API_URL !== TEST_SLACK_API_URL) {
+    throw new Error(`DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} for the trial copy.`);
+  }
   for (const [key, port] of [
     ['CONVEX_SELF_HOSTED_URL', ports.backend],
     ['NEXT_PUBLIC_CONVEX_URL', ports.backend],
@@ -2185,15 +2196,17 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   const rungReady =
     surfaceMode === 'real' && !!version && healthy('fake-slack') && healthy('looker-tile');
   const slackDouble = values.DAY0_TEST_SLACK_API_URL ?? '';
+  const slackDoubleWired = slackDouble === TEST_SLACK_API_URL &&
+    deployment.DAY0_TEST_SLACK_API_URL === TEST_SLACK_API_URL;
   const spent = typeof surfaces !== 'string' && surfaces.rungAlreadyRun;
   items.push({
     label: 'Offline rung doubles',
-    status: rungReady && slackDouble && !spent ? 'ok' : 'gap',
+    status: rungReady && slackDoubleWired && !spent ? 'ok' : 'gap',
     detail: [
       `fake-slack ${healthy('fake-slack') ? 'healthy' : 'not healthy'}, looker-tile ${healthy('looker-tile') ? 'healthy' : 'not healthy'}, sandbox ${healthy('sandbox') ? 'healthy' : 'not healthy'}`,
-      slackDouble
-        ? `DAY0_TEST_SLACK_API_URL names ${slackDouble}`
-        : `DAY0_TEST_SLACK_API_URL is empty, so the rung's Slack probe reaches slack.com and ends ungranted; set it to ${TEST_SLACK_API_URL}`,
+      slackDoubleWired
+        ? `DAY0_TEST_SLACK_API_URL names ${TEST_SLACK_API_URL} on both sides`
+        : `DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} in ${ENV_FILE} and on the deployment; set it and run pnpm demo:bed up`,
       spent
         ? 'this volume has already run the rung: restore the snapshot again before running another'
         : 'the trial ids on this volume are unspent',
@@ -2263,7 +2276,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   const tiers = demoTiers({
     videoPresent,
     offlineRungReady: rungReady,
-    slackDoubleWired: !!slackDouble,
+    slackDoubleWired,
     rungAlreadyRun: spent,
     redactorHealthy,
     redactorWired,
@@ -2285,11 +2298,20 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
   const values = readEnvFile();
   const ports = bedPorts(values);
   assertBedTarget(options.project, values, ports);
-  const refusal = offlineRungRefusal({
+  const services = projectServices(options.project) ?? [];
+  const readiness: RungReadiness = {
     project: options.project,
-    services: projectServices(options.project) ?? [],
+    services,
     values,
+    deploymentSlackUrl: TEST_SLACK_API_URL,
     ports,
+  };
+  const localRefusal = offlineRungRefusal(readiness);
+  if (localRefusal) throw new Error(localRefusal);
+  const deployment = deploymentEnv(bedEnvironment(options, values));
+  const refusal = offlineRungRefusal({
+    ...readiness,
+    deploymentSlackUrl: deployment.DAY0_TEST_SLACK_API_URL ?? '',
   });
   if (refusal) throw new Error(refusal);
   const out = resolve(options.out ?? `${KIT_DIR}/revocation-${stamp()}`);
