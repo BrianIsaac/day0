@@ -305,6 +305,53 @@ export default defineSchema({
     orientationJobId: v.optional(v.id('_scheduled_functions')),
     waterfallPosition: v.optional(v.number()),
     intakeSkipReason: v.optional(v.string()),
+    /** The queues this employee reads on a work-bearing surface: picked at
+     * orientation from its own role's documented `Team:`, `Project:` and
+     * `Channels:` lines, each value kept with the page line that states it,
+     * and approved by the manager and IT with the card. Absent on rows
+     * proposed before the field, which keep the page scan; present with no
+     * value means intake reads nothing, and `notes` says why. */
+    intakeScope: v.optional(
+      v.object({
+        team: v.optional(
+          v.object({
+            value: v.string(),
+            sourceId: v.optional(v.id('docSources')),
+            ref: v.string(),
+            quote: v.string(),
+          }),
+        ),
+        project: v.optional(
+          v.object({
+            value: v.string(),
+            sourceId: v.optional(v.id('docSources')),
+            ref: v.string(),
+            quote: v.string(),
+          }),
+        ),
+        projects: v.optional(
+          v.array(
+            v.object({
+              value: v.string(),
+              sourceId: v.optional(v.id('docSources')),
+              ref: v.string(),
+              quote: v.string(),
+            }),
+          ),
+        ),
+        channels: v.optional(
+          v.array(
+            v.object({
+              value: v.string(),
+              sourceId: v.optional(v.id('docSources')),
+              ref: v.string(),
+              quote: v.string(),
+            }),
+          ),
+        ),
+        notes: v.optional(v.array(v.string())),
+      }),
+    ),
     lastPolledAt: v.optional(v.number()),
     /** Independent checkpoint for the latency-sensitive manager decision poll. */
     lastDecisionPolledAt: v.optional(v.number()),

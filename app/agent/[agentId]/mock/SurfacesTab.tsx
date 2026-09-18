@@ -20,6 +20,16 @@ import { plainErrorMessage } from '@/lib/plain-error';
 import { presentBrowserComponent } from '@/surfaces/browser';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '@/surfaces/waterfall';
+import { awaitsManagerProposal, charterNamesWorkSystems } from '@/surfaces/charter-cards';
+import {
+  presentIntakeScope,
+  presentScopeDrift,
+  scopeDrift,
+  scopeFieldsFor,
+  type IntakeScope,
+  type ScopePage,
+  type ScopeValue,
+} from '@/surfaces/intake-scope';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 
 type SurfaceEvidence = {
@@ -53,7 +63,7 @@ type ConnectRequestBody = {
 
 type Operation = {
   error?: string;
-  kind: 'landing' | 'probe' | 'provision';
+  kind: 'landing' | 'probe' | 'propose' | 'provision';
   surfaceId: string;
 };
 
@@ -113,6 +123,150 @@ export function DiscoveryProvenance({
         );
       })}
     </div>
+  );
+}
+
+export interface IntakeScopeRowProps {
+  drift: readonly ScopeValue[];
+  scope: IntakeScope;
+  sourceLabels: ReadonlyMap<string, string>;
+  surfaceClass: string;
+  system: string;
+}
+
+/**
+ * Show the queues a work-bearing card reads, each with the handbook line
+ * that states it, so the manager and IT approve exactly what intake reads.
+ *
+ * Args:
+ *   props: The card's scope, what has changed on its pages, and source labels.
+ *
+ * Returns:
+ *   The reads line, its quotes, any change since the proposal and the notes.
+ */
+export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
+  const presentation = presentIntakeScope(props.system, props.surfaceClass, props.scope);
+  const changed = presentScopeDrift(props.scope, props.drift);
+  const queues = props.surfaceClass === 'kanban'
+    ? [props.scope.project, ...(props.scope.projects ?? [])].filter(
+        (value): value is ScopeValue => value !== undefined,
+      ).map((value): string => `Project ${value.value}`)
+    : (props.scope.channels ?? []).map((value): string => `#${value.value}`);
+  if (props.surfaceClass === 'kanban' && queues.length === 0 && props.scope.team) {
+    queues.push(`Team ${props.scope.team.value}`);
+  }
+  return (
+    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
+      <p className={presentation.empty ? 'font-medium text-[var(--color-warn)]' : 'font-medium'}>
+        {presentation.line}
+      </p>
+      {queues.length > 0 ? <ul className="mt-1 space-y-1">{queues.map((queue) => <li key={queue}>{queue}</li>)}</ul> : null}
+      {presentation.quotes.map((value: ScopeValue, index: number): React.ReactNode => {
+        const source =
+          (value.sourceId && props.sourceLabels.get(value.sourceId)) || 'documentation';
+        return (
+          <blockquote
+            key={`${value.ref}-${value.value}-${index}`}
+            className="mt-2 border-l border-[var(--color-border)] pl-2"
+          >
+            <span className="text-[var(--color-muted)]">{`${source} / ${value.ref}`}</span>
+            <br />
+            {value.quote}
+          </blockquote>
+        );
+      })}
+      {changed ? <p className="mt-2 text-[var(--color-warn)]">{changed}</p> : null}
+      {presentation.notes.map(
+        (note: string, index: number): React.ReactNode => (
+          <p key={`note-${index}`} className="mt-1 text-[10px] text-[var(--color-muted)]">
+            {note}
+          </p>
+        ),
+      )}
+    </div>
+  );
+}
+
+export interface UnnamedSystem {
+  _id: string;
+  slug: string;
+  displayName: string;
+  class: string;
+  discoveryEvidence?: SurfaceDiscoveryEvidence[];
+}
+
+export interface UnnamedSystemsRowProps {
+  error?: { surfaceId: string; message: string };
+  onPropose: (surfaceId: string) => void;
+  proposing?: string;
+  sourceLabels: ReadonlyMap<string, string>;
+  systems: readonly UnnamedSystem[];
+}
+
+/**
+ * List the documented systems this role's charter does not name, collapsed
+ * under the cards, each one click from a card of its own.
+ *
+ * Args:
+ *   props: The systems, their source labels and the propose callback.
+ *
+ * Returns:
+ *   The collapsed row, or nothing when every documented system is named.
+ */
+export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNode {
+  if (props.systems.length === 0) return null;
+  return (
+    <details className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
+      <summary className="cursor-pointer text-[var(--color-muted)]">
+        {`Documented in the company, not named in this role's charter (${props.systems.length})`}
+      </summary>
+      <p className="mt-2 text-[var(--color-muted)]">
+        Cards are proposed for the systems the charter names. Propose one of these to file its card;
+        the manager and IT still approve it, and a charter amendment names it for good.
+      </p>
+      <ul className="mt-2 space-y-2">
+        {props.systems.map((system: UnnamedSystem): React.ReactNode => {
+          const documented = (system.discoveryEvidence ?? []).find(
+            (item: SurfaceDiscoveryEvidence): boolean =>
+              item.kind === 'documentation' && item.current,
+          );
+          const source = documented?.sourceId
+            ? (props.sourceLabels.get(documented.sourceId) ?? 'documentation')
+            : 'documentation';
+          const proposing = props.proposing === system._id;
+          return (
+            <li
+              key={system._id}
+              className="flex flex-wrap items-start justify-between gap-2 border-t border-[var(--color-border)] pt-2"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">
+                  {system.displayName}{' '}
+                  <span className="text-[10px] font-normal text-[var(--color-muted)]">
+                    {system.class}
+                  </span>
+                </p>
+                {documented ? (
+                  <p className="mt-1 text-[var(--color-muted)]">
+                    {`${source} / ${documented.ref}`}: <EvidenceQuote quote={documented.quote} />
+                  </p>
+                ) : null}
+                {props.error?.surfaceId === system._id ? (
+                  <p className="mt-1 text-[var(--color-danger)]">{props.error.message}</p>
+                ) : null}
+              </div>
+              <button
+                onClick={(): void => props.onPropose(system._id)}
+                disabled={proposing}
+                className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+              >
+                {proposing ? 'Proposing...' : 'Propose'}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 
@@ -334,6 +488,7 @@ export function SurfaceLadder({ candidates, attempts }: SurfaceLadderProps): Rea
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
+  const charter = useQuery(api.charters.latest, { agentId });
   const credentialRows = useQuery(credentialSummariesQuery, {});
   const credentialSummaries = credentialRows;
   const sourceIds = useMemo((): Id<'docSources'>[] => {
@@ -351,8 +506,19 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
         item.sourceId ? [item.sourceId] : [],
       ),
     );
+    const scopeSourceIds = (surfaces ?? []).flatMap((surface) => {
+      const scope = surface.intakeScope;
+      return [scope?.team, scope?.project, ...(scope?.projects ?? []), ...(scope?.channels ?? [])].flatMap((value): string[] =>
+        value?.sourceId ? [value.sourceId] : [],
+      );
+    });
     return [
-      ...new Set([...evidenceSourceIds, ...discoverySourceIds, ...credentialSourceIds]),
+      ...new Set([
+        ...evidenceSourceIds,
+        ...discoverySourceIds,
+        ...scopeSourceIds,
+        ...credentialSourceIds,
+      ]),
     ] as Id<'docSources'>[];
   }, [credentialSummaries, surfaces]);
   const sources = useQuery(api.docSources.byIds, { sourceIds });
@@ -387,9 +553,35 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     () => orderSurfaceWaterfall(surfaces ?? [], documentedNames),
     [documentedNames, surfaces],
   );
+  const scopePages = useMemo(
+    (): ScopePage[] =>
+      (pages ?? []).map(
+        (page): ScopePage => ({
+          sourceId: String(page.sourceId),
+          ref: page.ref,
+          markdown: page.markdown,
+        }),
+      ),
+    [pages],
+  );
+  // The server orients only what the approved charter names; the card list
+  // follows the same rule, so what waits for the manager's Propose is listed
+  // under the cards rather than shown as a card that will never be filed.
+  const charterNamesSystems =
+    charter?.approved === true &&
+    charterNamesWorkSystems(
+      (charter.body as { namedSystems?: Array<{ class: string }> } | null)?.namedSystems,
+    );
+  const awaitingProposal = orderedSurfaces.filter((surface): boolean =>
+    awaitsManagerProposal(surface, charterNamesSystems),
+  );
+  const cardSurfaces = orderedSurfaces.filter(
+    (surface): boolean => !awaitsManagerProposal(surface, charterNamesSystems),
+  );
   const approve = useMutation(api.surfaces.approve);
   const reject = useMutation(api.surfaces.reject);
   const reorient = useAction(api.surfaces.reorient);
+  const requestProposal = useMutation(api.surfaces.requestProposal);
   const probe = useAction(api.surfaceActions.probe);
   const landCredential = useAction(api.surfaceActions.landCredential);
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
@@ -419,6 +611,20 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     } catch (failure) {
       setOperation({
         kind: 'probe',
+        surfaceId,
+        error: plainErrorMessage((failure as Error).message),
+      });
+    }
+  }
+
+  async function onPropose(surfaceId: Id<'surfaces'>): Promise<void> {
+    setOperation({ kind: 'propose', surfaceId });
+    try {
+      await requestProposal({ surfaceId });
+      setOperation(null);
+    } catch (failure) {
+      setOperation({
+        kind: 'propose',
         surfaceId,
         error: plainErrorMessage((failure as Error).message),
       });
@@ -457,11 +663,12 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     }
   }
 
-  if (!surfaces || !pages || !credentialRows)
+  if (!surfaces || !pages || !credentialRows || charter === undefined)
     return <p className="text-xs text-[var(--color-muted)]">{LOADING_SURFACES}</p>;
   if (surfaces.length === 0)
     return <p className="text-xs text-[var(--color-muted)]">{EMPTY_SURFACES}</p>;
-  const declared = surfaces.filter((surface): boolean => surface.verdict === 'declared');
+  const declared = cardSurfaces.filter((surface): boolean => surface.verdict === 'declared');
+  const proposeOperation = operation?.kind === 'propose' ? operation : undefined;
 
   return (
     <div className="space-y-3">
@@ -484,7 +691,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
         </div>
       ) : null}
       <div className="grid gap-3 md:grid-cols-2">
-        {orderedSurfaces.map((surface, index): React.ReactNode => {
+        {cardSurfaces.map((surface, index): React.ReactNode => {
           const request = surface.request as ConnectRequestBody | undefined;
           const ladder = request?.target?.ladder ?? surface.pathCandidates;
           const evidence = request?.evidence ?? (surface.whereFound as SurfaceEvidence[]);
@@ -604,6 +811,15 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   <dt className="text-[var(--color-muted)]">Rollback</dt>
                   <dd>{request.rollback || 'not stated'}</dd>
                 </dl>
+              ) : null}
+              {surface.intakeScope && scopeFieldsFor(surface.class).length > 0 ? (
+                <IntakeScopeRow
+                  drift={scopeDrift(surface.intakeScope, scopePages)}
+                  scope={surface.intakeScope}
+                  sourceLabels={sourceLabels}
+                  surfaceClass={surface.class}
+                  system={surface.displayName}
+                />
               ) : null}
               {surface.verdict !== 'declared' && surface.verdict !== 'absent' ? (
                 <ProvisioningRow
@@ -743,6 +959,21 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
           );
         })}
       </div>
+      <UnnamedSystemsRow
+        error={
+          proposeOperation?.error
+            ? { surfaceId: proposeOperation.surfaceId, message: proposeOperation.error }
+            : undefined
+        }
+        onPropose={(surfaceId: string): void => {
+          void onPropose(surfaceId as Id<'surfaces'>);
+        }}
+        proposing={
+          proposeOperation && !proposeOperation.error ? proposeOperation.surfaceId : undefined
+        }
+        sourceLabels={sourceLabels}
+        systems={awaitingProposal}
+      />
     </div>
   );
 }

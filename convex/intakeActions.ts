@@ -12,6 +12,12 @@ import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { browserComponentRefusal } from '../src/surfaces/browser';
 import { documentedChannelNames } from '../src/surfaces/slack-policy';
+import {
+  approvedChannelNames,
+  approvedLinearScope,
+  emptyScopeReason,
+  isEmptyScope,
+} from '../src/surfaces/intake-scope';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
@@ -112,8 +118,10 @@ export interface IntakeSweepResult {
 
 export type DecisionSweepResult = Omit<IntakeSweepResult, 'candidates'>;
 
+/** The Linear bounds intake reads: the approved scope, or the page scan's for older rows. */
 interface LinearScope {
-  project: string;
+  project?: string;
+  projects?: string[];
   team?: string;
 }
 
@@ -182,7 +190,10 @@ export function safeIntakeError(error: unknown, credential: string): string {
  * Raises:
  *   Error: If no Linear project is documented.
  */
-export function linearScopeFromPages(pages: readonly Doc<'docPages'>[]): LinearScope {
+export function linearScopeFromPages(pages: readonly Doc<'docPages'>[]): {
+  project: string;
+  team?: string;
+} {
   const markdown = pages
     .filter((page: Doc<'docPages'>): boolean => /linear/i.test(`${page.title}\n${page.markdown}`))
     .map((page: Doc<'docPages'>): string => page.markdown)
@@ -249,6 +260,8 @@ export interface LinearListRequest {
   args: Record<string, unknown>;
   /** True when the schema had a project argument; otherwise issues are filtered here. */
   projectEnforced: boolean;
+  /** True when the schema had a team argument; otherwise issues are filtered here. */
+  teamEnforced: boolean;
   /** True when the schema had an updated-at argument; otherwise issues are filtered here. */
   checkpointEnforced: boolean;
 }
@@ -321,7 +334,7 @@ export function linearListArguments(
   const properties = schemaProperties(inputSchema);
   const args: Record<string, unknown> = {};
   const projectName = discoveredArgument(properties, ['project', 'projectName', 'projectId']);
-  if (projectName) args[projectName] = scope.project;
+  if (projectName && scope.project) args[projectName] = scope.project;
 
   const teamName = discoveredArgument(properties, ['team', 'teamName', 'teamKey', 'teamId']);
   if (teamName && scope.team) args[teamName] = scope.team;
@@ -354,7 +367,12 @@ export function linearListArguments(
     if (!cursorName) throw new Error('Linear list_issues returned an unsupported cursor.');
     args[cursorName] = cursor;
   }
-  return { args, projectEnforced: projectName !== undefined, checkpointEnforced };
+  return {
+    args,
+    projectEnforced: projectName !== undefined,
+    teamEnforced: teamName !== undefined,
+    checkpointEnforced,
+  };
 }
 
 /**
@@ -373,6 +391,43 @@ export function issueProject(issue: Record<string, unknown>): string | undefined
   if (typeof issue.projectName === 'string') return issue.projectName;
   if (typeof project?.id === 'string') return project.id;
   return undefined;
+}
+
+/**
+ * Read every way an issue names its team, in lower case.
+ *
+ * Linear's MCP server returns the team's display name and the issue
+ * identifier (`FIN-4`), whose prefix is the team key; GraphQL-shaped
+ * payloads nest a team object. A documented team is usually the key, so
+ * the identifier's prefix is what lets the key be compared at all.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *
+ * Returns:
+ *   The team's name, key or id as the issue carries them; empty when none.
+ */
+export function issueTeamLabels(issue: Record<string, unknown>): string[] {
+  const labels = new Set<string>();
+  const add = (value: unknown): void => {
+    if (typeof value === 'string' && value.trim()) labels.add(value.trim().toLowerCase());
+  };
+  add(issue.team);
+  const team = asRecord(issue.team);
+  add(team?.key);
+  add(team?.name);
+  add(team?.id);
+  add(issue.teamKey);
+  add(issue.teamName);
+  add(issue.teamId);
+  const identifier =
+    typeof issue.identifier === 'string'
+      ? issue.identifier
+      : typeof issue.id === 'string'
+        ? issue.id
+        : '';
+  add(/^([A-Z][A-Z0-9_]*)-\d+$/.exec(identifier)?.[1]);
+  return [...labels];
 }
 
 /**
@@ -580,6 +635,11 @@ export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
 /**
  * Poll all bounded Linear pages and map their issues to candidates.
  *
+ * A card approved with an intake scope reads that team and project and
+ * nothing else; a row connected before the scope existed keeps the page
+ * scan as it was. A bound the schema cannot express is applied to the
+ * returned issues here: the project always, the team for an approved scope.
+ *
  * Args:
  *   surface: Connected kanban surface.
  *   pages: Runbook pages visible to its agent.
@@ -600,7 +660,9 @@ async function pollLinear(
   if (!surface.toolAllowlist?.includes('list_issues')) {
     throw new Error('Connected Linear surface does not allow list_issues.');
   }
-  const scope = linearScopeFromPages(pages);
+  const scope: LinearScope = surface.intakeScope
+    ? approvedLinearScope(surface.intakeScope)
+    : linearScopeFromPages(pages);
   const client = makeClient(linearEndpoint(surface.endpoint), credential);
   try {
     const { definitions, errors } = await client.listToolDefinitionsWithErrors({
@@ -613,52 +675,86 @@ async function pollLinear(
     if (!tool.execute) throw new Error('Linear list_issues tool is not executable.');
 
     const candidates: WorkCandidate[] = [];
-    const cursors = new Set<string>();
-    const wantedProject = scope.project.toLowerCase();
-    let seen = 0;
-    let withProject = 0;
-    let cursor: string | undefined;
-    for (let pageIndex = 0; pageIndex < MAX_MCP_PAGES; pageIndex += 1) {
-      const request = linearListArguments(
-        definition.inputSchema,
-        scope,
-        surface.lastPolledAt,
-        cursor,
-      );
-      const value = await tool.execute(request.args, {
-        abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-      });
-      const page = mcpIssuePage(value);
-      for (const issue of page.issues) {
-        seen += 1;
-        const project = issueProject(issue);
-        if (project !== undefined) withProject += 1;
-        if (project !== undefined && project.toLowerCase() !== wantedProject) continue;
-        const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
-        if (
-          surface.lastPolledAt !== undefined &&
-          Number.isFinite(updatedAt) &&
-          updatedAt < surface.lastPolledAt
-        ) {
-          continue;
-        }
-        const candidate = linearCandidate(issue, surface, observedAt);
-        if (candidate) candidates.push(candidate);
-      }
-      if (!request.projectEnforced && seen > 0 && withProject === 0) {
-        throw new Error(
-          `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${scope.project}.`,
+    const candidateIds = new Set<string>();
+    const projects = scope.projects?.length ? [...new Set(scope.projects)] : [scope.project];
+    // Only an approved team is enforced here. A row still on the page scan
+    // keeps its behaviour exactly, and the scan's team may be another
+    // role's handbook's, which is the defect the approved scope replaces.
+    const wantedTeam = surface.intakeScope ? scope.team?.toLowerCase() : undefined;
+    for (const approvedProject of projects) {
+      const cursors = new Set<string>();
+      const wantedProject = approvedProject?.toLowerCase();
+      let seen = 0;
+      let withProject = 0;
+      let withTeam = 0;
+      let cursor: string | undefined;
+      for (let pageIndex = 0; pageIndex < MAX_MCP_PAGES; pageIndex += 1) {
+        const request = linearListArguments(
+          definition.inputSchema,
+          { team: scope.team, project: approvedProject },
+          surface.lastPolledAt,
+          cursor,
         );
+        const value = await tool.execute(request.args, {
+          abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+        });
+        const page = mcpIssuePage(value);
+        for (const issue of page.issues) {
+          seen += 1;
+          const project = issueProject(issue);
+          if (project !== undefined) withProject += 1;
+          if (
+            wantedProject !== undefined &&
+            (project === undefined
+              ? surface.intakeScope !== undefined
+              : project.toLowerCase() !== wantedProject)
+          ) {
+            continue;
+          }
+          if (wantedTeam !== undefined && !request.teamEnforced) {
+            const teams = issueTeamLabels(issue);
+            if (teams.length > 0) withTeam += 1;
+            if (!teams.includes(wantedTeam)) continue;
+          }
+          const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
+          if (
+            surface.lastPolledAt !== undefined &&
+            Number.isFinite(updatedAt) &&
+            updatedAt < surface.lastPolledAt
+          ) {
+            continue;
+          }
+          const candidate = linearCandidate(issue, surface, observedAt);
+          if (candidate && !candidateIds.has(candidate.externalId)) {
+            candidates.push(candidate);
+            candidateIds.add(candidate.externalId);
+          }
+        }
+        if (
+          wantedProject !== undefined &&
+          !request.projectEnforced &&
+          seen > 0 &&
+          withProject === 0
+        ) {
+          throw new Error(
+            `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${approvedProject}.`,
+          );
+        }
+        if (wantedTeam !== undefined && !request.teamEnforced && seen > 0 && withTeam === 0) {
+          throw new Error(
+            `Linear list_issues has no team argument and its issues carry no team, so intake cannot be bounded to team ${scope.team}.`,
+          );
+        }
+        if (!page.nextCursor) break;
+        if (cursors.has(page.nextCursor)) {
+          throw new Error('Linear list_issues repeated a cursor before pagination completed.');
+        }
+        if (pageIndex === MAX_MCP_PAGES - 1) {
+          throw new Error('Linear list_issues pagination did not complete within the page limit.');
+        }
+        cursors.add(page.nextCursor);
+        cursor = page.nextCursor;
       }
-      if (!page.nextCursor) break;
-      if (cursors.has(page.nextCursor)) {
-        throw new Error('Linear list_issues repeated a cursor before pagination completed.');
-      }
-      if (pageIndex === MAX_MCP_PAGES - 1) {
-        throw new Error('Linear list_issues pagination did not complete within the page limit.');
-      }
-      cursors.add(page.nextCursor);
-      cursor = page.nextCursor;
     }
     return candidates;
   } finally {
@@ -1001,7 +1097,9 @@ async function pollSlack(
   if (include.work) {
     if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
     if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
-    const names = slackChannelsFromPages(pages);
+    const names = surface.intakeScope
+      ? approvedChannelNames(surface.intakeScope)
+      : slackChannelsFromPages(pages);
     if (names.length === 0) throw new Error('Slack policy names no intake channels.');
     const channels = await resolveSlackChannels(fetcher, credential, names);
     const mention = `<@${surface.providerIdentityId}>`;
@@ -1244,6 +1342,17 @@ export async function runIntakeSweep(
           surfaceId: surface._id,
           waterfallPosition,
           skipReason: `no intake reader for ${surface.displayName}; this Day0 deployment reads kanban work through Linear's MCP contract`,
+        });
+        skipped += 1;
+        continue;
+      }
+      // An approved scope with nothing in it is an answer, not a fault: this
+      // employee reads nothing here, and no credential is touched to find that out.
+      if (surface.intakeScope && isEmptyScope(surface.intakeScope, surface.class)) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: emptyScopeReason(surface.displayName, surface.class),
         });
         skipped += 1;
         continue;

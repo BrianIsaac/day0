@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import {
   compareProviderTs,
   issueProject,
+  issueTeamLabels,
   linearCandidate,
   linearListArguments,
   mcpIssuePage,
@@ -22,6 +23,7 @@ import {
 } from '../../convex/intakeActions';
 import type { WorkCandidate } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
+import { companyPage } from '../fixtures/company-bed';
 
 type CredentialId = GenericId<'credentials'>;
 
@@ -153,6 +155,7 @@ function runtimeHarness(
   surfaces: Doc<'surfaces'>[],
   pages: Doc<'docPages'>[],
   credentials: Map<string, string>,
+  agents: Doc<'agents'>[] = [agentRow()],
 ): RuntimeHarness {
   const records: RecordedIntake[] = [];
   const decisionPolls: Array<{
@@ -163,13 +166,12 @@ function runtimeHarness(
   const decisions: unknown[] = [];
   const seeds = new Map<string, SeededCandidate>();
   const openRequests = new Map<string, Array<{ ts: string }>>();
-  const agent = agentRow();
   const runtime: IntakeRuntime = {
     listSurfaces: async (): Promise<Doc<'surfaces'>[]> => surfaces,
     listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
       surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.class === 'chat'),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
-      agentId === agent._id ? agent : null,
+      agents.find((agent: Doc<'agents'>): boolean => agent._id === agentId) ?? null,
     listPages: async (): Promise<Doc<'docPages'>[]> => pages,
     decrypt: async (credentialId: CredentialId): Promise<string> => {
       const value = credentials.get(String(credentialId));
@@ -1178,6 +1180,7 @@ describe('intake provider contracts', (): void => {
         after: 'cursor-2',
       },
       projectEnforced: true,
+      teamEnforced: true,
       checkpointEnforced: true,
     });
     expect(
@@ -1186,7 +1189,12 @@ describe('intake provider contracts', (): void => {
         { project: 'Q3 close' },
         Date.parse('2026-08-26T01:00:00.000Z'),
       ),
-    ).toEqual({ args: { limit: 100 }, projectEnforced: false, checkpointEnforced: false });
+    ).toEqual({
+      args: { limit: 100 },
+      projectEnforced: false,
+      teamEnforced: false,
+      checkpointEnforced: false,
+    });
     expect(
       (): LinearListRequest =>
         linearListArguments(
@@ -1214,6 +1222,18 @@ describe('intake provider contracts', (): void => {
         { project: 'Q3 close' },
       ).args,
     ).toEqual({ project: 'Q3 close' });
+    expect(
+      linearListArguments({ properties: { team: {}, project: {}, limit: {} } }, { team: 'FIN' })
+        .args,
+    ).toEqual({ team: 'FIN', limit: 100 });
+    expect(issueTeamLabels({ id: 'FIN-4', team: 'Finance close' })).toEqual([
+      'finance close',
+      'fin',
+    ]);
+    expect(issueTeamLabels({ id: 'uuid-1', team: { key: 'LOG', name: 'Logistics desk' } })).toEqual(
+      ['log', 'logistics desk'],
+    );
+    expect(issueTeamLabels({ id: '0d3c5b4e-8f5e-4a0e-9d37-6f1f0b7b9a11' })).toEqual([]);
     expect(issueProject({ project: { name: 'Q3 close', id: 'p1' } })).toBe('Q3 close');
     expect(issueProject({ project: 'Q3 close' })).toBe('Q3 close');
     expect(issueProject({ projectName: 'Q3 close' })).toBe('Q3 close');
@@ -1733,6 +1753,470 @@ describe('intake provider contracts', (): void => {
       'custom-value',
     );
     expect(safe).toBe('Bearer <redacted> failed next to <redacted>');
+  });
+});
+
+/**
+ * One approved scope value quoting its handbook line, as orientation stores it.
+ *
+ * Args:
+ *   value: The team, project or channel name.
+ *   ref: The handbook page.
+ *   quote: The handbook line that states it.
+ *
+ * Returns:
+ *   A stored scope value.
+ */
+function scoped(
+  value: string,
+  ref: string,
+  quote: string,
+): { value: string; ref: string; quote: string } {
+  return { value, ref, quote };
+}
+
+describe('each employee reads its own approved queues', (): void => {
+  const revopsAgent: Doc<'agents'> = {
+    ...agentRow(),
+    _id: id<'agents'>('agent-revops'),
+    name: 'Priya',
+  };
+  const financeAgent: Doc<'agents'> = {
+    ...agentRow(),
+    _id: id<'agents'>('agent-finance'),
+    name: 'Mateo',
+  };
+  const REVOPS_PAGE = companyPage('revops/handbook.md');
+  const FINANCE_PAGE = companyPage('finance/handbook.md');
+  const LINEAR_PAGE = companyPage('notion-linear-automation');
+  const SLACK_PAGE = companyPage('notion-slack-automation-policy');
+
+  /** The company's pages with the two handbooks in one order or the other. */
+  function companyPageRows(order: 'revops-first' | 'finance-first'): Doc<'docPages'>[] {
+    const handbooks = [REVOPS_PAGE, FINANCE_PAGE];
+    return [
+      ...(order === 'revops-first' ? handbooks : handbooks.reverse()),
+      LINEAR_PAGE,
+      SLACK_PAGE,
+    ].map((page): Doc<'docPages'> => pageRow(page.ref, page.title, page.markdown));
+  }
+
+  /** Two employees' connected Linear and Slack cards, each with its approved scope. */
+  function companySurfaces(): Doc<'surfaces'>[] {
+    const linear = (
+      agent: Doc<'agents'>,
+      team: string,
+      project: string,
+      ref: string,
+    ): Doc<'surfaces'> =>
+      surfaceRow('linear', 'Linear', 'kanban', {
+        _id: id<'surfaces'>(`surface-${agent.name}-linear`),
+        agentId: agent._id,
+        credentialId: id<'credentials'>(`credential-${agent.name}-linear`),
+        endpoint: 'https://mcp.linear.app/mcp',
+        toolAllowlist: ['list_issues'],
+        intakeScope: {
+          team: scoped(team, ref, `- Team: \`${team}\``),
+          project: scoped(project, ref, `- Project: \`${project}\``),
+        },
+      });
+    const slack = (
+      agent: Doc<'agents'>,
+      channels: string[],
+      ref: string,
+      quote: string,
+    ): Doc<'surfaces'> =>
+      surfaceRow('slack', 'Slack', 'chat', {
+        _id: id<'surfaces'>(`surface-${agent.name}-slack`),
+        agentId: agent._id,
+        credentialId: id<'credentials'>(`credential-${agent.name}-slack`),
+        endpoint: 'https://slack.com/api/',
+        toolAllowlist: ['conversations.list', 'conversations.history'],
+        providerIdentityId: 'UBOT',
+        providerWorkspaceId: 'TKESTREL',
+        intakeScope: { channels: channels.map((channel) => scoped(channel, ref, quote)) },
+      });
+    return [
+      linear(revopsAgent, 'REVOPS', 'Q3 close', 'revops/handbook.md'),
+      linear(financeAgent, 'FIN', 'September close', 'finance/handbook.md'),
+      slack(
+        revopsAgent,
+        ['revops-asks', 'ops-requests'],
+        'revops/handbook.md',
+        '- Channels: #revops-asks, #revops, #ops-requests',
+      ),
+      slack(
+        financeAgent,
+        ['finance-close', 'ops-requests'],
+        'finance/handbook.md',
+        '- Channels: #finance-close, #ops-requests',
+      ),
+    ];
+  }
+
+  /** Each credential's decrypted value names its employee and system. */
+  function companyCredentials(): Map<string, string> {
+    return new Map(
+      ['Priya', 'Mateo'].flatMap(
+        (name): Array<[string, string]> => [
+          [`credential-${name}-linear`, `${name}-linear-value`],
+          [`credential-${name}-slack`, `${name}-slack-value`],
+        ],
+      ),
+    );
+  }
+
+  it('bounds each list_issues call to its own team and project, whichever handbook comes first', async (): Promise<void> => {
+    for (const order of ['revops-first', 'finance-first'] as const) {
+      const harness = runtimeHarness(
+        companySurfaces(),
+        companyPageRows(order),
+        companyCredentials(),
+        [revopsAgent, financeAgent],
+      );
+      const calls: Array<{ credential: string; args: Record<string, unknown> }> = [];
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-09-18T03:00:00.000Z'),
+        fetcher: async (input: string | URL | Request): Promise<Response> =>
+          new URL(String(input)).pathname.endsWith('/conversations.list')
+            ? slackResponse({ ok: true, channels: [], response_metadata: { next_cursor: '' } })
+            : slackResponse({ ok: true, messages: [] }),
+        makeMcpClient: (_endpoint: URL, credential: string) => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: {
+                list_issues: { inputSchema: { properties: { team: {}, project: {}, limit: {} } } },
+              },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              calls.push({ credential, args });
+              return { issues: [] };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+      });
+      expect(calls).toEqual([
+        {
+          credential: 'Priya-linear-value',
+          args: { team: 'REVOPS', project: 'Q3 close', limit: 100 },
+        },
+        {
+          credential: 'Mateo-linear-value',
+          args: { team: 'FIN', project: 'September close', limit: 100 },
+        },
+      ]);
+    }
+  });
+
+  it('polls both projects approved on one finance card and keeps the provider ids', async (): Promise<void> => {
+    const finance = companySurfaces()[1];
+    const second = scoped('October close', 'finance/handbook.md', '- Project: `October close`');
+    const surface: Doc<'surfaces'> = {
+      ...finance,
+      intakeScope: { ...finance.intakeScope, projects: [second] },
+    };
+    const harness = runtimeHarness(
+      [surface],
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [financeAgent],
+    );
+    const calls: string[] = [];
+    await expect(runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      makeMcpClient: () => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: { surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } } },
+          errors: {},
+        }),
+        toolFromDefinition: async () => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            const project = String(args.project);
+            calls.push(project);
+            return { issues: [{
+              id: project === 'September close' ? 'FIN-1' : 'FIN-2',
+              title: `Ticket in ${project}`,
+              url: 'https://linear.app/kestrel/issue/fin',
+              project: { name: project },
+            }] };
+          },
+        }),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+    })).resolves.toMatchObject({ candidates: 2, polled: 1 });
+    expect(calls).toEqual(['September close', 'October close']);
+    expect([...harness.seeds.values()].map((seed) => [seed.sourceSystem, seed.externalId])).toEqual([
+      ['linear', 'FIN-1'],
+      ['linear', 'FIN-2'],
+    ]);
+  });
+
+  it('reads only the approved channels, so finance never reads #revops-asks', async (): Promise<void> => {
+    for (const order of ['revops-first', 'finance-first'] as const) {
+      const harness = runtimeHarness(
+        companySurfaces(),
+        companyPageRows(order),
+        companyCredentials(),
+        [revopsAgent, financeAgent],
+      );
+      const history: Array<{ credential: string; channel: string }> = [];
+      const ids: Record<string, string> = {
+        'revops-asks': 'CASKS',
+        revops: 'CREVOPS',
+        'ops-requests': 'COPS',
+        'finance-close': 'CFIN',
+        'logistics-desk': 'CLOG',
+      };
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-09-18T03:00:00.000Z'),
+        fetcher: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) {
+            return slackResponse({
+              ok: true,
+              channels: Object.entries(ids).map(([name, channel]) => ({ id: channel, name })),
+              response_metadata: { next_cursor: '' },
+            });
+          }
+          const credential = String(new Headers(init?.headers).get('Authorization')).replace(
+            'Bearer ',
+            '',
+          );
+          history.push({ credential, channel: url.searchParams.get('channel') ?? '' });
+          return slackResponse({
+            ok: true,
+            messages: [
+              {
+                ts: '1770000000.000100',
+                user: 'UASKER',
+                text: `<@UBOT> ask in ${url.searchParams.get('channel')}`,
+              },
+            ],
+          });
+        },
+        makeMcpClient: () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (): Promise<unknown> => ({ issues: [] }),
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+      });
+      expect(
+        history
+          .filter((call) => call.credential === 'Mateo-slack-value')
+          .map((call) => call.channel),
+      ).toEqual(['CFIN', 'COPS']);
+      expect(
+        history
+          .filter((call) => call.credential === 'Priya-slack-value')
+          .map((call) => call.channel),
+      ).toEqual(['CASKS', 'COPS']);
+      expect(
+        [...harness.seeds.values()]
+          .filter((seed) => seed.agentId === financeAgent._id)
+          .map((seed) => seed.replyTarget?.channelName),
+      ).toEqual(['finance-close', 'ops-requests']);
+    }
+  });
+
+  it('reads each of the three company roles from only its approved queues', async (): Promise<void> => {
+    const logisticsAgent: Doc<'agents'> = {
+      ...agentRow(), _id: id<'agents'>('agent-logistics'), name: 'Aiko',
+    };
+    const logisticsRef = 'logistics/handbook.md';
+    const logisticsLinear = surfaceRow('linear', 'Linear', 'kanban', {
+      _id: id<'surfaces'>('surface-Aiko-linear'), agentId: logisticsAgent._id,
+      credentialId: id<'credentials'>('credential-Aiko-linear'),
+      endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['list_issues'],
+      intakeScope: {
+        team: scoped('LOG', logisticsRef, '- Team: `LOG`'),
+        project: scoped('Shipment exceptions', logisticsRef, '- Project: `Shipment exceptions`'),
+      },
+    });
+    const logisticsSlack = surfaceRow('slack', 'Slack', 'chat', {
+      _id: id<'surfaces'>('surface-Aiko-slack'), agentId: logisticsAgent._id,
+      credentialId: id<'credentials'>('credential-Aiko-slack'),
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT', providerWorkspaceId: 'TKESTREL',
+      intakeScope: { channels: ['logistics-desk', 'ops-requests'].map((name) =>
+        scoped(name, logisticsRef, '- Channels: #logistics-desk, #ops-requests')) },
+    });
+    const pageRows = [
+      REVOPS_PAGE, FINANCE_PAGE, companyPage(logisticsRef), LINEAR_PAGE, SLACK_PAGE,
+    ].map((page): Doc<'docPages'> => pageRow(page.ref, page.title, page.markdown));
+    const harness = runtimeHarness(
+      [...companySurfaces(), logisticsLinear, logisticsSlack],
+      pageRows,
+      new Map([...companyCredentials(),
+        ['credential-Aiko-linear', 'Aiko-linear-value'],
+        ['credential-Aiko-slack', 'Aiko-slack-value'],
+      ]),
+      [revopsAgent, financeAgent, logisticsAgent],
+    );
+    const linearCalls: Array<{ credential: string; team: unknown; project: unknown }> = [];
+    const history: Array<{ credential: string; channel: string }> = [];
+    const channels = [
+      'revops-asks', 'revops', 'finance-close', 'logistics-desk', 'ops-requests',
+    ].map((name) => ({ name, id: `C-${name}` }));
+    await expect(runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      fetcher: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/conversations.list')) {
+          return slackResponse({ ok: true, channels, response_metadata: { next_cursor: '' } });
+        }
+        history.push({
+          credential: String(new Headers(init?.headers).get('Authorization')).replace('Bearer ', ''),
+          channel: url.searchParams.get('channel') ?? '',
+        });
+        return slackResponse({ ok: true, messages: [] });
+      },
+      makeMcpClient: (_endpoint: URL, credential: string) => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: { surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } } },
+          errors: {},
+        }),
+        toolFromDefinition: async () => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            linearCalls.push({ credential, team: args.team, project: args.project });
+            return { issues: [{
+              id: `${args.team}-1`, title: `Ticket for ${args.team}`,
+              url: `https://linear.app/kestrel/issue/${args.team}-1`,
+              team: { key: args.team }, project: { name: args.project },
+            }] };
+          },
+        }),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+    })).resolves.toMatchObject({ candidates: 3, polled: 6 });
+    expect(linearCalls).toEqual([
+      { credential: 'Priya-linear-value', team: 'REVOPS', project: 'Q3 close' },
+      { credential: 'Mateo-linear-value', team: 'FIN', project: 'September close' },
+      { credential: 'Aiko-linear-value', team: 'LOG', project: 'Shipment exceptions' },
+    ]);
+    expect(history).toEqual([
+      { credential: 'Priya-slack-value', channel: 'C-revops-asks' },
+      { credential: 'Priya-slack-value', channel: 'C-ops-requests' },
+      { credential: 'Mateo-slack-value', channel: 'C-finance-close' },
+      { credential: 'Mateo-slack-value', channel: 'C-ops-requests' },
+      { credential: 'Aiko-slack-value', channel: 'C-logistics-desk' },
+      { credential: 'Aiko-slack-value', channel: 'C-ops-requests' },
+    ]);
+    expect([...harness.seeds.values()].map((seed) => [seed.agentId, seed.sourceSystem, seed.externalId])).toEqual([
+      [revopsAgent._id, 'linear', 'REVOPS-1'],
+      [financeAgent._id, 'linear', 'FIN-1'],
+      [logisticsAgent._id, 'linear', 'LOG-1'],
+    ]);
+  });
+
+  it('reads nothing from an empty approved scope and says why, before any credential is used', async (): Promise<void> => {
+    const surfaces = companySurfaces().map(
+      (surface): Doc<'surfaces'> => ({ ...surface, intakeScope: {} }),
+    );
+    const decrypted: string[] = [];
+    const harness = runtimeHarness(
+      surfaces,
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [revopsAgent, financeAgent],
+    );
+    const decrypt = harness.runtime.decrypt;
+    harness.runtime.decrypt = async (credentialId): Promise<string> => {
+      decrypted.push(String(credentialId));
+      return await decrypt(credentialId);
+    };
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        fetcher: async (): Promise<Response> => {
+          throw new Error('no provider call expected');
+        },
+        makeMcpClient: () => {
+          throw new Error('no provider call expected');
+        },
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 4 });
+    expect(decrypted).toEqual([]);
+    expect(harness.records.map((record) => record.skipReason)).toEqual([
+      'Reads nothing from Linear: no documented team or project was picked for this role.',
+      'Reads nothing from Slack: no documented channel was picked for this role.',
+      'Reads nothing from Linear: no documented team or project was picked for this role.',
+      'Reads nothing from Slack: no documented channel was picked for this role.',
+    ]);
+  });
+
+  it('bounds intake to the approved team itself when the schema takes no team argument', async (): Promise<void> => {
+    const finance = companySurfaces()[1];
+    const issue = (identifier: string, team: unknown): Record<string, unknown> => ({
+      id: identifier,
+      title: `Issue ${identifier}`,
+      url: `https://linear.app/kestrel/issue/${identifier}`,
+      project: { name: 'September close' },
+      ...(team === undefined ? {} : { team }),
+    });
+    const client = (rows: Record<string, unknown>[]) => () => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: { list_issues: { inputSchema: { properties: { project: {}, limit: {} } } } },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => {
+          expect(args).toEqual({ project: 'September close', limit: 100 });
+          return { issues: rows };
+        },
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    const bounded = runtimeHarness(
+      [finance],
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [financeAgent],
+    );
+    await expect(
+      runIntakeSweep(bounded.runtime, {
+        mode: 'real',
+        makeMcpClient: client([
+          issue('FIN-4', 'Finance close'),
+          issue('REVOPS-5', 'Revenue operations'),
+          issue('uuid-1', { key: 'FIN', name: 'Finance close' }),
+          issue('uuid-2', { key: 'LOG', name: 'Logistics desk' }),
+          issue('uuid-without-team', undefined),
+          { ...issue('uuid-without-project', 'Finance close'), project: undefined },
+        ]),
+      }),
+    ).resolves.toMatchObject({ candidates: 2, polled: 1 });
+    expect([...bounded.seeds.values()].map((seed) => seed.externalId)).toEqual(['FIN-4', 'uuid-1']);
+
+    const unbounded = runtimeHarness(
+      [finance],
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [financeAgent],
+    );
+    await expect(
+      runIntakeSweep(unbounded.runtime, {
+        mode: 'real',
+        makeMcpClient: client([issue('uuid-3', undefined)]),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(unbounded.records[0].skipReason).toContain('cannot be bounded to team FIN');
   });
 });
 

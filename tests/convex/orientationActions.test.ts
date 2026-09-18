@@ -29,14 +29,27 @@ import {
   isPrivateHost,
   namesSystem,
   orientSurface,
+  pickIntakeScope,
   registryRemoteEndpoint,
   relevantSystemText,
   selectEvidence,
+  type IntakeScopeDraft,
   type OrientationCtx,
   type OrientationDraftResult,
 } from '../../convex/orientationActions';
 import { allConvexModules } from './all-modules';
 import { sanitisedNotionPage, type NotionPageName } from '../fixtures/notion-pages';
+import { companyPage, companyPages } from '../fixtures/company-bed';
+import {
+  approvedChannelNames,
+  approvedLinearScope,
+  scopeCandidates,
+} from '../../src/surfaces/intake-scope';
+import {
+  reconcileDocumentedSystems,
+  type CharterSystemSeed,
+  type DocumentedSystemSeed,
+} from '../../convex/surfaces';
 import {
   fakeCredentialState,
   resetFakeCredentials,
@@ -82,11 +95,28 @@ const model = vi.hoisted(() => ({
   hang: false,
   /** Every prompt the mocked classifier received. */
   prompts: [] as string[],
+  /** What the mocked intake-scope picker answers; unset means it fails. */
+  scopeFor: undefined as
+    | undefined
+    | ((user: string) => Record<string, unknown> | Promise<Record<string, unknown>>),
+  /** Every prompt the mocked intake-scope picker received. */
+  scopePrompts: [] as string[],
 }));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async ({ user }: { user: string }): Promise<Record<string, unknown>> => {
+  agentJson: async ({
+    agent,
+    user,
+  }: {
+    agent: { name: string };
+    user: string;
+  }): Promise<Record<string, unknown>> => {
+    if (agent.name === 'intake-scope') {
+      model.scopePrompts.push(user);
+      if (!model.scopeFor) throw new Error('scope model unavailable in tests');
+      return model.scopeFor(user);
+    }
     model.prompts.push(user);
     if (model.hang) return await new Promise<never>((): void => undefined);
     if (!model.pathFor) throw new Error('model unavailable in tests');
@@ -337,6 +367,8 @@ afterEach((): void => {
   model.echoInput = false;
   model.hang = false;
   model.prompts.length = 0;
+  model.scopeFor = undefined;
+  model.scopePrompts.length = 0;
 });
 
 describe('orientation evidence selection', (): void => {
@@ -1213,6 +1245,7 @@ describe('orientation run', (): void => {
             agent: await harness.run(async (ctx) => await ctx.db.get(agentId)),
           };
         }
+        if (name.includes('charterForOrientation')) return null;
         if (name.includes('pagesForAgent')) {
           return await harness.query(internal.orientationData.pagesForAgent, {
             agentId: (args as { agentId: Id<'agents'> }).agentId,
@@ -1281,7 +1314,12 @@ describe('orientation run', (): void => {
         await (harness.mutation as unknown as Caller)(reference, args),
     } as unknown as OrientationCtx;
     await expect(
-      orientSurface(ctx, surfaceId, { draft, registry: async (): Promise<undefined> => undefined }),
+      orientSurface(ctx, surfaceId, {
+        draft,
+        registry: async (): Promise<undefined> => undefined,
+        pickScope: async (question): Promise<IntakeScopeDraft> =>
+          await pickIntakeScope(question, 25),
+      }),
     ).resolves.toEqual({ outcome: 'proposed', surfaceId });
     const linear = (await surfacesBySlug(harness, agentId)).linear;
     expect(linear).toMatchObject({ verdict: 'proposed', path: 'mcp' });
@@ -1534,6 +1572,688 @@ describe('the browser floor in orientation', (): void => {
     await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 0, absent: 1 });
     expect((await surfacesBySlug(harness, agentId))['northstar-crm']).toMatchObject({
       verdict: 'absent',
+    });
+  });
+});
+
+/** What each role's manager said about each system, from the company bed's `answers.md`. */
+const ROLE_CHARTERS = {
+  revops: {
+    proposedFunction:
+      'Revops coordinator for the Q3 close: triage what comes in, work the tickets in Linear, keep the audit notes on them and draft updates for the manager.',
+    namedSystems: [
+      {
+        name: 'Linear',
+        class: 'kanban',
+        whereMentioned:
+          'Linear for the real work, team REVOPS, project Q3 close: the audit note, the Looker pipeline tile refresh and the Northstar reconcile are all tickets in Linear.',
+      },
+      {
+        name: 'Slack',
+        class: 'chat',
+        whereMentioned:
+          'Asks come in on Slack in #revops-asks and in #ops-requests, the shared request channel; #revops is the team channel.',
+      },
+      {
+        name: 'Looker pipeline tile',
+        class: 'analytics',
+        whereMentioned: 'The pipeline numbers live on the Looker pipeline tile, web only.',
+      },
+      {
+        name: 'Northstar CRM',
+        class: 'crm',
+        whereMentioned: "Northstar CRM has the accounts but we've got no approved way in yet.",
+      },
+    ],
+  },
+  finance: {
+    proposedFunction:
+      'Close coordinator: post the close status note on its ticket in Linear and answer questions in #finance-close about where the close stands.',
+    namedSystems: [
+      {
+        name: 'Linear',
+        class: 'kanban',
+        whereMentioned: 'Linear, team FIN, project September close, for the close tickets.',
+      },
+      {
+        name: 'Slack',
+        class: 'chat',
+        whereMentioned:
+          'Slack: #finance-close is ours, and #ops-requests is the shared request channel.',
+      },
+      {
+        name: 'NetLedger',
+        class: 'other',
+        whereMentioned:
+          "NetLedger is the books, but you've got no approved way in; anything that needs NetLedger comes to me.",
+      },
+    ],
+  },
+  logistics: {
+    proposedFunction:
+      'Logistics desk for shipment exceptions: work the exception tickets in Linear and record each one with the customer notice from the handbook.',
+    namedSystems: [
+      {
+        name: 'Linear',
+        class: 'kanban',
+        whereMentioned: 'Linear, team LOG, project Shipment exceptions.',
+      },
+      {
+        name: 'Slack',
+        class: 'chat',
+        whereMentioned:
+          "Slack: #logistics-desk is the desk's channel and #ops-requests is the shared request channel.",
+      },
+    ],
+  },
+} as const;
+
+type CompanyRole = keyof typeof ROLE_CHARTERS;
+
+/** The systems documentation discovery finds in the company set, per source. */
+function companySystems(source: 'folder' | 'notion'): DocumentedSystemSeed[] {
+  const onboarding = companyPage('onboarding.md').markdown.split('\n');
+  const row = (system: string): string =>
+    onboarding.find((line): boolean => line.startsWith(`| ${system} |`)) ?? system;
+  if (source === 'notion') {
+    return [
+      {
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        ref: 'notion-linear-automation',
+        quote: '# Linear automation',
+      },
+      {
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        ref: 'notion-slack-automation-policy',
+        quote: '# Slack automation policy',
+      },
+    ];
+  }
+  return [
+    {
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      ref: 'onboarding.md',
+      quote: row('Linear'),
+    },
+    {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      ref: 'onboarding.md',
+      quote: row('Slack'),
+    },
+    {
+      slug: 'looker-pipeline-tile',
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      ref: 'systems/looker-pipeline-tile.md',
+      quote: '# Looker pipeline tile',
+    },
+    {
+      slug: 'northstar-crm',
+      displayName: 'Northstar CRM',
+      class: 'crm',
+      ref: 'systems/northstar-crm.md',
+      quote: '# Northstar CRM',
+    },
+    {
+      slug: 'netledger',
+      displayName: 'NetLedger',
+      class: 'other',
+      ref: 'systems/netledger.md',
+      quote: '# NetLedger',
+    },
+  ];
+}
+
+/**
+ * Bring up the company: one folder source and one Notion source carrying the
+ * company's pages, and one employee per role whose charter is approved.
+ *
+ * Documentation discovery reconciles every documented system into each
+ * employee's surfaces, then charter approval seeds the systems each charter
+ * names, which is the order the product runs them in.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   charters: The charter body per role; a role left out is not deployed.
+ *
+ * Returns:
+ *   The agent id per deployed role.
+ */
+async function seedCompany(
+  harness: TestConvex<typeof schema>,
+  charters: Partial<
+    Record<CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }>
+  >,
+): Promise<Partial<Record<CompanyRole, Id<'agents'>>>> {
+  const agents = await harness.run(
+    async (ctx): Promise<Partial<Record<CompanyRole, Id<'agents'>>>> => {
+      const sources = {
+        folder: await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Kestrel Supply folder',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+        notion: await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Kestrel Supply handbook',
+          kind: 'mcp',
+          serverKind: 'notion',
+          locator: 'http://docs-notion-mcp:3000/mcp',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+      };
+      for (const page of companyPages()) {
+        await ctx.db.insert('docPages', {
+          sourceId: sources[page.source],
+          ref: page.ref,
+          title: page.title,
+          markdown: page.markdown,
+          updatedAt: 1,
+        });
+      }
+      const agents: Partial<Record<CompanyRole, Id<'agents'>>> = {};
+      for (const [role, charter] of Object.entries(charters) as Array<
+        [CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }]
+      >) {
+        // Discovery schedules orientation only for an active employee; the
+        // charter's approval is what makes it active, so it is seeded after.
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@kestrel.example',
+          name: role,
+          userId: 'owner',
+          state: 'charter-pending',
+          createdAt: 1,
+        });
+        for (const source of ['folder', 'notion'] as const) {
+          await reconcileDocumentedSystems(ctx, {
+            agentId,
+            sourceId: sources[source],
+            systems: companySystems(source),
+            now: 2,
+          });
+        }
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '0.0',
+          body: { version: '0.0', ...charter },
+          approved: true,
+          approvedAt: 3,
+          createdAt: 3,
+        });
+        await ctx.db.patch(agentId, { state: 'active' });
+        agents[role] = agentId;
+      }
+      return agents;
+    },
+  );
+  for (const [role, agentId] of Object.entries(agents) as Array<[CompanyRole, Id<'agents'>]>) {
+    await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [...(charters[role]?.namedSystems ?? [])],
+    });
+  }
+  return agents;
+}
+
+/** Each surface's verdict by slug. */
+function verdicts(surfaces: Record<string, Doc<'surfaces'>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(surfaces).map(([slug, surface]): [string, string] => [slug, surface.verdict]),
+  );
+}
+
+/**
+ * What a faithful picker answers for each manager sentence in the company:
+ * the role's own team, project and request channels, each cited on its
+ * handbook. Finance's answer also carries a project no page states, which
+ * grounding must drop.
+ */
+function companyScopeModel(user: string): Record<string, unknown> {
+  const answers: Array<[string, Array<{ field: string; value: string; ref: string }>]> = [
+    [
+      'team REVOPS, project Q3 close',
+      [
+        { field: 'team', value: 'REVOPS', ref: 'revops/handbook.md' },
+        { field: 'project', value: 'Q3 close', ref: 'revops/handbook.md' },
+      ],
+    ],
+    [
+      'team FIN, project September close',
+      [
+        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'Q4 plan', ref: 'finance/handbook.md' },
+      ],
+    ],
+    [
+      'team LOG, project Shipment exceptions',
+      [
+        { field: 'team', value: 'LOG', ref: 'logistics/handbook.md' },
+        { field: 'project', value: 'Shipment exceptions', ref: 'logistics/handbook.md' },
+      ],
+    ],
+    [
+      'Asks come in on Slack in #revops-asks',
+      [
+        { field: 'channel', value: '#revops-asks', ref: 'revops/handbook.md' },
+        { field: 'channel', value: '#ops-requests', ref: 'revops/handbook.md' },
+      ],
+    ],
+    [
+      '#finance-close is ours',
+      [
+        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
+        { field: 'channel', value: '#ops-requests', ref: 'finance/handbook.md' },
+      ],
+    ],
+    [
+      "#logistics-desk is the desk's channel",
+      [
+        { field: 'channel', value: 'logistics-desk', ref: 'logistics/handbook.md' },
+        { field: 'channel', value: 'ops-requests', ref: 'logistics/handbook.md' },
+      ],
+    ],
+  ];
+  const picks = answers.find(([sentence]): boolean => user.includes(sentence))?.[1] ?? [];
+  return { picks, reasoning: 'Picked from the role and the manager sentence.' };
+}
+
+/** The model paths the company's documentation supports, per system. */
+function companyPath(system: string): DraftPath {
+  if (system === 'Linear') return 'mcp';
+  if (system === 'Slack') return 'documented-api';
+  if (system === 'Looker pipeline tile') return 'browser-driven';
+  return 'escalate';
+}
+
+describe('each employee reads its own role', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+  });
+
+  it("proposes only the systems each employee's charter names over one company page set", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, ROLE_CHARTERS);
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+
+    expect(verdicts(await surfacesBySlug(harness, agents.revops!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'proposed',
+      'northstar-crm': 'absent',
+      netledger: 'declared',
+    });
+    expect(verdicts(await surfacesBySlug(harness, agents.finance!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'declared',
+      'northstar-crm': 'declared',
+      netledger: 'absent',
+    });
+    expect(verdicts(await surfacesBySlug(harness, agents.logistics!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'declared',
+      'northstar-crm': 'declared',
+      netledger: 'declared',
+    });
+    // No model call is spent on a system the employee's charter does not name.
+    expect(
+      model.prompts.filter((prompt): boolean => /^System: Looker pipeline tile$/m.test(prompt)),
+    ).toHaveLength(1);
+    const oriented = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (index) => index.eq('agentId', agents.finance!))
+          .collect(),
+    );
+    expect(
+      oriented
+        .filter((event): boolean => event.type === 'surface.oriented')
+        .map((event): string => (event.payload as { verdict: string }).verdict)
+        .sort(),
+    ).toEqual(['absent', 'proposed', 'proposed']);
+  });
+
+  it('schedules orientation only for the systems the charter names', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await expect(
+      harness.action(internal.orientationActions.run, { agentId: agents.finance! }),
+    ).resolves.toEqual({ scheduled: 3 });
+    const surfaces = await surfacesBySlug(harness, agents.finance!);
+    expect(
+      Object.entries(surfaces)
+        .filter(([, surface]): boolean => surface.orientationJobId !== undefined)
+        .map(([slug]): string => slug)
+        .sort(),
+    ).toEqual(['linear', 'netledger', 'slack']);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(verdicts(await surfacesBySlug(harness, agents.finance!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'declared',
+      'northstar-crm': 'declared',
+      netledger: 'absent',
+    });
+  });
+
+  it('orients one system the charter does not name when the manager proposes it', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await orientDeclared(harness, agents.finance!);
+    const before = await surfacesBySlug(harness, agents.finance!);
+    expect(before['looker-pipeline-tile'].verdict).toBe('declared');
+
+    const requestProposal = api.surfaces.requestProposal;
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      harness
+        .withIdentity({ subject: 'other-owner' })
+        .mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id }),
+    ).rejects.toThrow();
+    await expect(owner.mutation(requestProposal, { surfaceId: before.linear._id })).rejects.toThrow(
+      'Only a declared system can be proposed; this one is proposed.',
+    );
+    // A job already waiting on the surface would skip it; the request replaces it.
+    await harness.mutation(internal.surfaces.scheduleOrientation, {
+      surfaceId: before['looker-pipeline-tile']._id,
+    });
+    const waiting = (await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']
+      .orientationJobId!;
+    await owner.mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id });
+    expect((await harness.run(async (ctx) => await ctx.db.system.get(waiting)))?.state.kind).toBe(
+      'canceled',
+    );
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const after = await surfacesBySlug(harness, agents.finance!);
+    expect(after['looker-pipeline-tile']).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+    });
+    // Only the one surface the manager asked for; the rest still wait.
+    expect(after['northstar-crm'].verdict).toBe('declared');
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (index) => index.eq('agentId', agents.finance!))
+          .collect(),
+    );
+    expect(
+      events
+        .filter((event): boolean => event.type === 'surface.proposal-requested')
+        .map((event): unknown => event.payload),
+    ).toEqual([{ surfaceId: before['looker-pipeline-tile']._id, slug: 'looker-pipeline-tile' }]);
+
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    await owner.mutation(api.surfaces.approve, {
+      surfaceId: after['looker-pipeline-tile']._id, role: 'manager',
+    });
+    expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
+      verdict: 'proposed', managerApprovedAt: expect.any(Number),
+    });
+    await owner.mutation(api.surfaces.approve, {
+      surfaceId: after['looker-pipeline-tile']._id, role: 'it',
+    });
+    expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
+      verdict: 'approved', itApprovedAt: expect.any(Number),
+    });
+
+    // Rejected, the card goes back under the row, one click from a card again.
+    await owner.mutation(api.surfaces.reject, {
+      surfaceId: after['looker-pipeline-tile']._id,
+      reason: 'Not this role.',
+    });
+    await expect(
+      owner.action(api.surfaces.reorient, { agentId: agents.finance! }),
+    ).resolves.toEqual({ scheduled: 0 });
+  });
+
+  it('refuses to propose outside real mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    const tile = (await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile'];
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    await expect(
+      harness
+        .withIdentity({ subject: 'owner' })
+        .mutation(liveApi.surfaces.requestProposal, { surfaceId: tile._id }),
+    ).rejects.toThrow('Surface proposal is a local real-mode feature');
+  });
+
+  it("puts each role's own queues on its cards, every value grounded on a page line", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = companyScopeModel;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, ROLE_CHARTERS);
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+    const revops = await surfacesBySlug(harness, agents.revops!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+    const logistics = await surfacesBySlug(harness, agents.logistics!);
+
+    expect(finance.linear.intakeScope).toEqual({
+      team: {
+        value: 'FIN',
+        sourceId: expect.any(String),
+        ref: 'finance/handbook.md',
+        quote: '- Team: `FIN`',
+      },
+      project: {
+        value: 'September close',
+        sourceId: expect.any(String),
+        ref: 'finance/handbook.md',
+        quote: '- Project: `September close`',
+      },
+      notes: ['Dropped project `Q4 plan`: finance/handbook.md does not state it.'],
+    });
+    expect(approvedLinearScope(revops.linear.intakeScope!)).toEqual({
+      team: 'REVOPS',
+      project: 'Q3 close',
+    });
+    expect(approvedLinearScope(logistics.linear.intakeScope!)).toEqual({
+      team: 'LOG',
+      project: 'Shipment exceptions',
+    });
+    expect(approvedChannelNames(revops.slack.intakeScope!)).toEqual([
+      'revops-asks',
+      'ops-requests',
+    ]);
+    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual([
+      'finance-close',
+      'ops-requests',
+    ]);
+    expect(approvedChannelNames(logistics.slack.intakeScope!)).toEqual([
+      'logistics-desk',
+      'ops-requests',
+    ]);
+    for (const value of finance.slack.intakeScope!.channels!) {
+      expect(value).toMatchObject({
+        ref: 'finance/handbook.md',
+        quote: '- Channels: #finance-close, #ops-requests',
+      });
+    }
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.reject, {
+      surfaceId: finance.slack._id,
+      reason: 'Re-propose.',
+    });
+    expect((await surfacesBySlug(harness, agents.finance!)).slack.intakeScope).toBeUndefined();
+    // A system that bears no work carries no scope.
+    expect(revops['looker-pipeline-tile'].intakeScope).toBeUndefined();
+
+    // Each pick was asked with this role's words, not another role's.
+    const financeLinear = model.scopePrompts.find((prompt): boolean =>
+      prompt.includes('Linear, team FIN, project September close'),
+    );
+    expect(financeLinear).toContain(ROLE_CHARTERS.finance.proposedFunction);
+    expect(financeLinear).not.toContain('team REVOPS, project Q3 close:');
+    expect(financeLinear).toContain('`September close` on finance/handbook.md');
+  });
+
+  it('drops a grounded queue from another role when the picker cites its real handbook', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = () => ({
+      picks: [
+        { field: 'channel', value: '#revops-asks', ref: 'revops/handbook.md' },
+        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
+        { field: 'channel', value: '#ops-requests', ref: 'finance/handbook.md' },
+      ],
+      reasoning: 'The other handbook has a valid channel line.',
+    });
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await orientDeclared(harness, agents.finance!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual([
+      'finance-close', 'ops-requests',
+    ]);
+    expect(finance.slack.intakeScope?.notes).toContain(
+      'Dropped #revops-asks: revops/handbook.md is outside this role’s handbook.',
+    );
+  });
+
+  it("falls back to the values the manager's own words name when the model does not pick", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, {
+      revops: ROLE_CHARTERS.revops,
+      finance: ROLE_CHARTERS.finance,
+    });
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+    const revops = await surfacesBySlug(harness, agents.revops!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+
+    expect(approvedLinearScope(finance.linear.intakeScope!)).toEqual({
+      team: 'FIN',
+      project: 'September close',
+    });
+    // The manager's sentence names the team channel too; only the model tells it apart.
+    expect(approvedChannelNames(revops.slack.intakeScope!)).toEqual([
+      'revops-asks',
+      'ops-requests',
+      'revops',
+    ]);
+    expect(revops.slack.intakeScope!.notes).toEqual([
+      "The model did not pick this role's queues (scope model unavailable in tests); the scope holds the documented values the manager's own words name.",
+    ]);
+  });
+
+  it('files an empty scope that says why when no page states a queue', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    model.scopeFor = companyScopeModel;
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'linear.md': LINEAR_RUNBOOK.replace(/team `REVOPS`, project `Q3 close`/, 'the team queue'),
+      },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    await orientDeclared(harness, agentId);
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    expect(linear.verdict).toBe('proposed');
+    expect(linear.intakeScope).toEqual({
+      notes: ['No page naming Linear states a team or project for intake to read.'],
+    });
+    expect(model.scopePrompts).toHaveLength(0);
+  });
+
+  it('falls back when the picker answers out of shape or not at all, and keeps only the asked fields', async (): Promise<void> => {
+    vi.useRealTimers();
+    const candidates = scopeCandidates(
+      [companyPage('finance/handbook.md'), companyPage('revops/handbook.md')].map((page) => ({
+        ref: page.ref,
+        markdown: page.markdown,
+      })),
+      ['team', 'project'],
+    );
+    const question = {
+      system: 'Linear',
+      surfaceClass: 'kanban',
+      fields: ['team', 'project'] as const,
+      role: ROLE_CHARTERS.finance.proposedFunction,
+      sentences: [ROLE_CHARTERS.finance.namedSystems[0].whereMentioned],
+      candidates,
+    };
+    model.scopeFor = (): Record<string, unknown> => ({ team: 'FIN' });
+    const shapeless = await pickIntakeScope(question, 1_000);
+    expect(shapeless.note).toContain('its answer was not a list of picks');
+    expect(shapeless.picks.map((pick): string => pick.value)).toEqual(['FIN', 'September close']);
+
+    model.scopeFor = async (): Promise<Record<string, unknown>> =>
+      await new Promise<never>((): void => undefined);
+    const started = Date.now();
+    const silent = await pickIntakeScope(question, 25);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(silent.note).toContain('no answer within');
+
+    model.scopeFor = (): Record<string, unknown> => ({
+      picks: [
+        { field: 'channel', value: 'finance-close', ref: 'finance/handbook.md' },
+        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+      ],
+      reasoning: 'The role is finance close.',
+    });
+    await expect(pickIntakeScope(question, 1_000)).resolves.toEqual({
+      picks: [{ field: 'team', value: 'FIN', ref: 'finance/handbook.md' }],
+    });
+
+    model.scopeFor = undefined;
+    const unnamed = await pickIntakeScope({ ...question, sentences: [] }, 25);
+    expect(unnamed.picks).toEqual([]);
+    expect(unnamed.note).toContain("the manager's own words name none of the documented values");
+    expect(model.scopePrompts.at(-1)).toContain(
+      '- none; the manager asked for this card without naming the system in the charter',
+    );
+  });
+
+  it('orients every documented system, as before, when the charter names no work system', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, {
+      finance: {
+        proposedFunction: ROLE_CHARTERS.finance.proposedFunction,
+        namedSystems: [
+          { name: 'Notion', class: 'docs', whereMentioned: 'The handbook is in Notion.' },
+        ],
+      },
+    });
+    await orientDeclared(harness, agents.finance!);
+    expect(verdicts(await surfacesBySlug(harness, agents.finance!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'proposed',
+      'northstar-crm': 'absent',
+      netledger: 'absent',
     });
   });
 });
