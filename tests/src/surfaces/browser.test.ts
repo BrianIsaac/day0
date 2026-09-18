@@ -22,6 +22,7 @@ import {
   withinDocumentedSurface,
   withResolvedRefs,
 } from '../../../src/surfaces/browser';
+import { dashboardPage, SIGN_IN_PAGE } from '../../fixtures/browser-phase-split-2026-09-16';
 
 const TILE = 'http://looker-tile:8080/';
 
@@ -303,6 +304,30 @@ describe('resolving an element a skill named', (): void => {
   it('refuses an ambiguous description rather than picking one', (): void => {
     const two = ['- button "Save" [ref=e1]', '- button "Save" [ref=e2]'].join('\n');
     expect(resolveElementRef(two, 'Save')).toBeUndefined();
+  });
+
+  // Red until containment compares whole words: on the exported sign-in page
+  // the brand mark's accessible name is the letter "L", which today stands
+  // for "Pipeline coverage" as the only candidate.
+  it.fails('does not let a one-letter brand mark stand for a field it does not name', (): void => {
+    expect(resolveElementRef(SIGN_IN_PAGE, 'Pipeline coverage')).toBeUndefined();
+  });
+
+  it('still resolves a description that adds a role word to a button name', (): void => {
+    expect(resolveElementRef(dashboardPage({ value: '68%' }), 'Save button')).toEqual({
+      name: 'Save',
+      ref: 'e25',
+      role: 'button',
+    });
+  });
+
+  it('still resolves a field whose name adds a unit to the description', (): void => {
+    const page = ['- generic [ref=e4]: L', '- textbox "Pipeline coverage (%)" [ref=e24]'].join('\n');
+    expect(resolveElementRef(page, 'Pipeline coverage')).toEqual({
+      name: 'Pipeline coverage (%)',
+      ref: 'e24',
+      role: 'textbox',
+    });
   });
 });
 
