@@ -140,7 +140,8 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
 const LABEL_THEN_VALUE =
   /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"，。]+)[`'"，。]?$/i;
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
-const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+)$/;
+/** A word of a runbook or of code: lowercase, Capitalised, snake_case or camelCase letters, no digit. */
+const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+)$/;
 /**
  * A word that names a credential, on its own or as the tail of a longer name
  * (`LOOKER_PASSWORD`, `X-Auth-Token`, `secret key`, `GH_PAT`).

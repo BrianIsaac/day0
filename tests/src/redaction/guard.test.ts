@@ -227,6 +227,15 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     }
   });
 
+  it('rejects a bare camelCase identifier the way it rejects a snake_case one, outside an assignment', (): void => {
+    for (const value of ['lookupByEmail', 'postMessage', 'save_comment']) {
+      const listed = `Call \`${value}\` first.`;
+      expect(guardSecretSpan(listed, spanOf(listed, value), 'access token'), value).toBeUndefined();
+      const labelled = `token: ${value}`;
+      expect(guardSecretSpan(labelled, spanOf(labelled, value), 'access token'), value).toEqual(spanOf(labelled, value));
+    }
+  });
+
   it('rejects a partial span of either: the name without its hash, one segment of a method', (): void => {
     const channel = 'Requests arrive in `#ops-requests` and `#revops`.';
     expect(guardSecretSpan(channel, spanOf(channel, 'ops-requests'), 'access token')).toBeUndefined();
