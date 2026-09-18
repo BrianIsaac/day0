@@ -78,7 +78,7 @@ import {
   type BedTicket,
 } from './spec';
 
-/** Where seed records when this clone's bed began, for the Slack deletes. */
+/** Where seed records what this clone may clean up. */
 export const STATE_FILE = '.demo-bed/company.json';
 const ENV_FILE = '.env.local';
 
@@ -226,17 +226,28 @@ function docsTarget(io: CompanyIo): string {
   return resolve(io.cwd, io.env.DAY0_DOCS_HOST_DIR?.trim() || DEFAULT_DOCS_HOST_DIR);
 }
 
-function readEpoch(io: CompanyIo): string | undefined {
-  const path = join(io.cwd, STATE_FILE);
-  if (!existsSync(path)) return undefined;
-  const parsed = JSON.parse(readFileSync(path, 'utf8')) as { epoch?: unknown };
-  return typeof parsed.epoch === 'string' ? parsed.epoch : undefined;
+interface CompanyState {
+  epoch: string;
+  issueIds: string[];
+  labelId?: string;
 }
 
-function writeEpoch(io: CompanyIo, epoch: string): void {
+function readState(io: CompanyIo): CompanyState | undefined {
+  const path = join(io.cwd, STATE_FILE);
+  if (!existsSync(path)) return undefined;
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<CompanyState>;
+  if (typeof parsed.epoch !== 'string') throw new Error(`${STATE_FILE} has no bed epoch`);
+  return {
+    epoch: parsed.epoch,
+    issueIds: Array.isArray(parsed.issueIds) ? parsed.issueIds.filter((id): id is string => typeof id === 'string') : [],
+    labelId: typeof parsed.labelId === 'string' ? parsed.labelId : undefined,
+  };
+}
+
+function writeState(io: CompanyIo, state: CompanyState): void {
   const path = join(io.cwd, STATE_FILE);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify({ epoch }, null, 2)}\n`, 'utf8');
+  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +407,11 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, report: Report): Promis
   report.line(label ? 'ok' : 'note', label ? `label ${spec.label}` : `label ${spec.label} is missing; seed creates it`);
   const { byKey, duplicates } = issuesByKey(await readBedIssues(client));
   for (const duplicate of duplicates) report.line('gap', `${duplicate}: archive one by hand`);
+  if (!readState(io)) {
+    for (const issue of byKey.values()) {
+      if (!issue.archived) report.line('gap', `${issue.identifier} is an active marked ticket from another clone: archive it there before this clone seeds`);
+    }
+  }
   for (const ticket of spec.tickets) {
     const issue = byKey.get(ticket.key);
     if (!issue || issue.archived) {
@@ -708,6 +724,7 @@ async function fileTicket(
 /** `seed`: the tickets created or put back, the bed's messages deleted, the tile restarted. */
 export async function runSeed(io: CompanyIo, report: Report): Promise<number> {
   const spec = loadBedSpec(io.cwd);
+  const previous = readState(io);
   const slackToken = io.env[SLACK_TOKEN_ENV]?.trim();
   const project = composeProject(io);
   report.section('Linear');
@@ -721,9 +738,19 @@ export async function runSeed(io: CompanyIo, report: Report): Promise<number> {
     for (const duplicate of duplicates) report.line('gap', `${duplicate}: archive one by hand`);
     return 1;
   }
+  if (!previous) {
+    const active = [...byKey.values()].filter((issue) => !issue.archived);
+    if (active.length > 0) {
+      for (const issue of active) report.line('gap', `${issue.identifier} is an active marked ticket from another clone: archive it there before this clone seeds`);
+      return 1;
+    }
+  }
   const undo = new UndoLedger();
+  let createdLabelId: string | undefined;
   try {
+    const priorLabel = await readLabel(client, spec.label);
     const labelId = await ensureLabel(client, spec, undo, report);
+    if (!priorLabel) createdLabelId = labelId;
     for (const ticket of spec.tickets) {
       const existing = byKey.get(ticket.key);
       if (ticket.late) {
@@ -743,11 +770,20 @@ export async function runSeed(io: CompanyIo, report: Report): Promise<number> {
     return 1;
   }
 
+  const currentIssues = await readBedIssues(client);
+  const activated = currentIssues.filter((issue) => {
+    const before = byKey.get(issue.key);
+    return !issue.archived && (!before || before.archived);
+  });
+  const state: CompanyState = {
+    epoch: previous?.epoch ?? slackTs(io.now()),
+    issueIds: [...new Set([...(previous?.issueIds ?? []), ...activated.map((issue) => issue.id)])],
+    labelId: previous?.labelId ?? createdLabelId,
+  };
+  writeState(io, state);
   report.section('Slack');
-  const epoch = readEpoch(io) ?? slackTs(io.now());
-  writeEpoch(io, epoch);
   try {
-    await deleteBedMessages(io, await slackView(io, slackToken, report, false), epoch, report);
+    await deleteBedMessages(io, await slackView(io, slackToken, report, false), state.epoch, report);
   } catch (error) {
     report.line('gap', `Slack: ${(error as Error).message}`);
   }
@@ -777,6 +813,11 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     report.line('gap', `${key} is not a late ticket; post files only ${late.join(', ')}`);
     return 1;
   }
+  const state = readState(io);
+  if (!state) {
+    report.line('gap', `run seed first so ${STATE_FILE} records which late ticket this clone may tear down`);
+    return 1;
+  }
   const linear = await linearForWrite(io, spec, report);
   if (!linear) return 1;
   const { byKey, duplicates } = issuesByKey(await readBedIssues(linear.client));
@@ -800,32 +841,40 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     }
     return 1;
   }
+  const filed = (await readBedIssues(linear.client)).find((issue) => issue.key === key && !issue.archived);
+  if (filed && (!existing || existing.archived)) {
+    writeState(io, { ...state, issueIds: [...new Set([...state.issueIds, filed.id])] });
+  }
   return 0;
 }
 
 /** `teardown`: archive the bed's tickets and delete the bed's bot messages. */
 export async function runTeardown(io: CompanyIo, report: Report): Promise<number> {
   const spec = loadBedSpec(io.cwd);
+  const state = readState(io);
   report.section('Linear');
   const key = io.env[LINEAR_KEY_ENV]?.trim();
   if (!key) {
     report.line('gap', `${LINEAR_KEY_ENV} is not set in ${ENV_FILE}`);
+  } else if (!state) {
+    report.line('note', `no seed is recorded in ${STATE_FILE} on this clone, so no Linear ticket is this clone's to archive`);
   } else {
     const client = new LinearClient(key, io.fetch);
     const issues = await readBedIssues(client);
-    for (const issue of issues.filter((candidate) => !candidate.archived)) {
+    const ownedIds = new Set(state.issueIds);
+    for (const issue of issues.filter((candidate) => ownedIds.has(candidate.id) && !candidate.archived)) {
       await archiveIssue(client, issue.id);
       report.line('ok', `archived ${issue.key} ${issue.identifier}`);
     }
-    const label = await readLabel(client, spec.label);
-    if (label && label.description === LABEL_DESCRIPTION) {
+    const label = state.labelId ? await readLabel(client, spec.label) : undefined;
+    if (label && label.id === state.labelId && label.description === LABEL_DESCRIPTION) {
       await deleteLabel(client, label.id);
       report.line('ok', `deleted label ${spec.label}, which seed created`);
     }
   }
   report.section('Slack');
   const token = io.env[SLACK_TOKEN_ENV]?.trim();
-  const epoch = readEpoch(io);
+  const epoch = state?.epoch;
   if (!token) {
     report.line('gap', `${SLACK_TOKEN_ENV} is not set in ${ENV_FILE}`);
   } else if (!epoch) {

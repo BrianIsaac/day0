@@ -387,6 +387,13 @@ describe('the command line', (): void => {
 });
 
 describe('seed', (): void => {
+  it('refuses a late post before seed can record ownership', async (): Promise<void> => {
+    const h = harness();
+    expect(await run(h, ['post', 'log-sh4480'])).toBe(1);
+    expect(h.linear.issues).toEqual([]);
+    expect(h.logs.join('\n')).toContain('run seed first');
+  });
+
   it('creates the nine tickets in their tracked states, and twice gives the same workspace', async (): Promise<void> => {
     const h = harness();
     expect(await run(h, ['seed'])).toBe(0);
@@ -516,6 +523,51 @@ describe('seed', (): void => {
 });
 
 describe('teardown', (): void => {
+  it('does not archive a marked ticket from an earlier clone before this clone seeds', async (): Promise<void> => {
+    const h = harness();
+    const prior = h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'Earlier clone ticket',
+      description: markedDescription('Earlier work', 'revops-tile'),
+    });
+    h.linear.labels.push({ id: 'prior-label', name: 'day0-demo', description: LABEL_DESCRIPTION });
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(prior.archivedAt).toBeNull();
+    expect(h.linear.labels).toHaveLength(1);
+    expect(existsSync(join(h.root, STATE_FILE))).toBe(false);
+  });
+
+  it('archives only tickets and labels this clone created after a seed', async (): Promise<void> => {
+    const h = harness();
+    const prior = h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'Refresh the Looker pipeline tile',
+      description: markedDescription('Earlier work', 'revops-tile'),
+      archivedAt: '2026-09-17T00:00:00.000Z',
+    });
+    h.linear.labels.push({ id: 'prior-label', name: 'day0-demo', description: LABEL_DESCRIPTION });
+    expect(await run(h, ['seed'])).toBe(0);
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(prior.archivedAt).not.toBeNull();
+    expect(h.linear.labels).toHaveLength(1);
+    expect(h.linear.issues.filter((issue) => issue.id !== prior.id).every((issue) => issue.archivedAt !== null)).toBe(true);
+  });
+
+  it('refuses to seed over an active ticket marked by an earlier clone', async (): Promise<void> => {
+    const h = harness();
+    const prior = h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'Earlier clone ticket',
+      description: markedDescription('Earlier work', 'revops-tile'),
+    });
+    const before = h.linear.snapshot();
+    expect(await run(h, ['seed'])).toBe(1);
+    expect(h.linear.snapshot()).toBe(before);
+    expect(h.logs.join('\n')).toContain('active marked ticket');
+    expect(existsSync(join(h.root, STATE_FILE))).toBe(false);
+    expect(prior.archivedAt).toBeNull();
+  });
+
   it("archives the bed's tickets, removes the label seed made and the bed's messages, and nothing else", async (): Promise<void> => {
     const h = harness();
     const foreign = h.linear.addIssue({ team: 'REVOPS', title: 'Not the bed s', projectId: null });
@@ -573,6 +625,20 @@ describe('docs', (): void => {
     expect(h.logs.join('\n')).toContain('onboarding.md is already there and was not written by bed:company');
     expect(await run(h, ['docs', '--replace'])).toBe(0);
     expect(readFileSync(join(h.docs, 'onboarding.md'), 'utf8')).toContain('# Kestrel Supply onboarding');
+  });
+
+  it('does not claim an identical foreign page in the manifest', async (): Promise<void> => {
+    const h = docsHarness();
+    mkdirSync(h.docs, { recursive: true });
+    const ref = 'onboarding.md';
+    const source = join(h.root, 'bed/company/folder', ref);
+    writeFileSync(join(h.docs, ref), readFileSync(source, 'utf8'));
+    expect(await run(h, ['docs'])).toBe(0);
+    const manifest = JSON.parse(readFileSync(join(h.docs, MANIFEST_FILE), 'utf8')) as { files: Record<string, string> };
+    expect(manifest.files[ref]).toBeUndefined();
+    writeFileSync(source, `${readFileSync(source, 'utf8')}\nNew tracked instruction.\n`);
+    expect(await run(h, ['docs'])).toBe(1);
+    expect(readFileSync(join(h.docs, ref), 'utf8')).not.toContain('New tracked instruction.');
   });
 
   it('updates a page it wrote, refuses one edited since, and leaves a foreign page with a note', async (): Promise<void> => {

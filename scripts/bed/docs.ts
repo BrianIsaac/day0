@@ -180,7 +180,11 @@ export function applyDocs(target: string, plan: DocsPlan, manifest: DocsManifest
     writeFileSync(path, page.content, 'utf8');
     files[page.ref] = pageHash(page.content);
   }
-  for (const ref of plan.unchanged) files[ref] = pageHash(readFileSync(join(target, ref), 'utf8'));
+  for (const ref of plan.unchanged) {
+    const presentHash = pageHash(readFileSync(join(target, ref), 'utf8'));
+    if (manifest.files[ref] === presentHash) files[ref] = presentHash;
+    else delete files[ref];
+  }
   for (const removal of plan.remove) {
     rmSync(join(target, removal.ref));
     delete files[removal.ref];
