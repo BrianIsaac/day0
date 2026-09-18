@@ -29,7 +29,10 @@ const PII_KINDS: Readonly<Record<string, EntityKind>> = {
  * is a change to this list and a reader sees exactly what is not caught.
  */
 const EXPECTED_MISSES: string[] = [];
-const EXPECTED_DAMAGE: string[] = [];
+const EXPECTED_DAMAGE: string[] = [
+  'bed-revops-handbook-original:channel:#ops-requests',
+  'bed-slack-policy-original:identifier:users.lookupByEmail',
+];
 
 describe('the labelled redaction corpus', (): void => {
   const cases = loadRedactionCorpus();

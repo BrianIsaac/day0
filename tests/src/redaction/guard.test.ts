@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { guardReason, guardSecretSpan, splitUserPasswordPair } from '../../../src/redaction/guard';
 import { NEVER_REDACT } from '../../../src/redaction/policy';
+import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 
 function spanOf(text: string, value: string): { start: number; end: number } {
   const start = text.indexOf(value);
@@ -199,4 +200,66 @@ it('keeps long and versioned permission identifiers without treating opaque halv
     expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toEqual(spanOf(text, value));
     expect(guardReason(value)).toBeUndefined();
   }
+});
+
+describe('structural identifiers the deployed model took for tokens on 18 September', (): void => {
+  it.fails.each([
+    ['#ops-requests', 'channel reference'],
+    ['#revops-asks', 'channel reference'],
+    ['#finance_close-2026', 'channel reference'],
+    ['users.lookupByEmail', 'dotted identifier'],
+    ['chat.postMessage', 'dotted identifier'],
+    ['oauth.v2.access', 'dotted identifier'],
+    ['process.env.HOME', 'dotted identifier'],
+    ['README.md', 'dotted identifier'],
+  ])('rejects %s as %s wherever it sits without a credential label', (value: string, reason: string): void => {
+    expect(guardReason(value)).toBe(reason);
+    for (const text of [`Use \`${value}\` for that.`, `${value}, then the rest`, `(${value})`, `| ${value} | all teams |`]) {
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), text).toBeUndefined();
+    }
+  });
+
+  it.fails('rejects a partial span of either: the name without its hash, one segment of a method', (): void => {
+    const channel = 'Requests arrive in `#ops-requests` and `#revops`.';
+    expect(guardSecretSpan(channel, spanOf(channel, 'ops-requests'), 'access token')).toBeUndefined();
+    const method = 'Call `users.lookupByEmail` first, then `conversations.open`.';
+    expect(guardSecretSpan(method, spanOf(method, 'lookupByEmail'), 'access token')).toBeUndefined();
+    expect(guardSecretSpan(method, spanOf(method, 'conversations'), 'access token')).toBeUndefined();
+  });
+
+  it('keeps every token-shaped value, dots and digits included, with or without a label', (): void => {
+    for (const value of [
+      CORPUS_SLOTS.slack_bot_token,
+      CORPUS_SLOTS.linear_token,
+      CORPUS_SLOTS.client_secret,
+      CORPUS_SLOTS.jwt,
+      ['q7Mz', '2Kv9', 'Tx4W'].join('.'),
+      '#Summer2026!',
+      'hunter2.local1',
+    ]) {
+      expect(guardReason(value), value).toBeUndefined();
+      expect(guardReason(value, { assigned: true }), value).toBeUndefined();
+      const text = `Use \`${value}\` for that.`;
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), value).toEqual(spanOf(text, value));
+    }
+  });
+
+  it.fails('keeps a labelled secret that has the shape of a channel or a dotted name', (): void => {
+    const dotted = ['Ops', 'Desk', 'Winter'].join('.');
+    expect(guardReason(dotted)).toBe('dotted identifier');
+    expect(guardReason(dotted, { assigned: true })).toBeUndefined();
+    expect(guardReason('#summer2026')).toBe('channel reference');
+    expect(guardReason('#summer2026', { assigned: true })).toBeUndefined();
+    for (const [text, value, label] of [
+      [`Looker password: \`${dotted}\``, dotted, 'password'],
+      [`password = ${dotted}`, dotted, 'password'],
+      ['token: "#summer2026"', '#summer2026', 'credential'],
+      [`Slack bot token: ${CORPUS_SLOTS.slack_bot_token}`, CORPUS_SLOTS.slack_bot_token, 'access token'],
+    ] as const) {
+      expect(guardSecretSpan(text, spanOf(text, value), label), text).toEqual(spanOf(text, value));
+    }
+    // A label that swallowed the value narrows to it and still keeps it.
+    const swallowed = `password: ${dotted}`;
+    expect(guardSecretSpan(swallowed, { start: 0, end: swallowed.length }, 'password')).toEqual(spanOf(swallowed, dotted));
+  });
 });
