@@ -105,17 +105,14 @@ function landedBrowserRows(slug: string, earlier: EarlierRows): BrowserRow[] {
 }
 
 /**
- * The rows of the run that last touched the surface, once each, in the order
- * they were sent. A retry's prerequisite ledger carries an earlier run's
- * landed writes ahead of its own rows, and a resumed closing set carries the
- * previous attempt's rows twice; either read in input order would replay a
- * sign-in onto a page that is not there.
+ * The current run's rows, once each, in the order they were sent. A retry's
+ * prerequisite ledger carries earlier runs' landed writes; those must not
+ * lend a new run their sign-in authority. A resumed closing set can carry the
+ * current run's rows twice, so duplicate keys are ignored.
  */
-function latestRunRows(rows: readonly BrowserRow[]): BrowserRow[] {
-  const latest = rows.at(-1)?.runId;
-  if (latest === undefined) return [];
+function currentRunRows(rows: readonly BrowserRow[], runId: string): BrowserRow[] {
   const byKey = new Map<string, BrowserRow>();
-  for (const row of rows) if (row.runId === latest && !byKey.has(row.key)) byKey.set(row.key, row);
+  for (const row of rows) if (row.runId === runId && !byKey.has(row.key)) byKey.set(row.key, row);
   return [...byKey.values()].sort((a, b) => a.index - b.index || a.sub - b.sub);
 }
 
@@ -219,6 +216,7 @@ function lastSignIn(rows: readonly BrowserRow[]): number[] {
  *   earlier: The run's earlier rows, from its prerequisite ledger and the
  *     rows this phase carries before the action that needs the page.
  *   endpoint: The surface's documented page.
+ *   runId: The run being applied; rows from earlier attempts are excluded.
  *
  * Returns:
  *   The calls to replay, in order, each with the row it repeats.
@@ -227,8 +225,9 @@ export function sessionRecipe(
   slug: string,
   earlier: EarlierRows,
   endpoint: string | undefined,
+  runId: string,
 ): SessionRecipeStep[] {
-  const rows = latestRunRows(landedBrowserRows(slug, earlier));
+  const rows = currentRunRows(landedBrowserRows(slug, earlier), runId);
   const signIn = lastSignIn(rows);
   if (signIn.length === 0 && rows.some(isCredentialFill)) {
     throw new IncompleteSignInError();

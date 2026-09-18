@@ -1054,6 +1054,24 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(driver.tile.value).toBe('74%');
   });
 
+  it('does not replay a previous run\'s sign-in into a retry with no browser rows of its own', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    const retry = { ...run, runId: 'run_2' as Id<'events'> };
+    const closing = await applySurfaceActions(ctx, 'real', [looker], retry, closingTile, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+    });
+    expect(closing[0]!.sessionRestore?.steps.map((step) => step.replayOf)).toEqual([undefined]);
+    expect(closing[0]!.ok).toBe(false);
+    expect(sentIn(driver, 2)).not.toContain('browser_fill_form');
+    expect(sentIn(driver, 2)).not.toContain('browser_click');
+    expect(driver.tile.value).toBe('68%');
+  });
+
   it('refuses the replay and every later action on the surface when the write scope is revoked under autonomy', async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);

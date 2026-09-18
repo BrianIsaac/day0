@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { sessionRecipe, signsIn, type SessionRecipeStep } from '../../../src/surfaces/browser-session';
+import {
+  sessionRecipe as recipeForRun,
+  signsIn,
+  type EarlierRows,
+  type SessionRecipeStep,
+} from '../../../src/surfaces/browser-session';
 import type { ActionAuthority, AppliedAction } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
 const ENDPOINT = 'http://looker-tile:8080/';
+const sessionRecipe = (slug: string, earlier: EarlierRows, endpoint: string | undefined, runId = 'run') =>
+  recipeForRun(slug, earlier, endpoint, runId);
 
 const call = (tool: string, args: Record<string, unknown> = {}, surface = 'looker'): MockAction => ({
   tool: 'mcp.call',
@@ -179,12 +186,18 @@ describe('the steps that re-establish a browser session', (): void => {
       'looker',
       { actions: [...earlier.actions, ...own.actions], applied: [...earlier.applied, ...own.applied] },
       ENDPOINT,
+      'second',
     );
     expect(tools(recipe)).toEqual([
       ['browser_navigate', 'wi:second:0'],
       ['browser_fill_form', 'wi:second:1'],
       ['browser_click', 'wi:second:2'],
     ]);
+  });
+
+  it('uses only the endpoint when the current run has no browser rows', (): void => {
+    const older = run([navigate(), signIn, clickSignIn], 'older');
+    expect(sessionRecipe('looker', older, ENDPOINT, 'retry')).toEqual([{ action: navigate() }]);
   });
 
   it('orders a run by its durable index and de-duplicates a row carried twice', (): void => {
@@ -202,6 +215,7 @@ describe('the steps that re-establish a browser session', (): void => {
         applied: [...writes.applied, ...phaseOne.applied],
       },
       ENDPOINT,
+      'first',
     );
     // The run signed in twice; the session to restore is the last sign-in.
     expect(tools(recipe)).toEqual([

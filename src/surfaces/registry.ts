@@ -240,7 +240,7 @@ async function restoreBrowserSession(
   if (!adapter.restoreSession) return undefined;
   let recipe: SessionRecipeStep[];
   try {
-    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint).map(
+    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId).map(
       (step: SessionRecipeStep): SessionRecipeStep => ({
         ...step,
         authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
