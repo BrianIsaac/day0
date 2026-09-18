@@ -486,8 +486,10 @@ export default defineSchema({
         reason: v.string(),
         at: v.number(),
         runId: v.optional(v.id('events')),
-        /** A rejection reason or a note given with Retry; absent rows predate the kind and are rejections. */
-        kind: v.optional(v.union(v.literal('rejection'), v.literal('retry-note'))),
+        /** A rejection reason, a cancelled plan's reason or a note given with Retry; absent rows predate the kind and are rejections. */
+        kind: v.optional(
+          v.union(v.literal('rejection'), v.literal('plan-rejection'), v.literal('retry-note')),
+        ),
         /** Set when a run completed with this feedback as its direction; it is then a record, not an instruction. */
         addressedAt: v.optional(v.number()),
       }),
@@ -539,6 +541,8 @@ export default defineSchema({
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),
+    /** A manager rejected an earlier plan for this item; its redraft needs explicit approval. */
+    planRejectedAt: v.optional(v.number()),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),
@@ -731,6 +735,36 @@ export default defineSchema({
     providerTs: v.optional(v.string()),
     failure: v.optional(v.string()),
   }).index('by_agent', ['agentId']),
+
+  /**
+   * The manager's corrections, kept for the employee's later work: a note
+   * given with Retry, a reason for rejecting held actions, a reason for
+   * cancelling a plan. Real mode only. The planner of a later item of the
+   * same kind reads the newest active ones (`src/work/corrections.ts`), and
+   * the executor carries those the approved plan applied. The text is kept
+   * as the manager wrote it and scrubbed only when a prompt is assembled.
+   */
+  corrections: defineTable({
+    agentId: v.id('agents'),
+    workItemId: v.id('workItems'),
+    /** The run the reason was given on, when there was one. */
+    runId: v.optional(v.id('events')),
+    kind: v.union(v.literal('retry-note'), v.literal('rejection'), v.literal('plan-rejection')),
+    text: v.string(),
+    itemTitle: v.string(),
+    sourceCategory: v.string(),
+    sourceSystem: v.string(),
+    /** Slugs of the surfaces the item's plan touched, with its own source surface. */
+    surfaces: v.array(v.string()),
+    createdAt: v.number(),
+    /** When the manager retired it; a retired correction is never selected again. */
+    retiredAt: v.optional(v.number()),
+    /** The later items whose stored plan applied it. */
+    appliedTo: v.array(v.id('workItems')),
+  })
+    .index('by_agent', ['agentId'])
+    .index('by_agent_active', ['agentId', 'retiredAt'])
+    .index('by_agent_active_createdAt', ['agentId', 'retiredAt', 'createdAt']),
 
   /** One idempotent manager-DM acknowledgement per parsed provider reply. */
   managerDecisionNotices: defineTable({

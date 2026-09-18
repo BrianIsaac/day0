@@ -9,6 +9,7 @@ import { redactText } from '../redaction/redact';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
+import { appliedCorrectionIds, plannerCorrectionLines, type PlannerCorrection } from './corrections';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
 import {
@@ -264,9 +265,10 @@ export const planSchema = z.object({
 });
 
 /**
- * The real planner's reply: the mock schema plus the declared obligations,
- * each nullable on the wire so a reply that omits them still parses and the
- * judgement fills them. The mock schema is untouched.
+ * The real planner's reply: the mock schema plus the declared obligations
+ * and the corrections it applied, each nullable on the wire so a reply that
+ * omits them still parses and the judgement fills the obligations. The mock
+ * schema is untouched.
  */
 export const realPlanSchema = planSchema.extend({
   stepObligations: z
@@ -280,6 +282,7 @@ export const realPlanSchema = planSchema.extend({
     .nullable(),
   transition: z.enum(PLAN_TRANSITIONS).nullable(),
   transitionStep: z.number().int().nullable(),
+  appliedCorrections: z.array(z.string()).nullable(),
 });
 
 type RealPlanReply = z.infer<typeof realPlanSchema>;
@@ -521,6 +524,13 @@ export interface DraftPlanArgs {
   now?: number;
   /** Record hook for what the obligations judgement decided or why it could not; real mode only. */
   onObligationEvent?: (event: ObligationEvent) => void | Promise<void>;
+  /**
+   * The manager's corrections from earlier work selected for this candidate,
+   * already scrubbed; real mode only, the mock prompt never carries them.
+   */
+  corrections?: readonly PlannerCorrection[];
+  /** Set when the corrections were scrubbed without the span model; the plan records it. */
+  correctionsRedaction?: 'structural-only';
 }
 
 /**
@@ -601,6 +611,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
       renderTeamDocs(args.documents.teamDocs),
     );
   }
+  if (args.surfaceMode === 'real') lines.push(...plannerCorrectionLines(args.corrections ?? []));
   lines.push('', 'Draft the execution plan now.');
   return lines.join('\n');
 }
@@ -669,7 +680,23 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
       drafted = { ...plan, advisorySteps: audit.flagged };
     }
   }
-  return await withObligations(drafted, reply, args, onObligationEvent);
+  return withCorrections(await withObligations(drafted, reply, args, onObligationEvent), reply, args);
+}
+
+/**
+ * The plan with the corrections it applied: only ids the prompt offered,
+ * and the scrub's degradation when the planner saw any.
+ */
+function withCorrections(plan: ExecutionPlan, reply: RealPlanReply, args: DraftPlanArgs): ExecutionPlan {
+  const offered = args.corrections ?? [];
+  const applied = appliedCorrectionIds(reply.appliedCorrections, offered);
+  return {
+    ...plan,
+    ...(applied.length > 0 ? { appliedCorrections: applied } : {}),
+    ...(offered.length > 0 && args.correctionsRedaction
+      ? { correctionsRedaction: args.correctionsRedaction }
+      : {}),
+  };
 }
 
 /**
