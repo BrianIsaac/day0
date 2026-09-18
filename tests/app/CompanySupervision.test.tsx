@@ -149,6 +149,33 @@ describe('the company supervision card', (): void => {
     expect(html.indexOf('>Company</th>')).toBeGreaterThan(html.indexOf('>Aiko</th>'));
   });
 
+  it('shows rejected and refused actions in each row and the company total', (): void => {
+    const figures: OwnerMetrics = {
+      ...FIGURES,
+      employees: FIGURES.employees.map((employee, index) => ({
+        ...employee,
+        metrics: {
+          ...employee.metrics,
+          actions: {
+            ...employee.metrics.actions,
+            rejected: index === 0 ? 2 : 0,
+            refused: index === 1 ? 1 : 0,
+          },
+        },
+      })),
+      company: {
+        ...FIGURES.company,
+        actions: { ...FIGURES.company.actions, rejected: 2, refused: 1 },
+      },
+    };
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={figures} />);
+
+    expect(rowOf(html, 'Priya')).toContain('25 · 1 · 1 · 2 · 0');
+    expect(rowOf(html, 'Mateo')).toContain('8 · 2 · 0 · 0 · 1');
+    expect(rowOf(html, 'Company')).toContain('33 · 3 · 1 · 2 · 1');
+    expect(html).toContain('automatic · approved · held · rejected · refused');
+  });
+
   it('quotes each employee’s time to an approved charter and their median, never a sum', (): void => {
     const company = rowOf(
       renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />),

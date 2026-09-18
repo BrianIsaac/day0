@@ -38,7 +38,7 @@ const DEFINITIONS = {
     'Plans and actions the manager approved or rejected, pooled across employees, because one manager made them.',
   wait: 'How long each decision waited for the manager, median and 90th percentile. The company row takes both over every decision pooled, the one manager’s distribution, not a median of the employees’ medians.',
   actions:
-    'Automatic: applied without asking, under standing or autonomous authority; a browser call replayed to sign in again is never an automatic action. Approved: approved by the manager. Held: waiting for the manager.',
+    'Automatic: applied without asking, under standing or autonomous authority; a browser call replayed to sign in again is never an automatic action. Approved: approved by the manager. Held: waiting for the manager. Rejected: rejected by the manager. Refused: blocked by the gate or a missing grant.',
   audit:
     'Landed ledger rows that carry their tool, authority, effect, run and idempotency key, over every landed row, replayed browser calls included. The company row pools every employee’s rows.',
   company: 'Every employee above, pooled. Evaluation agents and baseline arms are left out.',
@@ -56,7 +56,7 @@ const COLUMNS: readonly Column[] = [
   { label: 'Charter', unit: 'approved after', definition: DEFINITIONS.charter, width: 'w-[17rem]' },
   { label: 'Decisions', unit: 'approved / rejected', definition: DEFINITIONS.decisions },
   { label: 'Decision wait', unit: 'median / p90', definition: DEFINITIONS.wait },
-  { label: 'Actions', unit: 'automatic · approved · held', definition: DEFINITIONS.actions },
+  { label: 'Actions', unit: 'automatic · approved · held · rejected · refused', definition: DEFINITIONS.actions },
   { label: 'Audit trail', unit: 'complete', definition: DEFINITIONS.audit },
 ];
 
@@ -79,7 +79,7 @@ function waitCell(decisions: AgentMetrics['decisions']): string {
 }
 
 function actionsCell(actions: AgentMetrics['actions']): string {
-  return `${actions.autoApplied} · ${actions.approved} · ${actions.held}`;
+  return `${actions.autoApplied} · ${actions.approved} · ${actions.held} · ${actions.rejected} · ${actions.refused}`;
 }
 
 function FigureCells({
