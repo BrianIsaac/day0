@@ -25,6 +25,8 @@ const recorded = vi.hoisted(() => ({
   scopeCalls: [] as string[],
   /** Holds every charter judgement open until the test releases it. */
   scopeGate: undefined as Promise<void> | undefined,
+  /** Roles whose charter judgement finds the ask out of scope. */
+  outOfScope: new Set<string>(),
   planCalls: [] as string[],
   http: [] as string[],
 }));
@@ -35,6 +37,9 @@ vi.mock('../../src/lib/mastra', () => ({
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
       await recorded.scopeGate;
+      if ([...recorded.outOfScope].some((role) => args.user.includes(`Role: ${role}`))) {
+        return { inScope: false, fit: true, reason: 'the ask belongs to another desk' };
+      }
       return { inScope: true, fit: true, reason: 'close summaries are the charter work' };
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
@@ -76,6 +81,7 @@ type Harness = TestConvex<typeof schema>;
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
   recorded.scopeGate = undefined;
+  recorded.outOfScope.clear();
   recorded.planCalls.length = 0;
   recorded.http.length = 0;
   vi.useRealTimers();
@@ -461,7 +467,7 @@ describe('releasing a claim', (): void => {
     return { priya, mateo, held, refused };
   }
 
-  it.fails('returns the colleague\'s row for evaluation when the holder\'s plan is cancelled', async (): Promise<void> => {
+  it('returns the colleague\'s row for evaluation when the holder\'s plan is cancelled', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -485,6 +491,30 @@ describe('releasing a claim', (): void => {
     expect(claims.filter((claim) => claim.releasedAt === undefined)).toEqual([
       expect.objectContaining({ agentId: mateo, workItemId: refused }),
     ]);
+  });
+
+  it('returns only the rows the released claim refused, not a colleague who skipped at scope', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const aiko = await seedEmployee(harness, { name: 'Aiko' });
+    recorded.outOfScope.add("Aiko's desk");
+    const { mateo, held, refused } = await heldAndRefused(harness);
+    const atScope = await seedAsk(harness, aiko);
+    await drain(harness);
+    expect((await readItem(harness, atScope)).skipReason).toBe('out-of-scope: the ask belongs to another desk');
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
+    await drain(harness);
+
+    expect((await readItem(harness, refused)).state).toBe('plan-pending');
+    const stays = await readItem(harness, atScope);
+    expect(stays.state).toBe('skipped');
+    expect(stays.skipReason).toBe('out-of-scope: the ask belongs to another desk');
+    expect(stays).not.toHaveProperty('reevaluation');
+    expect((await eventsOf(harness, 'work.requeued')).map((event) => event.agentId)).toEqual([mateo]);
   });
 
   it.fails('refuses a retry of the cancelled item while a colleague holds it', async (): Promise<void> => {

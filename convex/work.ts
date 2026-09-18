@@ -328,13 +328,18 @@ export const seedItem = internalMutation({
     await seedItemInTransaction(ctx, args),
 });
 
-/** What changed, for a re-evaluation of the work parked under the old policy. */
-export type ReevaluationTrigger = 'charter' | 'documentation' | 'surface';
+/**
+ * What changed, for a re-evaluation of the work parked under the old policy.
+ * `claim-released` is a colleague letting go of an item this employee was
+ * refused; its key is the released claim's id.
+ */
+export type ReevaluationTrigger = 'charter' | 'documentation' | 'surface' | 'claim-released';
 
 const reevaluationTriggerValidator = v.union(
   v.literal('charter'),
   v.literal('documentation'),
   v.literal('surface'),
+  v.literal('claim-released'),
 );
 
 export interface ReevaluatePendingArgs {
@@ -361,6 +366,7 @@ type ParkedVerdict = {
   reason?: string;
   missingSurface?: string;
   missingPermissions?: string[];
+  claimedBy?: { claimId?: string };
 };
 
 interface SurfaceTrigger {
@@ -374,17 +380,20 @@ interface SurfaceTrigger {
  * An out-of-scope skip reads the charter, the documented systems and the
  * connected surfaces, so any of the three sends it back. A quality-fit skip
  * reads the charter's role. A deferral waits on one surface or one grant and
- * returns when that surface connects. A low-value or already-claimed skip
- * reads none of these and stays where it is.
+ * returns when that surface connects. A skip refused at the claim returns
+ * only when the claim that refused it is released, whatever else changes. A
+ * low-value or already-claimed skip reads none of these and stays where it is.
  */
 function verdictReturnsOn(
   row: Doc<'workItems'>,
   trigger: ReevaluationTrigger,
+  key: string,
   surface: SurfaceTrigger | undefined,
 ): boolean {
   const verdict = (row.verdict ?? {}) as ParkedVerdict;
   const reason = typeof verdict.reason === 'string' ? verdict.reason : (row.skipReason ?? '');
   if (row.state === 'skipped') {
+    if (trigger === 'claim-released') return verdict.claimedBy?.claimId === key;
     if (reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)) return true;
     if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) return trigger === 'charter';
     return false;
@@ -450,7 +459,7 @@ export async function reevaluatePendingInTransaction(
     for (const row of rows) {
       examined += 1;
       if (row.reevaluation?.key === args.key) continue;
-      if (!verdictReturnsOn(row, args.trigger, surface)) continue;
+      if (!verdictReturnsOn(row, args.trigger, args.key, surface)) continue;
       const previous = (row.verdict ?? {}) as ParkedVerdict;
       await ctx.db.patch(row._id, {
         state: 'discovered',
@@ -637,6 +646,47 @@ function claimRefusedVerdict(
       ? `already-claimed: state=${holderState}`
       : `${CLAIMED_BY_COLLEAGUE_SKIP_PREFIX}${holder.name} holds it (${holder.title})`;
   return { decision: 'skip', reason, claimedBy: holder };
+}
+
+/**
+ * Release the claim a work item holds and send back what it refused.
+ *
+ * Every employee of the owner is re-evaluated for the rows this claim
+ * refused, keyed by the claim's id, so each returns to `discovered` once and
+ * the next verdict takes the item or names its new holder. A row that holds
+ * no live claim releases nothing. Called where a holder is cancelled;
+ * completed and failed rows keep their claim.
+ *
+ * Args:
+ *   ctx: Mutation context of the transition.
+ *   workItemId: The work item letting go of its item.
+ *   now: The release time.
+ */
+export async function releaseExternalClaim(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  now: number,
+): Promise<void> {
+  const held = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of held) {
+    await ctx.db.patch(claim._id, { releasedAt: now });
+    const employees = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', claim.userId))
+      .collect();
+    for (const employee of employees) {
+      await reevaluatePendingInTransaction(ctx, {
+        agentId: employee._id,
+        trigger: 'claim-released',
+        key: claim._id,
+        now,
+      });
+    }
+  }
 }
 
 /**
@@ -1745,6 +1795,7 @@ async function cancelPlanInTransaction(
     skipReason,
     ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
+  await releaseExternalClaim(ctx, row._id, Date.now());
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.cancelled',
