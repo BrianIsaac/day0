@@ -320,7 +320,7 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     restoreSurfaceMode();
   });
 
-  it.fails('reads the tile again under the new run, and the closing reply quotes 74%, not the 68% read before the retry', async (): Promise<void> => {
+  it('reads the tile again under the new run, and the closing reply quotes 74%, not the 68% read before the retry', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const workItemId = await seed(t);
     const firstRun = await failAtClosingWithTheTileDown(t, workItemId);
@@ -373,7 +373,7 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
   // The 17 September ledger: the first attempt's closing snapshot landed on
   // a blank page, so the last carried snapshot is that one, and the 68% read
   // before it is marked as read before the retry.
-  it.fails('re-reads the last carried snapshot of the 17 September ledger, and the reply no longer quotes 68%', async (): Promise<void> => {
+  it('re-reads the last carried snapshot of the 17 September ledger, and the reply no longer quotes 68%', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const workItemId = await seed(t);
     await t.run(async (ctx) => {

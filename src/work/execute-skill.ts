@@ -120,6 +120,13 @@ const DEPENDENT_PHASE_REAL =
  */
 const BROWSER_SESSION_REAL =
   "  - A browser sequence left to the closing phase starts in a new browser, which Day0 signs in again from this run's own landed sign-in before the first closing action on that surface.";
+/**
+ * What a retry that resumes at the closing phase finds in its ledger, stated
+ * so the model quotes the right row. The resume takes the carried reads again
+ * whatever the model writes; this sentence documents it and replaces nothing.
+ */
+const RESUMED_READS_REAL =
+  '  - A retry that resumes at the closing phase takes the carried reads again first: a ledger row marked `re-read on resume at <time>` is the current reading of its surface, and a row marked `read before the retry` no longer describes it. Quote the current reading.';
 const DEPENDENT_PHASE_MOCK =
   '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
 
@@ -421,6 +428,7 @@ const REAL_PREAMBLE = [
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
+  RESUMED_READS_REAL,
   REAL_PROCEDURE_TRAIL_INDEX,
   '',
   'Action format: each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
@@ -2588,6 +2596,7 @@ export function appliedLedgerPrompt(
   applied: readonly AppliedAction[],
 ): string {
   if (applied.length === 0) return '(no action result was recorded)';
+  const current = currentReadings(actions, applied);
   return applied
     .map((entry, index): string => {
       const action = actions[index];
@@ -2599,9 +2608,45 @@ export function appliedLedgerPrompt(
       const repair = entry.repair
         ? ` · arguments repaired once after the provider refused ${entry.repair.toolArgsJson}: ${entry.repair.reason}`
         : '';
-      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}${repair}`);
+      const superseded = current.get(index);
+      const freshness = entry.refreshed
+        ? ` · re-read on resume at ${new Date(entry.refreshed.at).toISOString()}`
+        : superseded !== undefined
+          ? ` · read before the retry; row ${superseded} is the current reading`
+          : '';
+      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}${repair}${freshness}`);
     })
     .join('\n');
+}
+
+/**
+ * The landed reads a re-read on resume superseded, each with the row that
+ * is now the current reading: an earlier read on the same surface with the
+ * same tool, which the resume did not take again (on a browser-driven
+ * surface only the last snapshot is).
+ */
+function currentReadings(
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+): Map<number, number> {
+  const readOf = (index: number): string | undefined => {
+    const action = actions[index];
+    const row = applied[index];
+    if (!action || !row?.ok || row.held) return undefined;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || actionIntent(parsed.action) !== 'read') return undefined;
+    return `${parsed.action.surface}|${parsed.action.kind === 'mcp.call' ? parsed.action.tool : parsed.action.path}`;
+  };
+  const superseded = new Map<number, number>();
+  applied.forEach((row, index): void => {
+    if (!row.refreshed) return;
+    const read = readOf(index);
+    if (read === undefined) return;
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if (!applied[earlier]?.refreshed && readOf(earlier) === read) superseded.set(earlier, index);
+    }
+  });
+  return superseded;
 }
 
 /**
