@@ -40,6 +40,17 @@ describe('providerItemKey', (): void => {
     expect(providerItemKey(finance, { sourceSystem: 'linear-finance', externalId: ISSUE }, 'real')).toBe(key);
   });
 
+  it.fails('gives one Linear issue one key whichever Linear API the surface reads it over', (): void => {
+    const graphql = { slug: 'linear-api', class: 'kanban', path: 'documented-api', endpoint: 'https://api.linear.app/graphql' };
+    expect(providerItemKey(graphql, { sourceSystem: 'linear-api', externalId: ISSUE }, 'real')).toBe(
+      `linear:${ISSUE}`,
+    );
+    const lookalike = { ...graphql, endpoint: 'https://linear.app.example.com/graphql' };
+    expect(providerItemKey(lookalike, { sourceSystem: 'linear-api', externalId: ISSUE }, 'real')).toBe(
+      `https://linear.app.example.com|${ISSUE}`,
+    );
+  });
+
   it('keys a Slack message by its workspace, channel and timestamp', (): void => {
     expect(providerItemKey(slack('T0COMPANY'), { sourceSystem: 'slack', externalId: ASK }, 'real')).toBe(
       `slack:T0COMPANY:${ASK}`,
