@@ -36,6 +36,7 @@ export interface ScopeCandidate extends ScopeValue {
 export interface IntakeScope {
   team?: ScopeValue;
   project?: ScopeValue;
+  projects?: ScopeValue[];
   channels?: ScopeValue[];
   notes?: string[];
 }
@@ -175,6 +176,7 @@ export function groundScopePicks(
 ): IntakeScope {
   const scope: IntakeScope = {};
   const channels: ScopeValue[] = [];
+  const projects: ScopeValue[] = [];
   const notes: string[] = [];
   for (const pick of picks) {
     const value = pick.field === 'channel' ? channelName(pick.value) : pick.value.trim();
@@ -194,15 +196,28 @@ export function groundScopePicks(
       if (!channels.some((channel): boolean => channel.value === value)) channels.push(kept);
       continue;
     }
-    const current = scope[pick.field];
+    if (pick.field === 'project') {
+      const first = scope.project;
+      if (!first) scope.project = kept;
+      else if (first.value !== value && first.ref === kept.ref && first.sourceId === kept.sourceId) {
+        if (!projects.some((project): boolean => project.value === value)) projects.push(kept);
+      } else if (first.value !== value) {
+        notes.push(
+          `Dropped ${valueLabel(pick.field, value)}: intake reads projects from ${first.ref}, not another role's page.`,
+        );
+      }
+      continue;
+    }
+    const current = scope.team;
     if (!current) {
-      scope[pick.field] = kept;
+      scope.team = kept;
     } else if (current.value !== value) {
       notes.push(
         `Dropped ${valueLabel(pick.field, value)}: intake reads one ${pick.field}, and \`${current.value}\` was picked first.`,
       );
     }
   }
+  if (projects.length > 0) scope.projects = projects;
   if (channels.length > 0) scope.channels = channels;
   if (notes.length > 0) scope.notes = notes;
   return scope;
@@ -274,10 +289,19 @@ export function sentenceScopePicks(
  * Returns:
  *   The team and the project, each present only when approved.
  */
-export function approvedLinearScope(scope: IntakeScope): { team?: string; project?: string } {
+export function approvedLinearScope(scope: IntakeScope): {
+  team?: string;
+  project?: string;
+  projects?: string[];
+} {
   return {
     ...(scope.team ? { team: scope.team.value } : {}),
     ...(scope.project ? { project: scope.project.value } : {}),
+    ...(scope.projects?.length
+      ? { projects: [scope.project?.value, ...scope.projects.map((project) => project.value)].filter(
+          (project): project is string => project !== undefined,
+        ) }
+      : {}),
   };
 }
 
@@ -305,7 +329,7 @@ export function approvedChannelNames(scope: IntakeScope): string[] {
  *   True for a kanban scope with no team or project, or a chat scope with no channel.
  */
 export function isEmptyScope(scope: IntakeScope, surfaceClass: string): boolean {
-  if (surfaceClass === 'kanban') return !scope.team && !scope.project;
+  if (surfaceClass === 'kanban') return !scope.team && !scope.project && !scope.projects?.length;
   if (surfaceClass === 'chat') return (scope.channels ?? []).length === 0;
   return true;
 }
@@ -349,11 +373,14 @@ export function presentIntakeScope(
   }
   if (surfaceClass === 'kanban') {
     const quotes = distinctLines(
-      [scope.team, scope.project].filter((value): value is ScopeValue => value !== undefined),
+      [scope.team, scope.project, ...(scope.projects ?? [])].filter(
+        (value): value is ScopeValue => value !== undefined,
+      ),
     );
     const parts = [
       scope.team ? `team ${scope.team.value}` : undefined,
       scope.project ? `project ${scope.project.value}` : undefined,
+      ...(scope.projects ?? []).map((project): string => `project ${project.value}`),
     ].filter((part): part is string => part !== undefined);
     return { line: `Reads: ${system} ${parts.join(', ')}`, empty: false, quotes, notes };
   }
@@ -391,7 +418,7 @@ function distinctLines(values: readonly ScopeValue[]): ScopeValue[] {
  *   Each value whose page is gone or no longer carries its quoted line.
  */
 export function scopeDrift(scope: IntakeScope, pages: readonly ScopePage[]): ScopeValue[] {
-  const values = [scope.team, scope.project, ...(scope.channels ?? [])].filter(
+  const values = [scope.team, scope.project, ...(scope.projects ?? []), ...(scope.channels ?? [])].filter(
     (value): value is ScopeValue => value !== undefined,
   );
   return values.filter((value): boolean => {
@@ -424,7 +451,7 @@ export function presentScopeDrift(
   const label = (value: ScopeValue): string =>
     value === scope.team
       ? `team ${value.value}`
-      : value === scope.project
+      : value === scope.project || scope.projects?.includes(value)
         ? `project ${value.value}`
         : `#${value.value}`;
   const refs = [...new Set(drift.map((value): string => value.ref))];

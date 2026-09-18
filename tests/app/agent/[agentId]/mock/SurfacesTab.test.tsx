@@ -62,6 +62,7 @@ import {
   EMPTY_SURFACES,
   DiscoveryProvenance,
   EvidenceQuote,
+  IntakeScopeRow,
   LOADING_SURFACES,
   ProvisioningRow,
   SurfaceLadder,
@@ -481,6 +482,38 @@ describe('SurfacesTab and what each employee reads', (): void => {
     sourceId,
     ref: 'finance/handbook.md',
     quote,
+  });
+
+  it('lists each approved project and channel on its own card line', (): void => {
+    const project = (value: string) => scopeValue(value, `- Project: \`${value}\``);
+    const linear = renderToStaticMarkup(
+      <IntakeScopeRow
+        drift={[]}
+        scope={{
+          team: scopeValue('FIN', '- Team: `FIN`'),
+          project: project('September close'),
+          projects: [project('October close')],
+        }}
+        sourceLabels={new Map()}
+        surfaceClass="kanban"
+        system="Linear"
+      />,
+    );
+    const slack = renderToStaticMarkup(
+      <IntakeScopeRow
+        drift={[]}
+        scope={{ channels: [
+          scopeValue('finance-close', '- Channels: #finance-close, #ops-requests'),
+          scopeValue('ops-requests', '- Channels: #finance-close, #ops-requests'),
+        ] }}
+        sourceLabels={new Map()}
+        surfaceClass="chat"
+        system="Slack"
+      />,
+    );
+    expect(linear).toContain('<li>Project September close</li><li>Project October close</li>');
+    expect(slack).toContain('<li>#finance-close</li><li>#ops-requests</li>');
+    expect(slack.match(/- Channels: #finance-close, #ops-requests/g)).toHaveLength(1);
   });
   const card = (patch: Record<string, unknown>): Record<string, unknown> => ({
     _id: `surface-${String(patch.slug)}`,

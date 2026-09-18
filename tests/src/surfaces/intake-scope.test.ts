@@ -195,7 +195,7 @@ describe('grounding a pick on its page line', (): void => {
     );
     expect(twoProjects.project?.value).toBe('Q3 close');
     expect(twoProjects.notes).toEqual([
-      'Dropped project `September close`: intake reads one project, and `Q3 close` was picked first.',
+      "Dropped project `September close`: intake reads projects from revops/handbook.md, not another role's page.",
     ]);
 
     const slack = scopeCandidates(pages('revops-first'), ['channel']);
@@ -236,6 +236,31 @@ describe('grounding a pick on its page line', (): void => {
       expect(finance.project?.ref).toBe('finance/handbook.md');
       expect(revops.project?.ref).toBe('revops/handbook.md');
     }
+  });
+
+  it('keeps two projects stated by one role handbook on the same approved card', (): void => {
+    const candidates = scopeCandidates(
+      [{
+        ref: 'finance/handbook.md',
+        markdown: '- Team: `FIN`\n- Project: `September close`\n- Project: `October close`',
+      }],
+      ['team', 'project'],
+    );
+    const scope = groundScopePicks(
+      [
+        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'October close', ref: 'finance/handbook.md' },
+      ],
+      candidates,
+    );
+    expect(approvedLinearScope(scope)).toEqual({
+      team: 'FIN',
+      project: 'September close',
+      projects: ['September close', 'October close'],
+    });
+    expect(scope.notes).toBeUndefined();
+    expect(presentIntakeScope('Linear', 'kanban', scope).quotes).toHaveLength(3);
   });
 
   it("takes the channels the manager's sentence names, and no other role's", (): void => {

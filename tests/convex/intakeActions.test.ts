@@ -1913,6 +1913,49 @@ describe('each employee reads its own approved queues', (): void => {
     }
   });
 
+  it('polls both projects approved on one finance card and keeps the provider ids', async (): Promise<void> => {
+    const finance = companySurfaces()[1];
+    const second = scoped('October close', 'finance/handbook.md', '- Project: `October close`');
+    const surface: Doc<'surfaces'> = {
+      ...finance,
+      intakeScope: { ...finance.intakeScope, projects: [second] },
+    };
+    const harness = runtimeHarness(
+      [surface],
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [financeAgent],
+    );
+    const calls: string[] = [];
+    await expect(runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      makeMcpClient: () => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: { surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } } },
+          errors: {},
+        }),
+        toolFromDefinition: async () => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            const project = String(args.project);
+            calls.push(project);
+            return { issues: [{
+              id: project === 'September close' ? 'FIN-1' : 'FIN-2',
+              title: `Ticket in ${project}`,
+              url: 'https://linear.app/kestrel/issue/fin',
+              project: { name: project },
+            }] };
+          },
+        }),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+    })).resolves.toMatchObject({ candidates: 2, polled: 1 });
+    expect(calls).toEqual(['September close', 'October close']);
+    expect([...harness.seeds.values()].map((seed) => [seed.sourceSystem, seed.externalId])).toEqual([
+      ['linear', 'FIN-1'],
+      ['linear', 'FIN-2'],
+    ]);
+  });
+
   it('reads only the approved channels, so finance never reads #revops-asks', async (): Promise<void> => {
     for (const order of ['revops-first', 'finance-first'] as const) {
       const harness = runtimeHarness(

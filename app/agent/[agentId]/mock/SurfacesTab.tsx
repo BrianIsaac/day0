@@ -147,11 +147,20 @@ export interface IntakeScopeRowProps {
 export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
   const presentation = presentIntakeScope(props.system, props.surfaceClass, props.scope);
   const changed = presentScopeDrift(props.scope, props.drift);
+  const queues = props.surfaceClass === 'kanban'
+    ? [props.scope.project, ...(props.scope.projects ?? [])].filter(
+        (value): value is ScopeValue => value !== undefined,
+      ).map((value): string => `Project ${value.value}`)
+    : (props.scope.channels ?? []).map((value): string => `#${value.value}`);
+  if (props.surfaceClass === 'kanban' && queues.length === 0 && props.scope.team) {
+    queues.push(`Team ${props.scope.team.value}`);
+  }
   return (
     <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
       <p className={presentation.empty ? 'font-medium text-[var(--color-warn)]' : 'font-medium'}>
         {presentation.line}
       </p>
+      {queues.length > 0 ? <ul className="mt-1 space-y-1">{queues.map((queue) => <li key={queue}>{queue}</li>)}</ul> : null}
       {presentation.quotes.map((value: ScopeValue, index: number): React.ReactNode => {
         const source =
           (value.sourceId && props.sourceLabels.get(value.sourceId)) || 'documentation';
@@ -499,7 +508,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     );
     const scopeSourceIds = (surfaces ?? []).flatMap((surface) => {
       const scope = surface.intakeScope;
-      return [scope?.team, scope?.project, ...(scope?.channels ?? [])].flatMap((value): string[] =>
+      return [scope?.team, scope?.project, ...(scope?.projects ?? []), ...(scope?.channels ?? [])].flatMap((value): string[] =>
         value?.sourceId ? [value.sourceId] : [],
       );
     });

@@ -121,6 +121,7 @@ export type DecisionSweepResult = Omit<IntakeSweepResult, 'candidates'>;
 /** The Linear bounds intake reads: the approved scope, or the page scan's for older rows. */
 interface LinearScope {
   project?: string;
+  projects?: string[];
   team?: string;
 }
 
@@ -674,79 +675,86 @@ async function pollLinear(
     if (!tool.execute) throw new Error('Linear list_issues tool is not executable.');
 
     const candidates: WorkCandidate[] = [];
-    const cursors = new Set<string>();
-    const wantedProject = scope.project?.toLowerCase();
+    const candidateIds = new Set<string>();
+    const projects = scope.projects?.length ? [...new Set(scope.projects)] : [scope.project];
     // Only an approved team is enforced here. A row still on the page scan
     // keeps its behaviour exactly, and the scan's team may be another
     // role's handbook's, which is the defect the approved scope replaces.
     const wantedTeam = surface.intakeScope ? scope.team?.toLowerCase() : undefined;
-    let seen = 0;
-    let withProject = 0;
-    let withTeam = 0;
-    let cursor: string | undefined;
-    for (let pageIndex = 0; pageIndex < MAX_MCP_PAGES; pageIndex += 1) {
-      const request = linearListArguments(
-        definition.inputSchema,
-        scope,
-        surface.lastPolledAt,
-        cursor,
-      );
-      const value = await tool.execute(request.args, {
-        abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-      });
-      const page = mcpIssuePage(value);
-      for (const issue of page.issues) {
-        seen += 1;
-        const project = issueProject(issue);
-        if (project !== undefined) withProject += 1;
+    for (const approvedProject of projects) {
+      const cursors = new Set<string>();
+      const wantedProject = approvedProject?.toLowerCase();
+      let seen = 0;
+      let withProject = 0;
+      let withTeam = 0;
+      let cursor: string | undefined;
+      for (let pageIndex = 0; pageIndex < MAX_MCP_PAGES; pageIndex += 1) {
+        const request = linearListArguments(
+          definition.inputSchema,
+          { team: scope.team, project: approvedProject },
+          surface.lastPolledAt,
+          cursor,
+        );
+        const value = await tool.execute(request.args, {
+          abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+        });
+        const page = mcpIssuePage(value);
+        for (const issue of page.issues) {
+          seen += 1;
+          const project = issueProject(issue);
+          if (project !== undefined) withProject += 1;
+          if (
+            wantedProject !== undefined &&
+            (project === undefined
+              ? surface.intakeScope !== undefined
+              : project.toLowerCase() !== wantedProject)
+          ) {
+            continue;
+          }
+          if (wantedTeam !== undefined && !request.teamEnforced) {
+            const teams = issueTeamLabels(issue);
+            if (teams.length > 0) withTeam += 1;
+            if (!teams.includes(wantedTeam)) continue;
+          }
+          const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
+          if (
+            surface.lastPolledAt !== undefined &&
+            Number.isFinite(updatedAt) &&
+            updatedAt < surface.lastPolledAt
+          ) {
+            continue;
+          }
+          const candidate = linearCandidate(issue, surface, observedAt);
+          if (candidate && !candidateIds.has(candidate.externalId)) {
+            candidates.push(candidate);
+            candidateIds.add(candidate.externalId);
+          }
+        }
         if (
           wantedProject !== undefined &&
-          (project === undefined
-            ? surface.intakeScope !== undefined
-            : project.toLowerCase() !== wantedProject)
+          !request.projectEnforced &&
+          seen > 0 &&
+          withProject === 0
         ) {
-          continue;
+          throw new Error(
+            `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${approvedProject}.`,
+          );
         }
-        if (wantedTeam !== undefined && !request.teamEnforced) {
-          const teams = issueTeamLabels(issue);
-          if (teams.length > 0) withTeam += 1;
-          if (!teams.includes(wantedTeam)) continue;
+        if (wantedTeam !== undefined && !request.teamEnforced && seen > 0 && withTeam === 0) {
+          throw new Error(
+            `Linear list_issues has no team argument and its issues carry no team, so intake cannot be bounded to team ${scope.team}.`,
+          );
         }
-        const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
-        if (
-          surface.lastPolledAt !== undefined &&
-          Number.isFinite(updatedAt) &&
-          updatedAt < surface.lastPolledAt
-        ) {
-          continue;
+        if (!page.nextCursor) break;
+        if (cursors.has(page.nextCursor)) {
+          throw new Error('Linear list_issues repeated a cursor before pagination completed.');
         }
-        const candidate = linearCandidate(issue, surface, observedAt);
-        if (candidate) candidates.push(candidate);
+        if (pageIndex === MAX_MCP_PAGES - 1) {
+          throw new Error('Linear list_issues pagination did not complete within the page limit.');
+        }
+        cursors.add(page.nextCursor);
+        cursor = page.nextCursor;
       }
-      if (
-        wantedProject !== undefined &&
-        !request.projectEnforced &&
-        seen > 0 &&
-        withProject === 0
-      ) {
-        throw new Error(
-          `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${scope.project}.`,
-        );
-      }
-      if (wantedTeam !== undefined && !request.teamEnforced && seen > 0 && withTeam === 0) {
-        throw new Error(
-          `Linear list_issues has no team argument and its issues carry no team, so intake cannot be bounded to team ${scope.team}.`,
-        );
-      }
-      if (!page.nextCursor) break;
-      if (cursors.has(page.nextCursor)) {
-        throw new Error('Linear list_issues repeated a cursor before pagination completed.');
-      }
-      if (pageIndex === MAX_MCP_PAGES - 1) {
-        throw new Error('Linear list_issues pagination did not complete within the page limit.');
-      }
-      cursors.add(page.nextCursor);
-      cursor = page.nextCursor;
     }
     return candidates;
   } finally {

@@ -982,6 +982,7 @@ function storedScope(scope: IntakeScope): StoredIntakeScope {
   return {
     ...(scope.team ? { team: value(scope.team) } : {}),
     ...(scope.project ? { project: value(scope.project) } : {}),
+    ...(scope.projects ? { projects: scope.projects.map(value) } : {}),
     ...(scope.channels ? { channels: scope.channels.map(value) } : {}),
     ...(scope.notes && scope.notes.length > 0 ? { notes: scope.notes } : {}),
   };

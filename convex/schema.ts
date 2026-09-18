@@ -329,6 +329,16 @@ export default defineSchema({
             quote: v.string(),
           }),
         ),
+        projects: v.optional(
+          v.array(
+            v.object({
+              value: v.string(),
+              sourceId: v.optional(v.id('docSources')),
+              ref: v.string(),
+              quote: v.string(),
+            }),
+          ),
+        ),
         channels: v.optional(
           v.array(
             v.object({
