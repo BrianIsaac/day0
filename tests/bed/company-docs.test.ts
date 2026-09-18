@@ -21,7 +21,6 @@ import {
   stableSlug,
   structuralSystemCandidates,
   validateModelCandidates,
-  type DiscoveryPage,
 } from '../../src/docs/system-discovery';
 import { PROVIDER_SHAPES, structuralSpans } from '../../src/redaction/structural';
 import { browserTitleMarker } from '../../src/surfaces/browser';
