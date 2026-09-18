@@ -453,6 +453,13 @@ export default defineSchema({
     externalId: v.string(),
     /** Fixed at intake so a card edit cannot change which provider item a retry holds. */
     externalClaimKey: v.optional(v.string()),
+    /**
+     * The provider item's other name and the claim key it makes, when the
+     * provider prints two (Linear: `FIN-1` and a UUID). A write naming either
+     * meets this row.
+     */
+    externalAlias: v.optional(v.string()),
+    externalClaimAlias: v.optional(v.string()),
     title: v.string(),
     contentSummary: v.string(),
     contentRefs: v.array(v.string()),
@@ -651,8 +658,9 @@ export default defineSchema({
     ])
     .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId'])
-    /** Every work item discovered from one provider item, across employees. */
-    .index('by_claim_key', ['externalClaimKey']),
+    /** Every work item discovered from one provider item, across employees, by either of its names. */
+    .index('by_claim_key', ['externalClaimKey'])
+    .index('by_claim_alias', ['externalClaimAlias']),
 
   /**
    * Which employee holds an item of the owner's own systems: one live row per
@@ -667,6 +675,12 @@ export default defineSchema({
     key: v.string(),
     agentId: v.id('agents'),
     workItemId: v.id('workItems'),
+    /**
+     * The keys of the item's other names, copied from the work item when the
+     * claim is taken. The record of everything this claim covers; the guard
+     * finds a claim by an alias through the work item's `by_claim_alias`.
+     */
+    aliases: v.optional(v.array(v.string())),
     claimedAt: v.number(),
     releasedAt: v.optional(v.number()),
   })

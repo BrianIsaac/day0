@@ -148,7 +148,7 @@ const parsedPost = (body: Record<string, unknown>): ParsedSurfaceAction => {
 
 describe('writeTargetIds', (): void => {
   it('names the ticket a comment or a state change addresses, as intake stores it', (): void => {
-    expect(writeTargetIds(parsedCall('save_comment', { issueId: 'FIN-1', body: 'note' }), linear)).toEqual(['FIN-1']);
+    expect(writeTargetIds(parsedCall('save_comment', { issueId: 'FIN-1', body: 'note' }), linear)).toEqual(['FIN-1', 'fin-1']);
     expect(writeTargetIds(parsedCall('save_issue', { id: 'fin-1', state: 'Done' }), linear)).toEqual(['fin-1', 'FIN-1']);
   });
 
@@ -170,6 +170,12 @@ describe('writeTargetIds', (): void => {
     expect(writeTargetIds(request('/rest/api/3/issue/OPS-12/comment?expand=x', { body: 'note' }), jira)).toContain('OPS-12');
     const graphql = request('/graphql', { query: 'mutation', variables: { input: { issueId: ISSUE, body: 'note' } } });
     expect(writeTargetIds(graphql, jira)).toContain(ISSUE);
+  });
+
+  it('offers a ticket reference in both cases, since a model may print a UUID in capitals', (): void => {
+    const id = ['3f2a9c1e', '7b4d', '4e8a', '9c1f', '0a1b2c3d4e5f'].join('-');
+    expect(writeTargetIds(parsedCall('save_comment', { issueId: id.toUpperCase(), body: 'note' }), linear)).toContain(id);
+    expect(writeTargetIds(parsedCall('save_comment', { issueId: 'fin-1', body: 'note' }), linear)).toContain('FIN-1');
   });
 
   it('names nothing for a read or a write that addresses no item', (): void => {

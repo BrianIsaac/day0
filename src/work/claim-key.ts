@@ -140,9 +140,9 @@ function httpTicketReferences(parsed: ParsedHttpRequest): string[] {
  *
  * A ticket write names its ticket in its arguments, its request body or its
  * path; a chat reply names the message it sits under as intake keys one,
- * `<channel>:<thread>`. A ticket reference is also offered in upper case,
- * since a tracker accepts `fin-1` for `FIN-1` and intake stores the
- * identifier as the provider prints it. A read, a top-level chat post and a
+ * `<channel>:<thread>`. A ticket reference is also offered in upper and in
+ * lower case, since a tracker accepts `fin-1` for `FIN-1` and a UUID in
+ * capitals, and intake stores each name as the provider prints it. A read, a top-level chat post and a
  * write that names no item address nothing another work item could hold.
  *
  * Args:
@@ -160,7 +160,7 @@ export function writeTargetIds(parsed: ParsedSurfaceAction, surface: { class: st
     return channel && thread ? [`${channel}:${thread}`] : [];
   }
   const references = parsed.kind === 'mcp.call' ? targetIssueReferences(parsed) : httpTicketReferences(parsed);
-  return [...new Set(references.flatMap((ref) => [ref, ref.toUpperCase()]))].slice(0, WRITE_TARGET_LIMIT);
+  return [...new Set(references.flatMap((ref) => [ref, ref.toUpperCase(), ref.toLowerCase()]))].slice(0, WRITE_TARGET_LIMIT);
 }
 
 /** The work item holding an external item a write addresses, as the ledger names it. */

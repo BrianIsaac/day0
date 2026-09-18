@@ -36,6 +36,11 @@ export interface WorkCandidate {
   sourceCategory: WorkSourceCategory;
   sourceSystem: string;
   externalId: string;
+  /**
+   * The item's other name, when the provider prints two: a Linear issue is
+   * `FIN-1` and a UUID, and a write may name either.
+   */
+  externalAlias?: string;
   title: string;
   contentSummary: string;
   contentRefs: string[];

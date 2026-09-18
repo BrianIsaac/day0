@@ -1748,6 +1748,26 @@ describe('intake provider contracts', (): void => {
     expect(neither?.requesterLabel).toBeUndefined();
   });
 
+  it('carries a ticket\'s other name: the UUID beside an MCP identifier, the identifier beside a GraphQL UUID', (): void => {
+    const surface = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId: id<'credentials'>('credential-linear'),
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const observedAt = Date.parse('2026-09-19T03:03:00.000Z');
+    const uuid = ['3f2a9c1e', '7b4d', '4e8a', '9c1f', '0a1b2c3d4e5f'].join('-');
+    const issue = { title: 'Post the September close status note', url: 'https://linear.app/day00/issue/FIN-1' };
+    expect(linearCandidate({ ...issue, id: 'FIN-1', uuid }, surface, observedAt)).toMatchObject({
+      externalId: 'FIN-1',
+      externalAlias: uuid,
+    });
+    expect(linearCandidate({ ...issue, id: uuid, identifier: 'FIN-1' }, surface, observedAt)).toMatchObject({
+      externalId: uuid,
+      externalAlias: 'FIN-1',
+    });
+    expect(linearCandidate({ ...issue, id: 'FIN-1', identifier: 'FIN-1' }, surface, observedAt)).not.toHaveProperty('externalAlias');
+  });
+
   it('decodes structured and text MCP results and reads only policy channel rows', (): void => {
     expect(
       mcpIssuePage({ structuredContent: { issues: [{ id: 'one' }], nextCursor: 'two' } }),

@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -430,7 +430,7 @@ describe('a write to an external item that has a work item of its own, claimed o
   beforeEach((): void => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
-    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.useFakeTimers();
     vi.setSystemTime(ASK_APPROVED_AT);
   });
 
@@ -537,5 +537,148 @@ describe('a write to an external item that has a work item of its own, claimed o
     await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
 
     expect(ticketWrites()).toEqual(['save_comment', 'save_issue']);
+  });
+});
+
+/**
+ * One ticket, two names. Linear's MCP server prints the identifier as `id`
+ * and the UUID as `uuid`; a GraphQL-shaped read prints the UUID as `id` and
+ * the identifier beside it. `list_issues` shows both, so a write may name
+ * either, and the claim is keyed by whichever intake read as `id`.
+ */
+const TICKET_UUID = randomUUID();
+
+/** FIN-1 as intake seeds it: through the real seed mutation, keyed by one name and carrying the other. */
+async function seedTicketThroughIntake(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  keyedBy: 'identifier' | 'uuid',
+): Promise<Id<'workItems'>> {
+  return await harness.mutation(internal.work.seedItem, {
+    agentId,
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: keyedBy === 'identifier' ? 'FIN-1' : TICKET_UUID,
+    externalAlias: keyedBy === 'identifier' ? TICKET_UUID : 'FIN-1',
+    title: TICKET_TITLE,
+    contentSummary: 'Post the close status note for the September close on this ticket.',
+    contentRefs: ['https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note'],
+  });
+}
+
+const claimVerdict = { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] };
+const askNaming = (name: string): MockAction[] => [
+  LIST,
+  threadReply(ASK_CHANNEL, ASK_TS),
+  mcp('save_comment', { issueId: name, body: NOTE }),
+  mcp('save_issue', { id: name, state: 'Done' }),
+];
+
+describe('a write naming a ticket\'s other name (finding D, UUID against identifier)', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
+    vi.useFakeTimers();
+    vi.setSystemTime(ASK_APPROVED_AT);
+  });
+
+  afterEach((): void => {
+    recorded.mcp.length = 0;
+    recorded.http.length = 0;
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    restoreSurfaceMode();
+  });
+
+  it('stores both names at intake, and the claim carries the other as an alias', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedTicketThroughIntake(t, mateo, 'identifier');
+
+    const row = await readItem(t, ticket);
+    expect(row.externalClaimKey).toBe('linear:FIN-1');
+    expect(row.externalAlias).toBe(TICKET_UUID);
+    expect(row.externalClaimAlias).toBe(`linear:${TICKET_UUID}`);
+
+    await t.mutation(internal.work.setVerdict, { workItemId: ticket, verdict: claimVerdict });
+    const claims = await t.run(async (ctx) => await ctx.db.query('externalClaims').collect());
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({ key: 'linear:FIN-1', aliases: [`linear:${TICKET_UUID}`], workItemId: ticket });
+  });
+
+  it.each([
+    { keyedBy: 'identifier' as const, names: 'the UUID' },
+    { keyedBy: 'uuid' as const, names: 'the identifier' },
+  ])('withholds a write naming $names from a claim keyed by the other name', async ({ keyedBy }): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedTicketThroughIntake(t, mateo, keyedBy);
+    await t.mutation(internal.work.setVerdict, { workItemId: ticket, verdict: claimVerdict });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    const written = keyedBy === 'identifier' ? TICKET_UUID : 'FIN-1';
+    await atApply(t, ask, askNaming(written));
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    const answered = await readItem(t, ask);
+    expect(answered.state).toBe('completed');
+    for (const index of [2, 3]) {
+      expect(ledger(answered)[index]).toMatchObject({ ok: true, held: true });
+      expect(ledger(answered)[index]!.reason).toContain(`${written} is held by this employee's work item "${TICKET_TITLE}" (claimed)`);
+    }
+  });
+
+  it('withholds a write naming the UUID in another case, and one naming either name before the ticket\'s item has claimed', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    await seedTicketThroughIntake(t, mateo, 'identifier');
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, [
+      LIST,
+      mcp('save_comment', { issueId: TICKET_UUID.toUpperCase(), body: NOTE }),
+      mcp('save_issue', { id: 'fin-1', state: 'Done' }),
+    ]);
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    const rows = ledger(await readItem(t, ask));
+    expect(rows[1]!.reason).toContain('has its own work item with this employee');
+    expect(rows[2]!.reason).toContain('has its own work item with this employee');
+  });
+
+  it('lets the ticket\'s own item write its ticket by either name, and cites a note it landed under the other', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedTicketThroughIntake(t, mateo, 'identifier');
+    await t.mutation(internal.work.setVerdict, { workItemId: ticket, verdict: claimVerdict });
+    await atApply(t, ticket, [LIST, mcp('save_comment', { issueId: TICKET_UUID, body: NOTE }), mcp('save_issue', { id: TICKET_UUID, state: 'Done' })]);
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ticket });
+    expect(ticketWrites()).toEqual(['save_comment', 'save_issue']);
+    expect((await readItem(t, ticket)).state).toBe('completed');
+
+    recorded.mcp.length = 0;
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, ASK_ACTIONS);
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    // The double answers every comment with the same id; the line cites it.
+    expect(ledger(await readItem(t, ask))[2]!.reason).toContain(`which landed comment ${SECOND_NOTE_ID} on it`);
+  });
+
+  it('gives a row seeded before the alias existed its other name on the next poll, and its live claim too', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedItem(t, mateo, { source: 'ticket', state: 'claimed' });
+
+    const again = await seedTicketThroughIntake(t, mateo, 'identifier');
+
+    expect(again).toBe(ticket);
+    expect((await readItem(t, ticket)).externalClaimAlias).toBe(`linear:${TICKET_UUID}`);
+    const claims = await t.run(async (ctx) => await ctx.db.query('externalClaims').collect());
+    expect(claims).toHaveLength(1);
+    expect(claims[0]!.aliases).toEqual([`linear:${TICKET_UUID}`]);
   });
 });

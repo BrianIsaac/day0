@@ -265,6 +265,7 @@ export const workItemSeedFields = {
   sourceCategory: v.string(),
   sourceSystem: v.string(),
   externalId: v.string(),
+  externalAlias: v.optional(v.string()),
   title: v.string(),
   contentSummary: v.string(),
   contentRefs: v.array(v.string()),
@@ -286,6 +287,8 @@ export interface WorkItemSeedInput {
   sourceCategory: string;
   sourceSystem: string;
   externalId: string;
+  /** The item's other name, when the provider prints two. */
+  externalAlias?: string;
   title: string;
   contentSummary: string;
   contentRefs: string[];
@@ -294,6 +297,37 @@ export interface WorkItemSeedInput {
   owner?: string;
   requester?: string;
   replyTarget?: { channel: string; channelName?: string; threadTs?: string };
+}
+
+/**
+ * Give a row seeded before its item's other name was stored that name, on the
+ * poll that next reads the item, and its live claim with it.
+ *
+ * Args:
+ *   ctx: Mutation context of the seed.
+ *   existing: The row the item already has.
+ *   externalAlias: The other name this poll read, if the provider printed one.
+ *   externalClaimAlias: The claim key of that name.
+ */
+async function rememberExternalAlias(
+  ctx: MutationCtx,
+  existing: Doc<'workItems'>,
+  externalAlias: string | undefined,
+  externalClaimAlias: string | undefined,
+): Promise<void> {
+  if (externalAlias === undefined || !externalClaimAlias || existing.externalClaimAlias !== undefined) return;
+  if (existing.externalClaimKey === externalClaimAlias) return;
+  await ctx.db.patch(existing._id, { externalAlias, externalClaimAlias });
+  const held = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', existing._id))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of held) {
+    if (!claim.aliases?.includes(externalClaimAlias)) {
+      await ctx.db.patch(claim._id, { aliases: [...(claim.aliases ?? []), externalClaimAlias] });
+    }
+  }
 }
 
 /** Share intake's idempotency boundary with fixed evaluation task batches. */
@@ -308,18 +342,37 @@ export async function seedItemInTransaction(
     )
     .filter((q) => q.eq(q.field('agentId'), args.agentId))
     .first();
-  if (existing) return existing._id;
+  // An existing row is read again only while it still lacks the other name.
+  if (existing && (args.externalAlias === undefined || existing.externalClaimAlias !== undefined)) {
+    return existing._id;
+  }
   let externalClaimKey: string | undefined;
+  let externalClaimAlias: string | undefined;
   if (SURFACE_MODE === 'real') {
     const surface = await ctx.db
       .query('surfaces')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.sourceSystem))
       .first();
-    if (surface) externalClaimKey = providerItemKey(surface, args, SURFACE_MODE);
+    if (surface) {
+      externalClaimKey = providerItemKey(surface, args, SURFACE_MODE);
+      if (args.externalAlias !== undefined) {
+        externalClaimAlias = providerItemKey(
+          surface,
+          { sourceSystem: args.sourceSystem, externalId: args.externalAlias },
+          SURFACE_MODE,
+        );
+      }
+    }
   }
+  if (existing) {
+    await rememberExternalAlias(ctx, existing, args.externalAlias, externalClaimAlias);
+    return existing._id;
+  }
+  const { externalAlias, ...seed } = args;
   const id = await ctx.db.insert('workItems', {
-    ...args,
+    ...seed,
     ...(externalClaimKey ? { externalClaimKey } : {}),
+    ...(externalAlias !== undefined && externalClaimAlias ? { externalAlias, externalClaimAlias } : {}),
     state: 'discovered',
     observedAt: Date.now(),
     createdAt: Date.now(),
@@ -654,6 +707,7 @@ async function takeExternalClaim(
     key: scope.key,
     agentId: row.agentId,
     workItemId: row._id,
+    ...(row.externalClaimAlias ? { aliases: [row.externalClaimAlias] } : {}),
     claimedAt: now,
   });
   return { key: scope.key };
@@ -718,14 +772,18 @@ function claimRefusedVerdict(
  *   The comment's provider id, or undefined when the holder landed none.
  */
 function landedCommentOn(holding: Doc<'workItems'>): string | undefined {
-  const held = holding.externalId.toUpperCase();
+  const held = new Set(
+    [holding.externalId, holding.externalAlias]
+      .filter((name): name is string => name !== undefined)
+      .map((name) => name.toUpperCase()),
+  );
   return landedWritesOf(holding.output)
     .filter((write) => {
       const parsed = parseSurfaceAction(write.action);
       return (
         parsed.ok &&
         isAuditComment(parsed.action) &&
-        writeTargetIds(parsed.action, { class: 'kanban' }).some((target) => target.toUpperCase() === held)
+        writeTargetIds(parsed.action, { class: 'kanban' }).some((target) => held.has(target.toUpperCase()))
       );
     })
     .map((write) => write.applied.providerId)
@@ -794,7 +852,7 @@ export const writeClaimHolder = internalQuery({
     };
     for (const target of args.targets) {
       const key = providerItemKey(surface, { sourceSystem: surface.slug, externalId: target }, SURFACE_MODE);
-      if (key === undefined || row.externalClaimKey === key) continue;
+      if (key === undefined || row.externalClaimKey === key || row.externalClaimAlias === key) continue;
       const live = await ctx.db
         .query('externalClaims')
         .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
@@ -806,18 +864,36 @@ export const writeClaimHolder = internalQuery({
         if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) continue;
         return await holderOf(target, holding, false);
       }
-      const claimed = new Set(live.map((claim) => claim.workItemId));
-      const discoveredFrom = await ctx.db
-        .query('workItems')
-        .withIndex('by_claim_key', (q) => q.eq('externalClaimKey', key))
-        .take(DISCOVERED_FROM_LIMIT);
-      for (const holding of discoveredFrom) {
-        if (holding._id === row._id || claimed.has(holding._id)) continue;
-        if (NEVER_CLAIMED_DEAD_STATES.has(holding.state) || isRevocationTrialRow(holding)) continue;
+      // The work items discovered from the item under either of its names:
+      // one that holds a claim keyed by the other name, then one that has
+      // not claimed yet.
+      const named = [
+        ...(await ctx.db
+          .query('workItems')
+          .withIndex('by_claim_key', (q) => q.eq('externalClaimKey', key))
+          .take(DISCOVERED_FROM_LIMIT)),
+        ...(await ctx.db
+          .query('workItems')
+          .withIndex('by_claim_alias', (q) => q.eq('externalClaimAlias', key))
+          .take(DISCOVERED_FROM_LIMIT)),
+      ];
+      let waiting: Doc<'workItems'> | undefined;
+      for (const holding of named) {
+        if (holding._id === row._id || isRevocationTrialRow(holding)) continue;
         const employee = await ctx.db.get(holding.agentId);
         if (employee?.userId !== userId) continue;
-        return await holderOf(target, holding, true);
+        const claimed = await ctx.db
+          .query('externalClaims')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', holding._id))
+          .filter((q) => q.eq(q.field('releasedAt'), undefined))
+          .first();
+        if (claimed) {
+          if (!RELEASED_HOLDER_STATES.has(holding.state)) return await holderOf(target, holding, false);
+        } else if (!NEVER_CLAIMED_DEAD_STATES.has(holding.state)) {
+          waiting ??= holding;
+        }
       }
+      if (waiting) return await holderOf(target, waiting, true);
     }
     return null;
   },
