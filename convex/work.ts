@@ -419,6 +419,57 @@ const reevaluationTriggerValidator = v.union(
   v.literal('claim-released'),
 );
 
+/**
+ * The most re-admission keys a row remembers. Four kinds of change stamp a
+ * row (a policy change, a connecting surface, the verdict write and Check for
+ * new work, a registered skill); a row that has been sent back more often
+ * than this forgets its oldest key, and that change could buy it one more
+ * evaluation, never a loop.
+ */
+export const SPENT_REEVALUATION_KEYS = 16;
+
+/**
+ * Whether a change has already sent a row back for a fresh evaluation.
+ *
+ * Args:
+ *   row: The work item.
+ *   key: The idempotency key of the change.
+ *
+ * Returns:
+ *   True when the key is among those the row has spent.
+ */
+function reevaluationSpent(row: Pick<Doc<'workItems'>, 'reevaluation'>, key: string): boolean {
+  const stamp = row.reevaluation;
+  return stamp !== undefined && (stamp.key === key || (stamp.spent ?? []).includes(key));
+}
+
+/**
+ * The stamp of a re-admission, carrying the keys the row spent before it.
+ *
+ * Each of the four stampers has a once-per-change bound keyed on the row.
+ * One key would let a re-admission of another kind between two visits reset
+ * that bound, so the stamp keeps them all, newest last and bounded.
+ *
+ * Args:
+ *   row: The work item as it stands.
+ *   trigger: What sent it back.
+ *   key: The idempotency key of the change.
+ *   at: When.
+ *
+ * Returns:
+ *   The `reevaluation` record to store.
+ */
+function reevaluationStamp(
+  row: Pick<Doc<'workItems'>, 'reevaluation'>,
+  trigger: string,
+  key: string,
+  at: number,
+): NonNullable<Doc<'workItems'>['reevaluation']> {
+  const before = row.reevaluation ? (row.reevaluation.spent ?? [row.reevaluation.key]) : [];
+  const spent = [...before.filter((entry) => entry !== key), key].slice(-SPENT_REEVALUATION_KEYS);
+  return { trigger, key, at, spent };
+}
+
 export interface ReevaluatePendingArgs {
   agentId: Id<'agents'>;
   trigger: ReevaluationTrigger;
@@ -535,14 +586,14 @@ export async function reevaluatePendingInTransaction(
       .take(REEVALUATION_BATCH);
     for (const row of rows) {
       examined += 1;
-      if (row.reevaluation?.key === args.key) continue;
+      if (reevaluationSpent(row, args.key)) continue;
       if (!verdictReturnsOn(row, args.trigger, args.key, surface)) continue;
       const previous = (row.verdict ?? {}) as ParkedVerdict;
       await ctx.db.patch(row._id, {
         state: 'discovered',
         verdict: undefined,
         skipReason: undefined,
-        reevaluation: { trigger: args.trigger, key: args.key, at: now },
+        reevaluation: reevaluationStamp(row, args.trigger, args.key, now),
       });
       await ctx.db.insert('events', {
         agentId: args.agentId,
@@ -1073,9 +1124,10 @@ type SatisfiedTrigger = 'verdict-write' | 'check' | 'skill-registered';
  *
  * A `needs-skill` verdict naming a skill that registered meanwhile is not
  * answered here. That race belongs to `requeueBehindRegisteredSkill`, which
- * the proposal step reaches in every mode: a second reader with its own key
- * on the row's one `reevaluation` record would overwrite the owner's, and the
- * two would re-admit the row in turn for ever.
+ * the proposal step reaches in every mode, so the race has one owner and one
+ * key whatever the mode. (Two readers with a key each once overwrote one
+ * another on the row's single `reevaluation` key and re-admitted the row in
+ * turn for ever; the row now keeps every key it has spent.)
  *
  * Args:
  *   ctx: Mutation context.
@@ -1184,8 +1236,9 @@ function skillRegistrationKey(skill: Doc<'skills'>): string {
  * skill with nobody left to move it. The verdict write parks it as written;
  * the proposal step that follows (`skills.propose`) calls this, in every
  * mode, and Check for new work calls it for a row whose proposal step never
- * ran. The row is sent back once per registration, keyed on its
- * `reevaluation` record. A second `needs-skill` naming the same registration
+ * ran. The row is sent back once per registration, keyed among the keys its
+ * `reevaluation` record has spent, so no other kind of re-admission in
+ * between buys the registration a second turn. A second `needs-skill` naming the same registration
  * was decided with the skill on the list, so the skill does not cover the
  * row: it is skipped with that reason, which leaves it a Retry on its card,
  * rather than evaluated for ever or parked where nothing moves it.
@@ -1209,7 +1262,7 @@ export async function requeueBehindRegisteredSkill(
   const item = await ctx.db.get(workItemId);
   if (!item || item.state !== 'needs-skill' || item.agentId !== skill.agentId) return 'left';
   const key = skillRegistrationKey(skill);
-  if (item.reevaluation?.key === key) {
+  if (reevaluationSpent(item, key)) {
     await applyVerdict(ctx, workItemId, {
       decision: 'skip',
       reason: `registered skill "${skill.name}" was tried and does not cover this item`,
@@ -1219,7 +1272,7 @@ export async function requeueBehindRegisteredSkill(
   const at = Date.now();
   await ctx.db.patch(workItemId, {
     proposedSkillId: skill._id,
-    reevaluation: { trigger: 'skill-registered', key, at },
+    reevaluation: reevaluationStamp(item, 'skill-registered', key, at),
   });
   await applyVerdict(ctx, workItemId, {
     decision: 'pending-reevaluation',
@@ -1314,11 +1367,11 @@ async function readmitSatisfiedInTransaction(
         continue;
       }
       const satisfied = await waitSatisfiedBy(ctx, args.agentId, waited, now);
-      if (!satisfied || row.reevaluation?.key === satisfied.key) continue;
+      if (!satisfied || reevaluationSpent(row, satisfied.key)) continue;
       await ctx.db.patch(row._id, {
         state: 'discovered',
         verdict: undefined,
-        reevaluation: { trigger: 'check', key: satisfied.key, at: now },
+        reevaluation: reevaluationStamp(row, 'check', satisfied.key, now),
       });
       await logSatisfiedRequeue(ctx, row, 'check', satisfied.key, waited, now);
       await scheduleNextStep(ctx, { ...row, state: 'discovered', verdict: undefined });
@@ -1431,7 +1484,7 @@ export async function applyVerdict(
     const at = Date.now();
     const waited = effective as WaitingVerdict;
     const satisfied = await waitSatisfiedBy(ctx, row.agentId, waited, at);
-    if (satisfied && row.reevaluation?.key !== satisfied.key) {
+    if (satisfied && !reevaluationSpent(row, satisfied.key)) {
       readmission = { key: satisfied.key, waited, at };
       effective = {
         decision: 'pending-reevaluation',
@@ -1459,7 +1512,7 @@ export async function applyVerdict(
     // evaluable again the moment a slot frees.
     ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
     ...(readmission
-      ? { reevaluation: { trigger: 'verdict-write', key: readmission.key, at: readmission.at } }
+      ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
   });
   await ctx.db.insert('events', {

@@ -542,10 +542,18 @@ export default defineSchema({
      * thing a verdict waited on landing (`verdict-write` when the verdict was
      * written, `check` on Check for new work), or the skill its verdict names
      * having registered (`skill-registered`), with its idempotency key and
-     * when. The same key never re-admits the row twice.
+     * when. The same key never re-admits the row twice, whichever kind of
+     * re-admission came between: `spent` is every key that has sent the row
+     * back, this one last, the newest `SPENT_REEVALUATION_KEYS` of them. A
+     * row stamped before the list existed has spent its one `key`.
      */
     reevaluation: v.optional(
-      v.object({ trigger: v.string(), key: v.string(), at: v.number() }),
+      v.object({
+        trigger: v.string(),
+        key: v.string(),
+        at: v.number(),
+        spent: v.optional(v.array(v.string())),
+      }),
     ),
     /**
      * Real mode: when an evaluation of this row started. A second evaluation

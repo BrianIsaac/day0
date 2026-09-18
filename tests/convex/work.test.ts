@@ -3206,7 +3206,7 @@ describe('re-admitting pending work when the policy changes', (): void => {
     const row = await readItem(harness, ids.outOfScope);
     expect(row.verdict).toBeUndefined();
     expect(row.skipReason).toBeUndefined();
-    expect(row.reevaluation).toEqual({ trigger: 'charter', key: 'charter:v2', at: expect.any(Number) });
+    expect(row.reevaluation).toEqual({ trigger: 'charter', key: 'charter:v2', at: expect.any(Number), spent: ['charter:v2'] });
     expect(await requeuedEvents(harness, agentId)).toEqual([
       { workItemId: ids.outOfScope, trigger: 'charter', key: 'charter:v2', previousState: 'skipped' },
       { workItemId: ids.qualityFit, trigger: 'charter', key: 'charter:v2', previousState: 'skipped' },

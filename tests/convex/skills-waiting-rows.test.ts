@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
+import { SPENT_REEVALUATION_KEYS } from '../../convex/work';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**
@@ -1020,5 +1021,102 @@ describe('the verdict write and the registration side meeting on one late item',
 
     expect((await readItem(harness, late)).state).toBe('skipped');
     expect(await readmissions(harness, late)).toBe(2);
+  });
+
+  /**
+   * The row carried ONE `reevaluation` key shared by four stampers (a policy
+   * change, a connecting surface, the verdict write and this owner), so a
+   * re-admission of another kind between two visits overwrote the key and a
+   * once-per-change bound was reset by an unrelated change. Each stamper's
+   * bound now holds whatever the others do: the row keeps the keys it has
+   * spent.
+   */
+  const OUT_OF_SCOPE = { decision: 'skip', reason: 'out-of-scope: nothing in the charter covers a shipment note' };
+  const AWAITING_LINEAR = { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' };
+
+  async function charterChanged(harness: Harness, agentId: Id<'agents'>, key: string): Promise<number> {
+    const result = await harness.mutation(internal.work.reevaluatePending, { agentId, trigger: 'charter', key });
+    return result.readmitted;
+  }
+
+  it('keeps once per registration when a charter change re-admits the row between the owner\'s two visits', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, late } = await seedRegisteredAndLate(harness);
+    await landNeedsSkill(harness, agentId, late);
+    expect((await readItem(harness, late)).state).toBe('discovered');
+
+    // The re-evaluation skips it as out of scope; the manager amends the charter; the row returns.
+    await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: OUT_OF_SCOPE });
+    expect(await charterChanged(harness, agentId, 'charter:v2')).toBe(1);
+    // The evaluator names the same registered skill again: it was tried, under this registration.
+    await landNeedsSkill(harness, agentId, late);
+
+    expect(await readItem(harness, late)).toMatchObject({ state: 'skipped', skipReason: SKIP_REASON });
+    expect(await requeueTriggers(harness, late)).toEqual(['skill-registered', 'charter']);
+  });
+
+  it('keeps once per charter change when the owner re-queues the row between the change firing twice', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, late } = await seedRegisteredAndLate(harness);
+    await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: OUT_OF_SCOPE });
+    expect(await charterChanged(harness, agentId, 'charter:v2')).toBe(1);
+    await landNeedsSkill(harness, agentId, late);
+    expect((await readItem(harness, late)).reevaluation?.trigger).toBe('skill-registered');
+    await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: OUT_OF_SCOPE });
+
+    // The same amendment fires again (a continuation, a second pane): it has had its one turn.
+    expect(await charterChanged(harness, agentId, 'charter:v2')).toBe(0);
+
+    expect((await readItem(harness, late)).state).toBe('skipped');
+    expect(await requeueTriggers(harness, late)).toEqual(['charter', 'skill-registered']);
+    // A new amendment is a new change.
+    expect(await charterChanged(harness, agentId, 'charter:v3')).toBe(1);
+  });
+
+  it('keeps once per connection at the verdict write and at the check when the owner re-queues the row in between', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, late } = await seedRegisteredAndLate(harness);
+    // Linear is connected: a verdict that waits on it is sent back once, at the write.
+    const first = await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: AWAITING_LINEAR });
+    expect(first.decision).toBe('pending-reevaluation');
+    await landNeedsSkill(harness, agentId, late);
+    expect((await readItem(harness, late)).reevaluation?.trigger).toBe('skill-registered');
+
+    // The evaluator waits on the same connection again: that connection has had its turn.
+    const second = await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: AWAITING_LINEAR });
+    expect(second.decision).toBe('defer');
+    await check(harness, agentId);
+
+    expect((await readItem(harness, late)).state).toBe('deferred');
+    expect(await requeueTriggers(harness, late)).toEqual(['verdict-write', 'skill-registered']);
+  });
+
+  it('bounds the spent keys, newest kept, and reads a row stamped before the list as having spent its one key', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, late } = await seedRegisteredAndLate(harness);
+    await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: OUT_OF_SCOPE });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(late, { reevaluation: { trigger: 'charter', key: 'charter:v1', at: 1 } });
+    });
+    expect(await charterChanged(harness, agentId, 'charter:v1')).toBe(0);
+
+    for (let version = 2; version < 2 + SPENT_REEVALUATION_KEYS + 4; version += 1) {
+      expect(await charterChanged(harness, agentId, `charter:v${version}`)).toBe(1);
+      await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: OUT_OF_SCOPE });
+    }
+
+    const stamp = (await readItem(harness, late)).reevaluation!;
+    expect(stamp.spent).toHaveLength(SPENT_REEVALUATION_KEYS);
+    expect(stamp.spent!.at(-1)).toBe(stamp.key);
+    expect(stamp.key).toBe(`charter:v${SPENT_REEVALUATION_KEYS + 5}`);
+    expect(await charterChanged(harness, agentId, stamp.key)).toBe(0);
   });
 });
