@@ -111,7 +111,9 @@ function card(item: Doc<'workItems'>, onRetryFailed: (feedback?: string) => void
   );
 }
 
-describe('the manager retries an out-of-scope skip from the card', (): void => {
+// The seam loads every Convex module and renders the card, which takes over a
+// second on an idle machine and outran the default five seconds on a busy one.
+describe('the manager retries an out-of-scope skip from the card', { timeout: 30_000 }, (): void => {
   it('reaches the evaluator with the scope rule waived, from the Retry the card offers to the claim', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());

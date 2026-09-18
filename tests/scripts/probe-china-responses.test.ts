@@ -76,7 +76,9 @@ print(code,end='')
   }
 }
 
-describe('arrival probe response paths', () => {
+// Each case runs the probe script in a child process that is allowed ten
+// seconds, so the default five-second test bound fails first on a busy machine.
+describe('arrival probe response paths', { timeout: 20_000 }, () => {
   it('bounds certificate inspection when TCP connects but TLS stalls', () => {
     const result = exercise('tls');
     expect(result.stdout).toContain('Summary');
