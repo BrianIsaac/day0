@@ -218,6 +218,7 @@ export interface SurfaceAdapter {
     action: MockAction,
     index: number,
     idempotencyKey: string,
+    transportAuthority?: ActionAuthority,
   ): Promise<AppliedAction>;
 }
 

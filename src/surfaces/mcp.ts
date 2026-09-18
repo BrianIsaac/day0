@@ -475,9 +475,13 @@ export class McpAdapter implements SurfaceAdapter {
     action: MockAction,
     index: number,
     idempotencyKey: string,
+    transportAuthority?: ActionAuthority,
   ): Promise<AppliedAction> {
     void index;
-    return await this.send(ctx, run, action, idempotencyKey);
+    return await this.send(
+      ctx, run, action, idempotencyKey,
+      transportAuthority ? { authority: transportAuthority } : undefined,
+    );
   }
 
   /**

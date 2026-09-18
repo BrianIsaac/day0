@@ -346,7 +346,7 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     // drives each phase itself, so the scheduler's jobs never fire.
     vi.useFakeTimers();
     const t = convexTest(contractSchema(), allConvexModules());
-    const { workItemId, runId } = await seedAtClosing(t, REVOPS_7);
+    const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_7);
     // The closing phase leaves out the Done the plan promised and calls every step satisfied.
     const withoutDone = {
       ...refreshClosing,
@@ -378,6 +378,7 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     // The browser writes landed, so the retry needs the provider reconciled; then it resumes at the closing phase.
     await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
     await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Move it to Done as the plan says.' });
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const resumed = await readItem(t, workItemId);
     expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', resumedClosing: true, initialFailure: refusal.reason });
@@ -387,6 +388,7 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
       ['looker-pipeline-tile', 'browser_navigate'],
       ['looker-pipeline-tile', 'browser_snapshot'],
     ]);
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: false }); });
     recorded.mcp.length = 0;
 
     recorded.closingReply = refreshClosing;

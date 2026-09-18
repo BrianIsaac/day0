@@ -429,6 +429,28 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(reply).not.toContain('68%');
   }, 30_000);
 
+  it('records a refreshed read under the authority of the carried read', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await seed(t);
+    const first = firstAttempt2026_09_17(workItemId);
+    first.applied[6] = { ...first.applied[6]!, authority: 'manager' };
+    await t.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason: FIRST_FAILURE_2026_09_17,
+        output: first,
+      });
+    });
+    saveSeventyFour();
+
+    const resumed = await retryAtClosing(t, workItemId);
+    expect(ledger(resumed)[4]).toMatchObject({
+      ok: true,
+      authority: 'manager',
+      refreshed: { previous: { idempotencyKey: first.applied[6]!.idempotencyKey } },
+    });
+  }, 30_000);
+
   it('stops the resumed run when the re-read cannot be made, and nothing of the closing set is written', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const workItemId = await seed(t);

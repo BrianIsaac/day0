@@ -120,6 +120,8 @@ export interface ApplyOptions {
    * writes it carries lend it no sign-in.
    */
   resumedRunIds?: readonly string[];
+  /** Original authority of reads taken again on a resumed closing run. */
+  authorityByIndex?: ReadonlyMap<number, ActionAuthority>;
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -522,6 +524,7 @@ export async function applySurfaceActions(
         continue;
       }
       const adapterRun = { ...run, agentName: run.agentName ?? 'Day0' };
+      const rowAuthority = options.authorityByIndex?.get(index) ?? authority;
       const browserDriven = surface.path === 'browser-driven' && parsed.action.kind === 'mcp.call';
       let restored: SessionRestoreResult | undefined;
       if (browserDriven) {
@@ -563,7 +566,7 @@ export async function applySurfaceActions(
               {
                 grants: options.grants ?? new Set(),
                 autonomousActions,
-                authority,
+                authority: rowAuthority,
                 signInOnly: navigates,
                 resumedRunIds: options.resumedRunIds,
               },
@@ -585,8 +588,9 @@ export async function applySurfaceActions(
         serialiseSurfaceAction(provenance.action),
         durableIndex,
         idempotencyKey,
+        options.authorityByIndex?.get(index),
       );
-      const stamped = authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome;
+      const stamped = rowAuthority && outcome.ok && !outcome.held ? { ...outcome, authority: rowAuthority } : outcome;
       applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);
       // The page is open once a replay or a call has landed on it; until then
       // the next call on the surface is checked for a replay again.

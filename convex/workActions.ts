@@ -711,6 +711,10 @@ async function refreshCarriedReads(
         approvedIndexes: reread,
         priorLedger: applied.map((row, index) => (reread.has(index) ? undefined : row)),
         resumedRunIds: ledgerRunIds(applied),
+        authorityByIndex: new Map(indexes.flatMap((index) => {
+          const authority = applied[index]?.authority;
+          return authority ? [[index, authority] as const] : [];
+        })),
         autoPhase: true,
         autonomousActions: autonomousActionsOn(agent),
       },
