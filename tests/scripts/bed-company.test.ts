@@ -882,6 +882,19 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(h.slack.deleted).toHaveLength(3);
   });
 
+  it.fails('removes the label a later seed made after a partial teardown kept the state file', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.failing.add('auth.test');
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(h.linear.labels).toEqual([]);
+    expect(stateKept(h)).toBe(true);
+    h.slack.failing.clear();
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(h.linear.labels).toHaveLength(1);
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.linear.labels).toEqual([]);
+  });
+
   it('does not file a ticket twice when the first create landed before the timeout', async (): Promise<void> => {
     const h = harness();
     h.linear.fail('BedIssueCreate', { kind: 'timeout', landed: true });
