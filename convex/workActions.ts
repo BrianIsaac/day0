@@ -413,6 +413,7 @@ async function evaluateWorkItemHandler(
   });
   const candidate = rowToCandidate(item);
   let scopeJudgementUnavailable: string | undefined;
+  let scopeAdmission: { basis: string; namedBy?: string; overruled?: string[] } | undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'evaluation' } as const;
   const verdict = await recordingModelCalls(ctx, step, () => evaluateCandidate(
     candidate,
@@ -433,6 +434,15 @@ async function evaluateWorkItemHandler(
         if (judgement.admitted && judgement.failedOpen !== undefined) {
           scopeJudgementUnavailable = judgement.failedOpen;
         }
+        // The skip readings a named source set aside are kept on the row.
+        const judged = judgement.admitted && judgement.overruled !== undefined;
+        if (surfaceConfig.mode === 'real' && judged) {
+          scopeAdmission = {
+            basis: judgement.basis,
+            ...(judgement.namedBy !== undefined ? { namedBy: judgement.namedBy } : {}),
+            ...(judgement.overruled !== undefined ? { overruled: judgement.overruled } : {}),
+          };
+        }
       },
     },
   ));
@@ -441,6 +451,13 @@ async function evaluateWorkItemHandler(
       agentId,
       type: 'work.scope-judgement-unavailable',
       payload: { workItemId: args.workItemId, cause: scopeJudgementUnavailable },
+    });
+  }
+  if (scopeAdmission !== undefined) {
+    await ctx.runMutation(internal.work.recordScopeAdmission, {
+      workItemId: args.workItemId,
+      charterId: charterRow._id,
+      admission: scopeAdmission,
     });
   }
   const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {

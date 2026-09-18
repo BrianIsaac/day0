@@ -538,6 +538,22 @@ export default defineSchema({
      */
     scopeWaivedAt: v.optional(v.number()),
     /**
+     * Real mode: a scope judgement that kept this row after the model read it
+     * as out of scope, and the approved charter it was made against.
+     * `overruled` is every skip reading set aside, in order: the item's source
+     * is one the willDo names (`namedBy`) and the skip cited nothing that
+     * excludes it.
+     */
+    scopeAdmission: v.optional(
+      v.object({
+        charterId: v.id('charters'),
+        at: v.number(),
+        basis: v.string(),
+        namedBy: v.optional(v.string()),
+        overruled: v.optional(v.array(v.string())),
+      }),
+    ),
+    /**
      * What last sent this row back to `discovered`: a policy change, or the
      * thing a verdict waited on landing (`verdict-write` when the verdict was
      * written, `check` on Check for new work), or the skill its verdict names

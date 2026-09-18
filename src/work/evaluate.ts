@@ -1,4 +1,4 @@
-import { judgeScope, type ScopeJudgement } from './scope';
+import { judgeScope, type ItemSource, type ScopeJudgement } from './scope';
 import {
   AUTONOMOUS_WIP_LIMIT,
   COLD_START_WIP_LIMIT,
@@ -79,6 +79,13 @@ export interface EvaluationSurface extends SurfaceLiveness {
   class: string;
   endpoint?: string;
   discoveryEvidence?: readonly SurfaceDiscoveryEvidence[];
+  /** The team, projects and channels the manager approved for intake on this surface. */
+  intakeScope?: {
+    team?: { value: string };
+    project?: { value: string };
+    projects?: readonly { value: string }[];
+    channels?: readonly { value: string }[];
+  };
 }
 
 export interface EvalContext extends AgentContext {
@@ -159,6 +166,52 @@ function namesDocumentedSystem(
     if (!currentlyNamed) return false;
     return candidateNamesSurface(candidateText, surface);
   });
+}
+
+/** The channel in a mention's title, `Slack mention in #team-asks`. */
+const MENTION_CHANNEL = /#([^\s#]+)/;
+
+/**
+ * Where a real-mode candidate came from, read off the rows.
+ *
+ * Intake reads a kanban surface only within its approved team and projects,
+ * so every ticket from it is from those; a mention carries its own channel.
+ * The boss's own asks and the mock tables have no such source.
+ *
+ * Args:
+ *   candidate: Work candidate being evaluated.
+ *   ctx: Evaluation mode, clock and declared surfaces.
+ *
+ * Returns:
+ *   The source, or undefined when the item did not come from a listed surface.
+ */
+function itemSource(candidate: WorkCandidate, ctx: EvalContext): ItemSource | undefined {
+  if (ctx.surfaceMode !== 'real' || candidate.sourceSystem === 'boss') return undefined;
+  const surface = surfaceForSource(candidate.sourceSystem, ctx.surfaces, ctx.now ?? Date.now());
+  if (!surface) return undefined;
+  const scope = surface.intakeScope;
+  const projects = [scope?.project, ...(scope?.projects ?? [])]
+    .filter((project): project is { value: string } => project !== undefined)
+    .map((project) => project.value);
+  const channel =
+    surface.class === 'chat'
+      ? (candidate.replyTarget?.channelName ?? MENTION_CHANNEL.exec(candidate.title)?.[1])
+      : undefined;
+  return {
+    surface: surface.displayName,
+    slug: surface.slug,
+    ...(scope?.team ? { team: scope.team.value } : {}),
+    ...(projects.length > 0 ? { projects } : {}),
+    ...(channel ? { channel } : {}),
+  };
+}
+
+/** The display names and slugs of the surfaces that are connected now. */
+function liveSystemNames(ctx: EvalContext): string[] {
+  const now = ctx.now ?? Date.now();
+  return ctx.surfaces
+    .filter((surface): boolean => verdictFor(surface, now) === 'connected')
+    .flatMap((surface) => [surface.displayName, surface.slug]);
 }
 
 /** The surface slug convention, shared with the planner. */
@@ -319,6 +372,8 @@ export async function evaluateCandidate(
     deferMockQualityFit: true,
     provenance: eligibleByProvenance(candidate, ctx),
     namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
+    source: itemSource(candidate, ctx),
+    liveSystems: ctx.surfaceMode === 'real' ? liveSystemNames(ctx) : undefined,
   });
   if (ctx.surfaceMode !== 'mock' || !scope.admitted) opts.onScopeJudgement?.(scope);
   if (!scope.admitted) {

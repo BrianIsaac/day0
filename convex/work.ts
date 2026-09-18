@@ -470,6 +470,42 @@ function reevaluationStamp(
   return { trigger, key, at, spent };
 }
 
+const scopeAdmissionValidator = v.object({
+  basis: v.string(),
+  namedBy: v.optional(v.string()),
+  overruled: v.optional(v.array(v.string())),
+});
+
+/**
+ * Keep a scope judgement that set skip readings aside, on the row.
+ *
+ * Written by the evaluation step before its verdict, real mode only. The
+ * readings go on the timeline as well, so a manager reading the card later
+ * can see the model said otherwise and why that did not stand.
+ */
+export const recordScopeAdmission = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    charterId: v.id('charters'),
+    admission: scopeAdmissionValidator,
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row || row.state !== 'discovered') return;
+    const at = Date.now();
+    await ctx.db.patch(args.workItemId, {
+      scopeAdmission: { charterId: args.charterId, at, ...args.admission },
+    });
+    if (!args.admission.overruled?.length) return;
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.scope-skip-overruled',
+      payload: { workItemId: args.workItemId, ...args.admission },
+      createdAt: at,
+    });
+  },
+});
+
 export interface ReevaluatePendingArgs {
   agentId: Id<'agents'>;
   trigger: ReevaluationTrigger;
