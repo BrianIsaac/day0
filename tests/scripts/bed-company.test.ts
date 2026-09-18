@@ -648,7 +648,7 @@ describe('check', (): void => {
     expect(gaps).toContain('team FIN is missing: create it by hand in Linear');
     expect(gaps).toContain('REVOPS-1 "Refresh the Looker pipeline tile" is in project "Q3 close" and is not a bed ticket');
     expect(gaps).toContain('the app lacks chat:write.customize');
-    expect(gaps).toContain('#logistics-desk does not exist: create it by hand');
+    expect(gaps).toContain('#logistics-desk is not a public channel the bot can see: create it by hand as a public channel');
     expect(gaps).toContain('the bot is not in #ops-requests');
     expect(gaps).toContain('#revops-asks holds an ask from an earlier run');
     expect(gaps).toContain('"Slack automation policy" differs from slack-automation-policy.md at line 3');

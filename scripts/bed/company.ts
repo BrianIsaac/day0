@@ -463,7 +463,7 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
   for (const name of BED_CHANNELS) {
     const channel = view.channels.get(name);
     if (!channel) {
-      report.line('gap', `#${name} does not exist: create it by hand, then /invite the bot`);
+      report.line('gap', `#${name} is not a public channel the bot can see: create it by hand as a public channel (intake reads public channels only), then /invite the bot`);
     } else if (!channel.isMember) {
       report.line('gap', `the bot is not in #${name}: /invite it there`);
     } else {

@@ -747,7 +747,7 @@ describe('--company', (): void => {
     expect(flat).toContain(
       'the teams REVOPS (Revenue operations, project "Q3 close"), FIN (Finance close, project "September close"), LOG (Logistics desk, project "Shipment exceptions")',
     );
-    expect(flat).toContain('#finance-close, #logistics-desk, #ops-requests');
+    expect(flat).toContain('the public channels #revops-asks, #revops, #finance-close, #logistics-desk, #ops-requests');
     expect(flat).toContain('DAY0_BED_LINEAR_API_KEY, DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN');
     expect(printed.indexOf('hand steps')).toBeLessThan(printed.indexOf('[11/11] pnpm bed:company check'));
   });

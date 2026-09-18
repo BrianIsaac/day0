@@ -503,7 +503,7 @@ That is the ordinary real-mode setup followed by `pnpm bed:company docs`, which 
 The hand steps are done once per workspace, by you, because they are admin acts in accounts only you hold:
 
 1. **Linear**, as a workspace admin: teams `REVOPS` (project `Q3 close`), `FIN` "Finance close" (project `September close`) and `LOG` "Logistics desk" (project `Shipment exceptions`), each with the workflow states `Todo`, `In Progress` and `Done`. Archive or move out any older ticket in those three projects: intake reads every ticket in a documented project, and `check` lists each one that is not the bed's.
-2. **Slack**: the channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests`, and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. Delete any ask left over from an earlier run: a new deployment's first poll reads a channel's whole history.
+2. **Slack**: the public channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests` (intake reads public channels only), and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. Delete any ask left over from an earlier run: a new deployment's first poll reads a channel's whole history.
 3. **Notion**: the two pages in `bed/company/notion/`, pasted under one parent page shared with your integration, with the Linear key in place of the placeholder ([`bed/company/notion/README.md`](bed/company/notion/README.md)).
 4. **`.env.local`**: `DAY0_BED_LINEAR_API_KEY`, `DAY0_BED_SLACK_BOT_TOKEN` and `DAY0_BED_NOTION_TOKEN`. Only `pnpm bed:company` reads them, and it prints none of them.
 
@@ -1484,7 +1484,7 @@ secrets 文件（权限 0600）保存 `LINEAR_API_KEY` 和 `SLACK_BOT_TOKEN`；�
 手工步骤每个 workspace 只做一次，由你完成，因为它们是只有你持有的账户中的管理员操作：
 
 1. **Linear**，以 workspace 管理员身份：team `REVOPS`（project `Q3 close`）、`FIN` "Finance close"（project `September close`）和 `LOG` "Logistics desk"（project `Shipment exceptions`），每个 team 都有 `Todo`、`In Progress`、`Done` 三个工作流状态。把这三个 project 中较早的工单归档或移出：intake 会读取文档所记录 project 中的每一张工单，`check` 会列出每一张不属于演示环境的工单。
-2. **Slack**：频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`，以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。删除早先运行遗留的请求：新部署的首次轮询会读取频道的全部历史。
+2. **Slack**：公开频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`（intake 只读取公开频道），以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。删除早先运行遗留的请求：新部署的首次轮询会读取频道的全部历史。
 3. **Notion**：把 `bed/company/notion/` 下的两个页面粘贴到一个与你的 integration 共享的父页面之下，并把占位符换成 Linear key（见 [`bed/company/notion/README.md`](bed/company/notion/README.md)）。
 4. **`.env.local`**：`DAY0_BED_LINEAR_API_KEY`、`DAY0_BED_SLACK_BOT_TOKEN` 和 `DAY0_BED_NOTION_TOKEN`。只有 `pnpm bed:company` 读取它们，且不会打印其中任何一个。
 
