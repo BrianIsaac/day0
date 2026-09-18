@@ -45,6 +45,7 @@ import { loadSpanRecording, RecordedSpanModel } from '../fixtures/redaction-doub
 const BED = resolve('bed', 'company');
 const FOLDER = join(BED, 'folder');
 const NOTION = join(BED, 'notion');
+const FIXTURES = resolve('tests', 'fixtures', 'company-bed');
 const TILE_LOGIN = 'pipeline-tile-local';
 const TOKEN_PLACEHOLDER = 'PASTE_LINEAR_API_KEY_HERE';
 const SYSTEMS = ['Linear', 'Slack', 'Looker pipeline tile', 'Northstar CRM', 'NetLedger'];
@@ -130,6 +131,12 @@ describe('the company bed pages', (): void => {
       'Linear automation',
       'Slack automation policy',
     ]);
+  });
+
+  it('is copied into the convex fixtures byte for byte, so a page reworded here is reworded there', (): void => {
+    const drifted = [...folderPages.map((bedPage) => `folder/${bedPage.ref}`), ...notionPages.map((bedPage) => bedPage.ref)]
+      .filter((path) => readFileSync(join(BED, path), 'utf8') !== readFileSync(join(FIXTURES, path), 'utf8'));
+    expect(drifted, 'tests/fixtures/company-bed/ is stale: copy the page over').toEqual([]);
   });
 
   it('says on every page that the company is synthetic, and names no employee', (): void => {
