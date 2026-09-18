@@ -8,6 +8,8 @@ import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { autonomousActionsOn } from '../../src/work/autonomy';
 import { evaluateCandidate, type EvalContext } from '../../src/work/evaluate';
+import { INTERRUPTED_APPLY_REASON } from '../../src/work/reconciliation';
+import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
@@ -711,15 +713,16 @@ async function seedWork(
 }
 
 /**
- * Insert one work item that holds no slot: deferred, waiting on a skill, or
- * in `discovered` with or without a queue verdict.
+ * Insert one work item that holds no slot: deferred, waiting on a skill, in
+ * `discovered` with or without a queue verdict, or ended.
  *
  * Args:
  *   harness: Convex test harness.
  *   agentId: The employee.
  *   externalId: The provider item, as the run named it.
  *   state: The row's state.
- *   fields: The verdict and the skill the row waits on, when it has them.
+ *   fields: The verdict and the skill the row waits on, or what an ended row
+ *     keeps: its plan, output, reason, rejection and reconciliation.
  *
  * Returns:
  *   The new work item id.
@@ -729,7 +732,19 @@ async function seedParked(
   agentId: Id<'agents'>,
   externalId: string,
   state: Doc<'workItems'>['state'],
-  fields: { verdict?: Record<string, unknown>; proposedSkillId?: Id<'skills'> },
+  fields: Partial<
+    Pick<
+      Doc<'workItems'>,
+      | 'verdict'
+      | 'proposedSkillId'
+      | 'plan'
+      | 'output'
+      | 'skipReason'
+      | 'managerFeedback'
+      | 'providerReconciliation'
+      | 'pendingRunId'
+    >
+  >,
 ): Promise<Id<'workItems'>> {
   return await harness.run(
     async (ctx) =>
@@ -901,6 +916,7 @@ describe('the employee roster', (): void => {
         roleLine: 'charter pending',
         openCount: 0,
         parkedCount: 0,
+        stoppedCount: 0,
         needsYou: 0,
         docSourceCount: 1,
       },
@@ -913,6 +929,7 @@ describe('the employee roster', (): void => {
         roleLine: 'Close the month for the finance team.',
         openCount: 3,
         parkedCount: 0,
+        stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 2,
       },
@@ -926,7 +943,8 @@ describe('the employee roster', (): void => {
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
         openCount: 3,
         parkedCount: 0,
-        needsYou: 2,
+        stoppedCount: 1,
+        needsYou: 3,
         docSourceCount: 2,
       },
     ]);
@@ -942,6 +960,7 @@ describe('the employee roster', (): void => {
         roleLine: 'charter pending',
         openCount: 1,
         parkedCount: 0,
+        stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 1,
       },
@@ -1022,6 +1041,97 @@ describe('the employee roster', (): void => {
       proposedSkillId: proposedSkill,
     });
     expect((await counts()).Aiko).toEqual([0, 1 + waiting.length + 2, expected + 1]);
+  });
+
+  it('counts a stopped row that still offers the manager a move, beside open and parked and under needs-you (19 Sep second run)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-18T21:58:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await deployEmployee(harness, 'owner', 'Priya');
+    const mateo = await deployEmployee(harness, 'owner', 'Mateo');
+    const aiko = await deployEmployee(harness, 'owner', 'Aiko');
+    const counts = async (): Promise<Record<string, [number, number, number, number]>> =>
+      Object.fromEntries(
+        (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+          (row): [string, [number, number, number, number]] => [
+            row.name,
+            [row.openCount, row.parkedCount, row.stoppedCount, row.needsYou],
+          ],
+        ),
+      );
+    const plan = { summary: 'Synthetic.', steps: ['Synthetic.'] };
+    const comment = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-28","body":"Q3 close-summary audit note."}' },
+    };
+    const landed = {
+      authority: 'autonomous',
+      effect: 'save_comment on linear',
+      ok: true,
+      providerId: 'f465de65-f1b4-46f7-bfe8-b779071116b1',
+      tool: 'mcp.call',
+    };
+
+    // The landing page as the run left it: Priya's row read `0 open · 0 need you` over two stopped items.
+    await seedParked(harness, priya, 'REVOPS-28', 'failed', {
+      plan,
+      output: { actions: [comment], applied: [landed] },
+      skipReason:
+        "1 approved plan step(s) remained blocked: step 5 (Done is withheld: checks 2 and 3 are not confirmed, and the checklist requires all three confirmed or the manager saying so. The audit comment (action index 0) is emitted; the save_issue Done transition awaits the manager's direction.)",
+    });
+    await seedParked(harness, priya, 'C0C2U2UJUTU:1789761553.312049', 'failed', {
+      plan,
+      skipReason:
+        '1 of 7 actions did not change the work environment: mcp.call (shared credential write without attributable content)',
+    });
+    await seedWork(harness, priya, ['completed', 'completed', 'skipped']);
+    await seedWork(harness, mateo, ['completed', 'completed', 'skipped', 'skipped', 'skipped', 'skipped']);
+    await seedWork(harness, aiko, ['completed', 'completed']);
+    expect(await counts()).toEqual({ Priya: [0, 0, 2, 2], Mateo: [0, 0, 0, 0], Aiko: [0, 0, 0, 0] });
+
+    // A stop with nothing landed: Retry stands.
+    await seedParked(harness, aiko, 'SH-4471', 'failed', {
+      plan,
+      skipReason: `${STOPPED_PREFIX}2 approved plan step(s) remained blocked`,
+    });
+    expect((await counts()).Aiko).toEqual([0, 0, 1, 1]);
+
+    // An interrupted apply whose ledger names what to verify: the reconciliation is the manager's move, then Retry.
+    await seedParked(harness, aiko, 'LOG-interrupted', 'failed', {
+      plan,
+      output: { actions: [comment], applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true }] },
+      skipReason: INTERRUPTED_APPLY_REASON,
+    });
+    expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
+
+    // The same with nothing to verify against: the card disables both the confirmation and Retry, for good.
+    await seedParked(harness, aiko, 'LOG-dead-end', 'failed', {
+      plan,
+      skipReason: INTERRUPTED_APPLY_REASON,
+    });
+    expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
+
+    // Rejected by the manager, through the mutation the dashboard calls: the held set waited on
+    // them, the rejected row keeps its Retry but waits on nobody, since the last decision was theirs.
+    const owner = harness.withIdentity({ subject: 'owner' });
+    for (const [index, [externalId, reason]] of [['LOG-rejected', 'not this quarter'], ['LOG-rejected-bare', '']].entries()) {
+      const pendingRunId = await harness.run(
+        async (ctx) => await ctx.db.insert('events', { agentId: aiko, type: 'work.run', payload: {}, createdAt: 1 }),
+      );
+      const workItemId = await seedParked(harness, aiko, externalId, 'actions-pending', {
+        plan,
+        output: { actions: [comment] },
+        pendingRunId,
+      });
+      expect((await counts()).Aiko).toEqual([1, 0, 2 + index, 3]);
+      await owner.mutation(api.work.rejectActions, { workItemId, pendingRunId, reason });
+    }
+    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
+
+    // A cancelled plan, a skip and finished work are not stopped rows.
+    await seedParked(harness, aiko, 'LOG-cancelled', 'cancelled', { plan, skipReason: 'plan cancelled by the manager' });
+    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
   });
 
   it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {
