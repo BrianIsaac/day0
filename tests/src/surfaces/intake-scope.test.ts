@@ -196,6 +196,26 @@ describe('intake scope candidates', (): void => {
     ]);
   });
 
+  it.fails('offers the page stating the most first, whatever order the pages were synced in', (): void => {
+    // Rehearsal 1 synced the close status note runbook before the finance
+    // handbook; both state `September close`, and a model that picks every
+    // number keeps whichever is offered first.
+    const runbook = companyPage('finance/runbooks/close-status-note.md');
+    for (const synced of [[runbook, FINANCE], [FINANCE, runbook]]) {
+      const candidates = scopeCandidates(synced.map(folderPage), ['team', 'project']);
+      expect(candidates.map(({ field, value, ref }) => [field, value, ref])).toEqual([
+        ['team', 'FIN', 'finance/handbook.md'],
+        ['project', 'September close', 'finance/handbook.md'],
+        ['project', 'September close', 'finance/runbooks/close-status-note.md'],
+      ]);
+      const everything = groundScopePicks(
+        candidates.map((_candidate, index) => ({ candidate: index + 1 })),
+        candidates,
+      );
+      expect(everything.project?.quote).toBe('- Project: `September close`');
+    }
+  });
+
   it('does not turn a forbidden foreign project in a role handbook into a queue', (): void => {
     const candidates = scopeCandidates([{
       ref: 'finance/handbook.md',
