@@ -126,7 +126,8 @@ describe('what a correction is on the prompt', (): void => {
     expect(lines).toContain(CORRECTIONS_HEADING);
     const text = lines.join('\n');
     expect(text).toContain('apply those that fit this candidate');
-    expect(text).toContain('none overrides the charter, an approval requirement, a grant or the exact-action gate');
+    expect(text).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
+    expect(text).toContain('revocation');
     expect(text).toContain('`appliedCorrections`');
     expect(text).toContain(JSON.stringify(entries));
     expect(plannerCorrectionLines([])).toEqual([]);
@@ -135,7 +136,8 @@ describe('what a correction is on the prompt', (): void => {
   it('gives the executor the corrections the approved plan applied, as directions and not evidence', (): void => {
     const entries = [correctionEntry(correction({ _id: 'c1' }))];
     const text = executorCorrectionLines(entries).join('\n');
-    expect(text).toContain('none overrides the charter, an approval requirement, a grant or the exact-action gate');
+    expect(text).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
+    expect(text).toContain('revocation');
     expect(text).toContain('not evidence');
     expect(text).toContain(JSON.stringify(entries));
     expect(executorCorrectionLines([])).toEqual([]);

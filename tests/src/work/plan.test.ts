@@ -897,7 +897,7 @@ describe('corrections the manager gave on earlier work', (): void => {
     const user = planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections });
     expect(user).toContain('--- Corrections the manager gave on earlier work ---');
     expect(user).toContain(JSON.stringify(corrections));
-    expect(user).toContain('none overrides the charter, an approval requirement, a grant or the exact-action gate');
+    expect(user).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
     expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Corrections'));
     expect(user.endsWith('Draft the execution plan now.')).toBe(true);
     expect(planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections: [] })).not.toContain(

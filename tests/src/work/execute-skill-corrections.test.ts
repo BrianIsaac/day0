@@ -113,7 +113,7 @@ describe('the corrections the approved plan applied, in the executor prompts', (
     const user = recorded.users[0];
     expect(user).toContain('--- Corrections the approved plan applies ---');
     expect(user).toContain(JSON.stringify(applied));
-    expect(user).toContain('none overrides the charter, an approval requirement, a grant or the exact-action gate');
+    expect(user).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
   });
 
   it('puts them in the closing phase too', async (): Promise<void> => {

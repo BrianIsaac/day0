@@ -57,7 +57,7 @@ export const APPLIED_CORRECTIONS_HEADING = '--- Corrections the approved plan ap
 
 /** The rule both prompts state: a correction revises and never overrides. */
 export const CORRECTION_RULE =
-  'Each may revise how the work is planned and done, and may answer a question the documentation leaves to the manager; none overrides the charter, an approval requirement, a grant or the exact-action gate, and none widens the work the charter gives you.';
+  'Each may revise how the work is planned and done, and may answer a question the documentation leaves to the manager; none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate, and none widens the work the charter gives you.';
 
 /**
  * The corrections a later item is planned with.
