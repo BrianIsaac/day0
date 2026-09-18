@@ -1089,6 +1089,33 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(driver.tile.value).toBe('68%');
   });
 
+  it('does not transport a closing write after an incomplete earlier sign-in', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const incomplete = slackPhaseOne.slice(0, 2);
+    const first = await applySurfaceActions(ctx, 'real', [looker], run, incomplete, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1]),
+    });
+    expect(first.map((row) => row.ok)).toEqual([true, true]);
+    const closing = await applySurfaceActions(ctx, 'real', [looker], run, closingTile, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2]),
+      prerequisiteLedger: { actions: incomplete, applied: first },
+      idempotencyIndexOffset: 2,
+    });
+    expect(closing.map((row) => [row.ok, row.reason])).toEqual([
+      [false, 'browser session could not be re-established: incomplete sign-in'],
+      [false, 'browser session could not be re-established: incomplete sign-in'],
+      [false, 'browser session could not be re-established: incomplete sign-in'],
+    ]);
+    expect(sentIn(driver, 2)).toEqual([]);
+    expect(driver.tile.value).toBe('68%');
+  });
+
   it('refuses the rest of the surface\'s actions after a failed replay, and applies the other surfaces', async (): Promise<void> => {
     const refuseSecondNavigate = (call: TileDriverCall): string | undefined =>
       call.context === 2 && call.tool === 'browser_navigate' ? 'net::ERR_CONNECTION_REFUSED' : undefined;

@@ -7,7 +7,7 @@ import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
 import { MOCK_TOOLS, mockAdapter } from './mock';
-import { sessionRecipe, signsIn } from './browser-session';
+import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
 import {
   applyProvenance,
   AWAITING_APPROVAL,
@@ -238,12 +238,18 @@ async function restoreBrowserSession(
   },
 ): Promise<SessionRestoreResult | undefined> {
   if (!adapter.restoreSession) return undefined;
-  const recipe = sessionRecipe(surface.slug, earlier, surface.endpoint).map(
-    (step: SessionRecipeStep): SessionRecipeStep => ({
-      ...step,
-      authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
-    }),
-  );
+  let recipe: SessionRecipeStep[];
+  try {
+    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint).map(
+      (step: SessionRecipeStep): SessionRecipeStep => ({
+        ...step,
+        authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
+      }),
+    );
+  } catch (error) {
+    if (!(error instanceof IncompleteSignInError)) throw error;
+    return { ok: false, steps: [], reason: `browser session could not be re-established: ${error.message}` };
+  }
   if (recipe.length === 0) return undefined;
   if (live.signInOnly && !recipe.some((step) => signsIn(step.action, surface.slug))) {
     return undefined;

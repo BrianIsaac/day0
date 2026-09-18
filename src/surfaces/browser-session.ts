@@ -4,15 +4,21 @@ import type { ActionAuthority, AppliedAction, SessionRecipeStep, SessionRestoreS
 
 export type { SessionRecipeStep } from './types';
 
+export class IncompleteSignInError extends Error {
+  constructor() {
+    super('incomplete sign-in');
+  }
+}
+
 /**
  * Re-establishing a browser session in a new apply invocation.
  *
  * A run's phases are separate apply invocations, and each one opens a new MCP
  * session, which the driver under `--isolated` answers with a new browser
  * context: blank and signed out. The page a person would still have open is
- * rebuilt from the run's own landed rows on the surface, and from nothing
- * else: the navigate before the sign-in, the sign-in itself, and the page the
- * run last navigated to. Nothing that changed the system is ever replayed.
+ * rebuilt from the run's own landed rows on the surface: the navigate before
+ * a completed sign-in, the credential form and its submit control, and the
+ * page the run last navigated to.
  */
 
 /** Earlier rows of a run, actions and their ledger rows index-aligned. */
@@ -21,8 +27,11 @@ export interface EarlierRows {
   applied: readonly (AppliedAction | undefined)[];
 }
 
-/** `{{secret}}`, or its qualified form, anywhere in a tool's arguments. */
+/** `{{secret}}`, or its qualified form, in a credential field's value. */
 const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
+const CREDENTIAL_FIELD = /^(?:user ?name|e-?mail(?: address)?|password|passcode|access code|secret|api key|token)$/i;
+const SIGN_IN_CONTROL = /^(?:sign[ -]?in|log[ -]?(?:in|on))$/i;
+const NEXT_CONTROL = /^next$/i;
 
 interface BrowserRow {
   action: MockAction;
@@ -111,11 +120,22 @@ function latestRunRows(rows: readonly BrowserRow[]): BrowserRow[] {
 }
 
 const isNavigate = (row: BrowserRow): boolean => row.tool === 'browser_navigate';
-const isCredentialFill = (row: BrowserRow): boolean =>
-  row.tool === 'browser_fill_form' && SECRET_PLACEHOLDER.test(row.toolArgsJson);
+const isCredentialFill = (row: BrowserRow): boolean => signsIn(row.action, String(row.action.args.surface));
+
+function clickName(row: BrowserRow | undefined): string | undefined {
+  if (row?.tool !== 'browser_click') return undefined;
+  try {
+    const args: unknown = JSON.parse(row.toolArgsJson);
+    if (!args || typeof args !== 'object') return undefined;
+    const element = (args as Record<string, unknown>).element;
+    return typeof element === 'string' ? element.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
- * Whether an action types the surface's credential into a form: a sign-in.
+ * Whether an action types the surface's credential into a login field.
  *
  * Args:
  *   action: The action, if any.
@@ -127,31 +147,39 @@ const isCredentialFill = (row: BrowserRow): boolean =>
 export function signsIn(action: MockAction | undefined, slug: string): boolean {
   if (!action) return false;
   const parsed = parseSurfaceAction(action);
-  return (
-    parsed.ok &&
-    parsed.action.kind === 'mcp.call' &&
-    parsed.action.surface === slug &&
-    parsed.action.tool === 'browser_fill_form' &&
-    SECRET_PLACEHOLDER.test(action.args.toolArgsJson ?? '')
-  );
+  if (
+    !parsed.ok || parsed.action.kind !== 'mcp.call' ||
+    parsed.action.surface !== slug || parsed.action.tool !== 'browser_fill_form'
+  ) return false;
+  const fields = parsed.action.toolArgs.fields;
+  if (!Array.isArray(fields) || fields.length === 0) return false;
+  let hasSecret = false;
+  for (const field of fields) {
+    if (!field || typeof field !== 'object' || Array.isArray(field)) return false;
+    const name = (field as Record<string, unknown>).name;
+    const value = (field as Record<string, unknown>).value;
+    if (typeof name !== 'string' || !CREDENTIAL_FIELD.test(name.trim()) || typeof value !== 'string') return false;
+    if (SECRET_PLACEHOLDER.test(value)) hasSecret = true;
+  }
+  return hasSecret;
 }
 
 /**
- * The positions of the run's last sign-in: its credential fills, each with
- * the click directly after it. A sign-in that spans two pages is one run of
- * fill and click pairs; a run that signed in twice restores the later one.
+ * The positions of the run's last completed sign-in. A two-page sign-in may
+ * have a Next control between credential fills; its final control must submit
+ * the login. A run that signed in twice restores the later one.
  */
 function lastSignIn(rows: readonly BrowserRow[]): number[] {
   let last = -1;
   rows.forEach((row, position): void => {
-    if (isCredentialFill(row)) last = position;
+    if (isCredentialFill(row) && SIGN_IN_CONTROL.test(clickName(rows[position + 1]) ?? '')) {
+      last = position;
+    }
   });
   if (last < 0) return [];
-  const withClick = (fill: number): number[] =>
-    rows[fill + 1]?.tool === 'browser_click' ? [fill, fill + 1] : [fill];
-  const picked = withClick(last);
+  const picked = [last, last + 1];
   let first = last;
-  while (first >= 2 && rows[first - 1]!.tool === 'browser_click' && isCredentialFill(rows[first - 2]!)) {
+  while (first >= 2 && NEXT_CONTROL.test(clickName(rows[first - 1]) ?? '') && isCredentialFill(rows[first - 2]!)) {
     first -= 2;
     picked.unshift(first, first + 1);
   }
@@ -162,12 +190,11 @@ function lastSignIn(rows: readonly BrowserRow[]): number[] {
  * What re-establishes a browser page in a new invocation of a run.
  *
  * Read from the run's earlier rows on one browser-driven surface, landed
- * only: the `browser_navigate` immediately before the sign-in, every
- * `browser_fill_form` that carries the `{{secret}}` placeholder and the
- * `browser_click` directly after each, and the last `browser_navigate` when
- * it came after the sign-in. With no earlier navigate the surface's endpoint
- * is opened first. Never a fill without the placeholder, never another click,
- * never a snapshot: nothing that changed the system is sent twice.
+ * only: the `browser_navigate` immediately before the last completed sign-in,
+ * its credential fills and login controls, and the last `browser_navigate`
+ * when it came after the sign-in. With no earlier navigate the surface's
+ * endpoint is opened first. An incomplete sign-in refuses restoration rather
+ * than typing a credential into a page without submitting it.
  *
  * Args:
  *   slug: The browser-driven surface.
@@ -185,6 +212,9 @@ export function sessionRecipe(
 ): SessionRecipeStep[] {
   const rows = latestRunRows(landedBrowserRows(slug, earlier));
   const signIn = lastSignIn(rows);
+  if (signIn.length === 0 && rows.some(isCredentialFill)) {
+    throw new IncompleteSignInError();
+  }
   let navigateBefore = -1;
   if (signIn.length > 0) {
     for (let position = signIn[0]! - 1; position >= 0; position -= 1) {

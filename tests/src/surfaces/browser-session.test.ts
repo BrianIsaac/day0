@@ -88,12 +88,35 @@ describe('the steps that re-establish a browser session', (): void => {
     ]);
   });
 
-  it('replays only a click directly after a credential fill', (): void => {
-    const recipe = sessionRecipe('looker', run([navigate(), signIn, snapshot, clickSignIn]), ENDPOINT);
+  it('never treats a work Save after a secret-bearing fill as a sign-in', (): void => {
+    const workFill = call('browser_fill_form', {
+      fields: [{ name: 'Pipeline coverage', value: '{{secret}}' }],
+    });
+    const recipe = sessionRecipe(
+      'looker',
+      run([navigate(), signIn, clickSignIn, workFill, clickSave, snapshot]),
+      ENDPOINT,
+    );
     expect(tools(recipe)).toEqual([
       ['browser_navigate', 'wi:run:0'],
       ['browser_fill_form', 'wi:run:1'],
+      ['browser_click', 'wi:run:2'],
     ]);
+  });
+
+  it('does not replay an incomplete credential fill, including when another write separates it from a click', (): void => {
+    for (const actions of [
+      [navigate(), signIn],
+      [navigate(), signIn, fillCoverage, clickSignIn],
+    ]) {
+      expect(() => sessionRecipe('looker', run(actions), ENDPOINT)).toThrow('incomplete sign-in');
+    }
+  });
+
+  it('refuses a credential fill whose submit is separated by a read', (): void => {
+    expect(() => sessionRecipe('looker', run([navigate(), signIn, snapshot, clickSignIn]), ENDPOINT)).toThrow(
+      'incomplete sign-in',
+    );
   });
 
   it('ignores held, awaiting, refused and failed rows, and other surfaces', (): void => {
@@ -225,6 +248,7 @@ describe('telling a sign-in from any other fill', (): void => {
     expect(signsIn(signIn, 'looker')).toBe(true);
     expect(signsIn(call('browser_fill_form', { fields: [{ name: 'Email', value: '{{ secret:looker }}' }] }), 'looker')).toBe(true);
     expect(signsIn(fillCoverage, 'looker')).toBe(false);
+    expect(signsIn(call('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '{{secret}}' }] }), 'looker')).toBe(false);
     expect(signsIn(clickSignIn, 'looker')).toBe(false);
     expect(signsIn(signIn, 'other')).toBe(false);
     expect(signsIn(undefined, 'looker')).toBe(false);
