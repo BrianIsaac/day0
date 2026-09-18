@@ -33,6 +33,8 @@ const ticketSchema = z.object({
 const specSchema = z.object({
   label: z.string().min(1),
   states: z.array(z.string().min(1)).min(1),
+  /** Named subsets of the tickets a sitting may file instead of all of them. */
+  sets: z.record(z.string().regex(/^[a-z0-9-]+$/), z.array(z.string().min(1)).min(1)).default({}),
   teams: z
     .array(z.object({ key: z.string().min(1), name: z.string().min(1), project: z.string().min(1) }))
     .min(1),
@@ -67,7 +69,37 @@ export function loadBedSpec(cwd: string): BedSpec {
       throw new Error(`linear.json puts ${ticket.key} in state ${ticket.state}, which it does not declare.`);
     }
   }
+  for (const [name, members] of Object.entries(spec.sets)) {
+    for (const key of members) {
+      const ticket = spec.tickets.find((candidate) => candidate.key === key);
+      if (!ticket) throw new Error(`linear.json set ${name} names ticket ${key}, which it does not declare.`);
+      if (ticket.late) throw new Error(`linear.json set ${name} names ${key}, a late ticket that post files.`);
+    }
+  }
   return spec;
+}
+
+/**
+ * The tickets a seed files: a named set, or every ticket that is not late.
+ *
+ * Args:
+ *   spec: The bed.
+ *   set: The set's name, or undefined for the full seed.
+ *
+ * Returns:
+ *   The tickets, in the file's order.
+ *
+ * Raises:
+ *   Error: If the set is not declared; the message names the sets that are.
+ */
+export function ticketsToFile(spec: BedSpec, set: string | undefined): BedTicket[] {
+  if (set === undefined) return spec.tickets.filter((ticket) => !ticket.late);
+  const members = spec.sets[set];
+  if (!members) {
+    const names = Object.keys(spec.sets);
+    throw new Error(`linear.json has no set ${set}; its sets are ${names.length > 0 ? names.join(', ') : 'none'}.`);
+  }
+  return spec.tickets.filter((ticket) => members.includes(ticket.key));
 }
 
 /**
@@ -88,5 +120,9 @@ export function companyHandSteps(spec: BedSpec): string[] {
     `3. Notion: the two pages in ${BED_DIR}/notion/, pasted under one parent page shared with the integration (${BED_DIR}/notion/README.md).`,
     `4. .env.local: ${LINEAR_KEY_ENV}, ${SLACK_TOKEN_ENV} and ${NOTION_TOKEN_ENV}.`,
     'Then `pnpm bed:company check` until it is all green, and `pnpm bed:company seed`.',
+    ...Object.entries(spec.sets).map(
+      ([name, keys]) =>
+        `For a sitting that files only ${keys.join(', ')}: \`pnpm bed:company check --set ${name}\`, then \`pnpm bed:company seed --set ${name}\`; every other bed ticket is archived.`,
+    ),
   ];
 }
