@@ -517,7 +517,7 @@ describe('releasing a claim', (): void => {
     expect((await eventsOf(harness, 'work.requeued')).map((event) => event.agentId)).toEqual([mateo]);
   });
 
-  it.fails('refuses a retry of the cancelled item while a colleague holds it', async (): Promise<void> => {
+  it('refuses a retry of the cancelled item while a colleague holds it', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -536,7 +536,7 @@ describe('releasing a claim', (): void => {
     ]);
   });
 
-  it.fails('takes the claim again for a retried item nobody else holds', async (): Promise<void> => {
+  it('takes the claim again for a retried item nobody else holds', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());

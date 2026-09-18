@@ -626,6 +626,32 @@ async function takeExternalClaim(
 }
 
 /**
+ * Hold the item again for a row resuming past evaluation, or refuse.
+ *
+ * A retry sends a cancelled row with a plan straight to `plan-approved`, so
+ * no verdict takes the claim on the way; a colleague may have taken the item
+ * since the cancel released it. A failed or completed row still holds its
+ * claim and takes nothing new.
+ *
+ * Args:
+ *   ctx: Mutation context of the retry.
+ *   row: The row being retried.
+ *
+ * Raises:
+ *   Error: When another work item holds the item.
+ */
+async function retakeExternalClaim(ctx: MutationCtx, row: Doc<'workItems'>): Promise<void> {
+  const taken = await takeExternalClaim(ctx, row, Date.now());
+  if (!taken?.heldBy) return;
+  const { holder } = taken.heldBy;
+  throw new Error(
+    holder.agentId === row.agentId
+      ? `this employee already holds this item on another work item (${holder.title})`
+      : `another employee holds this: ${holder.name} (${holder.title})`,
+  );
+}
+
+/**
  * The skip a claim verdict becomes when another work item holds the item.
  *
  * Args:
@@ -1681,6 +1707,7 @@ export const retryFailed = mutation({
       : verdict?.decision === 'claim'
         ? 'claimed'
         : 'discovered';
+    if (next !== 'discovered') await retakeExternalClaim(ctx, row);
     // Retrying a skip is the manager overruling the agent's judgement: a
     // quality-fit skip says the work is worth doing, an out-of-scope skip says
     // the work is theirs to give. The re-evaluation leaves that one rule out.
