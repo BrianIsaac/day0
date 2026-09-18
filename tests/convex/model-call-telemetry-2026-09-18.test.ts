@@ -140,7 +140,7 @@ async function modelCallEvents(harness: Harness): Promise<Doc<'events'>[]> {
 }
 
 describe('work.model-call on the item events', (): void => {
-  it.fails('records the evaluation step\'s charter judgement with its stage, agent, attempts and duration', async (): Promise<void> => {
+  it('records the evaluation step\'s charter judgement with its stage, agent, attempts and duration', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -164,18 +164,32 @@ describe('work.model-call on the item events', (): void => {
     });
   });
 
-  it.fails('records the retries a call needed, and never the prompt or the provider\'s message', async (): Promise<void> => {
+  it('records the retries a call needed, and never the prompt or the provider\'s message', async (): Promise<void> => {
     useSurfaceMode('real');
-    vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
     const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-71');
+    // Only the wrapper's back-off timer is faked: the harness and the clock
+    // the report's duration is read from stay real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     recorded.scopeOutcomes.push({ statusCode: 503 }, { statusCode: 429 });
     vi.spyOn(console, 'warn').mockImplementation((): void => {});
 
-    const pending = harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId });
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(4_000);
+    // The step reads its rows before the first attempt and the harness loads
+    // each module it reaches from disk, so the faked clock is advanced in
+    // slices, yielding to the real event loop between them, until the action
+    // settles.
+    let settled = false;
+    const pending = harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }).finally(
+      (): void => {
+        settled = true;
+      },
+    );
+    const deadline = Date.now() + 15_000;
+    while (!settled && Date.now() < deadline) {
+      await new Promise((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(500);
+    }
     await expect(pending).resolves.toEqual({ decision: 'claim' });
 
     const events = await modelCallEvents(harness);
@@ -192,7 +206,7 @@ describe('work.model-call on the item events', (): void => {
     expect(stored).not.toContain(TICKET_BODY);
     expect(stored).not.toContain('provider answered');
     for (const prompt of recorded.prompts) expect(stored).not.toContain(prompt.slice(0, 40));
-  });
+  }, 20_000);
 
   it('writes nothing in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
