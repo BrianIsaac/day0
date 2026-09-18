@@ -569,6 +569,29 @@ describe('retrying a skipped item', (): void => {
     const markup = render(skipped('already-claimed: state=executing'));
     expect(markup).not.toContain('>Retry<');
   });
+
+  it.fails('names the colleague who holds the item, links to their dashboard and offers no Retry', (): void => {
+    const reason = 'claimed-by-colleague: Priya holds it (Slack mention in #ops-requests)';
+    const markup = render({
+      ...skipped(reason),
+      verdict: {
+        decision: 'skip',
+        reason,
+        claimedBy: {
+          claimId: 'c1',
+          agentId: 'a2',
+          workItemId: 'w9',
+          name: 'Priya',
+          title: 'Slack mention in #ops-requests',
+        },
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(markup).toContain('another employee holds this: <a href="/agent/a2"');
+    expect(markup).toContain('>Priya</a>');
+    expect(markup).toContain('Slack mention in #ops-requests');
+    expect(markup).not.toContain('claimed-by-colleague:');
+    expect(markup).not.toContain('>Retry<');
+  });
 });
 
 describe('phone approval delivery', (): void => {
