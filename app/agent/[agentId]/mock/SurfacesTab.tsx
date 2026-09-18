@@ -126,6 +126,31 @@ export function DiscoveryProvenance({
   );
 }
 
+/**
+ * Show a handbook line or a note with its code spans set as code.
+ *
+ * The stored text keeps the page's backticks, because a changed page is found
+ * by comparing the line as written; only the card sets them as code. A
+ * backtick with no partner is shown as it is.
+ *
+ * Args:
+ *   props: The line as stored.
+ *
+ * Returns:
+ *   The line, each backticked span in a code element.
+ */
+export function PageLine({ text }: { text: string }): React.ReactNode {
+  return text.split(/(`[^`]+`)/).map((part: string, index: number): React.ReactNode =>
+    /^`[^`]+`$/.test(part) ? (
+      <code key={index} className="rounded bg-[var(--color-border)] px-1 font-mono">
+        {part.slice(1, -1)}
+      </code>
+    ) : (
+      part
+    ),
+  );
+}
+
 export interface IntakeScopeRowProps {
   drift: readonly ScopeValue[];
   scope: IntakeScope;
@@ -152,15 +177,14 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
         (value): value is ScopeValue => value !== undefined,
       ).map((value): string => `Project ${value.value}`)
     : (props.scope.channels ?? []).map((value): string => `#${value.value}`);
-  if (props.surfaceClass === 'kanban' && queues.length === 0 && props.scope.team) {
-    queues.push(`Team ${props.scope.team.value}`);
-  }
+  // The reads line already names a single queue; the list is for telling several apart.
+  const listed = queues.length > 1 ? queues : [];
   return (
     <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
       <p className={presentation.empty ? 'font-medium text-[var(--color-warn)]' : 'font-medium'}>
         {presentation.line}
       </p>
-      {queues.length > 0 ? <ul className="mt-1 space-y-1">{queues.map((queue) => <li key={queue}>{queue}</li>)}</ul> : null}
+      {listed.length > 0 ? <ul className="mt-1 space-y-1">{listed.map((queue) => <li key={queue}>{queue}</li>)}</ul> : null}
       {presentation.quotes.map((value: ScopeValue, index: number): React.ReactNode => {
         const source =
           (value.sourceId && props.sourceLabels.get(value.sourceId)) || 'documentation';
@@ -171,7 +195,7 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
           >
             <span className="text-[var(--color-muted)]">{`${source} / ${value.ref}`}</span>
             <br />
-            {value.quote}
+            <PageLine text={value.quote} />
           </blockquote>
         );
       })}
@@ -179,7 +203,7 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
       {presentation.notes.map(
         (note: string, index: number): React.ReactNode => (
           <p key={`note-${index}`} className="mt-1 text-[10px] text-[var(--color-muted)]">
-            {note}
+            <PageLine text={note} />
           </p>
         ),
       )}
