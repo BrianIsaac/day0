@@ -280,6 +280,16 @@ describe('recomputing the supervision figures from an export', (): void => {
     expect(fail.err.join('\n')).not.toContain('auditTrail');
   });
 
+  it('writes only the figures with --json so a redirected numbers.json is valid', async (): Promise<void> => {
+    const directory = await exportDirectory(await companyBackend());
+    const output = capture();
+    expect(runRecompute([directory, '--owner', OWNER, '--json'], output.io)).toBe(0);
+    expect(JSON.parse(output.out.join('\n'))).toEqual(
+      recomputeFromExport(directory, { owner: OWNER }).figures,
+    );
+    expect(output.err).toEqual([]);
+  });
+
   it('refuses a path that is not an export and an unknown flag with usage', async (): Promise<void> => {
     const empty = mkdtempSync(join(tmpdir(), 'day0-recompute-empty-'));
     temporary.push(empty);
