@@ -523,6 +523,104 @@ describe('seed', (): void => {
   });
 });
 
+describe('a named set of tickets', (): void => {
+  const ONE_EACH = ['revops-tile', 'fin-status', 'log-sh4471'];
+  const writes = (h: Harness): string[] =>
+    h.linear.operations.filter((operation) => /Create|Update|Archive|Delete/.test(operation));
+  const filed = (h: Harness): string[] =>
+    loadBedSpec(h.root)
+      .tickets.filter((ticket) => {
+        const issue = h.linear.byKey(ticket.key);
+        return issue !== undefined && issue.archivedAt === null;
+      })
+      .map((ticket) => ticket.key);
+
+  it.fails('tracks the one-each set: one ticket per team, none of them late', (): void => {
+    const raw = JSON.parse(readFileSync(resolve('bed/company/linear.json'), 'utf8')) as {
+      sets?: Record<string, string[]>;
+    };
+    expect(raw.sets?.['one-each']).toEqual(ONE_EACH);
+    const spec = loadBedSpec(process.cwd());
+    const tickets = ONE_EACH.map((key) => spec.tickets.find((ticket) => ticket.key === key)!);
+    expect(tickets.map((ticket) => ticket.team)).toEqual(['REVOPS', 'FIN', 'LOG']);
+    expect(tickets.every((ticket) => !ticket.late && ticket.state === 'Todo')).toBe(true);
+  });
+
+  it.fails('refuses a set that names a ticket it does not declare, or a late one', (): void => {
+    const h = harness();
+    const path = join(h.root, 'bed', 'company', 'linear.json');
+    const tracked = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    writeFileSync(path, JSON.stringify({ ...tracked, sets: { broken: ['revops-tile', 'fin-nothing'] } }));
+    expect(() => loadBedSpec(h.root)).toThrow('set broken names ticket fin-nothing, which it does not declare');
+    writeFileSync(path, JSON.stringify({ ...tracked, sets: { late: ['log-sh4480'] } }));
+    expect(() => loadBedSpec(h.root)).toThrow('set late names log-sh4480, a late ticket that post files');
+  });
+
+  it.fails('takes --set for check and seed only, and always with a name', (): void => {
+    expect(parseCompanyArguments(['seed', '--set', 'one-each'])).toMatchObject({ verb: 'seed', set: 'one-each' });
+    expect(parseCompanyArguments(['--', 'check', '--set', 'one-each'])).toMatchObject({ verb: 'check', set: 'one-each' });
+    expect(() => parseCompanyArguments(['seed', '--set'])).toThrow('--set needs a set name');
+    expect(() => parseCompanyArguments(['teardown', '--set', 'one-each'])).toThrow('--set belongs to check and seed');
+    expect(() => parseCompanyArguments(['post', 'log-sh4480', '--set', 'one-each'])).toThrow('--set belongs to check and seed');
+  });
+
+  it.fails('files only the set, and a second seed with it changes nothing', async (): Promise<void> => {
+    const h = harness();
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(filed(h)).toEqual(ONE_EACH);
+    for (const key of ONE_EACH) expect(h.linear.byKey(key), key).toMatchObject({ stateId: expect.stringMatching(/-Todo$/), assigneeId: null });
+    expect(h.logs.join('\n')).toContain('Seeded the set one-each: revops-tile, fin-status, log-sh4471.');
+    const first = h.linear.snapshot();
+    h.linear.operations = [];
+    h.clock.now += 60_000;
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(h.linear.snapshot()).toBe(first);
+    expect(writes(h)).toEqual([]);
+  });
+
+  it.fails('archives the tickets outside the set that an earlier full seed filed', async (): Promise<void> => {
+    const h = harness();
+    expect(await run(h, ['seed'])).toBe(0);
+    expect(await run(h, ['post', 'log-sh4480'])).toBe(0);
+    expect(filed(h)).toHaveLength(10);
+    h.logs.length = 0;
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(filed(h)).toEqual(ONE_EACH);
+    expect(h.logs.join('\n')).toContain('archived revops-audit REVOPS-2; it is outside the set one-each');
+    expect(await run(h, ['seed'])).toBe(0);
+    expect(filed(h)).toHaveLength(9);
+  });
+
+  it.fails('refuses a set it does not know before any write, naming the sets it has', async (): Promise<void> => {
+    const h = harness();
+    expect(await run(h, ['seed', '--set', 'three-tasks'])).toBe(1);
+    expect(writes(h)).toEqual([]);
+    expect(h.runs).toEqual([]);
+    expect(h.logs.join('\n')).toContain('linear.json has no set three-tasks; its sets are one-each');
+    expect(await run(h, ['check', '--set', 'three-tasks'])).toBe(1);
+  });
+
+  it.fails('checks the bed for the set, and says which tickets it expects', async (): Promise<void> => {
+    const h = harness();
+    await run(h, ['docs']);
+    h.logs.length = 0;
+    expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
+    const before = h.logs.join('\n');
+    expect(before).toContain('seed --set one-each files revops-tile, fin-status, log-sh4471; every other ticket stays unfiled');
+    expect(before).toContain('revops-tile is not filed yet; seed creates it');
+    expect(before).toContain('revops-audit is outside the set one-each and not filed');
+    expect(before).toContain('log-sh4480 is outside the set one-each and not filed');
+    await run(h, ['seed', '--set', 'one-each']);
+    h.logs.length = 0;
+    expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
+    expect(h.logs.join('\n')).toContain('All green: the company bed is ready for seed --set one-each.');
+    h.logs.length = 0;
+    expect(await run(h, ['check'])).toBe(0);
+    expect(h.logs.join('\n')).toContain('seed files the nine tickets; post files log-sh4480 at its protocol step');
+    expect(h.logs.join('\n')).toContain('revops-audit is not filed yet; seed creates it');
+  });
+});
+
 describe('teardown', (): void => {
   it('keeps retry state and identifies a customised bot post that Slack will not delete', async (): Promise<void> => {
     const h = harness();
