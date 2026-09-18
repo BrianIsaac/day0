@@ -489,6 +489,7 @@ export default defineSchema({
     evaluationClaimedAt: v.optional(v.number()),
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
+    planPendingAt: v.optional(v.number()),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),

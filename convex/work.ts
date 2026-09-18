@@ -645,6 +645,7 @@ export const setPlan = internalMutation({
     await ctx.db.patch(args.workItemId, {
       plan: args.plan,
       state: 'plan-pending',
+      ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
     await ctx.db.insert('events', {
@@ -669,7 +670,7 @@ export const setPlan = internalMutation({
  * therefore affects this run; a stale value captured before the draft does not.
  */
 export const decidePlan = internalMutation({
-  args: { workItemId: v.id('workItems') },
+  args: { workItemId: v.id('workItems'), recovery: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<{ approved: boolean }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -686,6 +687,7 @@ export const decidePlan = internalMutation({
       payload: { workItemId: args.workItemId, by: 'autonomous' },
       createdAt: Date.now(),
     });
+    if (args.recovery) await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
     return { approved: true };
   },
 });

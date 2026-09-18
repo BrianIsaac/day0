@@ -174,6 +174,7 @@ describe('the stalled-step sweep', (): void => {
         state: 'plan-pending',
         verdict: { decision: 'claim' },
         plan: PLAN,
+        planPendingAt: now,
       }),
     }));
 
@@ -186,6 +187,48 @@ describe('the stalled-step sweep', (): void => {
     await harness.mutation(internal.work.resumeStalledSteps, {});
     expect(await scheduledSteps(harness)).toEqual([
       ['workActions:evaluateWorkItemInternal', older],
+    ]);
+  });
+
+  it('recovers a plan whose drafting action died before deciding it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness, false);
+    const now = Date.now();
+    const workItemId = await harness.run(async (ctx) =>
+      await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-44', now),
+        state: 'plan-pending',
+        plan: PLAN,
+      }),
+    );
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledSteps(harness)).toContainEqual(['work:decidePlan', workItemId]);
+  });
+
+  it('continues an autonomous plan when the recovered decision wins', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness, true);
+    const now = Date.now();
+    const workItemId = await harness.run(async (ctx) =>
+      await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-45', now),
+        state: 'plan-pending',
+        plan: PLAN,
+      }),
+    );
+
+    const decision = await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
+
+    expect(decision).toEqual({ approved: true });
+    expect(await scheduledSteps(harness)).toContainEqual([
+      'workActions:executeApprovedPlanInternal',
+      workItemId,
     ]);
   });
 

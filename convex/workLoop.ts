@@ -330,6 +330,19 @@ export async function resumeStalledStepsInTransaction(
       });
       rescheduled += 1;
     }
+    const undecidedPlans = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'plan-pending'))
+      .take(SWEEP_BATCH);
+    for (const row of undecidedPlans) {
+      if (isRevocationTrialRow(row) || row.decision ||
+          (row.planPendingAt !== undefined && now - row.planPendingAt < STEP_LEASE_MS)) continue;
+      await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
+        workItemId: row._id,
+        recovery: true,
+      });
+      rescheduled += 1;
+    }
     if (!evaluated) {
       const next = await nextRowForFreeSlot(ctx, agent._id, now);
       if (next) {
