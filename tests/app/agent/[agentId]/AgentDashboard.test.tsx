@@ -20,7 +20,9 @@ import {
   PlanExecutionLedger,
   RefusedClosingDetails,
   RefusedDraftDetails,
+  RegisteredSkillsPanel,
   WithheldActionsDetails,
+  retryVerifiesSavedDraft,
   failedItemReason,
   RepairNote,
   SessionRestoreNote,
@@ -1100,5 +1102,89 @@ describe('the refused skill draft', (): void => {
   it('renders nothing for a row that kept no draft', (): void => {
     expect(renderToStaticMarkup(<RefusedDraftDetails skill={{}} />)).toBe('');
     expect(renderToStaticMarkup(<RefusedDraftDetails skill={{ refusedBody: '' }} />)).toBe('');
+  });
+});
+
+describe('what Retry does to an unregistered skill', (): void => {
+  const noop = (): void => undefined;
+  const base = {
+    _id: 'skill-1',
+    _creationTime: 0,
+    agentId: 'agent-1',
+    name: 'refresh-the-tile',
+    description: 'refresh the analytics tile',
+    sourceType: 'agent-authored',
+    createdAt: 0,
+  };
+  const parked = {
+    ...base,
+    state: 'authoring',
+    body: '# Refresh the tile\n## Inputs\n- analytics-surface: the tile',
+    pendingSmokeTest: 'def run(inputs: dict) -> dict:\n    return {}',
+    verificationLog:
+      'the verification sandbox was busy with another skill for 5 minutes; ' +
+      'the body is kept and Retry runs the smoke test when it is free',
+  } as unknown as Doc<'skills'>;
+  const refused = {
+    ...base,
+    _id: 'skill-2',
+    state: 'failed',
+    body: '',
+    verificationLog: 'the authored skill is not a reusable procedure: it repeats one item values',
+  } as unknown as Doc<'skills'>;
+
+  function panel(unregistered: Doc<'skills'>[]): string {
+    return renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={unregistered}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+      />,
+    );
+  }
+
+  it('offers a parked skill the check it is waiting for, not a new authoring call', (): void => {
+    const markup = panel([parked]);
+    expect(markup).toContain('title="Run the body and smoke test this skill already has');
+    expect(markup).not.toContain('Author this skill again');
+  });
+
+  it('offers a refused skill a fresh authoring call', (): void => {
+    const markup = panel([refused]);
+    expect(markup).toContain('title="Author this skill again, with the reason it stopped');
+    expect(markup).not.toContain('already has');
+  });
+
+  it('authors again for a row whose run stopped before a smoke test was saved', (): void => {
+    const interrupted = { ...parked, pendingSmokeTest: undefined } as unknown as Doc<'skills'>;
+    expect(panel([interrupted])).toContain('title="Author this skill again');
+    expect(retryVerifiesSavedDraft(parked)).toBe(true);
+    expect(retryVerifiesSavedDraft(interrupted)).toBe(false);
+    expect(retryVerifiesSavedDraft(refused)).toBe(false);
+  });
+
+  it('states both cases in the help text, keeping the sandbox and one-run-at-a-time rules', (): void => {
+    const markup = panel([parked, refused]);
+    expect(markup).not.toContain('Retry re-authors the skill');
+    expect(markup).toContain('is checked again as it stands, with no second authoring call');
+    expect(markup).toContain('is authored again, with the reason fed back');
+    expect(markup).toContain('pnpm sandbox:up');
+    expect(markup).toContain('DAYTONA_API_KEY');
+    expect(markup).toContain('Only one authoring run holds a skill at a time');
+  });
+
+  it('says Revise is the one that always authors again', (): void => {
+    const registered = { ...base, state: 'registered', body: '# Refresh' } as unknown as Doc<'skills'>;
+    const markup = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[registered]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+      />,
+    );
+    expect(markup).toContain('title="Discard this body and author the skill again');
+    expect(markup).toContain('>Revise<');
   });
 });
