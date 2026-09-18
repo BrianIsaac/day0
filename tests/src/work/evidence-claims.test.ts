@@ -3,6 +3,7 @@ import { appliedLedgerPrompt } from '../../../src/work/execute-skill';
 import type { MockAction } from '../../../src/work/types';
 import {
   isChatMessage,
+  itemEvidence,
   messageTexts,
   unsupportedClaimIssues,
   unsupportedClaims,
@@ -26,6 +27,14 @@ import {
   RUN_3_RETRY_COMMENT,
   RUN_3_RETRY_NOTE,
 } from '../../fixtures/work/audit-note-2026-09-16-run-3';
+import {
+  LOG_2_DRAFT_DM,
+  LOG_2_REFUSED_CLAIM,
+  log2Candidate,
+  log2GroundingAction,
+  log2GroundingApplied,
+  managerDm,
+} from '../../fixtures/work/full-run-2026-09-19-log-2';
 
 const documentation = [`${CHECKLIST_PAGE.title}\n${CHECKLIST_PAGE.body}`];
 
@@ -372,5 +381,59 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
     expect(issues[0]).toContain('check 1');
     const namedByHead = absentRead.replace('Not confirmed: none.', 'Not confirmed: pipeline coverage — the tile could not be read.');
     expect(unsupportedClaimIssues([comment(namedByHead)], evidenceRun3)).toEqual([]);
+  });
+});
+
+describe('the work item as evidence (19 September, LOG-2)', (): void => {
+  const bare: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  const ownRead = { action: log2GroundingAction, applied: log2GroundingApplied };
+  const withItem = (item: string[]): ClaimEvidence => ({ ...bare, item });
+  const log2 = withItem(itemEvidence(log2Candidate, [ownRead]));
+
+  it('refused the ticket\'s own sentence while the item was no part of the evidence', (): void => {
+    expect(unsupportedClaims(LOG_2_DRAFT_DM, bare)).toContain(LOG_2_REFUSED_CLAIM);
+  });
+
+  it('lets the DM say what the ticket says, from the row alone and from the grounding read alone', (): void => {
+    expect(unsupportedClaimIssues([managerDm(LOG_2_DRAFT_DM)], log2)).toEqual([]);
+    expect(unsupportedClaims(LOG_2_DRAFT_DM, withItem(itemEvidence(log2Candidate, [])))).toEqual([]);
+    const readOnly = itemEvidence({ ...log2Candidate, title: 'LOG-2', contentSummary: '' }, [ownRead]);
+    expect(unsupportedClaims(LOG_2_DRAFT_DM, withItem(readOnly))).toEqual([]);
+  });
+
+  it('still refuses a date, a shipment or a result the ticket does not carry', (): void => {
+    const wrongDate = LOG_2_REFUSED_CLAIM.replace('26 September', '27 September');
+    expect(unsupportedClaims(wrongDate, log2)).toEqual([wrongDate]);
+    const wrongShipment = 'For SH-4461, Meridian Freight has confirmed a revised delivery date of 26 September.';
+    expect(unsupportedClaims(wrongShipment, log2)).toEqual([wrongShipment]);
+    // An identifier the item carries vouches for nothing on its own: that is the ledger's privilege.
+    const result = 'The exception comment on LOG-2 is posted and SH-4460 is now closed.';
+    expect(unsupportedClaims(result, log2)).toEqual([result]);
+    expect(unsupportedClaims(result, { ...bare, ledger: itemEvidence(log2Candidate, [ownRead]).join('\n') })).toEqual([]);
+  });
+
+  it('counts only a landed read of this item: another ticket\'s record, a held read and a failed one are left out', (): void => {
+    const other = (id: string, description: string): { action: MockAction; applied: typeof log2GroundingApplied } => ({
+      action: { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id }) } },
+      applied: { ...log2GroundingApplied, providerId: id, effect: `get_issue on linear · ${JSON.stringify({ id, description })}` },
+    });
+    const brightwater = 'The Brightwater freight accrual in NetLedger is confirmed at 41,200.';
+    const fin4 = other('FIN-4', brightwater);
+    expect(itemEvidence(log2Candidate, [fin4]).join('\n')).not.toContain('Brightwater');
+    expect(unsupportedClaims(brightwater, withItem(itemEvidence(log2Candidate, [ownRead, fin4])))).toEqual([brightwater]);
+    // An id that merely starts the same is another ticket.
+    expect(itemEvidence(log2Candidate, [other('LOG-21', brightwater)]).join('\n')).not.toContain('Brightwater');
+    const held = { ...ownRead, applied: { ...log2GroundingApplied, held: true } };
+    const failed = { ...ownRead, applied: { ...log2GroundingApplied, ok: false, effect: undefined, reason: brightwater } };
+    expect(itemEvidence({ ...log2Candidate, title: '', contentSummary: '' }, [held, failed])).toEqual([]);
+  });
+
+  it('keeps a token-shaped value in the ticket body out of the evidence', (): void => {
+    const token = ['xo', 'xb-', '1234567890', '-', 'abcdefghijkl'].join('');
+    const body = `${log2Candidate.contentSummary}\nThe carrier portal token is confirmed as ${token}.`;
+    const leaky = { ...ownRead, applied: { ...log2GroundingApplied, effect: `${log2GroundingApplied.effect} ${token}` } };
+    const evidence = itemEvidence({ ...log2Candidate, contentSummary: body }, [leaky]);
+    expect(evidence.join('\n')).not.toContain(token);
+    expect(evidence.join('\n')).toContain('has confirmed a revised delivery date of 26 September');
   });
 });
