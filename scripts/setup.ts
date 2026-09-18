@@ -90,6 +90,7 @@ import {
   type RedactorGpuDecision,
   type VenvDevice,
 } from './redactor-device';
+import { companyHandSteps, loadBedSpec } from './bed/spec';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './rehearsal/docker';
 import { setupRoute } from './setup-route';
 
@@ -193,6 +194,8 @@ export interface SetupOptions {
   sandbox: SandboxChoice;
   /** The manager's address, stored on the agent at deploy in real mode. */
   bossEmail?: string;
+  /** Real mode: copy the company bed's pages in afterwards and print its hand steps. */
+  company?: boolean;
   /** Print the plan of commands and write nothing. */
   dryRun: boolean;
   /** Take the project down, volumes included, before setting it up. */
@@ -275,6 +278,9 @@ const USAGE = `Usage: pnpm setup:local [options]
   --warm-from <project>         real mode: copy that project's redactor volumes, no download
   --sandbox <local|daytona>     real mode: what verifies authored skills (default local)
   --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
+  --company                     real mode: then copy the company bed's pages into the
+                                documentation folder (pnpm bed:company docs), print its
+                                hand steps and run pnpm bed:company check
   --dry-run                     print the plan of commands and write nothing
   --reset                       clear this project (containers and volumes) first
   --purge-env                   clear: remove .env.local as well
@@ -350,6 +356,8 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.reset = true;
     } else if (argument === '--purge-env') {
       options.purgeEnv = true;
+    } else if (argument === '--company') {
+      options.company = true;
     } else if (argument === 'stop' || argument === 'resume' || argument === 'clear') {
       if (options.command !== undefined && options.command !== argument) {
         throw new Error(`"${options.command}" and "${argument}" are two commands; give one.`);
@@ -913,6 +921,8 @@ export interface SequenceInput {
   reset?: boolean;
   /** Bundled route: whether the model has to be pulled; absent means yes. */
   pull?: boolean;
+  /** Real mode: the company bed's pages copied in, then its check. */
+  company?: boolean;
 }
 
 /**
@@ -946,6 +956,7 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     'convex dev --once',
     'convex:restart',
     'check:setup',
+    ...(real && input.company ? ['bed:company docs', 'bed:company check'] : []),
   ];
 }
 
@@ -1347,6 +1358,10 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
       return [{ command: 'pnpm', args: ['run', 'convex:restart'] }];
     case 'check:setup':
       return [{ command: 'pnpm', args: ['run', 'check:setup'] }];
+    case 'bed:company docs':
+      return [{ command: 'pnpm', args: ['run', 'bed:company', 'docs'] }];
+    case 'bed:company check':
+      return [{ command: 'pnpm', args: ['run', 'bed:company', 'check'] }];
     default:
       throw new Error(`no command for step "${step}"`);
   }
@@ -1892,6 +1907,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
   let started = false;
 
   try {
+    if (options.company && !real) {
+      io.log(
+        `error: --company sets up the company bed, which runs in real mode: \`${SETUP_SCRIPT} --company\`.`,
+      );
+      return 1;
+    }
     const hostedRefusal = buildEnvironmentRefusal(io.environment);
     if (hostedRefusal) {
       io.log(`error: ${hostedRefusal}`);
@@ -2217,6 +2238,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       sandbox: options.sandbox,
       reset: options.reset,
       pull,
+      company: options.company,
     });
     const context: StepContext = {
       mode: options.mode,
@@ -2488,6 +2510,41 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       checkerCommand.args,
       streamed,
     );
+
+    if (real && options.company) {
+      io.log('');
+      const [docsCommand] = stepCommands('bed:company docs', context);
+      const docs = step(io, steps, 'bed:company docs', 'pnpm bed:company docs', docsCommand.command, docsCommand.args, streamed);
+      if (docs.status !== 0) {
+        reportFailure(io, 'pnpm bed:company docs', docs, resolvedProject, options.mode);
+        return 1;
+      }
+      io.log('');
+      io.log("The company bed's hand steps, once per workspace:");
+      for (const line of companyHandSteps(loadBedSpec(io.cwd))) {
+        // A hanging indent, so each numbered step reads as one block.
+        const wrapped = wrapIndented(line, '     ');
+        wrapped[0] = `  ${wrapped[0]!.trimStart()}`;
+        for (const printed of wrapped) io.log(printed);
+      }
+      io.log('');
+      const [bedCheckCommand] = stepCommands('bed:company check', context);
+      const bedCheck = step(
+        io,
+        steps,
+        'bed:company check',
+        'pnpm bed:company check',
+        bedCheckCommand.command,
+        bedCheckCommand.args,
+        streamed,
+      );
+      if (bedCheck.status !== 0) {
+        io.log(
+          '    The setup itself is done; the gaps above are the hand steps still owed. Run ' +
+            '`pnpm bed:company check` again after each, then `pnpm bed:company seed`.',
+        );
+      }
+    }
 
     const unlock = io.run('pnpm', ['exec', 'tsx', 'scripts/dev-no-auth-key.ts', 'url'], {
       env: { ...environment, PORT: String(ports.app) },
