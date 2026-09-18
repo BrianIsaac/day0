@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  credentialInputIssues,
   bindSkillInputs,
+  declaredInputsNote,
   declaredSkillInputs,
+  declareUndeclaredInputs,
   renderSkillInputs,
   skillInputPlaceholders,
+  systemDeclaredInputs,
   undeclaredSkillInputs,
 } from '../../../src/work/skill-inputs';
 import type { WorkCandidate } from '../../../src/work/types';
@@ -190,3 +194,93 @@ describe('binding skill inputs from the candidate', (): void => {
     ]);
   });
 });
+
+describe('declaring the inputs an author used but did not declare', (): void => {
+  const body = [
+    '# Close a ticket',
+    '',
+    '## Inputs',
+    '',
+    '- `<record-id>`: the candidate id.',
+    '',
+    '## Procedure',
+    '',
+    'Set `<record-id>` to `<closing-state>` and reply `<reply-text>`.',
+  ].join('\n');
+
+  it('adds one line per missing name after the last declaration, moving nothing else', (): void => {
+    const repaired = declareUndeclaredInputs(body);
+
+    expect(repaired.declared).toEqual(['closing-state', 'reply-text']);
+    expect(repaired.body).toBe(
+      [
+        '# Close a ticket',
+        '',
+        '## Inputs',
+        '',
+        '- `<record-id>`: the candidate id.',
+        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.',
+        '- `<reply-text>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.',
+        '',
+        '## Procedure',
+        '',
+        'Set `<record-id>` to `<closing-state>` and reply `<reply-text>`.',
+      ].join('\n'),
+    );
+    expect(undeclaredSkillInputs(repaired.body)).toEqual([]);
+    expect(declareUndeclaredInputs(repaired.body)).toEqual({ body: repaired.body, declared: [], credentials: [] });
+  });
+
+  it('marks each line it added, so whoever reads the body later can tell the system wrote it', (): void => {
+    const repaired = declareUndeclaredInputs(body);
+
+    expect(systemDeclaredInputs(body)).toEqual([]);
+    expect(systemDeclaredInputs(repaired.body)).toEqual(['closing-state', 'reply-text']);
+    // The marker survives a park, a refusal and a retry that keeps the line, because it is in the body.
+    expect(systemDeclaredInputs(declareUndeclaredInputs(repaired.body).body)).toEqual(['closing-state', 'reply-text']);
+    // An author that writes the binding words itself has declared the input itself.
+    expect(systemDeclaredInputs(body.replace('the candidate id.', 'read it from the candidate body, its Refs line or the runbook for this run.'))).toEqual([]);
+  });
+
+  it('declares in a section that ends the body, and gives a body without one its own', (): void => {
+    const last = '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n';
+    expect(declareUndeclaredInputs(last).body).toBe(
+      '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n' +
+        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.\n',
+    );
+    const none = '# Close\n\nUse `<record-id>`.';
+    const repaired = declareUndeclaredInputs(none);
+    expect(repaired.body).toBe(
+      '# Close\n\nUse `<record-id>`.\n\n## Inputs\n\n- `<record-id>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.\n',
+    );
+    expect(declaredSkillInputs(repaired.body)).toEqual(['record-id']);
+  });
+
+  it('never declares a name that says it is a credential: the gate refuses it and says where a credential goes', (): void => {
+    const withToken = `${body}\nSend \`<slack-bot-token>\` as the bearer and sign with \`<api-key>\`; keep \`<monkey-count>\`.`;
+    const repaired = declareUndeclaredInputs(withToken);
+
+    expect(repaired.declared).toEqual(['closing-state', 'reply-text', 'monkey-count']);
+    expect(repaired.credentials).toEqual(['slack-bot-token', 'api-key']);
+    expect(undeclaredSkillInputs(repaired.body)).toEqual(['slack-bot-token', 'api-key']);
+    expect(credentialInputIssues(repaired.credentials)).toEqual([
+      'SKILL.md uses `<slack-bot-token>` as an input; a credential is never an input the executor reads from a candidate: write `{{secret}}` where it goes and the server substitutes the stored credential',
+      'SKILL.md uses `<api-key>` as an input; a credential is never an input the executor reads from a candidate: write `{{secret}}` where it goes and the server substitutes the stored credential',
+    ]);
+  });
+
+  it('leaves a body with nothing missing exactly as it was', (): void => {
+    const complete = body.replace('- `<record-id>`: the candidate id.', '- `<record-id>`, `<closing-state>`, `<reply-text>`: from the candidate.');
+    expect(declareUndeclaredInputs(complete)).toEqual({ body: complete, declared: [], credentials: [] });
+  });
+
+  it('names what was declared in the log', (): void => {
+    expect(declaredInputsNote(['reply-text'])).toBe(
+      'SKILL.md used `<reply-text>` without declaring it; it was declared under `## Inputs` as read from the candidate or its runbook at execution',
+    );
+    expect(declaredInputsNote(['a-b', 'c-d', 'e-f'])).toBe(
+      'SKILL.md used `<a-b>`, `<c-d>` and `<e-f>` without declaring them; each was declared under `## Inputs` as read from the candidate or its runbook at execution',
+    );
+  });
+});
+

@@ -20,7 +20,7 @@ import { qualityFitSchema } from '../../../src/work/quality-fit';
 import { scopeJudgementSchema } from '../../../src/work/scope';
 import { questionLabelSchema } from '../../../convex/onboarding';
 import { orientationSchema } from '../../../convex/orientationActions';
-import { authorSchema } from '../../../convex/skillActions';
+import { authorSchema, realAuthorSchema } from '../../../convex/skillActions';
 
 /**
  * What OpenAI Structured Outputs accepts in a strict `json_schema`, and nothing
@@ -189,6 +189,7 @@ const MODEL_FACING_SCHEMAS: Array<{ agent: string; schema: unknown }> = [
   { agent: 'day0-plan', schema: planSchema },
   { agent: 'day0-work-generator', schema: workGenSchema },
   { agent: 'day0-skill-author', schema: authorSchema },
+  { agent: 'day0-skill-author real', schema: realAuthorSchema },
   {
     agent: 'executor real, two trails',
     schema: executeSchemaForProcedureContract(contract, undefined, undefined, 'real'),

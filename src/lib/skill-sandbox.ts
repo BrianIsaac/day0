@@ -72,11 +72,13 @@ export function configuredSkillSandboxBackend(): Exclude<SkillSandboxBackend, 'n
 
 /**
  * How many representative input sets the smoke test runs the procedure with.
- * The author is told to call `run()` once per set and print one line per
- * call, so a passing run prints at least this many distinct lines: the only
- * offline evidence that the emitted actions follow the inputs rather than a
- * constant. The number is the author prompt's ("two different representative
- * input dicts") and changes with it.
+ * In mock mode the author is told to call `run()` once per set and print one
+ * line per call; in real mode the harness (`src/work/smoke-harness.ts`) calls
+ * it once per declared case and prints the line itself, having checked that
+ * the outputs differ. Either way a passing run prints at least this many
+ * distinct lines: the only offline evidence that the emitted actions follow
+ * the inputs rather than a constant. The number is the author prompt's ("two
+ * different representative input dicts") and changes with it.
  */
 export const SMOKE_TEST_INPUT_SETS = 2;
 

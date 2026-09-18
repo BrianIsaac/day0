@@ -7,6 +7,7 @@ vi.mock('convex/react', () => ({
   useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
 }));
 
+import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc } from '../../../../convex/_generated/dataModel';
 import {
   ActionPayload,
@@ -1174,6 +1175,19 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).toContain('Only one authoring run holds a skill at a time');
   });
 
+  // Rehearsal 1, 0:29: a traceback's caret line has no break opportunity, so
+  // the column kept its full width and pushed Retry past the card's edge.
+  it('lets the text column shrink beside Retry and wraps a log with no spaces, so Retry stays in the card', (): void => {
+    const carets = '^'.repeat(56);
+    const traceback = {
+      ...refused,
+      verificationLog: `verification in the local sandbox failed - smoke test exited 1. stderr: ${carets} AssertionError`,
+    } as unknown as Doc<'skills'>;
+    const markup = panel([traceback]);
+    expect(markup).toMatch(/<div class="flex-1 min-w-0"><div class="font-medium[^"]*">refresh-the-tile</);
+    expect(markup).toMatch(new RegExp(`<div class="[^"]*\\bbreak-words\\b[^"]*">verification in the local sandbox failed[^<]*\\^{56}`));
+  });
+
   it('says Revise is the one that always authors again', (): void => {
     const registered = { ...base, state: 'registered', body: '# Refresh' } as unknown as Doc<'skills'>;
     const markup = renderToStaticMarkup(
@@ -1186,5 +1200,70 @@ describe('what Retry does to an unregistered skill', (): void => {
     );
     expect(markup).toContain('title="Discard this body and author the skill again');
     expect(markup).toContain('>Revise<');
+  });
+
+  // The manager approves a skill before its body exists, so the skill's own
+  // row is the first place its inputs can be shown, and it has to say which of
+  // them the author never declared.
+  describe('the inputs a skill declares, and which of them the system declared for its author', (): void => {
+    const authored = declareUndeclaredInputs(
+      ['# Close', '', '## Inputs', '', '- `<record-id>`: the ticket.', '', '## Procedure', '', 'Set `<record-id>` to `<closing-state>`.'].join('\n'),
+    ).body;
+
+    it('lists them on a registered skill and marks the one Day0 added, saying so', (): void => {
+      const registered = { ...base, state: 'registered', body: authored } as unknown as Doc<'skills'>;
+      const markup = renderToStaticMarkup(
+        <RegisteredSkillsPanel skills={[registered]} unregistered={[]} authoringFailure={null} onAuthoringAttempt={noop} />,
+      );
+      expect(markup).toMatch(/>inputs<\/span>[^&]*<code[^>]*>&lt;record-id&gt;<\/code>/);
+      expect(markup).toMatch(/<code[^>]*>&lt;closing-state&gt;<\/code> \(added by Day0\)/);
+      // A placeholder never wraps inside its own name.
+      expect(markup).toMatch(/<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;record-id&gt;<\/code>/);
+      expect(markup).toContain('The author used the input marked &quot;added by Day0&quot; without declaring it');
+      expect(markup).toContain('the executor reads it from the candidate or its runbook at run time');
+    });
+
+    it('says nothing was added when the author declared everything, and nothing at all for a builtin', (): void => {
+      const complete = { ...base, state: 'registered', body: '# Close\n\n## Inputs\n\n- `<record-id>`: the ticket.\n' } as unknown as Doc<'skills'>;
+      const builtin = { ...complete, _id: 'skill-3', sourceType: 'builtin', body: '# See docs' } as unknown as Doc<'skills'>;
+      const markup = renderToStaticMarkup(
+        <RegisteredSkillsPanel skills={[complete, builtin]} unregistered={[]} authoringFailure={null} onAuthoringAttempt={noop} />,
+      );
+      expect(markup).toContain('&lt;record-id&gt;');
+      expect(markup).not.toContain('added by Day0');
+      expect(markup.match(/>inputs</g)).toHaveLength(1);
+    });
+
+    it('lists them on a failed attempt too, read from the draft the row kept', (): void => {
+      const failed = { ...refused, body: '', refusedBody: authored } as unknown as Doc<'skills'>;
+      expect(panel([failed])).toMatch(/<code[^>]*>&lt;closing-state&gt;<\/code> \(added by Day0\)/);
+    });
+  });
+
+  // The author's open item 3: a traceback rendered as one run of text cannot be read on camera.
+  describe('a verification log with line breaks', (): void => {
+    const log = [
+      'verification in the local sandbox (local:1f2e) failed - smoke test exited 1',
+      '',
+      'stderr:',
+      'smoke harness: run() raised KeyError on case 2',
+      '  File "authored_smoke.py", line 8, in run',
+      "KeyError: 'closing-state'",
+    ].join('\n');
+
+    it('keeps its line breaks, in a box bounded in height that scrolls, still wrapping a line with no spaces', (): void => {
+      const markup = panel([{ ...refused, verificationLog: log } as unknown as Doc<'skills'>]);
+      const block = /<div class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(markup);
+      expect(block).not.toBeNull();
+      const classes = block![1]!.split(' ');
+      expect(classes).toEqual(expect.arrayContaining(['whitespace-pre-wrap', 'break-words', 'max-h-40', 'overflow-y-auto', 'font-mono']));
+      expect(block![2]).toContain('failed - smoke test exited 1\n\nstderr:\nsmoke harness: run() raised KeyError on case 2\n  File');
+    });
+
+    it('leaves a one-line reason as the prose it was', (): void => {
+      const markup = panel([refused]);
+      expect(markup).not.toContain('data-skill-log="multiline"');
+      expect(markup).toMatch(/<div class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/);
+    });
   });
 });

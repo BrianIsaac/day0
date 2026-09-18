@@ -46,6 +46,16 @@ export const EXECUTION_INPUT_LINES: readonly string[] = [
   '  - `<audit-expectation>`: the read-back the runbook prescribes as evidence (an audit line, a returned identifier, a snapshot).',
 ];
 
+/**
+ * The taught inputs the executor binds by value from the candidate row that
+ * say where a write lands: the record and the reply target. The smoke harness
+ * holds a case that supplies one to carrying it into an action argument, so a
+ * write aimed at a constant cannot pass on the strength of a varying comment.
+ * `<originating-surface>` is bound by value too but routes rather than
+ * addresses, so a procedure may read it without sending it.
+ */
+export const CANDIDATE_BOUND_TARGET_INPUTS: readonly string[] = ['record-id', 'reply-channel', 'reply-thread'];
+
 /** One declared input and where this run's value comes from. */
 export interface SkillInputBinding {
   name: string;
@@ -118,6 +128,132 @@ export function undeclaredSkillInputs(body: string): string[] {
 
 const READ_BY_THE_EXECUTOR =
   'read it from the candidate body, its Refs line or the runbook for this run; the skill body carries no value for it';
+
+/** Where a declaration added for the author says its value comes from. */
+const ADDED_DECLARATION_SOURCE = 'read it from the candidate body, its Refs line or the runbook for this run';
+
+/**
+ * What every declaration the system added ends with. The manager approves a
+ * skill before its body exists, so the body itself has to say which of its
+ * inputs the author never declared: the mark travels with the body through a
+ * park, a refusal and an export, and the skills panel reads it back.
+ */
+const ADDED_DECLARATION_MARK = 'Declared by Day0: the author used it without declaring it.';
+
+const ADDED_DECLARATION = new RegExp(
+  `^\\s*[-*+]\\s*\`<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>\`:.*${ADDED_DECLARATION_MARK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+);
+
+/** Words that make a placeholder name a credential whatever surrounds them. */
+const CREDENTIAL_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'passphrase', 'credential', 'credentials', 'bearer', 'authorization']);
+
+/** A key or token qualified as one that authenticates; `<team-key>` and `<page-token>` are neither. */
+const CREDENTIAL_KEY_OR_TOKEN = /(?:^|-)(?:api|access|secret|private|signing|bot|user|app|auth|oauth|refresh|session|service)-(?:key|token)(?:-|$)/;
+
+/**
+ * Whether a placeholder's name says its value is a credential.
+ *
+ * Args:
+ *   name: A placeholder name without its brackets.
+ *
+ * Returns:
+ *   True for a name such as `slack-bot-token`, `api-key` or `admin-password`.
+ */
+export function isCredentialInputName(name: string): boolean {
+  return name.split('-').some((word: string): boolean => CREDENTIAL_WORDS.has(word)) || CREDENTIAL_KEY_OR_TOKEN.test(name);
+}
+
+/**
+ * Why a credential-named input is refused, one reason per name.
+ *
+ * Declaring such a name for the author would tell the executor to read a
+ * credential out of a candidate or a runbook and write it into an action, the
+ * one thing `{{secret}}` exists to make unnecessary.
+ *
+ * Args:
+ *   names: Placeholder names `declareUndeclaredInputs` would not declare.
+ *
+ * Returns:
+ *   The reasons, in the order given.
+ */
+export function credentialInputIssues(names: readonly string[]): string[] {
+  return names.map(
+    (name: string): string =>
+      `SKILL.md uses \`<${name}>\` as an input; a credential is never an input the executor reads from a candidate: write \`{{secret}}\` where it goes and the server substitutes the stored credential`,
+  );
+}
+
+/**
+ * Declare every placeholder a body uses but does not declare.
+ *
+ * An author that writes `<closing-state-name>` in an example and never lists
+ * it under `## Inputs` has written a procedure the executor can still bind:
+ * any input the candidate row does not settle is read from the candidate or
+ * its runbook at execution, which is exactly what `bindSkillInputs` tells the
+ * executor for it. So real mode declares it in those words instead of refusing
+ * the skill, and says so in the log. Each goes on its own list line after the
+ * section's last non-blank line, so the author's declarations keep their
+ * place; a body with no section gets one at its end. A name that says it is
+ * a credential is never declared: it is left for the gate to refuse.
+ *
+ * Args:
+ *   body: SKILL.md markdown.
+ *
+ * Returns:
+ *   The body with every other used placeholder declared, the names this added
+ *   in order of first use, and the credential names it left undeclared; the
+ *   body unchanged when nothing was added.
+ */
+export function declareUndeclaredInputs(body: string): { body: string; declared: string[]; credentials: string[] } {
+  const undeclared = undeclaredSkillInputs(body);
+  const credentials = undeclared.filter(isCredentialInputName);
+  const missing = undeclared.filter((name: string): boolean => !isCredentialInputName(name));
+  if (missing.length === 0) return { body, declared: [], credentials };
+  const lines = missing
+    .map((name: string): string => `- \`<${name}>\`: ${ADDED_DECLARATION_SOURCE}. ${ADDED_DECLARATION_MARK}`)
+    .join('\n');
+  const section = INPUTS_SECTION.exec(body);
+  if (!section) return { body: `${body.trimEnd()}\n\n## Inputs\n\n${lines}\n`, declared: missing, credentials };
+  const contentStart = section.index + section[0].length - section[1]!.length;
+  const at = contentStart + section[1]!.trimEnd().length;
+  return { body: `${body.slice(0, at)}\n${lines}${body.slice(at)}`, declared: missing, credentials };
+}
+
+/**
+ * The inputs a body says the system declared for its author.
+ *
+ * Args:
+ *   body: SKILL.md markdown.
+ *
+ * Returns:
+ *   The names on `## Inputs` lines that carry the system's mark, in order;
+ *   empty when the author declared everything it used.
+ */
+export function systemDeclaredInputs(body: string): string[] {
+  const section = INPUTS_SECTION.exec(body);
+  if (!section) return [];
+  return section[1]!
+    .split('\n')
+    .map((line: string): string | undefined => ADDED_DECLARATION.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined);
+}
+
+/**
+ * What the log says when real mode declared inputs for the author.
+ *
+ * Args:
+ *   names: The placeholder names declared, without brackets.
+ *
+ * Returns:
+ *   One line for the verification log.
+ */
+export function declaredInputsNote(names: readonly string[]): string {
+  const quoted = names.map((name: string): string => `\`<${name}>\``);
+  const list = quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}` : quoted[0]!;
+  return quoted.length > 1
+    ? `SKILL.md used ${list} without declaring them; each was declared under \`## Inputs\` as read from the candidate or its runbook at execution`
+    : `SKILL.md used ${list} without declaring it; it was declared under \`## Inputs\` as read from the candidate or its runbook at execution`;
+}
 
 /**
  * Bind a skill's declared inputs from the candidate for one run.

@@ -51,7 +51,8 @@ describe('the smoke test preflight', (): void => {
   it('redacts a token on the quoted line and bounds it', (): void => {
     const broken = [
       'def run(inputs: dict) -> dict:',
-      '    token = "xoxb-1234567890-abcdefghijkl" +',
+      // Assembled here so no token-shaped literal sits in the repository.
+      `    token = "${['xoxb', '1234567890', 'abcdefghijkl'].join('-')}" +`,
       'print(run({}))',
     ].join('\n');
     const reason = smokeTestPreflightReason(broken)!;
@@ -63,6 +64,20 @@ describe('the smoke test preflight', (): void => {
     expect(bounded.length).toBeLessThan(400);
     expect(bounded).toContain('line 2');
     expect(bounded).toContain('…');
+  });
+
+  it('needs no printed line in real mode, where the harness prints one per case', (): void => {
+    const cases = [
+      'def run(inputs: dict) -> dict:',
+      '    return {"actions": [{"tool": "mcp.call", "args": {"value": inputs["requested_value"]}}]}',
+      'CASES = [{"requested_value": "61%"}, {"requested_value": "58%"}]',
+    ].join('\n');
+    expect(smokeTestPreflightReason(cases, 'real')).toBeUndefined();
+    expect(smokeTestPreflightReason(cases, 'mock')).toContain('must print a success line');
+    expect(smokeTestPreflightReason(cases)).toContain('must print a success line');
+    expect(smokeTestPreflightReason('def main(inputs: dict) -> dict:\n    return {}\n', 'real')).toContain(
+      'must define run(inputs: dict) -> dict',
+    );
   });
 
   it('does not unwrap a fence itself: the caller decides and records it', (): void => {

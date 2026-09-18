@@ -20,6 +20,7 @@ import {
   type KeptCorrection,
 } from './corrections-panel';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
+import { declaredSkillInputs, systemDeclaredInputs } from '../../../src/work/skill-inputs';
 import {
   type ActionVerdict,
   describeAction,
@@ -1420,9 +1421,10 @@ export function RegisteredSkillsPanel({
               >
                 {s.sourceType === 'builtin' ? 'builtin' : 'authored'}
               </span>
-              <div className="flex-1">
-                <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
-                <div className="text-[var(--color-muted)] text-xs">{s.description}</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
+                <div className="text-[var(--color-muted)] text-xs break-words">{s.description}</div>
+                {s.sourceType === 'agent-authored' ? <SkillInputs body={s.body} /> : null}
               </div>
               {s.sourceType === 'agent-authored' ? (
                 <button
@@ -1451,20 +1453,26 @@ export function RegisteredSkillsPanel({
             {unregistered.map((s) => (
               <li key={s._id}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1">
-                    <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
-                    <div className="text-[var(--color-muted)] text-xs">
-                      {/* Three different things, and the row used to say the
-                          first for two of them: a run working on it now, whose
-                          log is the previous attempt's; a run that died holding
-                          it, which the lease has since released; and no run at
-                          all, where the log is this skill's own verdict. */}
-                      {holdsLiveAuthoringClaim(s, now)
-                        ? 'authoring now · a run holds this skill'
-                        : s.authoringRunId
-                          ? 'a run stopped without reporting · Retry takes the skill over'
-                          : (s.verificationLog ?? s.description)}
-                    </div>
+                  {/* A traceback's caret line has no break opportunity: without
+                      min-w-0 the column keeps its full width and pushes Retry
+                      past the card's edge. */}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
+                    {/* Three different things, and the row used to say the
+                        first for two of them: a run working on it now, whose
+                        log is the previous attempt's; a run that died holding
+                        it, which the lease has since released; and no run at
+                        all, where the log is this skill's own verdict. */}
+                    <SkillStatusLine
+                      text={
+                        holdsLiveAuthoringClaim(s, now)
+                          ? 'authoring now · a run holds this skill'
+                          : s.authoringRunId
+                            ? 'a run stopped without reporting · Retry takes the skill over'
+                            : (s.verificationLog ?? s.description)
+                      }
+                    />
+                    <SkillInputs body={s.body || s.refusedBody || ''} />
                     <RefusedDraftDetails skill={s} />
                   </div>
                   <button
@@ -1503,6 +1511,64 @@ export function RegisteredSkillsPanel({
         </div>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * What an unregistered skill's row says under its name.
+ *
+ * A one-line reason stays prose. A sandbox's log keeps its line breaks, in a
+ * box bounded in height that scrolls: a traceback collapsed into one run of
+ * text cannot be read, and one left unbounded makes the card as tall as the
+ * traceback. `break-words` still wraps a caret line, so Retry stays inside.
+ */
+function SkillStatusLine({ text }: { text: string }) {
+  if (!text.includes('\n')) {
+    return <div className="text-[var(--color-muted)] text-xs break-words">{text}</div>;
+  }
+  return (
+    <div
+      className="mt-0.5 text-[var(--color-muted)] text-[11px] leading-snug font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2"
+      data-skill-log="multiline"
+    >
+      {text}
+    </div>
+  );
+}
+
+/**
+ * The inputs an authored skill declares, with the ones the system declared
+ * for its author marked.
+ *
+ * The manager approves a skill before its body exists, so this row is the
+ * first place the inputs can be shown. An input the author used without
+ * declaring is declared for it in real mode; the body marks that line, and
+ * this says so beside the name rather than letting it pass as the author's.
+ */
+function SkillInputs({ body }: { body: string }) {
+  const declared = declaredSkillInputs(body) ?? [];
+  if (declared.length === 0) return null;
+  const added = new Set(systemDeclaredInputs(body));
+  const plural = added.size > 1;
+  return (
+    <div className="mt-1 text-[10px] text-[var(--color-muted)] break-words">
+      <span className="uppercase tracking-wider">inputs</span>{' '}
+      {declared.map((name, index) => (
+        <span key={name}>
+          {index > 0 ? ', ' : ''}
+          <code className="font-mono whitespace-nowrap">&lt;{name}&gt;</code>
+          {added.has(name) ? ' (added by Day0)' : ''}
+        </span>
+      ))}
+      {added.size > 0 ? (
+        <span>
+          {' '}
+          · The author used the input{plural ? 's' : ''} marked &quot;added by Day0&quot; without declaring{' '}
+          {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the executor reads{' '}
+          {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
+        </span>
+      ) : null}
+    </div>
   );
 }
 

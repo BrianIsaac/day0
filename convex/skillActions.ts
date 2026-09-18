@@ -15,12 +15,13 @@ import {
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { skillNameFor, skillOperationLabel, skillSurfacePhrase } from '../src/work/skill-shape';
 import { authoredSkillIssues, clipRefusedDraft, REFUSED_DRAFT_PROMPT_CHARS } from '../src/work/authored-skill';
-import { EXECUTION_INPUT_LINES } from '../src/work/skill-inputs';
+import { declaredInputsNote, declareUndeclaredInputs, EXECUTION_INPUT_LINES } from '../src/work/skill-inputs';
 import {
   FENCE_REMOVED_NOTE,
   smokeTestPreflightReason,
   unwrapMarkdownFence,
 } from '../src/work/smoke-test';
+import { harnessedSmokeTest, smokeHarnessContract, type SmokeHarnessContract } from '../src/work/smoke-harness';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
@@ -49,12 +50,16 @@ import { ownerKnownValues } from '../src/redaction/known-values';
  * body or smoke test that repeats the first work item's values or breaks the
  * placeholder contract; the reasons land on the row for the retry.
  *
+ * In real mode the author writes `run()` and its `CASES` and nothing else
+ * decides: the sandbox runs `src/work/smoke-harness.ts` around them, so an
+ * assertion the author wrote about its own output can never fail the check.
+ *
  * The Python smoke is a Voyager-style execution-success signal —
  * sandbox exit 0 means the body is internally consistent. Plan 2 / 3
  * adds environment + critic signals.
  */
 
-export const AUTHOR_SYSTEM = [
+const AUTHOR_PREAMBLE_LINES: readonly string[] = [
   'You are an autonomous workplace agent named Day0, authoring a new skill for yourself.',
   'A skill is a SKILL.md document that describes (a) when to invoke it, (b) the inputs it expects, (c) the procedure it follows step-by-step, (d) the format of its output, (e) the structured `actions[]` it MUST emit at the end, (f) the verification the executor reads back. SKILL.md is loaded as a behavioural prior at execution time — write it as if instructing a junior practitioner who has never seen the system before.',
   '',
@@ -75,18 +80,62 @@ export const AUTHOR_SYSTEM = [
   'A registered skill runs under either live action mode. Never hardcode approval-state language into the skill body or into comments and messages: do not say a write is queued, pending, awaiting approval or "for your approval". At execution time read the current mode from the run context and describe effects accordingly; the executor tells you whether allowed writes land as emitted or wait for literal approval.',
   'Public replies on a real chat surface: when the work came from a channel or thread, the skill must emit the reply as its own `http.request` POST `chat.postMessage` action with `channel` set to the source channel and `thread_ts` set to the source thread timestamp (the executor receives both on a `Reply target:` line); the gate holds that action for the manager\'s approval of the exact text, or sends it as emitted once the manager has turned autonomous actions on. The manager DM is for questions and escalation and a one-line note of what was done; it must never carry a draft reply that belongs in the channel.',
   '',
+];
+
+/** The smoke-test contract the recorded mock runs were authored under. */
+const MOCK_SMOKE_TEST_LINES: readonly string[] = [
   'You also produce a small Python smoke test that demonstrates the skill\'s shape. The smoke test runs in a fresh Python 3.12 sandbox with no third-party packages. It must:',
   '  - Define a `run(inputs: dict) -> dict` function that mimics the skill\'s shape (input keys → output keys, including the `actions` list) and reads every value it needs from `inputs`; the inputs are the skill\'s declared inputs.',
   '  - Call run() once for each of two different representative input dicts (different identifiers and values, none of them the values of the work item that first needed this skill).',
   '  - print() one concise success line per call that includes a value from that call\'s output so we can read back that the actions follow the inputs.',
   '  - exit 0.',
   '',
+];
+
+/** The real-mode contract: the author defines, `src/work/smoke-harness.ts` drives and judges. */
+const REAL_SMOKE_TEST_LINES: readonly string[] = [
+  'You also produce a small Python smoke test, smoke.py, that demonstrates the skill\'s shape. A verification harness runs it in a fresh Python 3.12 sandbox with no third-party packages. It must:',
+  '  - Define a `run(inputs: dict) -> dict` function that mimics the skill\'s shape (input keys → output keys, including the `actions` list) and reads every value it needs from `inputs`; the inputs are the skill\'s declared inputs.',
+  '  - Define `CASES`, a list of two different representative input dicts (different identifiers and values, none of them the values of the work item that first needed this skill).',
+  '  - Return every action in the executor\'s shape, `{"tool": "mcp.call", "args": {"surface", "tool", "toolArgsJson"}}` or `{"tool": "http.request", "args": {"surface", "method", "path", "headersJson", "body"}}`: on a surface from the Surfaces list, with a tool from that surface\'s allowed tools. Both cases emit actions, and at least one action is on the target surface.',
+  '  - Name in SKILL.md\'s procedure, by its exact name, every tool `run()` uses (`save_comment`, `chat.postMessage`, whichever they are): the harness refuses an action whose tool SKILL.md never names, because a step that says "send a message" without its tool is not a procedure.',
+  '  - Build the action arguments from `inputs`: the record id, and the reply channel and thread when a case gives them, reach the arguments of that case\'s actions, and the two cases produce different arguments.',
+  '  - Stop there: no call to run(), no assertion, no check and no print() at the top level. The harness calls run() once per case and checks those rules itself. Nothing else in smoke.py runs, and assert statements are not compiled.',
+  '',
+];
+
+const DISCIPLINE_LINES: readonly string[] = [
   'Discipline:',
   '  - SKILL.md must be self-contained markdown: every angle-bracket placeholder it uses is declared under `## Inputs`, and nothing else is a template.',
   '  - The smoke test is a structural check, not a real integration. Mock external calls.',
-].join('\n');
+];
 
-const skillAuthorAgent = makeAgent('day0-skill-author', AUTHOR_SYSTEM);
+/** The author's instructions in mock mode, byte-identical to the recorded runs'. */
+export const AUTHOR_SYSTEM = [...AUTHOR_PREAMBLE_LINES, ...MOCK_SMOKE_TEST_LINES, ...DISCIPLINE_LINES].join('\n');
+
+/**
+ * The author's instructions in real mode: the mock prompt with the smoke-test
+ * contract the harness drives. The author defines `run()` and its `CASES`;
+ * the calls and the checks are the harness's, so there is nothing for the
+ * author to assert about its own output.
+ */
+export const AUTHOR_SYSTEM_REAL = [...AUTHOR_PREAMBLE_LINES, ...REAL_SMOKE_TEST_LINES, ...DISCIPLINE_LINES].join('\n');
+
+/**
+ * The author's system prompt for a surface mode.
+ *
+ * Args:
+ *   mode: The deployment's surface mode.
+ *
+ * Returns:
+ *   The mock prompt, byte-identical to the one the recorded runs used, or the
+ *   real-mode prompt with the harness's smoke-test contract.
+ */
+export function authorSystemFor(mode: SurfaceMode): string {
+  return mode === 'real' ? AUTHOR_SYSTEM_REAL : AUTHOR_SYSTEM;
+}
+
+const skillAuthorAgent = makeAgent('day0-skill-author', authorSystemFor(SURFACE_MODE));
 
 /** What the author prompt needs from a skill row. */
 export interface AuthorPromptSkill {
@@ -243,12 +292,15 @@ function previousAttemptSection(skill: AuthorPromptSkill): string[] {
   ];
 }
 
+const authoredBody = z
+  .string()
+  .describe(
+    'Complete SKILL.md markdown: a reusable procedure with `## When to invoke`, `## Inputs` (every angle-bracket placeholder the body uses), the procedure, `## Verification` and the actions it emits.',
+  );
+
+/** What the author answers with in mock mode, byte-identical to the recorded runs'. */
 export const authorSchema = z.object({
-  body: z
-    .string()
-    .describe(
-      'Complete SKILL.md markdown: a reusable procedure with `## When to invoke`, `## Inputs` (every angle-bracket placeholder the body uses), the procedure, `## Verification` and the actions it emits.',
-    ),
+  body: authoredBody,
   smokeTest: z
     .string()
     .describe(
@@ -256,25 +308,70 @@ export const authorSchema = z.object({
     ),
 });
 
+/** What the author answers with in real mode: the same two files, the harness's smoke contract. */
+export const realAuthorSchema = z.object({
+  body: authoredBody,
+  smokeTest: z
+    .string()
+    .describe(
+      'Complete Python 3.12 source of smoke.py: define run(inputs: dict) -> dict reading its values from inputs, and CASES, a list of two different representative input dicts; nothing else, because the verification harness calls run() once per case and checks the results itself.',
+    ),
+});
+
+/**
+ * The author's answer schema for a surface mode.
+ *
+ * Args:
+ *   mode: The deployment's surface mode.
+ *
+ * Returns:
+ *   `authorSchema` in mock mode, `realAuthorSchema` in real mode.
+ */
+export function authorSchemaFor(mode: SurfaceMode): typeof authorSchema {
+  return mode === 'real' ? realAuthorSchema : authorSchema;
+}
+
 type SkillVerifier = (args: AuthorSkillArgs) => Promise<SkillSandboxRun>;
 
 /**
  * Reject malformed model output before either verification backend spends a
  * run. A smoke test that arrived wrapped in a markdown fence is unwrapped
- * first rather than refused; the result says so, and carries the program the
- * sandbox actually ran.
+ * first rather than refused; the result says so, and carries the author's
+ * program as it will be kept.
+ *
+ * In real mode the sandbox runs the harness around that program, so the
+ * verdict is the harness's reading of what `run()` returned and never an
+ * assertion the author wrote; mock mode runs the author's program as written,
+ * as the recorded runs did.
+ *
+ * Args:
+ *   args: The skill and the author's smoke test.
+ *   verify: The sandbox call, injected for tests.
+ *   mode: The deployment's surface mode.
+ *   contract: What the real-mode harness holds the actions against. Without
+ *     one the harness knows no connected surface, so every action is refused:
+ *     a caller that forgets it cannot register a skill unchecked.
+ *
+ * Returns:
+ *   The preflight refusal, or the sandbox's result with the author's program.
  */
 export async function verifyAuthoredSkill(
   args: AuthorSkillArgs,
   verify: SkillVerifier = authorAndVerifySkill,
+  mode: SurfaceMode = SURFACE_MODE,
+  contract?: SmokeHarnessContract,
 ): Promise<
   | { ok: true; result: SkillSandboxRun; smokeTest: string; unwrapped: boolean }
   | { ok: false; reason: string }
 > {
   const fence = unwrapMarkdownFence(args.smokeTest);
-  const reason = smokeTestPreflightReason(fence.source);
+  const reason = smokeTestPreflightReason(fence.source, mode);
   if (reason) return { ok: false, reason: `smoke test rejected before sandbox: ${reason}` };
-  const result = await verify({ ...args, smokeTest: fence.source });
+  const program =
+    mode === 'real'
+      ? harnessedSmokeTest(fence.source, contract ?? smokeHarnessContract(args.skillBody, [], undefined, Date.now()))
+      : fence.source;
+  const result = await verify({ ...args, smokeTest: program });
   return { ok: true, result, smokeTest: fence.source, unwrapped: fence.unwrapped };
 }
 
@@ -421,6 +518,31 @@ async function redactAuthoredDraft(
   agentId: Id<'agents'>,
   draft: { body: string; smokeTest: string },
 ): Promise<{ body: string; smokeTest: string }> {
+  const [body, smokeTest] = await redactAuthoringTexts(ctx, agentId, [draft.body, draft.smokeTest]);
+  return { body: body!, smokeTest: smokeTest! };
+}
+
+/**
+ * Authoring output made safe to keep: a draft, or what the sandbox printed.
+ *
+ * The outcome redactor, as a provider outcome gets: the owner's stored values
+ * exactly and the span model in real mode, the structural grammar in both. A
+ * smoke test's cases are the author's inventions and its traceback quotes its
+ * source, so a verification log is model output as much as a draft is.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The employee whose owner's stored values are removed exactly.
+ *   texts: The texts to redact.
+ *
+ * Returns:
+ *   The redacted texts, in the order given.
+ */
+async function redactAuthoringTexts(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  texts: readonly string[],
+): Promise<string[]> {
   let known: readonly string[] = [];
   let model = undefined;
   if (SURFACE_MODE === 'real') {
@@ -428,12 +550,19 @@ async function redactAuthoredDraft(
     if (agent?.userId) known = await ownerKnownValues(ctx, agent.userId);
     model = spanModelFromEnv();
   }
-  const [body, smokeTest] = await Promise.all([
-    redactOutcome(draft.body, '', model, known),
-    redactOutcome(draft.smokeTest, '', model, known),
-  ]);
-  return { body: body.text, smokeTest: smokeTest.text };
+  const redacted = await Promise.all(
+    texts.map((text: string): Promise<{ text: string }> => redactOutcome(text, '', model, known)),
+  );
+  return redacted.map((outcome): string => outcome.text);
 }
+
+/**
+ * How much of a failed verification the row keeps in real mode. Enough for the
+ * harness's reason and the author's frames of a traceback, which is what a
+ * first-try failure is diagnosed from; bounded because the retry prompt
+ * carries it back beside the refused draft.
+ */
+const FAILED_VERIFICATION_LOG_CHARS = 2_000;
 
 export const authorAndRegisterSkill = action({
   args: { skillId: v.id('skills') },
@@ -486,7 +615,7 @@ export const authorAndRegisterSkill = action({
         authored = await agentJson<AuthoredSkill>({
           agent: skillAuthorAgent,
           user: userPrompt,
-          schema: authorSchema,
+          schema: authorSchemaFor(SURFACE_MODE),
         });
       } catch (err) {
         const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
@@ -498,13 +627,24 @@ export const authorAndRegisterSkill = action({
       }
     }
 
-    const body = authored.body.trim();
+    // In real mode a placeholder the author used without declaring it is
+    // declared for it, in the words the executor binds such an input by,
+    // rather than refusing a procedure the executor can run; the line says
+    // Day0 added it. A name that says it is a credential is never declared:
+    // the gate refuses it and points at `{{secret}}`. Mock mode refuses every
+    // undeclared placeholder as the recorded runs did.
+    const inputs =
+      SURFACE_MODE === 'real'
+        ? declareUndeclaredInputs(authored.body.trim())
+        : { body: authored.body.trim(), declared: [], credentials: [] };
+    const body = inputs.body;
     // A fenced smoke test is a program with a wrapper, not a refusal: the
     // wrapper comes off here, before the gate reads it, and every log written
     // after this point says so.
     const fence = unwrapMarkdownFence(authored.smokeTest.trim());
     const smokeTest = fence.source.trim();
     const notes: string[] = fence.unwrapped ? [FENCE_REMOVED_NOTE] : [];
+    if (inputs.declared.length > 0) notes.push(declaredInputsNote(inputs.declared));
     const noted = (log: string): string => (notes.length > 0 ? `${notes.join('\n')}\n\n${log}` : log);
     if (!body || !smokeTest) {
       const reason = 'the model returned an empty SKILL.md body or smoke test';
@@ -524,6 +664,7 @@ export const authorAndRegisterSkill = action({
       : null;
     const issues = authoredSkillIssues({
       body, smokeTest, instance,
+      credentialInputs: inputs.credentials,
       documentedProcedure: SURFACE_MODE === 'real' ? linkedRunbookSection(skill, surfaceRows.map(toSurfaceRecord), pageRows) : '',
     });
     if (issues.length > 0) {
@@ -545,6 +686,7 @@ export const authorAndRegisterSkill = action({
     let verificationLog = '(no sandbox available)';
     let skipReason: string | null = null;
     let verificationFailure: string | null = null;
+    let failedVerificationLog = '';
     // Named in every message below, because "verification failed" means
     // different things to a boss depending on which sandbox said so.
     let backend = 'the sandbox';
@@ -576,11 +718,12 @@ export const authorAndRegisterSkill = action({
       return { ok: false, reason: `sandbox verification unavailable: ${reason}` };
     }
     try {
-      const verification = await verifyAuthoredSkill({
-        skillName: skill.name,
-        skillBody: body,
-        smokeTest,
-      });
+      const verification = await verifyAuthoredSkill(
+        { skillName: skill.name, skillBody: body, smokeTest },
+        authorAndVerifySkill,
+        SURFACE_MODE,
+        smokeHarnessContract(body, surfaceRows.map(toSurfaceRecord), skill.targetSurface, Date.now()),
+      );
       if (!verification.ok) {
         return await recordAuthoringFailure(ctx, args.skillId, runId, {
           rowReason: noted(verification.reason),
@@ -607,9 +750,16 @@ export const authorAndRegisterSkill = action({
           body,
         });
         if (!progress.held) return { ok: false, reason: SUPERSEDED };
-        verificationLog = `ran in ${backend} (${sandboxId})\n\nstdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
+        // What the sandbox printed is the author's: its cases' values and the
+        // lines of its source a traceback quotes. It is redacted as a draft
+        // is, and only it: the frame around it is this action's own words,
+        // and a span model that reads a sandbox id as a secret should not get
+        // the chance.
+        const [stdout, stderr] = await redactAuthoringTexts(ctx, skill.agentId, [result.stdout, result.stderr]);
+        verificationLog = `ran in ${backend} (${sandboxId})\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}\nok: ${result.ok}`;
         if (!result.ok) {
           verificationFailure = result.failureReason ?? 'sandbox verification failed';
+          failedVerificationLog = `stderr:\n${stderr!.trim()}\n\nstdout:\n${stdout!.trim()}`;
         }
       }
     } catch (err) {
@@ -626,10 +776,26 @@ export const authorAndRegisterSkill = action({
     // Recorded outside the try: a failure while recording a failure must not be
     // reported as the sandbox throwing.
     if (verificationFailure) {
+      // Mock mode records what the recorded runs recorded. Real mode keeps the
+      // attempt whole: the draft through the refused-draft path, so the row
+      // can be read and exported and the retry corrects it, and the log with
+      // stderr first, because the harness's reason and the traceback are
+      // there and 400 characters of stdout used to push them off the row.
+      if (SURFACE_MODE !== 'real') {
+        return await recordAuthoringFailure(ctx, args.skillId, runId, {
+          rowReason: noted(`verification in ${backend} failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`),
+          reason: `skill authored but verification failed - ${verificationFailure}`,
+          eventType: 'skill.verification-failed',
+        });
+      }
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: noted(`verification in ${backend} failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`),
+        rowReason: noted(
+          `verification in ${backend} (${sandboxId}) failed - ${verificationFailure}\n\n` +
+            clipRefusedDraft(failedVerificationLog, FAILED_VERIFICATION_LOG_CHARS),
+        ),
         reason: `skill authored but verification failed - ${verificationFailure}`,
         eventType: 'skill.verification-failed',
+        refusedDraft: await keepRefusedDraft(ctx, skill.agentId, { body, smokeTest }),
       });
     }
 

@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 
+import { randomUUID } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
@@ -12,15 +13,18 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const recorded = vi.hoisted(() => ({
   users: [] as string[],
+  schemas: [] as unknown[],
   outputs: [] as Array<{ body: string; smokeTest: string }>,
   sandboxRuns: 0,
+  sandboxPrograms: [] as string[],
   sandbox: undefined as SkillSandboxRun | undefined,
 }));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async <T>(args: { user: string }): Promise<T> => {
+  agentJson: async <T>(args: { user: string; schema: unknown }): Promise<T> => {
     recorded.users.push(args.user);
+    recorded.schemas.push(args.schema);
     const next = recorded.outputs.shift();
     if (!next) throw new Error('no authored output queued');
     return next as T;
@@ -31,8 +35,9 @@ vi.mock('../../src/lib/mastra', () => ({
 vi.mock('../../src/lib/skill-sandbox', () => ({
   // The bundled sandbox: the path that takes the verification lease.
   configuredSkillSandboxBackend: (): string => 'local',
-  authorAndVerifySkill: async (): Promise<SkillSandboxRun> => {
+  authorAndVerifySkill: async (args: { smokeTest: string }): Promise<SkillSandboxRun> => {
     recorded.sandboxRuns += 1;
+    recorded.sandboxPrograms.push(args.smokeTest);
     if (!recorded.sandbox) throw new Error('no sandbox result queued');
     return recorded.sandbox;
   },
@@ -111,8 +116,10 @@ describe('the static gate on an authored skill, through the authoring action', (
   beforeEach((): void => {
     useSurfaceMode('mock');
     recorded.users.length = 0;
+    recorded.schemas.length = 0;
     recorded.outputs.length = 0;
     recorded.sandboxRuns = 0;
+    recorded.sandboxPrograms.length = 0;
     recorded.sandbox = {
       backend: 'local',
       sandboxId: 'local:run-1',
@@ -169,7 +176,9 @@ describe('the static gate on an authored skill, through the authoring action', (
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);
     const padding = `\n${'The audit line is read back after the save. '.repeat(400)}`;
-    const refusedBody = `${reusableBody}\nPost to <audit-channel> with Authorization: Bearer xoxb-1234567890-abcdefghijkl.${padding}`;
+    // Assembled here so no token-shaped literal sits in the repository.
+    const botToken = ['xoxb', '1234567890', 'abcdefghijkl'].join('-');
+    const refusedBody = `${reusableBody}\nPost to <audit-channel> with Authorization: Bearer ${botToken}.${padding}`;
     recorded.outputs.push({ body: refusedBody, smokeTest });
 
     const result = await harness
@@ -229,6 +238,19 @@ describe('the static gate on an authored skill, through the authoring action', (
     const modelFailed = await readSkill(harness, skillId);
     expect(modelFailed.refusedBody).toBeUndefined();
     expect(modelFailed.refusedSmokeTest).toBeUndefined();
+  });
+
+  it('runs the author program as written in mock mode', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.sandboxPrograms).toEqual([smokeTest]);
+    const { authorSchema } = await import('../../convex/skillActions');
+    expect(recorded.schemas).toEqual([authorSchema]);
   });
 
   it('removes a markdown fence from the smoke test before the gate and says so in the log', async (): Promise<void> => {
@@ -293,5 +315,273 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(result.reason).toContain('SKILL.md uses `{{value}}`');
     expect(result.reason).toContain('SKILL.md declares no `## Inputs` section');
     expect(recorded.sandboxRuns).toBe(0);
+  });
+});
+
+describe('a sandbox that says no in mock mode, recorded as the recorded runs recorded it', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('mock');
+    recorded.users.length = 0;
+    recorded.schemas.length = 0;
+    recorded.outputs.length = 0;
+    recorded.sandboxRuns = 0;
+    recorded.sandboxPrograms.length = 0;
+  });
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('writes the same row and events byte for byte: the 400-character log, no kept draft', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    const stderr = `Traceback (most recent call last):\n  File "smoke.py", line 4, in <module>\n${'    assert False\n'.repeat(40)}AssertionError\n`;
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+    recorded.sandbox = { backend: 'local', sandboxId: 'local:run-mock', stdout: 'ok 61%\n', stderr, ok: false, failureReason: 'smoke test exited 1', skipped: false };
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: false, reason: 'skill authored but verification failed - smoke test exited 1' });
+    const log = `ran in the local sandbox (local:run-mock)\n\nstdout:\nok 61%\n\n\nstderr:\n${stderr}\nok: false`;
+    const row = await readSkill(harness, skillId);
+    expect(row.verificationLog).toBe(`verification in the local sandbox failed - smoke test exited 1. ${log.slice(0, 400)}`);
+    expect(row.body).toBe(reusableBody);
+    expect(row.refusedBody).toBeUndefined();
+    expect(row.refusedSmokeTest).toBeUndefined();
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type.startsWith('skill.')).map((event) => [event.type, (event.payload as { reason?: string }).reason])).toEqual([
+      ['skill.authoring-claimed', undefined],
+      ['skill.authoring', undefined],
+      ['skill.failed', 'skill authored but verification failed - smoke test exited 1'],
+      ['skill.verification-failed', 'skill authored but verification failed - smoke test exited 1'],
+    ]);
+  });
+});
+
+describe('real-mode authoring, where the harness is the smoke test', (): void => {
+  const casesSmokeTest = [
+    'def run(inputs: dict) -> dict:',
+    '    return {"actions": [{"action": "mcp.call", "tool": "save_comment", "id": inputs["record-id"]}]}',
+    '',
+    'CASES = [{"record-id": "OPS-3"}, {"record-id": "OPS-9"}]',
+  ].join('\n');
+
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    recorded.users.length = 0;
+    recorded.schemas.length = 0;
+    recorded.outputs.length = 0;
+    recorded.sandboxRuns = 0;
+    recorded.sandboxPrograms.length = 0;
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-real',
+      stdout: 'case 1: run() emitted 1 action\ncase 2: run() emitted 1 action\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+  });
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('asks in the real-mode schema, sends the sandbox the harness, and registers', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest: casesSmokeTest });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    const { realAuthorSchema } = await import('../../convex/skillActions');
+    const { harnessedSmokeTest, smokeHarnessContract } = await import('../../src/work/smoke-harness');
+    expect(recorded.schemas).toEqual([realAuthorSchema]);
+    // The contract is the stored body and the agent's connected surfaces: none on this seed.
+    expect(recorded.sandboxPrograms).toEqual([
+      harnessedSmokeTest(casesSmokeTest, smokeHarnessContract(reusableBody, [], undefined, 0)),
+    ]);
+    const registered = await readSkill(harness, skillId);
+    expect(registered.state).toBe('registered');
+    expect(registered.verificationLog).toContain('case 1: run() emitted 1 action');
+  });
+
+  /** A provider-token shape no fixture holds: built when the test runs. */
+  const runtimeToken = (): string => ['sk', 'live', randomUUID().replaceAll('-', '')].join('-');
+
+  /** Every string a manager, an export or a later prompt could read back for one agent. */
+  async function everythingKept(harness: Harness, skillId: Id<'skills'>): Promise<string> {
+    const row = await readSkill(harness, skillId);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    const items = await harness.run(async (ctx) => await ctx.db.query('workItems').collect());
+    return JSON.stringify({ row, events, items });
+  }
+
+  it('keeps a secret-shaped value the smoke test carried off the registered row, its log and every event', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    const token = runtimeToken();
+    recorded.outputs.push({
+      body: `${reusableBody}\nThe reference the runbook quotes is ${token}.`,
+      smokeTest: casesSmokeTest,
+    });
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-real',
+      stdout: `case 1: run() emitted 1 action (mcp.call save_comment); carries OPS-3, ${token}\ncase 2: run() emitted 1 action (mcp.call save_comment); carries OPS-9\n`,
+      stderr: `smoke harness: line 3 of the smoke test was skipped: ValueError: ${token}\n`,
+      ok: true,
+      skipped: false,
+    };
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    const registered = await readSkill(harness, skillId);
+    expect(registered.state).toBe('registered');
+    expect(registered.verificationLog).toContain('carries OPS-3, <redacted>');
+    expect(registered.body).toContain('The reference the runbook quotes is <redacted>.');
+    expect(await everythingKept(harness, skillId)).not.toContain(token);
+  });
+
+  it('keeps the failed attempt whole when the sandbox says no: body, cases and log, redacted, and hands them to the retry', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    const token = runtimeToken();
+    const failingSmokeTest = `${casesSmokeTest}\nNOTE = "${token}"`;
+    const traceback = [
+      'smoke harness: run() raised KeyError on case 2',
+      '  File "authored_smoke.py", line 2, in run',
+      `    return {"actions": [{"id": inputs["record-id"], "note": "${token}"}]}`,
+      "KeyError: 'record-id'",
+    ].join('\n');
+    recorded.outputs.push({ body: reusableBody, smokeTest: failingSmokeTest });
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-failed',
+      stdout: `${'x'.repeat(500)}\n`,
+      stderr: `${traceback}\n`,
+      ok: false,
+      failureReason: 'smoke test exited 1',
+      skipped: false,
+    };
+
+    const failed = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(failed).toEqual({ ok: false, reason: 'skill authored but verification failed - smoke test exited 1' });
+    const row = await readSkill(harness, skillId);
+    expect(row.state).toBe('failed');
+    expect(row.refusedBody).toBe(reusableBody);
+    expect(row.refusedSmokeTest).toBe(`${casesSmokeTest}\nNOTE = "<redacted>"`);
+    // The whole traceback with its line breaks, not the first 400 characters of the log.
+    expect(row.verificationLog).toContain('smoke harness: run() raised KeyError on case 2\n  File "authored_smoke.py", line 2, in run\n');
+    expect(row.verificationLog).toContain("KeyError: 'record-id'");
+    // Nothing a parked Retry reads: the next run authors again rather than re-running a program that failed.
+    expect(row.pendingSmokeTest).toBeUndefined();
+    expect(await everythingKept(harness, skillId)).not.toContain(token);
+
+    recorded.outputs.push({ body: reusableBody, smokeTest: casesSmokeTest });
+    recorded.sandbox = { backend: 'local', sandboxId: 'local:run-retry', stdout: 'case 1\ncase 2\n', stderr: '', ok: true, skipped: false };
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.users).toHaveLength(2);
+    expect(recorded.users[1]).toContain('Refused smoke.py:');
+    expect(recorded.users[1]).toContain('NOTE = "<redacted>"');
+    expect(recorded.users[1]).toContain('run() raised KeyError on case 2');
+    const registered = await readSkill(harness, skillId);
+    expect(registered.state).toBe('registered');
+    expect(registered.refusedBody).toBeUndefined();
+    expect(registered.refusedSmokeTest).toBeUndefined();
+  });
+
+  it('refuses any double-brace placeholder but {{secret}} before the sandbox, in the body or the cases, saying which', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({
+      body: reusableBody.replace('comment on `<record-id>`', 'comment on `<record-id>` in {{channel}}'),
+      smokeTest: casesSmokeTest.replace('"OPS-9"', '"{{ticket}}"'),
+    });
+
+    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain('SKILL.md uses `{{channel}}`; `{{secret}}` is the only double-brace placeholder');
+    expect(refused.reason).toContain('smoke.py uses `{{ticket}}`');
+    expect(refused.reason).not.toContain('`{{secret}}`; `{{secret}}`');
+    expect(recorded.sandboxRuns).toBe(0);
+    const row = await readSkill(harness, skillId);
+    expect(row.state).toBe('failed');
+    expect(row.refusedBody).toContain('{{channel}}');
+  });
+
+  it('declares an ordinary undeclared input but refuses one named as a credential, before any sandbox', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({
+      body: reusableBody.replace('comment on `<record-id>`', 'comment on `<record-id>` in `<closing-state>` with bearer `<tile-api-token>`'),
+      smokeTest: casesSmokeTest,
+    });
+
+    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain('SKILL.md uses `<tile-api-token>` as an input; a credential is never an input');
+    expect(refused.reason).not.toContain('`<closing-state>`');
+    expect(refused.reason).not.toContain('without declaring it under');
+    expect(recorded.sandboxRuns).toBe(0);
+    const row = await readSkill(harness, skillId);
+    expect(row.refusedBody).toContain('- `<closing-state>`: read it from the candidate body');
+    expect(row.refusedBody).not.toContain('- `<tile-api-token>`');
+  });
+
+  it('still refuses, before any sandbox, a body or CASES that repeat the first work item', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({
+      body: reusableBody,
+      smokeTest: casesSmokeTest.replace('"OPS-3"', '"REVOPS-7"'),
+    });
+
+    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain("smoke.py carries the first work item's value `REVOPS-7`");
+    expect(recorded.sandboxRuns).toBe(0);
+    expect((await readSkill(harness, skillId)).state).toBe('failed');
+  });
+
+  it('parks the author program, not the harness, when no sandbox ran, and harnesses it again on Retry', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest: casesSmokeTest });
+    recorded.sandbox = {
+      backend: 'none',
+      sandboxId: '(skipped)',
+      stdout: '',
+      stderr: '',
+      ok: false,
+      skipped: true,
+      skipReason: 'the local sandbox is not running',
+    };
+
+    const parked = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(parked.ok).toBe(false);
+    expect((await readSkill(harness, skillId)).pendingSmokeTest).toBe(casesSmokeTest);
+
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-retry',
+      stdout: 'case 1\ncase 2\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    const { harnessedSmokeTest, smokeHarnessContract } = await import('../../src/work/smoke-harness');
+    const harnessed = harnessedSmokeTest(casesSmokeTest, smokeHarnessContract(reusableBody, [], undefined, 0));
+    expect(recorded.users).toHaveLength(1);
+    expect(recorded.sandboxPrograms).toEqual([harnessed, harnessed]);
   });
 });

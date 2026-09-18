@@ -691,6 +691,11 @@ export const claimAuthoringRun = internalMutation({
  * Store the authored body as soon as a sandbox exists, so the boss can read
  * what was written whichever way the check goes. The run keeps its claim: this
  * is progress, not a result.
+ *
+ * Every authoring write below applies the structural floor to the text it
+ * keeps, as `parkUnverified` does: the body, the log and the reasons are model
+ * output and sandbox output, and a provider token in any of them has no
+ * business on a row, an event or a work item whatever the action did first.
  */
 export const recordAuthoringProgress = internalMutation({
   args: {
@@ -704,7 +709,7 @@ export const recordAuthoringProgress = internalMutation({
     if (!row) return { held: false };
     await ctx.db.patch(args.skillId, {
       sandboxId: args.sandboxId,
-      body: args.body,
+      body: redactTokenShapes(args.body),
       refusedBody: undefined,
       refusedSmokeTest: undefined,
     });
@@ -745,8 +750,8 @@ export const completeRegistration = internalMutation({
     if (!row) return { registered: false };
     await ctx.db.patch(args.skillId, {
       state: 'registered',
-      body: args.body,
-      verificationLog: args.verificationLog,
+      body: redactTokenShapes(args.body),
+      verificationLog: redactTokenShapes(args.verificationLog),
       refusedBody: undefined,
       refusedSmokeTest: undefined,
       pendingSmokeTest: undefined,
@@ -774,8 +779,12 @@ export const completeRegistration = internalMutation({
  *
  * A refusal before the sandbox keeps the draft it turned away, already
  * redacted and bounded by the action, so the row carries something to read
- * and the retry something to correct. A failure with no draft to keep clears
- * whatever an earlier refusal left: the row describes its latest attempt only.
+ * and the retry something to correct; in real mode a sandbox that said no
+ * keeps its draft the same way, so a failed first attempt can be read and
+ * exported afterwards. A failure with no draft to keep clears whatever an
+ * earlier refusal left: the row describes its latest attempt only. The draft
+ * never goes in `pendingSmokeTest`: that field means "not yet run", and a
+ * Retry that found it would run a program already known to fail.
  *
  * One transaction for the same reason as registration. A failing run that could
  * write the skill and the work item separately is a failing run that can put
@@ -797,11 +806,13 @@ export const failAuthoringRun = internalMutation({
   handler: async (ctx, args): Promise<{ recorded: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'fail');
     if (!row) return { recorded: false };
+    const reason = redactTokenShapes(args.reason);
     await ctx.db.patch(args.skillId, {
       state: 'failed',
-      verificationLog: args.rowReason,
-      refusedBody: args.refusedBody,
-      refusedSmokeTest: args.refusedSmokeTest,
+      verificationLog: redactTokenShapes(args.rowReason),
+      refusedBody: args.refusedBody === undefined ? undefined : redactTokenShapes(args.refusedBody),
+      refusedSmokeTest:
+        args.refusedSmokeTest === undefined ? undefined : redactTokenShapes(args.refusedSmokeTest),
       pendingSmokeTest: undefined,
       ...RELEASED,
     });
@@ -809,11 +820,11 @@ export const failAuthoringRun = internalMutation({
       await ctx.db.insert('events', {
         agentId: row.agentId,
         type,
-        payload: { skillId: args.skillId, name: row.name, reason: args.reason },
+        payload: { skillId: args.skillId, name: row.name, reason },
         createdAt: Date.now(),
       });
     }
-    await requeueSourceWork(ctx, row, { decision: 'needs-skill', reason: args.reason });
+    await requeueSourceWork(ctx, row, { decision: 'needs-skill', reason });
     return { recorded: true };
   },
 });
