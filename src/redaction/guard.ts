@@ -183,6 +183,7 @@ const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
 const USERNAME_DESIGNATOR = /(?:\blogin[ \t]+is|(?:\buser ?name|\buser|\baccount)[ \t]*(?:\bis\b|[:=：]))[ \t]*[`'"]?$/i;
 /** JSON keys whose string values are identifiers by construction. */
 const IDENTIFIER_KEY = /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
+const IDENTIFIER_KEY_ASSIGNMENT = /\b(?:channel|method)[ \t]+key[ \t]*[:=][ \t]*[`'"]?$/i;
 const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
 /** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
 const TRAILING_PUNCTUATION = /[.,;:)\]}'"`]+$/;
@@ -231,6 +232,9 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   // whole name's to judge, and a name is not a secret unless a label says so.
   const token = text.slice(tokenStart, tokenEnd);
   const hashed = text[tokenStart - 1] === '#' && !/[A-Za-z0-9_#]/.test(text[tokenStart - 2] ?? '');
+  const wholeToken = hashed ? `#${token}` : token;
+  if (IDENTIFIER_KEY_ASSIGNMENT.test(text.slice(0, hashed ? tokenStart - 1 : tokenStart)) &&
+    (CHANNEL_REFERENCE.test(wholeToken) || DOTTED_IDENTIFIER.test(token))) return undefined;
   if (hashed && CHANNEL_REFERENCE.test(`#${token}`) && !assignedAt(tokenStart - 1) && !columnAssigned) return undefined;
   if (DOTTED_IDENTIFIER.test(token) && !assigned) return undefined;
   const assignedTokenStart = hashed ? tokenStart - 1 : tokenStart;

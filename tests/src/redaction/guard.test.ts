@@ -323,4 +323,13 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
       expect(guardReason(name)).toBe('runbook word');
     }
   });
+
+  it('keeps channel and method identifiers when a documentation key names the identifier', (): void => {
+    for (const [text, value] of [
+      ['Channel key: #ops-requests', '#ops-requests'],
+      ['Method key: users.lookupByEmail', 'users.lookupByEmail'],
+    ]) {
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token')).toBeUndefined();
+    }
+  });
 });

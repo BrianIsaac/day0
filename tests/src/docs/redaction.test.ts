@@ -223,3 +223,18 @@ it('stores an entire assigned name-shaped value when detection covers only a seg
     expect(result.markdown.includes(value)).toBe(false);
   }
 });
+
+it('preserves identifier values under channel-key and method-key documentation labels', async () => {
+  for (const [text, value] of [
+    ['Channel key: #ops-requests', '#ops-requests'],
+    ['Method key: users.lookupByEmail', 'users.lookupByEmail'],
+  ]) {
+    const model = new ScriptedSpanModel((body) => {
+      const start = body.indexOf(value);
+      return start < 0 ? [] : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
+    });
+    const result = await redactCredentials(text, 'Access', { model });
+    expect(result.markdown).toBe(text);
+    expect(result.credentials).toEqual([]);
+  }
+});
