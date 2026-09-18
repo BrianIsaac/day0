@@ -273,6 +273,24 @@ describe('a skill that registers while several items wait for it', (): void => {
     expect(await pendingEvaluations(harness)).toEqual([]);
   });
 
+  it('keeps discovery order when the item that proposed the skill was discovered later', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    // Priya's rows on 19 Sep: the stranded ask is older than the ask the
+    // proposal was made for.
+    const { first, second, skillId } = await seedLinkedPair(harness, agentId, 'proposed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, { proposedFor: second });
+    });
+    const runId = await approveAndClaim(harness, skillId);
+
+    await register(harness, skillId, runId);
+
+    expect(await pendingEvaluations(harness)).toEqual([String(first), String(second)]);
+  });
+
   it('leaves alone a linked item that has already moved on', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
