@@ -114,9 +114,6 @@ export const OPEN_WORK_STATES = [
   'actions-pending',
 ] as const satisfies ReadonlyArray<Doc<'workItems'>['state']>;
 
-/** Discovered rows read when looking for the one a freed slot goes to. */
-const WAKE_SCAN = 100;
-
 /** What `scheduleNextStep` reads of a row, after its transition. */
 export type LoopRow = Pick<
   Doc<'workItems'>,
@@ -192,13 +189,12 @@ export async function nextRowForFreeSlot(
   now: number,
 ): Promise<Id<'workItems'> | undefined> {
   if (!(await hasFreeSlot(ctx, agentId))) return undefined;
-  const discovered = await ctx.db
+  for await (const row of ctx.db
     .query('workItems')
-    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'discovered'))
-    .take(WAKE_SCAN);
-  return discovered.find(
-    (row) => !isRevocationTrialRow(row) && !holdsLiveStepClaim(row, 'evaluation', now),
-  )?._id;
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'discovered'))) {
+    if (!isRevocationTrialRow(row) && !holdsLiveStepClaim(row, 'evaluation', now)) return row._id;
+  }
+  return undefined;
 }
 
 async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>): Promise<void> {
@@ -303,13 +299,17 @@ export async function resumeStalledStepsInTransaction(
   if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
   let rescheduled = 0;
   for (const agent of await ctx.db.query('agents').collect()) {
-    const ready = async (state: 'discovered' | 'claimed' | 'plan-approved') =>
-      (
-        await ctx.db
-          .query('workItems')
-          .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
-          .take(SWEEP_BATCH)
-      ).filter((row) => !isRevocationTrialRow(row));
+    const ready = async (state: 'discovered' | 'claimed' | 'plan-approved' | 'plan-pending' | 'executing') => {
+      const rows: Doc<'workItems'>[] = [];
+      for await (const row of ctx.db
+        .query('workItems')
+        .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))) {
+        if (isRevocationTrialRow(row)) continue;
+        rows.push(row);
+        if (rows.length === SWEEP_BATCH) break;
+      }
+      return rows;
+    };
     let evaluated = false;
     for (const row of await ready('discovered')) {
       if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
@@ -331,12 +331,8 @@ export async function resumeStalledStepsInTransaction(
       });
       rescheduled += 1;
     }
-    const undecidedPlans = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'plan-pending'))
-      .take(SWEEP_BATCH);
-    for (const row of undecidedPlans) {
-      if (isRevocationTrialRow(row) || row.decision ||
+    for (const row of await ready('plan-pending')) {
+      if (row.decision ||
           (row.planPendingAt !== undefined && now - row.planPendingAt < STEP_LEASE_MS)) continue;
       await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
         workItemId: row._id,
@@ -344,12 +340,8 @@ export async function resumeStalledStepsInTransaction(
       });
       rescheduled += 1;
     }
-    const executing = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'executing'))
-      .take(SWEEP_BATCH);
-    for (const row of executing) {
-      if (isRevocationTrialRow(row) || !row.executionRunId || row.pendingRunId ||
+    for (const row of await ready('executing')) {
+      if (!row.executionRunId || row.pendingRunId ||
           row.applyAttemptId || row.applyClaimedAt || row.applyPhase) continue;
       const claim = await ctx.db.get(row.executionRunId);
       if (!claim || now - claim.createdAt < EXECUTION_STALL_MS) continue;

@@ -303,6 +303,34 @@ describe('the stalled-step sweep', (): void => {
     expect(states).toEqual({ stuck: 'failed', live: 'executing', applying: 'executing' });
   });
 
+  it('wakes ordinary work behind retained revocation trials', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness, false);
+    const now = Date.now();
+    const ordinary = await harness.run(async (ctx) => {
+      for (let index = 0; index < 100; index += 1) {
+        await ctx.db.insert('workItems', {
+          ...row(agentId, `EVAL-rev-scope-${String(index).padStart(2, '0')}`, now),
+          state: 'discovered',
+        });
+      }
+      return await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-49', now),
+        state: 'discovered',
+        verdict: { decision: 'queue' },
+      });
+    });
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledSteps(harness)).toContainEqual([
+      'workActions:evaluateWorkItemInternal',
+      ordinary,
+    ]);
+  });
+
   it('does nothing in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     vi.useFakeTimers();
