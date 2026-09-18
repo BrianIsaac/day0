@@ -15,6 +15,7 @@ import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownersh
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
 import {
   claimLoopStepInTransaction,
+  EXECUTION_STALL_MS,
   OPEN_WORK_STATES,
   openSlotCount,
   resumeStalledStepsInTransaction,
@@ -1941,11 +1942,18 @@ export const setFailed = internalMutation({
      * it has no gate and no manager loop for a stop to mean anything to.
      */
     stopped: v.optional(v.boolean()),
+    onlyIfStalled: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (args.runId && row.executionRunId !== args.runId) return;
+    if (args.onlyIfStalled) {
+      if (row.state !== 'executing' || !args.runId || row.pendingRunId ||
+          row.applyAttemptId || row.applyClaimedAt || row.applyPhase) return;
+      const claim = await ctx.db.get(args.runId);
+      if (!claim || Date.now() - claim.createdAt < EXECUTION_STALL_MS) return;
+    }
     // A row that already reached an end state keeps it. Nothing legitimately
     // fails a completed run, and a losing caller must not add a second failure
     // record for a failure the winner already wrote.

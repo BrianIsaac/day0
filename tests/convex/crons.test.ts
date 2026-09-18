@@ -232,6 +232,77 @@ describe('the stalled-step sweep', (): void => {
     ]);
   });
 
+  it('recovers a killed execution without touching a live run or gate apply', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness, false);
+    const now = Date.now();
+    const ids = await harness.run(async (ctx) => {
+      const oldRun = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: {},
+        createdAt: now - LEASE_MS - 3 * 60_000,
+      });
+      const liveRun = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: {},
+        createdAt: now - 60_000,
+      });
+      return {
+        oldRun,
+        liveRun,
+        stuck: await ctx.db.insert('workItems', {
+          ...row(agentId, 'REVOPS-46', now),
+          state: 'executing',
+          plan: PLAN,
+          executionRunId: oldRun,
+        }),
+        live: await ctx.db.insert('workItems', {
+          ...row(agentId, 'REVOPS-47', now),
+          state: 'executing',
+          plan: PLAN,
+          executionRunId: liveRun,
+        }),
+        applying: await ctx.db.insert('workItems', {
+          ...row(agentId, 'REVOPS-48', now),
+          state: 'executing',
+          plan: PLAN,
+          executionRunId: oldRun,
+          pendingRunId: oldRun,
+        }),
+      };
+    });
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledSteps(harness)).toEqual([
+      ['work:setFailed', ids.stuck],
+    ]);
+    await harness.mutation(internal.work.setFailed, {
+      workItemId: ids.live,
+      runId: ids.liveRun,
+      reason: 'execution interrupted before the exact-action gate',
+      stopped: true,
+      onlyIfStalled: true,
+    });
+    await harness.mutation(internal.work.setFailed, {
+      workItemId: ids.stuck,
+      runId: ids.oldRun,
+      reason: 'execution interrupted before the exact-action gate',
+      stopped: true,
+      onlyIfStalled: true,
+    });
+    const states = await harness.run(async (ctx) => ({
+      stuck: (await ctx.db.get(ids.stuck))?.state,
+      live: (await ctx.db.get(ids.live))?.state,
+      applying: (await ctx.db.get(ids.applying))?.state,
+    }));
+    expect(states).toEqual({ stuck: 'failed', live: 'executing', applying: 'executing' });
+  });
+
   it('does nothing in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     vi.useFakeTimers();

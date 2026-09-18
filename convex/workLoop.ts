@@ -30,6 +30,7 @@ import { AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT } from '../src/work/types';
  * authoring lease (`src/lib/skill-authoring.ts`) is the precedent.
  */
 export const STEP_LEASE_MS = 10 * 60 * 1000;
+export const EXECUTION_STALL_MS = STEP_LEASE_MS + 2 * 60 * 1000;
 
 /** A step the loop claims on the row before spending a model call on it. */
 export type LoopStep = 'evaluation' | 'draft';
@@ -340,6 +341,24 @@ export async function resumeStalledStepsInTransaction(
       await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
         workItemId: row._id,
         recovery: true,
+      });
+      rescheduled += 1;
+    }
+    const executing = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'executing'))
+      .take(SWEEP_BATCH);
+    for (const row of executing) {
+      if (isRevocationTrialRow(row) || !row.executionRunId || row.pendingRunId ||
+          row.applyAttemptId || row.applyClaimedAt || row.applyPhase) continue;
+      const claim = await ctx.db.get(row.executionRunId);
+      if (!claim || now - claim.createdAt < EXECUTION_STALL_MS) continue;
+      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
+        workItemId: row._id,
+        runId: row.executionRunId,
+        reason: 'execution interrupted before the exact-action gate',
+        stopped: true,
+        onlyIfStalled: true,
       });
       rescheduled += 1;
     }
