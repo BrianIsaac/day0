@@ -1,8 +1,11 @@
 /** @vitest-environment node */
 
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   AUTHOR_SYSTEM,
+  authorSchema,
   buildAuthorPrompt,
   verifyAuthoredSkill,
 } from '../../convex/skillActions';
@@ -437,6 +440,18 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain('Correct that failure in this attempt; do not repeat the rejected output.');
     expect(prompt).not.toContain('Refused SKILL.md');
     expect(prompt).not.toContain('--- Required correction ---');
+  });
+
+  // The hosted demo and the frozen evaluation author skills in mock mode, so
+  // the author's instructions and the schema it answers in are byte-for-byte
+  // what they were when those runs were recorded.
+  it('keeps the mock author system prompt byte-identical', (): void => {
+    expect(createHash('sha256').update(AUTHOR_SYSTEM).digest('hex')).toMatchInlineSnapshot(`"18ef5587bdadf6bac04c6dde98ac05c08025f135ff46caf6297f2fa34ad3ba20"`);
+  });
+
+  it('keeps the mock author schema byte-identical', (): void => {
+    const schema = JSON.stringify(z.toJSONSchema(authorSchema));
+    expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(`"5e9fdc6c1f59fcee97c4b1504d62e838f1042c27436ff368467881945ca43a22"`);
   });
 
   it('tells the next authoring attempt why the prior smoke source was rejected', (): void => {
