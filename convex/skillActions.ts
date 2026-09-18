@@ -517,6 +517,31 @@ async function redactAuthoredDraft(
   agentId: Id<'agents'>,
   draft: { body: string; smokeTest: string },
 ): Promise<{ body: string; smokeTest: string }> {
+  const [body, smokeTest] = await redactAuthoringTexts(ctx, agentId, [draft.body, draft.smokeTest]);
+  return { body: body!, smokeTest: smokeTest! };
+}
+
+/**
+ * Authoring output made safe to keep: a draft, or what the sandbox printed.
+ *
+ * The outcome redactor, as a provider outcome gets: the owner's stored values
+ * exactly and the span model in real mode, the structural grammar in both. A
+ * smoke test's cases are the author's inventions and its traceback quotes its
+ * source, so a verification log is model output as much as a draft is.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The employee whose owner's stored values are removed exactly.
+ *   texts: The texts to redact.
+ *
+ * Returns:
+ *   The redacted texts, in the order given.
+ */
+async function redactAuthoringTexts(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  texts: readonly string[],
+): Promise<string[]> {
   let known: readonly string[] = [];
   let model = undefined;
   if (SURFACE_MODE === 'real') {
@@ -524,12 +549,19 @@ async function redactAuthoredDraft(
     if (agent?.userId) known = await ownerKnownValues(ctx, agent.userId);
     model = spanModelFromEnv();
   }
-  const [body, smokeTest] = await Promise.all([
-    redactOutcome(draft.body, '', model, known),
-    redactOutcome(draft.smokeTest, '', model, known),
-  ]);
-  return { body: body.text, smokeTest: smokeTest.text };
+  const redacted = await Promise.all(
+    texts.map((text: string): Promise<{ text: string }> => redactOutcome(text, '', model, known)),
+  );
+  return redacted.map((outcome): string => outcome.text);
 }
+
+/**
+ * How much of a failed verification the row keeps in real mode. Enough for the
+ * harness's reason and the author's frames of a traceback, which is what a
+ * first-try failure is diagnosed from; bounded because the retry prompt
+ * carries it back beside the refused draft.
+ */
+const FAILED_VERIFICATION_LOG_CHARS = 2_000;
 
 export const authorAndRegisterSkill = action({
   args: { skillId: v.id('skills') },
@@ -650,6 +682,7 @@ export const authorAndRegisterSkill = action({
     let verificationLog = '(no sandbox available)';
     let skipReason: string | null = null;
     let verificationFailure: string | null = null;
+    let failedVerificationLog = '';
     // Named in every message below, because "verification failed" means
     // different things to a boss depending on which sandbox said so.
     let backend = 'the sandbox';
@@ -716,6 +749,7 @@ export const authorAndRegisterSkill = action({
         verificationLog = `ran in ${backend} (${sandboxId})\n\nstdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
         if (!result.ok) {
           verificationFailure = result.failureReason ?? 'sandbox verification failed';
+          failedVerificationLog = `stderr:\n${result.stderr.trim()}\n\nstdout:\n${result.stdout.trim()}`;
         }
       }
     } catch (err) {
@@ -732,10 +766,27 @@ export const authorAndRegisterSkill = action({
     // Recorded outside the try: a failure while recording a failure must not be
     // reported as the sandbox throwing.
     if (verificationFailure) {
+      // Mock mode records what the recorded runs recorded. Real mode keeps the
+      // attempt whole: the draft through the refused-draft path, so the row
+      // can be read and exported and the retry corrects it, and the log with
+      // stderr first, because the harness's reason and the traceback are
+      // there and 400 characters of stdout used to push them off the row.
+      if (SURFACE_MODE !== 'real') {
+        return await recordAuthoringFailure(ctx, args.skillId, runId, {
+          rowReason: noted(`verification in ${backend} failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`),
+          reason: `skill authored but verification failed - ${verificationFailure}`,
+          eventType: 'skill.verification-failed',
+        });
+      }
+      const [failedLog] = await redactAuthoringTexts(ctx, skill.agentId, [failedVerificationLog]);
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: noted(`verification in ${backend} failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`),
+        rowReason: noted(
+          `verification in ${backend} (${sandboxId}) failed - ${verificationFailure}\n\n` +
+            clipRefusedDraft(failedLog!.trim(), FAILED_VERIFICATION_LOG_CHARS),
+        ),
         reason: `skill authored but verification failed - ${verificationFailure}`,
         eventType: 'skill.verification-failed',
+        refusedDraft: await keepRefusedDraft(ctx, skill.agentId, { body, smokeTest }),
       });
     }
 
@@ -758,11 +809,12 @@ export const authorAndRegisterSkill = action({
     // requeue of the work item that asked for the skill either all land or none
     // of them do. Anything that fails here leaves the row in a state the skills
     // panel lists and the next claim accepts.
+    const [registeredLog] = await redactAuthoringTexts(ctx, skill.agentId, [noted(verificationLog)]);
     const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
       skillId: args.skillId,
       runId,
       body,
-      verificationLog: noted(verificationLog),
+      verificationLog: registeredLog!,
     });
     if (!registered) return { ok: false, reason: SUPERSEDED };
 
