@@ -480,6 +480,15 @@ export default defineSchema({
     reevaluation: v.optional(
       v.object({ trigger: v.string(), key: v.string(), at: v.number() }),
     ),
+    /**
+     * Real mode: when an evaluation of this row started. A second evaluation
+     * arriving while the claim is live returns at once, so two wake-ups cost
+     * one model call; the verdict releases the claim, and a step that died
+     * leaves it to lapse after `STEP_LEASE_MS` for the stalled-step sweep.
+     */
+    evaluationClaimedAt: v.optional(v.number()),
+    /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
+    draftClaimedAt: v.optional(v.number()),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),

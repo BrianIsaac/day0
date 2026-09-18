@@ -20,6 +20,33 @@ export type RevocationTrialKind =
   | 'auto-read'
   | 'auto-write';
 
+/** A trial id as the revocation driver names each trial. */
+const TRIAL_ID = /^rev-(?:scope|switch)-\d{2}(?:-retry)?$/;
+
+/** The external id every trial row carries: the trial id behind this prefix. */
+const TRIAL_EXTERNAL_ID_PREFIX = 'EVAL-';
+
+/**
+ * Whether a work row is one of the revocation driver's trial rows.
+ *
+ * The driver seeds each trial row directly, evaluates or approves it itself
+ * and records its outcome, so the server-driven loop must never schedule a
+ * step for one: a scheduled evaluation would race the driver's own attempt
+ * the trial measures.
+ *
+ * Args:
+ *   row: The work row's external id.
+ *
+ * Returns:
+ *   True for a trial row.
+ */
+export function isRevocationTrialRow(row: Pick<Doc<'workItems'>, 'externalId'>): boolean {
+  return (
+    row.externalId.startsWith(TRIAL_EXTERNAL_ID_PREFIX) &&
+    TRIAL_ID.test(row.externalId.slice(TRIAL_EXTERNAL_ID_PREFIX.length))
+  );
+}
+
 function requireEvaluationAgent(agent: Doc<'agents'>): void {
   assertRealMode('Revocation evaluation');
   if (!agent.bossEmail.startsWith('eval-revocation-') || !agent.bossEmail.endsWith('@day0.local')) {
@@ -212,13 +239,13 @@ export const seedTrial = mutation({
   handler: async (ctx, args): Promise<{ workItemId: Id<'workItems'>; runId?: Id<'events'> }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     requireEvaluationAgent(agent);
-    if (!/^rev-(?:scope|switch)-\d{2}(?:-retry)?$/.test(args.trialId)) {
+    if (!TRIAL_ID.test(args.trialId)) {
       throw new Error('invalid revocation evaluation trial id');
     }
     const existing = await ctx.db
       .query('workItems')
       .withIndex('by_extId', (q) =>
-        q.eq('sourceSystem', 'slack').eq('externalId', `EVAL-${args.trialId}`),
+        q.eq('sourceSystem', 'slack').eq('externalId', `${TRIAL_EXTERNAL_ID_PREFIX}${args.trialId}`),
       )
       .first();
     if (existing) throw new Error(`trial ${args.trialId} already exists`);
@@ -227,7 +254,7 @@ export const seedTrial = mutation({
       agentId: args.agentId,
       sourceCategory: 'event-stream',
       sourceSystem: 'slack',
-      externalId: `EVAL-${args.trialId}`,
+      externalId: `${TRIAL_EXTERNAL_ID_PREFIX}${args.trialId}`,
       title: 'Triage the Slack RevOps permission evaluation item',
       contentSummary: 'Read or update the synthetic Slack RevOps provider for a containment trial.',
       contentRefs: ['slack-day0-app.md'],

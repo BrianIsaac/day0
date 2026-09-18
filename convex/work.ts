@@ -7,11 +7,20 @@ import {
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
+import {
+  claimLoopStepInTransaction,
+  OPEN_WORK_STATES,
+  openSlotCount,
+  resumeStalledStepsInTransaction,
+  scheduleNextStep,
+  type StepClaim,
+} from './workLoop';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,
@@ -299,6 +308,12 @@ export async function seedItemInTransaction(
     payload: { workItemId: id, title: args.title },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, {
+    _id: id,
+    agentId: args.agentId,
+    state: 'discovered',
+    externalId: args.externalId,
+  });
   return id;
 }
 
@@ -451,6 +466,7 @@ export async function reevaluatePendingInTransaction(
         },
         createdAt: now,
       });
+      await scheduleNextStep(ctx, { ...row, state: 'discovered', verdict: undefined });
       readmitted += 1;
     }
     if (rows.length === REEVALUATION_BATCH) {
@@ -531,24 +547,7 @@ export async function applyVerdict(
     if (!agent) throw new Error('agent not found');
     const autonomous = autonomousActionsOn(agent);
     const wipCap = autonomous ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT;
-    const openStates = [
-      'claimed',
-      'plan-pending',
-      'plan-approved',
-      'executing',
-      'actions-pending',
-    ] as const;
-    let openClaims = 0;
-    for (const state of openStates) {
-      const remaining = wipCap - openClaims;
-      if (remaining <= 0) break;
-      openClaims += (
-        await ctx.db
-          .query('workItems')
-          .withIndex('by_agent_state', (q) => q.eq('agentId', row.agentId).eq('state', state))
-          .take(remaining)
-      ).length;
-    }
+    const openClaims = await openSlotCount(ctx, row.agentId, wipCap);
     if (openClaims >= wipCap) {
       const posture = autonomous ? 'autonomous concurrency' : 'supervised cold-start';
       effective = {
@@ -573,6 +572,9 @@ export async function applyVerdict(
     verdict: effective,
     state: nextState,
     ...(skipReason ? { skipReason } : {}),
+    // The verdict ends the evaluation step; a row queued at the cap must be
+    // evaluable again the moment a slot frees.
+    ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
   });
   await ctx.db.insert('events', {
     agentId: row.agentId,
@@ -580,6 +582,7 @@ export async function applyVerdict(
     payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
 
@@ -639,7 +642,11 @@ export const setPlan = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'claimed') return { stored: false };
-    await ctx.db.patch(args.workItemId, { plan: args.plan, state: 'plan-pending' });
+    await ctx.db.patch(args.workItemId, {
+      plan: args.plan,
+      state: 'plan-pending',
+      ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
+    });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.plan-drafted',
@@ -1391,11 +1398,9 @@ async function approvePlanInTransaction(
     },
     createdAt: Date.now(),
   });
-  if (via === 'channel') {
-    await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-      workItemId: row._id,
-    });
-  }
+  // Whichever way the manager approved, the server runs the plan; the page no
+  // longer has to be open for it.
+  await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
 }
 
 export const approvePlan = mutation({
@@ -1510,6 +1515,9 @@ export const retryFailed = mutation({
       ...(feedback
         ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
         : {}),
+      // A retry starts every step afresh; no claim from an earlier attempt holds it back.
+      ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
+      ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1523,6 +1531,7 @@ export const retryFailed = mutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: next });
     return { ok: true, resumeState: next };
   },
 });
@@ -1594,6 +1603,7 @@ async function cancelPlanInTransaction(
     payload: { workItemId: row._id, reason: skipReason, decidedVia: via },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, { ...row, state: 'cancelled' });
 }
 
 /**
@@ -1616,6 +1626,29 @@ export const cancelPlan = mutation({
     await cancelPlanInTransaction(ctx, row, 'dashboard', args.reason ?? '');
     return { ok: true };
   },
+});
+
+/**
+ * Claim the evaluation or the draft of one row for the run about to make its
+ * model call, in real mode; see `claimLoopStepInTransaction`.
+ */
+export const claimLoopStep = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    step: v.union(v.literal('evaluation'), v.literal('draft')),
+  },
+  handler: async (ctx, args): Promise<StepClaim> =>
+    await claimLoopStepInTransaction(ctx, args.workItemId, args.step, Date.now()),
+});
+
+/**
+ * The stalled-step sweep, run with the five-minute intake poll; see
+ * `resumeStalledStepsInTransaction`. Real mode only.
+ */
+export const resumeStalledSteps = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ rescheduled: number }> =>
+    await resumeStalledStepsInTransaction(ctx, Date.now()),
 });
 
 /**
@@ -1876,6 +1909,7 @@ export const setCompleted = internalMutation({
       payload: { workItemId: args.workItemId, output: args.output },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: 'completed' });
     const surfaces = (
       await ctx.db
         .query('surfaces')
@@ -1949,6 +1983,7 @@ export const setFailed = internalMutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: 'failed' });
     if (args.stopped === false) return;
     if (stopped) {
       await queueManagerNote(ctx, row, 'stopped', (agentName) =>
@@ -2742,6 +2777,7 @@ async function rejectActionsInTransaction(
     payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, { ...row, state: 'failed' });
   return { ok: true };
 }
 
@@ -3102,6 +3138,7 @@ export const recoverInterruptedApply = internalMutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: 'failed' });
     return { recovered: 'outcome-unknown' };
   },
 });
@@ -3114,49 +3151,62 @@ export const setProposedSkill = internalMutation({
   },
 });
 
+const OPEN_CLAIM_STATES = new Set<string>(OPEN_WORK_STATES);
+
+async function countOpenForAgentImpl(ctx: QueryCtx, agentId: Id<'agents'>): Promise<number> {
+  const open = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
+    .collect();
+  return open.filter((w) => OPEN_CLAIM_STATES.has(w.state)).length;
+}
+
+async function findExistingClaimImpl(
+  ctx: QueryCtx,
+  args: { agentId: Id<'agents'>; sourceSystem: string; externalId: string },
+): Promise<{ state: Doc<'workItems'>['state'] } | null> {
+  const row = await ctx.db
+    .query('workItems')
+    .withIndex('by_extId', (q) =>
+      q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
+    )
+    .filter((q) => q.eq(q.field('agentId'), args.agentId))
+    .first();
+  if (!row) return null;
+  if (!OPEN_CLAIM_STATES.has(row.state)) return null;
+  return { state: row.state };
+}
+
 export const countOpenForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<number> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const open = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
-      .collect();
-    const openStates = new Set([
-      'claimed',
-      'plan-pending',
-      'plan-approved',
-      'executing',
-      'actions-pending',
-    ]);
-    return open.filter((w) => openStates.has(w.state)).length;
+    return await countOpenForAgentImpl(ctx, args.agentId);
   },
 });
 
+/** The same count for a scheduled work-loop step, which has no caller to check. */
+export const countOpenForAgentInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<number> => await countOpenForAgentImpl(ctx, args.agentId),
+});
+
+const existingClaimArgs = {
+  agentId: v.id('agents'),
+  sourceSystem: v.string(),
+  externalId: v.string(),
+};
+
 export const findExistingClaim = query({
-  args: {
-    agentId: v.id('agents'),
-    sourceSystem: v.string(),
-    externalId: v.string(),
-  },
+  args: existingClaimArgs,
   handler: async (ctx, args) => {
     await assertOwnsAgent(ctx, args.agentId);
-    const row = await ctx.db
-      .query('workItems')
-      .withIndex('by_extId', (q) =>
-        q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
-      )
-      .filter((q) => q.eq(q.field('agentId'), args.agentId))
-      .first();
-    if (!row) return null;
-    const claimedStates = [
-      'claimed',
-      'plan-pending',
-      'plan-approved',
-      'executing',
-      'actions-pending',
-    ];
-    if (!claimedStates.includes(row.state)) return null;
-    return { state: row.state };
+    return await findExistingClaimImpl(ctx, args);
   },
+});
+
+/** The same lookup for a scheduled work-loop step, which has no caller to check. */
+export const findExistingClaimInternal = internalQuery({
+  args: existingClaimArgs,
+  handler: async (ctx, args) => await findExistingClaimImpl(ctx, args),
 });

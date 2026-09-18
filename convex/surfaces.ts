@@ -19,6 +19,7 @@ import {
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
 import { reevaluatePendingInTransaction } from './work';
+import { scheduleNextStep } from './workLoop';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -1048,7 +1049,8 @@ export const demoteAfterProbeFailure = internalMutation({
  * Evaluation defers a candidate whose provider is not connected, or whose
  * read grant is missing, and nothing re-evaluates a deferred row on its
  * own. When the surface connects, and the grant lands with it, those rows go
- * back to `discovered` so the dashboard's queue evaluates them again.
+ * back to `discovered` to be evaluated again: by the server in real mode,
+ * by the dashboard's queue in mock mode.
  *
  * Args:
  *   ctx: Mutation context of the connecting write.
@@ -1093,6 +1095,7 @@ async function requeueDeferredWork(
       },
       createdAt: now,
     });
+    await scheduleNextStep(ctx, { ...item, state: 'discovered', verdict: undefined });
     requeued.push(item._id);
   }
   return requeued;
