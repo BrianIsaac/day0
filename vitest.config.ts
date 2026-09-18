@@ -19,6 +19,9 @@ export default defineConfig({
           name: 'convex',
           include: ['tests/convex/**/*.test.ts'],
           environment: 'edge-runtime',
+          // The first test of a file loads every Convex module; on a machine
+          // running several gates at once that alone has passed five seconds.
+          testTimeout: 20_000,
         },
       },
       {
@@ -46,6 +49,8 @@ export default defineConfig({
             'evaluation/gate/**/*.test.ts',
           ],
           environment: 'node',
+          // The script tests spawn processes, which a loaded machine starts slowly.
+          testTimeout: 20_000,
         },
       },
     ],
