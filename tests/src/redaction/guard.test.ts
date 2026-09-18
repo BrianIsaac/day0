@@ -304,4 +304,21 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     expect(guardSecretSpan(dotText, spanOf(dotText, 'Winter'), 'access token'))
       .toEqual(spanOf(dotText, dotted));
   });
+
+  it('keeps long opaque camelCase and snake_case secret values without a label', (): void => {
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+    const letters = (offset: number, count: number): string =>
+      Array.from({ length: count }, (_, index) => alphabet[(offset + index * 7) % alphabet.length]).join('');
+    const camel = [letters(0, 7), letters(1, 6), letters(2, 6), letters(3, 6), letters(4, 6)]
+      .map((part, index) => index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`).join('');
+    const snake = [letters(5, 14), letters(9, 14)].join('_');
+    for (const value of [camel, snake]) {
+      const text = `Use ${value} for the integration.`;
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token')).toEqual(spanOf(text, value));
+    }
+    for (const name of ['postMessage', 'save_comment', 'listOriginalConnectedChannelInfo']) {
+      const text = `Call ${name} for the workflow.`;
+      expect(guardSecretSpan(text, spanOf(text, name), 'access token')).toBeUndefined();
+    }
+  });
 });

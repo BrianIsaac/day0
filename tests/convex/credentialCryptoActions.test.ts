@@ -252,3 +252,38 @@ it('keeps explicitly assigned name-shaped tokens in owner-wide removal after pag
     expect(result.markdown.includes(value)).toBe(false);
   }
 });
+
+it('stores long opaque name-spelled credentials and removes them from another page', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
+    userId: 'owner', label: 'Access', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+  }));
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+  const letters = (offset: number, count: number): string =>
+    Array.from({ length: count }, (_, index) => alphabet[(offset + index * 7) % alphabet.length]).join('');
+  const values = [
+    [letters(0, 7), letters(1, 6), letters(2, 6), letters(3, 6), letters(4, 6)]
+      .map((part, index) => index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`).join(''),
+    [letters(5, 14), letters(9, 14)].join('_'),
+  ];
+  for (const [index, value] of values.entries()) {
+    const text = `Use ${value} for the integration.`;
+    const model = new ScriptedSpanModel((body) => {
+      const start = body.indexOf(value);
+      return start < 0 ? [] : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
+    });
+    const extracted = await redactCredentials(text, 'Access', { model });
+    expect(extracted.credentials.map((row) => row.plaintext)).toEqual([value]);
+    await harness.action(internal.credentials.store, {
+      userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: `opaque-${index}.md` },
+    });
+  }
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  for (const value of values) {
+    expect(known.includes(value)).toBe(true);
+    const repeated = await redactCredentials(`Repeated: ${value}`, 'Other page', {
+      model: new ScriptedSpanModel(() => []), known,
+    });
+    expect(repeated.markdown.includes(value)).toBe(false);
+  }
+});

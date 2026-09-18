@@ -37,18 +37,21 @@ const CHANNEL_REFERENCE = /^#[a-z0-9][a-z0-9_-]{0,79}$/;
  */
 const DOTTED_IDENTIFIER = /^[A-Za-z_]+(?:\.(?:[A-Za-z_]+|v\d+))+$/;
 
+function characterEntropy(value: string): number {
+  const counts = new Map<string, number>();
+  for (const character of value) counts.set(character, (counts.get(character) ?? 0) + 1);
+  return [...counts.values()].reduce((sum, count) => {
+    const probability = count / value.length;
+    return sum - probability * Math.log2(probability);
+  }, 0);
+}
+
 /** Scope segments are names; long, varied opaque segments can still be secrets. */
 function isPermissionScope(value: string): boolean {
   if (!PERMISSION_SCOPE.test(value)) return false;
   return value.split(/[:_.-]/).every((part) => {
     if (part.length < 16) return true;
-    const counts = new Map<string, number>();
-    for (const character of part) counts.set(character, (counts.get(character) ?? 0) + 1);
-    const entropy = [...counts.values()].reduce((sum, count) => {
-      const probability = count / part.length;
-      return sum - probability * Math.log2(probability);
-    }, 0);
-    return entropy < 3.5;
+    return characterEntropy(part) < 3.5;
   });
 }
 
@@ -142,6 +145,10 @@ const LABEL_THEN_VALUE =
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
 /** A word of a runbook or of code: lowercase, Capitalised, snake_case or camelCase letters, no digit. */
 const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+)$/;
+/** Long alphabetic values with enough character variety are plausible opaque credentials. */
+function opaqueRunbookWord(value: string): boolean {
+  return value.length >= 24 && characterEntropy(value) >= 4;
+}
 /**
  * A word that names a credential, on its own or as the tail of a longer name
  * (`LOOKER_PASSWORD`, `X-Auth-Token`, `secret key`, `GH_PAT`).
@@ -271,7 +278,8 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   // Tool names and prose are not credentials merely because a detector
   // labels them as such. Explicit assignments still protect weak passwords.
   const wholeWord = !/[A-Za-z0-9_]$/.test(before) && !/^[A-Za-z0-9_]/.test(text.slice(end));
-  if (wholeWord && RUNBOOK_WORD.test(value) && !SECRET_ASSIGNMENT.test(before) && !inCredentialColumn(text, start, end)) {
+  if (wholeWord && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value) &&
+    !SECRET_ASSIGNMENT.test(before) && !inCredentialColumn(text, start, end)) {
     return undefined;
   }
   if (NEVER_REDACT.has(value)) return undefined;
