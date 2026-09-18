@@ -742,6 +742,7 @@ async function seedParked(
       | 'skipReason'
       | 'managerFeedback'
       | 'providerReconciliation'
+      | 'pendingRunId'
     >
   >,
 ): Promise<Id<'workItems'>> {
@@ -1111,17 +1112,26 @@ describe('the employee roster', (): void => {
     });
     expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
 
-    // Rejected by the manager: Retry is offered, but the last decision was theirs, so nothing waits on them.
-    await seedParked(harness, aiko, 'LOG-rejected', 'failed', {
-      plan,
-      skipReason: 'rejected by the manager: not this quarter',
-      managerFeedback: { reason: 'not this quarter', at: 1, kind: 'rejection' },
-    });
-    expect((await counts()).Aiko).toEqual([0, 0, 3, 2]);
+    // Rejected by the manager, through the mutation the dashboard calls: the held set waited on
+    // them, the rejected row keeps its Retry but waits on nobody, since the last decision was theirs.
+    const owner = harness.withIdentity({ subject: 'owner' });
+    for (const [index, [externalId, reason]] of [['LOG-rejected', 'not this quarter'], ['LOG-rejected-bare', '']].entries()) {
+      const pendingRunId = await harness.run(
+        async (ctx) => await ctx.db.insert('events', { agentId: aiko, type: 'work.run', payload: {}, createdAt: 1 }),
+      );
+      const workItemId = await seedParked(harness, aiko, externalId, 'actions-pending', {
+        plan,
+        output: { actions: [comment] },
+        pendingRunId,
+      });
+      expect((await counts()).Aiko).toEqual([1, 0, 2 + index, 3]);
+      await owner.mutation(api.work.rejectActions, { workItemId, pendingRunId, reason });
+    }
+    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
 
     // A cancelled plan, a skip and finished work are not stopped rows.
     await seedParked(harness, aiko, 'LOG-cancelled', 'cancelled', { plan, skipReason: 'plan cancelled by the manager' });
-    expect((await counts()).Aiko).toEqual([0, 0, 3, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
   });
 
   it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {

@@ -235,7 +235,9 @@ function parkedRowNeedsManager(
  * landed it asks for the provider reconciliation first, which is also the
  * manager's. The one row with neither is an interrupted apply whose ledger
  * names nothing to verify: the confirmation and Retry are both disabled and
- * `work.reconcileFailed` refuses, so nothing the manager does moves it.
+ * `work.reconcileFailed` refuses, so nothing the manager does moves it. A
+ * recorded reconciliation needs no reading: it is only ever recorded against
+ * a ledger that names entries.
  *
  * Args:
  *   row: The failed row.
@@ -244,7 +246,6 @@ function parkedRowNeedsManager(
  *   True when Retry is open, or the reconciliation that opens it is.
  */
 function stoppedRowOffersMove(row: Doc<'workItems'>): boolean {
-  if (row.providerReconciliation) return true;
   if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) return true;
   return providerReconciliationEntries(row.output).length > 0;
 }
