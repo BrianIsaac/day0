@@ -203,10 +203,47 @@ async function seedEmployee(
   });
 }
 
+/** Seed one Linear ticket the way the intake sweep does. */
+async function seedTicket(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  externalId: string,
+): Promise<Id<'workItems'>> {
+  return await harness.mutation(internal.work.seedItem, {
+    agentId,
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId,
+    title: `Triage the Linear close summary ${externalId}`,
+    contentSummary: 'Triage this Linear close summary revenue operations hand-off.',
+    contentRefs: [`ticket://${externalId}`],
+    priority: 'High',
+  });
+}
+
+/** Run every job the scheduler holds that is due now, and every job those schedule. */
+async function drain(harness: Harness): Promise<void> {
+  await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+}
+
 async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
   const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
   if (!row) throw new Error('work item missing');
   return row;
+}
+
+async function eventsOf(harness: Harness, type: string): Promise<Doc<'events'>[]> {
+  return (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+    (event) => event.type === type,
+  );
+}
+
+async function scheduledNames(harness: Harness): Promise<string[]> {
+  return (
+    await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+  )
+    .map((row) => row.name)
+    .sort();
 }
 
 /** Insert a discovered ticket directly, so nothing is scheduled for it. */
@@ -314,6 +351,7 @@ describe('the server-side steps', (): void => {
 
   it('claims nothing when the dashboard drives the loop in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
+    vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
     const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-14');
@@ -327,6 +365,176 @@ describe('the server-side steps', (): void => {
     await harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-pending');
+    expect(row).not.toHaveProperty('draftClaimedAt');
+  });
+});
+
+describe('the server drives the work loop in real mode', (): void => {
+  it('takes an intake-seeded row to a drafted plan and a decision request with no client call', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-21');
+    await drain(harness);
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-pending');
+    expect(row.plan).toMatchObject({ summary: 'Tell the manager the close summary is ready.' });
+    expect(row.decision).toMatchObject({ kind: 'plan', ts: '1789000000.000100' });
+    expect(recorded.scopeCalls).toHaveLength(1);
+    expect(recorded.planCalls).toEqual(['Triage the Linear close summary REVOPS-21']);
+    expect(recorded.skillRuns).toEqual([]);
+    expect(
+      recorded.http.filter((call) => call.url.endsWith('/chat.postMessage')).map((call) => call.body),
+    ).toEqual([expect.objectContaining({ channel: 'D0MANAGER' })]);
+  });
+
+  it('executes a plan approved from the dashboard with no client call', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-22');
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await drain(harness);
+
+    expect(recorded.skillRuns).toEqual(['Triage the Linear close summary REVOPS-22']);
+    expect(await eventsOf(harness, 'work.execution-claimed')).toHaveLength(1);
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(await eventsOf(harness, 'work.completed')).toHaveLength(1);
+  });
+
+  it('holds the second row at the supervised cap until the first completes, then evaluates it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const first = await seedTicket(harness, agentId, 'REVOPS-23');
+    await drain(harness);
+    const second = await seedTicket(harness, agentId, 'REVOPS-24');
+    await drain(harness);
+
+    expect((await readItem(harness, first)).state).toBe('plan-pending');
+    const queued = await readItem(harness, second);
+    expect(queued.state).toBe('discovered');
+    expect(queued.verdict).toMatchObject({ decision: 'queue' });
+    expect(recorded.planCalls).toEqual(['Triage the Linear close summary REVOPS-23']);
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId: first });
+    await drain(harness);
+
+    expect((await readItem(harness, first)).state).toBe('completed');
+    const resumed = await readItem(harness, second);
+    expect(resumed.state).toBe('plan-pending');
+    expect(recorded.planCalls).toEqual([
+      'Triage the Linear close summary REVOPS-23',
+      'Triage the Linear close summary REVOPS-24',
+    ]);
+  });
+
+  it('takes a retried failed row back to execution', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-25');
+    await drain(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason: 'stopped: the manager DM did not land',
+        output: { ...managerDm, applied: [{ tool: 'http.request', ok: false, reason: 'timeout' }] },
+      });
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: 'Send it again.' });
+    await drain(harness);
+
+    expect(recorded.skillRuns).toEqual(['Triage the Linear close summary REVOPS-25']);
+    expect(await eventsOf(harness, 'work.execution-claimed')).toHaveLength(1);
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+  });
+
+  it('spends one evaluation model call on a seed and a re-evaluation that arrive together', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    let release = (): void => {};
+    recorded.scopeGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-26');
+    vi.advanceTimersByTime(0);
+    await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(1));
+
+    const second = await harness.action(internal.workActions.evaluateWorkItemInternal, {
+      workItemId,
+    });
+    expect(second.decision).toMatch(/^noop/);
+    release();
+    await drain(harness);
+
+    expect(recorded.scopeCalls).toHaveLength(1);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+  });
+
+  it('schedules nothing for a revocation trial row', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness, { bossEmail: 'eval-revocation-01@day0.local' });
+
+    const { workItemId } = await harness
+      .withIdentity(OWNER)
+      .mutation(api.revocationEvaluation.seedTrial, {
+        agentId,
+        trialId: 'rev-scope-01',
+        kind: 'queued-read',
+      });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['slack:read'] },
+    });
+
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+    expect((await scheduledNames(harness)).filter((name) => name.startsWith('workActions:'))).toEqual(
+      [],
+    );
+  });
+
+  it('schedules nothing in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-27');
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
+    });
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: { summary: 'x', steps: ['x'], expectedOutputType: 'message', riskNotes: '', reversibility: 'r', estimatedMinutes: 1 },
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+    expect((await scheduledNames(harness)).filter((name) => name.startsWith('workActions:'))).toEqual(
+      [],
+    );
+    const row = await readItem(harness, workItemId);
+    expect(row).not.toHaveProperty('evaluationClaimedAt');
     expect(row).not.toHaveProperty('draftClaimedAt');
   });
 });

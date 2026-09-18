@@ -9,6 +9,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { applyVerdict, skillRejectedReason } from './work';
+import { scheduleNextStep } from './workLoop';
 import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
@@ -462,6 +463,7 @@ export const reject = mutation({
           state: 'cancelled',
           skipReason: skillRejectedReason(row.name),
         });
+        await scheduleNextStep(ctx, { ...sourceWork, state: 'cancelled' });
       }
     }
     await ctx.db.insert('events', {

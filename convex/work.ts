@@ -13,7 +13,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
-import { claimLoopStepInTransaction, type StepClaim } from './workLoop';
+import {
+  claimLoopStepInTransaction,
+  OPEN_WORK_STATES,
+  openSlotCount,
+  scheduleNextStep,
+  type StepClaim,
+} from './workLoop';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,
@@ -301,6 +307,12 @@ export async function seedItemInTransaction(
     payload: { workItemId: id, title: args.title },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, {
+    _id: id,
+    agentId: args.agentId,
+    state: 'discovered',
+    externalId: args.externalId,
+  });
   return id;
 }
 
@@ -453,6 +465,7 @@ export async function reevaluatePendingInTransaction(
         },
         createdAt: now,
       });
+      await scheduleNextStep(ctx, { ...row, state: 'discovered', verdict: undefined });
       readmitted += 1;
     }
     if (rows.length === REEVALUATION_BATCH) {
@@ -533,24 +546,7 @@ export async function applyVerdict(
     if (!agent) throw new Error('agent not found');
     const autonomous = autonomousActionsOn(agent);
     const wipCap = autonomous ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT;
-    const openStates = [
-      'claimed',
-      'plan-pending',
-      'plan-approved',
-      'executing',
-      'actions-pending',
-    ] as const;
-    let openClaims = 0;
-    for (const state of openStates) {
-      const remaining = wipCap - openClaims;
-      if (remaining <= 0) break;
-      openClaims += (
-        await ctx.db
-          .query('workItems')
-          .withIndex('by_agent_state', (q) => q.eq('agentId', row.agentId).eq('state', state))
-          .take(remaining)
-      ).length;
-    }
+    const openClaims = await openSlotCount(ctx, row.agentId, wipCap);
     if (openClaims >= wipCap) {
       const posture = autonomous ? 'autonomous concurrency' : 'supervised cold-start';
       effective = {
@@ -585,6 +581,7 @@ export async function applyVerdict(
     payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
 
@@ -1400,11 +1397,9 @@ async function approvePlanInTransaction(
     },
     createdAt: Date.now(),
   });
-  if (via === 'channel') {
-    await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
-      workItemId: row._id,
-    });
-  }
+  // Whichever way the manager approved, the server runs the plan; the page no
+  // longer has to be open for it.
+  await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
 }
 
 export const approvePlan = mutation({
@@ -1519,6 +1514,9 @@ export const retryFailed = mutation({
       ...(feedback
         ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
         : {}),
+      // A retry starts every step afresh; no claim from an earlier attempt holds it back.
+      ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
+      ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1532,6 +1530,7 @@ export const retryFailed = mutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: next });
     return { ok: true, resumeState: next };
   },
 });
@@ -1603,6 +1602,7 @@ async function cancelPlanInTransaction(
     payload: { workItemId: row._id, reason: skipReason, decidedVia: via },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, { ...row, state: 'cancelled' });
 }
 
 /**
@@ -1898,6 +1898,7 @@ export const setCompleted = internalMutation({
       payload: { workItemId: args.workItemId, output: args.output },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: 'completed' });
     const surfaces = (
       await ctx.db
         .query('surfaces')
@@ -1971,6 +1972,7 @@ export const setFailed = internalMutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: 'failed' });
     if (args.stopped === false) return;
     if (stopped) {
       await queueManagerNote(ctx, row, 'stopped', (agentName) =>
@@ -2764,6 +2766,7 @@ async function rejectActionsInTransaction(
     payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
     createdAt: Date.now(),
   });
+  await scheduleNextStep(ctx, { ...row, state: 'failed' });
   return { ok: true };
 }
 
@@ -3124,6 +3127,7 @@ export const recoverInterruptedApply = internalMutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleNextStep(ctx, { ...row, state: 'failed' });
     return { recovered: 'outcome-unknown' };
   },
 });
@@ -3136,13 +3140,7 @@ export const setProposedSkill = internalMutation({
   },
 });
 
-const OPEN_CLAIM_STATES = new Set([
-  'claimed',
-  'plan-pending',
-  'plan-approved',
-  'executing',
-  'actions-pending',
-]);
+const OPEN_CLAIM_STATES = new Set<string>(OPEN_WORK_STATES);
 
 async function countOpenForAgentImpl(ctx: QueryCtx, agentId: Id<'agents'>): Promise<number> {
   const open = await ctx.db

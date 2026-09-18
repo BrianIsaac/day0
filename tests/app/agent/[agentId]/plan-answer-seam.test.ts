@@ -57,6 +57,7 @@ const plan = {
 };
 
 afterEach((): void => {
+  vi.useRealTimers();
   restoreSurfaceMode();
   recorded.users.length = 0;
 });
@@ -123,6 +124,8 @@ describe('a question asked at the plan, answered with the approval', (): void =>
 
   it('accepts the approval answer after an amendment that does not touch the question', async () => {
     useSurfaceMode('real');
+    // The approval schedules the server's run of the plan; it is not what this test reads.
+    vi.useFakeTimers();
     const t = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(t);
     const owner = t.withIdentity(OWNER);
@@ -145,6 +148,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
 
   it('reads the merged record on the form and carries the answer to the executor prompt and the charter amendment', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, charterId } = await seed(harness);
     const owner = harness.withIdentity(OWNER);
@@ -203,7 +207,8 @@ describe('a question asked at the plan, answered with the approval', (): void =>
 
     // The charter's answer is an amendment: v0.1 supersedes v0.0, the question
     // has left the open list, the record points at the new version, and the
-    // re-evaluation of parked work is keyed on that version.
+    // re-evaluation of parked work is keyed on that version. The approval
+    // itself has the server run the plan, with no page open.
     const latest = await owner.query(api.charters.latest, { agentId });
     expect(latest).toMatchObject({ version: '0.1', approved: true, supersedes: charterId });
     const body = latest?.body as Charter;
@@ -223,6 +228,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     const jobs = await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect());
     expect(jobs.map((job) => ({ name: job.name, args: job.args }))).toEqual([
       { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: latest?._id }] },
+      { name: 'workActions:executeApprovedPlanInternal', args: [{ workItemId }] },
     ]);
 
     // Nothing is left to ask, and the running card lists what was answered.

@@ -313,6 +313,7 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     recorded.http.length = 0;
     recorded.model.length = 0;
     recorded.closingReply = undefined;
+    vi.useRealTimers();
     restoreSurfaceMode();
   });
 
@@ -341,6 +342,9 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
   });
 
   it('keeps a refused closing set on the row and resumes the retry at the closing phase, not at phase one', async (): Promise<void> => {
+    // The retry below also schedules the server's run of the plan; the test
+    // drives each phase itself, so the scheduler's jobs never fire.
+    vi.useFakeTimers();
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId, runId } = await seedAtClosing(t, REVOPS_7);
     // The closing phase leaves out the Done the plan promised and calls every step satisfied.
@@ -532,6 +536,7 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     recorded.model.length = 0;
     recorded.closingReply = undefined;
     recorded.initialReply = undefined;
+    vi.useRealTimers();
     restoreSurfaceMode();
   });
 
@@ -640,6 +645,9 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
   });
 
   it('stops at the closing gate when the audit comment is withheld: the Done goes with it, nothing reaches Linear, and the retry resumes at the closing phase', async (): Promise<void> => {
+    // The retry below also schedules the server's run of the plan; the test
+    // drives each phase itself, so the scheduler's jobs never fire.
+    vi.useFakeTimers();
     const t = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_7_RUN_4);
     await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
