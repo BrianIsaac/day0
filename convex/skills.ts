@@ -8,7 +8,7 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { applyVerdict, skillRejectedReason } from './work';
+import { applyVerdict, requeueBehindRegisteredSkill, skillRejectedReason } from './work';
 import { scheduleNextStep } from './workLoop';
 import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
@@ -211,48 +211,6 @@ async function requeueWaitingWork(
   for (const row of await waitingRows(ctx, skill, scope)) {
     await applyVerdict(ctx, row._id, verdict);
   }
-}
-
-/**
- * Re-queue a row whose `needs-skill` verdict names a skill that has registered.
- *
- * An evaluation reads the skill list, spends its time in a model, and writes
- * its verdict afterwards. A registration that lands in between has already
- * re-queued the rows waiting then, so this row arrives at a callable skill
- * with nobody left to move it. It is sent back once per registration, keyed
- * on the row's `reevaluation` record. A second `needs-skill` naming the same
- * registration was decided with the skill on the list, so the skill does not
- * cover the row: it is skipped with that reason, which leaves it a Retry on
- * its card, rather than evaluated for ever or parked where nothing moves it.
- *
- * Args:
- *   ctx: Mutation context.
- *   skill: The registered skill the verdict names.
- *   workItemId: The row the verdict was written on.
- */
-async function requeueLinkedAfterRegistration(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-  workItemId: Id<'workItems'>,
-): Promise<void> {
-  const item = await ctx.db.get(workItemId);
-  if (!item || item.state !== 'needs-skill') return;
-  const key = `skill-registered:${skill._id}:${skill.registeredAt ?? 0}`;
-  if (item.reevaluation?.key === key) {
-    await applyVerdict(ctx, workItemId, {
-      decision: 'skip',
-      reason: `registered skill "${skill.name}" was tried and does not cover this item`,
-    });
-    return;
-  }
-  await ctx.db.patch(workItemId, {
-    proposedSkillId: skill._id,
-    reevaluation: { trigger: 'skill-registered', key, at: Date.now() },
-  });
-  await applyVerdict(ctx, workItemId, {
-    decision: 'pending-reevaluation',
-    reason: 'skill registered, ready to retry',
-  });
 }
 
 /**
@@ -464,7 +422,9 @@ export const propose = internalMutation({
     ).find((row: Doc<'skills'>): boolean => row.state !== 'rejected' && row.state !== 'failed');
     if (existing) {
       if (existing.state === 'registered') {
-        await requeueLinkedAfterRegistration(ctx, existing, args.workItemId);
+        // The late verdict's one way back: the verdict write parked it and
+        // stood down, so the row is re-queued here, once per registration.
+        await requeueBehindRegisteredSkill(ctx, existing, args.workItemId);
       }
       if (existing.state === 'proposed') {
         if (
