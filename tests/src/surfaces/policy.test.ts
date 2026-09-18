@@ -16,6 +16,7 @@ import {
   isAutomatic,
   isAuditComment,
   isManagerDm,
+  isMessage,
   isStatusChange,
   MALFORMED_ACTION,
   MOCK_VERB_REFUSED,
@@ -378,6 +379,41 @@ describe('the manager DM grant', (): void => {
     expect(grantRefusal(parsed(chatPost('D0MANAGER')), slack, new Set(['slack:write']))).toBeUndefined();
     expect(grantRefusal(parsed(chatPost('D0MANAGER')), slack, new Set(['slack:read']))).toBe('no grant (boss:message)');
     expect(grantRefusal(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }), slack, bossOnly)).toBe('no grant (slack:read)');
+  });
+});
+
+describe('telling a message from the work it reports on', (): void => {
+  it('recognises a documented API ticket comment as a message', (): void => {
+    const tickets: SurfaceRecord = { ...linear, path: 'documented-api', credentialKind: 'oauth' };
+    const post: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'linear', method: 'POST', path: '/issues/iss-1/comments', body: JSON.stringify({ body: 'The refresh landed.' }) },
+    };
+    expect(isMessage(parsed(post), tickets)).toBe(true);
+  });
+
+  it('is the manager DM, a chat post or thread reply, or a ticket comment, and nothing else', (): void => {
+    const mcpChat: SurfaceRecord = { ...slack, path: 'mcp', toolAllowlist: ['post_message'] };
+    const mcpPost: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'slack', tool: 'post_message', toolArgsJson: JSON.stringify({ channel: 'C0PUBLIC', text: 'Done.' }) },
+    };
+    const browser = (tool: string, args: Record<string, unknown>): MockAction => ({
+      tool: 'mcp.call',
+      args: { surface: 'looker', tool, toolArgsJson: JSON.stringify(args) },
+    });
+    const looker: SurfaceRecord = { ...linear, slug: 'looker', class: 'analytics', path: 'browser-driven' };
+    expect(isMessage(parsed(chatPost('D0MANAGER')), slack)).toBe(true);
+    expect(isMessage(parsed(chatPost('C0PUBLIC')), slack)).toBe(true);
+    expect(isMessage(parsed(chatPost('C0PUBLIC', { thread_ts: '1787746453.202809' })), slack)).toBe(true);
+    expect(isMessage(parsed(mcpPost), mcpChat)).toBe(true);
+    expect(isMessage(parsed(comment()), linear)).toBe(true);
+    expect(isMessage(parsed(statusChange()), linear)).toBe(false);
+    expect(isMessage(parsed(chatJoin('D0MANAGER')), slack)).toBe(false);
+    expect(isMessage(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }), slack)).toBe(false);
+    expect(isMessage(parsed(browser('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '74%' }] })), looker)).toBe(false);
+    expect(isMessage(parsed(browser('browser_click', { element: 'Save' })), looker)).toBe(false);
+    expect(isMessage(parsed(browser('browser_snapshot', {})), looker)).toBe(false);
   });
 });
 

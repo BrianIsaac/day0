@@ -1320,6 +1320,41 @@ describe('executor output contract', (): void => {
     expect(text).toContain('Last updated by revops');
   });
 
+  it('marks a read taken again on resume, and the earlier read of the same page it supersedes', (): void => {
+    const snapshot: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+    };
+    const issue: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+    };
+    const target = JSON.stringify({ tool: snapshot.tool, args: snapshot.args });
+    const text = appliedLedgerPrompt(
+      [snapshot, issue, snapshot],
+      [
+        { tool: 'mcp.call', ok: true, effect: 'browser_snapshot on looker · visible figure 68%', idempotencyKey: 'work:first:3' },
+        { tool: 'mcp.call', ok: true, effect: 'REVOPS-7 · Done', idempotencyKey: 'work:first:4' },
+        {
+          tool: 'mcp.call',
+          ok: true,
+          effect: 'browser_snapshot on looker · visible figure 74%',
+          idempotencyKey: 'work:retry:5',
+          refreshed: {
+            previous: { effect: 'browser_snapshot on looker · ### Page - Page URL: about:blank', idempotencyKey: 'work:first:6' },
+            at: Date.UTC(2026, 8, 16, 21, 11, 30),
+          },
+        },
+      ],
+    );
+    expect(text.split('\n')).toEqual([
+      `0. landed · ${target} · browser_snapshot on looker · visible figure 68% · read before the retry; row 2 is the current reading`,
+      `1. landed · ${JSON.stringify({ tool: issue.tool, args: issue.args })} · REVOPS-7 · Done`,
+      `2. landed · ${target} · browser_snapshot on looker · visible figure 74% · re-read on resume at 2026-09-16T21:11:30.000Z`,
+    ]);
+    expect(text).not.toContain('about:blank');
+  });
+
   it('redacts a credential shape that reached the ledger before it reaches the closing turn', (): void => {
     const text = appliedLedgerPrompt(
       [
@@ -1483,6 +1518,13 @@ describe('advisory plan steps in the closing phase', (): void => {
       "A browser sequence left to the closing phase starts in a new browser, which Day0 signs in again from this run's own landed sign-in before the first closing action on that surface.";
     expect(executorPreamble('real')).toContain(sentence);
     expect(executorPreamble('mock')).not.toContain('new browser');
+  });
+
+  it('tells the real executor how a resumed closing phase marks the reads it took again', (): void => {
+    expect(executorPreamble('real')).toContain(
+      'A retry that resumes at the closing phase takes the carried reads again first: a ledger row marked `re-read on resume at <time>` is the current reading of its surface, and a row marked `read before the retry` no longer describes it. Quote the current reading.',
+    );
+    expect(executorPreamble('mock')).not.toContain('re-read on resume');
   });
 
   it('accepts not-verifiable only in the real closing schema', (): void => {
