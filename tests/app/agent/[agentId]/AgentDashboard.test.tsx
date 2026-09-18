@@ -353,7 +353,9 @@ describe('a browser signed in again before a row', (): void => {
       />,
     );
     expect(markup).toContain('signed in again first: navigate, fill, click (replays of rows 0 to 2)');
-    expect(markup).toContain('nothing that changed the system was repeated');
+    expect(markup).toContain(
+      'the run&#x27;s own landed navigate and sign-in were sent again before this row. Nothing that changed the system was repeated.',
+    );
   });
 
   it('says when the page was opened from the surface itself because the run never navigated', (): void => {
@@ -375,6 +377,16 @@ describe('a browser signed in again before a row', (): void => {
     );
     expect(markup).toContain('could not sign in again first: navigate, fill (replays of rows 0 to 1)');
     expect(markup).toContain('stopped at fill: no grant (looker:write)');
+    expect(markup).toContain('this row and the rest on the surface were not sent');
+    expect(markup).not.toContain('were sent again');
+  });
+
+  it('says the page was opened again, not a sign-in, when the run never signed in', (): void => {
+    const markup = renderToStaticMarkup(
+      <SessionRestoreNote restore={{ steps: [step(navigate, 'wi:run:0')] }} />,
+    );
+    expect(markup).toContain('opened the page again first: navigate (replays of row 0)');
+    expect(markup).toContain('the run&#x27;s own landed navigate was sent again before this row.');
   });
 
   it('stays silent on a row sent without a replay', (): void => {

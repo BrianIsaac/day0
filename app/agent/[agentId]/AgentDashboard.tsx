@@ -1793,6 +1793,7 @@ export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | u
     : " (the surface's own page)";
   const failed = restore.steps.find((step) => !step.ok);
   const signsIn = verbs.includes('fill');
+  const replayed = signsIn ? 'navigate and sign-in' : 'navigate';
   const lead = failed
     ? signsIn
       ? 'could not sign in again first'
@@ -1811,8 +1812,11 @@ export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | u
         {source}
       </summary>
       <p className="text-[10px] text-[var(--color-muted)] break-words">
-        A new browser opens for every apply of a run, so the run&apos;s own landed navigate and sign-in
-        were sent again before this row; nothing that changed the system was repeated.
+        {failed
+          ? `A new browser opens for every apply of a run, so Day0 tried the run's own landed ${replayed} again before this row and stopped: this row and the rest on the surface were not sent.`
+          : `A new browser opens for every apply of a run, so the run's own landed ${replayed} ${
+              restore.steps.length === 1 ? 'was' : 'were'
+            } sent again before this row. Nothing that changed the system was repeated.`}
       </p>
       {failed ? (
         <p className="text-[10px] text-[var(--color-warn)] break-words">
