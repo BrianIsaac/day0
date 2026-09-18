@@ -67,6 +67,17 @@ export const DEFAULT_SNAPSHOT_SOURCE = 'day0-demo-7c65e7_convex_data';
 /** Where the redactor answers, as the deployment must address it. */
 export const REDACTOR_URL = 'http://redactor:8000';
 
+/** The fix when the redactor container is not healthy; the rung's folder sync would fail closed. */
+const REDACTOR_UNHEALTHY_FIX =
+  'the redactor is not healthy, and real-mode documentation sync fails closed without it, so the rung ' +
+  'stops at its folder sync; run pnpm demo:bed up --warm-from <warm project> and wait for the ' +
+  'redactor to report healthy';
+
+/** The fix when the backend has no redactor address to sync with. */
+const REDACTOR_UNWIRED_FIX =
+  `DAY0_REDACTOR_URL is empty in ${ENV_FILE} or on the deployment, so the backend has no redactor to ` +
+  `sync with; set it to ${REDACTOR_URL} and re-run pnpm demo:bed up`;
+
 /** What `pnpm eval:revocation` writes into `--out`, in `sha256sum` order. */
 export const RUNG_OUTPUT_FILES: readonly string[] = [
   'commands.txt',
@@ -97,6 +108,9 @@ const REDACTOR_VOLUME_SUFFIXES: readonly string[] = ['redactor_venv', 'redactor_
 
 /** Where the bundled browser component answers, as the deployment must address it. */
 const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
+
+/** The backend's own port, which the compose file publishes `CONVEX_PORT` from. */
+const CONTAINER_BACKEND_PORT = 3210;
 
 /**
  * Where the Slack double answers, as the deployment must address it.
@@ -617,7 +631,7 @@ export interface ServiceRow {
  * Read `docker ps` output in the kit's tab-separated format.
  *
  * Args:
- *   stdout: Lines of `service<TAB>state<TAB>status`.
+ *   stdout: Lines of `service<TAB>state<TAB>status<TAB>ports`.
  *
  * Returns:
  *   One row per container.
@@ -628,7 +642,7 @@ export function parseDockerPs(stdout: string): ServiceRow[] {
     .map((line: string): string => line.trim())
     .filter(Boolean)
     .map((line: string): ServiceRow => {
-      const [service, state, status = ''] = line.split('\t');
+      const [service, state, status = '', ports = ''] = line.split('\t');
       const health: ServiceRow['health'] = status.includes('(healthy)')
         ? 'healthy'
         : status.includes('(unhealthy)')
@@ -636,8 +650,28 @@ export function parseDockerPs(stdout: string): ServiceRow[] {
           : status.includes('(health: starting)')
             ? 'starting'
             : 'none';
-      return { service, state, health, ports: '' };
+      return { service, state, health, ports: ports.trim() };
     });
+}
+
+/**
+ * The host port a container publishes one of its ports on.
+ *
+ * Args:
+ *   ports: `docker ps`'s ports column, `host:port->container/proto` entries.
+ *   containerPort: The container port to look for.
+ *
+ * Returns:
+ *   The host port, or undefined when that container port is not published.
+ */
+export function publishedHostPort(ports: string, containerPort: number): number | undefined {
+  for (const entry of ports.split(',')) {
+    const match = /:(\d+)->(\d+)\/(?:tcp|udp)$/.exec(entry.trim());
+    if (match && Number.parseInt(match[2], 10) === containerPort) {
+      return Number.parseInt(match[1], 10);
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -832,18 +866,24 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
     name: 'Tier 2, the offline rung (pnpm eval:revocation; its measurements are model-free, its onboarding is not)',
     go:
       inputs.offlineRungReady &&
+      inputs.redactorHealthy &&
+      inputs.redactorWired &&
       inputs.slackDoubleWired &&
       !inputs.rungAlreadyRun &&
       !isOpenAi(inputs.rungModelRoute),
     reason: !inputs.offlineRungReady
       ? 'the backend, fake-slack or looker-tile is not up in real mode'
-      : !inputs.slackDoubleWired
-        ? `DAY0_TEST_SLACK_API_URL does not name the double, so the rung's Slack probe ends ungranted; set it to ${TEST_SLACK_API_URL} and re-run pnpm demo:bed up`
-        : inputs.rungAlreadyRun
-          ? 'this volume has already run the rung and its trial ids are spent; down --volumes, restore the snapshot again, then up'
-          : isOpenAi(inputs.rungModelRoute)
-            ? "the rung's onboarding would dial OpenAI, which is never called from the venue; point CONVEX_OPENAI_BASE_URL at the bundled model or the Featherless route"
-            : `backend, fake-slack and looker-tile are up in real mode, and the onboarding dials ${inputs.rungModelRoute}; model onboarding remains unverified by this checklist`,
+      : !inputs.redactorHealthy
+        ? REDACTOR_UNHEALTHY_FIX
+        : !inputs.redactorWired
+          ? REDACTOR_UNWIRED_FIX
+          : !inputs.slackDoubleWired
+            ? `DAY0_TEST_SLACK_API_URL does not name the double, so the rung's Slack probe ends ungranted; set it to ${TEST_SLACK_API_URL} and re-run pnpm demo:bed up`
+            : inputs.rungAlreadyRun
+              ? 'this volume has already run the rung and its trial ids are spent; down --volumes, restore the snapshot again, then up'
+              : isOpenAi(inputs.rungModelRoute)
+                ? "the rung's onboarding would dial OpenAI, which is never called from the venue; point CONVEX_OPENAI_BASE_URL at the bundled model or the Featherless route"
+                : `backend, fake-slack, looker-tile and the redactor are up in real mode, and the onboarding dials ${inputs.rungModelRoute}; model onboarding remains unverified by this checklist`,
   };
   let warm: TierVerdict;
   const missingSettings = (['OPENAI_MAX_OUTPUT_TOKENS', 'OPENAI_REASONING_EFFORT'] as const)
@@ -1053,12 +1093,6 @@ export function redactorVenvRefusal(device: VenvDevice, venv: string): string | 
   }
 }
 
-export function publishedHostPort(ports: string, containerPort: number): number | undefined {
-  void ports;
-  void containerPort;
-  throw new Error(NOT_BUILT);
-}
-
 export interface RungReadiness {
   project: string;
   services: readonly ServiceRow[];
@@ -1242,7 +1276,7 @@ function projectServices(project: string): ServiceRow[] | undefined {
       '--filter',
       `label=com.docker.compose.project=${project}`,
       '--format',
-      '{{.Label "com.docker.compose.service"}}\t{{.State}}\t{{.Status}}',
+      '{{.Label "com.docker.compose.service"}}\t{{.State}}\t{{.Status}}\t{{.Ports}}',
     ],
     { timeoutMs: 15_000 },
   );
@@ -1922,6 +1956,48 @@ async function preflight(options: DemoBedOptions): Promise<number> {
       : 'playwright-mcp is not running; the recorded tile card flips to ungranted on the next probe',
   });
 
+  const redactorRow = services?.find((row: ServiceRow): boolean => row.service === 'redactor');
+  const redactorHealthy = redactorRow?.health === 'healthy';
+  const redactorWired =
+    !!values.DAY0_REDACTOR_URL &&
+    (Object.keys(deployment).length === 0 || !!deployment.DAY0_REDACTOR_URL);
+  items.push({
+    label: 'Redactor component',
+    status: redactorHealthy && redactorWired ? 'ok' : 'gap',
+    detail: [
+      redactorHealthy
+        ? 'the redactor reports healthy'
+        : redactorRow
+          ? `the redactor is ${redactorRow.state}${redactorRow.health === 'none' ? '' : ` (${redactorRow.health})`}; ${REDACTOR_UNHEALTHY_FIX}`
+          : `no redactor container in project ${options.project}; ${REDACTOR_UNHEALTHY_FIX}`,
+      ...(redactorHealthy
+        ? []
+        : [
+            `warm projects on this machine: ${
+              warmProjects(docker.status === 0 ? volumeNames() : [])
+                .filter((project: string): boolean => project !== options.project)
+                .join(', ') || 'none'
+            }`,
+          ]),
+      redactorWired
+        ? `DAY0_REDACTOR_URL names ${values.DAY0_REDACTOR_URL}${Object.keys(deployment).length === 0 ? ' (deployment not read)' : ' on both sides'}`
+        : REDACTOR_UNWIRED_FIX,
+    ].join('\n'),
+  });
+
+  const backendRow = services?.find((row: ServiceRow): boolean => row.service === 'backend');
+  const publishedBackend = backendRow ? publishedHostPort(backendRow.ports, CONTAINER_BACKEND_PORT) : undefined;
+  items.push({
+    label: `Backend port belongs to project ${options.project}`,
+    status: publishedBackend === ports.backend ? 'ok' : 'gap',
+    detail:
+      publishedBackend === ports.backend
+        ? `its backend publishes ${CONTAINER_BACKEND_PORT} on 127.0.0.1:${ports.backend}, the port ${ENV_FILE} addresses`
+        : backendRow
+          ? `its backend publishes ${CONTAINER_BACKEND_PORT} on ${publishedBackend ?? 'no host port'}, but ${ENV_FILE} addresses ${ports.backend}; the rung would write to whatever listens there`
+          : `no backend container; ${ENV_FILE} addresses ${ports.backend}, which nothing of this project serves`,
+  });
+
   const rungReady =
     surfaceMode === 'real' && !!version && healthy('fake-slack') && healthy('looker-tile');
   const slackDouble = values.DAY0_TEST_SLACK_API_URL ?? '';
@@ -2005,8 +2081,8 @@ async function preflight(options: DemoBedOptions): Promise<number> {
     offlineRungReady: rungReady,
     slackDoubleWired: !!slackDouble,
     rungAlreadyRun: spent,
-    redactorHealthy: false,
-    redactorWired: false,
+    redactorHealthy,
+    redactorWired,
     rungModelRoute: deployment.OPENAI_BASE_URL ?? '',
     deploymentModelSettings: deployment,
     backendHealthy: !!version,
