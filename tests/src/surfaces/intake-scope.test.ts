@@ -6,6 +6,7 @@ import {
   groundScopePicks,
   presentIntakeScope,
   presentScopeDrift,
+  roleScopeCandidates,
   scopeCandidates,
   scopeDrift,
   scopeFieldsFor,
@@ -115,6 +116,22 @@ describe('intake scope candidates', (): void => {
         quote: 'Work in project `Q3 close` only.',
       },
     ]);
+  });
+
+  it('ties a manager-requested card to the role handbook even without a system sentence', (): void => {
+    const all = [...pages('revops-first'), {
+      ref: 'logistics/handbook.md', markdown: companyPage('logistics/handbook.md').markdown,
+    }];
+    const candidates = scopeCandidates(all, ['channel']);
+    expect(roleScopeCandidates(all, candidates, 'Close coordinator', [])
+      .map((candidate): string => candidate.ref)).toEqual([
+        'finance/handbook.md', 'finance/handbook.md',
+      ]);
+    expect(roleScopeCandidates(all, candidates, 'Logistics desk', [])
+      .map((candidate): string => candidate.value)).toEqual([
+        'logistics-desk', 'ops-requests',
+      ]);
+    expect(roleScopeCandidates(all, candidates, 'Assistant', [])).toEqual([]);
   });
 
   it('ignores quoted runbook examples and another team’s channels mentioned in prose', (): void => {

@@ -280,6 +280,41 @@ export function sentenceScopePicks(
     );
 }
 
+/** Keep candidate lines under the handbook identified by the charter's role and queue words. */
+export function roleScopeCandidates(
+  pages: readonly ScopePage[],
+  candidates: readonly ScopeCandidate[],
+  role: string | undefined,
+  sentences: readonly string[],
+): ScopeCandidate[] {
+  const refs = [...new Set(candidates.map((candidate): string => candidate.ref))];
+  if (refs.length <= 1) return [...candidates];
+  const named = sentenceScopePicks(sentences, candidates);
+  const namedByRef = new Map<string, Set<string>>();
+  for (const pick of named) {
+    const values = namedByRef.get(pick.ref) ?? new Set<string>();
+    values.add(`${pick.field}\0${pick.value}`);
+    namedByRef.set(pick.ref, values);
+  }
+  const roleWords = [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
+    .filter((word): boolean => word.length >= 5 && !['about', 'after', 'before', 'their', 'these', 'those', 'would', 'could', 'should', 'coordinator', 'manager', 'employee'].includes(word));
+  const scores = refs.map((ref) => {
+    const page = pages.find((candidate): boolean => candidate.ref === ref);
+    const heading = /^#\s+(.+)$/m.exec(page?.markdown ?? '')?.[1] ?? '';
+    const identity = `${ref} ${heading}`.toLowerCase();
+    const roleHits = roleWords.filter((word): boolean => identity.includes(word)).length;
+    return { ref, score: (namedByRef.get(ref)?.size ?? 0) * 100 + roleHits };
+  });
+  const highest = Math.max(...scores.map((item): number => item.score));
+  if (highest === 0) return [];
+  const top = scores.filter((item): boolean => item.score === highest);
+  const root = (ref: string): string => ref.includes('/') ? ref.split('/')[0] : ref;
+  const roots = new Set(top.map((item): string => root(item.ref)));
+  if (roots.size !== 1) return [];
+  const selected = root(top[0].ref);
+  return candidates.filter((candidate): boolean => root(candidate.ref) === selected);
+}
+
 /**
  * The Linear bounds an approved scope holds.
  *

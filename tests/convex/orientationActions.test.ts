@@ -2009,6 +2009,20 @@ describe('each employee reads its own role', (): void => {
         .map((event): unknown => event.payload),
     ).toEqual([{ surfaceId: before['looker-pipeline-tile']._id, slug: 'looker-pipeline-tile' }]);
 
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    await owner.mutation(api.surfaces.approve, {
+      surfaceId: after['looker-pipeline-tile']._id, role: 'manager',
+    });
+    expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
+      verdict: 'proposed', managerApprovedAt: expect.any(Number),
+    });
+    await owner.mutation(api.surfaces.approve, {
+      surfaceId: after['looker-pipeline-tile']._id, role: 'it',
+    });
+    expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
+      verdict: 'approved', itApprovedAt: expect.any(Number),
+    });
+
     // Rejected, the card goes back under the row, one click from a card again.
     await owner.mutation(api.surfaces.reject, {
       surfaceId: after['looker-pipeline-tile']._id,
@@ -2099,6 +2113,29 @@ describe('each employee reads its own role', (): void => {
     expect(financeLinear).toContain(ROLE_CHARTERS.finance.proposedFunction);
     expect(financeLinear).not.toContain('team REVOPS, project Q3 close:');
     expect(financeLinear).toContain('`September close` on finance/handbook.md');
+  });
+
+  it('drops a grounded queue from another role when the picker cites its real handbook', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = () => ({
+      picks: [
+        { field: 'channel', value: '#revops-asks', ref: 'revops/handbook.md' },
+        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
+        { field: 'channel', value: '#ops-requests', ref: 'finance/handbook.md' },
+      ],
+      reasoning: 'The other handbook has a valid channel line.',
+    });
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await orientDeclared(harness, agents.finance!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual([
+      'finance-close', 'ops-requests',
+    ]);
+    expect(finance.slack.intakeScope?.notes).toContain(
+      'Dropped #revops-asks: revops/handbook.md is outside this role’s handbook.',
+    );
   });
 
   it("falls back to the values the manager's own words name when the model does not pick", async (): Promise<void> => {

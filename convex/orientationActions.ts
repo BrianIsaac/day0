@@ -15,6 +15,7 @@ import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/
 import {
   groundScopePicks,
   scopeCandidates,
+  roleScopeCandidates,
   scopeFieldsFor,
   sentenceScopePicks,
   type IntakeScope,
@@ -1008,17 +1009,22 @@ async function orientIntakeScope(
 ): Promise<StoredIntakeScope | undefined> {
   const fields = scopeFieldsFor(surface.class);
   if (fields.length === 0) return undefined;
-  const candidates = scopeCandidates(
-    pages.map((page) => ({
+  const scopePages = pages.map((page) => ({
       sourceId: String(page.sourceId),
       ref: page.ref,
       markdown: page.markdown,
-    })),
-    fields,
-  );
+    }));
+  const candidates = scopeCandidates(scopePages, fields);
   if (candidates.length === 0) {
     const what = fields.includes('channel') ? 'a channel' : 'a team or project';
     return { notes: [`No page naming ${surface.displayName} states ${what} for intake to read.`] };
+  }
+  const sentences = (surface.discoveryEvidence ?? [])
+    .filter((item): boolean => item.kind === 'charter' && item.current)
+    .map((item): string => item.quote);
+  const roleCandidates = roleScopeCandidates(scopePages, candidates, role, sentences);
+  if (roleCandidates.length === 0) {
+    return { notes: [`No queue line could be tied to this role's handbook for ${surface.displayName}.`] };
   }
   const drafted = await pick({
     system: surface.displayName,
@@ -1026,15 +1032,29 @@ async function orientIntakeScope(
     fields,
     role,
     // The charter's entry quotes the manager's sentence about this system.
-    sentences: (surface.discoveryEvidence ?? [])
-      .filter((item): boolean => item.kind === 'charter' && item.current)
-      .map((item): string => item.quote),
-    candidates,
+    sentences,
+    candidates: roleCandidates,
   });
-  const grounded = groundScopePicks(drafted.picks, candidates);
+  const allowedRefs = new Set(roleCandidates.map((candidate): string => candidate.ref));
+  const foreign = drafted.picks.filter((item): boolean =>
+    !allowedRefs.has(item.ref) && candidates.some((candidate): boolean => candidate.ref === item.ref),
+  );
+  const grounded = groundScopePicks(
+    drafted.picks.filter((item): boolean => !foreign.includes(item)),
+    roleCandidates,
+  );
   return storedScope({
     ...grounded,
-    notes: [...(drafted.note ? [drafted.note] : []), ...(grounded.notes ?? [])],
+    notes: [
+      ...(drafted.note ? [drafted.note] : []),
+      ...(grounded.notes ?? []),
+      ...foreign.map((item): string => {
+        const label = item.field === 'channel'
+          ? `#${item.value.replace(/^#/, '')}`
+          : `${item.field} \`${item.value}\``;
+        return `Dropped ${label}: ${item.ref} is outside this role’s handbook.`;
+      }),
+    ],
   });
 }
 
