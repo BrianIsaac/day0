@@ -18,6 +18,7 @@ export const store = internalAction({
     kind: credentialKind,
     label: v.string(),
     plaintext: v.optional(v.string()),
+    explicitlyAssigned: v.optional(v.boolean()),
     source: v.union(
       v.object({ sourceId: v.id('docSources'), ref: v.string() }),
       v.literal('entered'),
@@ -51,11 +52,12 @@ export const bySourceForStore = internalQuery({
     revokedAt?: number;
     ciphertext: string;
     iv: string;
+    explicitlyAssigned?: boolean;
   } | null> => {
     const row = fakeCredentialState().rows.get(
       fakeCredentialKey(args.userId, String(args.sourceId), args.ref),
     );
-    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt, ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!) } : null;
+    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt, explicitlyAssigned: row.explicitlyAssigned, ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!) } : null;
   },
 });
 

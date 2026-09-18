@@ -130,6 +130,7 @@ export async function persistPageBatch(
         kind: 'value',
         label: credential.label,
         plaintext: credential.plaintext,
+        explicitlyAssigned: credential.explicitlyAssigned,
         source: {
           sourceId: source._id,
           ref,

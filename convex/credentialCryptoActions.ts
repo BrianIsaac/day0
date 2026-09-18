@@ -52,7 +52,7 @@ export const open = internalAction({
 export const ownerValues = internalAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<string[]> => {
-    const { overflow, rows }: { overflow: boolean; rows: Array<{ ciphertext: string; iv: string; label: string; pageDerived: boolean }> } =
+    const { overflow, rows }: { overflow: boolean; rows: Array<{ ciphertext: string; iv: string; label: string; pageDerived: boolean; explicitlyAssigned?: boolean }> } =
       await ctx.runQuery(internal.credentials.activeValuesForOwner, { userId: args.userId });
     if (overflow) {
       console.error(
@@ -71,7 +71,7 @@ export const ownerValues = internalAction({
         continue;
       }
       // A false page detection must not perpetuate itself through exact-value redaction.
-      if (plaintext && !(row.pageDerived && guardReason(plaintext, { assigned: assignedByLabel(row.label) }))) {
+      if (plaintext && !(row.pageDerived && guardReason(plaintext, { assigned: row.explicitlyAssigned === true || assignedByLabel(row.label) }))) {
         values.add(plaintext);
       }
     }
@@ -84,11 +84,11 @@ export const ownerValues = internalAction({
  * boundary. A password-class label records that the page assigned the value
  * explicitly, so a name-shaped password is not refused as a scope.
  */
-export function storedCredentialGuardReason(row: { ciphertext?: string; iv?: string; label: string }): string | undefined {
+export function storedCredentialGuardReason(row: { ciphertext?: string; iv?: string; label: string; explicitlyAssigned?: boolean }): string | undefined {
   if (row.ciphertext === undefined || row.iv === undefined) return 'credential material unavailable';
   try {
     const value = decryptCredential({ ciphertext: row.ciphertext, iv: row.iv }, requireCredentialKey());
-    return guardReason(value, { assigned: assignedByLabel(row.label) });
+    return guardReason(value, { assigned: row.explicitlyAssigned === true || assignedByLabel(row.label) });
   } catch {
     return 'credential material unreadable';
   }

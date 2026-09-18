@@ -88,6 +88,8 @@ export default defineSchema({
      * stays as the audit trail of a credential that was held. */
     ciphertext: v.optional(v.string()),
     iv: v.optional(v.string()),
+    /** True only when documentation explicitly assigned this value as a credential. */
+    explicitlyAssigned: v.optional(v.boolean()),
     /** Where the value came from: a documentation page, a field the approver
      * typed into, or - Phase 3 - the provider's own OAuth install redirect. */
     source: v.union(
