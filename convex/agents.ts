@@ -108,10 +108,9 @@ type RosterRow = Infer<typeof rosterRowValidator>;
 /**
  * Whether an agent row belongs to an evaluation run rather than the company.
  *
- * Both harnesses deploy under the operator's own subject: the revocation
- * trial as `eval-revocation-<stamp>@day0.local` (`scripts/eval-revocation.ts`)
- * and the semifinal as `eval-<run>-<time>@day0.local`
- * (`scripts/eval-semifinal.ts`), whose control arm is also `baseline`.
+ * Both evaluation paths deploy under the operator's own subject. Match their
+ * generated address and name together: the deploy mutation also accepts an
+ * ordinary manager address beginning with `eval-`.
  *
  * Args:
  *   agent: The agent row's boss address and arm.
@@ -119,9 +118,17 @@ type RosterRow = Infer<typeof rosterRowValidator>;
  * Returns:
  *   True for an evaluation agent.
  */
-function isEvaluationAgent(agent: Pick<Doc<'agents'>, 'bossEmail' | 'arm'>): boolean {
+function isEvaluationAgent(agent: Pick<Doc<'agents'>, 'bossEmail' | 'name' | 'arm'>): boolean {
   if (agent.arm === 'baseline') return true;
-  return agent.bossEmail.startsWith('eval-') && agent.bossEmail.endsWith('@day0.local');
+  if (agent.name === 'Day0 revocation evaluation') {
+    return /^eval-revocation-\d{4}-\d{2}-\d{2}t\d{2}-\d{2}-\d{2}z@day0\.local$/.test(
+      agent.bossEmail,
+    );
+  }
+  return (
+    /^Day0 evaluation [1-9]\d*$/.test(agent.name) &&
+    /^eval-day0-r[1-9]\d*-\d{13}@day0\.local$/.test(agent.bossEmail)
+  );
 }
 
 /**

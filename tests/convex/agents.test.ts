@@ -711,6 +711,25 @@ async function seedWork(
 }
 
 describe('the employee roster', (): void => {
+  it('does not mistake an ordinary employee for a trial because of the manager address', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const ordinary = await deployEmployee(harness, 'owner', 'Evaluation coordinator', {
+      bossEmail: 'eval-payroll@day0.local',
+    });
+    await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
+      bossEmail: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
+    });
+    await deployEmployee(harness, 'owner', 'Day0 evaluation 1', {
+      bossEmail: 'eval-day0-r1-1758150000000@day0.local',
+    });
+
+    expect((await owner.query(api.agents.rosterForUser, {})).map((row) => row.agentId)).toEqual([
+      ordinary,
+    ]);
+  });
+
   it('shows each of the owner\'s employees with its role, open work, what needs the manager and its autonomy, and nobody else', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -725,10 +744,10 @@ describe('the employee roster', (): void => {
       excludedDocSourceIds: [financeNotes],
     });
     const trial = await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
-      bossEmail: 'eval-revocation-20260918t070000z@day0.local',
+      bossEmail: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
     });
     await deployEmployee(harness, 'owner', 'Day0 evaluation 1', {
-      bossEmail: 'eval-run-1-1758150000000@day0.local',
+      bossEmail: 'eval-day0-r1-1758150000000@day0.local',
     });
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.insert('agents', {
@@ -881,8 +900,8 @@ describe('the employee roster', (): void => {
       employees.push(await deployEmployee(harness, 'owner', `Employee ${index}`));
     }
     for (let index = 1; index <= 3; index += 1) {
-      await deployEmployee(harness, 'owner', `Trial ${index}`, {
-        bossEmail: `eval-revocation-trial-${index}@day0.local`,
+      await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
+        bossEmail: `eval-revocation-2026-09-18t07-00-0${index}z@day0.local`,
       });
     }
 
