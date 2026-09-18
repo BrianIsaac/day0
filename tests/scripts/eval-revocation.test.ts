@@ -101,4 +101,15 @@ describe('waiting for the folder documentation sync', (): void => {
       ),
     ).rejects.toThrow('redactor unreachable');
   });
+
+  it('stops at once when a partially read sync cannot land its credential', async (): Promise<void> => {
+    const time = clock();
+    await expect(
+      waitForDocumentationSync(
+        async () => ({ status: 'credential-not-landed', pageCount: 4, lastError: 'credential missing' }),
+        time,
+      ),
+    ).rejects.toThrow('credential missing');
+    expect(time.at()).toBe(0);
+  });
 });

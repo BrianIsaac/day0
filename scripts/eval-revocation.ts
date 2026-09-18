@@ -75,7 +75,9 @@ export async function waitForDocumentationSync(
   let idleFrom = clock.now();
   for (;;) {
     const source = await read();
-    if (source?.status === 'error') throw new Error(source.lastError ?? 'folder sync failed');
+    if (source?.status === 'error' || source?.status === 'credential-not-landed') {
+      throw new Error(source.lastError ?? `folder sync failed: ${source.status}`);
+    }
     if (source && source.status === 'synced' && source.pageCount > 0) return source;
     if (source && source.pageCount !== pages) {
       pages = source.pageCount;
