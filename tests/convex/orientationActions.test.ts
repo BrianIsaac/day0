@@ -38,6 +38,7 @@ import {
 import { allConvexModules } from './all-modules';
 import { sanitisedNotionPage, type NotionPageName } from '../fixtures/notion-pages';
 import { companyPage, companyPages } from '../fixtures/company-bed';
+import { approvedChannelNames, approvedLinearScope } from '../../src/surfaces/intake-scope';
 import {
   reconcileDocumentedSystems,
   type CharterSystemSeed,
@@ -88,11 +89,26 @@ const model = vi.hoisted(() => ({
   hang: false,
   /** Every prompt the mocked classifier received. */
   prompts: [] as string[],
+  /** What the mocked intake-scope picker answers; unset means it fails. */
+  scopeFor: undefined as undefined | ((user: string) => Record<string, unknown>),
+  /** Every prompt the mocked intake-scope picker received. */
+  scopePrompts: [] as string[],
 }));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async ({ user }: { user: string }): Promise<Record<string, unknown>> => {
+  agentJson: async ({
+    agent,
+    user,
+  }: {
+    agent: { name: string };
+    user: string;
+  }): Promise<Record<string, unknown>> => {
+    if (agent.name === 'intake-scope') {
+      model.scopePrompts.push(user);
+      if (!model.scopeFor) throw new Error('scope model unavailable in tests');
+      return model.scopeFor(user);
+    }
     model.prompts.push(user);
     if (model.hang) return await new Promise<never>((): void => undefined);
     if (!model.pathFor) throw new Error('model unavailable in tests');
@@ -343,6 +359,8 @@ afterEach((): void => {
   model.echoInput = false;
   model.hang = false;
   model.prompts.length = 0;
+  model.scopeFor = undefined;
+  model.scopePrompts.length = 0;
 });
 
 describe('orientation evidence selection', (): void => {
@@ -1745,6 +1763,62 @@ function verdicts(surfaces: Record<string, Doc<'surfaces'>>): Record<string, str
   );
 }
 
+/**
+ * What a faithful picker answers for each manager sentence in the company:
+ * the role's own team, project and request channels, each cited on its
+ * handbook. Finance's answer also carries a project no page states, which
+ * grounding must drop.
+ */
+function companyScopeModel(user: string): Record<string, unknown> {
+  const answers: Array<[string, Array<{ field: string; value: string; ref: string }>]> = [
+    [
+      'team REVOPS, project Q3 close',
+      [
+        { field: 'team', value: 'REVOPS', ref: 'revops/handbook.md' },
+        { field: 'project', value: 'Q3 close', ref: 'revops/handbook.md' },
+      ],
+    ],
+    [
+      'team FIN, project September close',
+      [
+        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'Q4 plan', ref: 'finance/handbook.md' },
+      ],
+    ],
+    [
+      'team LOG, project Shipment exceptions',
+      [
+        { field: 'team', value: 'LOG', ref: 'logistics/handbook.md' },
+        { field: 'project', value: 'Shipment exceptions', ref: 'logistics/handbook.md' },
+      ],
+    ],
+    [
+      'Asks come in on Slack in #revops-asks',
+      [
+        { field: 'channel', value: '#revops-asks', ref: 'revops/handbook.md' },
+        { field: 'channel', value: '#ops-requests', ref: 'revops/handbook.md' },
+      ],
+    ],
+    [
+      '#finance-close is ours',
+      [
+        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
+        { field: 'channel', value: '#ops-requests', ref: 'finance/handbook.md' },
+      ],
+    ],
+    [
+      "#logistics-desk is the desk's channel",
+      [
+        { field: 'channel', value: 'logistics-desk', ref: 'logistics/handbook.md' },
+        { field: 'channel', value: 'ops-requests', ref: 'logistics/handbook.md' },
+      ],
+    ],
+  ];
+  const picks = answers.find(([sentence]): boolean => user.includes(sentence))?.[1] ?? [];
+  return { picks, reasoning: 'Picked from the role and the manager sentence.' };
+}
+
 /** The model paths the company's documentation supports, per system. */
 function companyPath(system: string): DraftPath {
   if (system === 'Linear') return 'mcp';
@@ -1901,6 +1975,94 @@ describe('each employee reads its own role', (): void => {
         .withIdentity({ subject: 'owner' })
         .mutation(liveApi.surfaces.requestProposal, { surfaceId: tile._id }),
     ).rejects.toThrow('Surface proposal is a local real-mode feature');
+  });
+
+  it.fails("puts each role's own queues on its cards, every value grounded on a page line", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = companyScopeModel;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, ROLE_CHARTERS);
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+    const revops = await surfacesBySlug(harness, agents.revops!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+    const logistics = await surfacesBySlug(harness, agents.logistics!);
+
+    expect(finance.linear.intakeScope).toEqual({
+      team: { value: 'FIN', sourceId: expect.any(String), ref: 'finance/handbook.md', quote: '- Team: `FIN`' },
+      project: {
+        value: 'September close',
+        sourceId: expect.any(String),
+        ref: 'finance/handbook.md',
+        quote: '- Project: `September close`',
+      },
+      notes: ['Dropped project `Q4 plan`: finance/handbook.md does not state it.'],
+    });
+    expect(approvedLinearScope(revops.linear.intakeScope!)).toEqual({ team: 'REVOPS', project: 'Q3 close' });
+    expect(approvedLinearScope(logistics.linear.intakeScope!)).toEqual({
+      team: 'LOG',
+      project: 'Shipment exceptions',
+    });
+    expect(approvedChannelNames(revops.slack.intakeScope!)).toEqual(['revops-asks', 'ops-requests']);
+    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual(['finance-close', 'ops-requests']);
+    expect(approvedChannelNames(logistics.slack.intakeScope!)).toEqual(['logistics-desk', 'ops-requests']);
+    for (const value of finance.slack.intakeScope!.channels!) {
+      expect(value).toMatchObject({ ref: 'finance/handbook.md', quote: '- Channels: #finance-close, #ops-requests' });
+    }
+    // A system that bears no work carries no scope.
+    expect(revops['looker-pipeline-tile'].intakeScope).toBeUndefined();
+
+    // Each pick was asked with this role's words, not another role's.
+    const financeLinear = model.scopePrompts.find((prompt): boolean =>
+      prompt.includes('Linear, team FIN, project September close'),
+    );
+    expect(financeLinear).toContain(ROLE_CHARTERS.finance.proposedFunction);
+    expect(financeLinear).not.toContain('team REVOPS, project Q3 close:');
+    expect(financeLinear).toContain('`September close` on finance/handbook.md');
+  });
+
+  it.fails("falls back to the values the manager's own words name when the model does not pick", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, {
+      revops: ROLE_CHARTERS.revops,
+      finance: ROLE_CHARTERS.finance,
+    });
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+    const revops = await surfacesBySlug(harness, agents.revops!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+
+    expect(approvedLinearScope(finance.linear.intakeScope!)).toEqual({
+      team: 'FIN',
+      project: 'September close',
+    });
+    // The manager's sentence names the team channel too; only the model tells it apart.
+    expect(approvedChannelNames(revops.slack.intakeScope!)).toEqual([
+      'revops-asks',
+      'ops-requests',
+      'revops',
+    ]);
+    expect(revops.slack.intakeScope!.notes).toEqual([
+      "The model did not pick this role's queues (scope model unavailable in tests); the scope holds the documented values the manager's own words name.",
+    ]);
+  });
+
+  it.fails('files an empty scope that says why when no page states a queue', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    model.scopeFor = companyScopeModel;
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK.replace(/team `REVOPS`, project `Q3 close`/, 'the team queue') }, [
+      { name: 'Linear', class: 'kanban' },
+    ]);
+    await orientDeclared(harness, agentId);
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    expect(linear.verdict).toBe('proposed');
+    expect(linear.intakeScope).toEqual({
+      notes: ['No page naming Linear states a team or project for intake to read.'],
+    });
+    expect(model.scopePrompts).toHaveLength(0);
   });
 
   it('orients every documented system, as before, when the charter names no work system', async (): Promise<void> => {
