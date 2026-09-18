@@ -51,7 +51,8 @@ describe('the smoke test preflight', (): void => {
   it('redacts a token on the quoted line and bounds it', (): void => {
     const broken = [
       'def run(inputs: dict) -> dict:',
-      '    token = "xoxb-1234567890-abcdefghijkl" +',
+      // Assembled here so no token-shaped literal sits in the repository.
+      `    token = "${['xoxb', '1234567890', 'abcdefghijkl'].join('-')}" +`,
       'print(run({}))',
     ].join('\n');
     const reason = smokeTestPreflightReason(broken)!;

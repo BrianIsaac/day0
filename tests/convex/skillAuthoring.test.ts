@@ -176,7 +176,9 @@ describe('the static gate on an authored skill, through the authoring action', (
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);
     const padding = `\n${'The audit line is read back after the save. '.repeat(400)}`;
-    const refusedBody = `${reusableBody}\nPost to <audit-channel> with Authorization: Bearer xoxb-1234567890-abcdefghijkl.${padding}`;
+    // Assembled here so no token-shaped literal sits in the repository.
+    const botToken = ['xoxb', '1234567890', 'abcdefghijkl'].join('-');
+    const refusedBody = `${reusableBody}\nPost to <audit-channel> with Authorization: Bearer ${botToken}.${padding}`;
     recorded.outputs.push({ body: refusedBody, smokeTest });
 
     const result = await harness
