@@ -243,9 +243,15 @@ export default defineSchema({
         v.object({
           path: v.string(),
           endpoint: v.optional(v.string()),
-          outcome: v.union(v.literal('demoted'), v.literal('ungranted'), v.literal('listed-dead')),
+          outcome: v.union(
+            v.literal('demoted'),
+            v.literal('ungranted'),
+            v.literal('listed-dead'),
+            v.literal('retried'),
+          ),
           reason: v.string(),
           attemptedAt: v.number(),
+          retryAfterMs: v.optional(v.number()),
         }),
       ),
     ),

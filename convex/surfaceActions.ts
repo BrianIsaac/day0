@@ -93,6 +93,8 @@ interface ProbeDependencies {
   probeMcp: typeof probeMcpSurface;
   probeSlack: typeof probeSlackSurface;
   now(): number;
+  /** The pause before a probe's one retry; real time unless a test replaces it. */
+  wait?(milliseconds: number): Promise<void>;
 }
 
 export interface ProbeOutcome {
@@ -105,6 +107,7 @@ export interface ProbeOutcome {
 }
 
 type McpClientFactory = (endpoint: URL, credential: string) => McpProbeClient;
+type EndpointInspector = (endpoint: URL) => Promise<string>;
 type HostResolver = (hostname: string) => Promise<string[]>;
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 type CredentialId = GenericId<'credentials'>;
@@ -182,6 +185,10 @@ async function day0Step<T>(what: string, step: () => Promise<T>): Promise<T> {
   }
 }
 
+/** A provider refusing the authority it was shown: the manager's or IT's to fix. */
+const ACCESS_REFUSAL =
+  /\b(?:HTTP\s+)?(?:401|403)\b|\bunauthori[sz]ed\b|\bforbidden\b|invalid[_ -]?(?:auth|token|credential)|token[_ -]?expired|missing[_ -]?scope|not[_ -]?authed|not a member|no manager email|deactivated|own bot user/i;
+
 function probeFailureVerdict(
   error: unknown,
   safeReason: string,
@@ -189,14 +196,90 @@ function probeFailureVerdict(
   if (error instanceof Day0ProbeLimitation || safeReason.includes(BROWSER_DRIVER_ABSENT)) {
     return 'ungranted';
   }
-  if (
-    /\b(?:HTTP\s+)?(?:401|403)\b|\bunauthori[sz]ed\b|\bforbidden\b|invalid[_ -]?(?:auth|token|credential)|token[_ -]?expired|missing[_ -]?scope|not[_ -]?authed|not a member|no manager email|deactivated|own bot user/i.test(
-      safeReason,
-    )
-  ) {
-    return 'ungranted';
-  }
+  if (ACCESS_REFUSAL.test(safeReason)) return 'ungranted';
   return 'listed-dead';
+}
+
+/** The verdicts `beginProbe` admits; a row that left them is no longer this probe's to call. */
+const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+];
+
+/** How long a probe waits before its one retry. */
+export const PROBE_RETRY_WAIT_MS = 5_000;
+
+/**
+ * A connection that never completed, or a provider answering 5xx.
+ *
+ * The first alternative is the fixed message the MCP client raises when both
+ * of its HTTP transports failed, which is all it says about a reset or a
+ * timeout; the Cloudflare 1xxx family is how a fronted provider's own failure
+ * arrives, with no HTTP status in the text.
+ */
+const TRANSIENT_FAILURE =
+  /any available HTTP transport|fetch failed|socket hang up|network error|\bE(?:CONN(?:RESET|REFUSED|ABORTED)|TIMEDOUT|PIPE|AI_AGAIN|HOSTUNREACH|NETUNREACH)\b|\bUND_ERR_|timed? ?out|\btimeout\b|net::ERR_(?:CONNECTION|TIMED_OUT|NETWORK|INTERNET|EMPTY_RESPONSE|SOCKET|ADDRESS_UNREACHABLE)|\b(?:HTTP|status)\W{0,3}5\d\d\b|bad gateway|service unavailable|gateway time-?out|internal server error|cloudflare-1xxx|\bError 1\d{3}\b/i;
+
+/** An MCP probe failure that remembers whether the unclipped text was transient. */
+class McpProbeFailure extends Error {
+  constructor(
+    message: string,
+    readonly transient: boolean,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Whether one more call could change a failed probe's answer.
+ *
+ * Only a failure that would otherwise be recorded as `listed-dead` qualifies:
+ * a refused key and a Day0 limitation are answers, and a second call returns
+ * the same one.
+ *
+ * Args:
+ *   error: The failure as thrown.
+ *   safeReason: Its redacted, clipped text.
+ *
+ * Returns:
+ *   True for a connection-level failure or a provider 5xx.
+ */
+function isTransientProbeFailure(error: unknown, safeReason: string): boolean {
+  if (probeFailureVerdict(error, safeReason) !== 'listed-dead') return false;
+  if (error instanceof McpProbeFailure && error.transient) return true;
+  return TRANSIENT_FAILURE.test(safeReason);
+}
+
+/** A newer probe, or a withdrawn approval, took the surface away while this probe waited to retry. */
+class ProbeSuperseded extends Error {}
+
+/**
+ * Name the transport failure behind a fetch that never got a response.
+ *
+ * `fetch` rejects with "fetch failed" and keeps what happened on its cause.
+ *
+ * Args:
+ *   error: What the fetch rejected with.
+ *
+ * Returns:
+ *   The cause's code, else the error's own name, else a plain phrase.
+ */
+function transportErrorDetail(error: unknown): string {
+  const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause;
+  if (typeof cause?.code === 'string') return cause.code;
+  if (error instanceof Error && error.name !== 'Error' && error.name !== 'TypeError') {
+    return error.name;
+  }
+  return 'no connection';
+}
+
+/** Real-time pause between a probe's first call and its retry. */
+async function waitRealTime(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve): void => {
+    setTimeout(resolve, milliseconds);
+  });
 }
 
 const credentialInternal = internal as unknown as {
@@ -588,6 +671,70 @@ export async function probeBrowserSurface(
 }
 
 /**
+ * Ask an MCP endpoint one question without the key, after a probe failed.
+ *
+ * The MCP client reports a failed connection as text: the HTTP status lives on
+ * an error object it flattens, and a failure of both transports becomes one
+ * fixed sentence. Handing the client a fetch of Day0's own to watch the real
+ * exchange would switch it from validating every redirect hop before sending
+ * to checking the final response afterwards, which is too much to give up on a
+ * credential-bearing client. So the reason a manager reads is completed by a
+ * separate request that carries no credential and follows no redirect, to the
+ * hostname whose addresses were checked a moment ago.
+ *
+ * A healthy endpoint refuses such a request for want of a key. That is said in
+ * words, never as its status, because the verdict reads those digits in a
+ * reason as the provider refusing the key Day0 was given.
+ *
+ * Args:
+ *   endpoint: The approved endpoint the probe just failed against.
+ *   fetcher: HTTP implementation, replaceable by behavioural tests.
+ *
+ * Returns:
+ *   One sentence for the reason.
+ */
+export async function inspectMcpEndpoint(endpoint: URL, fetcher: Fetcher = fetch): Promise<string> {
+  try {
+    const response = await fetcher(endpoint, {
+      method: 'GET',
+      headers: { Accept: 'application/json, text/event-stream' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+    await response.body?.cancel().catch((): void => undefined);
+    if (response.status >= 500) {
+      return `A request without the key got HTTP ${response.status} from the endpoint.`;
+    }
+    return 'A request without the key was answered, so the endpoint is reachable.';
+  } catch (error) {
+    return `A request without the key failed too: ${transportErrorDetail(error)}.`;
+  }
+}
+
+/** How much of the client's own message the reason keeps ahead of the endpoint check. */
+const MCP_FAILURE_LEAD = 190;
+
+/**
+ * Shorten an MCP client failure so the endpoint check survives the reason's clip.
+ *
+ * A fronted provider's own failure arrives as a problem document whose `type`
+ * URL alone outruns the clip; its `title` is the part a manager can read.
+ *
+ * Args:
+ *   message: The client's flattened failure text.
+ *
+ * Returns:
+ *   One line of at most `MCP_FAILURE_LEAD` characters and an ellipsis.
+ */
+function mcpFailureLead(message: string): string {
+  const text = message.replace(/\s+/g, ' ').trim();
+  const title = /"title"\s*:\s*"([^"]{1,120})"/.exec(text)?.[1];
+  const body = text.indexOf('{');
+  const line = title && body >= 0 ? `${text.slice(0, body)}${title}.` : text;
+  return line.length > MCP_FAILURE_LEAD ? `${line.slice(0, MCP_FAILURE_LEAD)}...` : line;
+}
+
+/**
  * Discover and constrain the tools exposed by one MCP surface.
  *
  * Args:
@@ -595,6 +742,7 @@ export async function probeBrowserSurface(
  *   credential: Decrypted bearer kept inside the Node action.
  *   makeClient: Client factory, replaceable by behavioural tests.
  *   resolveHostname: DNS resolver, replaceable by behavioural tests.
+ *   inspectEndpoint: Uncredentialed endpoint check, replaceable by behavioural tests.
  *
  * Returns:
  *   Allowlisted names and provider-discovered argument names.
@@ -604,6 +752,7 @@ export async function probeMcpSurface(
   credential: string,
   makeClient: McpClientFactory = createMcpClient,
   resolveHostname: HostResolver = resolveMcpHostname,
+  inspectEndpoint: EndpointInspector = inspectMcpEndpoint,
 ): Promise<McpDiscovery> {
   const url = approvedMcpEndpoint(endpoint);
   await assertPublicMcpAddresses(url.hostname, resolveHostname);
@@ -612,10 +761,21 @@ export async function probeMcpSurface(
     // Discovery with errors first: `listTools()` returns an empty map for a
     // server that refused the bearer, which would read as "no tools" on the
     // card when the provider actually answered 401.
-    const { definitions, errors } = await client.listToolDefinitionsWithErrors({
-      perServerTimeoutMs: 30_000,
-    });
-    if (errors.surface) throw new Error(errors.surface);
+    const { definitions, errors } = await client
+      .listToolDefinitionsWithErrors({ perServerTimeoutMs: 30_000 })
+      .catch((error: unknown) => ({
+        definitions: {} as Record<string, Record<string, ToolDefinition>>,
+        errors: { surface: error instanceof Error ? error.message : String(error) },
+      }));
+    if (errors.surface) {
+      // A refusal of the key is already the whole answer; anything else is
+      // text with the status flattened out of it, so the endpoint is asked.
+      if (ACCESS_REFUSAL.test(errors.surface)) throw new Error(errors.surface);
+      throw new McpProbeFailure(
+        `${mcpFailureLead(errors.surface)} ${await inspectEndpoint(url)}`,
+        TRANSIENT_FAILURE.test(errors.surface),
+      );
+    }
     const catalog = definitions.surface;
     // A server that answers with an empty catalogue has answered: it is alive
     // and Day0 has nothing to call on it. `mcpAllowlist` says so as a Day0
@@ -664,8 +824,15 @@ async function callSlack(
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(30_000),
+  }).catch((error: unknown): never => {
+    throw new Error(`Slack ${method} could not be reached: ${transportErrorDetail(error)}.`);
   });
-  const payload = (await response.json()) as Record<string, unknown>;
+  // A gateway answering for Slack sends HTML. Parsing it would replace the
+  // status with a syntax error, and the status is what the reason needs.
+  const payload = (await response.json().catch((): Record<string, unknown> => ({}))) as Record<
+    string,
+    unknown
+  >;
   if (!response.ok || payload.ok !== true) {
     throw new Error(
       typeof payload.error === 'string'
@@ -900,6 +1067,48 @@ export async function runSurfaceProbe(
     return await recordFailure(reason, verdict, attemptedAt);
   };
 
+  /**
+   * Make one provider call, and once more if the first failure was transient.
+   *
+   * A single dropped connection used to reach `failOrDemote`, which writes
+   * `listed-dead` or, on a row with a lower rung, abandons the better route for
+   * good. The retry is recorded before the wait so the card and the trail show
+   * it whichever way the second call goes.
+   */
+  const withOneRetry = async <T>(
+    credential: string,
+    known: readonly string[],
+    call: () => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await call();
+    } catch (error) {
+      const reason = safeProviderError(error, credential, known);
+      if (!isTransientProbeFailure(error, reason)) throw error;
+      const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
+        surfaceId,
+        generation,
+        reason,
+        retryAfterMs: PROBE_RETRY_WAIT_MS,
+        attemptedAt: dependencies.now(),
+      });
+      if (!recorded) throw new ProbeSuperseded();
+      await (dependencies.wait ?? waitRealTime)(PROBE_RETRY_WAIT_MS);
+      // The second call carries the key, so it is made only for a row that is
+      // still this probe's and still approved.
+      const current = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
+        surfaceId,
+      });
+      if (
+        current?.surface.probeGeneration !== generation ||
+        !PROBEABLE_VERDICTS.includes(current.surface.verdict)
+      ) {
+        throw new ProbeSuperseded();
+      }
+      return await call();
+    }
+  };
+
   // The route list is capped to the three actual rungs when orientation stores
   // it. This loop is capped independently so a malformed legacy row can never
   // turn a provider failure into an unbounded action.
@@ -960,7 +1169,9 @@ export async function runSurfaceProbe(
       let providerIdentityId: string | undefined;
       let providerWorkspaceId: string | undefined;
       if (surface.path === 'mcp') {
-        const discovery = await dependencies.probeMcp(surface.endpoint, credential);
+        const discovery = await withOneRetry(credential, known, () =>
+          dependencies.probeMcp(surface.endpoint, credential),
+        );
         toolAllowlist = discovery.toolAllowlist;
         toolArguments = discovery.toolArguments;
       } else if (surface.path === 'browser-driven') {
@@ -981,11 +1192,13 @@ export async function runSurfaceProbe(
             )
             .join('\n\n'),
         );
-        const discovery = await dependencies.probeBrowser(
-          surface.endpoint,
-          process.env.DAY0_BROWSER_MCP_URL,
-          undefined,
-          titleMarker,
+        const discovery = await withOneRetry(credential, known, () =>
+          dependencies.probeBrowser(
+            surface.endpoint,
+            process.env.DAY0_BROWSER_MCP_URL,
+            undefined,
+            titleMarker,
+          ),
         );
         toolAllowlist = discovery.toolAllowlist;
         toolArguments = discovery.toolArguments;
@@ -1002,16 +1215,18 @@ export async function runSurfaceProbe(
           (): Promise<Doc<'docPages'>[]> =>
             ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
         );
-        const slack = await dependencies.probeSlack(
-          credential,
-          context.agent.bossEmail,
-          pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
-          undefined,
-          // The channels this employee will read are the approved ones, so
-          // those are the ones whose invite the card asks for.
-          surface.intakeScope
-            ? approvedChannelNames(surface.intakeScope)
-            : documentedChannelNames(pages),
+        const slack = await withOneRetry(credential, known, () =>
+          dependencies.probeSlack(
+            credential,
+            context.agent.bossEmail,
+            pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+            undefined,
+            // The channels this employee will read are the approved ones, so
+            // those are the ones whose invite the card asks for.
+            surface.intakeScope
+              ? approvedChannelNames(surface.intakeScope)
+              : documentedChannelNames(pages),
+          ),
         );
         toolAllowlist = slack.toolAllowlist;
         channelsNotJoined = slack.channelsNotJoined;
@@ -1076,6 +1291,9 @@ export async function runSurfaceProbe(
         managerDmReady: managerDmChannelId !== undefined,
       };
     } catch (error) {
+      if (error instanceof ProbeSuperseded) {
+        return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
+      }
       const reason = safeProviderError(error, credential, known);
       const verdict = probeFailureVerdict(error, reason);
       const outcome = await failOrDemote(reason, verdict);

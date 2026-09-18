@@ -10,9 +10,11 @@ import { ownerValuesRef } from '../../src/redaction/known-values';
 import {
   approvedMcpEndpoint,
   argumentNamesFromSchema,
+  inspectMcpEndpoint,
   managerUserId,
   MAX_MCP_TOOLS,
   mcpAllowlist,
+  PROBE_RETRY_WAIT_MS,
   probeBrowserSurface,
   probeMcpSurface,
   managerDisplayName,
@@ -195,8 +197,9 @@ describe('surface MCP probing', (): void => {
           disconnect,
         }),
         publicDns,
+        async (): Promise<string> => 'A request without the key failed too: ETIMEDOUT.',
       ),
-    ).rejects.toThrow('timed out');
+    ).rejects.toThrow('timed out A request without the key failed too: ETIMEDOUT.');
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
@@ -615,10 +618,11 @@ describe('surface probe action state', (): void => {
           failures.push(args);
           return true;
         }
+        if ('retryAfterMs' in args) return true;
         return null;
       },
       runQuery: async (): Promise<unknown> => ({
-        surface,
+        surface: { ...surface, probeGeneration: 1 },
         agent: { _id: agentId, bossEmail: 'boss@day0.local' },
       }),
       runAction: fakeRunAction('provider-contract-value'),
@@ -629,6 +633,7 @@ describe('surface probe action state', (): void => {
       probeBrowser: vi.fn(),
       probeSlack: vi.fn(),
       now: (): number => 1_000,
+      wait: async (): Promise<void> => undefined,
     });
 
     expect(outcome).toMatchObject({ verdict: expectedVerdict });
@@ -1812,11 +1817,18 @@ describe('probing the browser floor', (): void => {
       } as unknown as ActionCtx,
       surfaceId,
       false,
-      { probeBrowser, probeMcp, probeSlack: vi.fn(), now: (): number => 1_000 },
+      {
+        probeBrowser,
+        probeMcp,
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait: async (): Promise<void> => undefined,
+      },
     );
 
     expect(outcome).toMatchObject({ verdict: 'connected' });
-    expect(probeMcp).toHaveBeenCalledOnce();
+    // A 503 earns the one retry; the descent happens only after it failed too.
+    expect(probeMcp).toHaveBeenCalledTimes(2);
     expect(probeBrowser).toHaveBeenCalledWith(
       'https://jira.example/issues',
       DEFAULT_BROWSER_MCP_URL,
@@ -1834,10 +1846,506 @@ describe('probing the browser floor', (): void => {
         {
           path: 'mcp',
           endpoint: 'https://mcp.jira.example/mcp',
+          outcome: 'retried',
+          reason: 'MCP server returned HTTP 503',
+        },
+        {
+          path: 'mcp',
+          endpoint: 'https://mcp.jira.example/mcp',
           outcome: 'demoted',
           reason: 'MCP server returned HTTP 503',
         },
       ],
     });
+  });
+});
+
+/**
+ * Finding J, second full run, 19 Sep: Priya's Linear card read LISTED-DEAD four
+ * seconds after the second approval while the endpoint answered within the
+ * minute. The reason string below is the run's own.
+ */
+describe('one failed probe does not write listed-dead', (): void => {
+  const RUN_TRANSPORT_FAILURE =
+    'Failed to connect to MCP server surface: Error: Could not connect to server with any available HTTP transport';
+  const LINEAR_ENDPOINT = 'https://mcp.linear.app/mcp';
+  const reachable = async (): Promise<string> =>
+    'A request without the key was answered, so the endpoint is reachable.';
+
+  type Discovery = {
+    definitions: Record<string, Record<string, ToolDefinition>>;
+    errors: Record<string, string>;
+  };
+
+  const answers: Discovery = {
+    definitions: { surface: { list_issues: {}, save_comment: {} } },
+    errors: {},
+  };
+  const fails = (message: string): Discovery => ({ definitions: {}, errors: { surface: message } });
+
+  /**
+   * A client factory that answers each new client with the next scripted result.
+   *
+   * Args:
+   *   script: One discovery result per client the probe creates, in order.
+   *
+   * Returns:
+   *   The factory, and how many clients it made and disconnected.
+   */
+  function scriptedFactory(script: Discovery[]): {
+    factory: NonNullable<Parameters<typeof probeMcpSurface>[2]>;
+    made: () => number;
+    disconnected: () => number;
+  } {
+    let made = 0;
+    let disconnected = 0;
+    return {
+      factory: () => {
+        const result = script[Math.min(made, script.length - 1)];
+        made += 1;
+        return {
+          listToolDefinitionsWithErrors: async () => result,
+          disconnect: async (): Promise<void> => {
+            disconnected += 1;
+          },
+        };
+      },
+      made: (): number => made,
+      disconnected: (): number => disconnected,
+    };
+  }
+
+  async function approvedSurface(
+    harness: TestConvex<typeof schema>,
+    options: { path: 'mcp' | 'documented-api' | 'browser-driven'; fallback?: boolean },
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'location',
+        label: 'Bed credential',
+        ciphertext: 'not-read-by-this-contract',
+        iv: 'not-read-by-this-contract',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'systems.md',
+        title: 'Systems',
+        markdown: `${SLACK_POLICY}\n\n# Looker pipeline tile\n\n- Probe marker: page title \`Pipeline coverage\`.`,
+        updatedAt: 1,
+      });
+      const endpoint =
+        options.path === 'mcp'
+          ? LINEAR_ENDPOINT
+          : options.path === 'documented-api'
+            ? 'https://slack.com/api/'
+            : 'https://looker.example/tile';
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: options.path === 'documented-api' ? 'slack' : 'linear',
+        displayName:
+          options.path === 'mcp'
+            ? 'Linear'
+            : options.path === 'documented-api'
+              ? 'Slack'
+              : 'Looker pipeline tile',
+        class: options.path === 'documented-api' ? 'chat' : 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        path: options.path,
+        ...(options.fallback
+          ? {
+              fallbackPath: 'browser-driven' as const,
+              pathCandidates: [
+                { path: 'mcp' as const, endpoint: LINEAR_ENDPOINT },
+                { path: 'browser-driven' as const, endpoint: 'https://linear.app/revops' },
+              ],
+            }
+          : {}),
+        endpoint,
+        credentialId,
+        credentialKind: 'location',
+        credentialLanded: false,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        request: { expiresInDays: 30 },
+        createdAt: 1,
+      });
+    });
+  }
+
+  function probeContext(harness: TestConvex<typeof schema>): ActionCtx {
+    return {
+      runMutation: harness.mutation.bind(harness),
+      runQuery: harness.query.bind(harness),
+      runAction: fakeRunAction(`bed-${randomBytes(12).toString('hex')}`),
+    } as unknown as ActionCtx;
+  }
+
+  async function surfaceEvents(
+    harness: TestConvex<typeof schema>,
+  ): Promise<Array<{ type: string; payload: Record<string, unknown> }>> {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type.startsWith('surface.probe'))
+        .map((event) => ({
+          type: event.type,
+          payload: event.payload as Record<string, unknown>,
+        })),
+    );
+  }
+
+  it('retries once after a connection failure and connects without leaving the approved rung', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp', fallback: true });
+    const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE), answers]);
+    const wait = vi.fn(async (): Promise<void> => undefined);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome).toMatchObject({ verdict: 'connected' });
+    expect(clients.made()).toBe(2);
+    expect(clients.disconnected()).toBe(2);
+    expect(wait).toHaveBeenCalledExactlyOnceWith(PROBE_RETRY_WAIT_MS);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'connected', path: 'mcp', endpoint: LINEAR_ENDPOINT });
+    expect(surface?.probeAttempts).toHaveLength(1);
+    expect(surface?.probeAttempts?.[0]).toMatchObject({
+      path: 'mcp',
+      outcome: 'retried',
+      retryAfterMs: PROBE_RETRY_WAIT_MS,
+    });
+    expect(surface?.probeAttempts?.[0]?.reason).toContain('any available HTTP transport');
+    const events = await surfaceEvents(harness);
+    expect(events.map((event): string => event.type)).toEqual(['surface.probe-retried']);
+    expect(events[0].payload).toMatchObject({ surfaceId, retryAfterMs: PROBE_RETRY_WAIT_MS });
+    expect(String(events[0].payload.reason)).toContain('the endpoint is reachable');
+  });
+
+  it('writes listed-dead only after the retry failed too, and says what the endpoint answered', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE)]);
+    const wait = vi.fn(async (): Promise<void> => undefined);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(
+          endpoint,
+          credential,
+          clients.factory,
+          publicDns,
+          async (): Promise<string> => 'A request without the key failed too: ECONNRESET.',
+        ),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('listed-dead');
+    expect(outcome.reason).toContain('any available HTTP transport');
+    expect(outcome.reason).toContain('ECONNRESET');
+    expect(clients.made()).toBe(2);
+    expect(wait).toHaveBeenCalledOnce();
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.probeAttempts?.map((attempt): string => attempt.outcome)).toEqual([
+      'retried',
+      'listed-dead',
+    ]);
+    expect((await surfaceEvents(harness)).map((event): string => event.type)).toEqual([
+      'surface.probe-retried',
+      'surface.probe-failed',
+    ]);
+  });
+
+  it('never retries a refused key: 401 is the manager to fix, not the network', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    const clients = scriptedFactory([
+      fails(
+        'Failed to connect to MCP server surface: SdkHttpError: Error POSTing to endpoint: HTTP 401 {"error":"invalid_token"}',
+      ),
+    ]);
+    const wait = vi.fn(async (): Promise<void> => undefined);
+    const inspect = vi.fn(reachable);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(endpoint, credential, clients.factory, publicDns, inspect),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('ungranted');
+    expect(outcome.reason).toContain('401');
+    expect(clients.made()).toBe(1);
+    expect(wait).not.toHaveBeenCalled();
+    expect(inspect).not.toHaveBeenCalled();
+    expect((await surfaceEvents(harness)).map((event): string => event.type)).toEqual([
+      'surface.probe-failed',
+    ]);
+  });
+
+  it('retries a provider 5xx, the Cloudflare 1101 the run met included', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    const clients = scriptedFactory([
+      fails(
+        'Failed to connect to MCP server surface: Error: Streamable HTTP error: Error POSTing to endpoint: {"type":"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1101/","title":"Error 1101: Worker threw exception"}',
+      ),
+      answers,
+    ]);
+    const wait = vi.fn(async (): Promise<void> => undefined);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('connected');
+    expect(clients.made()).toBe(2);
+  });
+
+  it('does not retry a Day0 limitation, which no second call would change', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    const clients = scriptedFactory([{ definitions: { surface: {} }, errors: {} }]);
+    const wait = vi.fn(async (): Promise<void> => undefined);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('ungranted');
+    expect(clients.made()).toBe(1);
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it('stops without a second call when a newer probe took over during the wait', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE), answers]);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait: async (): Promise<void> => {
+        await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      },
+    });
+
+    expect(outcome).toEqual({
+      verdict: 'skipped',
+      reason: 'A newer surface probe superseded this result.',
+    });
+    expect(clients.made()).toBe(1);
+  });
+
+  it('makes no second call with the key when the approval was withdrawn during the wait', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE), answers]);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait: async (): Promise<void> => {
+        await harness.run(async (ctx): Promise<void> => {
+          await ctx.db.patch(surfaceId, { verdict: 'proposed' });
+        });
+      },
+    });
+
+    expect(outcome.verdict).toBe('skipped');
+    expect(clients.made()).toBe(1);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.verdict).toBe('proposed');
+  });
+
+  it('names the transport error behind a Slack call that never connected', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
+    const wait = vi.fn(async (): Promise<void> => undefined);
+    const fetcher = vi.fn(async (): Promise<Response> => {
+      throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
+    });
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: vi.fn(),
+      probeBrowser: vi.fn(),
+      probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+        probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('listed-dead');
+    expect(outcome.reason).toBe('Slack auth.test could not be reached: ECONNRESET.');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledOnce();
+  });
+
+  it('carries the HTTP status of a Slack gateway error and retries it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
+    const wait = vi.fn(async (): Promise<void> => undefined);
+    const fetcher = vi.fn(
+      async (): Promise<Response> =>
+        new Response('<html><body>502 Bad Gateway</body></html>', {
+          status: 502,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+    );
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: vi.fn(),
+      probeBrowser: vi.fn(),
+      probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+        probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('listed-dead');
+    expect(outcome.reason).toBe('Slack auth.test returned HTTP 502.');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledOnce();
+  });
+
+  it('does not retry a Slack token the workspace refused', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
+    const wait = vi.fn(async (): Promise<void> => undefined);
+    const fetcher = vi.fn(
+      async (): Promise<Response> => slackResponse({ ok: false, error: 'invalid_auth' }),
+    );
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: vi.fn(),
+      probeBrowser: vi.fn(),
+      probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+        probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('ungranted');
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it('retries a documented page whose connection was reset, and not an absent driver', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'browser-driven' });
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', DEFAULT_BROWSER_MCP_URL);
+    const wait = vi.fn(async (): Promise<void> => undefined);
+    const probeBrowser = vi
+      .fn<() => Promise<McpDiscovery>>()
+      .mockRejectedValueOnce(
+        new Error('the documented page could not be opened: net::ERR_CONNECTION_RESET at https://looker.example/tile'),
+      )
+      .mockResolvedValueOnce({ toolAllowlist: ['browser_navigate'], toolArguments: [] });
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: vi.fn(),
+      probeBrowser,
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('connected');
+    expect(probeBrowser).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledOnce();
+
+    const absent = await approvedSurface(harness, { path: 'browser-driven' });
+    const driverDown = vi.fn(async (): Promise<never> => {
+      throw new Error(BROWSER_DRIVER_ABSENT_REASON);
+    });
+    wait.mockClear();
+    const second = await runSurfaceProbe(probeContext(harness), absent, false, {
+      probeMcp: vi.fn(),
+      probeBrowser: driverDown,
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait,
+    });
+    expect(second.verdict).toBe('ungranted');
+    expect(driverDown).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+  });
+});
+
+describe('the endpoint check that follows a failed MCP probe', (): void => {
+  const endpoint = new URL('https://mcp.linear.app/mcp');
+
+  it('sends no credential, follows no redirect, and never writes a status the verdict reads as a refusal', async (): Promise<void> => {
+    const seen: RequestInit[] = [];
+    const unauthenticated = async (_url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(init ?? {});
+      return new Response('{"error":"unauthenticated"}', { status: 401 });
+    };
+
+    const line = await inspectMcpEndpoint(endpoint, unauthenticated);
+
+    expect(line).toBe('A request without the key was answered, so the endpoint is reachable.');
+    expect(line).not.toMatch(/401|403|unauthori|forbidden/i);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].redirect).toBe('manual');
+    expect(new Headers(seen[0].headers).has('authorization')).toBe(false);
+  });
+
+  it('reports a gateway status and a transport error in the words a manager reads', async (): Promise<void> => {
+    await expect(
+      inspectMcpEndpoint(endpoint, async () => new Response('bad gateway', { status: 502 })),
+    ).resolves.toBe('A request without the key got HTTP 502 from the endpoint.');
+    await expect(
+      inspectMcpEndpoint(endpoint, async () => {
+        throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
+      }),
+    ).resolves.toBe('A request without the key failed too: ECONNRESET.');
   });
 });
