@@ -2224,8 +2224,8 @@ function disagreementOutcome(steps: string[], obligations: PlanObligationsRow): 
     return 'These obligations no longer line up with the plan\'s steps, so the gates read neither and hold nothing on their account.';
   }
   return transitionWithheld(plan)
-    ? 'One of the two readings leaves the state change to you, so it is held for your decision whatever the autonomy switch says.'
-    : 'Neither reading leaves the state change to you, so it is not held on that account: the run carries it as the judgement read it, and it lands under the autonomy switch like any other write.';
+    ? 'One of the two readings leaves the state change to you, so a state change the run makes is held for your decision whatever the autonomy switch says; a retry note from you that names the state is that decision.'
+    : 'Neither reading leaves the state change to you, so it is not held on that account: the run follows the judgement\'s reading, and a state change it makes goes through the autonomy switch like any other write.';
 }
 
 /**

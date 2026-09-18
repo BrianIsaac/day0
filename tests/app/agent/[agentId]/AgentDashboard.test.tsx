@@ -559,6 +559,7 @@ describe('sending a finished item back', (): void => {
     expect(fin1).toContain('The planner declared the ticket state moved by the plan');
     expect(fin1).toContain('the judgement read it as moved when what the run reads shows the condition holds');
     expect(fin1).toContain('Neither reading leaves the state change to you, so it is not held on that account');
+    expect(fin1).toContain('a state change it makes goes through the autonomy switch like any other write');
     expect(fin1).not.toContain('held for you');
 
     // The `#finance-close` ask: the planner left the move to the manager, the judgement did not; the gate held it.
@@ -567,14 +568,15 @@ describe('sending a finished item back', (): void => {
       transition: 'conditional-on-evidence', transitionStep: 5, plannerTransition: 'conditional-on-manager',
     });
     expect(ask).toContain('The planner declared the ticket state moved only on your approval, held for you');
-    expect(ask).toContain('One of the two readings leaves the state change to you, so it is held for your decision');
+    expect(ask).toContain('One of the two readings leaves the state change to you, so a state change the run makes is held for your decision');
 
     // LOG-2: the judgement left the move to the manager, the planner did not; the gate held it.
     const log2 = card(['Draft the notice', 'Draft to the manager', 'Comment on LOG-2', 'Move LOG-2 to Done'], {
       steps: [report, slackWrite, linearMove, linearMove],
       transition: 'conditional-on-manager', transitionStep: 4, plannerTransition: 'promised',
     });
-    expect(log2).toContain('One of the two readings leaves the state change to you, so it is held for your decision');
+    expect(log2).toContain('a retry note from you that names the state is that decision');
+    expect(log2).toContain('One of the two readings leaves the state change to you, so a state change the run makes is held for your decision');
 
     // Obligations that no longer line up with the steps hold nothing at the gate, so the card claims no hold.
     const unusable = card(['One step'], { steps: [], transition: 'conditional-on-evidence', transitionStep: 1, plannerTransition: 'withheld' });
