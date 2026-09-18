@@ -67,6 +67,7 @@ const FIELD_GRAMMARS: Record<Exclude<ScopeField, 'channel'>, readonly RegExp[]> 
 const CHANNELS_LABEL = /^\s*(?:[-*+]\s+)?Channels?\s*:/i;
 const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+const FORBIDDEN_QUEUE_LINE = /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
 const MAX_NOTE_VALUE = 80;
 
 /**
@@ -128,7 +129,7 @@ export function scopeCandidates(
       }
       if (fence) continue;
       const quote = line.trim();
-      if (!quote || containsTokenShape(quote)) continue;
+      if (!quote || containsTokenShape(quote) || FORBIDDEN_QUEUE_LINE.test(quote)) continue;
       for (const field of fields) {
         if (field === 'channel') {
           if (!CHANNELS_LABEL.test(line)) continue;

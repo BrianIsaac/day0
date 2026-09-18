@@ -165,6 +165,20 @@ describe('intake scope candidates', (): void => {
       ['channel', 'ops-requests'],
     ]);
   });
+
+  it('does not turn a forbidden foreign project in a role handbook into a queue', (): void => {
+    const candidates = scopeCandidates([{
+      ref: 'finance/handbook.md',
+      markdown: [
+        '# Finance close handbook',
+        '- Team: `FIN`',
+        '- Project: `September close`',
+        'Do not read project `Q3 close`; that belongs to RevOps.',
+      ].join('\n'),
+    }], ['team', 'project']);
+
+    expect(valuesOn(candidates, 'project', 'finance/handbook.md')).toEqual(['September close']);
+  });
 });
 
 describe('grounding a pick on its page line', (): void => {
