@@ -157,6 +157,20 @@ describe('writeTargetIds', (): void => {
     expect(writeTargetIds(parsedPost({ channel: 'C0OPSREQ', text: 'hello' }), chat)).toEqual([]);
   });
 
+  it('reads a documented-API ticket write from its path and from its body, nested as GraphQL nests it', (): void => {
+    const request = (path: string, body: Record<string, unknown>): ParsedSurfaceAction => {
+      const parsed = parseSurfaceAction({
+        tool: 'http.request',
+        args: { surface: 'jira', method: 'POST', path, body: JSON.stringify(body) },
+      });
+      if (!parsed.ok) throw new Error(parsed.reason);
+      return parsed.action;
+    };
+    expect(writeTargetIds(request('/rest/api/3/issue/OPS-12/comment?expand=x', { body: 'note' }), jira)).toContain('OPS-12');
+    const graphql = request('/graphql', { query: 'mutation', variables: { input: { issueId: ISSUE, body: 'note' } } });
+    expect(writeTargetIds(graphql, jira)).toContain(ISSUE);
+  });
+
   it('names nothing for a read or a write that addresses no item', (): void => {
     expect(writeTargetIds(parsedCall('get_issue', { id: 'FIN-1' }), linear)).toEqual([]);
     expect(writeTargetIds(parsedCall('list_issues', { team: 'FIN' }), linear)).toEqual([]);
@@ -169,7 +183,7 @@ describe('withheldByClaimReason', (): void => {
 
   it('names the holder, its state and the comment it landed', (): void => {
     expect(withheldByClaimReason({ ...holder, landedComment: 'c-1' })).toBe(
-      'withheld: FIN-1 is held by this employee\'s work item "Post the note" (completed), which landed comment c-1 on it; one work item writes an external item, so this write is not sent',
+      'withheld for another work item\'s claim: FIN-1 is held by this employee\'s work item "Post the note" (completed), which landed comment c-1 on it; one work item writes an external item, so this write is not sent',
     );
   });
 
