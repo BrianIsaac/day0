@@ -92,7 +92,7 @@ describe('the personal-data miss the review named', (): void => {
 });
 
 describe('the identifiers the phase 10 review found stored as credentials', (): void => {
-  it.fails('bed-revops-handbook-original: the backticked channel names stay, nothing is a secret', async (): Promise<void> => {
+  it('bed-revops-handbook-original: the backticked channel names stay, nothing is a secret', async (): Promise<void> => {
     const { entry, out } = await redactCase('bed-revops-handbook-original');
     for (const value of ['#ops-requests', '#revops-asks', '#revops']) {
       expect(survives(entry, out, value), value).toBe(true);
@@ -101,7 +101,7 @@ describe('the identifiers the phase 10 review found stored as credentials', (): 
     expect(out.findings.filter((finding) => finding.kind === 'secret')).toEqual([]);
   });
 
-  it.fails('bed-slack-policy-original: the backticked Web API method names stay, nothing is a secret', async (): Promise<void> => {
+  it('bed-slack-policy-original: the backticked Web API method names stay, nothing is a secret', async (): Promise<void> => {
     const { entry, out } = await redactCase('bed-slack-policy-original');
     for (const value of ['users.lookupByEmail', 'auth.test', 'chat.postMessage', 'https://slack.com/api/', 'chat:write.customize']) {
       expect(survives(entry, out, value), value).toBe(true);

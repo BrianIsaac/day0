@@ -178,7 +178,7 @@ it('lets resync repair an old scope row instead of redacting it as a known value
   expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual(['users:read']);
 });
 
-it.fails('leaves a stored channel name or method name out of exact removal while every real secret stays in', async () => {
+it('leaves a stored channel name or method name out of exact removal while every real secret stays in', async () => {
   const harness = convexTest(schema, allConvexModules());
   const dotted = ['Ops', 'Desk', 'Winter'].join('.');
   // The rows a sync at 0acb98f left behind: the two originals, and the copies the

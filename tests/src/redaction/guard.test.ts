@@ -203,13 +203,13 @@ it('keeps long and versioned permission identifiers without treating opaque halv
 });
 
 describe('structural identifiers the deployed model took for tokens on 18 September', (): void => {
-  it.fails.each([
+  it.each([
     ['#ops-requests', 'channel reference'],
     ['#revops-asks', 'channel reference'],
     ['#finance_close-2026', 'channel reference'],
     ['users.lookupByEmail', 'dotted identifier'],
     ['chat.postMessage', 'dotted identifier'],
-    ['oauth.v2.access', 'dotted identifier'],
+    ['admin.conversations.ekm.listOriginalConnectedChannelInfo', 'dotted identifier'],
     ['process.env.HOME', 'dotted identifier'],
     ['README.md', 'dotted identifier'],
   ])('rejects %s as %s wherever it sits without a credential label', (value: string, reason: string): void => {
@@ -219,7 +219,15 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     }
   });
 
-  it.fails('rejects a partial span of either: the name without its hash, one segment of a method', (): void => {
+  it('rejects an all-lowercase method name by the hostname shape, which comes first', (): void => {
+    for (const value of ['auth.test', 'oauth.v2.access', 'conversations.history']) {
+      expect(guardReason(value), value).toBe('hostname');
+      const text = `Methods automations use: \`${value}\`, then the rest.`;
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), value).toBeUndefined();
+    }
+  });
+
+  it('rejects a partial span of either: the name without its hash, one segment of a method', (): void => {
     const channel = 'Requests arrive in `#ops-requests` and `#revops`.';
     expect(guardSecretSpan(channel, spanOf(channel, 'ops-requests'), 'access token')).toBeUndefined();
     const method = 'Call `users.lookupByEmail` first, then `conversations.open`.';
@@ -244,7 +252,7 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     }
   });
 
-  it.fails('keeps a labelled secret that has the shape of a channel or a dotted name', (): void => {
+  it('keeps a labelled secret that has the shape of a channel or a dotted name', (): void => {
     const dotted = ['Ops', 'Desk', 'Winter'].join('.');
     expect(guardReason(dotted)).toBe('dotted identifier');
     expect(guardReason(dotted, { assigned: true })).toBeUndefined();
