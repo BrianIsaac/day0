@@ -824,7 +824,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(allArchived(h)).toBe(true);
   });
 
-  it.fails('names a call that times out twice, still cleans Slack, keeps the state, and a second run finishes', async (): Promise<void> => {
+  it('names a call that times out twice, still cleans Slack, keeps the state, and a second run finishes', async (): Promise<void> => {
     const h = await seeded();
     h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
     h.linear.fail('BedLabelDelete', { kind: 'timeout' }, { kind: 'timeout' });
@@ -840,7 +840,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(stateKept(h)).toBe(false);
   });
 
-  it.fails('archives the other tickets when one archive fails twice', async (): Promise<void> => {
+  it('archives the other tickets when one archive fails twice', async (): Promise<void> => {
     const h = await seeded();
     h.linear.fail('BedIssueArchive', { kind: 'timeout' }, { kind: 'timeout' });
     expect(await run(h, ['teardown'])).toBe(1);
@@ -852,7 +852,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(allArchived(h)).toBe(true);
   });
 
-  it.fails('does not wait out a rate limit longer than its cap; it says so and carries on to Slack', async (): Promise<void> => {
+  it('does not wait out a rate limit longer than its cap; it says so and carries on to Slack', async (): Promise<void> => {
     const h = await seeded();
     h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
     h.linear.fail('BedLabelDelete', { kind: 'status', status: 429, headers: { 'Retry-After': '1800' }, body: {} });
@@ -865,7 +865,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(stateKept(h)).toBe(true);
   });
 
-  it.fails('cleans the other Slack conversations when one cannot be read or one delete fails', async (): Promise<void> => {
+  it('cleans the other Slack conversations when one cannot be read or one delete fails', async (): Promise<void> => {
     const h = await seeded();
     h.slack.post('C1', { ts: later(5), text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID });
     h.slack.post('C3', { ts: later(6), text: `Accruals booked.\n\n${TRAILER}`, bot_id: BOT_ID });

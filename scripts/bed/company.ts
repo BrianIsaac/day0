@@ -76,6 +76,7 @@ import {
   slackTs,
   strayAsks,
   type BedChannel,
+  type BedMessage,
 } from './slack';
 import {
   BED_CHANNELS,
@@ -672,16 +673,28 @@ async function deleteBedMessages(io: CompanyIo, view: SlackView, epoch: string, 
   }
   const client = new SlackClient(view.token, io.fetch);
   let deleted = 0;
+  // One conversation or message that fails is a gap of its own; the others are still cleaned.
   for (const conversation of conversations) {
-    const messages = await conversationMessages(io.fetch, view.token, conversation.id, epoch);
+    const where = conversation.name ? `#${conversation.name}` : `DM ${conversation.id}`;
+    let messages: BedMessage[];
+    try {
+      messages = await conversationMessages(io.fetch, view.token, conversation.id, epoch);
+    } catch (error) {
+      report.line('gap', `${where} was not read (${(error as Error).message})`);
+      continue;
+    }
     for (const message of bedMessages(messages, view.botId, epoch)) {
       try {
         await client.deleteMessage(conversation.id, message.ts);
         deleted += 1;
       } catch (error) {
-        if (!(error as Error).message.includes('cant_delete_message')) throw error;
-        const where = conversation.name ? `#${conversation.name}` : `DM ${conversation.id}`;
-        report.line('gap', `${where} message ${message.ts} cannot be deleted by the bot token after a customised post: delete that exact message by hand in Slack, then retry teardown`);
+        const reason = (error as Error).message;
+        report.line(
+          'gap',
+          reason.includes('cant_delete_message')
+            ? `${where} message ${message.ts} cannot be deleted by the bot token after a customised post: delete that exact message by hand in Slack, then retry teardown`
+            : `${where} message ${message.ts} was not deleted (${reason})`,
+        );
       }
     }
   }
@@ -1029,6 +1042,50 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
   return 0;
 }
 
+/** What failed, said once: a retry's own line already names the call. */
+function failure(what: string, error: unknown): string {
+  const message = (error as Error).message;
+  return message.startsWith(what) ? message : `${what} failed: ${message}`;
+}
+
+/**
+ * Archive this clone's tickets and delete the label seed made. Each call that
+ * fails even after its retry is one gap line and the rest still run, so one
+ * failure never leaves the Slack half untouched.
+ */
+async function teardownLinear(linear: BedLinear, spec: BedSpec, state: CompanyState, report: Report): Promise<void> {
+  let issues: BedIssue[] = [];
+  try {
+    issues = await linear.issues();
+  } catch (error) {
+    report.line('gap', `${failure('ticket read', error)}; no ticket was archived`);
+  }
+  const ownedIds = new Set(state.issueIds);
+  for (const issue of issues.filter((candidate) => ownedIds.has(candidate.id) && !candidate.archived)) {
+    try {
+      await linear.archive(issue);
+      report.line('ok', `archived ${issue.key} ${issue.identifier}`);
+    } catch (error) {
+      report.line('gap', failure(`${issue.identifier} archive`, error));
+    }
+  }
+  if (!state.labelId) return;
+  let label: BedLabel | undefined;
+  try {
+    label = await linear.label(spec.label);
+  } catch (error) {
+    report.line('gap', failure('label read', error));
+    return;
+  }
+  if (!label || label.id !== state.labelId || label.description !== LABEL_DESCRIPTION) return;
+  try {
+    await linear.deleteLabel(spec.label, label.id);
+    report.line('ok', `deleted label ${spec.label}, which seed created`);
+  } catch (error) {
+    report.line('gap', failure('label delete', error));
+  }
+}
+
 /** `teardown`: archive the bed's tickets and delete the bed's bot messages. */
 export async function runTeardown(io: CompanyIo, report: Report): Promise<number> {
   const spec = loadBedSpec(io.cwd);
@@ -1040,18 +1097,7 @@ export async function runTeardown(io: CompanyIo, report: Report): Promise<number
   } else if (!state) {
     report.line('note', `no seed is recorded in ${STATE_FILE} on this clone, so no Linear ticket is this clone's to archive`);
   } else {
-    const linear = bedLinear(io, key, report);
-    const issues = await linear.issues();
-    const ownedIds = new Set(state.issueIds);
-    for (const issue of issues.filter((candidate) => ownedIds.has(candidate.id) && !candidate.archived)) {
-      await linear.archive(issue);
-      report.line('ok', `archived ${issue.key} ${issue.identifier}`);
-    }
-    const label = state.labelId ? await linear.label(spec.label) : undefined;
-    if (label && label.id === state.labelId && label.description === LABEL_DESCRIPTION) {
-      await linear.deleteLabel(spec.label, label.id);
-      report.line('ok', `deleted label ${spec.label}, which seed created`);
-    }
+    await teardownLinear(bedLinear(io, key, report), spec, state, report);
   }
   report.section('Slack');
   const token = io.env[SLACK_TOKEN_ENV]?.trim();
@@ -1061,11 +1107,17 @@ export async function runTeardown(io: CompanyIo, report: Report): Promise<number
   } else if (!epoch) {
     report.line('note', `no seed is recorded in ${STATE_FILE} on this clone, so no Slack message is the bed's to delete`);
   } else {
-    await deleteBedMessages(io, await slackView(io, token, report, false), epoch, report);
+    try {
+      await deleteBedMessages(io, await slackView(io, token, report, false), epoch, report);
+    } catch (error) {
+      report.line('gap', `Slack: ${(error as Error).message}`);
+    }
     if (report.gaps === 0) rmSync(join(io.cwd, STATE_FILE));
   }
   report.say('');
-  report.say(report.gaps === 0 ? 'Torn down.' : `${report.gaps} gap(s) above.`);
+  if (report.gaps === 0) report.say('Torn down.');
+  else if (state) report.say(`${report.gaps} gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`);
+  else report.say(`${report.gaps} gap(s) above.`);
   return report.gaps === 0 ? 0 : 1;
 }
 
