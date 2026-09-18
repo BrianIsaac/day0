@@ -1,12 +1,13 @@
 /**
- * The manager's written word on a work item: a rejection reason or a note
- * given with Retry. One value lives on the item at a time; it is the
- * direction the next run reads, and once a run has completed with it the
- * record stays on the item marked as addressed so the card keeps telling the
- * story and no later run mistakes it for a live instruction.
+ * The manager's written word on a work item: a rejection reason, a reason
+ * for cancelling its plan, or a note given with Retry. One value lives on
+ * the item at a time; it is the direction the next run reads, and once a run
+ * has completed with it the record stays on the item marked as addressed so
+ * the card keeps telling the story and no later run mistakes it for a live
+ * instruction.
  */
 
-export type ManagerFeedbackKind = 'rejection' | 'retry-note';
+export type ManagerFeedbackKind = 'rejection' | 'plan-rejection' | 'retry-note';
 
 export interface ManagerFeedback {
   reason: string;
@@ -39,8 +40,11 @@ export function liveManagerFeedback(feedback: ManagerFeedback | undefined): stri
  *   feedback: The stored feedback.
  *
  * Returns:
- *   `Retry note` for a note given with Retry, else `Rejection reason`.
+ *   `Retry note` for a note given with Retry, `Plan rejection reason` for a
+ *   cancelled plan's reason, else `Rejection reason`.
  */
 export function managerFeedbackLabel(feedback: Pick<ManagerFeedback, 'kind'>): string {
-  return feedback.kind === 'retry-note' ? 'Retry note' : 'Rejection reason';
+  if (feedback.kind === 'retry-note') return 'Retry note';
+  if (feedback.kind === 'plan-rejection') return 'Plan rejection reason';
+  return 'Rejection reason';
 }
