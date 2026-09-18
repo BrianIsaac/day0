@@ -839,8 +839,8 @@ type WaitingVerdict = ParkedVerdict & { suggestedSkillName?: string };
 /** What the owner of the registration race did with a row. */
 type RegisteredSkillOutcome = 'requeued' | 'skipped' | 'left';
 
-/** A re-admission decided where a verdict is written or checked, not by a policy change. */
-type SatisfiedTrigger = 'verdict-write' | 'check';
+/** A re-admission decided where a verdict is written, linked or checked, not by a policy change. */
+type SatisfiedTrigger = 'verdict-write' | 'check' | 'skill-registered';
 
 /**
  * Whether what a waiting verdict names is present now, and under which key.
@@ -975,6 +975,8 @@ function skillRegistrationKey(skill: Doc<'skills'>): string {
  *   ctx: Mutation context.
  *   skill: The registered skill the verdict names.
  *   workItemId: The row the verdict was written on.
+ *   via: Who reached the row, for the `work.requeued` event: the proposal
+ *     step, or Check for new work.
  *
  * Returns:
  *   Whether the row was re-queued, skipped, or was not waiting and left alone.
@@ -983,6 +985,7 @@ export async function requeueBehindRegisteredSkill(
   ctx: MutationCtx,
   skill: Doc<'skills'>,
   workItemId: Id<'workItems'>,
+  via: 'skill-registered' | 'check' = 'skill-registered',
 ): Promise<RegisteredSkillOutcome> {
   const item = await ctx.db.get(workItemId);
   if (!item || item.state !== 'needs-skill' || item.agentId !== skill.agentId) return 'left';
@@ -994,14 +997,16 @@ export async function requeueBehindRegisteredSkill(
     });
     return 'skipped';
   }
+  const at = Date.now();
   await ctx.db.patch(workItemId, {
     proposedSkillId: skill._id,
-    reevaluation: { trigger: 'skill-registered', key, at: Date.now() },
+    reevaluation: { trigger: 'skill-registered', key, at },
   });
   await applyVerdict(ctx, workItemId, {
     decision: 'pending-reevaluation',
     reason: 'skill registered, ready to retry',
   });
+  await logSatisfiedRequeue(ctx, item, via, key, (item.verdict ?? {}) as WaitingVerdict, at);
   return 'requeued';
 }
 
@@ -1085,11 +1090,8 @@ async function readmitSatisfiedInTransaction(
       // step cannot each give the row a turn.
       const skill = await registeredSkillNamedBy(ctx, args.agentId, waited);
       if (skill) {
-        const outcome = await requeueBehindRegisteredSkill(ctx, skill, row._id);
-        if (outcome === 'requeued') {
-          await logSatisfiedRequeue(ctx, row, 'check', skillRegistrationKey(skill), waited, now);
-          readmitted += 1;
-        }
+        const outcome = await requeueBehindRegisteredSkill(ctx, skill, row._id, 'check');
+        if (outcome === 'requeued') readmitted += 1;
         continue;
       }
       const satisfied = await waitSatisfiedBy(ctx, args.agentId, waited, now);
@@ -1144,10 +1146,10 @@ export const readmitSatisfiedDeferrals = internalMutation({
  * Record an evaluation verdict and move the row to where it puts it.
  *
  * A plain helper rather than only a mutation, because `skills.completeRegistration`
- * has to requeue the work item that asked for a skill inside the same
- * transaction that registers the skill — a registered, callable skill whose
- * originating work item is still parked at `needs-skill` is a state nothing in
- * the product knows how to leave.
+ * has to requeue every work item waiting for a skill inside the same
+ * transaction that registers the skill - a registered, callable skill with a
+ * work item still parked at `needs-skill` behind it is a state nothing in the
+ * product knows how to leave.
  */
 export async function applyVerdict(
   ctx: MutationCtx,

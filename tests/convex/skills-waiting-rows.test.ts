@@ -857,6 +857,21 @@ describe('the verdict write and the registration side meeting on one late item',
     }).length;
   }
 
+  /** The triggers of the row's `work.requeued` events, in order. */
+  async function requeueTriggers(harness: Harness, late: Id<'workItems'>): Promise<string[]> {
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .filter((q) => q.eq(q.field('type'), 'work.requeued'))
+          .collect(),
+    );
+    return events
+      .map((event) => event.payload as { workItemId?: string; trigger: string })
+      .filter((payload) => payload.workItemId === late)
+      .map((payload) => payload.trigger);
+  }
+
   it('leaves the late verdict to the registration side: the write parks it, the proposal step re-queues it', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -875,6 +890,7 @@ describe('the verdict write and the registration side meeting on one late item',
     });
     expect(row.reevaluation?.trigger).toBe('skill-registered');
     expect(await readmissions(harness, late)).toBe(1);
+    expect(await requeueTriggers(harness, late)).toEqual(['skill-registered']);
   });
 
   it('verdict write first, then the check, then the verdict again: one re-queue, then the skip', async (): Promise<void> => {
@@ -924,6 +940,7 @@ describe('the verdict write and the registration side meeting on one late item',
       skipReason: SKIP_REASON,
     });
     expect(await readmissions(harness, late)).toBe(1);
+    expect(await requeueTriggers(harness, late)).toEqual(['check']);
   });
 
   it('the check landing between a second verdict and its proposal step skips the row, and the proposal step leaves it skipped', async (): Promise<void> => {
@@ -962,7 +979,29 @@ describe('the verdict write and the registration side meeting on one late item',
       skipReason: SKIP_REASON,
     });
     expect(await readmissions(harness, late)).toBe(1);
+    expect(await requeueTriggers(harness, late)).toHaveLength(1);
     expect(await pendingEvaluations(harness)).toHaveLength(2);
+  });
+
+  it('owns the race in mock mode too, where the verdict write never looked', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, skillId, late } = await seedRegisteredAndLate(harness);
+
+    await landNeedsSkill(harness, agentId, late);
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'pending-reevaluation' },
+      proposedSkillId: skillId,
+    });
+    await landNeedsSkill(harness, agentId, late);
+
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'skipped',
+      skipReason: SKIP_REASON,
+    });
+    expect(await readmissions(harness, late)).toBe(1);
   });
 
   it('a revision and a second registration buy the row one more evaluation, not more', async (): Promise<void> => {
