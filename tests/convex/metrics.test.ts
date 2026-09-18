@@ -744,7 +744,7 @@ describe('supervision figures for a company of employees', (): void => {
   const SET_ASIDE: EmployeeSpec[] = [
     {
       name: 'Day0 revocation evaluation',
-      bossEmail: 'eval-revocation-20260918t080000@day0.local',
+      bossEmail: 'eval-revocation-2026-09-18t08-00-00z@day0.local',
       deployedAt: 4_000,
       charterApprovedAt: 5_000,
       decisions: [

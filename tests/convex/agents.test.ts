@@ -728,6 +728,9 @@ describe('the employee roster', (): void => {
     expect((await owner.query(api.agents.rosterForUser, {})).map((row) => row.agentId)).toEqual([
       ordinary,
     ]);
+    const supervision = await owner.query(api.metrics.forOwner, {});
+    expect(supervision?.employees.map((row) => row.agentId)).toEqual([ordinary]);
+    expect(supervision?.excludedAgents).toBe(2);
   });
 
   it('does not let a caller with an empty subject read malformed owner rows', async (): Promise<void> => {

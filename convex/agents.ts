@@ -14,6 +14,7 @@ import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
 import { OPEN_WORK_STATES, wakeQueuedWork } from './workLoop';
 import { agentReadsSource } from './docSources';
+import { isEvaluationAgent } from './metrics';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -104,32 +105,6 @@ const rosterRowValidator = v.object({
 
 /** One employee as the landing page lists it. */
 type RosterRow = Infer<typeof rosterRowValidator>;
-
-/**
- * Whether an agent row belongs to an evaluation run rather than the company.
- *
- * Both evaluation paths deploy under the operator's own subject. Match their
- * generated address and name together: the deploy mutation also accepts an
- * ordinary manager address beginning with `eval-`.
- *
- * Args:
- *   agent: The agent row's boss address and arm.
- *
- * Returns:
- *   True for an evaluation agent.
- */
-function isEvaluationAgent(agent: Pick<Doc<'agents'>, 'bossEmail' | 'name' | 'arm'>): boolean {
-  if (agent.arm === 'baseline') return true;
-  if (agent.name === 'Day0 revocation evaluation') {
-    return /^eval-revocation-\d{4}-\d{2}-\d{2}t\d{2}-\d{2}-\d{2}z@day0\.local$/.test(
-      agent.bossEmail,
-    );
-  }
-  return (
-    /^Day0 evaluation [1-9]\d*$/.test(agent.name) &&
-    /^eval-day0-r[1-9]\d*-\d{13}@day0\.local$/.test(agent.bossEmail)
-  );
-}
 
 /**
  * Fit a charter's function onto the roster's one line.

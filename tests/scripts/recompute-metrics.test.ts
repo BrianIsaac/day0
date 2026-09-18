@@ -60,7 +60,7 @@ async function companyBackend(): Promise<ReturnType<typeof convexTest>> {
       },
       {
         name: 'Day0 revocation evaluation',
-        bossEmail: 'eval-revocation-20260918t080000@day0.local',
+        bossEmail: 'eval-revocation-2026-09-18t08-00-00z@day0.local',
         deployedAt: 3_000,
         approvedAt: 4_000,
         waits: [900_000],
