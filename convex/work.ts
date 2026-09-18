@@ -629,8 +629,8 @@ async function takeExternalClaim(
 /**
  * Hold the item again for a row resuming past evaluation, or refuse.
  *
- * A retry sends a cancelled row with a plan straight to `plan-approved`, so
- * no verdict takes the claim on the way; a colleague may have taken the item
+ * A retry resumes a cancelled row that has a plan past evaluation, so no
+ * verdict takes the claim on the way; a colleague may have taken the item
  * since the cancel released it. A failed or completed row still holds its
  * claim and takes nothing new.
  *
