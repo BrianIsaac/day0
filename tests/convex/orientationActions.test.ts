@@ -1873,6 +1873,63 @@ function companyScopeModel(user: string): Record<string, unknown> {
   return { picks, reasoning: 'Picked from the role and the manager sentence.' };
 }
 
+/**
+ * The number the pick's prompt offers a candidate under.
+ *
+ * Args:
+ *   user: The intake-scope prompt.
+ *   field: The candidate's field.
+ *   value: The candidate's value, a channel with or without its hash.
+ *
+ * Returns:
+ *   The number printed before the candidate, or undefined when the prompt
+ *   does not number it.
+ */
+function offeredNumber(user: string, field: string, value: string): number | undefined {
+  const label = field === 'channel' ? `#${value.replace(/^#/, '')}` : `\`${value}\``;
+  for (const line of user.split('\n')) {
+    const match = /^\[(\d+)\] (\S+) (.+?) on /.exec(line);
+    if (match && match[2] === field && match[3] === label) return Number(match[1]);
+  }
+  return undefined;
+}
+
+/**
+ * What the model answered in rehearsal 1 (18 September) for Priya's Linear
+ * card and Aiko's Slack card, as the rows' notes recorded it: the right
+ * values, each ref carrying the candidate's page line after it. Beside each
+ * restatement, the number the prompt offers that candidate under.
+ */
+function rehearsalScopeModel(user: string): Record<string, unknown> {
+  const answers: Array<[string, Array<{ field: string; value: string; ref: string }>]> = [
+    [
+      'team REVOPS, project Q3 close',
+      [
+        { field: 'team', value: 'REVOPS', ref: 'revops/handbook.md: - Team: `REVOPS`' },
+        { field: 'project', value: 'Q3 close', ref: 'revops/handbook.md: - Project: `Q3 close`' },
+      ],
+    ],
+    [
+      "#logistics-desk is the desk's channel",
+      [
+        {
+          field: 'channel',
+          value: '#ops-requests',
+          ref: 'logistics/handbook.md: - Channels: #logistics-desk, #ops-requests',
+        },
+      ],
+    ],
+  ];
+  const picks = answers.find(([sentence]): boolean => user.includes(sentence))?.[1] ?? [];
+  return {
+    picks: picks.map((pick) => ({
+      candidate: offeredNumber(user, pick.field, pick.value),
+      ...pick,
+    })),
+    reasoning: 'Picked from the role and the manager sentence.',
+  };
+}
+
 /** The model paths the company's documentation supports, per system. */
 function companyPath(system: string): DraftPath {
   if (system === 'Linear') return 'mcp';
@@ -2114,6 +2171,84 @@ describe('each employee reads its own role', (): void => {
     expect(financeLinear).toContain(ROLE_CHARTERS.finance.proposedFunction);
     expect(financeLinear).not.toContain('team REVOPS, project Q3 close:');
     expect(financeLinear).toContain('`September close` on finance/handbook.md');
+  });
+
+  it.fails("grounds rehearsal 1's picks, whatever the model restated beside the number", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = rehearsalScopeModel;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, {
+      revops: ROLE_CHARTERS.revops,
+      logistics: ROLE_CHARTERS.logistics,
+    });
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+    const revops = await surfacesBySlug(harness, agents.revops!);
+    const logistics = await surfacesBySlug(harness, agents.logistics!);
+
+    expect(revops.linear.intakeScope).toEqual({
+      team: {
+        value: 'REVOPS',
+        sourceId: expect.any(String),
+        ref: 'revops/handbook.md',
+        quote: '- Team: `REVOPS`',
+      },
+      project: {
+        value: 'Q3 close',
+        sourceId: expect.any(String),
+        ref: 'revops/handbook.md',
+        quote: '- Project: `Q3 close`',
+      },
+    });
+    expect(logistics.slack.intakeScope).toEqual({
+      channels: [
+        {
+          value: 'ops-requests',
+          sourceId: expect.any(String),
+          ref: 'logistics/handbook.md',
+          quote: '- Channels: #logistics-desk, #ops-requests',
+        },
+      ],
+    });
+  });
+
+  it.fails("numbers each candidate the pick is offered, and offers only this role's", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = companyScopeModel;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { revops: ROLE_CHARTERS.revops });
+    await orientDeclared(harness, agents.revops!);
+    const linear = model.scopePrompts.find((prompt): boolean =>
+      prompt.includes('team REVOPS, project Q3 close'),
+    );
+    const offered = (linear ?? '').split('\n').filter((line): boolean => /^\[\d+\] /.test(line));
+    expect(offered).toContain('[1] team `REVOPS` on revops/handbook.md: - Team: `REVOPS`');
+    expect(offered.map((line): number => Number(/^\[(\d+)\]/.exec(line)?.[1]))).toEqual(
+      offered.map((_line, index): number => index + 1),
+    );
+    expect(offered.every((line): boolean => / on revops\//.test(line))).toBe(true);
+  });
+
+  it.fails('drops a number the pick was not offered, and a number given twice, and says so', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = (user: string): Record<string, unknown> => ({
+      picks: user.includes('#finance-close is ours')
+        ? [{ candidate: 1 }, { candidate: 1 }, { candidate: 99 }]
+        : [],
+      reasoning: 'The first channel is the role’s.',
+    });
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await orientDeclared(harness, agents.finance!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+
+    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual(['finance-close']);
+    expect(finance.slack.intakeScope?.notes).toEqual([
+      'Dropped pick 1: #finance-close was already picked.',
+      'Dropped pick 99: no documented value was offered under that number.',
+    ]);
   });
 
   it('drops a grounded queue from another role when the picker cites its real handbook', async (): Promise<void> => {

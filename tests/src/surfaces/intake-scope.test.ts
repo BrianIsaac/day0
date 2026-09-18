@@ -12,12 +12,42 @@ import {
   scopeFieldsFor,
   sentenceScopePicks,
   type ScopeCandidate,
+  type ScopeField,
   type ScopePage,
 } from '../../../src/surfaces/intake-scope';
 import { companyPage } from '../../fixtures/company-bed';
 
 const REVOPS = companyPage('revops/handbook.md');
 const FINANCE = companyPage('finance/handbook.md');
+const LOGISTICS = companyPage('logistics/handbook.md');
+
+/** One page as the folder source stores it. */
+function folderPage(page: { ref: string; markdown: string }): ScopePage {
+  return { sourceId: 'source-folder', ref: page.ref, markdown: page.markdown };
+}
+
+/** A pick as the model answers it: a candidate's number, beside whatever it restates. */
+interface AnsweredPick {
+  candidate: number;
+  field: ScopeField;
+  value: string;
+  ref: string;
+}
+
+/** The number a candidate is offered under: its place in the list, from 1. */
+function numberOf(
+  candidates: readonly ScopeCandidate[],
+  field: ScopeField,
+  value: string,
+  ref: string,
+): number {
+  const index = candidates.findIndex(
+    (candidate): boolean =>
+      candidate.field === field && candidate.value === value && candidate.ref === ref,
+  );
+  if (index < 0) throw new Error(`No candidate ${field} ${value} on ${ref}.`);
+  return index + 1;
+}
 
 /** The two handbooks in one order or the other, as one documentation set. */
 function pages(order: 'revops-first' | 'finance-first'): ScopePage[] {
@@ -316,6 +346,110 @@ describe('grounding a pick on its page line', (): void => {
       ]);
     }
     expect(sentenceScopePicks([], scopeCandidates(pages('revops-first'), ['channel']))).toEqual([]);
+  });
+});
+
+describe('a pick names its candidate by number', (): void => {
+  it.fails("grounds rehearsal 1's picks, whatever the model restated beside the number", (): void => {
+    // Priya's Linear card and Aiko's Slack card on 18 September: the right
+    // values, each ref carrying the candidate's page line after it, as the
+    // rows' `surfaces.intakeScope.notes` recorded them.
+    const linear = scopeCandidates([folderPage(REVOPS)], ['team', 'project']);
+    const priya: AnsweredPick[] = [
+      {
+        candidate: numberOf(linear, 'team', 'REVOPS', 'revops/handbook.md'),
+        field: 'team',
+        value: 'REVOPS',
+        ref: 'revops/handbook.md: - Team: `REVOPS`',
+      },
+      {
+        candidate: numberOf(linear, 'project', 'Q3 close', 'revops/handbook.md'),
+        field: 'project',
+        value: 'Q3 close',
+        ref: 'revops/handbook.md: - Project: `Q3 close`',
+      },
+    ];
+    expect(groundScopePicks(priya, linear)).toEqual({
+      team: {
+        value: 'REVOPS',
+        sourceId: 'source-folder',
+        ref: 'revops/handbook.md',
+        quote: '- Team: `REVOPS`',
+      },
+      project: {
+        value: 'Q3 close',
+        sourceId: 'source-folder',
+        ref: 'revops/handbook.md',
+        quote: '- Project: `Q3 close`',
+      },
+    });
+
+    const slack = scopeCandidates([folderPage(LOGISTICS)], ['channel']);
+    const aiko: AnsweredPick[] = [
+      {
+        candidate: numberOf(slack, 'channel', 'ops-requests', 'logistics/handbook.md'),
+        field: 'channel',
+        value: '#ops-requests',
+        ref: 'logistics/handbook.md: - Channels: #logistics-desk, #ops-requests',
+      },
+    ];
+    expect(groundScopePicks(aiko, slack)).toEqual({
+      channels: [
+        {
+          value: 'ops-requests',
+          sourceId: 'source-folder',
+          ref: 'logistics/handbook.md',
+          quote: '- Channels: #logistics-desk, #ops-requests',
+        },
+      ],
+    });
+  });
+
+  it.fails('takes the value, page and line from the numbered candidate, never from the restatement', (): void => {
+    const candidates = scopeCandidates(pages('revops-first'), ['team', 'project']);
+    const answered: AnsweredPick[] = [
+      {
+        candidate: numberOf(candidates, 'team', 'FIN', 'finance/handbook.md'),
+        field: 'team',
+        value: 'FINANCE',
+        ref: 'revops/handbook.md',
+      },
+    ];
+    const scope = groundScopePicks(answered, candidates);
+    expect(scope.team).toEqual({
+      value: 'FIN',
+      sourceId: 'source-folder',
+      ref: 'finance/handbook.md',
+      quote: '- Team: `FIN`',
+    });
+    expect(scope.notes).toBeUndefined();
+  });
+
+  it.fails('drops a number outside the list, and a number given twice, each with a note', (): void => {
+    const candidates = scopeCandidates([folderPage(FINANCE)], ['team', 'project']);
+    const fin = numberOf(candidates, 'team', 'FIN', 'finance/handbook.md');
+    const answered: AnsweredPick[] = [
+      { candidate: fin, field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+      { candidate: 0, field: 'project', value: 'Q4 plan', ref: 'finance/handbook.md' },
+      {
+        candidate: candidates.length + 1,
+        field: 'project',
+        value: 'Q4 plan',
+        ref: 'finance/handbook.md',
+      },
+      { candidate: fin, field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+    ];
+    const scope = groundScopePicks(answered, candidates);
+    expect(scope.team?.value).toBe('FIN');
+    expect(scope.project).toBeUndefined();
+    expect(scope.notes).toEqual([
+      'Dropped pick 0: no documented value was offered under that number.',
+      `Dropped pick ${candidates.length + 1}: no documented value was offered under that number.`,
+      `Dropped pick ${fin}: team \`FIN\` was already picked.`,
+    ]);
+    expect(groundScopePicks(answered.slice(0, 1), []).notes).toEqual([
+      `Dropped pick ${fin}: no documented value was offered under that number.`,
+    ]);
   });
 });
 
