@@ -9,7 +9,7 @@ Slack carries requests and the manager conversation. A reply to a channel ask is
 
 - Workspace: the company's Slack workspace.
 - Integration: Slack Web API over HTTPS at `https://slack.com/api/`, bot token in the `Authorization: Bearer` header.
-- Methods automations use: `auth.test`, `users.lookupByEmail`, `conversations.open`, `conversations.list`, `conversations.history`, `conversations.replies`, `chat.postMessage`.
+- Methods automations use: auth.test, users.lookupByEmail, conversations.open, conversations.list, conversations.history, conversations.replies and chat.postMessage.
 
 ## The channels, by team
 

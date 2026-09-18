@@ -10,9 +10,8 @@ pipeline. The team's formal work is in Linear and its requests arrive in Slack.
 - Project: `Q3 close`
 - Channels: #revops-asks, #revops, #ops-requests
 
-`#revops-asks` receives requests for the team, `#revops` is the team channel, and `#ops-requests`
-is the company's shared request channel. The manager DM is where drafts, questions and
-escalations go.
+The first channel receives requests for the team, the second is the team channel, and the third is
+the company's shared request channel. Drafts, questions and escalations go to the manager DM.
 
 ## What the team uses
 
