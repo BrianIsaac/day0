@@ -29,16 +29,22 @@ import {
   isPrivateHost,
   namesSystem,
   orientSurface,
+  pickIntakeScope,
   registryRemoteEndpoint,
   relevantSystemText,
   selectEvidence,
+  type IntakeScopeDraft,
   type OrientationCtx,
   type OrientationDraftResult,
 } from '../../convex/orientationActions';
 import { allConvexModules } from './all-modules';
 import { sanitisedNotionPage, type NotionPageName } from '../fixtures/notion-pages';
 import { companyPage, companyPages } from '../fixtures/company-bed';
-import { approvedChannelNames, approvedLinearScope } from '../../src/surfaces/intake-scope';
+import {
+  approvedChannelNames,
+  approvedLinearScope,
+  scopeCandidates,
+} from '../../src/surfaces/intake-scope';
 import {
   reconcileDocumentedSystems,
   type CharterSystemSeed,
@@ -90,7 +96,9 @@ const model = vi.hoisted(() => ({
   /** Every prompt the mocked classifier received. */
   prompts: [] as string[],
   /** What the mocked intake-scope picker answers; unset means it fails. */
-  scopeFor: undefined as undefined | ((user: string) => Record<string, unknown>),
+  scopeFor: undefined as
+    | undefined
+    | ((user: string) => Record<string, unknown> | Promise<Record<string, unknown>>),
   /** Every prompt the mocked intake-scope picker received. */
   scopePrompts: [] as string[],
 }));
@@ -1306,7 +1314,11 @@ describe('orientation run', (): void => {
         await (harness.mutation as unknown as Caller)(reference, args),
     } as unknown as OrientationCtx;
     await expect(
-      orientSurface(ctx, surfaceId, { draft, registry: async (): Promise<undefined> => undefined }),
+      orientSurface(ctx, surfaceId, {
+        draft,
+        registry: async (): Promise<undefined> => undefined,
+        pickScope: async (question): Promise<IntakeScopeDraft> => await pickIntakeScope(question, 25),
+      }),
     ).resolves.toEqual({ outcome: 'proposed', surfaceId });
     const linear = (await surfacesBySlug(harness, agentId)).linear;
     expect(linear).toMatchObject({ verdict: 'proposed', path: 'mcp' });
@@ -1977,7 +1989,7 @@ describe('each employee reads its own role', (): void => {
     ).rejects.toThrow('Surface proposal is a local real-mode feature');
   });
 
-  it.fails("puts each role's own queues on its cards, every value grounded on a page line", async (): Promise<void> => {
+  it("puts each role's own queues on its cards, every value grounded on a page line", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
     model.scopeFor = companyScopeModel;
@@ -2009,6 +2021,11 @@ describe('each employee reads its own role', (): void => {
     for (const value of finance.slack.intakeScope!.channels!) {
       expect(value).toMatchObject({ ref: 'finance/handbook.md', quote: '- Channels: #finance-close, #ops-requests' });
     }
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.reject, {
+      surfaceId: finance.slack._id,
+      reason: 'Re-propose.',
+    });
+    expect((await surfacesBySlug(harness, agents.finance!)).slack.intakeScope).toBeUndefined();
     // A system that bears no work carries no scope.
     expect(revops['looker-pipeline-tile'].intakeScope).toBeUndefined();
 
@@ -2021,7 +2038,7 @@ describe('each employee reads its own role', (): void => {
     expect(financeLinear).toContain('`September close` on finance/handbook.md');
   });
 
-  it.fails("falls back to the values the manager's own words name when the model does not pick", async (): Promise<void> => {
+  it("falls back to the values the manager's own words name when the model does not pick", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
     const harness = convexTest(schema, orientationModules());
@@ -2048,7 +2065,7 @@ describe('each employee reads its own role', (): void => {
     ]);
   });
 
-  it.fails('files an empty scope that says why when no page states a queue', async (): Promise<void> => {
+  it('files an empty scope that says why when no page states a queue', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     model.scopeFor = companyScopeModel;
@@ -2063,6 +2080,55 @@ describe('each employee reads its own role', (): void => {
       notes: ['No page naming Linear states a team or project for intake to read.'],
     });
     expect(model.scopePrompts).toHaveLength(0);
+  });
+
+  it('falls back when the picker answers out of shape or not at all, and keeps only the asked fields', async (): Promise<void> => {
+    vi.useRealTimers();
+    const candidates = scopeCandidates(
+      [companyPage('finance/handbook.md'), companyPage('revops/handbook.md')].map((page) => ({
+        ref: page.ref,
+        markdown: page.markdown,
+      })),
+      ['team', 'project'],
+    );
+    const question = {
+      system: 'Linear',
+      surfaceClass: 'kanban',
+      fields: ['team', 'project'] as const,
+      role: ROLE_CHARTERS.finance.proposedFunction,
+      sentences: [ROLE_CHARTERS.finance.namedSystems[0].whereMentioned],
+      candidates,
+    };
+    model.scopeFor = (): Record<string, unknown> => ({ team: 'FIN' });
+    const shapeless = await pickIntakeScope(question, 1_000);
+    expect(shapeless.note).toContain('its answer was not a list of picks');
+    expect(shapeless.picks.map((pick): string => pick.value)).toEqual(['FIN', 'September close']);
+
+    model.scopeFor = async (): Promise<Record<string, unknown>> =>
+      await new Promise<never>((): void => undefined);
+    const started = Date.now();
+    const silent = await pickIntakeScope(question, 25);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(silent.note).toContain('no answer within');
+
+    model.scopeFor = (): Record<string, unknown> => ({
+      picks: [
+        { field: 'channel', value: 'finance-close', ref: 'finance/handbook.md' },
+        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+      ],
+      reasoning: 'The role is finance close.',
+    });
+    await expect(pickIntakeScope(question, 1_000)).resolves.toEqual({
+      picks: [{ field: 'team', value: 'FIN', ref: 'finance/handbook.md' }],
+    });
+
+    model.scopeFor = undefined;
+    const unnamed = await pickIntakeScope({ ...question, sentences: [] }, 25);
+    expect(unnamed.picks).toEqual([]);
+    expect(unnamed.note).toContain("the manager's own words name none of the documented values");
+    expect(model.scopePrompts.at(-1)).toContain(
+      '- none; the manager asked for this card without naming the system in the charter',
+    );
   });
 
   it('orients every documented system, as before, when the charter names no work system', async (): Promise<void> => {

@@ -19,6 +19,7 @@ import {
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
 import { reevaluatePendingInTransaction } from './work';
+import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 
 const surfaceVerdict = v.union(
@@ -502,7 +503,12 @@ export async function reconcileDocumentedSystems(
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
-/** Store an evidence-backed connect request. */
+/**
+ * Store an evidence-backed connect request.
+ *
+ * A work-bearing card carries the queues its employee will read; they are
+ * approved with the rest of the card and replaced only by a new proposal.
+ */
 export const propose = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -516,6 +522,7 @@ export const propose = internalMutation({
     credentialKind: v.optional(credentialKind),
     credentialLocation: v.optional(v.string()),
     expiresInDays: v.number(),
+    intakeScope: schema.tables.surfaces.validator.fields.intakeScope,
   },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
@@ -542,6 +549,7 @@ export const propose = internalMutation({
       credentialRef: undefined,
       expiresAt: now + args.expiresInDays * 24 * 60 * 60 * 1_000,
       reason: undefined,
+      intakeScope: args.intakeScope,
     });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
@@ -1404,6 +1412,7 @@ export const reject = mutation({
       channelsNotJoined: undefined,
       waterfallPosition: undefined,
       intakeSkipReason: undefined,
+      intakeScope: undefined,
       lastPolledAt: undefined,
       credentialLanded: false,
       lastVerifiedAt: undefined,
