@@ -712,3 +712,96 @@ export function answersTheAsker(action: MockAction, reply: AskReplyTarget): bool
   const place = reply.threadTs ? `${reply.channel}/${reply.threadTs}` : reply.channel;
   return messageTarget(result.action) === place;
 }
+
+/** How the ledger line of a message withheld with a write its set did not know would be withheld begins. */
+export const WITHHELD_WITH_CLAIMED_WRITE_PREFIX = 'withheld with the write it reports: ';
+
+/**
+ * The ledger line of a chat message withheld because a write beside it, in a
+ * set authored before anyone held the write's target, was withheld for a claim.
+ *
+ * The message was written as if the write would land. It is not sent; the
+ * closing set is authored once more from the ledger as it stands.
+ *
+ * Args:
+ *   claimReason: The withheld write's own line (`withheldByClaimReason`).
+ *
+ * Returns:
+ *   The reason, carrying the holder's line.
+ */
+export function withheldWithClaimedWriteReason(claimReason: string): string {
+  const holder = claimReason.startsWith(WITHHELD_BY_CLAIM_PREFIX) ? claimReason.slice(WITHHELD_BY_CLAIM_PREFIX.length) : claimReason;
+  return `${WITHHELD_WITH_CLAIMED_WRITE_PREFIX}this set was authored before another work item held what it writes (${holder}), so a message written beside that write is not sent as it stands; the closing set is authored once more from what landed`;
+}
+
+/**
+ * Whether a ledger row is a message withheld with a claimed write.
+ *
+ * Args:
+ *   row: A ledger row, possibly absent.
+ *
+ * Returns:
+ *   True for a held row carrying that line.
+ */
+export function withheldWithClaimedWrite(row: { held?: boolean; reason?: string } | undefined): boolean {
+  return row?.held === true && row.reason?.startsWith(WITHHELD_WITH_CLAIMED_WRITE_PREFIX) === true;
+}
+
+/** A held item as a closing set keeps it: enough to tell later whether its executor was told of a holder. */
+export type ListedHeldItem = Pick<HeldExternalItem, 'externalId' | 'externalAlias' | 'pageField'>;
+
+/**
+ * The listed held item one of a write's targets names, if any.
+ *
+ * A ticket is matched by either of its names, a page field by its documented
+ * label on a browser-driven surface, both without regard to case. A page
+ * field is not matched by surface: two employees' cards may name one page
+ * differently, and a wrong match here only leaves a message to be sent as
+ * it always was.
+ *
+ * Args:
+ *   listed: The held items an executor was told of.
+ *   targets: The ids a write addresses (`writeTargetIds`).
+ *   surface: The surface written.
+ *
+ * Returns:
+ *   The first listed item a target names.
+ */
+export function listedHeldItem<T extends ListedHeldItem>(
+  listed: readonly T[],
+  targets: readonly string[],
+  surface: { path?: string },
+): T | undefined {
+  const wanted = new Set(targets.map((target) => target.toLowerCase()));
+  return listed.find((item) => {
+    if (item.pageField) return surface.path === BROWSER_DRIVEN && wanted.has(browserFieldId(item.externalId));
+    return [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])].some((name) => wanted.has(name.toLowerCase()));
+  });
+}
+
+/**
+ * The held items the claim-withheld rows of a ledger were withheld for.
+ *
+ * Args:
+ *   actions: The run's actions.
+ *   applied: Their ledger rows.
+ *   held: The items other work items hold, as read now.
+ *   surfaces: The agent's surfaces.
+ *
+ * Returns:
+ *   Each held item a claim-withheld write addressed, once.
+ */
+export function heldItemsOfWithheldRows(
+  actions: readonly MockAction[],
+  applied: ReadonlyArray<{ held?: boolean; reason?: string } | undefined>,
+  held: readonly HeldExternalItem[],
+  surfaces: ReadonlyArray<{ slug: string; class: string; path?: string }>,
+): HeldExternalItem[] {
+  const found = actions.flatMap((action, index): HeldExternalItem[] => {
+    if (!withheldByClaim(applied[index])) return [];
+    const on = parsedOn(action, surfaces);
+    const item = on ? listedHeldItem(held, writeTargetIds(on.parsed, on.surface), on.surface) : undefined;
+    return item ? [item] : [];
+  });
+  return found.filter((item, at) => found.indexOf(item) === at);
+}

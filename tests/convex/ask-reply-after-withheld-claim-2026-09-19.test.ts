@@ -161,6 +161,20 @@ const holderPlan: ExecutionPlan = {
   },
 };
 
+const slackMessage = (body: Record<string, unknown>): MockAction => ({
+  tool: 'http.request',
+  args: {
+    surface: 'slack', method: 'POST', path: '/chat.postMessage',
+    headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}', 'Content-Type': 'application/json; charset=utf-8' }),
+    body: JSON.stringify(body),
+  },
+});
+const threadReply = (text: string): MockAction =>
+  slackMessage({ channel: REVOPS_ASKS_ASK.replyTarget.channel, thread_ts: REVOPS_ASKS_ASK.replyTarget.threadTs, text });
+const managerDm = (text: string): MockAction => slackMessage({ channel: MANAGER_DM, text });
+const satisfied = (evidence: string): PlanStepOutcome[] =>
+  revopsAsksPlan.steps.map((_, index) => ({ step: index + 1, status: 'satisfied' as const, evidence }));
+
 interface Seeded { agentId: Id<'agents'>; ask: Id<'workItems'>; holder: Id<'workItems'> }
 
 async function seed(harness: Harness): Promise<Seeded> {
@@ -249,8 +263,25 @@ async function authorClosing(harness: Harness, workItemId: Id<'workItems'>): Pro
   const row = await readItem(harness, workItemId);
   await harness.action(internal.workActions.authorDependentActions, { workItemId, runId: row.executionRunId! });
 }
+/** Apply the set that is waiting, as the scheduled apply would. */
+async function applyWaiting(harness: Harness, workItemId: Id<'workItems'>): Promise<void> {
+  await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+}
+/**
+ * Drain what the steps above left scheduled. Every step is driven by hand
+ * first: `runAllTimers` fires the six-minute apply watchdog at once, and it
+ * would read an apply still in flight as interrupted.
+ */
 async function settle(harness: Harness): Promise<void> {
   await harness.finishAllScheduledFunctions(vi.runAllTimers);
+}
+/** The closing apply, the second authoring it may ask for, and that set's apply. */
+async function closeOut(harness: Harness, workItemId: Id<'workItems'>): Promise<void> {
+  await applyWaiting(harness, workItemId);
+  if ((outputOf(await readItem(harness, workItemId)) as { phase?: string }).phase === 'dependent-authoring') {
+    await authorClosing(harness, workItemId);
+    await applyWaiting(harness, workItemId);
+  }
 }
 /** The sibling ask begins executing, which is when it takes the page-field claim. */
 async function holderBegins(harness: Harness, holder: Id<'workItems'>): Promise<void> {
@@ -281,25 +312,169 @@ describe('an ask whose closing writes were withheld for a claim holder still ans
     restoreSurfaceMode();
   });
 
-  it("never completes silently on the run's own closing set: the claim is taken while the set is authored, the reply step is blocked, nothing answers the thread", async (): Promise<void> => {
+  it('two asks, one tile: the claim is taken after the set is authored, the Save is withheld, no message claims it, and the reply still lands naming the holder', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { ask, holder } = await seed(t);
-    recorded.closingAnswers.push(RUN_CLOSING);
-    recorded.duringClosing = async (): Promise<void> => await holderBegins(t, holder);
+    recorded.closingAnswers.push(RUN_CLOSING, closingAnswer({
+      draft: 'The tile reads 68%; the refresh was not made from this request.',
+      notes: '',
+      actions: [threadReply('Pipeline coverage on the Looker tile reads 68% as I read it just now; it has not been refreshed to the 74% standup figure yet.'), managerDm('The #revops-asks ask is answered from the tile as read, 68%. Could you obtain an approved access path for the Q4 pipeline tracker?')],
+      planStepOutcomes: satisfied('ledger rows 0 to 3 and 6: the tile read 68%; rows 4 and 5 were withheld for the work item that holds the field'),
+    }));
 
     await runPhaseOne(t, ask);
+    await authorClosing(t, ask);
+    // The set is authored and waits for its apply; the sibling begins and takes the field.
+    expect(recorded.closingPrompts[0]).not.toContain('page field');
+    await holderBegins(t, holder);
+    await closeOut(t, ask);
+    await applyWaiting(t, holder);
     await settle(t);
 
     const row = await readItem(t, ask);
-    const rows = outputOf(row).applied ?? [];
-    expect(rows.filter((entry) => entry.reason?.startsWith("withheld for another work item's claim: the page field \"pipeline coverage\"")).length).toBeGreaterThanOrEqual(2);
-    // The one Save is the holder's.
+    expect(row.state).toBe('completed');
+    const { actions = [], applied = [] } = outputOf(row);
+    expect(actions).toHaveLength(10);
+    // The first closing set: fill and Save withheld for the holder, the snapshot read, the DM not sent as written.
+    for (const index of [4, 5]) {
+      expect(applied[index]).toMatchObject({ ok: true, held: true });
+      expect(applied[index]!.reason).toContain(`withheld for another work item's claim: the page field "pipeline coverage" on ${SLUG} is held by this employee's work item "${OPS_REQUESTS_ASK_TITLE}"`);
+    }
+    expect(applied[6]!.effect).toContain('visible figure');
+    expect(applied[7]).toMatchObject({ ok: true, held: true });
+    expect(applied[7]!.reason).toContain('withheld with the write it reports: ');
+    expect(applied[7]!.reason).toContain(OPS_REQUESTS_ASK_TITLE);
+    // One Save, the holder's.
     expect(saves()).toBe(1);
     expect((outputOf(await readItem(t, holder)).applied ?? []).every((entry) => entry.ok && !entry.held)).toBe(true);
-    expect(recorded.closingPrompts).toHaveLength(1);
-    expect(posted().some((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel)).toBe(false);
-    // The day's row read `completed`, "2 changes landed", with nobody answered.
+
+    // The set was authored once more, under the holders as they then stood and from the ledger as it then stood.
+    expect(recorded.closingPrompts).toHaveLength(2);
+    expect(recorded.closingPrompts[1]).toContain(`${SLUG} · page field "Pipeline coverage" · this employee · "${OPS_REQUESTS_ASK_TITLE}"`);
+    expect(recorded.closingPrompts[1]).toContain(`5. held · {"tool":"mcp.call","args":{"surface":"${SLUG}","tool":"browser_click","toolArgsJson":"{\\"element\\":\\"Save\\"}"}} · mcp.call ${SLUG} · browser_click · {element: "Save"} · withheld for another work item's claim: the page field "pipeline coverage"`);
+    expect(recorded.closingPrompts[1]).toMatch(/7\. held · .*withheld with the write it reports: /);
+    expect(applied[8]).toMatchObject({ ok: true });
+    expect(applied[8]!.held).toBeUndefined();
+
+    // The person who asked is answered, from what was read, and told whose work the refresh is.
+    const replies = posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.thread_ts).toBe(REVOPS_ASKS_ASK.replyTarget.threadTs);
+    expect(replies[0]!.text).toContain('reads 68%');
+    expect(replies[0]!.text).toContain(`Pipeline coverage on ${SLUG} is refreshed by its own work item ("${OPS_REQUESTS_ASK_TITLE}"); it was not written from this request.`);
+    // No message anywhere says this run made the refresh.
+    expect(posted().map((body) => String(body.text)).filter((text) => /emitted the documented refresh/.test(text))).toEqual([]);
+
+    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
+    const mine = events.filter((event) => (event.payload as { workItemId?: string }).workItemId === ask);
+    expect(mine.filter((event) => event.type === 'work.closing-reauthored').map((event) => event.payload)).toEqual([
+      expect.objectContaining({ reason: 'claim-withheld', withheldIndexes: [4, 5, 7] }),
+    ]);
+    expect(mine.some((event) => event.type === 'audit.corrected' && String((event.payload as { reason?: string }).reason).startsWith('held-item reply completed'))).toBe(true);
+    expect(mine.filter((event) => event.type === 'work.failed')).toEqual([]);
+  }, 30_000);
+
+  it("adds nothing to a reply that already says whose work the field is", async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { ask, holder } = await seed(t);
+    const text = 'Pipeline coverage reads 68% on the tile as I read it; the field refresh is held by its own work item, so I have not written it.';
+    recorded.closingAnswers.push(RUN_CLOSING, closingAnswer({
+      draft: 'Answered from the tile as read.', notes: '', actions: [threadReply(text)],
+      planStepOutcomes: satisfied('ledger rows 0 to 3 and 6'),
+    }));
+
+    await runPhaseOne(t, ask);
+    await authorClosing(t, ask);
+    await holderBegins(t, holder);
+    await closeOut(t, ask);
+    await applyWaiting(t, holder);
+    await settle(t);
+
+    expect((await readItem(t, ask)).state).toBe('completed');
+    const replies = posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel).map((body) => String(body.text));
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.startsWith(text)).toBe(true);
+    expect(replies[0]).not.toContain('is refreshed by its own work item (');
+  }, 30_000);
+
+  it('is one round: a second closing set that still leaves the reply blocked stops the run, and nothing is authored a third time', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { ask, holder } = await seed(t);
+    recorded.closingAnswers.push(RUN_CLOSING, closingAnswer({
+      draft: 'Still no reply.', notes: '', actions: [managerDm('The tile reads 68%. Could you decide how the ask should be answered?')],
+      planStepOutcomes: revopsAsksOutcomes,
+    }));
+
+    await runPhaseOne(t, ask);
+    await authorClosing(t, ask);
+    await holderBegins(t, holder);
+    await closeOut(t, ask);
+    await applyWaiting(t, holder);
+    await settle(t);
+
+    const row = await readItem(t, ask);
     expect(row.state).toBe('failed');
     expect(row.skipReason).toContain('approved plan step(s) remained blocked: step 3 (');
+    expect(recorded.closingPrompts).toHaveLength(2);
+    expect(recorded.closingAnswers).toHaveLength(0);
+    expect(posted().some((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel)).toBe(false);
+  }, 30_000);
+
+  it('sends the messages of a set whose executor was told of the holder as they were written, and still authors once more for the reply it left out', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { ask, holder } = await seed(t);
+    // Told of the holder, the executor still fills and Saves; sent back once by its own reply check, it answers the same.
+    recorded.closingAnswers.push(RUN_CLOSING, RUN_CLOSING, closingAnswer({
+      draft: 'Answered from the tile as read.', notes: '',
+      actions: [threadReply('Pipeline coverage reads 74% on the tile; the field refresh is held by its own work item.')],
+      planStepOutcomes: satisfied('ledger rows 0 to 3 and 6'),
+    }));
+
+    await runPhaseOne(t, ask);
+    // The sibling holds the field before this closing set is authored: the executor is told, and ignores it.
+    await holderBegins(t, holder);
+    await applyWaiting(t, holder);
+    await authorClosing(t, ask);
+    expect(recorded.closingPrompts[0]).toContain(`page field "Pipeline coverage" · this employee · "${OPS_REQUESTS_ASK_TITLE}"`);
+    await closeOut(t, ask);
+    await settle(t);
+
+    const row = await readItem(t, ask);
+    const { applied = [] } = outputOf(row);
+    expect(applied[4]).toMatchObject({ held: true });
+    expect(applied[5]).toMatchObject({ held: true });
+    expect(applied[7]).toMatchObject({ ok: true, tool: 'http.request' });
+    expect(applied[7]!.held).toBeUndefined();
+    // The DM went out with whose work the refresh is, as the authoring's own check completes it.
+    expect(String(posted().find((body) => body.channel === MANAGER_DM)?.text)).toContain(`Pipeline coverage on ${SLUG} is refreshed by its own work item ("${OPS_REQUESTS_ASK_TITLE}"); it was not written from this request.`);
+    expect(recorded.closingPrompts).toHaveLength(3);
+    expect(saves()).toBe(1);
+    expect(row.state).toBe('completed');
+    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'work.closing-reauthored').map((event) => (event.payload as { reason?: string }).reason)).toEqual(['reply-owed']);
+    expect(posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel)).toHaveLength(1);
+  }, 30_000);
+
+  it("the day's own race: the claim is taken while the set is authored; the run does not complete with nobody answered", async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { ask, holder } = await seed(t);
+    recorded.closingAnswers.push(RUN_CLOSING, closingAnswer({
+      draft: 'Answered from the tile as read.', notes: '',
+      actions: [threadReply('Pipeline coverage reads 68% on the tile; the field refresh is held by its own work item.')],
+      planStepOutcomes: satisfied('ledger rows 0 to 3 and 6'),
+    }));
+    recorded.duringClosing = async (): Promise<void> => await holderBegins(t, holder);
+
+    await runPhaseOne(t, ask);
+    await authorClosing(t, ask);
+    await closeOut(t, ask);
+    await applyWaiting(t, holder);
+    await settle(t);
+
+    const row = await readItem(t, ask);
+    expect(row.state).toBe('completed');
+    expect(saves()).toBe(1);
+    expect(posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel)).toHaveLength(1);
+    expect(posted().map((body) => String(body.text)).filter((text) => /emitted the documented refresh/.test(text))).toEqual([]);
   }, 30_000);
 });

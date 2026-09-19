@@ -58,7 +58,24 @@ import {
   type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import { answersTheAsker, heldItemOfBlockedStep, heldItemReplyFindings, isReplyStep, plannedWriteTargets, withHeldItemsSaid, withheldByClaim, withheldByClaimReason, writeTargetIds, type AskReplyTarget, type HeldExternalItem } from '../src/work/claim-key';
+import {
+  answersTheAsker,
+  heldItemOfBlockedStep,
+  heldItemReplyFindings,
+  heldItemsOfWithheldRows,
+  isReplyStep,
+  listedHeldItem,
+  plannedWriteTargets,
+  withHeldItemsSaid,
+  withheldByClaim,
+  withheldByClaimReason,
+  withheldWithClaimedWrite,
+  withheldWithClaimedWriteReason,
+  writeTargetIds,
+  type AskReplyTarget,
+  type HeldExternalItem,
+  type ListedHeldItem,
+} from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -1106,7 +1123,17 @@ interface DependentAuthoringOutput extends ExecutionOutput {
   refusedClosing?: RefusedClosing;
   /** A re-read on resume that did not land: the run stopped before its closing set. */
   failedReread?: FailedReread;
+  /**
+   * Set when the closing set is being authored once more (`closingRoundOwed`):
+   * the run's one extra round is spent. The first closing set and its ledger
+   * are part of `actions` and `applied` from then on; `prerequisiteCount`
+   * keeps where phase one ended.
+   */
+  closingRound?: { reason: ClosingRoundReason; prerequisiteCount: number };
 }
+
+/** Why a closing set is authored once more: the asker has no reply yet, or messages were withheld with a claimed write. */
+type ClosingRoundReason = 'reply-owed' | 'claim-withheld';
 
 interface DependentPendingOutput extends DependentExecutionOutput {
   phase: 'dependent';
@@ -1119,6 +1146,12 @@ interface DependentPendingOutput extends DependentExecutionOutput {
    * a holder after the reply has said where the work is does not fail the run.
    */
   leftToHolders?: HeldExternalItem[];
+  /**
+   * The held items this set's executor was told of. A write the apply
+   * withholds for a holder that is not among them was authored before the
+   * claim was taken, and so was every message beside it.
+   */
+  authoredUnder?: ListedHeldItem[];
 }
 
 function isDependentPendingOutput(
@@ -1397,7 +1430,7 @@ function flattenedDependentOutput(
       : {}),
     applied: [...output.initial.applied, ...applied],
     planStepOutcomes: output.planStepOutcomes,
-    prerequisiteCount: output.initial.actions.length,
+    prerequisiteCount: output.initial.closingRound?.prerequisiteCount ?? output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
   };
@@ -1416,6 +1449,79 @@ function askReplyOf(item: Pick<Doc<'workItems'>, 'sourceSystem' | 'replyTarget'>
   if (SURFACE_MODE !== 'real' || !item?.replyTarget) return undefined;
   return { surface: item.sourceSystem, channel: item.replyTarget.channel, ...(item.replyTarget.threadTs ? { threadTs: item.replyTarget.threadTs } : {}) };
 }
+
+/**
+ * Whether the person who asked is still owed their reply.
+ *
+ * The reply to the asker is the primary effect of a mention. With the reply
+ * step blocked and no reply landed where they read, the run did not do what
+ * it was for, whatever else landed or was withheld.
+ *
+ * Args:
+ *   outcomes: The closing phase's plan-step accounting.
+ *   run: The plan, the run's whole action set with its ledger, and where the item answers.
+ *
+ * Returns:
+ *   True for a mention whose reply step is blocked and whose thread has no landed reply.
+ */
+export function replyStillOwed(
+  outcomes: readonly PlanStepOutcome[],
+  run: {
+    plan: ExecutionPlan;
+    actions: readonly ExecutionOutput['actions'][number][];
+    applied: readonly (Partial<AppliedAction> | undefined)[];
+    reply?: AskReplyTarget;
+  },
+): boolean {
+  const reply = run.reply;
+  if (reply === undefined) return false;
+  if (!outcomes.some((outcome) => outcome.status === 'blocked' && isReplyStep(outcome, run.plan, reply))) return false;
+  return !run.actions.some((action, index) => {
+    const row = run.applied[index];
+    return row?.ok === true && row.held !== true && answersTheAsker(action, reply);
+  });
+}
+
+/**
+ * Why a closing set that has been applied is authored once more, if it is.
+ *
+ * Two things a closing set cannot know when it is authored. A sibling work
+ * item may take the claim on what the set writes before the set is applied:
+ * the guard withholds the write, and the messages beside it, written as if it
+ * would land, are withheld with it. And an executor leaves the reply to the
+ * person who asked for after a read-back that only the apply of this same set
+ * produces: there is no later phase to write it in. In both cases the set is
+ * authored once more against the ledger as it now stands. One round per run
+ * (`closingRound` on the prerequisites), and only when the apply left no
+ * failure: a failed run stops as it did.
+ *
+ * Args:
+ *   output: The applied closing set.
+ *   applied: Its ledger rows.
+ *   item: The work item.
+ *
+ * Returns:
+ *   The reason for the round, or undefined when the run finishes as it is.
+ */
+function closingRoundOwed(
+  output: DependentPendingOutput,
+  applied: readonly AppliedAction[],
+  item: Doc<'workItems'> | null,
+): ClosingRoundReason | undefined {
+  if (SURFACE_MODE !== 'real' || !item || output.initial.closingRound) return undefined;
+  if (!output.initial.resumedClosing && output.initial.initialFailure) return undefined;
+  if (applied.some(withheldWithClaimedWrite)) return 'claim-withheld';
+  const owed = replyStillOwed(output.planStepOutcomes, {
+    plan: item.plan as ExecutionPlan,
+    actions: [...output.initial.actions, ...output.actions],
+    applied: [...output.initial.applied, ...applied],
+    reply: askReplyOf(item),
+  });
+  return owed ? 'reply-owed' : undefined;
+}
+
+/** The event that records a closing set authored once more, with the reason. */
+const CLOSING_REAUTHORED = 'work.closing-reauthored';
 
 /**
  * Why blocked plan steps fail a run, if they do.
@@ -1456,14 +1562,7 @@ export function blockedPlanReason(
       const row = run.applied[index];
       return row?.ok === true && row.held !== true;
     };
-    // The reply to the person who asked is the primary effect of a mention.
-    // With the reply step blocked and no reply landed where they read, the
-    // run did not do what it was for, whatever else landed or was withheld.
-    const reply = run.reply;
-    const replyOwed =
-      reply !== undefined &&
-      blocked.some((outcome) => isReplyStep(outcome, run.plan, reply)) &&
-      !run.actions.some((action, index) => landed(index) && answersTheAsker(action, reply));
+    const replyOwed = replyStillOwed(outcomes, run);
     // A read the gate refused was never sent and had nothing to change: the
     // step that needed it is the blocked step, not an action that did not land.
     const refusedRead = (index: number): boolean => {
@@ -1594,6 +1693,9 @@ export function closingStopReason(run: {
  *   heldElsewhere: The items other work items hold, as the executor was told.
  *   surfaces: The agent's surfaces.
  *   replyTarget: The thread the work item answers, when it came from chat.
+ *   withheldFor: The held items an earlier closing set of this run had writes
+ *     withheld for (`heldItemsOfWithheldRows`): a set authored once more owes
+ *     the person who asked whose work that is.
  *
  * Returns:
  *   The set, and the sentences added to it; the same set when none was owed.
@@ -1605,11 +1707,15 @@ export function withLeftStepsSaid(
   heldElsewhere: readonly HeldExternalItem[],
   surfaces: readonly SurfaceRecord[],
   replyTarget?: { channel: string; threadTs?: string },
+  withheldFor: readonly HeldExternalItem[] = [],
 ): { actions: ExecutionOutput['actions']; said: string[] } {
-  const owed = outcomes.flatMap((outcome) => {
-    const item = outcome.status === 'blocked' ? heldItemOfBlockedStep(outcome, plan, heldElsewhere) : undefined;
-    return item ? [item] : [];
-  });
+  const owed = [
+    ...outcomes.flatMap((outcome) => {
+      const item = outcome.status === 'blocked' ? heldItemOfBlockedStep(outcome, plan, heldElsewhere) : undefined;
+      return item ? [item] : [];
+    }),
+    ...withheldFor,
+  ];
   if (owed.length === 0) return { actions, said: [] };
   // The manager DM reports on the work; it is not where the person who asked reads.
   const toTheAsker = actions.filter((action) => {
@@ -1779,7 +1885,10 @@ export const authorDependentActions = internalAction({
         candidate: rowToCandidate(item),
         onAdditionalModelCall: (): void => {},
       }));
-      const leftSaid = withLeftStepsSaid(repaired.actions, repaired.planStepOutcomes, plan, heldElsewhere, surfaces, item.replyTarget);
+      const leftSaid = withLeftStepsSaid(
+        repaired.actions, repaired.planStepOutcomes, plan, heldElsewhere, surfaces, item.replyTarget,
+        heldItemsOfWithheldRows(prerequisites.actions, prerequisites.applied, heldElsewhere, surfaces),
+      );
       const held = leftSaid.said.length > 0 ? { ...repaired, actions: leftSaid.actions } : repaired;
       authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
@@ -1799,6 +1908,11 @@ export const authorDependentActions = internalAction({
         ...(leftToHolders.length > 0
           ? { leftToHolders: leftToHolders.filter((holder, at) => leftToHolders.findIndex((row) => row.externalId === holder.externalId) === at) }
           : {}),
+        authoredUnder: heldElsewhere.map((listed) => ({
+          externalId: listed.externalId,
+          ...(listed.externalAlias ? { externalAlias: listed.externalAlias } : {}),
+          ...(listed.pageField ? { pageField: true } : {}),
+        })),
       };
       const stop = closingStopReason({
         plan,
@@ -2057,7 +2171,18 @@ export const applyApprovedActions = internalAction({
           autoPhase: claim.phase === 'auto',
           autonomousActions: claim.autonomousActions,
           replyTarget: claim.replyTarget,
-          ...(SURFACE_MODE === 'real' ? { claimHold: heldByAnotherWorkItem(ctx, args.workItemId) } : {}),
+          ...(SURFACE_MODE === 'real'
+            ? {
+                claimHold: heldByAnotherWorkItem(
+                  ctx,
+                  args.workItemId,
+                  // A closing set in its first round, whose executor's held list was kept.
+                  isDependentPendingOutput(output) && !output.initial.closingRound && output.authoredUnder
+                    ? { actions: output.actions, surfaces, authoredUnder: output.authoredUnder }
+                    : undefined,
+                ),
+              }
+            : {}),
         }),
         output.argumentRepairs,
       );
@@ -2170,7 +2295,36 @@ async function itemsHeldElsewhere(
  * Returns:
  *   The check `applySurfaceActions` makes before a write is sent.
  */
-function heldByAnotherWorkItem(ctx: ActionCtx, workItemId: Id<'workItems'>): ClaimHold {
+function heldByAnotherWorkItem(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  closing?: { actions: readonly MockAction[]; surfaces: readonly SurfaceRecord[]; authoredUnder: readonly ListedHeldItem[] },
+): ClaimHold {
+  // A closing set whose executor was not told of a holder wrote its messages
+  // as if the write would land. Read once, before the first action goes out
+  // and whatever the order of the set: with such a write in it, the chat
+  // messages of the set are withheld with it, and the finish authors the
+  // closing set once more (`closingRoundOwed`). A holder the executor was
+  // told of changes nothing here: its reply was held to saying so.
+  let unannounced: Promise<string | undefined> | undefined;
+  const unannouncedHold = async (): Promise<string | undefined> => {
+    if (!closing) return undefined;
+    for (const action of closing.actions) {
+      const parsed = parseSurfaceAction(action);
+      const surface = parsed.ok ? closing.surfaces.find((row) => row.slug === parsed.action.surface) : undefined;
+      if (!parsed.ok || !surface) continue;
+      const targets = writeTargetIds(parsed.action, surface);
+      if (targets.length === 0 || listedHeldItem(closing.authoredUnder, targets, surface)) continue;
+      const holder = await ctx.runQuery(internal.work.writeClaimHolder, { workItemId, surfaceSlug: surface.slug, targets });
+      if (!holder) continue;
+      return withheldWithClaimedWriteReason(
+        withheldByClaimReason(
+          surface.path === 'browser-driven' ? { ...holder, target: `the page field "${holder.target}" on ${surface.slug}` } : holder,
+        ),
+      );
+    }
+    return undefined;
+  };
   // A page field is written by a fill and the control that submits it. Once
   // this apply has withheld a fill on a browser-driven surface, the writes
   // that follow it there (the Save) are withheld with it: a Save alone would
@@ -2181,6 +2335,11 @@ function heldByAnotherWorkItem(ctx: ActionCtx, workItemId: Id<'workItems'>): Cla
     const browserDriven = surface.path === 'browser-driven';
     const earlier = browserDriven ? withheldPages.get(surface.slug) : undefined;
     const targets = writeTargetIds(parsed, surface);
+    if (surface.class === 'chat' && actionIntent(parsed) === 'write') {
+      unannounced ??= unannouncedHold();
+      const withWrite = await unannounced;
+      if (withWrite) return withWrite;
+    }
     if (targets.length === 0) {
       return earlier !== undefined && actionIntent(parsed) === 'write' ? earlier : undefined;
     }
@@ -2669,6 +2828,39 @@ async function finishRun(
     }
     const finalOutput = flattenedDependentOutput(output, settled);
     const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, { workItemId });
+    const round = reason ? undefined : closingRoundOwed(output, settled, item);
+    if (round && item) {
+      const withheldActions = [...(output.initial.withheldActions ?? []), ...(output.withheldActions ?? [])];
+      const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
+        workItemId,
+        runId: claim.runId,
+        applyAttemptId: claim.applyAttemptId,
+        output: {
+          ...output.initial,
+          actions: finalOutput.actions,
+          applied: finalOutput.applied,
+          needsDependentPhase: true,
+          ...(withheldActions.length > 0 ? { withheldActions } : {}),
+          closingRound: { reason: round, prerequisiteCount: finalOutput.prerequisiteCount },
+        } satisfies DependentAuthoringOutput,
+      });
+      if (!prepared.prepared) {
+        return { ok: false, reason: 'the run moved on before its closing set could be authored once more' };
+      }
+      await ctx.runMutation(internal.events.log, {
+        agentId: item.agentId,
+        type: CLOSING_REAUTHORED,
+        payload: {
+          workItemId,
+          runId: claim.runId,
+          reason: round,
+          withheldIndexes: finalOutput.applied.flatMap((entry, index) =>
+            withheldByClaim(entry) || withheldWithClaimedWrite(entry) ? [index] : [],
+          ),
+        },
+      });
+      return { ok: true, reason: `closing actions applied; the closing set is authored once more (${round})` };
+    }
     const finalReason =
       (output.initial.resumedClosing ? undefined : output.initial.initialFailure) ??
       reason ??
