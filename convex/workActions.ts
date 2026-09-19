@@ -87,7 +87,7 @@ import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop'
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
-import { carriedDeclaredReads, groundingReadSurfaces } from '../src/work/promised-reads';
+import { carriedDeclaredReads, groundingReadSurfaces, noteReleasesRead } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
@@ -1193,6 +1193,8 @@ export interface PlanStepOutcomeCheck {
   surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
   /** The manager's live feedback on the run; a step may rest on it only when it is here. */
   managerFeedback?: string;
+  /** The live feedback again when it is a note given with Retry: only such a note can release a declared read. */
+  retryNote?: string;
   /** The work item, so its own plan-grounding read can be told from another ticket's. */
   candidate?: Pick<WorkCandidate, 'externalId'>;
   /** The item's plan-grounding reads, as `internal.work.planGroundingReads` returns them. */
@@ -1205,8 +1207,10 @@ export interface PlanStepOutcomeCheck {
  * A declared read is met by a landed read of its surface in phase one's
  * ledger, or by the item's own plan-grounding read of that surface: the
  * product made that read itself, under standing authority, before the plan
- * that declares it was drafted. Otherwise the step may not be reported
- * satisfied, and must say why it is not.
+ * that declares it was drafted. It is released when the manager's retry
+ * note removes it and the step's outcome rests on that note
+ * (`noteReleasesRead`). Otherwise the step may not be reported satisfied,
+ * and must say why it is not.
  *
  * Args:
  *   args: The same arguments the gate takes.
@@ -1217,10 +1221,14 @@ export interface PlanStepOutcomeCheck {
 export function unmetDeclaredReads(args: PlanStepOutcomeCheck): DeclaredRead[] {
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const surface of groundingReadSurfaces(args.candidate?.externalId, args.groundingReads)) reads.add(surface);
+  const note = args.retryNote?.trim();
   return declaredReads(args.plan, args.surfaces).filter((read): boolean => {
     if (reads.has(read.surface.slug.toLowerCase())) return false;
     const outcome = args.outcomes.find((row) => row.step === read.step);
     if (!outcome) return true;
+    if (note && outcome.basis === 'manager-feedback' && outcome.evidence.trim() !== '' && noteReleasesRead(note, read)) {
+      return false;
+    }
     return outcome.status === 'satisfied' || outcome.evidence.trim() === '';
   });
 }
@@ -1572,6 +1580,7 @@ export const authorDependentActions = internalAction({
         initialLedger: prerequisites.applied,
         surfaces: gateSurfaces,
         managerFeedback: feedback,
+        retryNote: item.managerFeedback?.kind === 'retry-note' ? feedback : undefined,
         candidate: rowToCandidate(item),
         groundingReads,
       });

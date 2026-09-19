@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
  * Finding T of the third full internal run (19 September): the promised-read
  * gate read phase one's ledger only, so LOG-1's retry was refused three
  * times for a Linear read the product had made before the plan was drafted
- * and the closing set carried again. Every row here is the run's own.
+ * and the closing set carried again, and FIN-1 was refused for a Slack read
+ * the manager's note had removed. Every row here is the run's own.
  */
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -43,6 +44,7 @@ const log1Gate = (extra: Partial<Parameters<typeof validatePlanStepOutcomes>[0]>
     initialLedger: [],
     surfaces,
     managerFeedback: LOG_1_RETRY_NOTE,
+    retryNote: LOG_1_RETRY_NOTE,
     ...extra,
   });
 
@@ -54,6 +56,7 @@ const fin1Gate = (extra: Partial<Parameters<typeof validatePlanStepOutcomes>[0]>
     initialLedger: fin1PhaseOne.applied,
     surfaces,
     managerFeedback: FIN_1_RETRY_NOTE,
+    retryNote: FIN_1_RETRY_NOTE,
     candidate: fin1Candidate,
     ...extra,
   });
@@ -87,7 +90,7 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
   });
 
   it('counts the grounding read for its own surface only: a declared Slack read is still owed', (): void => {
-    expect(() => fin1Gate({ groundingReads: [log1GroundingRead], candidate: log1Candidate })).toThrow(
+    expect(() => fin1Gate({ retryNote: undefined, groundingReads: [log1GroundingRead], candidate: log1Candidate })).toThrow(
       'approved plan step 4 declares a read of Slack',
     );
   });
@@ -102,7 +105,59 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
       surfaces,
       candidate: log1Candidate,
       groundingReads: [],
+      retryNote: LOG_1_RETRY_NOTE,
     });
     expect(unmet.map(missingReadReason)).toEqual([LOG_1_REFUSAL]);
   });
 });
+
+describe('a retry note releases the declared read it removed (FIN-1, 19 September)', () => {
+  it('reproduces the run: the gate refuses the Slack read the note removed when it is not told of the note', (): void => {
+    expect(() => fin1Gate({ retryNote: undefined })).toThrow(fin1RefusedClosing.reason);
+  });
+
+  it('accepts the run\'s closing set: a live retry note, the step resting on it, and the note naming the surface it removes', (): void => {
+    expect(() => fin1Gate()).not.toThrow();
+  });
+
+  it('releases nothing when the step does not rest on the manager\'s feedback', (): void => {
+    const outcomes = fin1RefusedClosing.planStepOutcomes.map((outcome) =>
+      outcome.step === 4 ? { step: 4, status: 'satisfied' as const, evidence: outcome.evidence } : outcome,
+    );
+    expect(() => fin1Gate({ outcomes })).toThrow(fin1RefusedClosing.reason);
+  });
+
+  it('releases nothing on a note that does not remove the read', (): void => {
+    for (const retryNote of [
+      LOG_1_RETRY_NOTE,
+      'Do not skip the Slack read: check #finance-close first.',
+      'No, read Slack first and then post the note.',
+      'Post the note in Linear. The Slack thread can wait for nobody.',
+      'Leave out the Notion step.',
+    ]) {
+      expect(() => fin1Gate({ retryNote, managerFeedback: retryNote }), retryNote).toThrow(fin1RefusedClosing.reason);
+    }
+  });
+
+  it('releases the read on a note that names the step by number', (): void => {
+    const retryNote = 'Skip step 4, the questions were answered on a call.';
+    expect(() => fin1Gate({ retryNote, managerFeedback: retryNote })).not.toThrow();
+    const wrongStep = 'Skip step 2, the questions were answered on a call.';
+    expect(() => fin1Gate({ retryNote: wrongStep, managerFeedback: wrongStep })).toThrow(fin1RefusedClosing.reason);
+  });
+
+  it('releases only the read: the step must still carry evidence and the feedback must be live', (): void => {
+    expect(() => fin1Gate({ managerFeedback: undefined })).toThrow('step 4 cites manager feedback the run does not carry');
+  });
+
+  it('owes nothing for a read the manager\'s note took out of the plan itself: a redrafted plan declares its own reads', (): void => {
+    const redrafted = {
+      ...fin1Plan,
+      steps: fin1Plan.steps.slice(0, 3),
+      obligations: { ...fin1Plan.obligations!, steps: fin1Plan.obligations!.steps.slice(0, 3) },
+    };
+    const outcomes = fin1RefusedClosing.planStepOutcomes.slice(0, 3);
+    expect(() => fin1Gate({ plan: redrafted, outcomes, retryNote: undefined })).not.toThrow();
+  });
+});
+

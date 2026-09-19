@@ -80,8 +80,12 @@ import {
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
 import { REFUSED_CREATE_ACTION, REFUSED_CREATE_RUN } from '../fixtures/refused-ticket-create-2026-09-19';
 import {
+  FIN_1_RETRY_NOTE,
   LOG_1_REFUSAL,
   LOG_1_RETRY_NOTE,
+  fin1Candidate,
+  fin1Plan,
+  fin1RefusedClosing,
   log1Candidate,
   log1GroundingRead,
   log1Plan,
@@ -5374,5 +5378,50 @@ describe('the promised-read gate on a retry (finding T, 19 September)', (): void
     expect(recorded.dependentRuns).toBe(1);
     expect(recorded.mcp).toEqual([]);
     expect((await readItem(harness, workItemId)).state).toBe('failed');
+  });
+
+  /**
+   * FIN-1 as its retry found it. The harness's Linear double lists no
+   * `list_issues`, so phase one's landed Linear read is a `get_issue` here;
+   * the plan, the note and the closing set are the run's.
+   */
+  const fin1Retry = async (kind: 'retry-note' | 'rejection'): Promise<{ result: { ok: boolean; reason?: string }; item: Doc<'workItems'> }> => {
+    recorded.skillOutput = {
+      draft: 'Reading the close tickets.', notes: '', needsDependentPhase: true,
+      actions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'FIN-2' }) } }],
+    };
+    recorded.dependentOutput = closingOf(fin1RefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        externalId: fin1Candidate.externalId,
+        title: fin1Candidate.title,
+        contentSummary: fin1Candidate.contentSummary,
+        plan: fin1Plan,
+        managerFeedback: { reason: FIN_1_RETRY_NOTE, at: Date.now(), kind },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    const result = await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    return { result, item: await readItem(harness, workItemId) };
+  };
+
+  it('lets FIN-1\'s closing set through when the retry note removed the Slack read it declares', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { result, item } = await fin1Retry('retry-note');
+    expect(result).toEqual({ ok: true, reason: "dependent actions pending the manager's approval" });
+    expect(item.state).toBe('actions-pending');
+    expect(recorded.http).toEqual([]);
+  });
+
+  it('releases nothing on the same words given as a rejection reason: only a note given with Retry counts', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { result, item } = await fin1Retry('rejection');
+    expect(result).toEqual({ ok: false, reason: fin1RefusedClosing.reason });
+    expect(item.state).toBe('failed');
   });
 });

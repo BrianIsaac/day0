@@ -3,7 +3,8 @@
  * phase one landed. The closing gate (`validatePlanStepOutcomes`) owes each
  * declared read a landed read of its surface; on 19 September it looked in
  * phase one's ledger alone, and refused LOG-1 three times for a Linear read
- * the product had made itself before the plan was drafted.
+ * the product had made itself before the plan was drafted, and FIN-1 for a
+ * Slack read the manager's retry note had taken out of the work.
  */
 
 import { actionIntent, parseSurfaceAction } from '../surfaces/policy';
@@ -38,6 +39,50 @@ export function groundingReadSurfaces(externalId: string | undefined, reads: rea
     if (parsed.ok) surfaces.add(parsed.action.surface.toLowerCase());
   }
   return surfaces;
+}
+
+/** Verbs and prepositions that take a thing out of the work, written before the thing. */
+const REMOVING = String.raw`(?:skip|omit|drop|remove|without|leave\s+out|leave\s+off|take\s+out)`;
+/** What a manager says after the thing to take it out. */
+const UNNEEDED = String.raw`(?:is|are)?\s*(?:not\s+needed|not\s+required|not\s+necessary|unnecessary|unneeded)`;
+/** A removal that is itself negated: "do not skip the Slack read". */
+const KEPT = /\b(?:not|never|don't|dont|cannot|can't)\s+(?:skip|omit|drop|remove|leave|take)\b/i;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Whether the manager's retry note takes a declared read out of the work.
+ *
+ * The note counts when one of its sentences names the read, by the
+ * surface's name or slug or by its step number, and removes it in so many
+ * words: a removing verb shortly before the name in the same clause
+ * ("leave out the Slack step", "skip step 4"; not "skip the greeting and
+ * answer in Slack"), "no" directly before it ("needs no Slack call"),
+ * or the name followed by "not needed". A sentence that negates the removal
+ * ("do not skip the Slack read") releases nothing, and neither does a note
+ * that only mentions the surface. The caller pairs this with the step's
+ * own outcome resting on the manager's feedback; the note alone releases
+ * nothing.
+ *
+ * Args:
+ *   note: The live retry note.
+ *   read: The declared read.
+ *
+ * Returns:
+ *   True when the note removes the read.
+ */
+export function noteReleasesRead(note: string, read: DeclaredRead): boolean {
+  const names = [...new Set([read.surface.displayName, read.surface.slug].map((name) => name.trim()).filter(Boolean))]
+    .map(escapeRegExp);
+  const named = `(?:(?:${names.join('|')})(?![A-Za-z0-9])|step\\s+${read.step}(?![0-9]))`;
+  const before = new RegExp(`\\b${REMOVING}\\b(?:(?!\\b(?:and|but|then|or)\\b)[^,:;.!?\\n]){0,40}?(?<![A-Za-z0-9])${named}`, 'i');
+  const adjacent = new RegExp(`\\bno\\s+(?:more\\s+)?${named}`, 'i');
+  const after = new RegExp(`(?<![A-Za-z0-9])${named}(?:\\s+(?:call|read|step|check|lookup))?\\s+${UNNEEDED}`, 'i');
+  return note
+    .split(/(?<=[.!?;])\s+|\n+/)
+    .some((sentence) => !KEPT.test(sentence) && (before.test(sentence) || adjacent.test(sentence) || after.test(sentence)));
 }
 
 /**
