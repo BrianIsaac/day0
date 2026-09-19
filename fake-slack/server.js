@@ -22,6 +22,19 @@ async function bodyOf(request) {
   return body;
 }
 
+// Slack's read methods take their arguments from the query string or a form
+// body and do not read a JSON one: a JSON body leaves them with no arguments.
+function readArguments(url, request, body) {
+  const merged = new URLSearchParams(url.search);
+  const type = String(request.headers['content-type'] || '').toLowerCase();
+  if (type.startsWith('application/x-www-form-urlencoded')) {
+    for (const [name, value] of new URLSearchParams(body)) merged.set(name, value);
+  }
+  return merged;
+}
+
+const CHANNELS = ['D_DAY0_MANAGER', 'C_REVOPS', 'C_REVOPS_ASKS'];
+
 function authorised(request, expected = botToken) {
   return request.headers.authorization === `Bearer ${expected}`;
 }
@@ -92,6 +105,9 @@ const server = createServer(async (request, response) => {
     return json(response, 200, { ok: true, user_id: 'U_DAY0_BOT', team_id: 'T_DAY0' });
   }
   if (method === 'users.lookupByEmail') {
+    if (!readArguments(url, request, body).get('email')) {
+      return json(response, 200, { ok: false, error: 'users_not_found' });
+    }
     return json(response, 200, {
       ok: true,
       user: { id: 'U_DAY0_MANAGER', real_name: 'Day0 operator', deleted: false },
@@ -110,6 +126,22 @@ const server = createServer(async (request, response) => {
       response_metadata: { next_cursor: '' },
     });
   }
+  if (method === 'conversations.history' || method === 'conversations.replies') {
+    const given = readArguments(url, request, body);
+    if (!CHANNELS.includes(given.get('channel') || '')) {
+      return json(response, 200, { ok: false, error: 'channel_not_found' });
+    }
+    if (method === 'conversations.history') {
+      return json(response, 200, { ok: true, messages: [], has_more: false });
+    }
+    const ts = given.get('ts');
+    if (!ts) return json(response, 200, { ok: false, error: 'invalid_arguments' });
+    return json(response, 200, {
+      ok: true,
+      messages: [{ type: 'message', user: 'U_DAY0_MANAGER', ts, thread_ts: ts }],
+      has_more: false,
+    });
+  }
   if (method === 'chat.postMessage') {
     let payload;
     try {
@@ -117,7 +149,7 @@ const server = createServer(async (request, response) => {
     } catch {
       return json(response, 200, { ok: false, error: 'invalid_json' });
     }
-    if (!['D_DAY0_MANAGER', 'C_REVOPS', 'C_REVOPS_ASKS'].includes(payload.channel)) {
+    if (!CHANNELS.includes(payload.channel)) {
       return json(response, 200, { ok: false, error: 'not_in_channel' });
     }
     if (typeof payload.text !== 'string' || payload.text.trim() === '') {

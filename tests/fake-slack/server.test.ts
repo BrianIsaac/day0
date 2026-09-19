@@ -1,41 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createServer, type AddressInfo } from 'node:net';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { startFakeSlack, type FakeSlack } from './spawn';
 
-const SERVER = fileURLToPath(new URL('../../fake-slack/server.js', import.meta.url));
 let BASE = '';
-let child: ChildProcess;
-
-/**
- * A port nothing listens on. A fixed port let two checkouts running this
- * file at once share one server, and each read the other's call counts.
- *
- * Returns:
- *   The port the operating system handed out.
- */
-async function freePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once('error', reject);
-    probe.listen(0, '127.0.0.1', (): void => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close((): void => resolve(port));
-    });
-  });
-}
-
-async function ready(): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    try {
-      if ((await fetch(`${BASE}/healthz`)).ok) return;
-    } catch {
-      // The child has not bound the socket yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error('the fake Slack service did not start');
-}
+let fake: FakeSlack;
 
 async function api(
   method: string,
@@ -55,17 +22,12 @@ async function api(
 }
 
 beforeAll(async (): Promise<void> => {
-  const port = await freePort();
-  BASE = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, FAKE_SLACK_PORT: String(port) },
-    stdio: 'ignore',
-  });
-  await ready();
+  fake = await startFakeSlack();
+  BASE = fake.base;
 }, 20_000);
 
 afterAll((): void => {
-  child?.kill('SIGTERM');
+  fake?.stop();
 });
 
 describe('the isolated Slack provisioning proof', (): void => {
@@ -100,7 +62,7 @@ describe('the isolated Slack provisioning proof', (): void => {
   it('probes a dedicated identity and reports documented channels as not joined', async (): Promise<void> => {
     const token = 'xoxb-day0-fake-dedicated-token';
     expect(await api('auth.test', token)).toMatchObject({ ok: true, user_id: 'U_DAY0_BOT' });
-    expect(await api('users.lookupByEmail', token)).toMatchObject({
+    expect(await api('users.lookupByEmail', token, 'email=operator%40example.test')).toMatchObject({
       user: { id: 'U_DAY0_MANAGER' },
     });
     expect(await api('conversations.open', token)).toMatchObject({
@@ -164,5 +126,69 @@ describe('the isolated Slack provisioning proof', (): void => {
     expect(proof.requestLog).toEqual([
       { sequence: 1, method: 'auth.test', at: expect.any(Number) },
     ]);
+  });
+
+  describe('reads its parameters where Slack reads them', (): void => {
+    const token = ['xoxb', 'day0', 'fake', 'dedicated', 'token'].join('-');
+    const call = async (
+      verb: 'GET' | 'POST',
+      path: string,
+      contentType?: string,
+      body?: string,
+    ): Promise<Record<string, unknown>> =>
+      (await (
+        await fetch(`${BASE}/api/${path}`, {
+          method: verb,
+          headers: { authorization: `Bearer ${token}`, ...(contentType ? { 'content-type': contentType } : {}) },
+          body,
+        })
+      ).json()) as Record<string, unknown>;
+    const FORM = 'application/x-www-form-urlencoded';
+    const JSON_TYPE = 'application/json; charset=utf-8';
+
+    it('answers a thread read whose channel and ts are in the query, under GET and POST', async (): Promise<void> => {
+      for (const verb of ['GET', 'POST'] as const) {
+        expect(await call(verb, 'conversations.replies?channel=C_REVOPS_ASKS&ts=1787817600.000001')).toMatchObject({
+          ok: true,
+          messages: [{ ts: '1787817600.000001', thread_ts: '1787817600.000001' }],
+          has_more: false,
+        });
+      }
+    });
+
+    it('answers a history read whose channel is in a form body', async (): Promise<void> => {
+      expect(await call('POST', 'conversations.history', FORM, 'channel=C_REVOPS&limit=5')).toMatchObject({
+        ok: true,
+        messages: [],
+        has_more: false,
+      });
+    });
+
+    it('does not read a JSON body on a read method: the channel was never named', async (): Promise<void> => {
+      const body = JSON.stringify({ channel: 'C_REVOPS_ASKS', ts: '1787817600.000001' });
+      expect(await call('POST', 'conversations.replies', JSON_TYPE, body)).toEqual({ ok: false, error: 'channel_not_found' });
+      expect(await call('POST', 'conversations.history', JSON_TYPE, body)).toEqual({ ok: false, error: 'channel_not_found' });
+      expect(await call('POST', 'users.lookupByEmail', JSON_TYPE, '{"email":"operator@example.test"}')).toEqual({
+        ok: false,
+        error: 'users_not_found',
+      });
+    });
+
+    it('refuses a channel it does not have, and a thread read with no ts', async (): Promise<void> => {
+      expect(await call('GET', 'conversations.replies?channel=C_ELSEWHERE&ts=1787817600.000001')).toEqual({
+        ok: false,
+        error: 'channel_not_found',
+      });
+      expect(await call('GET', 'conversations.replies?channel=C_REVOPS&thread_ts=1787817600.000001')).toEqual({
+        ok: false,
+        error: 'invalid_arguments',
+      });
+    });
+
+    it('still reads a JSON body on the write methods that take one', async (): Promise<void> => {
+      expect(
+        await call('POST', 'chat.postMessage', JSON_TYPE, JSON.stringify({ channel: 'C_REVOPS', text: 'a note' })),
+      ).toMatchObject({ ok: true, channel: 'C_REVOPS' });
+    });
   });
 });
