@@ -20,7 +20,7 @@ npx convex function-spec --file spec.json
 To call a public function from the command line on the local no-auth stack, present the local owner's identity; without it every per-agent function refuses as not authenticated, which is the ownership check doing its job:
 
 ```bash
-npx convex run agents:list '{}' --identity '{"subject":"dev-no-auth|local-boss"}'
+npx convex run agents:listForUser '{}' --identity '{"subject":"dev-no-auth|local-boss"}'
 npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
 ```
 
