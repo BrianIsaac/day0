@@ -89,6 +89,16 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
     expect(() => log1Gate({ groundingReads: [log1GroundingRead] })).toThrow(LOG_1_REFUSAL);
   });
 
+  it('skips a grounding-read row it cannot read instead of failing on it', (): void => {
+    const malformed = [
+      { action: undefined, applied: { ok: true } },
+      { action: {}, applied: { ok: true } },
+      { action: log1GroundingRead.action, applied: null },
+    ] as unknown as GroundingRead[];
+    expect(() => log1Gate({ candidate: log1Candidate, groundingReads: malformed })).toThrow(LOG_1_REFUSAL);
+    expect(() => log1Gate({ candidate: log1Candidate, groundingReads: [...malformed, log1GroundingRead] })).not.toThrow();
+  });
+
   it('counts the grounding read for its own surface only: a declared Slack read is still owed', (): void => {
     expect(() => fin1Gate({ retryNote: undefined, groundingReads: [log1GroundingRead], candidate: log1Candidate })).toThrow(
       'approved plan step 4 declares a read of Slack',

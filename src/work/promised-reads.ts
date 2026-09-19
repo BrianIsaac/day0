@@ -33,6 +33,7 @@ export function groundingReadSurfaces(externalId: string | undefined, reads: rea
   const surfaces = new Set<string>();
   if (!externalId) return surfaces;
   for (const { action, applied } of reads) {
+    if (!action || typeof action.tool !== 'string' || !action.args) continue;
     if (applied?.ok !== true || applied.held || applied.awaitingApproval) continue;
     if (!readsTheItem(action, externalId)) continue;
     const parsed = parseSurfaceAction(action);
@@ -47,6 +48,8 @@ const REMOVING = String.raw`(?:skip|omit|drop|remove|without|leave\s+out|leave\s
 const UNNEEDED = String.raw`(?:is|are)?\s*(?:not\s+needed|not\s+required|not\s+necessary|unnecessary|unneeded)`;
 /** A removal that is itself negated: "do not skip the Slack read". */
 const KEPT = /\b(?:not|never|don't|dont|cannot|can't)\s+(?:skip|omit|drop|remove|leave|take)\b/i;
+/** A sentence that reports the read as missing, or asks for it: "no Slack read was made, do it now". */
+const DEMANDED = /\bthere\s+(?:was|were)\s+no\b|\b(?:was|were)\s+(?:not\s+)?(?:made|done|taken)\b|\b(?:again|first|missing|forgot|forgotten|do\s+it|make\s+it)\b|\?\s*$/i;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -61,8 +64,9 @@ function escapeRegExp(value: string): string {
  * ("leave out the Slack step", "skip step 4"; not "skip the greeting and
  * answer in Slack"), "no" directly before it ("needs no Slack call"),
  * or the name followed by "not needed". A sentence that negates the removal
- * ("do not skip the Slack read") releases nothing, and neither does a note
- * that only mentions the surface. The caller pairs this with the step's
+ * ("do not skip the Slack read"), reports the read as missing or asks for
+ * it ("no Slack read was made, do it now"), or is a question releases
+ * nothing, and neither does a note that only mentions the surface. The caller pairs this with the step's
  * own outcome resting on the manager's feedback; the note alone releases
  * nothing.
  *
@@ -82,7 +86,7 @@ export function noteReleasesRead(note: string, read: DeclaredRead): boolean {
   const after = new RegExp(`(?<![A-Za-z0-9])${named}(?:\\s+(?:call|read|step|check|lookup))?\\s+${UNNEEDED}`, 'i');
   return note
     .split(/(?<=[.!?;])\s+|\n+/)
-    .some((sentence) => !KEPT.test(sentence) && (before.test(sentence) || adjacent.test(sentence) || after.test(sentence)));
+    .some((sentence) => !KEPT.test(sentence) && !DEMANDED.test(sentence) && (before.test(sentence) || adjacent.test(sentence) || after.test(sentence)));
 }
 
 /**

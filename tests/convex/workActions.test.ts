@@ -5368,6 +5368,22 @@ describe('the promised-read gate on a retry (finding T, 19 September)', (): void
     expect(output.refusedClosing?.actions).toEqual(log1RefusedClosing.actions);
   });
 
+  it('applies nothing from a closing set over the cap, whatever it carries', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    const [read, comment, done] = log1RefusedClosing.actions;
+    const flood = Array.from({ length: CLOSING_SET_CAP }, () => read!);
+    recorded.dependentOutput = { ...closingOf(log1RefusedClosing), actions: [...flood, comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    const result = await authorClosing(harness, workItemId);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain(`cap is ${CLOSING_SET_CAP}`);
+    expect(recorded.dependentRuns).toBe(1);
+    expect(recorded.mcp).toEqual([]);
+  });
+
   it('refuses a closing set that declares a read it neither made nor carries, with no second authoring', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };

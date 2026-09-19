@@ -1642,7 +1642,9 @@ export const authorDependentActions = internalAction({
         },
       }));
       let output = await authorClosingSet();
-      const carriedReads = carriedBy(output);
+      const cap = dependentActionCap(initial);
+      // A set over the cap is refused below as it stands: nothing in it is applied first.
+      const carriedReads = output.actions.length > cap ? [] : carriedBy(output);
       carriedReadsOwed = false;
       if (carriedReads.length > 0) {
         authored = output;
@@ -1653,7 +1655,6 @@ export const authorDependentActions = internalAction({
         output = await authorClosingSet();
       }
       authored = output;
-      const cap = dependentActionCap(initial);
       if (output.actions.length > cap) {
         throw new Error(
           `dependent phase emitted ${output.actions.length} actions; cap is ${cap}`,
