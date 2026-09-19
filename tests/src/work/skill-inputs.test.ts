@@ -4,6 +4,10 @@ import {
   bindSkillInputs,
   declaredInputsNote,
   declaredSkillInputs,
+  EXECUTION_INPUT_LINES,
+  executionInputLines,
+  impliedSkillInputs,
+  REPLY_SURFACE_INPUT,
   declareUndeclaredInputs,
   renderSkillInputs,
   skillInputPlaceholders,
@@ -284,3 +288,72 @@ describe('declaring the inputs an author used but did not declare', (): void => 
   });
 });
 
+// Demo rehearsal 2, 19 Sep 2026, finding 1: the taught lines gave a reply
+// channel and thread and no surface to send them on.
+describe('the surface that carries the reply', (): void => {
+  const ask: WorkCandidate = {
+    ...candidate,
+    sourceCategory: 'event-stream',
+    sourceSystem: 'Slack',
+    externalId: 'C0BSF04TZ19:1789000500.000200',
+    replyTarget: { channel: 'C0BSF04TZ19', channelName: 'ops-requests', threadTs: '1789000500.000200' },
+  };
+  const taught = `${body}`.replace(
+    '- `<originating-surface>`: where the ticket lives.',
+    '- `<reply-surface>`: the connected chat surface.\n- `<originating-surface>`: where the ticket lives.',
+  );
+
+  it('teaches a real-mode author which surface carries the reply, and leaves the mock lines as they were', (): void => {
+    expect(executionInputLines('mock')).toBe(EXECUTION_INPUT_LINES);
+    const real = executionInputLines('real');
+    expect(real).toContain(
+      '  - `<reply-channel>` and `<reply-thread>`: the channel and thread of the `Reply target:` line when the work came from a chat channel or thread. The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface\'s own path (`http.request` on an API surface); never on `<originating-surface>` unless that is the chat surface.',
+    );
+    expect(real).toContain(
+      '  - `<reply-surface>`: the slug of the connected chat surface the `Reply target:` line\'s channel is on; the executor binds it whenever there is a `Reply target:` line. Every reply action\'s `surface` is `<reply-surface>`: a ticket surface never carries a reply.',
+    );
+    expect(real.join('\n')).not.toContain('a reply in the thread on chat');
+    expect(real[0]).toBe(EXECUTION_INPUT_LINES[0]);
+  });
+
+  it('binds the reply surface from the surface the Reply target line is on', (): void => {
+    expect(REPLY_SURFACE_INPUT).toBe('reply-surface');
+    expect(bindSkillInputs(taught, ask).find((binding) => binding.name === 'reply-surface')).toEqual({
+      name: 'reply-surface',
+      value: 'slack',
+      source: 'the chat surface the Reply target line is on; every reply action goes to it',
+    });
+    expect(bindSkillInputs(taught, candidate).find((binding) => binding.name === 'reply-surface')).toEqual({
+      name: 'reply-surface',
+      source: 'no Reply target line: the work did not come from a chat channel',
+    });
+  });
+
+  it('binds it in real mode for a skill registered before the input was taught, after the inputs it declares', (): void => {
+    expect(impliedSkillInputs(body)).toEqual(['reply-surface']);
+    expect(impliedSkillInputs(taught)).toEqual([]);
+    expect(impliedSkillInputs('## Inputs\n- `<record-id>`: the ticket.\n## Procedure\nComment on <record-id>.')).toEqual([]);
+
+    const bound = bindSkillInputs(body, ask, 'real');
+    expect(bound.map((binding) => binding.name)).toEqual([
+      'record-id',
+      'requested-value',
+      'reply-channel',
+      'reply-thread',
+      'originating-surface',
+      'reply-surface',
+    ]);
+    expect(bound[bound.length - 1]).toEqual({
+      name: 'reply-surface',
+      value: 'slack',
+      source:
+        'the chat surface the Reply target line is on; this skill was registered before the input was taught, so Day0 binds it: send the reply to <reply-channel> on this surface, never on <originating-surface> unless it is this surface',
+    });
+  });
+
+  it('adds nothing for such a skill in mock mode, or when the work has no Reply target', (): void => {
+    expect(bindSkillInputs(body, ask).map((binding) => binding.name)).not.toContain('reply-surface');
+    expect(bindSkillInputs(body, ask, 'mock').map((binding) => binding.name)).not.toContain('reply-surface');
+    expect(bindSkillInputs(body, candidate, 'real').map((binding) => binding.name)).not.toContain('reply-surface');
+  });
+});
