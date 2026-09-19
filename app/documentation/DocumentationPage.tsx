@@ -15,6 +15,19 @@ export function locatorForSourceKind(kind: SourceKind): string {
 }
 
 /**
+ * The link form's text fields once a source has been linked: both empty, so
+ * the next source's label and location are typed into a blank field instead
+ * of over the last one's. The kind stays as chosen, and the folder default
+ * (`.`) is not offered again: that folder has just been linked.
+ *
+ * Returns:
+ *   The label and locator to show.
+ */
+export function linkFormAfterLink(): { label: string; locator: string } {
+  return { label: '', locator: '' };
+}
+
+/**
  * Say what this source kind will actually reach, and what has to be running.
  *
  * Three of the four kinds are read by the backend itself and depend on nothing
@@ -73,6 +86,9 @@ export function DocumentationPage(): React.ReactNode {
         serverKind: kind === 'mcp' ? serverKind : undefined,
         credential: kind === 'mcp' ? credential : undefined,
       });
+      const cleared = linkFormAfterLink();
+      setLabel(cleared.label);
+      setLocator(cleared.locator);
     } catch (failure) {
       setError(plainErrorMessage((failure as Error).message));
     } finally {
