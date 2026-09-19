@@ -51,10 +51,13 @@ export { replyTargetLine };
  * The `Skill inputs for this run` block of the executor user prompt: the
  * inputs the skill body declares, bound from the candidate where the row
  * settles them. Absent for a body that declares none, so the prompts of the
- * builtin skill and of every recorded bed are the prompts they were.
+ * builtin skill and of every recorded bed are the prompts they were. In real
+ * mode a body that declares a reply channel and no reply surface is given the
+ * reply surface as well, so a skill registered before that input was taught
+ * sends its reply to the chat surface the Reply target is on.
  */
-function skillInputLines(skillBody: string, candidate: WorkCandidate): string[] {
-  const bindings = bindSkillInputs(skillBody, candidate);
+function skillInputLines(skillBody: string, candidate: WorkCandidate, mode: SurfaceMode): string[] {
+  const bindings = bindSkillInputs(skillBody, candidate, mode);
   if (bindings.length === 0) return [];
   return [
     '--- Skill inputs for this run (bind every declared input before acting) ---',
@@ -2495,7 +2498,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Body:`,
     candidate.contentSummary,
     '',
-    ...skillInputLines(skill.body, candidate),
+    ...skillInputLines(skill.body, candidate, mode),
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',
@@ -3189,7 +3192,7 @@ async function authorDependentSkillRun(
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body: ${candidate.contentSummary}`,
     '',
-    ...skillInputLines(skill.body, candidate),
+    ...skillInputLines(skill.body, candidate, mode),
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',

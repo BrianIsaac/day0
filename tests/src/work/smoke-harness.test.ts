@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { verdictFor } from '../../../src/lib/skill-sandbox';
-import { bindSkillInputs, CANDIDATE_BOUND_TARGET_INPUTS } from '../../../src/work/skill-inputs';
+import { bindSkillInputs, CANDIDATE_BOUND_TARGET_INPUTS, REPLY_SURFACE_INPUT } from '../../../src/work/skill-inputs';
 import {
   harnessedSmokeTest,
   SMOKE_HARNESS,
@@ -16,6 +16,11 @@ import {
   UNDECLARED_BODY_2026_09_19,
   UNDECLARED_SMOKE_TEST_2026_09_19,
 } from '../../fixtures/skill-undeclared-inputs-2026-09-19';
+import {
+  REPLY_SURFACE_BODY_2026_09_19,
+  REPLY_SURFACE_REASON_2026_09_19,
+  REPLY_SURFACE_SMOKE_TEST_2026_09_19,
+} from '../../fixtures/skill-reply-surface-2026-09-19';
 
 interface HarnessRun {
   exitCode: number;
@@ -48,6 +53,7 @@ const CONTRACT: SmokeHarnessContract = {
     { slug: 'slack', path: 'documented-api', allowedTools: ['chat.postMessage', 'conversations.history'] },
   ],
   boundInputs: [...CANDIDATE_BOUND_TARGET_INPUTS],
+  replySurfaceInput: REPLY_SURFACE_INPUT,
 };
 
 /** Run the harnessed program the way both sandboxes run smoke.py. */
@@ -501,6 +507,119 @@ describe('the real-mode smoke harness', (): void => {
 
       expect(bound.map((binding): string => binding.name)).toEqual([...CANDIDATE_BOUND_TARGET_INPUTS]);
       expect(bound.every((binding): boolean => binding.value !== undefined)).toBe(true);
+    });
+  });
+
+  // Demo rehearsal 2, 19 Sep 2026, finding 1: a first authoring routed its
+  // thread reply through <originating-surface>, and its own second case set
+  // that to the ticket surface with a reply channel.
+  describe('the surface that carries the reply', (): void => {
+    /** A comment-and-close procedure written to the taught reply-surface input. */
+    const REPLY_SURFACE_BODY = [
+      '# kanban-comment-and-close',
+      '',
+      '## Inputs',
+      '',
+      '- `<record-id>`: the ticket.',
+      '- `<requested-value>`: the note.',
+      '- `<reply-channel>` and `<reply-thread>`: the Reply target line.',
+      '- `<reply-surface>`: the connected chat surface the Reply target line names.',
+      '- `<originating-surface>`: the surface the work came from.',
+      '',
+      '## Procedure',
+      '',
+      '1. Emit an `mcp.call` with tool `save_comment` on `<record-id>` carrying `<requested-value>`, then `save_issue`.',
+      '2. When a reply is owed, emit an `http.request` POST to `chat.postMessage` on `<reply-surface>`.',
+    ].join('\n');
+
+    const replySmoke = (replySurfaceExpression: string): string =>
+      [
+        'import json',
+        '',
+        '',
+        'def run(inputs: dict) -> dict:',
+        '    record = inputs["record-id"]',
+        '    ticket_surface = inputs["originating-surface"]',
+        '    actions = [',
+        '        {"tool": "mcp.call", "args": {"surface": ticket_surface, "tool": "save_comment", "toolArgsJson": json.dumps({"issueId": record, "body": inputs["requested-value"]})}},',
+        '        {"tool": "mcp.call", "args": {"surface": ticket_surface, "tool": "save_issue", "toolArgsJson": json.dumps({"id": record, "state": "Done"})}},',
+        '    ]',
+        '    if inputs.get("reply-channel"):',
+        '        actions.append({"tool": "http.request", "args": {',
+        `            "surface": ${replySurfaceExpression},`,
+        '            "method": "POST",',
+        '            "path": "chat.postMessage",',
+        '            "headersJson": json.dumps({"Authorization": "Bearer {{secret}}"}),',
+        '            "body": json.dumps({"channel": inputs["reply-channel"], "thread_ts": inputs.get("reply-thread"), "text": "Closed " + record}),',
+        '        }})',
+        '    return {"actions": actions}',
+        '',
+        '',
+        'CASES = [',
+        '    {"record-id": "FIN-12", "requested-value": "matched to the cent", "originating-surface": "linear"},',
+        '    {"record-id": "LOG-7", "requested-value": "carrier confirmed", "originating-surface": "linear",',
+        '     "reply-surface": "slack", "reply-channel": "C0AAAAAAA2", "reply-thread": "1710000000.000200"},',
+        ']',
+      ].join('\n');
+
+    const contract: SmokeHarnessContract = {
+      ...CONTRACT,
+      body: REPLY_SURFACE_BODY,
+      surfaces: [...CONTRACT.surfaces, { slug: 'teams', path: 'documented-api', allowedTools: ['chat.postMessage'] }],
+    };
+
+    it('refuses the draft the rehearsal refused, for the reason the row kept', (): void => {
+      const run = runHarnessed(REPLY_SURFACE_SMOKE_TEST_2026_09_19, { ...CONTRACT, body: REPLY_SURFACE_BODY_2026_09_19 });
+
+      expect(verdict(run).ok).toBe(false);
+      expect(run.stderr.split('\n')[0]).toContain(REPLY_SURFACE_REASON_2026_09_19);
+    });
+
+    it('tells the retry which surface carries the reply when the refused action is the reply', (): void => {
+      const run = runHarnessed(REPLY_SURFACE_SMOKE_TEST_2026_09_19, { ...CONTRACT, body: REPLY_SURFACE_BODY_2026_09_19 });
+
+      expect(run.stderr.split('\n')[0]).toBe(
+        `${REPLY_SURFACE_REASON_2026_09_19}; it carries the case's <reply-channel>, and a reply is an action on <reply-surface>, the connected chat surface, never on the surface the ticket is on`,
+      );
+    });
+
+    it('keeps that sentence for a reply sent by HTTP, not for a wrong verb on the chat surface itself', (): void => {
+      const smoke = replySmoke('inputs["reply-surface"]').replace('"tool": "http.request", "args": {', '"tool": "mcp.call", "args": {');
+      const run = runHarnessed(smoke, contract);
+
+      expect(run.stderr.split('\n')[0]).toBe('smoke harness: case 2 action 3 uses mcp.call on slack, whose path is documented-api');
+    });
+
+    it('passes a ticket-born case with a reply target when the reply goes to the reply surface', (): void => {
+      const run = runHarnessed(replySmoke('inputs["reply-surface"]'), contract);
+
+      expect(run.stderr).not.toContain('smoke harness: case');
+      expect(verdict(run).ok).toBe(true);
+      expect(run.stdout).toContain(
+        'case 2: run() emitted 3 actions (mcp.call save_comment, mcp.call save_issue, http.request chat.postMessage)',
+      );
+    });
+
+    it('refuses a reply sent on a surface other than the one the case gives as its reply surface', (): void => {
+      const run = runHarnessed(replySmoke('"teams"'), contract);
+
+      expect(verdict(run).ok).toBe(false);
+      expect(run.stderr.split('\n')[0]).toBe(
+        "smoke harness: case 2 action 3 sends the reply to <reply-channel> on teams, but the case gives <reply-surface> as slack; the executor binds <reply-surface> from the Reply target line, so the reply is an action on that surface",
+      );
+    });
+
+    it('leaves a case that gives a reply surface and no reply channel alone', (): void => {
+      const smoke = replySmoke('inputs["reply-surface"]').replace(
+        '{"record-id": "FIN-12", "requested-value": "matched to the cent", "originating-surface": "linear"},',
+        '{"record-id": "FIN-12", "requested-value": "matched to the cent", "originating-surface": "linear", "reply-surface": "slack"},',
+      );
+
+      expect(verdict(runHarnessed(smoke, contract)).ok).toBe(true);
+    });
+
+    it('names the reply surface input in the contract it builds', (): void => {
+      expect(smokeHarnessContract(REPLY_SURFACE_BODY, [], 'linear', 0).replySurfaceInput).toBe('reply-surface');
     });
   });
 });

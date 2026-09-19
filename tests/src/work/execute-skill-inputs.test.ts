@@ -32,6 +32,7 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import { runDependentSkill, runSkill } from '../../../src/work/execute-skill';
+import { REPLY_SURFACE_BODY_2026_09_19 } from '../../fixtures/skill-reply-surface-2026-09-19';
 
 const charter: Charter = {
   version: '0.0',
@@ -138,5 +139,61 @@ describe('the executor binds a parameterised skill from the candidate', (): void
       expect(prompt).not.toContain('Skill inputs for this run');
       expect(prompt).not.toContain('<record-id>');
     }
+  });
+});
+
+// Demo rehearsal 2, 19 Sep 2026, finding 1.
+describe('the executor binds the surface that carries the reply', (): void => {
+  const ask: WorkCandidate = {
+    ...candidate,
+    sourceCategory: 'event-stream',
+    sourceSystem: 'slack',
+    externalId: 'C0BSF04TZ19:1789000500.000200',
+    title: 'Slack mention in #ops-requests',
+    replyTarget: { channel: 'C0BSF04TZ19', channelName: 'ops-requests', threadTs: '1789000500.000200' },
+  };
+  const taught = {
+    ...parameterised,
+    body: parameterised.body.replace(
+      '## Procedure',
+      '- `<reply-channel>` and `<reply-thread>`: the Reply target line.\n- `<reply-surface>`: the chat surface.\n## Procedure',
+    ),
+  };
+  /** A skill as a bed registered it before the input was taught: the rehearsal's own body. */
+  const registeredBefore = { name: 'kanban-comment-and-close', description: 'Comment and close.', body: REPLY_SURFACE_BODY_2026_09_19 };
+  const BOUND = '  - <reply-surface> = slack (the chat surface the Reply target line is on;';
+
+  beforeEach((): void => {
+    recorded.users.length = 0;
+  });
+
+  it('binds the reply surface from the Reply target line in both phases', async (): Promise<void> => {
+    await runSkill({ skill: taught, plan, candidate: ask, charter, mockEnv, mode: 'real', surfaces: [] });
+    await runDependentSkill({
+      skill: taught,
+      plan,
+      candidate: ask,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+
+    expect(recorded.users).toHaveLength(2);
+    for (const prompt of recorded.users) {
+      expect(prompt).toContain('Reply target: channel C0BSF04TZ19 (#ops-requests), thread_ts 1789000500.000200');
+      expect(prompt).toContain(`${BOUND} every reply action goes to it)`);
+    }
+  });
+
+  it('binds it for a skill registered before the input was taught, in real mode only', async (): Promise<void> => {
+    await runSkill({ skill: registeredBefore, plan, candidate: ask, charter, mockEnv, mode: 'real', surfaces: [] });
+    await runSkill({ skill: registeredBefore, plan, candidate: ask, charter, mockEnv, mode: 'mock' });
+
+    expect(recorded.users[0]).toContain(`${BOUND} this skill was registered before the input was taught, so Day0 binds it:`);
+    expect(recorded.users[0]).toContain('  - <reply-channel> = C0BSF04TZ19 (the Reply target line)');
+    expect(recorded.users[1]).not.toContain('<reply-surface>');
   });
 });
