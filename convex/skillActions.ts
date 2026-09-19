@@ -15,7 +15,7 @@ import {
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { skillNameFor, skillOperationLabel, skillSurfacePhrase } from '../src/work/skill-shape';
 import { authoredSkillIssues, clipRefusedDraft, REFUSED_DRAFT_PROMPT_CHARS } from '../src/work/authored-skill';
-import { declaredInputsNote, declareUndeclaredInputs, EXECUTION_INPUT_LINES } from '../src/work/skill-inputs';
+import { declaredInputsNote, declareUndeclaredInputs, executionInputLines, REPLY_SURFACE_INPUT } from '../src/work/skill-inputs';
 import {
   FENCE_REMOVED_NOTE,
   smokeTestPreflightReason,
@@ -25,6 +25,7 @@ import { harnessedSmokeTest, smokeHarnessContract, type SmokeHarnessContract } f
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
+import { verdictFor as surfaceVerdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
 import { spanModelFromEnv } from '../src/redaction/client';
@@ -99,7 +100,7 @@ const REAL_SMOKE_TEST_LINES: readonly string[] = [
   '  - Define `CASES`, a list of two different representative input dicts (different identifiers and values, none of them the values of the work item that first needed this skill).',
   '  - Return every action in the executor\'s shape, `{"tool": "mcp.call", "args": {"surface", "tool", "toolArgsJson"}}` or `{"tool": "http.request", "args": {"surface", "method", "path", "headersJson", "body"}}`: on a surface from the Surfaces list, with a tool from that surface\'s allowed tools. Both cases emit actions, and at least one action is on the target surface.',
   '  - Name in SKILL.md\'s procedure, by its exact name, every tool `run()` uses (`save_comment`, `chat.postMessage`, whichever they are): the harness refuses an action whose tool SKILL.md never names, because a step that says "send a message" without its tool is not a procedure.',
-  '  - Build the action arguments from `inputs`: the record id, and the reply channel and thread when a case gives them, reach the arguments of that case\'s actions, and the two cases produce different arguments.',
+  '  - Build the action arguments from `inputs`: the record id, and the reply channel and thread when a case gives them, reach the arguments of that case\'s actions, and the two cases produce different arguments. A case that gives `reply-channel` gives `reply-surface` too, and the reply action\'s `surface` is that input, never `originating-surface`.',
   '  - Stop there: no call to run(), no assertion, no check and no print() at the top level. The harness calls run() once per case and checks those rules itself. Nothing else in smoke.py runs, and assert statements are not compiled.',
   '',
 ];
@@ -151,7 +152,49 @@ export interface AuthorPromptSkill {
   previousAuthoringDraft?: { body: string; smokeTest: string };
 }
 
-function shapeSection(skill: AuthorPromptSkill): string[] {
+/** The verb that reaches a surface over each path, as the smoke harness and the execution gate hold it. */
+const PATH_VERBS: Record<string, string> = { mcp: 'mcp.call', 'browser-driven': 'mcp.call', 'documented-api': 'http.request' };
+
+/**
+ * Which connected surface `<reply-surface>` is on this deployment, for a
+ * real-mode author.
+ *
+ * The taught line says a reply goes to the connected chat surface; this names
+ * it from the same connected list the prompt shows, with the verb its path
+ * takes, and names the target surface's verb beside it, so the author reads
+ * that the ticket surface cannot carry a `chat.postMessage` rather than
+ * inferring it. The executor binds the input per run; the slug here is for
+ * the smoke test's cases.
+ *
+ * Args:
+ *   skill: The proposed skill, for its target surface.
+ *   surfaces: The agent's surfaces.
+ *   now: Clock for the connection verdict.
+ *
+ * Returns:
+ *   One prompt line, or none when no chat surface is connected.
+ */
+function replySurfaceLines(skill: AuthorPromptSkill, surfaces: readonly SurfaceRecord[], now: number): string[] {
+  const connected = surfaces.filter((surface): boolean => surfaceVerdictFor(surface, now) === 'connected');
+  const chat = connected.find((surface): boolean => surface.class === 'chat' && !!surface.path && PATH_VERBS[surface.path] !== undefined);
+  if (!chat?.path) return [];
+  const input = `\`<${REPLY_SURFACE_INPUT}>\``;
+  const target = connected.find((surface): boolean => surface.slug === skill.targetSurface && surface.slug !== chat.slug);
+  const targetClause =
+    target?.path && PATH_VERBS[target.path] && PATH_VERBS[target.path] !== PATH_VERBS[chat.path]
+      ? `; \`${target.slug}\` is path ${target.path}, reached by \`${PATH_VERBS[target.path]}\` only, so it never carries a reply`
+      : '';
+  return [
+    `  Here ${input} is \`${chat.slug}\`, the connected chat surface (path ${chat.path}, reached by \`${PATH_VERBS[chat.path]}\`)${targetClause}. In \`CASES\`, a case that gives \`reply-channel\` gives \`${REPLY_SURFACE_INPUT}\` too, set to \`${chat.slug}\`, and \`run()\` sends the reply on \`inputs["${REPLY_SURFACE_INPUT}"]\`.`,
+  ];
+}
+
+function shapeSection(
+  skill: AuthorPromptSkill,
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+  mode: SurfaceMode,
+): string[] {
   if (!skill.surfaceClass || !skill.operation) return [];
   const shape = { surfaceClass: skill.surfaceClass, operation: skill.operation };
   return [
@@ -159,7 +202,8 @@ function shapeSection(skill: AuthorPromptSkill): string[] {
     'The rationale names the first work item; it is an instance, and none of its identifiers, figures or quoted words belong in the skill.',
     '',
     'Execution inputs the executor can supply, to declare under `## Inputs` as the procedure needs them:',
-    ...EXECUTION_INPUT_LINES,
+    ...executionInputLines(mode),
+    ...(mode === 'real' ? replySurfaceLines(skill, surfaces, now) : []),
   ];
 }
 
@@ -238,7 +282,7 @@ export function buildAuthorPrompt(
 ): string {
   const surfaceGuidance = surfaceInstructions(surfaces, now, mode);
   const runbookGuidance = linkedRunbookSection(skill, surfaces, pages);
-  const shape = shapeSection(skill);
+  const shape = shapeSection(skill, surfaces, now, mode);
   return [
     `Skill name: ${skill.name}`,
     `Description: ${skill.description}`,
