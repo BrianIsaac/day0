@@ -69,6 +69,15 @@ describe('the raw thread reference in a visible message', (): void => {
     }
   });
 
+  it('in the middle of a sentence it becomes "this thread", never a hole in the sentence', (): void => {
+    expect(withoutThreadReference(`See thread 1789761553.312049 for the figure; more soon.`, target, 'in-thread')).toBe(
+      'See this thread for the figure; more soon.',
+    );
+    expect(withoutThreadReference(`I have answered ${RAW} with the figure.`, target, 'in-thread')).toBe(
+      'I have answered this thread with the figure.',
+    );
+  });
+
   it('becomes words a person reads anywhere else: a DM or a ticket comment', (): void => {
     expect(withoutThreadReference(`Tile refreshed to 74%. Ref: ${RAW}.`, target, 'elsewhere')).toBe(
       'Tile refreshed to 74%. Ref: the ask in #ops-requests.',
@@ -109,6 +118,13 @@ describe('the action set', (): void => {
       issueId: 'REVOPS-5',
       body: 'Tile refreshed to 74% for the ask in #ops-requests.',
     });
+    // A value typed into a system is data, not a message: a runbook that pastes the id into a field gets it as written.
+    const typed: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'looker-pipeline-tile', tool: 'browser_type', toolArgsJson: JSON.stringify({ element: 'Source thread', text: RAW }) },
+    };
+    const tile = [...surfaces, { slug: 'looker-pipeline-tile', displayName: 'Looker', class: 'analytics', path: 'browser-driven', endpoint: 'http://looker-tile:8080/', toolAllowlist: ['browser_type'], ...live }];
+    expect(withoutOwnThreadReferences([typed], tile, target).changed).toEqual([]);
     const browser = priya.output.actions.slice(0, 6) as MockAction[];
     const untouched = withoutOwnThreadReferences(browser, surfaces, target);
     expect(untouched.changed).toEqual([]);

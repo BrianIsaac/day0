@@ -1,4 +1,4 @@
-import { actionIntent, isSurfaceTool, messageTarget, parseSurfaceAction } from '../surfaces/policy';
+import { actionIntent, isAuditComment, isSurfaceTool, messageTarget, parseSurfaceAction } from '../surfaces/policy';
 import { messageTexts } from './evidence-claims';
 import type { MockAction, ReplyTarget } from './types';
 
@@ -77,7 +77,8 @@ function rawThreadReference(target: ReplyTarget & { threadTs: string }): string 
  * record id writes that into the reply. Where a message goes is carried by
  * the action's `channel` and `thread_ts`, which is what the ledger, the
  * reuse on retry and the reply checks read, so the text never needs it. In
- * the thread itself the reference is dropped with its label; anywhere else
+ * the thread itself the reference is dropped with its label (or, inside a
+ * sentence, said as "this thread"); anywhere else
  * (the manager DM, a ticket comment) it is said in words.
  *
  * Args:
@@ -97,9 +98,12 @@ export function withoutThreadReference(text: string, target: ReplyTarget | undef
     const words = target.channelName ? `the ask in #${target.channelName}` : 'the Slack thread';
     return text.replace(new RegExp(raw, 'gi'), words);
   }
-  const unit = new RegExp(String.raw`[ \t]*[([]?\s*(?:${REFERENCE_LABEL})?${raw}\s*[)\]]?\.?`, 'gi');
+  // At the end of a line the labelled reference goes whole; inside a sentence it is said as "this thread".
+  const tail = new RegExp(String.raw`[ \t]*[([]?\s*(?:${REFERENCE_LABEL})?${raw}\s*[)\]]?\.?(?=[ \t]*(?:\n|$))`, 'gi');
+  const inline = new RegExp(String.raw`(?:${REFERENCE_LABEL})?${raw}`, 'gi');
   const next = text
-    .replace(unit, '')
+    .replace(tail, '')
+    .replace(inline, 'this thread')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+([.,;])/g, '$1')
     .replace(/[ \t]+$/gm, '')
@@ -135,6 +139,8 @@ export function withoutOwnThreadReferences<T extends MockAction>(
     const payload = action.tool === 'http.request' ? action.args?.body : action.args?.toolArgsJson;
     if (typeof payload !== 'string') return action;
     const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+    // A message or a comment is read by a person; a value typed into a system is data and stays as written.
+    if (surface?.class !== 'chat' && !isAuditComment(parsed.action)) return action;
     const place: ThreadReferencePlace =
       surface?.class === 'chat' && messageTarget(parsed.action) === thread ? 'in-thread' : 'elsewhere';
     let record: unknown;
