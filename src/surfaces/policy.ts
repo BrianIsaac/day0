@@ -445,6 +445,26 @@ function rpcMethod(path: string): string | undefined {
 }
 
 /**
+ * The documented RPC read a request is, when it is one.
+ *
+ * Narrower than `isRpcRead`: only a method on the documented list, whose
+ * parameters are known to select no operation, and only when the whole
+ * request is classed a read. The HTTP adapter uses it to decide whether the
+ * body's parameters belong in the query.
+ *
+ * Args:
+ *   request: A parsed `http.request`.
+ *
+ * Returns:
+ *   The method in lower case, or undefined.
+ */
+export function documentedRpcRead(request: ParsedHttpRequest): string | undefined {
+  const method = rpcMethod(request.path)?.toLowerCase();
+  if (method === undefined || !DOCUMENTED_RPC_READS.has(method)) return undefined;
+  return actionIntent(request) === 'read' ? method : undefined;
+}
+
+/**
  * Whether a path names a read of an RPC-style Web API, whatever verb carries it.
  *
  * The path must be one dotted method and nothing more, so `POST /graphql`,
