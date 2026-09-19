@@ -18,6 +18,19 @@ import {
 } from '../../convex/workActions';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
+import {
+  LOG_1_RETRY_NOTE as SITTING_4_RETRY_NOTE,
+  LOG_1_SECOND_SITTING_STOP,
+  log1Candidate as sitting4Log1Candidate,
+  log1PhaseOne as sitting4Log1PhaseOne,
+  log1Plan as sitting4Log1Plan,
+  log1SecondSittingClosing,
+  log1SecondSittingPhaseOne,
+  log1SecondSittingPlan,
+  log3Candidate,
+  log3PhaseOne,
+  log3Plan,
+} from '../fixtures/work/full-run-4-2026-09-19-log-1';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import {
   AWAITING_APPROVAL,
@@ -1198,6 +1211,219 @@ describe('stopping blocked work with only a manager message left', (): void => {
 
   it('still stops on a note that asks the manager nothing', (): void => {
     expect(closingStopReason(run('REVOPS-7 has no owner, so nothing was changed and I stopped.'))).toContain('blocked');
+  });
+});
+
+describe('writes the plan left to the manager\'s answer stop with the question (19 Sep fourth run, finding V)', (): void => {
+  const seedTicket = async (
+    harness: Harness,
+    candidate: typeof sitting4Log1Candidate,
+    plan: typeof sitting4Log1Plan,
+  ): Promise<Seeded> => {
+    const seeded = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(seeded.workItemId, {
+        externalId: candidate.externalId,
+        title: candidate.title,
+        contentSummary: candidate.contentSummary,
+        contentRefs: candidate.contentRefs,
+        plan,
+      });
+    });
+    return seeded;
+  };
+  const posts = (): typeof recorded.http => recorded.http.filter((call) => call.url.includes('chat.postMessage'));
+  const ticketWrites = (): string[] => recorded.mcp.map((call) => call.tool).filter((tool) => tool !== 'get_issue');
+
+  it("stops LOG-1 with the question when the set carries the comment and Done beside it", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = sitting4Log1PhaseOne;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, sitting4Log1Candidate, sitting4Log1Plan);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toMatch(/^stopped: /);
+    expect(stopped.skipReason).toContain('Which template should the notice use');
+    expect(stopped.skipReason).toContain('step 2');
+    expect(stopped.skipReason).toContain('step 3');
+    // The question went out once, the ticket was read, and nothing was written to it.
+    expect(posts()).toHaveLength(1);
+    expect(ticketWrites()).toEqual([]);
+    const output = stopped.output as { actions: unknown[]; applied: AppliedAction[]; withheldActions?: Array<{ action: unknown; reason: string }> };
+    expect(output.actions).toEqual(sitting4Log1PhaseOne.actions.slice(0, 2));
+    expect(output.applied.map((row) => row.ok && row.held !== true)).toEqual([true, true]);
+    expect(output.withheldActions?.map((row) => row.action)).toEqual(sitting4Log1PhaseOne.actions.slice(2));
+    expect(output.withheldActions?.every((row) => row.reason.includes("the manager's answer"))).toBe(true);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect());
+    const failed = events.filter((event) => event.type === 'work.failed');
+    expect(failed).toHaveLength(1);
+    expect((failed[0]!.payload as { stopped?: boolean }).stopped).toBe(true);
+    // The timeline says what was withheld and why, before the stop.
+    expect(events.filter((event) => event.type === 'work.conditional-writes-withheld').map((event) => event.payload)).toEqual([
+      { workItemId, runId: expect.any(String), phase: 'single', steps: [2, 3], withheld: ['mcp.call linear · save_comment', 'mcp.call linear · save_issue'] },
+    ]);
+  });
+
+  it("lands the comment and Done for the manager once Retry carries the answer, and does not ask again", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = sitting4Log1PhaseOne;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, sitting4Log1Candidate, sitting4Log1Plan);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+
+    // As in the earlier sittings: the landed DM is confirmed, then Retry carries the note.
+    // The retried run emits the comment and Done alone, as the fourth sitting's retry did.
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, actions: sitting4Log1PhaseOne.actions.slice(2) };
+    await harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    const output = pending.output as { actions: unknown[]; withheldActions?: unknown[]; openQuestion?: unknown };
+    expect(output.actions).toEqual(sitting4Log1PhaseOne.actions.slice(2));
+    expect(output.withheldActions).toBeUndefined();
+    expect(output.openQuestion).toBeUndefined();
+    expect(pending.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['held', 'held']);
+    expect(posts()).toHaveLength(1);
+    expect(ticketWrites()).toEqual([]);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect());
+    expect(events.filter((event) => event.type === 'work.retry')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'work.failed')).toHaveLength(1);
+  });
+
+  it("stops again when Retry carries no answer and the retried run writes without asking again", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = sitting4Log1PhaseOne;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, sitting4Log1Candidate, sitting4Log1Plan);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    // The question the first run landed is still the open one.
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, actions: sitting4Log1PhaseOne.actions.slice(2) };
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('Which template should the notice use');
+    expect(posts()).toHaveLength(1);
+    expect(ticketWrites()).toEqual([]);
+  });
+
+  it("lands SH-4480 without a stop: its plan applied the corrections kept from SH-4471", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = log3PhaseOne;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, log3Candidate, log3Plan);
+    await harness.run(async (ctx): Promise<void> => {
+      const kept = await Promise.all((['retry-note', 'rejection'] as const).map((kind) => ctx.db.insert('corrections', {
+        agentId, workItemId, kind, text: SITTING_4_RETRY_NOTE, itemTitle: sitting4Log1Candidate.title,
+        sourceCategory: 'ticket-queue', sourceSystem: 'linear', surfaces: ['linear', 'slack'], createdAt: Date.now(), appliedTo: [workItemId],
+      })));
+      await ctx.db.patch(workItemId, { plan: { ...log3Plan, appliedCorrections: kept } });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    const output = pending.output as { actions: unknown[]; withheldActions?: unknown[] };
+    expect(output.actions).toEqual(log3PhaseOne.actions);
+    expect(output.withheldActions).toBeUndefined();
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("does not stop SH-4480's set even with no correction behind it: a draft for approval asks no question", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = log3PhaseOne;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, log3Candidate, log3Plan);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('actions-pending');
+  });
+
+  it("leaves the second sitting's stop as it was: her own blocked steps, the question sent, nothing on the ticket", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Asking the desk lead.', notes: '', needsDependentPhase: true, actions: log1SecondSittingPhaseOne };
+    recorded.dependentOutput = log1SecondSittingClosing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, sitting4Log1Candidate, log1SecondSittingPlan);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(LOG_1_SECOND_SITTING_STOP);
+    expect(posts()).toHaveLength(1);
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('withholds a closing set\'s comment and Done when the question landed in phase one and nobody answered', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const [read, question, comment, done] = sitting4Log1PhaseOne.actions;
+    recorded.skillOutput = { draft: 'Asking the desk lead.', notes: '', needsDependentPhase: true, actions: [read!, question!] };
+    recorded.dependentOutput = {
+      draft: sitting4Log1PhaseOne.draft, notes: sitting4Log1PhaseOne.notes, actions: [comment!, done!],
+      planStepOutcomes: [1, 2, 3].map((step) => ({ step, status: 'satisfied' as const, evidence: `Action for step ${step} emitted.` })),
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, sitting4Log1Candidate, sitting4Log1Plan);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toMatch(/^stopped: /);
+    expect(stopped.skipReason).toContain('Which template should the notice use');
+    expect(posts()).toHaveLength(1);
+    expect(ticketWrites()).toEqual([]);
+    expect((stopped.output as { withheldActions?: Array<{ action: unknown }> }).withheldActions?.map((row) => row.action)).toEqual([comment, done]);
+    expect((stopped.output as { openQuestion?: { steps: number[] } }).openQuestion?.steps).toEqual([2, 3]);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'work.conditional-writes-withheld').map((event) => (event.payload as { phase: string }).phase)).toEqual(['closing']);
+  });
+
+  it('does not stop a run whose question stands beside no conditional write', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = sitting4Log1PhaseOne;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const promised = {
+      ...sitting4Log1Plan,
+      obligations: {
+        ...sitting4Log1Plan.obligations!,
+        steps: sitting4Log1Plan.obligations!.steps.map((step) => ({ ...step, kind: step.kind === 'conditional-write' ? 'write' as const : step.kind })),
+        transition: 'promised' as const,
+      },
+    };
+    const { workItemId } = await seedTicket(harness, sitting4Log1Candidate, promised);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    expect((pending.output as { actions: unknown[] }).actions).toEqual(sitting4Log1PhaseOne.actions);
   });
 });
 

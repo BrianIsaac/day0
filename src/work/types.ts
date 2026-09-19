@@ -303,11 +303,24 @@ export interface WithheldAction {
   reason: string;
 }
 
+/**
+ * A question the run put to the manager while the approved plan left writes
+ * to the manager's answer: those writes were withheld, and the run stops with
+ * the question as its reason once the rest of its set has settled.
+ */
+export interface OpenQuestion {
+  question: string;
+  /** The one-based plan steps that wait on the answer. */
+  steps: number[];
+}
+
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
   /** Actions the evidence invariant withheld after its one repair; see `WithheldAction`. */
   withheldActions?: WithheldAction[];
+  /** Server-derived: the question to the manager this set's withheld writes wait on; see `OpenQuestion`. */
+  openQuestion?: OpenQuestion;
   /** Writes earlier runs of this item landed; server-derived on a retry, absent on a first run. */
   landedWrites?: LandedWrite[];
   draft: string;
@@ -388,6 +401,8 @@ export interface DependentExecutionOutput {
   actions: MockAction[];
   /** Actions the evidence invariant withheld after its one repair; see `WithheldAction`. */
   withheldActions?: WithheldAction[];
+  /** Server-derived: the question to the manager this set's withheld writes wait on; see `OpenQuestion`. */
+  openQuestion?: OpenQuestion;
   /** The one repair each held write earned before the hold; absent when none was needed. */
   argumentRepairs?: ArgumentRepairAttempt[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */
