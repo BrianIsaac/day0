@@ -22,7 +22,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
 - Watch the work queue advance and the Skills panel show the capabilities it proposes, verifies and registers.
 
-Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) shows this loop on the hosted mock office, and the [demo video](https://youtu.be/LkqAEKfNExE) is the recorded real-mode run against the author's own Linear and Slack workspaces, the route [One full run](#one-full-run-from-the-first-page) documents below.
+Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) shows this loop on the hosted mock office, and the [demo video](https://youtu.be/bxKB9FjeI3o) is the recorded real-mode run against the author's own Linear and Slack workspaces, the route [One full run](#one-full-run-from-the-first-page) documents below.
 
 ## Disclosures
 
@@ -108,7 +108,7 @@ The skill it writes is a procedure for one operation on one surface class, named
 
 ## One full run, from the first page
 
-Everything below is a single run of [real mode](#real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [demo video](https://youtu.be/LkqAEKfNExE) is the recorded run of the same route, on a later commit and GLM 5.3 Flash, and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
+Everything below is a single run of [real mode](#real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [demo video](https://youtu.be/bxKB9FjeI3o) is the recorded run of the same route, on a later commit and GLM 5.3 Flash, and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
 
 Elapsed times are counted from the moment the agent was deployed.
 
@@ -1055,7 +1055,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
 - 查看工作队列推进，并在 Skills 面板中看到 Agent 提出、验证和注册能力。
 
-两段录像：[mock office 演示视频](https://youtu.be/UqPnFyQ9Fuo)在托管的 mock office 上展示上述流程；[演示视频](https://youtu.be/LkqAEKfNExE)是连接作者本人 Linear 与 Slack workspace 的录制 real-mode 运行，即下文[一次完整运行](#一次完整运行从第一个页面开始)记录的路径。
+两段录像：[mock office 演示视频](https://youtu.be/UqPnFyQ9Fuo)在托管的 mock office 上展示上述流程；[演示视频](https://youtu.be/bxKB9FjeI3o)是连接作者本人 Linear 与 Slack workspace 的录制 real-mode 运行，即下文[一次完整运行](#一次完整运行从第一个页面开始)记录的路径。
 
 ### 披露
 
@@ -1140,7 +1140,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 ### 一次完整运行，从第一个页面开始
 
-以下是[真实模式](#真实模式)的一次完整运行，从头到尾，在按该节所印步骤搭建的 `main` 全新克隆上完成。运行时间为 2026 年 9 月 3 日，`OPENAI_MODEL=gpt-5.6-terra`，连接的是作者本人的 Linear workspace、作者本人的 Slack workspace，以及本仓库通过 `demo` profile 提供的合成 Looker 式 pipeline tile。由同一个人同时担任 manager 与 IT 审批人，这正是单用户本地运行的含义。[演示视频](https://youtu.be/LkqAEKfNExE)是同一路径在更晚 commit 上以 GLM 5.3 Flash 完成的录制运行，Linear 与 Slack 两侧的效果在视频中呈现；下面每一张截图都来自 day0 dashboard。
+以下是[真实模式](#真实模式)的一次完整运行，从头到尾，在按该节所印步骤搭建的 `main` 全新克隆上完成。运行时间为 2026 年 9 月 3 日，`OPENAI_MODEL=gpt-5.6-terra`，连接的是作者本人的 Linear workspace、作者本人的 Slack workspace，以及本仓库通过 `demo` profile 提供的合成 Looker 式 pipeline tile。由同一个人同时担任 manager 与 IT 审批人，这正是单用户本地运行的含义。[演示视频](https://youtu.be/bxKB9FjeI3o)是同一路径在更晚 commit 上以 GLM 5.3 Flash 完成的录制运行，Linear 与 Slack 两侧的效果在视频中呈现；下面每一张截图都来自 day0 dashboard。
 
 耗时均从 Agent 部署那一刻开始计算。
 
