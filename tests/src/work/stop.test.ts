@@ -15,6 +15,7 @@ import {
   withRefusedReadsDropped,
 } from '../../../src/work/stop';
 import { FIN_1_ITEM, FIN_1_ITEM_ACTIONS } from '../../fixtures/mateo-stopped-rows-2026-09-19';
+import { OPS_REQUESTS_ASK, OPS_REQUESTS_ASK_ACTIONS } from '../../fixtures/priya-stopped-rows-2026-09-19';
 import { REFUSED_CREATE_RUN } from '../../fixtures/refused-ticket-create-2026-09-19';
 import type { MockAction } from '../../../src/work/types';
 
@@ -216,5 +217,40 @@ describe('a read the gate refused is dropped, not a stop (19 Sep third run, find
     expect(droppedReadRefusal('no grant (slack:read)')).toBeUndefined();
     expect(droppedReadRefusal(undefined)).toBeUndefined();
     expect(droppedReadRefusal(`${DROPPED_READ_PREFIX}provider said no`)).toBeUndefined();
+  });
+});
+
+describe('a refused read-back sent as GET with a body is dropped, not a stop (19 Sep fourth run, finding U)', (): void => {
+  const actions = OPS_REQUESTS_ASK_ACTIONS;
+  const ledger = OPS_REQUESTS_ASK.applied as Array<Partial<AppliedAction>>;
+
+  it("is the run's own stop: eight landed, the ninth refused, and the item failed on it", (): void => {
+    expect(ledger.slice(0, 8).every((row) => row.ok === true)).toBe(true);
+    expect(ledger[8]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
+    expect(OPS_REQUESTS_ASK.skipReason).toContain("stopped: Day0's gate refused 1 of 9 actions");
+  });
+
+  it('drops the row as the run recorded it, with a ledger line, and the run does not stop', (): void => {
+    const dropped = withRefusedReadsDropped(actions, ledger);
+    expect(dropped.slice(0, 8)).toEqual(ledger.slice(0, 8));
+    expect(dropped[8]).toMatchObject({
+      tool: 'http.request',
+      ok: true,
+      held: true,
+      reason: `${DROPPED_READ_PREFIX}${SHARED_WRITE_WITHOUT_ATTRIBUTION}`,
+      idempotencyKey: ledger[8]!.idempotencyKey,
+    });
+    expect(droppedReadRefusal(dropped[8]!.reason)).toBe(SHARED_WRITE_WITHOUT_ATTRIBUTION);
+    expect(gateRefusalStop(actions, dropped)).toBeUndefined();
+  });
+
+  it('still stops on the same refusal when the ninth action is a write', (): void => {
+    const write: MockAction = {
+      tool: 'http.request',
+      args: { ...actions[8]!.args, path: '/conversations.mark' },
+    };
+    const kept = withRefusedReadsDropped([...actions.slice(0, 8), write], ledger);
+    expect(kept).toEqual(ledger);
+    expect(gateRefusalStop([...actions.slice(0, 8), write], kept)).toContain("Day0's gate refused 1 of 9 actions");
   });
 });
