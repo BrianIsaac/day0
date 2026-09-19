@@ -62,6 +62,7 @@ function post(path: string, body: Record<string, unknown> = {}, method = 'POST')
 function deps(sent: string[]): RealAdapterDeps {
   return {
     decrypt: vi.fn(async (): Promise<string> => 'secret'),
+    now: (): number => now,
     createMcpClient: (): never => {
       throw new Error('no MCP surface in this test');
     },

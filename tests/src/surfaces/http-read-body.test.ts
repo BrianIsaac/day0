@@ -96,6 +96,7 @@ function request(
 function deps(sent: Sent[], fetcher?: RealAdapterDeps['fetch']): RealAdapterDeps {
   return {
     decrypt: vi.fn(async (): Promise<string> => FAKE_BOT_TOKEN),
+    now: (): number => now,
     createMcpClient: (): never => {
       throw new Error('no MCP surface in this test');
     },
