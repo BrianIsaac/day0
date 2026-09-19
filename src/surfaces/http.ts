@@ -65,16 +65,18 @@ export interface HttpAdapterDeps {
 export { resolveRequestUrl };
 
 /**
- * Move a documented RPC read's JSON body parameters into the query.
+ * Move a documented RPC read's body parameters into the query.
  *
  * Slack's read methods take their parameters from the query string or a form
- * body and do not read a JSON one, so a read whose parameters the model wrote
- * as JSON lands with none of them and is answered `channel_not_found`. The
+ * body and do not read a JSON one, and a GET's body is never sent at all, so a
+ * read whose parameters the model wrote in a body, as JSON or as a form, lands
+ * with none of them and is answered `channel_not_found`. The
  * adapter, not the model, puts them where the provider reads them: a parameter
  * already in the query stands, an empty one is skipped, a list is
  * comma-joined as Slack's `types` is, and `conversations.replies` takes the
  * `thread_ts` a model tends to write as the `ts` Slack asks for. The
- * credential never goes in a URL, so a placeholder among them is refused.
+ * credential never goes in a URL, so a placeholder among them is refused and
+ * a `token` argument is left behind.
  *
  * Args:
  *   request: The parsed request.
@@ -88,9 +90,14 @@ export { resolveRequestUrl };
  */
 function moveReadBodyIntoQuery(request: ParsedHttpRequest, url: URL): boolean {
   const method = documentedRpcRead(request);
-  if (method === undefined || request.bodyJson === undefined) return false;
-  for (const [name, value] of Object.entries(request.bodyJson)) {
+  if (method === undefined || request.body === undefined || request.body.trim() === '') return false;
+  const given: Array<[string, unknown]> = request.bodyJson
+    ? Object.entries(request.bodyJson)
+    : [...new URLSearchParams(request.body.trim())];
+  for (const [name, value] of given) {
     if (value === null || value === undefined || url.searchParams.has(name)) continue;
+    // Slack still reads a `token` argument; the bearer header is the only place one goes.
+    if (name.toLowerCase() === 'token') continue;
     const text = Array.isArray(value)
       ? value.map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join(',')
       : typeof value === 'object'

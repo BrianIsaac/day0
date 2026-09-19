@@ -254,6 +254,24 @@ describe("a documented read's JSON body parameters travel in the query (finding 
     });
   });
 
+  it('moves a form body the same way, which a GET would otherwise have left behind', async (): Promise<void> => {
+    const sent: Sent[] = [];
+    const form: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/conversations.replies',
+        headersJson: '{"Authorization":"Bearer {{secret}}","Content-Type":"application/x-www-form-urlencoded"}',
+        body: `channel=${CHANNEL}&ts=${THREAD}`,
+      },
+    };
+    expect(actionIntent(parsed(form))).toBe('read');
+    expect(await apply(form, sent)).toMatchObject({ ok: true });
+    expect(Object.fromEntries(new URL(sent[0]!.url).searchParams)).toEqual({ channel: CHANNEL, ts: THREAD });
+    expect(sent[0]).toMatchObject({ method: 'GET', body: undefined });
+  });
+
   it('sends nothing the gate did not class: the request as sent is a read by the same rule', async (): Promise<void> => {
     const sent: Sent[] = [];
     await apply(refused, sent);
@@ -268,10 +286,20 @@ describe("a documented read's JSON body parameters travel in the query (finding 
 
   it('never puts the credential in a URL: a placeholder among the parameters is refused unsent', async (): Promise<void> => {
     const sent: Sent[] = [];
-    const row = await apply(request('GET', '/conversations.replies', { channel: CHANNEL, token: '{{secret}}' }), sent);
+    const row = await apply(request('GET', '/conversations.replies', { channel: CHANNEL, cursor: '{{secret}}' }), sent);
     expect(row).toMatchObject({ ok: false });
     expect(JSON.stringify(row)).not.toContain(FAKE_BOT_TOKEN);
     expect(sent).toEqual([]);
+  });
+
+  it('leaves a token argument behind: the bearer header is the only place one goes', async (): Promise<void> => {
+    const sent: Sent[] = [];
+    const pasted = ['xoxb', 'pasted', 'by', 'a', 'model'].join('-');
+    await apply(request('POST', '/conversations.history', { channel: CHANNEL, token: pasted }), sent);
+    expect(sent[0]!.url).toBe(`https://slack.com/api/conversations.history?channel=${CHANNEL}`);
+    expect(sent[0]!.body).toBeUndefined();
+    await apply(request('GET', '/conversations.history', { channel: CHANNEL, token: '{{secret}}' }), sent);
+    expect(sent[1]!.url).toBe(`https://slack.com/api/conversations.history?channel=${CHANNEL}`);
   });
 
   it('leaves an undocumented read and a non-RPC request exactly as they were sent before', async (): Promise<void> => {
