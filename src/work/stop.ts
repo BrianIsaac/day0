@@ -17,6 +17,7 @@
 
 import { actionIntent, isGateRefusal, isManagerDm, isSurfaceTool, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
+import { redactTokenShapes } from '../surfaces/redact';
 import { summariseAction } from '../surfaces/summary';
 import type { LandedNoteRow } from './manager-notes';
 import type { MockAction, ReplyTarget } from './types';
@@ -256,7 +257,8 @@ export function landedNoteRows(
         : typeof entry.tool === 'string'
           ? entry.tool
           : 'unknown action';
-      return [{ kind: read ? 'read' : 'write', line, ...(outcomeUnknown ? { outcomeUnknown: true } : {}) }];
+      // The line is built from the action as authored, so it passes the same structural floor the ledger's effect does.
+      return [{ kind: read ? 'read' : 'write', line: redactTokenShapes(line), ...(outcomeUnknown ? { outcomeUnknown: true } : {}) }];
     }),
   );
 }

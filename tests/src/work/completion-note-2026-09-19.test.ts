@@ -55,6 +55,21 @@ describe('the completion DM, from the same rows', (): void => {
     }
   });
 
+  it('names a credential field without quoting it, and carries no token-shaped value an action holds', (): void => {
+    const token = ['xoxb', '2847561930', '5529104736', 'aBcDeFgHiJkLmNoPqRsTuVwX'].join('-');
+    const output = {
+      actions: [
+        { tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool: 'browser_fill_form', toolArgsJson: JSON.stringify({ fields: [{ name: 'Password', value: 'hunter2-literal' }] }) } },
+        { tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool: 'browser_navigate', toolArgsJson: JSON.stringify({ url: `http://looker-tile:8080/?t=${token}` }) } },
+      ],
+      applied: [{ tool: 'mcp.call', ok: true }, { tool: 'mcp.call', ok: true }],
+    };
+    const text = landedNoteRows(output, surfaces, undefined).map((row) => row.line).join('\n');
+    expect(text).toContain('Set Password to "[credential]"');
+    expect(text).not.toContain('hunter2');
+    expect(text).not.toContain(token);
+  });
+
   it('counts what the card counts: Mateo\'s two reads and two writes', (): void => {
     const text = landedNoteText({
       agentName: 'Mateo', title: mateo.title, outcome: 'completed',
