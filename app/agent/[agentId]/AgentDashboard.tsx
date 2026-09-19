@@ -2468,6 +2468,44 @@ export function retryRequest(
  * Returns:
  *   The arguments for `work.cancelPlan`.
  */
+/** A retry note as typed, with the run it was typed for. */
+export interface TypedRetryNote {
+  text: string;
+  token: string;
+}
+
+/**
+ * What a typed retry note is tied to: the item's state and the manager's
+ * last sent note. Sending a note moves both, so the box empties when the
+ * Retry is taken rather than carrying the sent note onto the next card.
+ *
+ * Args:
+ *   item: The work item row.
+ *
+ * Returns:
+ *   A token that changes whenever a typed note stops being current.
+ */
+export function retryNoteToken(item: Pick<Doc<'workItems'>, 'state' | 'managerFeedback'>): string {
+  return `${item.state}:${item.managerFeedback?.at ?? ''}`;
+}
+
+/**
+ * The retry note that is still the manager's to send. A note left in the box
+ * after its Retry made the finished card read as being sent back, which put
+ * "Provider reconciliation required" under work that owed none (demo
+ * rehearsal 2, Aiko's LOG-1).
+ *
+ * Args:
+ *   typed: The note and the token it was typed under.
+ *   token: The item's current token.
+ *
+ * Returns:
+ *   The typed text while it is current, else the empty string.
+ */
+export function liveRetryNote(typed: TypedRetryNote, token: string): string {
+  return typed.token === token ? typed.text : '';
+}
+
 export function cancelPlanRequest(
   workItemId: Id<'workItems'>,
   reason?: string,
@@ -3103,7 +3141,9 @@ export function WorkItemCard({
   // Refused at the claim: the colleague who holds the item works it, and the
   // row comes back by itself if they let it go, so there is no Retry here.
   const heldByColleague = colleagueHolding(item);
-  const [retryNote, setRetryNote] = useState('');
+  const noteToken = retryNoteToken(item);
+  const [typedRetryNote, setTypedRetryNote] = useState<TypedRetryNote>({ text: '', token: noteToken });
+  const retryNote = liveRetryNote(typedRetryNote, noteToken);
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   // A plan the manager cancelled: Retry drafts a new one, never runs this one.
   const cancelledPlan = item.state === 'cancelled' && plan !== undefined;
@@ -3424,7 +3464,7 @@ export function WorkItemCard({
             <input
               type="text"
               value={retryNote}
-              onChange={(event) => setRetryNote(event.target.value)}
+              onChange={(event) => setTypedRetryNote({ text: event.target.value, token: noteToken })}
               placeholder={
                 item.state === 'completed'
                   ? 'note for the retry: say what to change or answer what the agent asked'

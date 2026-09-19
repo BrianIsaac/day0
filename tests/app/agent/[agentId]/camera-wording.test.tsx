@@ -8,7 +8,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Doc } from '../../../../convex/_generated/dataModel';
-import { WorkItemCard } from '../../../../app/agent/[agentId]/AgentDashboard';
+import { WorkItemCard, liveRetryNote, retryNoteToken } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { clockTime } from '../../../../app/agent/[agentId]/time';
 import type { AutonomyChange } from '../../../../src/work/autonomy';
 import rehearsal from '../../../fixtures/work/demo-rehearsal-2-2026-09-19.json';
@@ -77,5 +77,34 @@ describe('a plan drafted before autonomous actions were turned on', (): void => 
   it('says nothing on a run the manager approved by hand', (): void => {
     const aiko = rehearsal.workItems.aikoCompleted;
     expect(card(aiko, [{ at: aiko.planPendingAt + 1, on: true }])).not.toContain('after this plan was drafted');
+  });
+});
+
+describe('the note typed for a retry', (): void => {
+  const aiko = rehearsal.workItems.aikoCompleted;
+  const stopped = rehearsal.workItems.aikoStopped;
+  const NOTE = aiko.managerFeedback.reason;
+
+  it('belongs to the run it was typed for: the stopped run\'s note is not the finished run\'s', (): void => {
+    const typedWhileStopped = { text: NOTE, token: retryNoteToken(stopped as never) };
+    expect(liveRetryNote(typedWhileStopped, retryNoteToken(stopped as never))).toBe(NOTE);
+    expect(liveRetryNote(typedWhileStopped, retryNoteToken(aiko as never))).toBe('');
+  });
+
+  it('is dropped when the same state comes round again after the note was sent', (): void => {
+    const first = retryNoteToken({ state: 'failed' } as never);
+    const again = retryNoteToken({ state: 'failed', managerFeedback: { at: 1789788836000 } } as never);
+    expect(liveRetryNote({ text: NOTE, token: first }, again)).toBe('');
+  });
+
+  it('leaves the finished card without a reconciliation checklist nobody owes', (): void => {
+    const markup = card(aiko, [], false);
+    expect(markup).toContain('2 changes reached the work environment');
+    expect(markup).not.toContain('Provider reconciliation required');
+    expect(markup).not.toContain('Retry remains disabled');
+  });
+
+  it('still asks for it on the stopped card, where a retry is owed one', (): void => {
+    expect(card(stopped, [], false)).toContain('Provider reconciliation required');
   });
 });
