@@ -1577,9 +1577,12 @@ export function blockedPlanReason(
       return parsed.ok && actionIntent(parsed.action) === 'read';
     };
     // A write withheld for another work item's claim is that item's to land;
-    // it is not work this run left undone.
+    // it is not work this run left undone. A message withheld with such a
+    // write was authored again in the round that followed, and that set is
+    // judged here with it.
     const everyActionLanded = run.actions.every(
-      (_action, index) => landed(index) || withheldByClaim(run.applied[index]) || refusedRead(index),
+      (_action, index) =>
+        landed(index) || withheldByClaim(run.applied[index]) || withheldWithClaimedWrite(run.applied[index]) || refusedRead(index),
     );
     // A step the executor left out because its target has a work item of its
     // own is accounted for as the withheld write would have been: the holder
@@ -2325,6 +2328,9 @@ async function itemsHeldElsewhere(
  * Args:
  *   ctx: Convex action context.
  *   workItemId: The work item whose set is being applied.
+ *   closing: For a closing set in its first round, the set, the surfaces and
+ *     the held items its executor was told of; absent, no message is withheld
+ *     with a write.
  *
  * Returns:
  *   The check `applySurfaceActions` makes before a write is sent.

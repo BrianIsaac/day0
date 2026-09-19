@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blockedPlanReason } from '../../../convex/workActions';
 import type { AppliedAction } from '../../../src/surfaces/types';
+import { withheldWithClaimedWriteReason } from '../../../src/work/claim-key';
 import type { ExecutionPlan, MockAction, PlanStepOutcome } from '../../../src/work/types';
 import {
   REVOPS_ASKS_ASK,
@@ -97,6 +98,24 @@ describe('the reply to the asker is the primary effect of a mention (19 Sep four
         actions: [...actions, threadReply(reply.channel)],
         applied: [...applied, landed],
         reply: channelOnly,
+      }),
+    ).toBeUndefined();
+  });
+  it('accounts for a message withheld with a claimed write as the claim-withheld write is: the round that followed re-authored it', (): void => {
+    // The final ledger after the round: the first set's DM withheld, the reply landed, and a step unrelated to the reply blocked.
+    const withheldDm: AppliedAction = {
+      ...revopsAsksClosingLedger[3]!, held: true, authority: undefined,
+      reason: withheldWithClaimedWriteReason(String(revopsAsksClosingLedger[0]!.reason)),
+    };
+    const outcomes: PlanStepOutcome[] = revopsAsksOutcomes.map((row) =>
+      row.step === 3 ? { ...row, status: 'satisfied' } : row.step === 4 ? { ...row, status: 'blocked', evidence: 'The tracker gap could not be recorded.' } : row,
+    );
+    expect(
+      blockedPlanReason(outcomes, {
+        plan: revopsAsksPlan,
+        actions: [...actions, threadReply(reply.channel, reply.threadTs)],
+        applied: [...applied.slice(0, 7), withheldDm, landed],
+        reply,
       }),
     ).toBeUndefined();
   });

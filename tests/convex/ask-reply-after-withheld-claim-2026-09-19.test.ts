@@ -523,4 +523,56 @@ describe('an ask whose closing writes were withheld for a claim holder still ans
     expect(recorded.closingPrompts).toHaveLength(2);
     expect(authoredUnder).toEqual(expect.arrayContaining([expect.objectContaining({ externalId: 'Pipeline coverage', pageField: true })]));
   }, 30_000);
+  it('with the switch off: the claim is taken while the closing set waits for approval, and the approved apply still ends in one more authoring and a reply', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, ask, holder } = await seed(t);
+    await t.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: false }));
+    recorded.closingAnswers.push(RUN_CLOSING, closingAnswer({
+      draft: 'Answered from the tile as read.', notes: '',
+      actions: [threadReply('Pipeline coverage reads 68% on the tile; the field refresh is held by its own work item.')],
+      planStepOutcomes: satisfied('ledger rows 0 to 3 and 6'),
+    }));
+    /** Approve every row the manager is asked about, then apply. */
+    const approveAll = async (workItemId: Id<'workItems'>): Promise<void> => {
+      const row = await readItem(t, workItemId);
+      if (row.state !== 'actions-pending') return;
+      const rows = outputOf(row).applied ?? [];
+      const actions = outputOf(row).actions ?? [];
+      const asked = actions.map((_, index) => index).filter((index) => rows[index] === undefined || rows[index]!.awaitingApproval);
+      await t.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: row.pendingRunId!, approvedIndexes: asked });
+      await applyWaiting(t, workItemId);
+    };
+
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: ask });
+    await applyWaiting(t, ask);
+    await approveAll(ask);
+    await authorClosing(t, ask);
+    await applyWaiting(t, ask);
+    // The fill and the Save wait for the manager; the sibling takes the field in the meantime.
+    expect((await readItem(t, ask)).state).toBe('actions-pending');
+    await t.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: true }));
+    await holderBegins(t, holder);
+    await applyWaiting(t, holder);
+    await t.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: false }));
+    await approveAll(ask);
+
+    const between = await readItem(t, ask);
+    // The DM is automatic, so it went out before anyone held the field and cannot be taken back:
+    // the round here is for the reply, and the DM's words stand as they were sent (left open).
+    expect(between.output).toMatchObject({ phase: 'dependent-authoring', closingRound: { reason: 'reply-owed', prerequisiteCount: 4 } });
+    expect(outputOf(between).applied![7]).toMatchObject({ ok: true, tool: 'http.request' });
+    expect(outputOf(between).applied![7]!.held).toBeUndefined();
+    await authorClosing(t, ask);
+    await applyWaiting(t, ask);
+    await approveAll(ask);
+    await settle(t);
+
+    const row = await readItem(t, ask);
+    expect(row.state).toBe('completed');
+    expect(saves()).toBe(1);
+    const { applied = [] } = outputOf(row);
+    expect(applied[4]!.reason).toContain("withheld for another work item's claim");
+    expect(applied[5]!.reason).toContain("withheld for another work item's claim");
+    expect(posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel)).toHaveLength(1);
+  }, 30_000);
 });
