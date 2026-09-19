@@ -58,7 +58,7 @@ import {
   type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import { heldItemOfBlockedStep, heldItemReplyFindings, plannedWriteTargets, withHeldItemsSaid, withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
+import { answersTheAsker, heldItemOfBlockedStep, heldItemReplyFindings, isReplyStep, plannedWriteTargets, withHeldItemsSaid, withheldByClaim, withheldByClaimReason, writeTargetIds, type AskReplyTarget, type HeldExternalItem } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -1404,15 +1404,31 @@ function flattenedDependentOutput(
 }
 
 /**
+ * Where a work item answers, when its source is a mention on a chat surface.
+ *
+ * Args:
+ *   item: The work item.
+ *
+ * Returns:
+ *   The asker's thread or channel; undefined for any other item and in mock mode.
+ */
+function askReplyOf(item: Pick<Doc<'workItems'>, 'sourceSystem' | 'replyTarget'> | null | undefined): AskReplyTarget | undefined {
+  if (SURFACE_MODE !== 'real' || !item?.replyTarget) return undefined;
+  return { surface: item.sourceSystem, channel: item.replyTarget.channel, ...(item.replyTarget.threadTs ? { threadTs: item.replyTarget.threadTs } : {}) };
+}
+
+/**
  * Why blocked plan steps fail a run, if they do.
  *
  * A blocked step is the closing phase's honest account of something it
  * could not prove, and that account is kept on the item either way. It fails
  * the run only when the work did not land: no action was emitted, an emitted
- * action did not reach its surface, or the plan promised a ticket close and
- * no state transition landed. A run whose every action landed is completed,
- * with the blocked steps recorded beside it, rather than reported as failed
- * against a provider that shows the change.
+ * action did not reach its surface, the plan promised a ticket close and
+ * no state transition landed, or the item came from a mention, its reply step
+ * is blocked and no reply landed where the person who asked reads. A run
+ * whose every action landed is otherwise completed, with the blocked steps
+ * recorded beside it, rather than reported as failed against a provider that
+ * shows the change.
  *
  * Args:
  *   outcomes: The closing phase's plan-step accounting.
@@ -1429,6 +1445,8 @@ export function blockedPlanReason(
     applied: readonly (Partial<AppliedAction> | undefined)[];
     /** The items other work items hold, as the executor was told before it authored. */
     heldElsewhere?: readonly HeldExternalItem[];
+    /** Where the work item answers, when it came from a mention; given at the finish, after the apply. */
+    reply?: AskReplyTarget;
   },
 ): string | undefined {
   const blocked = outcomes.filter((outcome) => outcome.status === 'blocked');
@@ -1438,6 +1456,14 @@ export function blockedPlanReason(
       const row = run.applied[index];
       return row?.ok === true && row.held !== true;
     };
+    // The reply to the person who asked is the primary effect of a mention.
+    // With the reply step blocked and no reply landed where they read, the
+    // run did not do what it was for, whatever else landed or was withheld.
+    const reply = run.reply;
+    const replyOwed =
+      reply !== undefined &&
+      blocked.some((outcome) => isReplyStep(outcome, run.plan, reply)) &&
+      !run.actions.some((action, index) => landed(index) && answersTheAsker(action, reply));
     // A read the gate refused was never sent and had nothing to change: the
     // step that needed it is the blocked step, not an action that did not land.
     const refusedRead = (index: number): boolean => {
@@ -1459,7 +1485,7 @@ export function blockedPlanReason(
     const leftToHolders = blocked.every(
       (outcome) => heldItemOfBlockedStep(outcome, run.plan, run.heldElsewhere) !== undefined,
     );
-    if (everyActionLanded && leftToHolders) return undefined;
+    if (everyActionLanded && leftToHolders && !replyOwed) return undefined;
     const closePromised =
       run.plan.expectedOutputType === 'ticket-update' && transitionPromised(run.plan);
     const transitionLanded = run.actions.some((action, index): boolean => {
@@ -1476,7 +1502,7 @@ export function blockedPlanReason(
     });
     const primaryEffectLanded =
       run.plan.expectedOutputType !== 'ticket-update' || ticketEffectLanded;
-    if (everyActionLanded && primaryEffectLanded && (!closePromised || transitionLanded)) {
+    if (everyActionLanded && primaryEffectLanded && !replyOwed && (!closePromised || transitionLanded)) {
       return undefined;
     }
   }
@@ -2642,13 +2668,15 @@ async function finishRun(
       };
     }
     const finalOutput = flattenedDependentOutput(output, settled);
+    const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, { workItemId });
     const finalReason =
       (output.initial.resumedClosing ? undefined : output.initial.initialFailure) ??
       reason ??
       blockedPlanReason(output.planStepOutcomes, {
-        plan: (await ctx.runQuery(internal.work.getInternal, { workItemId }))?.plan as ExecutionPlan,
+        plan: item?.plan as ExecutionPlan,
         actions: finalOutput.actions,
         applied: finalOutput.applied,
+        reply: askReplyOf(item),
         // The holders the set was authored under stand, as a claim-withheld
         // row's line does. A set kept before they were recorded reads them now.
         heldElsewhere:

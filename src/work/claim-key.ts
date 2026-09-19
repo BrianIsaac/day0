@@ -657,3 +657,58 @@ export function withHeldItemsSaid(
   }
   return [...actions];
 }
+
+/** Where a work item that came from a mention answers: the asker's thread, or the channel when there is none. */
+export interface AskReplyTarget {
+  /** The slug of the chat surface the mention was found on. */
+  surface: string;
+  channel: string;
+  threadTs?: string;
+}
+
+/**
+ * Whether a blocked plan step is the reply to the person who asked.
+ *
+ * Where the plan has declared obligations, the step is one that writes the
+ * surface the mention came from. A plan that declares nothing usable cannot
+ * tell its steps apart, so any blocked step of it is read as the reply: the
+ * finish then asks only whether a reply landed.
+ *
+ * Args:
+ *   outcome: The blocked step's accounting.
+ *   plan: The approved plan.
+ *   reply: Where the work item answers.
+ *
+ * Returns:
+ *   True when the step may be the reply.
+ */
+export function isReplyStep(
+  outcome: { step: number },
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+  reply: AskReplyTarget,
+): boolean {
+  const declared = planObligations(plan)?.steps[outcome.step - 1];
+  if (!declared) return true;
+  if (declared.kind !== 'write' && declared.kind !== 'conditional-write') return false;
+  return (declared.writes ?? []).some((slug) => slug.toLowerCase() === reply.surface.toLowerCase());
+}
+
+/**
+ * Whether an action is a message put where the person who asked reads: in
+ * the thread the work item answers, or in its channel when the mention was
+ * outside a thread.
+ *
+ * Args:
+ *   action: An action of the run.
+ *   reply: Where the work item answers.
+ *
+ * Returns:
+ *   True for a chat write addressed to exactly that place.
+ */
+export function answersTheAsker(action: MockAction, reply: AskReplyTarget): boolean {
+  if (!isSurfaceTool(action.tool)) return false;
+  const result = parseSurfaceAction(action);
+  if (!result.ok || result.action.surface !== reply.surface || actionIntent(result.action) !== 'write') return false;
+  const place = reply.threadTs ? `${reply.channel}/${reply.threadTs}` : reply.channel;
+  return messageTarget(result.action) === place;
+}

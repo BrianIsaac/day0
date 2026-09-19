@@ -389,16 +389,12 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     expect(slackLedger[6]!.effect).toContain('Last updated by revops at');
     const revops7Row = await readItem(t, revops7);
     expect(JSON.stringify([slackRow.output, revops7Row.output])).not.toContain('about:blank');
-    // 3. The Slack item did not fail.
-    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
-    expect(
-      events.filter(
-        (event) =>
-          event.type === 'work.failed' &&
-          (event.payload as { workItemId?: string }).workItemId === slack,
-      ),
-    ).toEqual([]);
-    expect(slackRow.state).toBe('completed');
+    // 3. Every browser row landed, and the item still does not read
+    //    completed: its reply step was reported blocked and nothing answered
+    //    the thread (finding W, 19 September). On the day it completed.
+    expect(slackLedger.every((row) => row.ok && !row.held)).toBe(true);
+    expect(slackRow.state).toBe('failed');
+    expect(slackRow.skipReason).toContain('1 approved plan step(s) remained blocked: step 3 (');
     // 4. REVOPS-7 landed every browser row, in a browser that served no
     //    Slack call.
     expect(ledger(revops7Row).slice(0, 7).every((row) => row.ok && !row.held)).toBe(true);
