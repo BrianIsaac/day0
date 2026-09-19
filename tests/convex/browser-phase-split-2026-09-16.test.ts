@@ -29,7 +29,12 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 const recorded = vi.hoisted(() => ({
   driver: undefined as undefined | import('../fixtures/browser-phase-split-2026-09-16').TileDriver,
   http: [] as Array<{ url: string; body: unknown }>,
+  /** How many times the Slack mention's closing set has been authored. */
+  slackClosings: 0,
 }));
+
+/** What the mention's second closing authoring answers: the reply, from the read-back now in its ledger. */
+const REPLY_TEXT = 'Pipeline coverage reads 74% on the Looker tile, per its audit line (Last updated by revops).';
 
 const r7Plan: ExecutionPlan = {
   summary: 'Refresh the Looker pipeline tile to the approved 74%, read it back and tell the manager.',
@@ -80,7 +85,32 @@ vi.mock('../../src/lib/mastra', async () => {
           };
         }
         if (name.endsWith('-dependent')) {
-          if (slack) return fixture.slackClosingReply;
+          if (slack) {
+            recorded.slackClosings += 1;
+            if (recorded.slackClosings === 1) return fixture.slackClosingReply;
+            return {
+              draft: 'The read-back is in the ledger now, so the thread is answered from it.',
+              notes: '',
+              actions: [
+                {
+                  tool: 'http.request',
+                  args: {
+                    surface: 'slack',
+                    method: 'POST',
+                    path: '/chat.postMessage',
+                    headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+                    body: JSON.stringify({ channel: 'C0BSF04TZ19', thread_ts: '1787746453.202809', text: REPLY_TEXT }),
+                  },
+                },
+              ],
+              procedureTrails: [],
+              planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) =>
+                outcome.step === 3
+                  ? { ...outcome, status: 'satisfied', evidence: 'ledger row 6: visible figure 74% and the audit line; the reply in this response quotes them' }
+                  : outcome,
+              ),
+            };
+          }
           return {
             draft: 'The tile reads 74% with the audit line; the manager has the read-back.',
             notes: '',
@@ -333,6 +363,7 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     vi.unstubAllEnvs();
     recorded.driver = undefined;
     recorded.http.length = 0;
+    recorded.slackClosings = 0;
     restoreSurfaceMode();
   });
 
@@ -360,11 +391,17 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     // by a new invocation.
     await t.action(internal.workActions.authorDependentActions, { workItemId: slack, runId });
     await applyAs(t, 'slack', slack);
+    // Its reply step was blocked for a read-back that only this apply
+    // produced, so the closing set is authored once more from the ledger
+    // (finding W, 19 September), and that set is applied.
+    expect((await readItem(t, slack)).output).toMatchObject({ phase: 'dependent-authoring', closingRound: { reason: 'reply-owed', prerequisiteCount: 4 } });
+    await t.action(internal.workActions.authorDependentActions, { workItemId: slack, runId });
+    await applyAs(t, 'slack', slack);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const slackRow = await readItem(t, slack);
     const slackLedger = ledger(slackRow);
-    expect(slackLedger).toHaveLength(8);
+    expect(slackLedger).toHaveLength(9);
     // 1. The closing fill and Save landed, the fill after the run's own
     //    navigate, credential fill and Sign in were replayed in its browser.
     expect(slackLedger[4]).toMatchObject({ ok: true });
@@ -389,16 +426,20 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     expect(slackLedger[6]!.effect).toContain('Last updated by revops at');
     const revops7Row = await readItem(t, revops7);
     expect(JSON.stringify([slackRow.output, revops7Row.output])).not.toContain('about:blank');
-    // 3. The Slack item did not fail.
+    // 3. The Slack item did not fail, and the person who asked is answered:
+    //    on the day it completed with its reply step blocked and no reply.
     const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
-    expect(
-      events.filter(
-        (event) =>
-          event.type === 'work.failed' &&
-          (event.payload as { workItemId?: string }).workItemId === slack,
-      ),
-    ).toEqual([]);
+    const mine = events.filter((event) => (event.payload as { workItemId?: string }).workItemId === slack);
+    expect(mine.filter((event) => event.type === 'work.failed')).toEqual([]);
+    expect(mine.filter((event) => event.type === 'work.closing-reauthored')).toHaveLength(1);
     expect(slackRow.state).toBe('completed');
+    expect(slackLedger.every((row) => row.ok && !row.held)).toBe(true);
+    expect(recorded.slackClosings).toBe(2);
+    expect(
+      recorded.http.map((call) => call.body as { channel?: string; thread_ts?: string; text?: string })
+        .filter((body) => body.channel === 'C0BSF04TZ19' && body.thread_ts === '1787746453.202809' && body.text?.startsWith(REPLY_TEXT)),
+    ).toHaveLength(1);
+    expect((slackRow.output as { prerequisiteCount?: number }).prerequisiteCount).toBe(4);
     // 4. REVOPS-7 landed every browser row, in a browser that served no
     //    Slack call.
     expect(ledger(revops7Row).slice(0, 7).every((row) => row.ok && !row.held)).toBe(true);

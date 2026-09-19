@@ -43,7 +43,7 @@ import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
-import { heldElsewhereLines, heldElsewhereRows, heldItemReplyFindings, withHeldItemsSaid, type HeldExternalItem } from './claim-key';
+import { heldElsewhereLines, heldElsewhereRows, heldItemReplyFindings, withHeldItemsSaid, withheldByClaim, withheldWithClaimedWrite, type HeldExternalItem } from './claim-key';
 
 export { replyTargetLine };
 
@@ -2670,7 +2670,10 @@ export function appliedLedgerPrompt(
     .map((entry, index): string => {
       const action = actions[index];
       const result = entry.ok && !entry.held ? 'landed' : entry.held ? 'held' : 'failed';
-      const detail = entry.effect ?? entry.reason ?? '(no provider detail)';
+      // A row withheld for a claim says whose work it is: a set authored
+      // from this ledger has to be able to say so.
+      const claimed = withheldByClaim(entry) || withheldWithClaimedWrite(entry);
+      const detail = claimed && entry.effect ? `${entry.effect} · ${entry.reason}` : (entry.effect ?? entry.reason ?? '(no provider detail)');
       const target = action
         ? JSON.stringify({ tool: action.tool, args: action.args })
         : JSON.stringify({ tool: entry.tool });
