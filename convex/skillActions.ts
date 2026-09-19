@@ -185,7 +185,7 @@ function replySurfaceLines(skill: AuthorPromptSkill, surfaces: readonly SurfaceR
       ? `; \`${target.slug}\` is path ${target.path}, reached by \`${PATH_VERBS[target.path]}\` only, so it never carries a reply`
       : '';
   return [
-    `  Here ${input} is \`${chat.slug}\`, the connected chat surface (path ${chat.path}, reached by \`${PATH_VERBS[chat.path]}\`)${targetClause}. In \`CASES\`, a case that gives \`reply-channel\` gives \`${REPLY_SURFACE_INPUT}\` too, set to \`${chat.slug}\`, and \`run()\` sends the reply on \`inputs["${REPLY_SURFACE_INPUT}"]\`.`,
+    `  Here ${input} is \`${chat.slug}\`, the connected chat surface (path ${chat.path}, reached by \`${PATH_VERBS[chat.path]}\`)${targetClause}. In \`CASES\`, a case that gives \`reply-channel\` gives \`${REPLY_SURFACE_INPUT}\` too, set to \`${chat.slug}\`, and \`run()\` sends the reply on \`inputs["${REPLY_SURFACE_INPUT}"]\`. SKILL.md writes ${input} as the reply action's \`surface\`, never the slug: the executor binds it for each run.`,
   ];
 }
 

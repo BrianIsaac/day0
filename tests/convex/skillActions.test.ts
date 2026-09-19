@@ -192,7 +192,7 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain('  - `<reply-surface>`: the slug of the connected chat surface');
     expect(prompt).not.toContain('a reply in the thread on chat');
     expect(prompt).toContain(
-      '  Here `<reply-surface>` is `slack`, the connected chat surface (path documented-api, reached by `http.request`); `linear` is path mcp, reached by `mcp.call` only, so it never carries a reply. In `CASES`, a case that gives `reply-channel` gives `reply-surface` too, set to `slack`, and `run()` sends the reply on `inputs["reply-surface"]`.',
+      '  Here `<reply-surface>` is `slack`, the connected chat surface (path documented-api, reached by `http.request`); `linear` is path mcp, reached by `mcp.call` only, so it never carries a reply. In `CASES`, a case that gives `reply-channel` gives `reply-surface` too, set to `slack`, and `run()` sends the reply on `inputs["reply-surface"]`. SKILL.md writes `<reply-surface>` as the reply action\'s `surface`, never the slug: the executor binds it for each run.',
     );
   });
 
