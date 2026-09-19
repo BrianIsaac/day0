@@ -8,7 +8,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Doc } from '../../../../convex/_generated/dataModel';
-import { WorkItemCard, liveRetryNote, retryNoteToken } from '../../../../app/agent/[agentId]/AgentDashboard';
+import { WorkItemCard, liveRetryNote, retryNoteToken, sortedForQueue } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { clockTime } from '../../../../app/agent/[agentId]/time';
 import type { AutonomyChange } from '../../../../src/work/autonomy';
 import rehearsal from '../../../fixtures/work/demo-rehearsal-2-2026-09-19.json';
@@ -106,5 +106,35 @@ describe('the note typed for a retry', (): void => {
 
   it('still asks for it on the stopped card, where a retry is owed one', (): void => {
     expect(card(stopped, [], false)).toContain('Provider reconciliation required');
+  });
+});
+
+describe('one Retry on the page at the run\'s one Retry', (): void => {
+  const skipped = rehearsal.workItems.aikoSkipped;
+  const stopped = rehearsal.workItems.aikoStopped;
+
+  it('labels the skipped row\'s control for what it does, with the explanation as its title', (): void => {
+    const markup = card(skipped, [], false);
+    expect(markup).toContain('>Take it anyway</button>');
+    expect(markup).not.toContain('>Retry</button>');
+    expect(markup).toContain(
+      'title="Take it anyway re-evaluates this item as in scope, on your decision; its plan still needs your approval."',
+    );
+  });
+
+  it('keeps Retry for the stopped run', (): void => {
+    const markup = card(stopped, [], false);
+    expect(markup).toContain('>Retry</button>');
+    expect(markup).not.toContain('Take it anyway');
+  });
+
+  it('sorts the stopped card that waits on the manager above the skipped rows', (): void => {
+    const sorted = sortedForQueue([skipped, stopped] as never);
+    expect(sorted.map((item) => item.state)).toEqual(['failed', 'skipped']);
+    // What needs a decision still comes first, and finished work stays above both.
+    const states = ['skipped', 'failed', 'completed', 'plan-pending', 'actions-pending'].map((state) => ({ ...skipped, state }));
+    expect(sortedForQueue(states as never).map((item) => item.state)).toEqual([
+      'actions-pending', 'plan-pending', 'completed', 'failed', 'skipped',
+    ]);
   });
 });

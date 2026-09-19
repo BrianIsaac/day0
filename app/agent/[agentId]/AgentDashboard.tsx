@@ -1732,6 +1732,24 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
   );
 }
 
+// What needs the manager first: literal actions awaiting approval, then plans,
+// then skills. A failed or stopped run waits on the manager's Retry, so it sits
+// above the skipped rows, which wait on nobody.
+const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'failed', 'skipped', 'cancelled', 'deferred'];
+
+/**
+ * The work queue in the order the page lists it.
+ *
+ * Args:
+ *   workItems: The employee's work items.
+ *
+ * Returns:
+ *   A sorted copy; rows of one state keep their order.
+ */
+export function sortedForQueue<T extends { state: string }>(workItems: readonly T[]): T[] {
+  return [...workItems].sort((a, b) => QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state));
+}
+
 export function WorkQueue({
   agentId,
   workItems,
@@ -1772,16 +1790,7 @@ export function WorkQueue({
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
 
-  const items = useMemo(
-    () =>
-      [...workItems].sort((a, b) => {
-        // What needs the manager first: literal actions awaiting approval,
-        // then plans, then skills.
-        const order = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'skipped', 'cancelled', 'failed', 'deferred'];
-        return order.indexOf(a.state) - order.indexOf(b.state);
-      }),
-    [workItems],
-  );
+  const items = useMemo(() => sortedForQueue(workItems), [workItems]);
 
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
@@ -2487,6 +2496,9 @@ export function retryRequest(
  * Returns:
  *   The arguments for `work.cancelPlan`.
  */
+/** The skipped row's control: the manager gives the agent an item it set aside. */
+export const TAKE_IT_ANYWAY = 'Take it anyway';
+
 /** A retry note as typed, with the run it was typed for. */
 export interface TypedRetryNote {
   text: string;
@@ -3157,6 +3169,13 @@ export function WorkItemCard({
   // documented systems; Retry is the manager saying the work is theirs to give.
   const outOfScopeSkipped = skipVerdictReason?.startsWith(OUT_OF_SCOPE_SKIP_PREFIX) === true;
   const skipWaivable = qualityFitSkipped || outOfScopeSkipped;
+  // A skipped row's control is not a retry of a run: it hands the agent an
+  // item it set aside. Named apart so the page holds one Retry when a run stops.
+  const takeAnywayNote = qualityFitSkipped
+    ? `${TAKE_IT_ANYWAY} re-evaluates this item without the quality-fit filter; its plan still needs your approval.`
+    : outOfScopeSkipped
+      ? `${TAKE_IT_ANYWAY} re-evaluates this item as in scope, on your decision; its plan still needs your approval.`
+      : undefined;
   // Refused at the claim: the colleague who holds the item works it, and the
   // row comes back by itself if they let it go, so there is no Retry here.
   const heldByColleague = colleagueHolding(item);
@@ -3498,9 +3517,10 @@ export function WorkItemCard({
           <button
             onClick={() => onRetryFailed(retryNote)}
             disabled={retryBlocked || (item.state === 'completed' && !sendingBack)}
+            title={takeAnywayNote}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Retry
+            {takeAnywayNote ? TAKE_IT_ANYWAY : 'Retry'}
           </button>
           {retryBlocked && (item.state !== 'completed' || sendingBack) ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
@@ -3520,17 +3540,8 @@ export function WorkItemCard({
                 : 'Retry drafts a new plan and your reason goes with it; the plan comes back to you before anything runs.'}
             </p>
           ) : null}
-          {qualityFitSkipped ? (
-            <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry re-evaluates this item without the quality-fit filter; its plan still needs
-              your approval.
-            </p>
-          ) : null}
-          {outOfScopeSkipped ? (
-            <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry re-evaluates this item as in scope, on your decision; its plan still needs
-              your approval.
-            </p>
+          {takeAnywayNote ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">{takeAnywayNote}</p>
           ) : null}
         </div>
       ) : null}
