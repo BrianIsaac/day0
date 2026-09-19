@@ -243,6 +243,76 @@ export const log1SecondRefusedClosing = {
   "at": 1789775911386
 } as RefusedClosing;
 
+/** The first run's phase one: the escalation DM, landed. */
+export const log1FirstStopPhaseOne = {
+  "actions": [
+    {
+      "args": {
+        "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Escalation on LOG-1 (shipment SH-4471, held at Port Klang, carrier Meridian Freight): the carrier has given no revised ETA, so per the logistics desk handbook ('Notices and ETAs') I need the desk lead's choice before writing the customer notice. Which of the two handbook templates should I use — 'Delay, revised ETA confirmed' or 'Delay, ETA unconfirmed, next update by <time>' (the latter looks like the fit)? And what next-update time should the notice promise? Once you answer, I will record the exception comment on LOG-1 and move it to Done, both held for your approval.\"}",
+        "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
+        "method": "POST",
+        "path": "/chat.postMessage",
+        "surface": "slack"
+      },
+      "tool": "http.request"
+    }
+  ],
+  "applied": [
+    {
+      "authority": "standing",
+      "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789775147.261859\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation on LOG-1 (shipment SH-4471, held at Port Klang, carrie…",
+      "idempotencyKey": "nh7crv16ksaxkw9w9w0gsw0syd8enrw7:k97cwet1cacrj0qygy57xgnf258em095:0",
+      "ok": true,
+      "providerId": "1789775147.261859",
+      "tool": "http.request"
+    }
+  ]
+} as { actions: MockAction[]; applied: AppliedAction[] };
+
+/**
+ * The first run's closing set, from its `work.failed` event: the re-read
+ * alone, with steps 3 and 4 blocked in the employee's own words. The stop
+ * was right; the reason the card gave was the gate's, not hers.
+ */
+export const log1FirstStopRefusedClosing = {
+  "actions": [
+    {
+      "args": {
+        "surface": "linear",
+        "tool": "get_issue",
+        "toolArgsJson": "{\"id\":\"LOG-1\"}"
+      },
+      "tool": "mcp.call"
+    }
+  ],
+  "draft": "LOG-1 (shipment SH-4471 held at Port Klang, carrier Meridian Freight, no revised ETA) is blocked pending the manager's answer to the escalation DM (ledger row 0, HTTP 200, ts 1789775147.261859). The logistics desk handbook ('Notices and ETAs') requires the desk lead's template choice and next-update time before the customer notice can be written, so the exception comment cannot be composed without leaving a <placeholder>. This closing turn re-reads LOG-1 in Linear to confirm the ticket's current state (a read, which lands now); no comment and no state change are emitted. When the manager answers, the next work item will record the exception comment in the 'How to record a shipment exception' format and then move LOG-1 to Done, both held for the manager's literal approval.",
+  "notes": "Blocked on the manager's reply: template choice and next-update time for SH-4471 are unknown, so the notice text cannot be filled; the fresh get_issue read (action 0) is emitted now to satisfy plan step 1's declared Linear read.",
+  "planStepOutcomes": [
+    {
+      "evidence": "Action 0 in this response: mcp.call get_issue on LOG-1 (linear), the declared Linear read confirming shipment SH-4471 held at Port Klang, carrier Meridian Freight, revised ETA none given.",
+      "status": "satisfied",
+      "step": 1
+    },
+    {
+      "evidence": "Applied ledger row 0: http.request POST /chat.postMessage to manager DM D0MANAGER, HTTP 200, ts 1789775147.261859, escalation asking for template choice and next-update time.",
+      "status": "satisfied",
+      "step": 2
+    },
+    {
+      "evidence": "No manager answer is in the applied ledger; the handbook ('Notices and ETAs') requires the desk lead's template choice and next-update time before the notice text can be filled, so save_comment on LOG-1 cannot be composed yet.",
+      "status": "blocked",
+      "step": 3
+    },
+    {
+      "evidence": "Depends on step 3: the runbook 'How to record a shipment exception' requires the comment to precede any status change, and no comment has landed, so save_issue to Done is not emitted.",
+      "status": "blocked",
+      "step": 4
+    }
+  ],
+  "reason": "approved plan step 1 declares a read of Linear, but no landed Linear read or blocking ledger reason was recorded",
+  "at": 1789775169399
+} as RefusedClosing;
+
 export const fin1Candidate: WorkCandidate = { ...{
   "sourceCategory": "ticket-queue",
   "sourceSystem": "linear",

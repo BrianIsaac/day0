@@ -87,6 +87,8 @@ import {
   fin1Plan,
   fin1RefusedClosing,
   log1Candidate,
+  log1FirstStopPhaseOne,
+  log1FirstStopRefusedClosing,
   log1GroundingRead,
   log1Plan,
   log1RefusedClosing,
@@ -5423,5 +5425,34 @@ describe('the promised-read gate on a retry (finding T, 19 September)', (): void
     const { result, item } = await fin1Retry('rejection');
     expect(result).toEqual({ ok: false, reason: fin1RefusedClosing.reason });
     expect(item.state).toBe('failed');
+  });
+
+  it('still stops SH-4471 first try, before any write to the ticket, and in the employee\'s own words', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Escalating to the manager.', notes: '', needsDependentPhase: true,
+      actions: log1FirstStopPhaseOne.actions,
+    };
+    recorded.dependentOutput = closingOf(log1FirstStopRefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: true });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { managerFeedback: undefined });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).not.toContain('declares a read of Linear');
+    expect(stopped.skipReason).toContain('No manager answer is in the applied ledger');
+    // A stop withholds the closing set whole: nothing reaches the ticket, not even the re-read.
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http.filter((call) => call.url.includes('chat.postMessage'))).toHaveLength(1);
   });
 });

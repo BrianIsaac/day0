@@ -19,6 +19,7 @@ import {
   PendingActions,
   PlanApprovalForm,
   PlanExecutionLedger,
+  RefusedBlockedSteps,
   RefusedClosingDetails,
   RefusedDraftDetails,
   RegisteredSkillsPanel,
@@ -40,6 +41,7 @@ import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026
 import { slackPhaseOne } from '../../../fixtures/browser-phase-split-2026-09-16';
 import { REFUSED_CREATE_RUN } from '../../../fixtures/refused-ticket-create-2026-09-19';
 import { gateRefusalStop } from '../../../../src/work/stop';
+import { log1FirstStopRefusedClosing, log1RefusedClosing } from '../../../fixtures/work/full-run-3-2026-09-19-log-1';
 import {
   OPEN_QUESTIONS_2026_09_16,
   RECORDED_QUESTIONS_2026_09_16,
@@ -246,6 +248,44 @@ describe('refused closing set', (): void => {
     expect(markup).toContain('Refreshed the tile to 74%.');
     expect(markup).toContain('Step 3 · satisfied - the audit comment in this response');
     expect(renderToStaticMarkup(<RefusedClosingDetails refused={undefined} />)).toBe('');
+  });
+});
+
+describe('the employee\'s own blocked steps beside the gate\'s reason (SH-4471, 19 September)', (): void => {
+  it('shows each step the refused closing phase recorded as blocked, in the open, with its reason', (): void => {
+    const markup = renderToStaticMarkup(<RefusedBlockedSteps refused={log1FirstStopRefusedClosing} />);
+    expect(markup).not.toContain('<details');
+    expect(markup).toContain('The employee recorded 2 steps as blocked');
+    expect(markup).toContain('Step 3 · blocked - No manager answer is in the applied ledger');
+    expect(markup).toContain('Step 4 · blocked - Depends on step 3');
+    expect(markup).not.toContain('Step 1');
+    expect(markup).not.toContain(log1FirstStopRefusedClosing.reason);
+  });
+
+  it('shows one step in the singular, and one the phase could not verify', (): void => {
+    const [first, , third] = log1FirstStopRefusedClosing.planStepOutcomes;
+    const markup = renderToStaticMarkup(
+      <RefusedBlockedSteps
+        refused={{ ...log1FirstStopRefusedClosing, planStepOutcomes: [{ ...first!, status: 'not-verifiable' }, third!] }}
+      />,
+    );
+    expect(markup).toContain('The employee recorded 2 steps as blocked or not verifiable');
+    expect(markup).toContain('Step 1 · not-verifiable - ');
+    const one = renderToStaticMarkup(
+      <RefusedBlockedSteps refused={{ ...log1FirstStopRefusedClosing, planStepOutcomes: [third!] }} />,
+    );
+    expect(one).toContain('The employee recorded 1 step as blocked');
+  });
+
+  it('shows nothing when every step was reported satisfied, and nothing without a refused set', (): void => {
+    expect(renderToStaticMarkup(<RefusedBlockedSteps refused={log1RefusedClosing} />)).toBe('');
+    expect(renderToStaticMarkup(<RefusedBlockedSteps refused={undefined} />)).toBe('');
+  });
+
+  it('is shown for a refused set with no actions at all, where the disclosure shows nothing', (): void => {
+    const empty = { ...log1FirstStopRefusedClosing, actions: [] };
+    expect(renderToStaticMarkup(<RefusedClosingDetails refused={empty} />)).toBe('');
+    expect(renderToStaticMarkup(<RefusedBlockedSteps refused={empty} />)).toContain('Step 3 · blocked');
   });
 });
 
