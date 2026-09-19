@@ -9,8 +9,6 @@
  * and sent together on the hour.
  */
 
-import type { ReconciliationEntry } from './reconciliation';
-
 export type ManagerNotificationMode = 'per-run' | 'digest';
 
 export type ManagerNoteKind = 'landed' | 'stopped';
@@ -50,11 +48,36 @@ function changes(count: number): string {
   return `${count} ${count === 1 ? 'change' : 'changes'}`;
 }
 
+/** One landed ledger row as the note tells it. */
+export interface LandedNoteRow {
+  /** A write is work to reconcile; a read is counted so the note agrees with the card. */
+  kind: 'write' | 'read';
+  /** The row in a manager's words (`summariseAction`), never the provider's or the driver's echo. */
+  line: string;
+  outcomeUnknown?: boolean;
+}
+
+/** What a finished run's count is a count of: the plain word when it is all writes, the split when it is not. */
+function landedCount(rows: readonly LandedNoteRow[]): string {
+  const writes = rows.filter((row) => row.kind === 'write').length;
+  const reads = rows.length - writes;
+  if (reads === 0) return `${changes(writes)} landed`;
+  const split = [
+    ...(writes > 0 ? [`${writes} ${writes === 1 ? 'write' : 'writes'}`] : []),
+    `${reads} ${reads === 1 ? 'read' : 'reads'}`,
+  ].join(', ');
+  return `${rows.length} ${rows.length === 1 ? 'action' : 'actions'} landed (${split})`;
+}
+
 /**
  * The one-line note, with its ledger lines, for a run in which work landed.
  *
+ * A finished run lists every landed row, reads included, so its count is the
+ * card's count and says what it counts. A run that stopped lists and counts
+ * its writes only: those are what the manager reconciles before a retry.
+ *
  * Args:
- *   args: The agent, the item, the landed entries, and for a failed run why it ended.
+ *   args: The agent, the item, the landed rows (`landedNoteRows`), and for a failed run why it ended.
  *
  * Returns:
  *   The note text.
@@ -62,18 +85,16 @@ function changes(count: number): string {
 export function landedNoteText(args: {
   agentName: string;
   title: string;
-  landed: readonly ReconciliationEntry[];
+  rows: readonly LandedNoteRow[];
   outcome: 'completed' | 'failed';
   reason?: string;
 }): string {
-  const lines = args.landed.map(
-    (entry) =>
-      `- ${entry.effect ?? entry.tool}${entry.outcome === 'outcome-unknown' ? ' (outcome unknown)' : ''}`,
-  );
+  const rows = args.outcome === 'completed' ? args.rows : args.rows.filter((row) => row.kind === 'write');
+  const lines = rows.map((row) => `- ${row.line}${row.outcomeUnknown ? ' (outcome unknown)' : ''}`);
   const head =
     args.outcome === 'completed'
-      ? `${args.agentName} finished ${quoted(args.title)}: ${changes(args.landed.length)} landed.`
-      : `${args.agentName} stopped on ${quoted(args.title)} after ${changes(args.landed.length)} landed: ${args.reason ?? 'the run did not finish'}. Reconcile the provider in day0 before a retry.`;
+      ? `${args.agentName} finished ${quoted(args.title)}: ${landedCount(rows)}.`
+      : `${args.agentName} stopped on ${quoted(args.title)} after ${changes(rows.length)} landed: ${args.reason ?? 'the run did not finish'}. Reconcile the provider in day0 before a retry.`;
   return [head, ...lines].join('\n');
 }
 

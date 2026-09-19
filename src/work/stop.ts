@@ -17,9 +17,12 @@
 
 import { actionIntent, isGateRefusal, isManagerDm, isSurfaceTool, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
-import type { MockAction } from './types';
+import { summariseAction } from '../surfaces/summary';
+import type { LandedNoteRow } from './manager-notes';
+import type { MockAction, ReplyTarget } from './types';
 import {
   ledgerPhases,
+  OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   type ReconciliationEntry,
 } from './reconciliation';
@@ -218,4 +221,42 @@ export function isStopped(skipReason: string | undefined): boolean {
  */
 export function stopDetail(skipReason: string): string {
   return isStopped(skipReason) ? skipReason.slice(STOPPED_PREFIX.length) : skipReason;
+}
+
+/**
+ * The run's landed rows as the completion note tells them: every landed or
+ * outcome-unknown row in ledger order, reads included, each in a manager's
+ * words. The manager DM is left out, as in `landedWork`: it reports on work
+ * and is not work.
+ *
+ * Args:
+ *   output: A run's persisted output, in either of its two shapes.
+ *   surfaces: The agent's surfaces, for display names and the manager DM.
+ *   replyTarget: The thread the work item answers, so a reply to it reads as one.
+ *
+ * Returns:
+ *   One row per landed action, for `landedNoteText`.
+ */
+export function landedNoteRows(
+  output: unknown,
+  surfaces: readonly SurfaceRecord[],
+  replyTarget?: ReplyTarget,
+): LandedNoteRow[] {
+  return ledgerPhases(output).flatMap(({ actions, applied }) =>
+    applied.flatMap((entry, index): LandedNoteRow[] => {
+      const outcomeUnknown = entry.outcomeUnknown === true || entry.reason === OUTCOME_UNKNOWN_REASON;
+      if (!outcomeUnknown && (entry.ok !== true || entry.held === true)) return [];
+      const action = actions[index];
+      const parsed = action ? parseSurfaceAction(action) : undefined;
+      const surface = parsed?.ok ? surfaces.find((row) => row.slug === parsed.action.surface) : undefined;
+      if (parsed?.ok && surface && isManagerDm(parsed.action, surface)) return [];
+      const read = !outcomeUnknown && parsed?.ok === true && actionIntent(parsed.action) !== 'write';
+      const line = action
+        ? summariseAction(action, surfaces, { replyTarget })
+        : typeof entry.tool === 'string'
+          ? entry.tool
+          : 'unknown action';
+      return [{ kind: read ? 'read' : 'write', line, ...(outcomeUnknown ? { outcomeUnknown: true } : {}) }];
+    }),
+  );
 }

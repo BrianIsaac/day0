@@ -15,16 +15,16 @@ describe('the manager notification mode', (): void => {
 
 describe('the notes the gate writes for the manager', (): void => {
   const landed = [
-    { phase: 'closing' as const, actionIndex: 0, tool: 'mcp.call', outcome: 'landed' as const, effect: 'commented on REVOPS-7' },
-    { phase: 'closing' as const, actionIndex: 1, tool: 'mcp.call', outcome: 'outcome-unknown' as const },
+    { kind: 'write' as const, line: 'Comment on REVOPS-7: "Done."' },
+    { kind: 'write' as const, line: 'Move REVOPS-7 to Done on Linear', outcomeUnknown: true },
   ];
 
   it('says what landed when a run finished', (): void => {
     expect(
-      landedNoteText({ agentName: 'Priya', title: ' Add the  audit note ', landed, outcome: 'completed' }),
-    ).toBe('Priya finished “Add the audit note”: 2 changes landed.\n- commented on REVOPS-7\n- mcp.call (outcome unknown)');
+      landedNoteText({ agentName: 'Priya', title: ' Add the  audit note ', rows: landed, outcome: 'completed' }),
+    ).toBe('Priya finished “Add the audit note”: 2 changes landed.\n- Comment on REVOPS-7: "Done."\n- Move REVOPS-7 to Done on Linear (outcome unknown)');
     expect(
-      landedNoteText({ agentName: 'Priya', title: 'x', landed: landed.slice(0, 1), outcome: 'completed' }),
+      landedNoteText({ agentName: 'Priya', title: 'x', rows: landed.slice(0, 1), outcome: 'completed' }),
     ).toContain('1 change landed.');
   });
 
@@ -32,7 +32,7 @@ describe('the notes the gate writes for the manager', (): void => {
     const text = landedNoteText({
       agentName: 'Priya',
       title: 'Close REVOPS-7',
-      landed: landed.slice(0, 1),
+      rows: [...landed.slice(0, 1), { kind: 'read' as const, line: 'Read issue REVOPS-7 on Linear' }],
       outcome: 'failed',
       reason: 'the status change was refused',
     });

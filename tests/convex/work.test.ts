@@ -2360,7 +2360,8 @@ describe('the exact-action gate', (): void => {
       async (ctx) => await ctx.db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
     );
     expect(notes.map((note) => [note.kind, note.workItemId, note.claimedAt])).toEqual([['landed', workItemId, undefined]]);
-    expect(notes[0].text).toBe('Priya finished “Add the close-summary audit note”: 1 change landed.\n- commented on REVOPS-1');
+    // The line is the action in a manager's words, never the provider's echo of it.
+    expect(notes[0].text).toBe('Priya finished “Add the close-summary audit note”: 1 change landed.\n- Comment on iss-1: "x"');
     expect(await scheduledFunctionNames(harness)).toContain('managerChannelActions:sendManagerNote');
 
     // A stop is read on the card, not sent: nothing needs deciding.

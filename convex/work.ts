@@ -77,7 +77,7 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { isStopped, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
+import { isStopped, landedNoteRows, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
   digestText,
   landedNoteText,
@@ -3173,7 +3173,12 @@ export const setCompleted = internalMutation({
     const landed = landedWork(args.output, surfaces);
     if (landed.length > 0) {
       await queueManagerNote(ctx, row, 'landed', (agentName) =>
-        landedNoteText({ agentName, title: row.title, landed, outcome: 'completed' }),
+        landedNoteText({
+          agentName,
+          title: row.title,
+          rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
+          outcome: 'completed',
+        }),
       );
     }
   },
@@ -3256,7 +3261,13 @@ export const setFailed = internalMutation({
       );
     } else {
       await queueManagerNote(ctx, row, 'landed', (agentName) =>
-        landedNoteText({ agentName, title: row.title, landed, outcome: 'failed', reason: stopDetail(reason) }),
+        landedNoteText({
+          agentName,
+          title: row.title,
+          rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
+          outcome: 'failed',
+          reason: stopDetail(reason),
+        }),
       );
     }
   },
