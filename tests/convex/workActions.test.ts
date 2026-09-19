@@ -79,6 +79,14 @@ import {
 } from './fixtures/plan-obligations-2026-09-16';
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
 import { REFUSED_CREATE_ACTION, REFUSED_CREATE_RUN } from '../fixtures/refused-ticket-create-2026-09-19';
+import {
+  LOG_1_REFUSAL,
+  LOG_1_RETRY_NOTE,
+  log1Candidate,
+  log1GroundingRead,
+  log1Plan,
+  log1RefusedClosing,
+} from '../fixtures/work/full-run-3-2026-09-19-log-1';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -5228,5 +5236,64 @@ describe('a step the gate refuses does not strand the rest of the run (19 Sep ru
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
     expect(failed.skipReason).toContain('actions did not change the work environment');
+  });
+});
+
+describe('the promised-read gate on a retry (finding T, 19 September)', (): void => {
+  const closingOf = (refused: typeof log1RefusedClosing): DependentExecutionOutput => ({
+    draft: refused.draft,
+    notes: refused.notes,
+    actions: refused.actions,
+    planStepOutcomes: refused.planStepOutcomes,
+  });
+
+  /** LOG-1 as the retry found it: plan approved, the manager's note live, phase one carrying nothing. */
+  const seedLog1 = async (harness: Harness, options: { groundingRead: boolean }): Promise<Seeded> => {
+    const seeded = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(seeded.workItemId, {
+        externalId: log1Candidate.externalId,
+        title: log1Candidate.title,
+        contentSummary: log1Candidate.contentSummary,
+        contentRefs: log1Candidate.contentRefs,
+        plan: log1Plan,
+        managerFeedback: { reason: LOG_1_RETRY_NOTE, at: Date.now(), kind: 'retry-note' },
+      });
+      if (options.groundingRead) {
+        await ctx.db.insert('events', {
+          agentId: seeded.agentId,
+          type: 'work.plan-grounding-read',
+          payload: { workItemId: seeded.workItemId, ...log1GroundingRead },
+          createdAt: Date.now(),
+        });
+      }
+    });
+    return seeded;
+  };
+
+  const authorClosing = async (harness: Harness, workItemId: Id<'workItems'>): Promise<{ ok: boolean; reason?: string }> => {
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    return await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+  };
+
+  it('takes the run\'s closing set to the manager once the item\'s grounding read stands behind step 1', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    recorded.dependentOutput = closingOf(log1RefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: true });
+
+    // The read in the set applies on its own; the comment and Done wait for the manager.
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({ ok: true, reason: 'dependent actions applying' });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    expect((pending.output as { actions: unknown[] }).actions).toEqual(log1RefusedClosing.actions);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    expect(recorded.dependentRuns).toBe(1);
   });
 });

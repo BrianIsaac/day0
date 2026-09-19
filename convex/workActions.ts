@@ -87,6 +87,7 @@ import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop'
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
+import { groundingReadSurfaces } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
@@ -1161,17 +1162,9 @@ function successfulReadSurfaces(
  * (`declaredReads`, the same reading the closing resume makes), and only of
  * surfaces the gate holds: an absent or ungranted surface is never owed. A
  * plan with no declared obligations owes no read here; the prose is never
- * consulted.
+ * consulted. What may stand behind a declared read is `unmetDeclaredReads`'.
  */
-export function validatePlanStepOutcomes(args: {
-  plan: ExecutionPlan;
-  outcomes: readonly PlanStepOutcome[];
-  initialActions: readonly ExecutionOutput['actions'][number][];
-  initialLedger: readonly AppliedAction[];
-  surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
-  /** The manager's live feedback on the run; a step may rest on it only when it is here. */
-  managerFeedback?: string;
-}): void {
+export function validatePlanStepOutcomes(args: PlanStepOutcomeCheck): void {
   const ordered = [...args.outcomes].sort((a, b) => a.step - b.step);
   if (
     ordered.length !== args.plan.steps.length ||
@@ -1187,14 +1180,49 @@ export function validatePlanStepOutcomes(args: {
       );
     }
   }
+  const unmet = unmetDeclaredReads(args)[0];
+  if (unmet) throw new Error(missingReadReason(unmet));
+}
+
+/** What the promised-read gate is given: the plan, the closing phase's account of it, and what the run read. */
+export interface PlanStepOutcomeCheck {
+  plan: ExecutionPlan;
+  outcomes: readonly PlanStepOutcome[];
+  initialActions: readonly ExecutionOutput['actions'][number][];
+  initialLedger: readonly AppliedAction[];
+  surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
+  /** The manager's live feedback on the run; a step may rest on it only when it is here. */
+  managerFeedback?: string;
+  /** The work item, so its own plan-grounding read can be told from another ticket's. */
+  candidate?: Pick<WorkCandidate, 'externalId'>;
+  /** The item's plan-grounding reads, as `internal.work.planGroundingReads` returns them. */
+  groundingReads?: readonly GroundingRead[];
+}
+
+/**
+ * The declared reads a closing account leaves with nothing behind them.
+ *
+ * A declared read is met by a landed read of its surface in phase one's
+ * ledger, or by the item's own plan-grounding read of that surface: the
+ * product made that read itself, under standing authority, before the plan
+ * that declares it was drafted. Otherwise the step may not be reported
+ * satisfied, and must say why it is not.
+ *
+ * Args:
+ *   args: The same arguments the gate takes.
+ *
+ * Returns:
+ *   The unmet reads in step order; empty when the gate has nothing to refuse.
+ */
+export function unmetDeclaredReads(args: PlanStepOutcomeCheck): DeclaredRead[] {
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
-  for (const read of declaredReads(args.plan, args.surfaces)) {
-    if (reads.has(read.surface.slug.toLowerCase())) continue;
-    const outcome = ordered[read.step - 1]!;
-    if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
-      throw new Error(missingReadReason(read));
-    }
-  }
+  for (const surface of groundingReadSurfaces(args.candidate?.externalId, args.groundingReads)) reads.add(surface);
+  return declaredReads(args.plan, args.surfaces).filter((read): boolean => {
+    if (reads.has(read.surface.slug.toLowerCase())) return false;
+    const outcome = args.outcomes.find((row) => row.step === read.step);
+    if (!outcome) return true;
+    return outcome.status === 'satisfied' || outcome.evidence.trim() === '';
+  });
 }
 
 /** Why a declared read has no landed read behind it: the step and the surface it declared. */
@@ -1459,17 +1487,21 @@ export const authorDependentActions = internalAction({
       const gateSurfaces = surfaces
         .filter((surface) => verdictFor(surface, Date.now()) === 'connected')
         .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
+      const groundingReads = await itemGroundingReads(ctx, args.workItemId);
+      const readCheck = (candidateOutput: DependentExecutionOutput): PlanStepOutcomeCheck => ({
+        plan,
+        outcomes: candidateOutput.planStepOutcomes,
+        initialActions: prerequisites.actions,
+        initialLedger: prerequisites.applied,
+        surfaces: gateSurfaces,
+        managerFeedback: feedback,
+        candidate: rowToCandidate(item),
+        groundingReads,
+      });
       const closingGate = (candidateOutput: DependentExecutionOutput): string[] => {
         const issues: string[] = [];
         try {
-          validatePlanStepOutcomes({
-            plan,
-            outcomes: candidateOutput.planStepOutcomes,
-            initialActions: prerequisites.actions,
-            initialLedger: prerequisites.applied,
-            surfaces: gateSurfaces,
-            managerFeedback: feedback,
-          });
+          validatePlanStepOutcomes(readCheck(candidateOutput));
         } catch (error) {
           issues.push(error instanceof Error ? error.message : String(error));
         }
@@ -1483,7 +1515,6 @@ export const authorDependentActions = internalAction({
         return issues;
       };
       const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
-      const groundingReads = await itemGroundingReads(ctx, args.workItemId);
       const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
       const output = await recordingModelCalls(ctx, step, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },

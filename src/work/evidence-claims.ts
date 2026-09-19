@@ -198,7 +198,7 @@ function argumentStrings(value: unknown): string[] {
 }
 
 /** Whether a read addresses this work item: one of its arguments is the item's id, whole. */
-function readsTheItem(action: MockAction, externalId: string): boolean {
+export function readsTheItem(action: MockAction, externalId: string): boolean {
   const id = externalId.trim().toLowerCase();
   if (!id || !isSurfaceTool(action.tool)) return false;
   const parsed = parseSurfaceAction(action);
