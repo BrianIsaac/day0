@@ -805,3 +805,38 @@ export function heldItemsOfWithheldRows(
   });
   return found.filter((item, at) => found.indexOf(item) === at);
 }
+
+/**
+ * The held items a set writes that its executor was not told of.
+ *
+ * The held items are read before a closing set is authored, and a sibling
+ * work item can take a claim while the model call is in flight (19 September:
+ * 170 ms after the read, 18 s before the set came back). Read again when the
+ * set comes back, this names what it writes that is held now and was not
+ * listed then.
+ *
+ * Args:
+ *   actions: The set as authored.
+ *   before: The held items its executor was told of.
+ *   now: The held items read after it was authored.
+ *   surfaces: The agent's surfaces.
+ *
+ * Returns:
+ *   Each newly held item the set writes, once, from `now`.
+ */
+export function newlyHeldWrites(
+  actions: readonly MockAction[],
+  before: readonly HeldExternalItem[],
+  now: readonly HeldExternalItem[],
+  surfaces: ReadonlyArray<{ slug: string; class: string; path?: string }>,
+): HeldExternalItem[] {
+  const found = actions.flatMap((action): HeldExternalItem[] => {
+    const on = parsedOn(action, surfaces);
+    if (!on || actionIntent(on.parsed) !== 'write') return [];
+    const targets = writeTargetIds(on.parsed, on.surface);
+    if (targets.length === 0 || listedHeldItem(before, targets, on.surface)) return [];
+    const item = listedHeldItem(now, targets, on.surface);
+    return item ? [item] : [];
+  });
+  return found.filter((item, at) => found.indexOf(item) === at);
+}

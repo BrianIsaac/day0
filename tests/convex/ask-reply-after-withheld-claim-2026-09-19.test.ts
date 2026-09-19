@@ -455,26 +455,72 @@ describe('an ask whose closing writes were withheld for a claim holder still ans
     expect(posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel)).toHaveLength(1);
   }, 30_000);
 
-  it("the day's own race: the claim is taken while the set is authored; the run does not complete with nobody answered", async (): Promise<void> => {
+  it("the day's own race: the claim is taken while the set is authored, the holders are read again before the set goes on, and nothing is withheld because nothing is written", async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { ask, holder } = await seed(t);
     recorded.closingAnswers.push(RUN_CLOSING, closingAnswer({
       draft: 'Answered from the tile as read.', notes: '',
-      actions: [threadReply('Pipeline coverage reads 68% on the tile; the field refresh is held by its own work item.')],
-      planStepOutcomes: satisfied('ledger rows 0 to 3 and 6'),
+      actions: [tile('browser_snapshot', {}), threadReply('Pipeline coverage reads 68% on the tile as I read it just now.')],
+      planStepOutcomes: satisfied('ledger rows 0 to 3: the tile read 68%'),
     }));
+    // 19 September, 01:48:36 UTC: the sibling's claim landed 170 ms after this authoring began, 18 s before it ended.
     recorded.duringClosing = async (): Promise<void> => await holderBegins(t, holder);
 
     await runPhaseOne(t, ask);
     await authorClosing(t, ask);
+
+    // Authored twice in the one authoring turn: the second time under the holders as they stood when the first came back.
+    expect(recorded.closingPrompts).toHaveLength(2);
+    expect(recorded.closingPrompts[0]).not.toContain('page field');
+    expect(recorded.closingPrompts[1]).toContain(`${SLUG} · page field "Pipeline coverage" · this employee · "${OPS_REQUESTS_ASK_TITLE}"`);
+    const waiting = (await readItem(t, ask)).output as { actions: MockAction[]; authoredUnder?: Array<{ externalId: string }> };
+    expect(waiting.actions).toHaveLength(2);
+    expect(waiting.authoredUnder?.map((listed) => listed.externalId)).toContain('Pipeline coverage');
+
     await closeOut(t, ask);
     await applyWaiting(t, holder);
     await settle(t);
 
     const row = await readItem(t, ask);
     expect(row.state).toBe('completed');
+    const { actions = [], applied = [] } = outputOf(row);
+    expect(actions).toHaveLength(6);
+    expect(applied.every((entry) => entry.ok && !entry.held)).toBe(true);
+    expect(JSON.stringify(actions)).not.toContain('"Pipeline coverage\\",\\"value\\":\\"74%');
     expect(saves()).toBe(1);
-    expect(posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel)).toHaveLength(1);
+
+    const replies = posted().filter((body) => body.channel === REVOPS_ASKS_ASK.replyTarget.channel);
+    expect(replies).toHaveLength(1);
+    // The set that was dropped wrote the field, so the reply owes the asker whose work that is.
+    expect(replies[0]!.text).toContain(`Pipeline coverage on ${SLUG} is refreshed by its own work item ("${OPS_REQUESTS_ASK_TITLE}"); it was not written from this request.`);
     expect(posted().map((body) => String(body.text)).filter((text) => /emitted the documented refresh/.test(text))).toEqual([]);
+
+    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'work.closing-reauthored').map((event) => event.payload)).toEqual([
+      expect.objectContaining({ workItemId: ask, reason: 'holder-changed', heldNow: ['Pipeline coverage'] }),
+    ]);
+  }, 30_000);
+
+  it('keeps the holders the set was authored under at the finish: a holder that goes away while the set waits does not fail a run whose reply said where the work is', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { ask, holder } = await seed(t);
+    recorded.closingAnswers.push(RUN_CLOSING, closingAnswer({
+      draft: 'Answered from the tile as read.', notes: '',
+      actions: [threadReply('Pipeline coverage reads 68% on the tile; the field refresh is held by its own work item.')],
+      planStepOutcomes: satisfied('ledger rows 0 to 3: the tile read 68%'),
+    }));
+    recorded.duringClosing = async (): Promise<void> => await holderBegins(t, holder);
+
+    await runPhaseOne(t, ask);
+    await authorClosing(t, ask);
+    const authoredUnder = ((await readItem(t, ask)).output as { authoredUnder?: unknown[] }).authoredUnder;
+    // The holder is cancelled while the set waits; what the set was authored under stands on the row.
+    await t.run(async (ctx) => await ctx.db.patch(holder, { state: 'skipped' }));
+    await closeOut(t, ask);
+
+    const row = await readItem(t, ask);
+    expect(row.state).toBe('completed');
+    expect(recorded.closingPrompts).toHaveLength(2);
+    expect(authoredUnder).toEqual(expect.arrayContaining([expect.objectContaining({ externalId: 'Pipeline coverage', pageField: true })]));
   }, 30_000);
 });

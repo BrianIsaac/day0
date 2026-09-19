@@ -65,6 +65,7 @@ import {
   heldItemsOfWithheldRows,
   isReplyStep,
   listedHeldItem,
+  newlyHeldWrites,
   plannedWriteTargets,
   withHeldItemsSaid,
   withheldByClaim,
@@ -1135,6 +1136,9 @@ interface DependentAuthoringOutput extends ExecutionOutput {
 /** Why a closing set is authored once more: the asker has no reply yet, or messages were withheld with a claimed write. */
 type ClosingRoundReason = 'reply-owed' | 'claim-withheld';
 
+/** Why a closing set was authored again before it went on: a sibling took what it writes while it was being authored. */
+const HOLDER_CHANGED = 'holder-changed';
+
 interface DependentPendingOutput extends DependentExecutionOutput {
   phase: 'dependent';
   actionIndexOffset: number;
@@ -1827,8 +1831,15 @@ export const authorDependentActions = internalAction({
         return issues;
       };
       const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
-      const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
-      const authorClosingSet = (): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, step, () => runDependentSkill({
+      // Read before every authoring, and the list the last authoring was
+      // given is the one the set keeps: the finish uses the holders the set
+      // was authored under, whatever becomes of them while it waits.
+      let heldElsewhere: HeldExternalItem[] = [];
+      const authorClosingSet = async (): Promise<DependentExecutionOutput> => {
+        heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
+        return await authorUnder(heldElsewhere);
+      };
+      const authorUnder = (held: HeldExternalItem[]): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, step, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
         candidate: rowToCandidate(item),
@@ -1847,7 +1858,7 @@ export const authorDependentActions = internalAction({
         resumedClosing: prerequisites.resumedClosing,
         refusedClosing: prerequisites.refusedClosing,
         landedWrites: prerequisites.landedWrites,
-        heldElsewhere,
+        heldElsewhere: held,
         closingGate,
         onAuditCorrection: async (removedIndices, reason) => {
           await ctx.runMutation(internal.events.log, {
@@ -1869,6 +1880,28 @@ export const authorDependentActions = internalAction({
         prerequisites = initial;
         output = await authorClosingSet();
       }
+      // The held items were read before the model call, and a sibling can
+      // take a claim while it is in flight. Read again now: a set that writes
+      // what is held now and was not listed then is authored once more under
+      // the list as it stands, so its reply is written knowing. Once per
+      // authoring turn, and not in the run's extra round; past this point the
+      // apply guard and that round cover what changes while the set waits.
+      let droppedWritesTo: HeldExternalItem[] = [];
+      if (!initial.closingRound && output.actions.length <= cap) {
+        const heldNow = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
+        const taken = newlyHeldWrites(output.actions, heldElsewhere, heldNow, surfaces);
+        if (taken.length > 0) {
+          authored = output;
+          await ctx.runMutation(internal.events.log, {
+            agentId: item.agentId,
+            type: CLOSING_REAUTHORED,
+            payload: { workItemId: args.workItemId, runId: args.runId, reason: HOLDER_CHANGED, heldNow: taken.map((held) => held.externalId) },
+          });
+          heldElsewhere = heldNow;
+          droppedWritesTo = taken;
+          output = await authorUnder(heldNow);
+        }
+      }
       authored = output;
       if (output.actions.length > cap) {
         throw new Error(
@@ -1887,7 +1920,8 @@ export const authorDependentActions = internalAction({
       }));
       const leftSaid = withLeftStepsSaid(
         repaired.actions, repaired.planStepOutcomes, plan, heldElsewhere, surfaces, item.replyTarget,
-        heldItemsOfWithheldRows(prerequisites.actions, prerequisites.applied, heldElsewhere, surfaces),
+        // Whose work a withheld write is, and a write the set before this one made and this one dropped.
+        [...heldItemsOfWithheldRows(prerequisites.actions, prerequisites.applied, heldElsewhere, surfaces), ...droppedWritesTo],
       );
       const held = leftSaid.said.length > 0 ? { ...repaired, actions: leftSaid.actions } : repaired;
       authored = held;

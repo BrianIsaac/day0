@@ -3,6 +3,7 @@ import {
   WITHHELD_BY_CLAIM_PREFIX,
   heldItemsOfWithheldRows,
   listedHeldItem,
+  newlyHeldWrites,
   withheldByClaim,
   withheldByClaimReason,
   withheldWithClaimedWrite,
@@ -98,5 +99,17 @@ describe('a message withheld with a claimed write', (): void => {
       { tool: 'mcp.call', ok: true, held: true, reason: 'awaiting approval', effect: 'mcp.call fill', idempotencyKey: 'k' },
     ]);
     expect(awaiting).toMatch(/· mcp\.call fill$/);
+  });
+});
+
+describe('what a set writes that was taken while it was being authored', (): void => {
+  it("names the page field the run's closing set fills when the field is held now and was not listed then", (): void => {
+    expect(newlyHeldWrites(revopsAsksClosing, [ticket], [ticket, field], [tile, slack])).toEqual([field]);
+  });
+
+  it('names nothing when the executor was told, when nothing is held now, or when the set only reads the page', (): void => {
+    expect(newlyHeldWrites(revopsAsksClosing, [field], [field], [tile, slack])).toEqual([]);
+    expect(newlyHeldWrites(revopsAsksClosing, [], [ticket], [tile, slack])).toEqual([]);
+    expect(newlyHeldWrites(revopsAsksClosing.slice(2), [], [field], [tile, slack])).toEqual([]);
   });
 });
