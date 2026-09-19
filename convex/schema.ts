@@ -954,7 +954,9 @@ export default defineSchema({
     type: v.string(),
     payload: v.any(),
     createdAt: v.number(),
-  }).index('by_agent', ['agentId']),
+  })
+    .index('by_agent', ['agentId'])
+    .index('by_agent_type', ['agentId', 'type']),
 
   // ---- Mock work environment (per-agent) ----
   // Agent-readable docs (Confluence-style). Includes both team docs (the

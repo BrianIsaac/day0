@@ -64,3 +64,55 @@ export function autonomousActionsOn(agent: { autonomousActions?: boolean | undef
 export function autonomyLabel(on: boolean): string {
   return on ? AUTONOMOUS_LABEL : SUPERVISED_LABEL;
 }
+
+/** One flip of the switch, as `agent.autonomy-changed` recorded it. */
+export interface AutonomyChange {
+  /** The event's `createdAt`. */
+  at: number;
+  /** What the switch was set to. */
+  on: boolean;
+}
+
+/**
+ * The flip that explains a plan reading "autonomous actions are off" above a
+ * ledger applied autonomously: the switch was off when the plan was drafted,
+ * was turned on afterwards, and the run then applied under it. The stored
+ * plan is the record of what was drafted and is never rewritten, so the card
+ * says the sequence instead.
+ *
+ * Args:
+ *   planDraftedAt: When the plan was put to the manager, if it has been.
+ *   appliedAutonomously: Whether any row of the run's ledger landed on the switch's authority.
+ *   changes: The employee's flips, in any order.
+ *
+ * Returns:
+ *   When the switch was turned on, or undefined when nothing needs saying:
+ *   no plan, no autonomous row, or the first flip after the draft was not a
+ *   turn-on (the plan was then drafted with the switch already on).
+ */
+export function autonomyTurnedOnAfterDraft(
+  planDraftedAt: number | undefined,
+  appliedAutonomously: boolean,
+  changes: readonly AutonomyChange[],
+): number | undefined {
+  if (planDraftedAt === undefined || !appliedAutonomously) return undefined;
+  const first = [...changes].sort((a, b) => a.at - b.at).find((change) => change.at > planDraftedAt);
+  return first?.on ? first.at : undefined;
+}
+
+/**
+ * The card's sentence for `autonomyTurnedOnAfterDraft`.
+ *
+ * Args:
+ *   clock: The flip's time as the page prints times.
+ *   autonomous: How many landed rows the switch authorised.
+ *   landed: How many rows landed in all; the rest were the manager's or standing authority.
+ *
+ * Returns:
+ *   One sentence, read between the plan as drafted and the ledger.
+ */
+export function autonomyTurnedOnAfterDraftNote(clock: string, autonomous: number, landed: number): string {
+  const applied =
+    autonomous >= landed ? 'its actions were applied under it' : `${autonomous} of its ${landed} actions were applied under it`;
+  return `Autonomous actions were turned on at ${clock}, after this plan was drafted; ${applied}.`;
+}

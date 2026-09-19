@@ -23,6 +23,29 @@ export const recent = query({
   },
 });
 
+/**
+ * Every flip of the employee's autonomous-actions switch, oldest first.
+ *
+ * The feed's `recent` window rolls past a flip within one run, and a finished
+ * card has to say when the switch changed relative to its plan for as long as
+ * the card is on the page, so the flips are read by type rather than out of
+ * the feed.
+ */
+export const autonomyChanges = query({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<Array<{ at: number; on: boolean }>> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const events = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (q) => q.eq('agentId', args.agentId).eq('type', 'agent.autonomy-changed'))
+      .collect();
+    return events.map((event) => ({
+      at: event.createdAt,
+      on: (event.payload as { to?: unknown } | undefined)?.to === true,
+    }));
+  },
+});
+
 /** Payload keys that identify a person rather than describe an action. */
 const PERSONAL_KEYS = new Set(['bossEmail', 'email', 'managerEmail']);
 

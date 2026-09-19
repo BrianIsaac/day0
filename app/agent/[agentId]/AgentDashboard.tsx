@@ -35,6 +35,9 @@ import {
   AUTONOMY_WARNING,
   autonomousActionsOn,
   autonomyLabel,
+  autonomyTurnedOnAfterDraft,
+  autonomyTurnedOnAfterDraftNote,
+  type AutonomyChange,
   HELD_BEFORE_AUTONOMY_NOTE,
   HELD_WITHHELD_TRANSITION_NOTE,
   HELD_WHILE_SUPERVISED_NOTE,
@@ -65,7 +68,7 @@ import {
 } from '../../../src/work/reconciliation';
 import type { ArgumentRepairAttempt, MockAction, PlanObligations } from '../../../src/work/types';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '../../../src/work/obligations';
-import { clockTimeWithSeconds, relativeTime, useNow } from './time';
+import { clockTime, clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
 import { GATE_REFUSAL_STOP, isGateRefusalStop, isStopped, stopDetail } from '../../../src/work/stop';
@@ -122,6 +125,11 @@ export function AgentDashboard({ agentId }: Props) {
     surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
   );
   const corrections: KeptCorrection[] = correctionRows ?? [];
+  // Real mode only: the mock has no switch, so nothing there ever flips it.
+  const autonomyChanges = useQuery(
+    api.events.autonomyChanges,
+    surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
+  );
   const retireCorrection = useMutation(api.corrections.retire);
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
@@ -246,6 +254,7 @@ export function AgentDashboard({ agentId }: Props) {
             autonomousActions={agent ? autonomousActionsOn(agent) : false}
             surfaceMode={surfaceConfig?.mode}
             corrections={corrections}
+            autonomyChanges={autonomyChanges ?? []}
           />
         </div>
 
@@ -1714,6 +1723,7 @@ export function WorkQueue({
   autonomousActions,
   surfaceMode,
   corrections = [],
+  autonomyChanges = [],
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
@@ -1728,6 +1738,8 @@ export function WorkQueue({
   surfaceMode: 'mock' | 'real' | undefined;
   /** The employee's kept corrections, for the plan cards that applied one. */
   corrections?: KeptCorrection[];
+  /** The employee's flips of the autonomous-actions switch, oldest first. */
+  autonomyChanges?: readonly AutonomyChange[];
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -1823,6 +1835,7 @@ export function WorkQueue({
               autonomousActions={autonomousActions}
               questions={openQuestions.filter((question) => question.workItemId === item._id)}
               corrections={corrections}
+              autonomyChanges={autonomyChanges}
               onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
               onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
               onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
@@ -3013,6 +3026,7 @@ export function WorkItemCard({
   autonomousActions,
   questions = [],
   corrections = [],
+  autonomyChanges = [],
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -3028,6 +3042,8 @@ export function WorkItemCard({
   questions?: Doc<'managerQuestions'>[];
   /** The employee's kept corrections, for the line saying this plan applied one. */
   corrections?: readonly KeptCorrection[];
+  /** The employee's flips of the autonomous-actions switch, for a plan drafted before one. */
+  autonomyChanges?: readonly AutonomyChange[];
   onApprovePlan: (decision: PlanApproval) => void;
   onCancelPlan: (reason: string) => void;
   onRetryFailed: (feedback?: string) => void;
@@ -3064,6 +3080,8 @@ export function WorkItemCard({
   const refusedActions = unlandedActions.filter((a) => isSurfaceTool(a.tool) && isGateRefusal(a.reason));
   const failedActions = unlandedActions.filter((a) => !refusedActions.includes(a));
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
+  const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(item.planPendingAt, landedAutonomously > 0, autonomyChanges);
   const reconciliationEntries = item.providerReconciliation?.entries ??
     providerReconciliationEntries(output);
   const needsProviderReconciliation = retryRequiresProviderReconciliation(
@@ -3198,6 +3216,13 @@ export function WorkItemCard({
             redaction={plan.correctionsRedaction}
           />
           <PlanObligationsLine steps={plan.steps} obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
+          {autonomyTurnedOnAt !== undefined ? (
+            <p className="mt-2 text-[var(--color-ok)]">
+              <time dateTime={new Date(autonomyTurnedOnAt).toISOString()} title={clockTimeWithSeconds(autonomyTurnedOnAt)}>
+                {autonomyTurnedOnAfterDraftNote(clockTime(autonomyTurnedOnAt), landedAutonomously, landedActions.length)}
+              </time>
+            </p>
+          ) : null}
           {item.state === 'plan-pending' && item.planRejectedAt !== undefined ? (
             <p className="mt-2 text-[var(--color-warn)]">
               This plan was redrafted after you rejected an earlier plan. It waits for your approval even while autonomous actions are on.

@@ -160,3 +160,43 @@ describe('event trace export on a deployed agent', (): void => {
     expect(trace.ledger).toHaveLength(1);
   });
 });
+
+describe('the flips of the autonomous-actions switch', (): void => {
+  it('returns the employee\'s own flips oldest first, past any feed window, to the owner only', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = await harness.run(async (ctx): Promise<Array<Id<'agents'>>> => {
+      const ids: Array<Id<'agents'>> = [];
+      for (const name of ['Priya', 'Mateo']) {
+        ids.push(
+          await ctx.db.insert('agents', {
+            bossEmail: 'boss@day0.local',
+            name,
+            userId: 'owner',
+            state: 'active',
+            createdAt: 1,
+          }),
+        );
+      }
+      const flip = { reason: 'set by the manager' };
+      // The rehearsal's two flips (19 Sep 2026), then enough feed to roll past them.
+      await ctx.db.insert('events', { agentId: ids[0]!, type: 'agent.autonomy-changed', payload: { from: false, to: true, ...flip }, createdAt: 1789788458102 });
+      await ctx.db.insert('events', { agentId: ids[1]!, type: 'agent.autonomy-changed', payload: { from: false, to: true, ...flip }, createdAt: 1789788477973 });
+      for (let index = 0; index < 40; index += 1) {
+        await ctx.db.insert('events', { agentId: ids[0]!, type: 'work.model-call', payload: {}, createdAt: 1789788460000 + index });
+      }
+      await ctx.db.insert('events', { agentId: ids[0]!, type: 'agent.autonomy-changed', payload: { from: true, to: false, ...flip }, createdAt: 1789788500000 });
+      return ids;
+    });
+
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(await owner.query(api.events.autonomyChanges, { agentId: priya! })).toEqual([
+      { at: 1789788458102, on: true },
+      { at: 1789788500000, on: false },
+    ]);
+    expect(await owner.query(api.events.autonomyChanges, { agentId: mateo! })).toEqual([{ at: 1789788477973, on: true }]);
+    await expect(
+      harness.withIdentity({ subject: 'intruder' }).query(api.events.autonomyChanges, { agentId: priya! }),
+    ).rejects.toThrow();
+  });
+});
