@@ -120,6 +120,14 @@ describe('openManagerQuestion', () => {
     expect(open?.withheld).toEqual([{ index: 2, step: 3 }]);
   });
 
+  it('reads a question set in emphasis, and keeps a long one to a length the card can show', (): void => {
+    const ask = (text: string) => openManagerQuestion({ plan: log1Plan, actions: [dm(text), comment!, done!], surfaces, answered: false });
+    expect(ask('SH-4471 is held. **Which template should I use?**')?.question).toBe('**Which template should I use?**');
+    const long = ask(`Which template applies given ${'the carrier gave no revised ETA and '.repeat(40)}the handbook leaves it to you?`);
+    expect(long?.question.length).toBeLessThanOrEqual(600);
+    expect(long?.question.endsWith('…')).toBe(true);
+  });
+
   it('takes no question from a public post, a report, or a link with a query string', (): void => {
     const ask = (action: MockAction) => openManagerQuestion({ plan: log1Plan, actions: [action, comment!, done!], surfaces, answered: false });
     expect(ask(dm('Which template should I use?', 'C0PUBLIC'))).toBeUndefined();

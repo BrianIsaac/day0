@@ -967,8 +967,25 @@ async function holdDay0Actions(
             plan: args.plan,
             surfaces,
             answered: managerHasAnswered(args.item, args.plan),
+            // A question an earlier run landed and nobody answered is still the open one.
+            askedEarlier: (args.landedWrites ?? []).map((write) => write.action),
           })
         : auditedOutput;
+    await recordConditionalWritesWithheld(
+      ctx, { agentId: args.agentId, workItemId: args.workItemId, runId: args.runId, phase: stagedOutput.needsDependentPhase ? 'prerequisite' : 'single' }, auditedOutput, stagedOutput,
+    );
+    if (stagedOutput.openQuestion && stagedOutput.actions.length === 0 && !stagedOutput.needsDependentPhase) {
+      // Every action waited on the answer to a question an earlier run asked:
+      // nothing is left to apply, and the run ends on the question.
+      const reason = openQuestionStopReason(stagedOutput.openQuestion);
+      await ctx.runMutation(internal.work.setFailed, {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        reason,
+        output: { ...stagedOutput, applied: [] },
+      });
+      return result({ ok: false, reason });
+    }
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -1185,6 +1202,14 @@ export function managerHasAnswered(
   );
 }
 
+const CONDITIONAL_WRITES_WITHHELD = 'work.conditional-writes-withheld';
+
+/** An action by its tool, surface and verb, with no payload. */
+function actionName(action: MockAction): string {
+  const verb = action.args.tool ?? `${String(action.args.method ?? '')} ${String(action.args.path ?? '')}`.trim();
+  return `${action.tool} ${String(action.args.surface ?? '')} · ${String(verb)}`;
+}
+
 /** A set that may carry a question to the manager beside the writes that wait on its answer. */
 type QuestionableOutput = Parameters<typeof withholdActions>[0] & {
   argumentRepairs?: ArgumentRepairAttempt[];
@@ -1235,6 +1260,36 @@ export function withOpenQuestionHeld<T extends QuestionableOutput>(
       : {}),
     openQuestion: { question: open.question, steps: open.steps },
   };
+}
+
+/**
+ * Record on the timeline what a phase had withheld for the manager's answer.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   run: The agent, the work item, the run and the phase.
+ *   before: The set as it was authored.
+ *   after: The set as it reaches the gate.
+ */
+async function recordConditionalWritesWithheld(
+  ctx: ActionCtx,
+  run: { agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'>; phase: 'single' | 'prerequisite' | 'closing' },
+  before: QuestionableOutput,
+  after: QuestionableOutput,
+): Promise<void> {
+  if (after === before || !after.openQuestion) return;
+  const kept = new Set(after.actions);
+  await ctx.runMutation(internal.events.log, {
+    agentId: run.agentId,
+    type: CONDITIONAL_WRITES_WITHHELD,
+    payload: {
+      workItemId: run.workItemId,
+      runId: run.runId,
+      phase: run.phase,
+      steps: after.openQuestion.steps,
+      withheld: before.actions.filter((action) => !kept.has(action)).map((action) => actionName(action)),
+    },
+  });
 }
 
 /** The reason a run ends on when it, or the phase before it, left a question to the manager open. */
@@ -1911,10 +1966,16 @@ export const authorDependentActions = internalAction({
       }
       // A question this run put to the manager, here or in phase one, that
       // nobody has answered: the writes the plan left to the answer wait.
-      const asked = initial.actions.filter((_action, index) => initial!.applied[index]?.ok === true && initial!.applied[index]?.held !== true);
+      const asked = [
+        ...initial.actions.filter((_action, index) => initial!.applied[index]?.ok === true && initial!.applied[index]?.held !== true),
+        ...(initial.landedWrites ?? []).map((write) => write.action),
+      ];
       const gated = withOpenQuestionHeld(dependent, {
         plan, surfaces, answered: managerHasAnswered(item, plan), askedEarlier: asked,
       });
+      await recordConditionalWritesWithheld(
+        ctx, { agentId: item.agentId, workItemId: args.workItemId, runId: args.runId, phase: 'closing' }, dependent, gated,
+      );
       if (gated.actions.length === 0) {
         const finalOutput = flattenedDependentOutput(gated, []);
         const failure = (initial.resumedClosing ? undefined : initial.initialFailure) ??

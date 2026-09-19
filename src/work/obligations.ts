@@ -198,7 +198,9 @@ export function managerConditionalSteps(plan: ObligedPlan): number[] {
 }
 
 /** A question mark that ends a clause; one inside a link's query string asks nothing. */
-const QUESTION_MARK = /\?(?=$|[\s"'\u201d\u2019)\]])/;
+const QUESTION_MARK = /\?(?=$|[\s"'\u201d\u2019)\]*_])/;
+/** The most of a question a stop reason carries. */
+const QUESTION_CHARS = 600;
 
 /** The text a manager message carries, whichever transport it takes. */
 function messageText(parsed: ParsedSurfaceAction): string {
@@ -212,7 +214,8 @@ function messageText(parsed: ParsedSurfaceAction): string {
 /** The sentences of a message that ask, in order; the whole message when none can be cut out. */
 function questionsIn(text: string): string {
   const asked = text.split(/(?<=[.?!])\s+|\n+/).filter((sentence) => QUESTION_MARK.test(sentence));
-  return (asked.length > 0 ? asked.join(' ') : text).trim();
+  const question = (asked.length > 0 ? asked.join(' ') : text).trim();
+  return question.length > QUESTION_CHARS ? `${question.slice(0, QUESTION_CHARS - 1).trimEnd()}…` : question;
 }
 
 /** A question put to the manager that the plan's conditional writes wait on. */

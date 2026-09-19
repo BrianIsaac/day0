@@ -1262,6 +1262,10 @@ describe('writes the plan left to the manager\'s answer stop with the question (
     const failed = events.filter((event) => event.type === 'work.failed');
     expect(failed).toHaveLength(1);
     expect((failed[0]!.payload as { stopped?: boolean }).stopped).toBe(true);
+    // The timeline says what was withheld and why, before the stop.
+    expect(events.filter((event) => event.type === 'work.conditional-writes-withheld').map((event) => event.payload)).toEqual([
+      { workItemId, runId: expect.any(String), phase: 'single', steps: [2, 3], withheld: ['mcp.call linear · save_comment', 'mcp.call linear · save_issue'] },
+    ]);
   });
 
   it("lands the comment and Done for the manager once Retry carries the answer, and does not ask again", async (): Promise<void> => {
@@ -1294,6 +1298,27 @@ describe('writes the plan left to the manager\'s answer stop with the question (
     const events = await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect());
     expect(events.filter((event) => event.type === 'work.retry')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'work.failed')).toHaveLength(1);
+  });
+
+  it("stops again when Retry carries no answer and the retried run writes without asking again", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = sitting4Log1PhaseOne;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, sitting4Log1Candidate, sitting4Log1Plan);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    // The question the first run landed is still the open one.
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, actions: sitting4Log1PhaseOne.actions.slice(2) };
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('Which template should the notice use');
+    expect(posts()).toHaveLength(1);
+    expect(ticketWrites()).toEqual([]);
   });
 
   it("lands SH-4480 without a stop: its plan applied the corrections kept from SH-4471", async (): Promise<void> => {
@@ -1376,6 +1401,8 @@ describe('writes the plan left to the manager\'s answer stop with the question (
     expect(ticketWrites()).toEqual([]);
     expect((stopped.output as { withheldActions?: Array<{ action: unknown }> }).withheldActions?.map((row) => row.action)).toEqual([comment, done]);
     expect((stopped.output as { openQuestion?: { steps: number[] } }).openQuestion?.steps).toEqual([2, 3]);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'work.conditional-writes-withheld').map((event) => (event.payload as { phase: string }).phase)).toEqual(['closing']);
   });
 
   it('does not stop a run whose question stands beside no conditional write', async (): Promise<void> => {
