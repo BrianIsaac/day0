@@ -516,8 +516,11 @@ export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
     if (parsed.method !== 'GET' && parsed.method !== 'HEAD' && parsed.method !== 'POST') return 'write';
     // And they can take POST, or a body, for a read: the operation decides. The
     // body's parameters may travel in the query, so they are read as a query is.
+    // An escape hides a word from the raw text and not from the provider, so a
+    // JSON body is read as it parses as well as as it was written.
     if (isRpcRead(parsed.path)) {
-      return operationTokens(parsed.body ?? '').some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
+      const body = `${parsed.body ?? ''} ${parsed.bodyJson ? JSON.stringify(parsed.bodyJson) : ''}`;
+      return operationTokens(body).some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
     }
     if (parsed.method === 'POST') return 'write';
     return parsed.body !== undefined && parsed.body.trim() !== '' ? 'write' : 'read';

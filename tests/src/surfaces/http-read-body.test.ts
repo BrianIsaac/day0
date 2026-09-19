@@ -180,6 +180,20 @@ describe('a documented-API read carried by GET with a body (19 Sep fourth run, f
     expect(actionIntent(parsed(request(method, '/issues.list', { action: 'archive' }, 'northstar')))).toBe('write');
   });
 
+  it('reads the body as it parses: an escaped or percent-encoded mutation is still a write', (): void => {
+    const escaped: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'GET', path: '/conversations.history', body: '{"op\\u0065ration":"d\\u0065lete"}' },
+    };
+    expect(parsed(escaped)).toMatchObject({ bodyJson: { operation: 'delete' } });
+    expect(actionIntent(parsed(escaped))).toBe('write');
+    const form: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'GET', path: '/conversations.history', body: 'channel=C1&operation=%2564elete' },
+    };
+    expect(actionIntent(parsed(form))).toBe('write');
+  });
+
   it.each(['PUT', 'PATCH', 'DELETE'])('keeps %s a write whatever the operation is called', (method): void => {
     expect(actionIntent(parsed(request(method, '/conversations.replies', { channel: CHANNEL })))).toBe('write');
   });
