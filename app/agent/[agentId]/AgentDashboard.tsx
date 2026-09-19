@@ -20,7 +20,7 @@ import {
   type KeptCorrection,
 } from './corrections-panel';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
-import { declaredSkillInputs, systemDeclaredInputs } from '../../../src/work/skill-inputs';
+import { declaredSkillInputs, impliedSkillInputs, systemDeclaredInputs } from '../../../src/work/skill-inputs';
 import {
   type ActionVerdict,
   describeAction,
@@ -256,6 +256,7 @@ export function AgentDashboard({ agentId }: Props) {
             unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
             authoringFailure={authoringFailure}
             onAuthoringAttempt={setLastAttempt}
+            surfaceMode={surfaceConfig?.mode}
           />
           {surfaceConfig?.mode === 'real' ? (
             <Card title={keptCorrectionsTitle(corrections)}>
@@ -1343,6 +1344,7 @@ export function RegisteredSkillsPanel({
   unregistered,
   authoringFailure,
   onAuthoringAttempt,
+  surfaceMode,
 }: {
   skills: Doc<'skills'>[];
   /**
@@ -1361,6 +1363,8 @@ export function RegisteredSkillsPanel({
   authoringFailure: string | null;
   /** Retries report here too, so the notice is never older than the last try. */
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
+  /** Real mode lists the inputs the executor binds for a skill that predates them. */
+  surfaceMode?: 'mock' | 'real';
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const requestRevision = useMutation(api.skills.requestRevision);
@@ -1427,7 +1431,7 @@ export function RegisteredSkillsPanel({
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
                 <div className="text-[var(--color-muted)] text-xs break-words">{s.description}</div>
-                {s.sourceType === 'agent-authored' ? <SkillInputs body={s.body} /> : null}
+                {s.sourceType === 'agent-authored' ? <SkillInputs body={s.body} surfaceMode={surfaceMode} /> : null}
               </div>
               {s.sourceType === 'agent-authored' ? (
                 <button
@@ -1547,10 +1551,17 @@ function SkillStatusLine({ text }: { text: string }) {
  * first place the inputs can be shown. An input the author used without
  * declaring is declared for it in real mode; the body marks that line, and
  * this says so beside the name rather than letting it pass as the author's.
+ * In real mode the executor also binds the reply surface for a skill that was
+ * registered before that input was taught; it is listed last, marked as
+ * bound by Day0, so the line shows every input a run is given. Only a
+ * registered skill is given the mode: an attempt that never registered runs
+ * nothing, and Retry authors it again under the taught lines.
  */
-function SkillInputs({ body }: { body: string }) {
-  const declared = declaredSkillInputs(body) ?? [];
-  if (declared.length === 0) return null;
+function SkillInputs({ body, surfaceMode }: { body: string; surfaceMode?: 'mock' | 'real' }) {
+  const authored = declaredSkillInputs(body) ?? [];
+  if (authored.length === 0) return null;
+  const bound = new Set(surfaceMode === 'real' ? impliedSkillInputs(body) : []);
+  const declared = [...authored, ...bound];
   const added = new Set(systemDeclaredInputs(body));
   const plural = added.size > 1;
   return (
@@ -1561,6 +1572,7 @@ function SkillInputs({ body }: { body: string }) {
           {index > 0 ? ', ' : ''}
           <code className="font-mono whitespace-nowrap">&lt;{name}&gt;</code>
           {added.has(name) ? ' (added by Day0)' : ''}
+          {bound.has(name) ? ' (bound by Day0)' : ''}
         </span>
       ))}
       {added.size > 0 ? (
@@ -1569,6 +1581,13 @@ function SkillInputs({ body }: { body: string }) {
           · The author used the input{plural ? 's' : ''} marked &quot;added by Day0&quot; without declaring{' '}
           {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the executor reads{' '}
           {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
+        </span>
+      ) : null}
+      {bound.size > 0 ? (
+        <span>
+          {' '}
+          · This skill was registered before Day0 taught the input marked &quot;bound by Day0&quot;: the executor binds
+          it from the Reply target, so the reply goes to the chat surface the ask came from.
         </span>
       ) : null}
     </div>

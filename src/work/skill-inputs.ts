@@ -1,4 +1,5 @@
 import { surfaceSlug } from '../surfaces/slug';
+import type { SurfaceMode } from '../surfaces/types';
 import type { WorkCandidate } from './types';
 
 /**
@@ -46,6 +47,42 @@ export const EXECUTION_INPUT_LINES: readonly string[] = [
   '  - `<audit-expectation>`: the read-back the runbook prescribes as evidence (an audit line, a returned identifier, a snapshot).',
 ];
 
+/** The taught input that says which surface carries a reply. */
+export const REPLY_SURFACE_INPUT = 'reply-surface';
+
+/**
+ * The taught inputs in real mode. They differ from the recorded list where a
+ * live author went wrong: the recorded lines give a reply channel and thread
+ * and no surface to send them on, and describe `<originating-surface>` as
+ * where "a reply in the thread on chat" closes the loop, so a draft could
+ * address the thread reply to the ticket surface (demo rehearsal 2, 19 Sep
+ * 2026). These name the surface as its own input, which the executor binds
+ * from the candidate, so a body never has to work it out.
+ */
+const REAL_EXECUTION_INPUT_LINES: readonly string[] = [
+  EXECUTION_INPUT_LINES[0]!,
+  EXECUTION_INPUT_LINES[1]!,
+  '  - `<reply-channel>` and `<reply-thread>`: the channel and thread of the `Reply target:` line when the work came from a chat channel or thread. The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface\'s own path (`http.request` on an API surface); never on `<originating-surface>` unless that is the chat surface.',
+  `  - \`<${REPLY_SURFACE_INPUT}>\`: the slug of the connected chat surface the \`Reply target:\` line's channel is on; the executor binds it whenever there is a \`Reply target:\` line. Every reply action's \`surface\` is \`<${REPLY_SURFACE_INPUT}>\`: a ticket surface never carries a reply.`,
+  '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket). It is a ticket surface for a ticket and the chat surface for a chat ask, so a reply is never routed through it: a reply goes to `<reply-surface>`.',
+  EXECUTION_INPUT_LINES[4]!,
+];
+
+/**
+ * The taught input lines for a surface mode.
+ *
+ * Args:
+ *   mode: The deployment's surface mode.
+ *
+ * Returns:
+ *   The recorded list in mock mode, the very array, so the mock author's
+ *   prompt is the one the recorded runs used; in real mode the list that
+ *   names the reply surface.
+ */
+export function executionInputLines(mode: SurfaceMode): readonly string[] {
+  return mode === 'real' ? REAL_EXECUTION_INPUT_LINES : EXECUTION_INPUT_LINES;
+}
+
 /**
  * The taught inputs the executor binds by value from the candidate row that
  * say where a write lands: the record and the reply target. The smoke harness
@@ -53,6 +90,9 @@ export const EXECUTION_INPUT_LINES: readonly string[] = [
  * write aimed at a constant cannot pass on the strength of a varying comment.
  * `<originating-surface>` is bound by value too but routes rather than
  * addresses, so a procedure may read it without sending it.
+ * `<reply-surface>` has its own rule in the harness: it is held against the
+ * action that carries the reply channel, not against every case, because a
+ * case may give it and owe no reply.
  */
 export const CANDIDATE_BOUND_TARGET_INPUTS: readonly string[] = ['record-id', 'reply-channel', 'reply-thread'];
 
@@ -255,6 +295,28 @@ export function declaredInputsNote(names: readonly string[]): string {
     : `SKILL.md used ${list} without declaring it; it was declared under \`## Inputs\` as read from the candidate or its runbook at execution`;
 }
 
+const NO_REPLY_TARGET = 'no Reply target line: the work did not come from a chat channel';
+
+/**
+ * The taught inputs a body leaves undeclared that the executor binds anyway.
+ *
+ * A skill registered before `<reply-surface>` was taught declares a reply
+ * channel or thread and no surface for them. It still runs: in real mode the
+ * executor binds the reply surface for it, and the skills list shows the
+ * input as bound by Day0. A body that declares no reply input implies none.
+ *
+ * Args:
+ *   body: SKILL.md markdown.
+ *
+ * Returns:
+ *   `['reply-surface']` for such a body, otherwise empty.
+ */
+export function impliedSkillInputs(body: string): string[] {
+  const declared = declaredSkillInputs(body) ?? [];
+  const replies = declared.includes('reply-channel') || declared.includes('reply-thread');
+  return replies && !declared.includes(REPLY_SURFACE_INPUT) ? [REPLY_SURFACE_INPUT] : [];
+}
+
 /**
  * Bind a skill's declared inputs from the candidate for one run.
  *
@@ -262,20 +324,43 @@ export function declaredInputsNote(names: readonly string[]): string {
  * their source, because only the executor reading the candidate prose and the
  * runbook can settle them.
  *
+ * The reply surface is the surface the Reply target is on. A Reply target is
+ * stored only on work that came from a chat surface, whose slug is the
+ * candidate's source system, which is also where the ask-reply composition
+ * addresses a reply. In real mode a body that declares a reply channel or
+ * thread and no reply surface gets the binding after its own, when the work
+ * has a Reply target: that is how a skill registered before the input was
+ * taught sends its reply to the right surface. Mock mode adds nothing, so a
+ * recorded bed's executor prompt is the one it was.
+ *
  * Args:
  *   body: SKILL.md markdown.
  *   candidate: The work item this run is for.
+ *   mode: The surface mode of the run.
  *
  * Returns:
- *   One binding per declared input, in declaration order; empty when the body
- *   declares none.
+ *   One binding per declared input, in declaration order, then any the
+ *   executor adds; empty when the body declares none.
  */
 export function bindSkillInputs(
   body: string,
   candidate: Pick<WorkCandidate, 'externalId' | 'contentRefs' | 'sourceSystem' | 'replyTarget'>,
+  mode: SurfaceMode = 'mock',
 ): SkillInputBinding[] {
   const declared = declaredSkillInputs(body) ?? [];
-  return declared.map((name: string): SkillInputBinding => {
+  const replySurface = candidate.replyTarget ? surfaceSlug(candidate.sourceSystem) : undefined;
+  const implied: SkillInputBinding[] =
+    mode === 'real' && replySurface !== undefined && impliedSkillInputs(body).length > 0
+      ? [
+          {
+            name: REPLY_SURFACE_INPUT,
+            value: replySurface,
+            source:
+              'the chat surface the Reply target line is on; this skill was registered before the input was taught, so Day0 binds it: send the reply to <reply-channel> on this surface, never on <originating-surface> unless it is this surface',
+          },
+        ]
+      : [];
+  const bound = declared.map((name: string): SkillInputBinding => {
     switch (name) {
       case 'record-id':
         return { name, value: candidate.externalId, source: 'the candidate id' };
@@ -285,20 +370,25 @@ export function bindSkillInputs(
           value: surfaceSlug(candidate.sourceSystem),
           source: 'the surface the work came from',
         };
+      case REPLY_SURFACE_INPUT:
+        return replySurface !== undefined
+          ? { name, value: replySurface, source: 'the chat surface the Reply target line is on; every reply action goes to it' }
+          : { name, source: NO_REPLY_TARGET };
       case 'reply-channel':
         return candidate.replyTarget
           ? { name, value: candidate.replyTarget.channel, source: 'the Reply target line' }
-          : { name, source: 'no Reply target line: the work did not come from a chat channel' };
+          : { name, source: NO_REPLY_TARGET };
       case 'reply-thread':
         return candidate.replyTarget?.threadTs
           ? { name, value: candidate.replyTarget.threadTs, source: 'the Reply target line' }
           : candidate.replyTarget
             ? { name, source: 'the Reply target line names a top-level post, so there is no thread' }
-            : { name, source: 'no Reply target line: the work did not come from a chat channel' };
+            : { name, source: NO_REPLY_TARGET };
       default:
         return { name, source: READ_BY_THE_EXECUTOR };
     }
   });
+  return [...bound, ...implied];
 }
 
 /**

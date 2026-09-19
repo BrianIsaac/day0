@@ -164,6 +164,51 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain('The rationale names the first work item; it is an instance');
   });
 
+  // Demo rehearsal 2, 19 Sep 2026, finding 1: real mode says which surface
+  // carries the reply; the mock author's prompt is the recorded one.
+  const slack: SurfaceRecord = {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage', 'conversations.replies'],
+  };
+  const kanbanSkill = { ...skill, name: 'kanban-comment-and-close', surfaceClass: 'kanban', operation: 'comment-and-close', targetSurface: 'linear' };
+
+  it('keeps the mock author prompt with a shape and surfaces byte-identical', (): void => {
+    const prompt = buildAuthorPrompt(kanbanSkill, [linear, slack], now, [], 'mock');
+    expect(prompt).not.toContain('<reply-surface>');
+    expect(createHash('sha256').update(prompt).digest('hex')).toMatchInlineSnapshot(`"de4943a3dd8b2b14e7c067511b0637a36dc1f2b6a98f1a598b3647359a6ca492"`);
+  });
+
+  it('teaches a real-mode author the reply surface as an input, and names it from the connected surfaces', (): void => {
+    const prompt = buildAuthorPrompt(kanbanSkill, [linear, slack], now, [], 'real');
+    expect(prompt).toContain('The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface\'s own path');
+    expect(prompt).toContain('never on `<originating-surface>` unless that is the chat surface.');
+    expect(prompt).toContain('  - `<reply-surface>`: the slug of the connected chat surface');
+    expect(prompt).not.toContain('a reply in the thread on chat');
+    expect(prompt).toContain(
+      '  Here `<reply-surface>` is `slack`, the connected chat surface (path documented-api, reached by `http.request`); `linear` is path mcp, reached by `mcp.call` only, so it never carries a reply. In `CASES`, a case that gives `reply-channel` gives `reply-surface` too, set to `slack`, and `run()` sends the reply on `inputs["reply-surface"]`. SKILL.md writes `<reply-surface>` as the reply action\'s `surface`, never the slug: the executor binds it for each run.',
+    );
+  });
+
+  it('names no reply surface when no chat surface is connected', (): void => {
+    const prompt = buildAuthorPrompt(kanbanSkill, [linear], now, [], 'real');
+    expect(prompt).toContain('  - `<reply-surface>`:');
+    expect(prompt).not.toContain('Here `<reply-surface>` is');
+  });
+
+  it('tells a real-mode author that a case with a reply channel gives the reply surface too', (): void => {
+    expect(AUTHOR_SYSTEM_REAL).toContain(
+      'A case that gives `reply-channel` gives `reply-surface` too, and the reply action\'s `surface` is that input, never `originating-surface`.',
+    );
+    expect(AUTHOR_SYSTEM).not.toContain('reply-surface');
+  });
+
   it('keeps the shape-free author prompt as it was when nothing is connected', (): void => {
     expect(buildAuthorPrompt(skill, [], now)).toBe(
       [

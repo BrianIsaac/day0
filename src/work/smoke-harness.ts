@@ -25,7 +25,8 @@
  * a tool that surface allows and SKILL.md names; at least one action on the
  * skill's target surface; each case's action arguments carrying a value that
  * case supplied, and every input the executor binds from the candidate row
- * (the record, the reply target) when the case supplies it; and action
+ * (the record, the reply target) when the case supplies it; the reply channel
+ * sent on the reply surface when a case gives both; and action
  * arguments, not merely outputs, that differ between cases. A mimic that
  * passes says nothing about a provider's answer, but one that fails any of
  * these describes a write the gate would refuse or aim at a constant.
@@ -44,7 +45,7 @@
 
 import type { SurfacePath, SurfaceRecord } from '../surfaces/types';
 import { verdictFor as surfaceVerdictFor } from '../surfaces/verdict';
-import { CANDIDATE_BOUND_TARGET_INPUTS } from './skill-inputs';
+import { CANDIDATE_BOUND_TARGET_INPUTS, REPLY_SURFACE_INPUT } from './skill-inputs';
 
 /** Where the author's source, base64-encoded, is written into the harness. */
 const AUTHORED_SOURCE_SLOT = '__DAY0_AUTHORED_SOURCE__';
@@ -76,6 +77,12 @@ export interface SmokeHarnessContract {
    * action argument.
    */
   boundInputs: string[];
+  /**
+   * The input that names the surface a reply goes to. A case that gives it
+   * with a reply channel must send that channel on that surface. Absent on a
+   * contract built before the input was taught, which holds no case to it.
+   */
+  replySurfaceInput?: string;
 }
 
 /**
@@ -110,6 +117,7 @@ export function smokeHarnessContract(
         }),
       ),
     boundInputs: [...CANDIDATE_BOUND_TARGET_INPUTS],
+    replySurfaceInput: REPLY_SURFACE_INPUT,
   };
 }
 
@@ -325,7 +333,7 @@ def names_operation(operation):
     return re.search(pattern, CONTRACT["body"]) is not None
 
 
-def check_action(action, case_index, action_index):
+def check_action(action, case_index, action_index, inputs):
     """Refuse a verb, surface or tool the skill could not use at execution or does not name."""
     at = f"case {case_index} action {action_index}"
     verb, args = action_parts(action, case_index, action_index)
@@ -335,7 +343,13 @@ def check_action(action, case_index, action_index):
         listed = ", ".join(entry["slug"] for entry in CONTRACT["surfaces"]) or "none"
         fail(f"{at} targets surface {slug!r}, which is not a connected surface (connected: {listed})")
     if surface.get("path") not in VERB_PATHS[verb]:
-        fail(f"{at} uses {verb} on {slug}, whose path is {surface.get('path') or 'unknown'}")
+        reason = f"{at} uses {verb} on {slug}, whose path is {surface.get('path') or 'unknown'}"
+        if verb == "http.request" and carries_reply_channel(args, inputs):
+            reason += (
+                "; it carries the case's <reply-channel>, and a reply is an action on <reply-surface>, "
+                "the connected chat surface, never on the surface the ticket is on"
+            )
+        fail(reason)
     if verb == "mcp.call":
         operation = args.get("tool")
     else:
@@ -386,6 +400,33 @@ def input_value(inputs, name):
     return None
 
 
+def carries_reply_channel(args, inputs):
+    """Whether an action is addressed to the reply channel the case supplied.
+
+    The channel has to be a whole argument value: a ticket comment that
+    mentions the channel in its text is not a reply to it.
+    """
+    channel = input_value(inputs, "reply-channel")
+    if not isinstance(channel, str) or not supplied({"reply-channel": channel}):
+        return False
+    return any(leaf == channel for key, value in args.items() if key != "surface" for leaf in leaves(value))
+
+
+def check_reply_surface(index, inputs, parts):
+    """Hold a case that gives a reply surface and a reply channel to sending the one on the other."""
+    name = CONTRACT.get("replySurfaceInput")
+    expected = input_value(inputs, name) if name else None
+    if not isinstance(expected, str) or not expected.strip():
+        return
+    for number, (_, args, _) in enumerate(parts, 1):
+        if carries_reply_channel(args, inputs) and args.get("surface") != expected:
+            fail(
+                f"case {index} action {number} sends the reply to <reply-channel> on {args.get('surface')}, "
+                f"but the case gives <{name}> as {expected}; the executor binds <{name}> from the Reply target "
+                "line, so the reply is an action on that surface"
+            )
+
+
 def carried(inputs, output):
     """The short input values that appear in an output, in the order they were given."""
     text = canonical(output)
@@ -415,8 +456,9 @@ def check(calls):
                 f"run() returned no actions list for case {index}; "
                 "the dict it returns carries what the skill emits under actions"
             )
-        parts = [check_action(action, index, number) for number, action in enumerate(output["actions"], 1)]
-        checked.append((index, inputs if isinstance(inputs, dict) else {}, output, parts))
+        given = inputs if isinstance(inputs, dict) else {}
+        parts = [check_action(action, index, number, given) for number, action in enumerate(output["actions"], 1)]
+        checked.append((index, given, output, parts))
     emitting = [entry for entry in checked if entry[3]]
     if len(emitting) < MIN_CASES:
         fail(
@@ -424,6 +466,7 @@ def check(calls):
             f"{MIN_CASES} representative inputs must each make the skill emit an action"
         )
     for index, inputs, _, parts in emitting:
+        check_reply_surface(index, inputs, parts)
         arguments = [args for _, args, _ in parts]
         if supplied(inputs) and not any(carries(arguments, value) for value in supplied(inputs)):
             fail(
