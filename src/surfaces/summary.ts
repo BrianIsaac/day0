@@ -104,12 +104,77 @@ function verbAndNoun(tool: string): { verb: string; noun: string } {
   return { verb, noun: rest.join(' ') };
 }
 
+/** A form field whose value is a credential whatever was typed into it. */
+const CREDENTIAL_FIELD = /pass(?:word|code|phrase)|secret|token|api[ _-]?key|\bpin\b/i;
+
+/** How many form fields one line names before it counts the rest. */
+const BROWSER_FIELD_LIMIT = 4;
+
+/**
+ * A browser-driven step in the words of someone watching the page: what was
+ * opened, what was set to what, what was pressed. The driver's own echo (the
+ * code it ran, the snapshot file) is evidence for the ledger, never the line.
+ *
+ * Args:
+ *   tool: The browser tool, e.g. `browser_fill_form`.
+ *   args: Its arguments as the skill emitted them.
+ *   name: The surface's display name.
+ *
+ * Returns:
+ *   The line, or undefined for a browser tool this does not know.
+ */
+function describeBrowserStep(tool: string, args: JsonObject, name: string): string | undefined {
+  const element = firstString(args, ['element', 'name', 'ref']);
+  switch (tool) {
+    case 'browser_navigate': {
+      const url = firstString(args, ['url']);
+      return url ? `Open ${label(url, 120)} on ${name}` : undefined;
+    }
+    case 'browser_fill_form': {
+      const fields = Array.isArray(args.fields) ? (args.fields as unknown[]) : [];
+      const set = fields.flatMap((field): string[] => {
+        if (!field || typeof field !== 'object' || Array.isArray(field)) return [];
+        const record = field as JsonObject;
+        const fieldName = firstString(record, ['name', 'element', 'ref']);
+        const value = record.value;
+        if (!fieldName || (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean')) return [];
+        // A credential typed as a literal is named, never quoted: this line goes to a DM.
+        const shownValue = CREDENTIAL_FIELD.test(fieldName) ? '[credential]' : excerpt(String(value), 60);
+        return [`${label(fieldName, 40)} to ${JSON.stringify(shownValue)}`];
+      });
+      if (set.length === 0) return undefined;
+      const shown = set.slice(0, BROWSER_FIELD_LIMIT);
+      const rest = set.length - shown.length;
+      const listed = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0];
+      return `Set ${listed}${rest > 0 ? ` (+${rest} more)` : ''} on ${name}`;
+    }
+    case 'browser_click':
+      return element ? `Press ${quote(element)} on ${name}` : undefined;
+    case 'browser_type': {
+      const text = firstString(args, ['text']);
+      if (!element || text === undefined) return undefined;
+      const shownValue = CREDENTIAL_FIELD.test(element) ? '[credential]' : excerpt(text, 60);
+      return `Set ${label(element, 40)} to ${JSON.stringify(shownValue)} on ${name}`;
+    }
+    case 'browser_select_option': {
+      const values = Array.isArray(args.values) ? args.values.filter((value): value is string => typeof value === 'string') : [];
+      return element && values.length > 0 ? `Choose ${quote(values.join(', '))} in ${label(element, 40)} on ${name}` : undefined;
+    }
+    case 'browser_snapshot':
+      return `Read the page on ${name}`;
+    default:
+      return undefined;
+  }
+}
+
 function describeMcpCall(
   parsed: Extract<ParsedSurfaceAction, { kind: 'mcp.call' }>,
   surfaces: readonly SurfaceRecord[],
 ): string {
   const name = surfaceName(parsed.surface, surfaces);
   const args = parsed.toolArgs;
+  const browserStep = parsed.tool.startsWith('browser_') ? describeBrowserStep(parsed.tool, args, name) : undefined;
+  if (browserStep) return browserStep;
   const { verb, noun } = verbAndNoun(parsed.tool);
   const ref = firstString(args, ISSUE_KEYS);
   const text = firstString(args, TEXT_KEYS);

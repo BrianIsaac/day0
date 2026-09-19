@@ -1,0 +1,976 @@
+{
+  "source": "demo rehearsal 2, 19 Sep 2026, bed day0-reh2-a4637a: export.zip and findings/*.jsonl, rows verbatim",
+  "agents": {
+    "j578dhkwnnds0zw43fpy548fr98eqjbt": "Aiko",
+    "j57989cmmzw48hyh3wkv32tzp58eqx09": "Mateo",
+    "j57b4fsy78fte4wbr2cxx90c3n8eqtvj": "Priya"
+  },
+  "workItems": {
+    "mateoCompleted": {
+      "_creationTime": 1789788208815.0664,
+      "_id": "nh70d5rwjha1npsqn1zeaecwr58eq8w1",
+      "agentId": "j57989cmmzw48hyh3wkv32tzp58eqx09",
+      "contentRefs": [
+        "https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note"
+      ],
+      "contentSummary": "Post the close status note for the September close on this ticket.\n\nday0-demo-key: fin-status",
+      "createdAt": 1789788208815.0,
+      "decision": {
+        "channel": "D0BS5SXMXPZ",
+        "decidedAt": 1789788594067.0,
+        "decidedVia": "dashboard",
+        "id": "3rfmmx",
+        "kind": "actions",
+        "outcome": "approved",
+        "requestedAt": 1789788547207.0,
+        "surfaceName": "Slack",
+        "surfaceSlug": "slack",
+        "ts": "1789788547.495479"
+      },
+      "externalAlias": "8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1",
+      "externalClaimAlias": "linear:8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1",
+      "externalClaimKey": "linear:FIN-1",
+      "externalId": "FIN-1",
+      "observedAt": 1789788208815.0,
+      "output": {
+        "actions": [
+          {
+            "args": {
+              "surface": "linear",
+              "tool": "list_issues",
+              "toolArgsJson": "{\"team\":\"FIN\",\"project\":\"September close\",\"limit\":50}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "linear",
+              "tool": "get_issue",
+              "toolArgsJson": "{\"id\":\"FIN-1\"}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "linear",
+              "tool": "save_comment",
+              "toolArgsJson": "{\"issueId\":\"FIN-1\",\"body\":\"Accruals booked: FIN-2 Accruals booked for September, Done\\nBank reconciliation: FIN-3 Bank reconciliation for September, In Progress\\nNot done yet: Bank reconciliation (FIN-3, In Progress)\"}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "linear",
+              "tool": "save_issue",
+              "toolArgsJson": "{\"id\":\"FIN-1\",\"state\":\"Done\"}"
+            },
+            "tool": "mcp.call"
+          }
+        ],
+        "applied": [
+          {
+            "authority": "autonomous",
+            "effect": "list_issues on linear · {\"issues\":[{\"id\":\"FIN-3\",\"uuid\":\"ed68714b-9f4d-44c2-936f-38e591315295\",\"title\":\"Bank reconciliation for September\",\"description\":\"Close calendar step, business day 4: the accounting team reconciles the September bank statements in NetLedger.\\n\\nday0-demo-key: fin-bankrec\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-3/bank-reconciliation-for-september\",\"gitBranchName\":\"isaacbikjk/fin-3-bank-reconciliation-for-september\",\"createdAt\":\"2026-09-18T18:25:27.104Z\",\"updatedAt\":\"2026-09-19T03:10:41.808Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":\"2026-09-18T18:25:27.130Z\",\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"In Progress\",\"statusType\":\"started\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"},{\"id\":\"FIN-2\",\"uuid\":\"67461d7d-056f-427b-9b64-13bb787fd58c\",\"title\":\"Accruals booked for September\",\"description\":\"Close calendar step, business day 3: the accounting team books the September accruals in NetLedger.\\n\\nday0-demo-key: fin-accruals\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-2/accruals-booked-for-september\",\"gitBranchName\":\"isaacbikjk/fin-2-accruals-booked-for-september\",\"createdAt\":\"2026-09-18T18:25:26.631Z\",\"updatedAt\":\"2026-09-19T03:10:40.199Z\",\"archivedAt\":null,\"completedAt\":\"2026-09-18T18:25:26.659Z\",\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Done\",\"statusType\":\"completed\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"},{\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the September close on this ticket.\\n\\nday0-demo-key: fin-status\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note\",\"gitBranchName\":\"isaacbikjk/fin-1-post-the-september-close-status-note\",\"createdAt\":\"2026-09-18T14:18:35.053Z\",\"updatedAt\":\"2026-09-19T03:10:37.977Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Todo\",\"statusType\":\"unstarted\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"}],\"hasNextPage\":false}",
+            "idempotencyKey": "nh70d5rwjha1npsqn1zeaecwr58eq8w1:k97csg8epbw71j04xw1abfgaes8epy3j:0",
+            "ok": true,
+            "providerId": "FIN-3",
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "get_issue on linear · {\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the September close on this ticket.\\n\\nday0-demo-key: fin-status\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note\",\"gitBranchName\":\"<redacted>\",\"createdAt\":\"2026-09-18T14:18:35.053Z\",\"updatedAt\":\"2026-09-19T03:10:37.977Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Todo\",\"statusType\":\"unstarted\",\"labels\":[\"day0-demo\"],\"attachments\":[],\"documents\":[],\"stateHistory\":[{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T14:18:35.053Z\",\"endedAt\":\"2026-09-18T19:07:25.235Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-18T19:07:25.235Z\",\"endedAt\":\"2026-09-18T21:13:55.401Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T21:13:55.401Z\",\"endedAt\":\"2026-09-18T21:44:32.373Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-18T21:44:32.373Z\",\"endedAt\":\"2026-09-18T23:23:53.494Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T23:23:53.494Z\",\"endedAt\":\"2026-09-19T01:52:18.026Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-19T01:52:18.026Z\",\"endedAt\":\"2026-09-19T03:10:37.974Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-19T03:10:37.974Z\",\"endedAt\":null}],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"}",
+            "idempotencyKey": "nh70d5rwjha1npsqn1zeaecwr58eq8w1:k97csg8epbw71j04xw1abfgaes8epy3j:1",
+            "ok": true,
+            "providerId": "FIN-1",
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "save_comment on linear · {\"id\":\"c46d6f9e-bdc6-4a10-a00d-7861207fd803\",\"body\":\"Accruals booked: FIN-2 Accruals booked for September, Done\\nBank reconciliation: FIN-3 Bank reconcili…",
+            "idempotencyKey": "nh70d5rwjha1npsqn1zeaecwr58eq8w1:k97csg8epbw71j04xw1abfgaes8epy3j:2",
+            "ok": true,
+            "providerId": "c46d6f9e-bdc6-4a10-a00d-7861207fd803",
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "manager",
+            "effect": "save_issue on linear · {\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the…",
+            "idempotencyKey": "nh70d5rwjha1npsqn1zeaecwr58eq8w1:k97csg8epbw71j04xw1abfgaes8epy3j:3",
+            "ok": true,
+            "providerId": "FIN-1",
+            "tool": "mcp.call"
+          }
+        ],
+        "draft": "Close status note (September close), from Linear as read in the ledger:\n\nAccruals booked: FIN-2 Accruals booked for September, Done\nBank reconciliation: FIN-3 Bank reconciliation for September, In Progress\nNot done yet: Bank reconciliation (FIN-3, In Progress)\n\nThe note is posted as one comment on FIN-1 (Post the September close status note); once posted, FIN-1 moves to Done per the runbook `How to write the close status note`. No #finance-close question threads were identified in this run's evidence, so no thread replies are emitted; any question that arrives will be answered in its thread with the same lines.",
+        "needsDependentPhase": false,
+        "notes": "States read from the applied ledger's list_issues/get_issue reads: FIN-2 Done, FIN-3 In Progress, FIN-1 Todo. Autonomous actions are ON, so the comment and the Done transition land as emitted; no manager DM is sent because there is no question or escalation. No Reply target line and no #finance-close thread identifiers are on this run, so no Slack replies are emitted; the flash report has no ticket and is excluded from the note per the runbook.",
+        "planStepOutcomes": [
+          {
+            "evidence": "Ledger row 0 (list_issues, team FIN, project September close) reports FIN-2 Accruals booked for September at Done and FIN-3 Bank reconciliation for September at In Progress; row 1 (get_issue FIN-1) confirms FIN-1 at Todo.",
+            "status": "satisfied",
+            "step": 1.0
+          },
+          {
+            "evidence": "The note is drafted in the runbook format in this response's draft. With autonomous actions ON, no approval hold applies; the draft lands directly as the save_comment on FIN-1 (action index 0) rather than as a held manager DM.",
+            "status": "satisfied",
+            "step": 2.0
+          },
+          {
+            "evidence": "Action index 0 posts the note as one save_comment on FIN-1; action index 1 is a separate save_issue moving FIN-1 to Done, emitted after the comment per the runbook.",
+            "status": "satisfied",
+            "step": 3.0
+          },
+          {
+            "evidence": "No #finance-close question threads are identified in this run's candidate, plan or ledger; no Reply target line is present, so no thread replies are emitted. Any future question will be answered in its thread with the same lines as the note.",
+            "status": "satisfied",
+            "step": 4.0
+          }
+        ],
+        "prerequisiteCount": 2.0,
+        "procedureTrails": []
+      },
+      "plan": {
+        "estimatedMinutes": 25.0,
+        "expectedOutputType": "ticket-update",
+        "obligations": {
+          "basis": "judgement",
+          "reason": "FIN-1 moves to Done only after the manager approves the note and the status change, since autonomous actions are off.",
+          "steps": [
+            {
+              "kind": "read",
+              "reads": [
+                "linear"
+              ],
+              "reason": "Reads the FIN September close step tickets and records each state exactly as Linear reports it.",
+              "writes": []
+            },
+            {
+              "kind": "write",
+              "reads": [],
+              "reason": "Sends the drafted close status note to the manager DM for approval; the Linear comment and status change are only held, not emitted.",
+              "writes": [
+                "slack"
+              ]
+            },
+            {
+              "kind": "conditional-write",
+              "reads": [],
+              "reason": "Only after the manager approves, posts the note as one save_comment on FIN-1 and a separate save_issue moving FIN-1 to Done.",
+              "writes": [
+                "linear"
+              ]
+            },
+            {
+              "kind": "conditional-write",
+              "reads": [],
+              "reason": "Replies in #finance-close question threads with the note's lines, each reply held for the manager's approval before it reaches Slack.",
+              "writes": [
+                "slack"
+              ]
+            }
+          ],
+          "transition": "conditional-on-manager",
+          "transitionStep": 3.0
+        },
+        "reversibility": "The Linear comment can be edited or superseded by a later comment; the status change to Done can be reverted. Slack messages, once approved and sent, cannot be retracted.",
+        "riskNotes": "NetLedger has no connected surface; step states are read from Linear tickets only, per the handbook. If a step ticket cannot be found in Linear, the note reports it as not done and the gap goes to the manager. Slack replies require manager approval of exact text while autonomous actions are off.",
+        "steps": [
+          "Read the step tickets in Linear team FIN, project September close (Accruals booked, Bank reconciliation) and record each state exactly as Linear reports it.",
+          "Draft the close status note in the runbook format (one line per step in calendar order, then a 'Not done yet' line) and send it to the manager DM for approval; the comment on FIN-1 and the status change to Done are held for the manager's literal approval.",
+          "After the manager approves, post the note as one save_comment on FIN-1 (FIN-1), then a separate save_issue moving FIN-1 to Done.",
+          "Answer any open questions in #finance-close about where the close stands in their threads with the same lines as the note; each reply is held for the manager's approval before it reaches Slack."
+        ],
+        "summary": "Follow the close status note runbook: read the September close step tickets in Linear (team FIN), draft the note, post it as one comment on FIN-1, then move FIN-1 to Done. Answer any #finance-close questions in their threads with the same lines. All writes are held for the manager's literal approval because autonomous actions are off; only reads and the manager DM land now."
+      },
+      "planPendingAt": 1789788391288.0,
+      "priority": "No priority",
+      "proposedSkillId": "n57e1nt2jx34ft5dx04y6aghm98eq5e2",
+      "requester": "Brian",
+      "requesterLabel": "Brian",
+      "scopeAdmission": {
+        "at": 1789788210680.0,
+        "basis": "charter-judgement",
+        "charterId": "j97a4w55k5bd0bk2a2t4zcp1ad8epekb"
+      },
+      "skillId": "n57e1nt2jx34ft5dx04y6aghm98eq5e2",
+      "sourceCategory": "ticket-queue",
+      "sourceSystem": "linear",
+      "state": "completed",
+      "title": "Post the September close status note",
+      "verdict": {
+        "decision": "claim",
+        "requiredPermissions": [
+          "boss:message",
+          "linear:read"
+        ],
+        "risk": 30.0,
+        "value": 60.0
+      }
+    },
+    "aikoSkipped": {
+      "_creationTime": 1789788237198.2234,
+      "_id": "nh70gff7xacn0j67v85k4wwkn18ep24z",
+      "agentId": "j578dhkwnnds0zw43fpy548fr98eqjbt",
+      "contentRefs": [
+        "https://app.slack.com/client/T0BSQSQG0UU/C0C2U2UJUTU/thread/C0C2U2UJUTU-1789761553312049"
+      ],
+      "contentSummary": "<@U0BTFK6FLNL> please refresh the pipeline tile to the standup figure",
+      "createdAt": 1789788237198.0,
+      "externalClaimKey": "slack:T0BSQSQG0UU:C0C2U2UJUTU:1789761553.312049",
+      "externalId": "C0C2U2UJUTU:1789761553.312049",
+      "observedAt": 1789788237198.0,
+      "replyTarget": {
+        "channel": "C0C2U2UJUTU",
+        "channelName": "ops-requests",
+        "threadTs": "1789761553.312049"
+      },
+      "requester": "U0BTFHN6MKJ",
+      "requesterLabel": "U0BTFHN6MKJ",
+      "skipReason": "out-of-scope: Refreshing a pipeline tile in #ops-requests is non-exception logistics desk work outside the Shipment exceptions project, which the willNotDo clause excludes.",
+      "sourceCategory": "event-stream",
+      "sourceSystem": "slack",
+      "state": "skipped",
+      "title": "Slack mention in #ops-requests",
+      "verdict": {
+        "decision": "skip",
+        "reason": "out-of-scope: Refreshing a pipeline tile in #ops-requests is non-exception logistics desk work outside the Shipment exceptions project, which the willNotDo clause excludes."
+      }
+    },
+    "priyaCompleted": {
+      "_creationTime": 1789788168016.61,
+      "_id": "nh78e1g5th0ay674wtnck23bn58epyzs",
+      "agentId": "j57b4fsy78fte4wbr2cxx90c3n8eqtvj",
+      "contentRefs": [
+        "https://app.slack.com/client/T0BSQSQG0UU/C0C2U2UJUTU/thread/C0C2U2UJUTU-1789761553312049"
+      ],
+      "contentSummary": "<@U0BTFK6FLNL> please refresh the pipeline tile to the standup figure",
+      "createdAt": 1789788168016.0,
+      "decision": {
+        "channel": "D0BS5SXMXPZ",
+        "decidedAt": 1789788454684.0,
+        "decidedVia": "dashboard",
+        "id": "5g2ys9",
+        "kind": "plan",
+        "outcome": "approved",
+        "requestedAt": 1789788379806.0,
+        "surfaceName": "Slack",
+        "surfaceSlug": "slack",
+        "ts": "1789788380.132269"
+      },
+      "externalClaimKey": "slack:T0BSQSQG0UU:C0C2U2UJUTU:1789761553.312049",
+      "externalId": "C0C2U2UJUTU:1789761553.312049",
+      "observedAt": 1789788168016.0,
+      "output": {
+        "actions": [
+          {
+            "args": {
+              "surface": "looker-pipeline-tile",
+              "tool": "browser_navigate",
+              "toolArgsJson": "{\"url\":\"http://looker-tile:8080/\"}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "looker-pipeline-tile",
+              "tool": "browser_fill_form",
+              "toolArgsJson": "{\"fields\":[{\"name\":\"Username\",\"value\":\"revops\"},{\"name\":\"Password\",\"value\":\"{{secret}}\"}]}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "looker-pipeline-tile",
+              "tool": "browser_click",
+              "toolArgsJson": "{\"element\":\"Sign in\"}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "looker-pipeline-tile",
+              "tool": "browser_fill_form",
+              "toolArgsJson": "{\"fields\":[{\"name\":\"Pipeline coverage\",\"value\":\"74%\"}]}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "looker-pipeline-tile",
+              "tool": "browser_click",
+              "toolArgsJson": "{\"element\":\"Save\"}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "looker-pipeline-tile",
+              "tool": "browser_snapshot",
+              "toolArgsJson": "{}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "body": "{\"channel\":\"C0C2U2UJUTU\",\"thread_ts\":\"1789761553.312049\",\"text\":\"Done — the pipeline tile now shows 74% (the approved figure from the Friday standup summary). Audit line: Last updated by revops at 2026-09-19 03:27:49 UTC. Ref: C0C2U2UJUTU:1789761553.312049.\"}",
+              "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
+              "method": "POST",
+              "path": "/chat.postMessage",
+              "surface": "slack"
+            },
+            "tool": "http.request"
+          }
+        ],
+        "applied": [
+          {
+            "authority": "autonomous",
+            "effect": "browser_navigate on looker-pipeline-tile · ### Ran Playwright code ```js await page.goto('http://looker-tile:8080/'); ``` ### Page - Page URL: http://looker-tile:8080/ - Page Title: Sign in - Looker ### Snapshot - [Snapshot](.playwright-mcp/page-2026-09-19T03-27-46-336Z.yml)",
+            "idempotencyKey": "nh78e1g5th0ay674wtnck23bn58epyzs:k97597pejdyp9h83xgrm34d7rs8epyxz:0",
+            "ok": true,
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "browser_fill_form on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('textbox', { name: 'Username' }).fill('revops'); await page.getByRole('textbox', { n…",
+            "idempotencyKey": "nh78e1g5th0ay674wtnck23bn58epyzs:k97597pejdyp9h83xgrm34d7rs8epyxz:1",
+            "ok": true,
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "browser_click on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('button', { name: 'Sign in' }).click(); ``` ### Page - Page URL: http://looker-tile:8080…",
+            "idempotencyKey": "nh78e1g5th0ay674wtnck23bn58epyzs:k97597pejdyp9h83xgrm34d7rs8epyxz:2",
+            "ok": true,
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "browser_fill_form on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('textbox', { name: 'Pipeline coverage' }).fill('74%'); ```",
+            "idempotencyKey": "nh78e1g5th0ay674wtnck23bn58epyzs:k97597pejdyp9h83xgrm34d7rs8epyxz:3",
+            "ok": true,
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "browser_click on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('button', { name: 'Save' }).click(); ``` ### Page - Page URL: http://looker-tile:8080/ti…",
+            "idempotencyKey": "nh78e1g5th0ay674wtnck23bn58epyzs:k97597pejdyp9h83xgrm34d7rs8epyxz:4",
+            "ok": true,
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "browser_snapshot on looker-pipeline-tile · visible figure 74% · Last updated by revops at 2026-09-19 03:27:49 UTC",
+            "idempotencyKey": "nh78e1g5th0ay674wtnck23bn58epyzs:k97597pejdyp9h83xgrm34d7rs8epyxz:5",
+            "ok": true,
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "autonomous",
+            "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"C0C2U2UJUTU\",\"ts\":\"1789788484.567219\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Done \\u2014 the pipeline tile now shows 74% (the approved figure …",
+            "idempotencyKey": "nh78e1g5th0ay674wtnck23bn58epyzs:k97597pejdyp9h83xgrm34d7rs8epyxz:6",
+            "ok": true,
+            "providerId": "1789788484.567219",
+            "tool": "http.request"
+          }
+        ],
+        "draft": "Tile refresh complete. The Looker pipeline tile was signed in as revops, Pipeline coverage was set to 74% exactly (the approved figure from the Friday standup summary, per the tile runbook), and Save was clicked. Read-back in the same session confirms the change landed: the tile shows 74% and the audit line reads 'Last updated by revops at 2026-09-19 03:27:49 UTC'. A threaded reply to the ask in #ops-requests (C0C2U2UJUTU, thread 1789761553.312049) confirms this, quoting the audit line. No Linear ticket was referenced by the ask, so no Linear audit comment or status change was made; if the manager names a Q3 close ticket, the audit note can be added there.",
+        "needsDependentPhase": false,
+        "notes": "The ask referenced no Linear ticket, so no Linear comment or state change was planned; FIN-1 and LOG-1 belong to other work items and were left untouched.",
+        "planStepOutcomes": [
+          {
+            "evidence": "Ledger rows 0-4: navigate to http://looker-tile:8080/ (page title 'Sign in - Looker'), fill Username revops and Password {{secret}}, click Sign in, fill Pipeline coverage 74%, click Save — all landed.",
+            "status": "satisfied",
+            "step": 1.0
+          },
+          {
+            "evidence": "Ledger row 5 (browser_snapshot): visible figure 74%; audit line 'Last updated by revops at 2026-09-19 03:27:49 UTC'.",
+            "status": "satisfied",
+            "step": 2.0
+          },
+          {
+            "evidence": "Action index 0: chat.postMessage to channel C0C2U2UJUTU, thread_ts 1789761553.312049, confirming 74% and quoting the audit line.",
+            "status": "satisfied",
+            "step": 3.0
+          },
+          {
+            "evidence": "Evidence (figure 74%, audit line 'Last updated by revops at 2026-09-19 03:27:49 UTC') recorded in the draft; no Linear ticket was referenced by the ask, so no Linear audit comment or status change was emitted.",
+            "status": "satisfied",
+            "step": 4.0
+          }
+        ],
+        "prerequisiteCount": 6.0,
+        "procedureTrails": []
+      },
+      "plan": {
+        "estimatedMinutes": 15.0,
+        "expectedOutputType": "message",
+        "obligations": {
+          "basis": "judgement",
+          "reason": "The plan names no Linear ticket and makes no commitment to move any ticket state; it only notes no status change is planned unless the manager names one.",
+          "steps": [
+            {
+              "kind": "write",
+              "reads": [],
+              "reason": "Emits the documented browser login-and-save sequence that changes the pipeline coverage figure on the tile, held for manager approval.",
+              "writes": [
+                "looker-pipeline-tile"
+              ]
+            },
+            {
+              "kind": "read",
+              "reads": [
+                "looker-pipeline-tile"
+              ],
+              "reason": "Takes a browser snapshot of the tile in the same session to read back the figure and audit line as evidence the save landed.",
+              "writes": []
+            },
+            {
+              "kind": "write",
+              "reads": [],
+              "reason": "Posts a thread reply in #ops-requests quoting the audit line; the message text quotes evidence but the step itself only writes Slack.",
+              "writes": [
+                "slack"
+              ]
+            },
+            {
+              "kind": "report",
+              "reads": [],
+              "reason": "Records the evidence and the no-Linear-ticket finding in the response without touching any surface.",
+              "writes": []
+            }
+          ],
+          "transition": "none",
+          "transitionStep": null
+        },
+        "reversibility": "The tile holds a single value; a wrong figure can be corrected by re-running the same sequence. The Slack reply, once approved and sent, is a normal channel message.",
+        "riskNotes": "The refresh is fully specified by the runbook (figure 74%, exact element names, single origin). The Slack confirmation is a public-channel post and is held for the manager's approval of its exact text. The ask carries no Linear ticket identifier, so whether this work should also leave an audit comment on a Q3 close ticket is left for the manager to settle at approval. If the page redirects, login fails, or the audit line does not appear, the run stops with the observed failure recorded — no retries.",
+        "steps": [
+          "Emit the documented browser sequence on looker-pipeline-tile in one session: navigate to http://looker-tile:8080/, fill Username (revops) and Password ({{secret}}), click Sign in, fill Pipeline coverage with 74% exactly (no recomputed figure), click Save. Because autonomous actions are off and a browser login cannot be split across sessions, this whole write sequence parks for the manager's exact-action approval.",
+          "In the same session, read the tile back with browser_snapshot and quote the visible figure and the audit line ('Last updated by <user> at <time> UTC') as evidence the change landed; if the audit line does not appear, record the observed failure and stop.",
+          "Emit a Slack thread reply to the ask in #ops-requests (channel C0C2U2UJUTU, thread_ts 1789761553.312049) confirming the tile now shows 74%, quoting the audit line; held for the manager's approval of the exact text.",
+          "Record in this response the evidence (figure and audit line) and note that no Linear ticket was referenced by the ask, so no Linear audit comment or status change is planned unless the manager names the ticket."
+        ],
+        "summary": "The ask is a Looker pipeline tile refresh to the standup figure. The runbook fixes the figure at 74% (approved source: the Friday standup summary) and prescribes the exact browser sequence on the connected looker-pipeline-tile surface. Autonomous actions are off, so the browser write sequence and the Slack thread reply are held for the manager's literal approval; reads land now."
+      },
+      "planPendingAt": 1789788379707.0,
+      "proposedSkillId": "n57f3fax28qz8ez01mwf5v4r698epypa",
+      "replyTarget": {
+        "channel": "C0C2U2UJUTU",
+        "channelName": "ops-requests",
+        "threadTs": "1789761553.312049"
+      },
+      "requester": "U0BTFHN6MKJ",
+      "requesterLabel": "U0BTFHN6MKJ",
+      "scopeAdmission": {
+        "at": 1789788170132.0,
+        "basis": "charter-judgement",
+        "charterId": "j97fk2nzwqqbejdyd0ds8zvdtx8eqj3c"
+      },
+      "skillId": "n57f3fax28qz8ez01mwf5v4r698epypa",
+      "sourceCategory": "event-stream",
+      "sourceSystem": "slack",
+      "state": "completed",
+      "title": "Slack mention in #ops-requests",
+      "verdict": {
+        "decision": "claim",
+        "requiredPermissions": [
+          "boss:message",
+          "slack:read"
+        ],
+        "risk": 40.0,
+        "value": 60.0
+      }
+    },
+    "aikoCompleted": {
+      "_creationTime": 1789788239259.9707,
+      "_id": "nh7ed4b9807fm82jz0ffk1cm358ep46j",
+      "agentId": "j578dhkwnnds0zw43fpy548fr98eqjbt",
+      "contentRefs": [
+        "https://linear.app/day00/issue/LOG-1/exception-sh-4471-held-at-port-klang-meridian-freight-no-revised-eta"
+      ],
+      "contentSummary": "Shipment SH-4471 is held at Port Klang. The carrier, Meridian Freight, has not given a revised ETA.\n\nday0-demo-key: log-sh4471",
+      "createdAt": 1789788239259.0,
+      "decision": {
+        "channel": "D0BS5SXMXPZ",
+        "decidedAt": 1789788904632.0,
+        "decidedVia": "dashboard",
+        "id": "vxx85y",
+        "kind": "actions",
+        "outcome": "approved",
+        "requestedAt": 1789788845718.0,
+        "surfaceName": "Slack",
+        "surfaceSlug": "slack",
+        "ts": "1789788845.994799"
+      },
+      "externalAlias": "ab8c7d32-1d2b-41e4-bb73-ff9cc8ec9281",
+      "externalClaimAlias": "linear:ab8c7d32-1d2b-41e4-bb73-ff9cc8ec9281",
+      "externalClaimKey": "linear:LOG-1",
+      "externalId": "LOG-1",
+      "managerFeedback": {
+        "addressedAt": 1789788921731.0,
+        "at": 1789788836177.0,
+        "kind": "retry-note",
+        "reason": "For a Meridian Freight hold at Port Klang with no revised ETA, use the \"Delay, ETA unconfirmed, next update by <time>\" template, with the next update by 17:00 SGT the next business day."
+      },
+      "observedAt": 1789788239259.0,
+      "output": {
+        "actions": [
+          {
+            "args": {
+              "surface": "linear",
+              "tool": "save_comment",
+              "toolArgsJson": "{\"issueId\":\"LOG-1\",\"body\":\"Exception: SH-4471, held at Port Klang, no revised ETA given\\nCarrier: Meridian Freight; revised ETA: none given\\nCustomer notice (Delay, ETA unconfirmed, next update by <time>):\\nYour shipment SH-4471 is delayed at Port Klang. Meridian Freight has not yet confirmed a revised delivery date. We will update you by 17:00 SGT the next business day.\\nNext update: 17:00 SGT the next business day\"}"
+            },
+            "tool": "mcp.call"
+          },
+          {
+            "args": {
+              "surface": "linear",
+              "tool": "save_issue",
+              "toolArgsJson": "{\"id\":\"LOG-1\",\"state\":\"Done\"}"
+            },
+            "tool": "mcp.call"
+          }
+        ],
+        "applied": [
+          {
+            "authority": "manager",
+            "effect": "save_comment on linear · {\"id\":\"d8b18a49-15fc-4821-ab92-4af355db5035\",\"body\":\"Exception: SH-4471, held at Port Klang, no revised ETA given\\nCarrier: Meridian Freight; revised ETA:…",
+            "idempotencyKey": "nh7ed4b9807fm82jz0ffk1cm358ep46j:k97ezpmnvzd6razd6ss43xtg9h8epeq6:0",
+            "ok": true,
+            "providerId": "d8b18a49-15fc-4821-ab92-4af355db5035",
+            "tool": "mcp.call"
+          },
+          {
+            "authority": "manager",
+            "effect": "save_issue on linear · {\"id\":\"LOG-1\",\"uuid\":\"ab8c7d32-1d2b-41e4-bb73-ff9cc8ec9281\",\"title\":\"Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA\",\"description\":…",
+            "idempotencyKey": "nh7ed4b9807fm82jz0ffk1cm358ep46j:k97ezpmnvzd6razd6ss43xtg9h8epeq6:1",
+            "ok": true,
+            "providerId": "LOG-1",
+            "tool": "mcp.call"
+          }
+        ],
+        "deferredActions": null,
+        "draft": "LOG-1 (SH-4471 held at Port Klang, Meridian Freight, no revised ETA): the desk lead's answer has arrived via the manager — use the handbook template 'Delay, ETA unconfirmed, next update by <time>' with the next update by 17:00 SGT the next business day. This response emits two writes, both held for the manager's literal approval while autonomous actions are off:\n\n1. One audit comment on LOG-1 in the 'How to record a shipment exception' format:\n\nException: SH-4471, held at Port Klang, no revised ETA given\nCarrier: Meridian Freight; revised ETA: none given\nCustomer notice (Delay, ETA unconfirmed, next update by <time>):\nYour shipment SH-4471 is delayed at Port Klang. Meridian Freight has not yet confirmed a revised delivery date. We will update you by 17:00 SGT the next business day.\nNext update: 17:00 SGT the next business day\n\n2. After that comment, save_issue moves LOG-1 to Done, per the exception process ('Once the comment is posted, move the ticket to Done'). The customer notice itself is not sent by this work: the account team sends it from the ticket, and the desk lead has approved the template and next-update time via the manager.\n\nVerification once applied: the audit comment visible on LOG-1 and LOG-1's state reported by Linear as Done.",
+        "landedWrites": [
+          {
+            "action": {
+              "args": {
+                "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (LOG-1): shipment SH-4471 is held at Port Klang and the carrier, Meridian Freight, has given no revised ETA. Before I record the exception and draft the customer notice, could you confirm with the desk lead (1) which of the two handbook templates to use — 'Delay, revised ETA confirmed' does not fit, so presumably 'Delay, ETA unconfirmed, next update by <time>' — and (2) the next-update time to promise? Once I have both answers I will post the exception comment on LOG-1 and move it to Done, held for your approval of the exact payloads.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
+                "method": "POST",
+                "path": "/chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            },
+            "applied": {
+              "authority": "standing",
+              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789788660.332569\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (…",
+              "idempotencyKey": "nh7ed4b9807fm82jz0ffk1cm358ep46j:k973t2c4anq8qkkp2q43xwxz9n8eq6fp:0",
+              "ok": true,
+              "providerId": "1789788660.332569",
+              "tool": "http.request"
+            }
+          }
+        ],
+        "needsDependentPhase": false,
+        "notes": "The escalation DM to the manager DM channel already landed in a prior run (provider id 1789788660.332569), so no new DM is sent; the manager's feedback supplies the desk lead's template choice and next-update time. No Reply target line exists, so no channel/thread reply is emitted.",
+        "procedureTrails": []
+      },
+      "plan": {
+        "estimatedMinutes": 15.0,
+        "expectedOutputType": "ticket-update",
+        "obligations": {
+          "basis": "judgement",
+          "reason": "The plan moves LOG-1 to Done only after the desk lead answers the escalation and the manager approves the comment and status payloads; it never moves the state unconditionally.",
+          "steps": [
+            {
+              "kind": "write",
+              "reads": [],
+              "reason": "Sends the desk-lead escalation about SH-4471's missing ETA to the manager DM; it only posts a message and reads no surface.",
+              "writes": [
+                "slack"
+              ]
+            },
+            {
+              "kind": "conditional-write",
+              "reads": [],
+              "reason": "Posts the exception comment on LOG-1 only once the desk lead's template and next-update answer arrives, held for the manager's approval of the exact payload.",
+              "writes": [
+                "linear"
+              ]
+            },
+            {
+              "kind": "conditional-write",
+              "reads": [],
+              "reason": "Moves LOG-1 to Done via save_issue only after the comment is posted, held for the manager's approval.",
+              "writes": [
+                "linear"
+              ]
+            }
+          ],
+          "transition": "conditional-on-manager",
+          "transitionStep": 3.0
+        },
+        "reversibility": "The manager DM is conversational. The Linear comment can be rewritten or the ticket moved back to Todo; no customer-facing send happens in this plan.",
+        "riskNotes": "The customer notice cannot be drafted complete without the desk lead's choice of template and next-update time; the handbook forbids writing to the customer without it, so the recording step is conditional on that answer. The comment and status change are also gated on manager approval while autonomous actions are off. No Slack channel read or post is needed — the exception arrived as a Linear ticket, and the account team sends the notice from the ticket.",
+        "steps": [
+          "DM the manager (desk-lead escalation per the handbook's 'Notices and ETAs' rule): SH-4471 held at Port Klang, carrier Meridian Freight has given no revised ETA — ask which of the two handbook templates to use ('Delay, ETA unconfirmed, next update by <time>' needs a next-update time only the desk lead can set) and the next-update time. Reference LOG-1.",
+          "Conditional-write: once the desk lead's answer arrives via the manager, post one comment on LOG-1 in the 'How to record a shipment exception' format — Exception: SH-4471, held at Port Klang; Carrier: Meridian Freight; revised ETA: none given; Customer notice (<template name per desk lead>): notice text with every placeholder filled from the ticket and the desk lead's answer; Next update: <time the notice promises>. Held for the manager's approval of the exact payload.",
+          "Conditional-write: after the comment is posted, move LOG-1 to Done via save_issue, per the exception process. Held for the manager's approval."
+        ],
+        "summary": "LOG-1 records SH-4471 held at Port Klang with no revised ETA from Meridian Freight. The handbook says when the carrier has given no ETA, the desk lead chooses the template and sets the next-update time before any customer notice is written. So the run escalates that question to the desk lead via the manager DM now, and the ticket comment and Done move are held until the answer comes back. Autonomous actions are off: the DM lands now, every other write waits for the manager's literal approval."
+      },
+      "planPendingAt": 1789788504864.0,
+      "priority": "No priority",
+      "proposedSkillId": "n570fs7308rcq3tbdr2ysr89qn8eqqfr",
+      "requester": "Brian",
+      "requesterLabel": "Brian",
+      "scopeAdmission": {
+        "at": 1789788240620.0,
+        "basis": "charter-judgement",
+        "charterId": "j97csk7rahxqbw9tq1nsj3tpc58eq76d"
+      },
+      "skillId": "n570fs7308rcq3tbdr2ysr89qn8eqqfr",
+      "sourceCategory": "ticket-queue",
+      "sourceSystem": "linear",
+      "state": "completed",
+      "title": "Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA",
+      "verdict": {
+        "decision": "claim",
+        "requiredPermissions": [
+          "boss:message",
+          "linear:read"
+        ],
+        "risk": 30.0,
+        "value": 60.0
+      }
+    },
+    "aikoStopped": {
+      "_creationTime": 1789788239259.9707,
+      "_id": "nh7ed4b9807fm82jz0ffk1cm358ep46j",
+      "agentId": "j578dhkwnnds0zw43fpy548fr98eqjbt",
+      "contentRefs": [
+        "https://linear.app/day00/issue/LOG-1/exception-sh-4471-held-at-port-klang-meridian-freight-no-revised-eta"
+      ],
+      "contentSummary": "Shipment SH-4471 is held at Port Klang. The carrier, Meridian Freight, has not given a revised ETA.\n\nday0-demo-key: log-sh4471",
+      "createdAt": 1789788239259,
+      "decision": {
+        "channel": "D0BS5SXMXPZ",
+        "decidedAt": 1789788634276,
+        "decidedVia": "dashboard",
+        "id": "7egeh4",
+        "kind": "plan",
+        "outcome": "approved",
+        "requestedAt": 1789788504962,
+        "surfaceName": "Slack",
+        "surfaceSlug": "slack",
+        "ts": "1789788505.359659"
+      },
+      "externalAlias": "ab8c7d32-1d2b-41e4-bb73-ff9cc8ec9281",
+      "externalClaimAlias": "linear:ab8c7d32-1d2b-41e4-bb73-ff9cc8ec9281",
+      "externalClaimKey": "linear:LOG-1",
+      "externalId": "LOG-1",
+      "observedAt": 1789788239259,
+      "output": {
+        "actions": [
+          {
+            "args": {
+              "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (LOG-1): shipment SH-4471 is held at Port Klang and the carrier, Meridian Freight, has given no revised ETA. Before I record the exception and draft the customer notice, could you confirm with the desk lead (1) which of the two handbook templates to use — 'Delay, revised ETA confirmed' does not fit, so presumably 'Delay, ETA unconfirmed, next update by <time>' — and (2) the next-update time to promise? Once I have both answers I will post the exception comment on LOG-1 and move it to Done, held for your approval of the exact payloads.\"}",
+              "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
+              "method": "POST",
+              "path": "/chat.postMessage",
+              "surface": "slack"
+            },
+            "tool": "http.request"
+          }
+        ],
+        "applied": [
+          {
+            "authority": "standing",
+            "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789788660.332569\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (…",
+            "idempotencyKey": "nh7ed4b9807fm82jz0ffk1cm358ep46j:k973t2c4anq8qkkp2q43xwxz9n8eq6fp:0",
+            "ok": true,
+            "providerId": "1789788660.332569",
+            "tool": "http.request"
+          }
+        ],
+        "draft": "LOG-1 (SH-4471 held at Port Klang, Meridian Freight, no revised ETA) — status: blocked pending the desk lead's answer.\n\nDone so far: the escalation DM to the manager has landed (Slack manager DM, ts 1789788660.332569), asking which of the two handbook templates to use and the next-update time, per the logistics handbook's 'Notices and ETAs' rule: 'when the carrier has given none, ask the desk lead which template to use before writing to the customer. The desk lead knows which customers accept a notice without a date and sets the time of the next update.'\n\nNot done yet: the exception comment on LOG-1 and the move to Done are held. A notice that still carries a <placeholder> is not ready ('How to record a shipment exception'), and both the template name and the next-update time can only come from the desk lead. No comment has been posted on LOG-1 and its state is unchanged. Once the answer arrives, the comment will be posted in the runbook format (Exception: SH-4471, held at Port Klang; Carrier: Meridian Freight; revised ETA: none given; Customer notice (<template name>): filled notice text; Next update: <time>) and then LOG-1 moved to Done, both held for the manager's approval of the exact payloads.",
+        "needsDependentPhase": false,
+        "notes": "No desk-lead answer has arrived in this run, so the conditional comment and Done move cannot be truthfully emitted; the DM is the only landed write and no further action is taken this turn.",
+        "planStepOutcomes": [
+          {
+            "evidence": "Applied ledger row 0: http.request POST /chat.postMessage to manager DM D0BS5SXMXPZ landed (HTTP 200, ts 1789788660.332569), asking the desk lead's template choice and next-update time for SH-4471 / LOG-1.",
+            "status": "satisfied",
+            "step": 1
+          },
+          {
+            "evidence": "The comment on LOG-1 is conditional on the desk lead's answer (template name and next-update time), which has not arrived; per 'How to record a shipment exception' a notice still carrying a <placeholder> is not ready, so no comment payload can be truthfully emitted.",
+            "status": "blocked",
+            "step": 2
+          },
+          {
+            "evidence": "The Done move on LOG-1 must follow the posted comment (runbook: 'Once the comment is posted, move the ticket to Done'); no comment has landed, so no save_issue is emitted.",
+            "status": "blocked",
+            "step": 3
+          }
+        ],
+        "prerequisiteCount": 1,
+        "procedureTrails": []
+      },
+      "plan": {
+        "estimatedMinutes": 15,
+        "expectedOutputType": "ticket-update",
+        "obligations": {
+          "basis": "judgement",
+          "reason": "The plan moves LOG-1 to Done only after the desk lead answers the escalation and the manager approves the comment and status payloads; it never moves the state unconditionally.",
+          "steps": [
+            {
+              "kind": "write",
+              "reads": [],
+              "reason": "Sends the desk-lead escalation about SH-4471's missing ETA to the manager DM; it only posts a message and reads no surface.",
+              "writes": [
+                "slack"
+              ]
+            },
+            {
+              "kind": "conditional-write",
+              "reads": [],
+              "reason": "Posts the exception comment on LOG-1 only once the desk lead's template and next-update answer arrives, held for the manager's approval of the exact payload.",
+              "writes": [
+                "linear"
+              ]
+            },
+            {
+              "kind": "conditional-write",
+              "reads": [],
+              "reason": "Moves LOG-1 to Done via save_issue only after the comment is posted, held for the manager's approval.",
+              "writes": [
+                "linear"
+              ]
+            }
+          ],
+          "transition": "conditional-on-manager",
+          "transitionStep": 3
+        },
+        "reversibility": "The manager DM is conversational. The Linear comment can be rewritten or the ticket moved back to Todo; no customer-facing send happens in this plan.",
+        "riskNotes": "The customer notice cannot be drafted complete without the desk lead's choice of template and next-update time; the handbook forbids writing to the customer without it, so the recording step is conditional on that answer. The comment and status change are also gated on manager approval while autonomous actions are off. No Slack channel read or post is needed — the exception arrived as a Linear ticket, and the account team sends the notice from the ticket.",
+        "steps": [
+          "DM the manager (desk-lead escalation per the handbook's 'Notices and ETAs' rule): SH-4471 held at Port Klang, carrier Meridian Freight has given no revised ETA — ask which of the two handbook templates to use ('Delay, ETA unconfirmed, next update by <time>' needs a next-update time only the desk lead can set) and the next-update time. Reference LOG-1.",
+          "Conditional-write: once the desk lead's answer arrives via the manager, post one comment on LOG-1 in the 'How to record a shipment exception' format — Exception: SH-4471, held at Port Klang; Carrier: Meridian Freight; revised ETA: none given; Customer notice (<template name per desk lead>): notice text with every placeholder filled from the ticket and the desk lead's answer; Next update: <time the notice promises>. Held for the manager's approval of the exact payload.",
+          "Conditional-write: after the comment is posted, move LOG-1 to Done via save_issue, per the exception process. Held for the manager's approval."
+        ],
+        "summary": "LOG-1 records SH-4471 held at Port Klang with no revised ETA from Meridian Freight. The handbook says when the carrier has given no ETA, the desk lead chooses the template and sets the next-update time before any customer notice is written. So the run escalates that question to the desk lead via the manager DM now, and the ticket comment and Done move are held until the answer comes back. Autonomous actions are off: the DM lands now, every other write waits for the manager's literal approval."
+      },
+      "planPendingAt": 1789788504864,
+      "priority": "No priority",
+      "proposedSkillId": "n570fs7308rcq3tbdr2ysr89qn8eqqfr",
+      "requester": "Brian",
+      "requesterLabel": "Brian",
+      "scopeAdmission": {
+        "at": 1789788240620,
+        "basis": "charter-judgement",
+        "charterId": "j97csk7rahxqbw9tq1nsj3tpc58eq76d"
+      },
+      "skillId": "n570fs7308rcq3tbdr2ysr89qn8eqqfr",
+      "skipReason": "stopped: 2 approved plan step(s) remained blocked: step 2 (The comment on LOG-1 is conditional on the desk lead's answer (template name and next-update time), which has not arrived; per 'How to record a shipment exception' a notice still carrying a <placeholder> is not ready, so no comment payload can be truthfully emitted.); step 3 (The Done move on LOG-1 must follow the posted comment (runbook: 'Once the comment is posted, move the ticket to Done'); no comment has landed, so no save_issue is emitted.)",
+      "sourceCategory": "ticket-queue",
+      "sourceSystem": "linear",
+      "state": "failed",
+      "title": "Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA",
+      "verdict": {
+        "decision": "claim",
+        "requiredPermissions": [
+          "boss:message",
+          "linear:read"
+        ],
+        "risk": 30,
+        "value": 60
+      }
+    }
+  },
+  "autonomyChanges": [
+    {
+      "_creationTime": 1789788477973.8367,
+      "_id": "k9778yfvn2dg8sx2g4ck338rxx8eqegs",
+      "agentId": "j57989cmmzw48hyh3wkv32tzp58eqx09",
+      "createdAt": 1789788477973.0,
+      "payload": {
+        "from": false,
+        "reason": "set by the manager",
+        "to": true
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789788458102.038,
+      "_id": "k97adqpb0nbagnapm025hrygah8ep8xs",
+      "agentId": "j57b4fsy78fte4wbr2cxx90c3n8eqtvj",
+      "createdAt": 1789788458102.0,
+      "payload": {
+        "from": false,
+        "reason": "set by the manager",
+        "to": true
+      },
+      "type": "agent.autonomy-changed"
+    }
+  ],
+  "managerNotes": [
+    {
+      "_creationTime": 1789788486801.165,
+      "_id": "kn7790tfgg8s881zevdtf0kq418ep1dj",
+      "agentId": "j57b4fsy78fte4wbr2cxx90c3n8eqtvj",
+      "claimedAt": 1789788486885.0,
+      "createdAt": 1789788486801.0,
+      "kind": "landed",
+      "providerTs": "1789788487.108759",
+      "text": "Priya finished “Slack mention in #ops-requests”: 5 changes landed.\n- browser_fill_form on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('textbox', { name: 'Username' }).fill('revops'); await page.getByRole('textbox', { n…\n- browser_click on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('button', { name: 'Sign in' }).click(); ``` ### Page - Page URL: http://looker-tile:8080…\n- browser_fill_form on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('textbox', { name: 'Pipeline coverage' }).fill('74%'); ```\n- browser_click on looker-pipeline-tile · ### Ran Playwright code ```js await page.getByRole('button', { name: 'Save' }).click(); ``` ### Page - Page URL: http://looker-tile:8080/ti…\n- HTTP 200 · {\"ok\":true,\"channel\":\"C0C2U2UJUTU\",\"ts\":\"1789788484.567219\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Done \\u2014 the pipeline tile now shows 74% (the approved figure …",
+      "workItemId": "nh78e1g5th0ay674wtnck23bn58epyzs"
+    },
+    {
+      "_creationTime": 1789788602728.5583,
+      "_id": "kn77mx6tfhtps462drxyepj30s8eqm2g",
+      "agentId": "j57989cmmzw48hyh3wkv32tzp58eqx09",
+      "claimedAt": 1789788602817.0,
+      "createdAt": 1789788602728.0,
+      "kind": "landed",
+      "providerTs": "1789788603.088299",
+      "text": "Mateo finished “Post the September close status note”: 2 changes landed.\n- save_comment on linear · {\"id\":\"c46d6f9e-bdc6-4a10-a00d-7861207fd803\",\"body\":\"Accruals booked: FIN-2 Accruals booked for September, Done\\nBank reconciliation: FIN-3 Bank reconcili…\n- save_issue on linear · {\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the…",
+      "workItemId": "nh70d5rwjha1npsqn1zeaecwr58eq8w1"
+    },
+    {
+      "_creationTime": 1789788921731.7852,
+      "_id": "kn79w3fxfsa0mdctvksep4nhzs8eqwwm",
+      "agentId": "j578dhkwnnds0zw43fpy548fr98eqjbt",
+      "claimedAt": 1789788921817.0,
+      "createdAt": 1789788921731.0,
+      "kind": "landed",
+      "providerTs": "1789788922.517189",
+      "text": "Aiko finished “Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA”: 2 changes landed.\n- save_comment on linear · {\"id\":\"d8b18a49-15fc-4821-ab92-4af355db5035\",\"body\":\"Exception: SH-4471, held at Port Klang, no revised ETA given\\nCarrier: Meridian Freight; revised ETA:…\n- save_issue on linear · {\"id\":\"LOG-1\",\"uuid\":\"ab8c7d32-1d2b-41e4-bb73-ff9cc8ec9281\",\"title\":\"Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA\",\"description\":…",
+      "workItemId": "nh7ed4b9807fm82jz0ffk1cm358ep46j"
+    }
+  ],
+  "surfaces": [
+    {
+      "slug": "linear",
+      "displayName": "Linear",
+      "class": "kanban",
+      "path": "mcp",
+      "endpoint": "https://mcp.linear.app/mcp",
+      "verdict": "connected",
+      "credentialLanded": true,
+      "credentialKind": "value",
+      "lastVerifiedAt": 1789788165228.0,
+      "toolAllowlist": [
+        "get_agent_skill",
+        "get_attachment",
+        "get_diff",
+        "get_diff_threads",
+        "get_document",
+        "get_issue",
+        "get_issue_status",
+        "get_milestone",
+        "get_notifications",
+        "get_project",
+        "get_release",
+        "get_release_note",
+        "get_status_updates",
+        "get_team",
+        "get_template",
+        "get_user",
+        "get_workspace",
+        "list_agent_skills",
+        "list_comments",
+        "list_cycles",
+        "list_diffs",
+        "list_documents",
+        "list_issue_labels",
+        "list_issue_statuses",
+        "list_issues",
+        "list_milestones",
+        "list_project_labels",
+        "list_projects",
+        "list_release_notes",
+        "list_release_pipelines",
+        "list_releases",
+        "list_teams",
+        "list_templates",
+        "list_users",
+        "search_documentation",
+        "create_attachment",
+        "create_attachment_from_upload",
+        "create_issue_label",
+        "delete_attachment",
+        "delete_comment",
+        "delete_diff_comment",
+        "delete_status_update",
+        "extract_images",
+        "mark_notification",
+        "merge_diff",
+        "prepare_attachment_upload",
+        "resolve_diff_thread",
+        "restore_issue_label",
+        "restore_project_label",
+        "retire_issue_label",
+        "retire_project_label",
+        "save_comment",
+        "save_diff_comment",
+        "save_document",
+        "save_issue",
+        "save_issue_label",
+        "save_milestone",
+        "save_project",
+        "save_project_label",
+        "save_release",
+        "save_release_note",
+        "save_status_update",
+        "share_issue",
+        "submit_diff_review",
+        "unshare_issue",
+        "update_diff"
+      ]
+    },
+    {
+      "slug": "looker-pipeline-tile",
+      "displayName": "Looker pipeline tile",
+      "class": "analytics",
+      "path": "browser-driven",
+      "endpoint": "http://looker-tile:8080/",
+      "verdict": "connected",
+      "credentialLanded": true,
+      "credentialKind": "value",
+      "lastVerifiedAt": 1789788170232.0,
+      "toolAllowlist": [
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_fill_form"
+      ]
+    },
+    {
+      "slug": "slack",
+      "displayName": "Slack",
+      "class": "chat",
+      "path": "documented-api",
+      "endpoint": "https://slack.com/api/",
+      "verdict": "connected",
+      "credentialLanded": true,
+      "credentialKind": "location",
+      "lastVerifiedAt": 1789788167099.0,
+      "managerDmChannelId": "D0BS5SXMXPZ",
+      "managerName": "Brian",
+      "providerIdentityId": "U0BTFK6FLNL",
+      "toolAllowlist": [
+        "auth.test",
+        "users.lookupByEmail",
+        "conversations.open",
+        "conversations.list",
+        "conversations.history",
+        "conversations.replies",
+        "chat.postMessage"
+      ]
+    }
+  ]
+}

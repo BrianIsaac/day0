@@ -35,6 +35,9 @@ import {
   AUTONOMY_WARNING,
   autonomousActionsOn,
   autonomyLabel,
+  autonomyTurnedOnAfterDraft,
+  autonomyTurnedOnAfterDraftNote,
+  type AutonomyChange,
   HELD_BEFORE_AUTONOMY_NOTE,
   HELD_WITHHELD_TRANSITION_NOTE,
   HELD_WHILE_SUPERVISED_NOTE,
@@ -65,7 +68,7 @@ import {
 } from '../../../src/work/reconciliation';
 import type { ArgumentRepairAttempt, MockAction, PlanObligations } from '../../../src/work/types';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '../../../src/work/obligations';
-import { clockTimeWithSeconds, relativeTime, useNow } from './time';
+import { clockTime, clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
 import { GATE_REFUSAL_STOP, isGateRefusalStop, isStopped, stopDetail } from '../../../src/work/stop';
@@ -122,6 +125,11 @@ export function AgentDashboard({ agentId }: Props) {
     surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
   );
   const corrections: KeptCorrection[] = correctionRows ?? [];
+  // Real mode only: the mock has no switch, so nothing there ever flips it.
+  const autonomyChanges = useQuery(
+    api.events.autonomyChanges,
+    surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
+  );
   const retireCorrection = useMutation(api.corrections.retire);
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
@@ -246,6 +254,7 @@ export function AgentDashboard({ agentId }: Props) {
             autonomousActions={agent ? autonomousActionsOn(agent) : false}
             surfaceMode={surfaceConfig?.mode}
             corrections={corrections}
+            autonomyChanges={autonomyChanges ?? []}
           />
         </div>
 
@@ -1723,6 +1732,24 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
   );
 }
 
+// What needs the manager first: literal actions awaiting approval, then plans,
+// then skills. A failed or stopped run waits on the manager's Retry, so it sits
+// above the skipped rows, which wait on nobody.
+const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'failed', 'skipped', 'cancelled', 'deferred'];
+
+/**
+ * The work queue in the order the page lists it.
+ *
+ * Args:
+ *   workItems: The employee's work items.
+ *
+ * Returns:
+ *   A sorted copy; rows of one state keep their order.
+ */
+export function sortedForQueue<T extends { state: string }>(workItems: readonly T[]): T[] {
+  return [...workItems].sort((a, b) => QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state));
+}
+
 export function WorkQueue({
   agentId,
   workItems,
@@ -1733,6 +1760,7 @@ export function WorkQueue({
   autonomousActions,
   surfaceMode,
   corrections = [],
+  autonomyChanges = [],
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
@@ -1747,6 +1775,8 @@ export function WorkQueue({
   surfaceMode: 'mock' | 'real' | undefined;
   /** The employee's kept corrections, for the plan cards that applied one. */
   corrections?: KeptCorrection[];
+  /** The employee's flips of the autonomous-actions switch, oldest first. */
+  autonomyChanges?: readonly AutonomyChange[];
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -1760,16 +1790,7 @@ export function WorkQueue({
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
 
-  const items = useMemo(
-    () =>
-      [...workItems].sort((a, b) => {
-        // What needs the manager first: literal actions awaiting approval,
-        // then plans, then skills.
-        const order = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'skipped', 'cancelled', 'failed', 'deferred'];
-        return order.indexOf(a.state) - order.indexOf(b.state);
-      }),
-    [workItems],
-  );
+  const items = useMemo(() => sortedForQueue(workItems), [workItems]);
 
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
@@ -1842,6 +1863,7 @@ export function WorkQueue({
               autonomousActions={autonomousActions}
               questions={openQuestions.filter((question) => question.workItemId === item._id)}
               corrections={corrections}
+              autonomyChanges={autonomyChanges}
               onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
               onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
               onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
@@ -2474,6 +2496,47 @@ export function retryRequest(
  * Returns:
  *   The arguments for `work.cancelPlan`.
  */
+/** The skipped row's control: the manager gives the agent an item it set aside. */
+export const TAKE_IT_ANYWAY = 'Take it anyway';
+
+/** A retry note as typed, with the run it was typed for. */
+export interface TypedRetryNote {
+  text: string;
+  token: string;
+}
+
+/**
+ * What a typed retry note is tied to: the item's state and the manager's
+ * last sent note. Sending a note moves both, so the box empties when the
+ * Retry is taken rather than carrying the sent note onto the next card.
+ *
+ * Args:
+ *   item: The work item row.
+ *
+ * Returns:
+ *   A token that changes whenever a typed note stops being current.
+ */
+export function retryNoteToken(item: Pick<Doc<'workItems'>, 'state' | 'managerFeedback'>): string {
+  return `${item.state}:${item.managerFeedback?.at ?? ''}`;
+}
+
+/**
+ * The retry note that is still the manager's to send. A note left in the box
+ * after its Retry made the finished card read as being sent back, which put
+ * "Provider reconciliation required" under work that owed none (demo
+ * rehearsal 2, Aiko's LOG-1).
+ *
+ * Args:
+ *   typed: The note and the token it was typed under.
+ *   token: The item's current token.
+ *
+ * Returns:
+ *   The typed text while it is current, else the empty string.
+ */
+export function liveRetryNote(typed: TypedRetryNote, token: string): string {
+  return typed.token === token ? typed.text : '';
+}
+
 export function cancelPlanRequest(
   workItemId: Id<'workItems'>,
   reason?: string,
@@ -3032,6 +3095,7 @@ export function WorkItemCard({
   autonomousActions,
   questions = [],
   corrections = [],
+  autonomyChanges = [],
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -3047,6 +3111,8 @@ export function WorkItemCard({
   questions?: Doc<'managerQuestions'>[];
   /** The employee's kept corrections, for the line saying this plan applied one. */
   corrections?: readonly KeptCorrection[];
+  /** The employee's flips of the autonomous-actions switch, for a plan drafted before one. */
+  autonomyChanges?: readonly AutonomyChange[];
   onApprovePlan: (decision: PlanApproval) => void;
   onCancelPlan: (reason: string) => void;
   onRetryFailed: (feedback?: string) => void;
@@ -3083,6 +3149,8 @@ export function WorkItemCard({
   const refusedActions = unlandedActions.filter((a) => isSurfaceTool(a.tool) && isGateRefusal(a.reason));
   const failedActions = unlandedActions.filter((a) => !refusedActions.includes(a));
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
+  const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(item.planPendingAt, landedAutonomously > 0, autonomyChanges);
   const reconciliationEntries = item.providerReconciliation?.entries ??
     providerReconciliationEntries(output);
   const needsProviderReconciliation = retryRequiresProviderReconciliation(
@@ -3101,10 +3169,19 @@ export function WorkItemCard({
   // documented systems; Retry is the manager saying the work is theirs to give.
   const outOfScopeSkipped = skipVerdictReason?.startsWith(OUT_OF_SCOPE_SKIP_PREFIX) === true;
   const skipWaivable = qualityFitSkipped || outOfScopeSkipped;
+  // A skipped row's control is not a retry of a run: it hands the agent an
+  // item it set aside. Named apart so the page holds one Retry when a run stops.
+  const takeAnywayNote = qualityFitSkipped
+    ? `${TAKE_IT_ANYWAY} re-evaluates this item without the quality-fit filter; its plan still needs your approval.`
+    : outOfScopeSkipped
+      ? `${TAKE_IT_ANYWAY} re-evaluates this item as in scope, on your decision; its plan still needs your approval.`
+      : undefined;
   // Refused at the claim: the colleague who holds the item works it, and the
   // row comes back by itself if they let it go, so there is no Retry here.
   const heldByColleague = colleagueHolding(item);
-  const [retryNote, setRetryNote] = useState('');
+  const noteToken = retryNoteToken(item);
+  const [typedRetryNote, setTypedRetryNote] = useState<TypedRetryNote>({ text: '', token: noteToken });
+  const retryNote = liveRetryNote(typedRetryNote, noteToken);
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   // A plan the manager cancelled: Retry drafts a new one, never runs this one.
   const cancelledPlan = item.state === 'cancelled' && plan !== undefined;
@@ -3217,6 +3294,13 @@ export function WorkItemCard({
             redaction={plan.correctionsRedaction}
           />
           <PlanObligationsLine steps={plan.steps} obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
+          {autonomyTurnedOnAt !== undefined ? (
+            <p className="mt-2 text-[var(--color-ok)]">
+              <time dateTime={new Date(autonomyTurnedOnAt).toISOString()} title={clockTimeWithSeconds(autonomyTurnedOnAt)}>
+                {autonomyTurnedOnAfterDraftNote(clockTime(autonomyTurnedOnAt), landedAutonomously, landedActions.length)}
+              </time>
+            </p>
+          ) : null}
           {item.state === 'plan-pending' && item.planRejectedAt !== undefined ? (
             <p className="mt-2 text-[var(--color-warn)]">
               This plan was redrafted after you rejected an earlier plan. It waits for your approval even while autonomous actions are on.
@@ -3418,7 +3502,7 @@ export function WorkItemCard({
             <input
               type="text"
               value={retryNote}
-              onChange={(event) => setRetryNote(event.target.value)}
+              onChange={(event) => setTypedRetryNote({ text: event.target.value, token: noteToken })}
               placeholder={
                 item.state === 'completed'
                   ? 'note for the retry: say what to change or answer what the agent asked'
@@ -3433,9 +3517,10 @@ export function WorkItemCard({
           <button
             onClick={() => onRetryFailed(retryNote)}
             disabled={retryBlocked || (item.state === 'completed' && !sendingBack)}
+            title={takeAnywayNote}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Retry
+            {takeAnywayNote ? TAKE_IT_ANYWAY : 'Retry'}
           </button>
           {retryBlocked && (item.state !== 'completed' || sendingBack) ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
@@ -3455,17 +3540,8 @@ export function WorkItemCard({
                 : 'Retry drafts a new plan and your reason goes with it; the plan comes back to you before anything runs.'}
             </p>
           ) : null}
-          {qualityFitSkipped ? (
-            <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry re-evaluates this item without the quality-fit filter; its plan still needs
-              your approval.
-            </p>
-          ) : null}
-          {outOfScopeSkipped ? (
-            <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry re-evaluates this item as in scope, on your decision; its plan still needs
-              your approval.
-            </p>
+          {takeAnywayNote ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">{takeAnywayNote}</p>
           ) : null}
         </div>
       ) : null}

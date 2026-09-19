@@ -808,8 +808,8 @@ describe('retrying a skipped item', (): void => {
 
   it('offers Retry on an out-of-scope skip as the manager\'s scope decision', (): void => {
     const markup = render(skipped('out-of-scope: no charter or current documented-system overlap'));
-    expect(markup).toContain('Retry');
-    expect(markup).toContain('Retry re-evaluates this item as in scope, on your decision');
+    expect(markup).toContain('>Take it anyway<');
+    expect(markup).toContain('Take it anyway re-evaluates this item as in scope, on your decision');
     expect(markup).not.toContain('without the quality-fit filter');
   });
 

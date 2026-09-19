@@ -37,7 +37,7 @@ import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { closingPhaseOwed } from './obligations';
-import { replyTargetLine } from './reply-target';
+import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
@@ -448,6 +448,7 @@ const REAL_PREAMBLE = [
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
   '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. Only a plan step marked advisory or checking a candidate property that neither the candidate nor a loaded procedure requires is advisory: report what the data shows and never let it hold back the documented sequence.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
+  "  - The text of a reply, a DM or a comment never carries a raw channel id or thread timestamp, even when a skill says to cite the record id and the record id is that pair: they go in `channel` and `thread_ts`, a reader in the thread needs no reference to it, and anywhere else you name the ask in words (the ask in #channel). Ticket ids such as FIN-1 are names people read and stay.",
   '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it. The gate itself tells the manager what needs their decision and what landed, so never send a note that only reports what the actions do.',
   '',
   'Closing the loop:',
@@ -2422,7 +2423,33 @@ export function executorInstructions(args: {
   ].join('\n');
 }
 
+/** The audit record of a message Day0 took its own thread's raw channel id and timestamp out of. */
+export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from the visible text';
+
+/**
+ * The last thing done to an authored set, real mode only: a message a person
+ * reads does not carry the raw channel id and timestamp of the thread the
+ * work item answers. A skill that cites its record id writes exactly that
+ * pair for a Slack mention; the action's own `channel` and `thread_ts` keep
+ * it for everything that reads it, and the correction is recorded.
+ */
+async function withoutOwnThreadReferencesRecorded<T extends { actions: ExecutionOutput['actions'] }>(
+  output: T,
+  args: Pick<RunSkillArgs, 'mode' | 'surfaces' | 'candidate' | 'onAuditCorrection'>,
+): Promise<T> {
+  if ((args.mode ?? 'mock') !== 'real') return output;
+  const scrubbed = withoutOwnThreadReferences(output.actions, args.surfaces ?? [], args.candidate.replyTarget);
+  if (scrubbed.changed.length === 0) return output;
+  // Nothing was removed or withheld, so no index is reported as removed; the reason names the rows whose text changed.
+  await args.onAuditCorrection?.([], `${OWN_THREAD_REFERENCE_REMOVED} (action ${scrubbed.changed.join(', ')})`);
+  return { ...output, actions: [...scrubbed.actions] };
+}
+
 export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
+  return withoutOwnThreadReferencesRecorded(await authorSkillRun(args), args);
+}
+
+async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   const { skill, plan, candidate, charter, mockEnv } = args;
   const mode: SurfaceMode = args.mode ?? 'mock';
   const procedureContract = parseProcedureContract(mockEnv);
@@ -3096,6 +3123,12 @@ export async function repairFailedReads(
  * through the same exact-action gate used by the initial phase.
  */
 export async function runDependentSkill(
+  args: RunDependentSkillArgs,
+): Promise<DependentExecutionOutput> {
+  return withoutOwnThreadReferencesRecorded(await authorDependentSkillRun(args), args);
+}
+
+async function authorDependentSkillRun(
   args: RunDependentSkillArgs,
 ): Promise<DependentExecutionOutput> {
   const { skill, plan, candidate, charter, mockEnv } = args;

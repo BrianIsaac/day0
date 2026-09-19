@@ -21,6 +21,7 @@ vi.mock('convex/react', () => ({
 import {
   DocumentationPage,
   SourceKindHelp,
+  linkFormAfterLink,
   locatorForSourceKind,
 } from '../../../app/documentation/DocumentationPage';
 
@@ -67,6 +68,10 @@ describe('the link form and the components a source needs', (): void => {
     expect(locatorForSourceKind('git')).toBe('');
     expect(locatorForSourceKind('urls')).toBe('');
     expect(locatorForSourceKind('folder')).toBe('.');
+  });
+
+  it('empties the label and the locator after a link, so the next source is typed, not replaced (rehearsal 2: the Notion label was a replace of "Team folder")', (): void => {
+    expect(linkFormAfterLink()).toEqual({ label: '', locator: '' });
   });
 
   it('says a folder source needs no component running', (): void => {
