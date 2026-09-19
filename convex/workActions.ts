@@ -21,6 +21,7 @@ import {
   DEFERRALS_KEPT,
   deferralAudit,
   dependentActionCap,
+  HELD_ITEM_REPLY_COMPLETED,
   removePrewrittenClosingActions,
   repairableReadFailures,
   repairFailedReads,
@@ -57,7 +58,7 @@ import {
   type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import { plannedWriteTargets, withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
+import { heldItemOfBlockedStep, heldItemReplyFindings, plannedWriteTargets, withHeldItemsSaid, withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -1306,6 +1307,8 @@ export function blockedPlanReason(
     plan: ExecutionPlan;
     actions: readonly ExecutionOutput['actions'][number][];
     applied: readonly (Partial<AppliedAction> | undefined)[];
+    /** The items other work items hold, as the executor was told before it authored. */
+    heldElsewhere?: readonly HeldExternalItem[];
   },
 ): string | undefined {
   const blocked = outcomes.filter((outcome) => outcome.status === 'blocked');
@@ -1329,6 +1332,14 @@ export function blockedPlanReason(
     const everyActionLanded = run.actions.every(
       (_action, index) => landed(index) || withheldByClaim(run.applied[index]) || refusedRead(index),
     );
+    // A step the executor left out because its target has a work item of its
+    // own is accounted for as the withheld write would have been: the holder
+    // lands it. With every blocked step such a step, nothing here was left
+    // undone; one blocked for any other reason is judged as before.
+    const leftToHolders = blocked.every(
+      (outcome) => heldItemOfBlockedStep(outcome, run.plan, run.heldElsewhere) !== undefined,
+    );
+    if (everyActionLanded && leftToHolders) return undefined;
     const closePromised =
       run.plan.expectedOutputType === 'ticket-update' && transitionPromised(run.plan);
     const transitionLanded = run.actions.some((action, index): boolean => {
@@ -1395,6 +1406,8 @@ export function closingStopReason(run: {
   closingActions: readonly ExecutionOutput['actions'][number][];
   initialFailure?: string;
   surfaces: readonly SurfaceRecord[];
+  /** The items other work items hold, as the closing executor was told. */
+  heldElsewhere?: readonly HeldExternalItem[];
 }): string | undefined {
   const landed = landedWork(
     { actions: run.initialActions, applied: run.initialApplied },
@@ -1415,7 +1428,60 @@ export function closingStopReason(run: {
     plan: run.plan,
     actions: [...run.initialActions, ...run.closingActions],
     applied: [...run.initialApplied, ...asIfLanded],
+    heldElsewhere: run.heldElsewhere,
   });
+}
+
+/**
+ * The closing set with where a held item's work is said in its reply, for the
+ * steps the executor left to that item's own work item.
+ *
+ * The authoring's own check asks this of a set that writes to a held item. An
+ * executor that obeyed the held-items block wrote to none, so the check never
+ * ran; the person who asked is owed the same sentence, and it is Day0's, built
+ * from the holder's row.
+ *
+ * Args:
+ *   actions: The closing set, after its repairs.
+ *   outcomes: The closing phase's plan-step accounting.
+ *   plan: The approved plan.
+ *   heldElsewhere: The items other work items hold, as the executor was told.
+ *   surfaces: The agent's surfaces.
+ *   replyTarget: The thread the work item answers, when it came from chat.
+ *
+ * Returns:
+ *   The set, and the sentences added to it; the same set when none was owed.
+ */
+export function withLeftStepsSaid(
+  actions: ExecutionOutput['actions'],
+  outcomes: readonly PlanStepOutcome[],
+  plan: ExecutionPlan,
+  heldElsewhere: readonly HeldExternalItem[],
+  surfaces: readonly SurfaceRecord[],
+  replyTarget?: { channel: string; threadTs?: string },
+): { actions: ExecutionOutput['actions']; said: string[] } {
+  const owed = outcomes.flatMap((outcome) => {
+    const item = outcome.status === 'blocked' ? heldItemOfBlockedStep(outcome, plan, heldElsewhere) : undefined;
+    return item ? [item] : [];
+  });
+  if (owed.length === 0) return { actions, said: [] };
+  // The manager DM reports on the work; it is not where the person who asked reads.
+  const toTheAsker = actions.filter((action) => {
+    const parsed = parseSurfaceAction(action);
+    const surface = parsed.ok ? surfaces.find((row) => row.slug === parsed.action.surface) : undefined;
+    return !(parsed.ok && surface && isManagerDm(parsed.action, surface));
+  });
+  const findings = heldItemReplyFindings(toTheAsker, heldElsewhere, surfaces, owed).filter((finding) =>
+    owed.includes(finding.item),
+  );
+  const answered = withHeldItemsSaid(toTheAsker, findings, surfaces, replyTarget) as ExecutionOutput['actions'];
+  const next = actions.map((action) => {
+    const at = toTheAsker.indexOf(action);
+    return at === -1 ? action : answered[at]!;
+  });
+  return next.every((action, index) => action === actions[index])
+    ? { actions, said: [] }
+    : { actions: next, said: findings.map((finding) => finding.sentence) };
 }
 
 /** Author the one bounded closing action set from the persisted prerequisite ledger. */
@@ -1540,6 +1606,14 @@ export const authorDependentActions = internalAction({
         candidate: rowToCandidate(item),
         onAdditionalModelCall: (): void => {},
       }));
+      const leftSaid = withLeftStepsSaid(held.actions, held.planStepOutcomes, plan, heldElsewhere, surfaces, item.replyTarget);
+      if (leftSaid.said.length > 0) {
+        held.actions = leftSaid.actions;
+        await ctx.runMutation(internal.events.log, {
+          agentId: item.agentId, type: 'audit.corrected',
+          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices: [], reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}` },
+        });
+      }
       authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
         plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes, initialFailure,
@@ -1559,6 +1633,7 @@ export const authorDependentActions = internalAction({
         closingActions: held.actions,
         initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
         surfaces,
+        heldElsewhere,
       });
       if (stop) {
         const offset = initial.actions.length;
@@ -2419,6 +2494,14 @@ async function finishRun(
         plan: (await ctx.runQuery(internal.work.getInternal, { workItemId }))?.plan as ExecutionPlan,
         actions: finalOutput.actions,
         applied: finalOutput.applied,
+        // Read only for a blocked step, and as the closing executor was told it.
+        heldElsewhere:
+          SURFACE_MODE === 'real' && output.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
+            ? scrubKnownValues(
+                (await ctx.runQuery(internal.work.itemsHeldElsewhere, { workItemId })) as HeldExternalItem[],
+                knownValues,
+              )
+            : undefined,
       });
     if (finalReason) {
       const ended = gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? finalReason;

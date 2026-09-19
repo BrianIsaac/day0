@@ -78,7 +78,12 @@ import {
   RUN_4_TILE_READ_BACK,
 } from './fixtures/plan-obligations-2026-09-16';
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
-import { FIN_1_ITEM, FIN_1_ITEM_ACTIONS } from '../fixtures/mateo-stopped-rows-2026-09-19';
+import {
+  FIN_1_ITEM,
+  FIN_1_ITEM_ACTIONS,
+  FINANCE_CLOSE_ASK,
+  FINANCE_CLOSE_ASK_ACTIONS,
+} from '../fixtures/mateo-stopped-rows-2026-09-19';
 import { REFUSED_CREATE_ACTION, REFUSED_CREATE_RUN } from '../fixtures/refused-ticket-create-2026-09-19';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
@@ -5046,6 +5051,170 @@ describe('the closing gates against the 16 September plans', (): void => {
         planStepOutcomes: [...run4AuditNoteOutcomes.slice(0, 4), { step: 5, status: 'blocked', evidence: 'the manager has not decided' }],
       }),
     ).toBeUndefined();
+  });
+});
+
+describe('an ask that leaves a held ticket to its own work item still answers (19 Sep third run, finding S)', (): void => {
+  const [listIssues, threadReply, managerDm] = FINANCE_CLOSE_ASK_ACTIONS.map((action) => ({
+    tool: action.tool,
+    args: { ...action.args },
+  })) as ExecutionOutput['actions'];
+
+  async function seedAskAndTicket(harness: Harness): Promise<Seeded> {
+    const seeded = await seed(
+      harness,
+      'real',
+      ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write'],
+      { autonomousActions: true },
+    );
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(seeded.agentId, { name: 'Mateo', managerNotifications: 'digest' });
+      await ctx.db.insert('skills', {
+        agentId: seeded.agentId,
+        name: 'answer-close-status-ask',
+        description: 'Answer where the close stands, in the thread that asked.',
+        body: 'Read the step tickets, then answer in the thread.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'slack',
+        createdAt: 1,
+        registeredAt: 1,
+      });
+      for (const surface of await ctx.db.query('surfaces').collect()) {
+        await ctx.db.patch(
+          surface._id,
+          surface.slug === 'slack'
+            ? { managerDmChannelId: 'D0BS5SXMXPZ', managerUserId: 'U0MANAGER' }
+            : { toolAllowlist: ['save_comment', 'save_issue', 'get_issue', 'list_issues', 'list_comments'] },
+        );
+      }
+      await ctx.db.patch(seeded.workItemId, {
+        sourceCategory: 'event-stream',
+        sourceSystem: 'slack',
+        externalId: FINANCE_CLOSE_ASK.externalId,
+        externalClaimKey: 'slack:T0BSQSQG0UU:C0C2P932A2H:1789761522.764859',
+        title: FINANCE_CLOSE_ASK.title,
+        contentSummary: FINANCE_CLOSE_ASK.contentSummary,
+        replyTarget: { ...FINANCE_CLOSE_ASK.replyTarget },
+        plan: { ...FINANCE_CLOSE_ASK.plan, steps: [...FINANCE_CLOSE_ASK.plan.steps] } as never,
+      });
+      // FIN-1's own work item, with the same employee, approved and not yet run: the 19 Sep order.
+      await ctx.db.insert('workItems', {
+        agentId: seeded.agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: FIN_1_ITEM.externalId,
+        externalClaimKey: 'linear:FIN-1',
+        title: FIN_1_ITEM.title,
+        contentSummary: FIN_1_ITEM.contentSummary,
+        contentRefs: [],
+        state: 'plan-approved',
+        observedAt: 1,
+        createdAt: 1,
+      });
+    });
+    return seeded;
+  }
+
+  async function runBothPhases(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error(`execution run missing: ${prepared.state} ${prepared.skipReason ?? ''}`);
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const authored = await readItem(harness, workItemId);
+    if (authored.state === 'executing') await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    return await readItem(harness, workItemId);
+  }
+
+  function useRunOutputs(planStepOutcomes: DependentExecutionOutput['planStepOutcomes'], closingActions = [threadReply!, managerDm!]): void {
+    recorded.skillOutput = { draft: 'Reading the close step tickets.', notes: '', needsDependentPhase: true, actions: [listIssues!] };
+    recorded.dependentOutput = { draft: 'Answering in the thread; the note is FIN-1\'s own work.', notes: '', actions: closingActions, planStepOutcomes };
+  }
+
+  it("sends the run's thread reply and completes when the executor authors no FIN-1 write", async (): Promise<void> => {
+    useSurfaceMode('real');
+    useRunOutputs(FINANCE_CLOSE_ASK.planStepOutcomes as DependentExecutionOutput['planStepOutcomes']);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedAskAndTicket(harness);
+
+    const done = await runBothPhases(harness, workItemId);
+
+    expect(done.skipReason).toBeUndefined();
+    expect(done.state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment' || call.tool === 'save_issue')).toEqual([]);
+    const posts = recorded.http.filter((call) => call.url.includes('chat.postMessage')).map((call) => call.body as { channel: string; thread_ts?: string; text: string });
+    const reply = posts.find((post) => post.channel === 'C0C2P932A2H');
+    expect(reply?.thread_ts).toBe('1789761522.764859');
+    expect(reply?.text).toContain('Bank reconciliation: FIN-3 Bank reconciliation for September, In Progress');
+    // The reply says where the note is: on FIN-1, by its own work item.
+    expect(reply?.text).toMatch(/FIN-1[^\n]*own work item/);
+    expect(ledger(done).every((row) => row.ok && !row.held)).toBe(true);
+    // The blocked steps stay on the record as the executor accounted for them.
+    const kept = (done.output as { planStepOutcomes: Array<{ step: number; status: string }> }).planStepOutcomes;
+    expect(kept.filter((row) => row.status === 'blocked').map((row) => row.step)).toEqual([3, 5]);
+  });
+
+  it('adds where the note is to a reply that does not say it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const silent = {
+      ...threadReply!,
+      args: {
+        ...threadReply!.args,
+        body: JSON.stringify({ channel: 'C0C2P932A2H', thread_ts: '1789761522.764859', text: 'Accruals booked: FIN-2, Done\nNot done yet: Bank reconciliation (FIN-3, In Progress)' }),
+      },
+    };
+    useRunOutputs(FINANCE_CLOSE_ASK.planStepOutcomes as DependentExecutionOutput['planStepOutcomes'], [silent, managerDm!]);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedAskAndTicket(harness);
+
+    const done = await runBothPhases(harness, workItemId);
+
+    expect(done.state).toBe('completed');
+    const reply = recorded.http
+      .map((call) => call.body as { channel?: string; text?: string })
+      .find((post) => post.channel === 'C0C2P932A2H');
+    expect(reply?.text).toContain('Not done yet: Bank reconciliation (FIN-3, In Progress)');
+    expect(reply?.text).toContain('FIN-1 has its own work item ("Post the September close status note"); what this request asked for on FIN-1 will be posted there.');
+  });
+
+  it('still stops, reply withheld, when a step is blocked for any other reason', async (): Promise<void> => {
+    useSurfaceMode('real');
+    useRunOutputs(
+      (FINANCE_CLOSE_ASK.planStepOutcomes as DependentExecutionOutput['planStepOutcomes']).map((outcome) =>
+        outcome.step === 3
+          ? { ...outcome, evidence: 'The note could not be written: the step tickets disagree about the close date.' }
+          : outcome,
+      ),
+    );
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedAskAndTicket(harness);
+
+    const stopped = await runBothPhases(harness, workItemId);
+
+    expect(stopped.state).toBe('failed');
+    expect(isStopped(stopped.skipReason)).toBe(true);
+    expect(stopped.skipReason).toContain('2 approved plan step(s) remained blocked: step 3 (The note could not be written');
+    expect(recorded.http.filter((call) => call.url.includes('chat.postMessage'))).toEqual([]);
+    expect(ledger(stopped).slice(1).every((row) => row.held && row.reason === WITHHELD_ON_STOP)).toBe(true);
+  });
+
+  it('still stops when FIN-1 has no work item of its own to leave the note to', async (): Promise<void> => {
+    useSurfaceMode('real');
+    useRunOutputs(FINANCE_CLOSE_ASK.planStepOutcomes as DependentExecutionOutput['planStepOutcomes']);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedAskAndTicket(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      const holder = (await ctx.db.query('workItems').collect()).find((row) => row.externalId === 'FIN-1');
+      if (holder) await ctx.db.patch(holder._id, { state: 'cancelled' });
+    });
+
+    const stopped = await runBothPhases(harness, workItemId);
+
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(FINANCE_CLOSE_ASK.skipReason);
+    expect(recorded.http.filter((call) => call.url.includes('chat.postMessage'))).toEqual([]);
   });
 });
 
