@@ -4,7 +4,7 @@ Version maintenance record for Day0, from the git history, grouped by the milest
 
 ## goai-final: the finals build, 16 to 19 September 2026
 
-The tag `goai-final` marks this release; it moves onto the merge that lands this entry. The recording ran on `f739614`, the last commit dated 19 September, and the hosted halves were brought to it on 20 September 2026: the cloud Convex functions first (293 functions, three new empty tables, no row of the protected office changed), then the app at `day0-olive.vercel.app`. 415 commits dated 17 to 19 September; 3,515 tests.
+The tag `goai-final` marks this release; it moves onto the merge that lands this entry. The recording ran on `f739614`, the last commit dated 19 September, and the hosted halves were brought to it on 20 September 2026: the cloud Convex functions first (293 functions, three new empty tables, no row of the protected office changed), then the app at `day0-olive.vercel.app`. 415 commits dated 17 to 19 September; 3,517 tests in 252 files.
 
 ### 19 September 2026
 
