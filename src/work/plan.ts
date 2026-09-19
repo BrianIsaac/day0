@@ -73,6 +73,16 @@ export const SIGNED_TICKET_PLANNER = [
   '  - If the gate refuses a step, the steps that do not need its result still run and the run stops with the refusal for the manager. So do not make the work the ask is about (the refresh, the answer on the thread) wait on bookkeeping such as filing a ticket: word each step so it stands on what it needs and no more.',
 ];
 
+/**
+ * What a ticket's own item reads, real mode only. On 19 September FIN-1's plan
+ * declared a read of Slack for a job that lived wholly in Linear, and the
+ * promised-read gate then held the run to a channel read nothing needed. The
+ * mock planner text stays byte-identical.
+ */
+export const OWN_ITEM_READS_PLANNER = [
+  "  - Plan the reads the work itself needs and no others. A ticket's own item is done on its ticket: it needs no chat channel read unless a step of this plan uses what the channel says, and a question somebody asked in a channel is its own work item, answered there. Declare a read of a surface only on a step that uses what it reads; a declared read is one the run is held to.",
+];
+
 /** The run-context instruction shared by the planner and executor. */
 export function actionModeInstruction(
   autonomousActions: boolean,
@@ -94,7 +104,7 @@ export function planSystemPrompt(
   return [
     ...SYSTEM_PROMPT_HEAD,
     ...(surfaceMode === 'real'
-      ? [...SCOPE_NOT_GATE_PLANNER, ...DECLARED_OBLIGATIONS_PLANNER, ...SIGNED_TICKET_PLANNER]
+      ? [...SCOPE_NOT_GATE_PLANNER, ...DECLARED_OBLIGATIONS_PLANNER, ...SIGNED_TICKET_PLANNER, ...OWN_ITEM_READS_PLANNER]
       : []),
     '',
     actionModeInstruction(autonomousActions, surfaceMode),

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { SurfaceRecord } from '../../../src/surfaces/types';
+import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import { OUTCOME_UNKNOWN_REASON } from '../../../src/work/reconciliation';
-import { LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION } from '../../../src/surfaces/policy';
+import { LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION, SHARED_WRITE_WITHOUT_ATTRIBUTION } from '../../../src/surfaces/policy';
 import {
+  DROPPED_READ_PREFIX,
+  droppedReadRefusal,
   gateRefusalStop,
   isGateRefusalStop,
   isStopped,
@@ -10,7 +12,9 @@ import {
   STOPPED_PREFIX,
   stopDetail,
   stoppedReason,
+  withRefusedReadsDropped,
 } from '../../../src/work/stop';
+import { FIN_1_ITEM, FIN_1_ITEM_ACTIONS } from '../../fixtures/mateo-stopped-rows-2026-09-19';
 import { REFUSED_CREATE_RUN } from '../../fixtures/refused-ticket-create-2026-09-19';
 import type { MockAction } from '../../../src/work/types';
 
@@ -146,5 +150,71 @@ describe('a run cut short by a gate refusal (19 Sep run, finding N)', (): void =
   it('leaves a mock run exactly as it read before', (): void => {
     const mock: MockAction[] = [{ tool: 'ticket.update', args: { slug: 'T-1', status: 'done' } }];
     expect(gateRefusalStop(mock, [{ tool: 'ticket.update', ok: false, reason: 'unknown tool' }])).toBeUndefined();
+  });
+});
+
+describe('a read the gate refused is dropped, not a stop (19 Sep third run, finding R)', (): void => {
+  const actions = FIN_1_ITEM_ACTIONS;
+  const ledger = FIN_1_ITEM.applied as Array<Partial<AppliedAction>>;
+  // The run's own refusal names a write; a read is refused for its grant, its
+  // surface or its allowlist, so the row is replayed under each of those.
+  const refusedAs = (reason: string): Array<Partial<AppliedAction>> => [ledger[0]!, { ...ledger[1]!, reason }];
+
+  it("keeps the run's list_issues and marks the refused Slack read dropped, with the gate's reason", (): void => {
+    const dropped = withRefusedReadsDropped(actions, refusedAs('no grant (slack:read)'));
+    expect(dropped[0]).toBe(ledger[0]);
+    expect(dropped[1]).toMatchObject({
+      tool: 'http.request',
+      ok: true,
+      held: true,
+      reason: `${DROPPED_READ_PREFIX}no grant (slack:read)`,
+      idempotencyKey: ledger[1]!.idempotencyKey,
+    });
+    expect(droppedReadRefusal(dropped[1]!.reason)).toBe('no grant (slack:read)');
+    expect(gateRefusalStop(actions, dropped)).toBeUndefined();
+  });
+
+  it('drops the row as the run recorded it too, now that the operation is read as a read', (): void => {
+    const dropped = withRefusedReadsDropped(actions, ledger);
+    expect(dropped[1]).toMatchObject({ ok: true, held: true });
+    expect(droppedReadRefusal(dropped[1]!.reason)).toBe(SHARED_WRITE_WITHOUT_ATTRIBUTION);
+  });
+
+  it('never drops a refused write: the run still stops at it', (): void => {
+    const rows = [{ tool: 'mcp.call', ...ok }, { tool: 'mcp.call', ok: false, reason: 'no grant (linear:write)' }];
+    const kept = withRefusedReadsDropped([read, comment], rows);
+    expect(kept).toEqual(rows);
+    expect(gateRefusalStop([read, comment], kept)).toContain("Day0's gate refused 1 of 2 actions");
+  });
+
+  it('never drops a read the provider failed, or one whose outcome is unknown', (): void => {
+    const failed = [{ tool: 'mcp.call', ...ok }, { tool: 'mcp.call', ok: false, reason: 'provider said no' }];
+    expect(withRefusedReadsDropped([comment, read], failed)).toEqual(failed);
+    const unknown = [
+      { tool: 'mcp.call', ...ok },
+      { tool: 'mcp.call', ok: false, outcomeUnknown: true, reason: 'no grant (linear:read)' },
+    ];
+    expect(withRefusedReadsDropped([comment, read], unknown)).toEqual(unknown);
+  });
+
+  it('drops nothing when no other row stands: a run that did nothing still stops', (): void => {
+    const only = [{ tool: 'mcp.call', ok: false, reason: 'no grant (linear:read)' }];
+    expect(withRefusedReadsDropped([read], only)).toEqual(only);
+    expect(gateRefusalStop([read], only)).toContain('nothing else landed');
+  });
+
+  it('leaves a mock run and an unparsable row alone', (): void => {
+    const mock: MockAction[] = [{ tool: 'slack.postMessage', args: { slug: 'dm-manager' } }, { tool: 'ticket.update', args: { slug: 'T-1' } }];
+    const rows = [{ tool: 'slack.postMessage', ok: false, reason: 'unknown tool' }, { tool: 'ticket.update', ...ok }];
+    expect(withRefusedReadsDropped(mock, rows)).toEqual(rows);
+    const broken: MockAction[] = [{ tool: 'mcp.call', args: { surface: 'linear' } }, comment];
+    const malformed = [{ tool: 'mcp.call', ok: false, reason: 'malformed surface action (tool is required)' }, { tool: 'mcp.call', ...ok }];
+    expect(withRefusedReadsDropped(broken, malformed)).toEqual(malformed);
+  });
+
+  it('reads only its own line back as a dropped read', (): void => {
+    expect(droppedReadRefusal('no grant (slack:read)')).toBeUndefined();
+    expect(droppedReadRefusal(undefined)).toBeUndefined();
+    expect(droppedReadRefusal(`${DROPPED_READ_PREFIX}provider said no`)).toBeUndefined();
   });
 });

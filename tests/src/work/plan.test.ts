@@ -8,6 +8,7 @@ import {
   CANDIDATE_RECORD_LENGTH,
   candidateRecordRead,
   draftExecutionPlan,
+  OWN_ITEM_READS_PLANNER,
   planPreconditionAudit,
   planSchema,
   planSystemPrompt,
@@ -323,6 +324,18 @@ describe('charter adjectives are scope, not gates', (): void => {
     expect(prompt).toContain('Day0 signs a new ticket in its description');
     expect(prompt).toContain('refuses a new ticket that has no description');
     expect(prompt).toContain('the steps that do not need its result still run');
+  });
+
+  it("tells the real planner a ticket's own item needs no channel read its plan does not use (19 Sep third run, finding R)", (): void => {
+    for (const line of OWN_ITEM_READS_PLANNER) {
+      expect(planSystemPrompt(false, 'real')).toContain(line);
+      expect(planSystemPrompt(true, 'real')).toContain(line);
+      expect(planSystemPrompt(false, 'mock')).not.toContain(line);
+      expect(planSystemPrompt(true, 'mock')).not.toContain(line);
+    }
+    const prompt = planSystemPrompt(true, 'real');
+    expect(prompt).toContain("A ticket's own item is done on its ticket");
+    expect(prompt).toContain('a declared read is one the run is held to');
   });
 
   it('derives candidate properties from the charter wording', (): void => {

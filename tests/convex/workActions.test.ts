@@ -28,7 +28,7 @@ import {
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
 } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
-import { isStopped, STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
+import { DROPPED_READ_PREFIX, isStopped, STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
 import { actionIdempotencyKey } from '../../src/work/idempotency';
 import {
   CLOSING_SET_CAP,
@@ -78,6 +78,7 @@ import {
   RUN_4_TILE_READ_BACK,
 } from './fixtures/plan-obligations-2026-09-16';
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
+import { FIN_1_ITEM, FIN_1_ITEM_ACTIONS } from '../fixtures/mateo-stopped-rows-2026-09-19';
 import { REFUSED_CREATE_ACTION, REFUSED_CREATE_RUN } from '../fixtures/refused-ticket-create-2026-09-19';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
@@ -524,6 +525,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                 'save_comment',
                 'save_issue',
                 'get_issue',
+                'list_issues',
                 'list_comments',
                 'browser_navigate',
                 'browser_fill_form',
@@ -5044,6 +5046,175 @@ describe('the closing gates against the 16 September plans', (): void => {
         planStepOutcomes: [...run4AuditNoteOutcomes.slice(0, 4), { step: 5, status: 'blocked', evidence: 'the manager has not decided' }],
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep third run, finding R)", (): void => {
+  const closing: DependentExecutionOutput = {
+    draft: 'The close status note is on FIN-1 and FIN-1 is Done.',
+    notes: '',
+    actions: [
+      {
+        tool: 'mcp.call',
+        args: {
+          surface: 'linear',
+          tool: 'save_comment',
+          toolArgsJson: JSON.stringify({ issueId: 'FIN-1', body: 'Accruals booked: FIN-2, Done\nNot done yet: FIN-3' }),
+        },
+      },
+      {
+        tool: 'mcp.call',
+        args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'FIN-1', state: 'Done' }) },
+      },
+    ],
+    planStepOutcomes: [1, 2, 3, 4].map((step) => ({ step, status: 'satisfied' as const, evidence: 'Landed; see the ledger.' })),
+  };
+
+  async function seedTicket(harness: Harness, grants: string[]): Promise<Seeded> {
+    const seeded = await seed(harness, 'real', grants, { autonomousActions: true });
+    await harness.run(async (ctx): Promise<void> => {
+      for (const surface of await ctx.db.query('surfaces').collect()) {
+        await ctx.db.patch(surface._id, {
+          toolAllowlist:
+            surface.slug === 'slack'
+              ? ['conversations.list', 'conversations.history', 'chat.postMessage']
+              : ['save_comment', 'save_issue', 'get_issue', 'list_issues', 'list_comments'],
+        });
+      }
+      await ctx.db.patch(seeded.workItemId, {
+        externalId: FIN_1_ITEM.externalId,
+        title: FIN_1_ITEM.title,
+        contentSummary: FIN_1_ITEM.contentSummary,
+        plan: { ...FIN_1_ITEM.plan, steps: [...FIN_1_ITEM.plan.steps] } as never,
+      });
+    });
+    return seeded;
+  }
+
+  async function runBothPhases(
+    harness: Harness,
+    workItemId: Id<'workItems'>,
+    betweenHoldAndApply: () => Promise<void> = async (): Promise<void> => {},
+  ): Promise<Doc<'workItems'>> {
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await betweenHoldAndApply();
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error(`execution run missing: ${prepared.state} ${prepared.skipReason ?? ''}`);
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    return await readItem(harness, workItemId);
+  }
+
+  function phaseOne(): ExecutionOutput {
+    return {
+      draft: 'Reading the close step tickets, then locating #finance-close.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: FIN_1_ITEM_ACTIONS.map((action) => ({ tool: action.tool, args: { ...action.args } })) as ExecutionOutput['actions'],
+    };
+  }
+
+  it("sends the run's POST /conversations.list as the read it is, and the item completes", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, ['boss:message', 'linear:read', 'linear:write', 'slack:read']);
+
+    const done = await runBothPhases(harness, workItemId);
+
+    expect(recorded.http.map((call) => [call.method, call.url])).toContainEqual(['POST', 'https://slack.com/api/conversations.list']);
+    expect(ledger(done).map((row) => row.ok && !row.held)).toEqual([true, true, true, true]);
+    expect(done.state).toBe('completed');
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.actions).toMatchObject({ refused: 0 });
+  });
+
+  it('drops the read when the gate refuses it at the apply, says so on the ledger, and goes on', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = {
+      ...closing,
+      planStepOutcomes: closing.planStepOutcomes.map((outcome) =>
+        outcome.step === 4
+          ? { step: 4, status: 'blocked' as const, evidence: "The #finance-close read was refused by Day0's gate (no grant), so no thread was answered." }
+          : outcome,
+      ),
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, ['boss:message', 'linear:read', 'linear:write', 'slack:read']);
+
+    // The hold saw the grant; it is gone by the apply, so the gate refuses the
+    // read there, which is the one place a refused read is a failed row.
+    const done = await runBothPhases(harness, workItemId, async (): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        const grant = (await ctx.db.query('permissionGrants').collect()).find((row) => row.scope === 'slack:read');
+        if (grant) await ctx.db.delete(grant._id);
+      });
+    });
+
+    expect(recorded.http.filter((call) => call.url.includes('conversations.list'))).toEqual([]);
+    const rows = ledger(done);
+    expect(rows[1]).toMatchObject({ ok: true, held: true, reason: `${DROPPED_READ_PREFIX}no grant (slack:read)` });
+    expect(rows[1]?.authority).toBeUndefined();
+    expect([rows[0], rows[2], rows[3]].every((row) => row?.ok && !row.held)).toBe(true);
+    expect(done.state).toBe('completed');
+    // The gate did refuse an action, and the supervision figure still says so.
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.actions).toMatchObject({ refused: 1 });
+  });
+
+  it('accounts for a refused read beside a blocked step, and never for a refused write', (): void => {
+    const plan = { ...FIN_1_ITEM.plan, steps: [...FIN_1_ITEM.plan.steps] } as never;
+    const actions = [...phaseOne().actions, ...closing.actions];
+    const landed = { tool: 'mcp.call', ok: true };
+    const outcomes = closing.planStepOutcomes.map((outcome) =>
+      outcome.step === 4 ? { ...outcome, status: 'blocked' as const, evidence: 'The channel read was refused.' } : outcome,
+    );
+    const withRead = (row: Partial<AppliedAction>): Array<Partial<AppliedAction>> => [landed, row, landed, landed];
+    // Dropped at the apply, and held at the hold: either way the read was never sent.
+    expect(blockedPlanReason(outcomes, { plan, actions, applied: withRead({ tool: 'http.request', ok: true, held: true, reason: `${DROPPED_READ_PREFIX}no grant (slack:read)` }) })).toBeUndefined();
+    expect(blockedPlanReason(outcomes, { plan, actions, applied: withRead({ tool: 'http.request', ok: true, held: true, reason: 'no grant (slack:read)' }) })).toBeUndefined();
+    // A read the manager left unapproved, or one a provider failed, is not the gate's refusal.
+    expect(blockedPlanReason(outcomes, { plan, actions, applied: withRead({ tool: 'http.request', ok: true, held: true, reason: 'held: not approved' }) })).toContain('remained blocked');
+    expect(blockedPlanReason(outcomes, { plan, actions, applied: withRead({ tool: 'http.request', ok: false, reason: 'provider said no' }) })).toContain('remained blocked');
+    // The same held line on a write is work left undone.
+    const write = [...actions];
+    write[1] = { tool: 'http.request', args: { surface: 'slack', method: 'POST', path: '/conversations.open', body: '{"users":"U1"}' } };
+    expect(blockedPlanReason(outcomes, { plan, actions: write, applied: withRead({ tool: 'http.request', ok: true, held: true, reason: 'no grant (slack:write)' }) })).toContain('remained blocked');
+  });
+
+  it('still stops at a write the gate refuses beside the read', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...phaseOne(),
+      actions: [
+        ...phaseOne().actions,
+        {
+          tool: 'http.request',
+          args: { surface: 'slack', method: 'POST', path: '/conversations.open', body: JSON.stringify({ users: 'U0BTFHN6MKJ' }) },
+        },
+      ],
+    };
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write']);
+    await harness.run(async (ctx): Promise<void> => {
+      const slack = (await ctx.db.query('surfaces').collect()).find((row) => row.slug === 'slack');
+      if (slack) await ctx.db.patch(slack._id, { toolAllowlist: ['conversations.list', 'conversations.open', 'chat.postMessage'] });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(ledger(stopped)[2]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
+    expect(recorded.http.filter((call) => call.url.includes('conversations.open'))).toEqual([]);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain("Day0's gate refused 1 of 3 actions before sending it");
+    expect(stopped.skipReason).toContain('POST /conversations.open on slack');
   });
 });
 

@@ -83,7 +83,7 @@ import {
   scrubbedCorrectionEntries,
   type PlannerCorrection,
 } from '../src/work/corrections';
-import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
+import { droppedReadRefusal, gateRefusalStop, landedWork, WITHHELD_ON_STOP, withRefusedReadsDropped } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
@@ -94,6 +94,7 @@ import {
   describeAction,
   isAutomatic,
   isAuditComment,
+  isGateRefusal,
   isManagerDm,
   isStatusChange,
   needsStandingGrant,
@@ -1314,10 +1315,19 @@ export function blockedPlanReason(
       const row = run.applied[index];
       return row?.ok === true && row.held !== true;
     };
+    // A read the gate refused was never sent and had nothing to change: the
+    // step that needed it is the blocked step, not an action that did not land.
+    const refusedRead = (index: number): boolean => {
+      const row = run.applied[index];
+      if (row?.held !== true) return false;
+      if (!isGateRefusal(droppedReadRefusal(row.reason) ?? row.reason)) return false;
+      const parsed = parseSurfaceAction(run.actions[index]!);
+      return parsed.ok && actionIntent(parsed.action) === 'read';
+    };
     // A write withheld for another work item's claim is that item's to land;
     // it is not work this run left undone.
     const everyActionLanded = run.actions.every(
-      (_action, index) => landed(index) || withheldByClaim(run.applied[index]),
+      (_action, index) => landed(index) || withheldByClaim(run.applied[index]) || refusedRead(index),
     );
     const closePromised =
       run.plan.expectedOutputType === 'ticket-update' && transitionPromised(run.plan);
@@ -2363,7 +2373,9 @@ async function finishRun(
   // the adapters already applied it to provider text, and this covers every
   // other string the dashboard renders from the run, whatever wrote it.
   const output = scrubKnownValues(rawOutput, knownValues);
-  const applied = scrubKnownValues(rawApplied, knownValues);
+  // A read the gate refused is dropped with its ledger line and is no failure
+  // of the run; a refused write still is.
+  const applied = scrubKnownValues(withRefusedReadsDropped(rawOutput.actions ?? [], rawApplied), knownValues);
   const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
   const reason =
     applied.length === 0

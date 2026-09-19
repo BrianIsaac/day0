@@ -8,9 +8,14 @@
  * gate refused before sending: nothing is unknown at the provider, the rest of
  * the run went ahead, and the reason says what was refused and what stands.
  * That stop may have landed work, so its landed note is still sent.
+ *
+ * A READ the gate refused is not such a row: nothing was sent and nothing was
+ * to change, so it is dropped with a ledger line and the run goes on without
+ * it. A step that needed what it would have read says so in the closing
+ * phase, and the promised-read gate still holds a plan to the reads it declared.
  */
 
-import { isGateRefusal, isManagerDm, isSurfaceTool, parseSurfaceAction } from '../surfaces/policy';
+import { actionIntent, isGateRefusal, isManagerDm, isSurfaceTool, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import type { MockAction } from './types';
 import {
@@ -27,6 +32,61 @@ export const WITHHELD_ON_STOP =
 
 /** How the reason of a run cut short by a gate refusal begins, after the stopped prefix. */
 export const GATE_REFUSAL_STOP = "Day0's gate refused ";
+
+/** How the ledger line of a read the gate refused, and the run went on without, begins. */
+export const DROPPED_READ_PREFIX =
+  "dropped: Day0's gate refused this read before sending it, so nothing was read and the run went on without it: ";
+
+/**
+ * The gate's own reason on a dropped read's ledger line.
+ *
+ * Args:
+ *   reason: The reason on a ledger row.
+ *
+ * Returns:
+ *   The refusal the gate gave, or undefined when the row is not a dropped read.
+ */
+export function droppedReadRefusal(reason: string | undefined): string | undefined {
+  if (reason?.startsWith(DROPPED_READ_PREFIX) !== true) return undefined;
+  const refusal = reason.slice(DROPPED_READ_PREFIX.length);
+  return isGateRefusal(refusal) ? refusal : undefined;
+}
+
+/**
+ * The ledger with every read the gate refused marked dropped.
+ *
+ * Only a real surface verb the gate itself refused before sending, whose
+ * action parses as a read, is dropped: a refused write still stops the run, a
+ * provider's failure and an unknown outcome are untouched, and so is a mock
+ * run. The row is kept, accounted for as a held row is (`ok`, `held`), with
+ * the gate's reason after the prefix. When no other row of the ledger stands
+ * nothing is dropped, because a run that did nothing at all still stops.
+ *
+ * Args:
+ *   actions: The actions, index-aligned with the ledger.
+ *   applied: The ledger as the apply left it.
+ *
+ * Returns:
+ *   The ledger, with the refused reads marked; the same rows otherwise.
+ */
+export function withRefusedReadsDropped<Row extends Partial<AppliedAction>>(
+  actions: readonly MockAction[],
+  applied: readonly Row[],
+): Row[] {
+  const refusedRead = (row: Row, index: number): boolean => {
+    if (row.ok === true || row.held === true || row.outcomeUnknown === true) return false;
+    if (!isSurfaceTool(row.tool ?? '') || !isGateRefusal(row.reason)) return false;
+    const action = actions[index];
+    const parsed = action ? parseSurfaceAction(action) : undefined;
+    return parsed?.ok === true && actionIntent(parsed.action) === 'read';
+  };
+  if (!applied.some((row, index) => row.ok === true && !refusedRead(row, index))) return [...applied];
+  return applied.map((row, index) =>
+    refusedRead(row, index)
+      ? { ...row, ok: true, held: true, reason: `${DROPPED_READ_PREFIX}${row.reason}` }
+      : row,
+  );
+}
 
 /** A refused row as the manager reads it: the operation and its surface, never its payload. */
 function refusedOperation(action: MockAction | undefined, row: Partial<AppliedAction>): string {
