@@ -1371,6 +1371,39 @@ describe('what Retry does to an unregistered skill', (): void => {
     });
   });
 
+  // Demo rehearsal 2, 19 Sep 2026, finding 1: a skill registered before
+  // `<reply-surface>` was taught still runs, because the executor binds the
+  // input for it in real mode; the inputs line says so.
+  describe('the reply surface on the inputs line', (): void => {
+    const before = ['# Close', '', '## Inputs', '', '- `<record-id>`: the ticket.', '- `<reply-channel>` and `<reply-thread>`: the Reply target line.', '', '## Procedure', '', 'Comment on `<record-id>`, then reply to `<reply-channel>` in `<reply-thread>`.'].join('\n');
+    const taught = before.replace('## Procedure', '- `<reply-surface>`: the chat surface.\n\n## Procedure');
+    const render = (body: string, surfaceMode?: 'mock' | 'real'): string =>
+      renderToStaticMarkup(
+        <RegisteredSkillsPanel
+          skills={[{ ...base, state: 'registered', body } as unknown as Doc<'skills'>]}
+          unregistered={[]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+          surfaceMode={surfaceMode}
+        />,
+      );
+
+    it('lists the input Day0 binds for a skill registered before it was taught, in real mode', (): void => {
+      const markup = render(before, 'real');
+      expect(markup).toMatch(/<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;reply-surface&gt;<\/code> \(bound by Day0\)/);
+      expect(markup).toContain(
+        'This skill was registered before Day0 taught the input marked &quot;bound by Day0&quot;: the executor binds it from the Reply target, so the reply goes to the chat surface the ask came from.',
+      );
+    });
+
+    it('lists it as the author declared it once taught, and adds nothing in mock mode', (): void => {
+      expect(render(taught, 'real')).toContain('&lt;reply-surface&gt;');
+      expect(render(taught, 'real')).not.toContain('bound by Day0');
+      expect(render(before, 'mock')).not.toContain('reply-surface');
+      expect(render(before)).not.toContain('reply-surface');
+    });
+  });
+
   // The author's open item 3: a traceback rendered as one run of text cannot be read on camera.
   describe('a verification log with line breaks', (): void => {
     const log = [
