@@ -290,9 +290,16 @@ export function openManagerQuestion(args: {
   };
 }
 
+const WITHHELD_FOR_ANSWER = 'withheld: the approved plan leaves step ';
+
 /** The ledger reason on a write withheld for the manager's answer. */
 export function withheldForAnswerReason(step: number): string {
-  return `withheld: the approved plan leaves step ${step} to the manager's answer, and the question put to the manager is still open`;
+  return `${WITHHELD_FOR_ANSWER}${step} to the manager's answer, and the question put to the manager is still open`;
+}
+
+/** Whether a withheld action's reason is the wait for the manager's answer. */
+export function isWithheldForAnswer(reason: string): boolean {
+  return reason.startsWith(WITHHELD_FOR_ANSWER);
 }
 
 /**

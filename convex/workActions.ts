@@ -1494,6 +1494,9 @@ function flattenedDependentOutput(
     prerequisiteCount: output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
+    ...(output.openQuestion ?? output.initial.openQuestion
+      ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
+      : {}),
   };
 }
 

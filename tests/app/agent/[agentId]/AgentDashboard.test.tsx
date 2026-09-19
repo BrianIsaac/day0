@@ -42,6 +42,8 @@ import { slackPhaseOne } from '../../../fixtures/browser-phase-split-2026-09-16'
 import { REFUSED_CREATE_RUN } from '../../../fixtures/refused-ticket-create-2026-09-19';
 import { gateRefusalStop } from '../../../../src/work/stop';
 import { log1FirstStopRefusedClosing, log1RefusedClosing } from '../../../fixtures/work/full-run-3-2026-09-19-log-1';
+import { log1PhaseOne as sitting4Log1PhaseOne } from '../../../fixtures/work/full-run-4-2026-09-19-log-1';
+import { openQuestionStopReason, withheldForAnswerReason } from '../../../../src/work/obligations';
 import {
   OPEN_QUESTIONS_2026_09_16,
   RECORDED_QUESTIONS_2026_09_16,
@@ -309,6 +311,31 @@ describe('actions an audit withheld', (): void => {
     expect(markup).toContain('REVOPS-5 audit comment posted with the three checks.');
     expect(renderToStaticMarkup(<WithheldActionsDetails withheld={[]} />)).toBe('');
     expect(renderToStaticMarkup(<WithheldActionsDetails withheld={undefined} />)).toBe('');
+  });
+
+  it('sets writes that wait on the manager\'s answer apart from the evidence check\'s, and says how to answer', (): void => {
+    const [, , comment, done] = sitting4Log1PhaseOne.actions;
+    const waiting = [comment!, done!].map((action, index) => ({ action, reason: withheldForAnswerReason(index + 2) }));
+    const markup = renderToStaticMarkup(<WithheldActionsDetails withheld={waiting} />);
+    expect(markup).toContain('Waiting on your answer · 2 actions · never sent');
+    expect(markup).not.toContain('evidence check');
+    expect(markup).toContain('leaves step 2 to the manager&#x27;s answer');
+    expect(markup).toContain('Retry with a note answers it');
+    const mixed = renderToStaticMarkup(
+      <WithheldActionsDetails withheld={[...waiting, { action: comment!, reason: 'asserted a fact the ledger does not carry' }]} />,
+    );
+    expect(mixed).toContain('Waiting on your answer · 2 actions · never sent');
+    expect(mixed).toContain('Withheld by the evidence check · 1 action · never sent');
+  });
+
+  it('reads a stop with the question open as one the manager answers with Retry', (): void => {
+    const reason = openQuestionStopReason({ question: 'Which template should the notice use?', steps: [2, 3] });
+    expect(failedItemReason({ skipReason: `stopped: ${reason}`, output: { openQuestion: { question: 'q', steps: [2, 3] } } })).toBe(
+      `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${reason}`,
+    );
+    expect(failedItemReason({ skipReason: `stopped: ${reason}`, output: {} })).toBe(
+      `stopped, nothing landed and nothing to decide: ${reason}`,
+    );
   });
 
   it('names a stop at the closing gate as one the prerequisites survived', (): void => {

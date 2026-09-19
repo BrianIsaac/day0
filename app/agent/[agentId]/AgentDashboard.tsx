@@ -64,7 +64,7 @@ import {
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
 import type { ArgumentRepairAttempt, MockAction, PlanObligations } from '../../../src/work/types';
-import { planObligations, transitionWithheld } from '../../../src/work/obligations';
+import { isWithheldForAnswer, planObligations, transitionWithheld } from '../../../src/work/obligations';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
@@ -2192,10 +2192,20 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
  */
 export function WithheldActionsDetails({ withheld }: { withheld: WithheldActionRow[] | undefined }) {
   if (!withheld || withheld.length === 0) return null;
+  const waiting = withheld.filter((row) => isWithheldForAnswer(row.reason));
+  if (waiting.length > 0 && waiting.length < withheld.length) {
+    return (
+      <>
+        <WithheldActionsDetails withheld={waiting} />
+        <WithheldActionsDetails withheld={withheld.filter((row) => !isWithheldForAnswer(row.reason))} />
+      </>
+    );
+  }
+  const forAnswer = waiting.length > 0;
   return (
     <details className="mt-2 text-xs">
       <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
-        Withheld by the evidence check · {withheld.length}{' '}
+        {forAnswer ? 'Waiting on your answer' : 'Withheld by the evidence check'} · {withheld.length}{' '}
         {withheld.length === 1 ? 'action' : 'actions'} · never sent
       </summary>
       <ul className="mt-1 space-y-1">
@@ -2210,7 +2220,9 @@ export function WithheldActionsDetails({ withheld }: { withheld: WithheldActionR
         ))}
       </ul>
       <p className="mt-1 text-[10px] text-[var(--color-muted)]">
-        The rest of the response went on without these; a retry authors them again from the ledger.
+        {forAnswer
+          ? 'The approved plan left these to your answer, so the question went out without them; Retry with a note answers it and the next run authors them from it.'
+          : 'The rest of the response went on without these; a retry authors them again from the ledger.'}
       </p>
     </details>
   );
@@ -2453,7 +2465,7 @@ export function cancelPlanRequest(
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
-  output?: { refusedClosing?: unknown } | null;
+  output?: { refusedClosing?: unknown; openQuestion?: unknown; initial?: { openQuestion?: unknown } | null } | null;
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
@@ -2466,8 +2478,12 @@ export function failedItemReason(item: {
   if (item.skipReason && isStopped(item.skipReason)) {
     // A stop at the closing gate keeps the landed prerequisites and the
     // refused set on the row; Retry resumes at the closing phase.
-    return item.output?.refusedClosing
-      ? `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`
+    if (item.output?.refusedClosing) {
+      return `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`;
+    }
+    // The run asked its question and withheld the writes that wait on the answer.
+    return item.output?.openQuestion || item.output?.initial?.openQuestion
+      ? `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${stopDetail(item.skipReason)}`
       : `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;

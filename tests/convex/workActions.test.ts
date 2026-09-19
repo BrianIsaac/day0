@@ -1375,6 +1375,7 @@ describe('writes the plan left to the manager\'s answer stop with the question (
     expect(posts()).toHaveLength(1);
     expect(ticketWrites()).toEqual([]);
     expect((stopped.output as { withheldActions?: Array<{ action: unknown }> }).withheldActions?.map((row) => row.action)).toEqual([comment, done]);
+    expect((stopped.output as { openQuestion?: { steps: number[] } }).openQuestion?.steps).toEqual([2, 3]);
   });
 
   it('does not stop a run whose question stands beside no conditional write', async (): Promise<void> => {
