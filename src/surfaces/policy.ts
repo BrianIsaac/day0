@@ -439,23 +439,49 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
   return malformed(`unknown surface verb ${action.tool}`);
 }
 
+/** The one dotted method a path names, or undefined when it names anything else. */
+function rpcMethod(path: string): string | undefined {
+  return RPC_METHOD_PATH.exec(path.split(/[?#]/, 1)[0] ?? '')?.[1];
+}
+
 /**
- * Whether a POST path names a read of an RPC-style Web API.
+ * The documented RPC read a request is, when it is one.
+ *
+ * Narrower than `isRpcRead`: only a method on the documented list, whose
+ * parameters are known to select no operation, and only when the whole
+ * request is classed a read. The HTTP adapter uses it to decide whether the
+ * body's parameters belong in the query.
+ *
+ * Args:
+ *   request: A parsed `http.request`.
+ *
+ * Returns:
+ *   The method in lower case, or undefined.
+ */
+export function documentedRpcRead(request: ParsedHttpRequest): string | undefined {
+  const method = rpcMethod(request.path)?.toLowerCase();
+  if (method === undefined || !DOCUMENTED_RPC_READS.has(method)) return undefined;
+  return actionIntent(request) === 'read' ? method : undefined;
+}
+
+/**
+ * Whether a path names a read of an RPC-style Web API, whatever verb carries it.
  *
  * The path must be one dotted method and nothing more, so `POST /graphql`,
- * a REST collection and a method under a longer path all stay writes. A
- * documented read method is a read; an undocumented one is a read only when
- * its operation leads with a read verb, and a write otherwise, which is the
- * side to err on. The caller has already refused any mutation word.
+ * a REST collection and a method under a longer path all stay with their
+ * verb's rule. A documented read method is a read; an undocumented one is a
+ * read only when its operation leads with a read verb, and a write otherwise,
+ * which is the side to err on. The caller has already refused any mutation
+ * word.
  *
  * Args:
  *   path: The request path, with or without its query.
  *
  * Returns:
- *   True when the operation is a read whatever verb carries it.
+ *   True when the operation is a read whatever verb or body carries it.
  */
 function isRpcRead(path: string): boolean {
-  const method = RPC_METHOD_PATH.exec(path.split(/[?#]/, 1)[0] ?? '')?.[1];
+  const method = rpcMethod(path);
   if (method === undefined) return false;
   if (DOCUMENTED_RPC_READS.has(method.toLowerCase())) return true;
   const operation = operationTokens(method.slice(method.lastIndexOf('.') + 1))[0];
@@ -465,9 +491,11 @@ function isRpcRead(path: string): boolean {
 /**
  * Whether an action reads from or writes to its surface.
  *
- * An HTTP request is classed by its operation, not its verb: a documented
- * read method sent as POST is a read (`isRpcRead`), and a mutation named in a
- * GET path is a write. PUT, PATCH and DELETE are always writes.
+ * An HTTP request is classed by its operation, not its verb or its body: a
+ * documented read method is a read sent as POST, or as GET with its parameters
+ * in a body (`isRpcRead`), and a mutation named in a GET path, or in the body
+ * of such a read, is a write. PUT, PATCH and DELETE are always writes, and a
+ * GET that is not one dotted method is a write once it carries a body.
  *
  * Unknown MCP tool names count as writes, so an unrecognised tool needs the
  * stronger grant rather than slipping through as a read. A name that conjoins
@@ -485,9 +513,16 @@ export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
     // RPC APIs can accept mutations over GET. Treat an operation carrying an
     // explicit mutation verb as a write even when its transport method lies.
     if (operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
-    // And they can take POST for a read: the operation decides, not the verb.
-    if (parsed.method === 'POST') return isRpcRead(parsed.path) ? 'read' : 'write';
-    if (parsed.method !== 'GET' && parsed.method !== 'HEAD') return 'write';
+    if (parsed.method !== 'GET' && parsed.method !== 'HEAD' && parsed.method !== 'POST') return 'write';
+    // And they can take POST, or a body, for a read: the operation decides. The
+    // body's parameters may travel in the query, so they are read as a query is.
+    // An escape hides a word from the raw text and not from the provider, so a
+    // JSON body is read as it parses as well as as it was written.
+    if (isRpcRead(parsed.path)) {
+      const body = `${parsed.body ?? ''} ${parsed.bodyJson ? JSON.stringify(parsed.bodyJson) : ''}`;
+      return operationTokens(body).some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
+    }
+    if (parsed.method === 'POST') return 'write';
     return parsed.body !== undefined && parsed.body.trim() !== '' ? 'write' : 'read';
   }
   if (BROWSER_READ_TOOLS.has(parsed.tool)) return 'read';

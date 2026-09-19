@@ -1108,18 +1108,23 @@ function dropActions<T extends CorrectableOutput>(
  * Args:
  *   output: The response as the audit last saw it.
  *   refusals: The actions to withhold, by index, with the reasons.
+ *   by: What withheld them, as a trail that mapped to one says it.
  *
  * Returns:
  *   The output without those actions and with `withheldActions` extended.
  */
-export function withholdActions<T extends CorrectableOutput>(output: T, refusals: readonly AuditRefusal[]): T {
+export function withholdActions<T extends CorrectableOutput>(
+  output: T,
+  refusals: readonly AuditRefusal[],
+  by: string = 'by the evidence check',
+): T {
   if (refusals.length === 0) return output;
   const reasons = new Map(refusals.map(({ index, reason }) => [index, reason]));
   const withheld: WithheldAction[] = refusals.map(({ index, reason }) => ({ action: output.actions[index]!, reason }));
   const dropped = dropActions(output, refusals.map(({ index }) => index), (trailId, actionIndex) => ({
     trailId,
     state: 'inapplicable' as const,
-    reason: `the action this trail mapped to was withheld by the evidence check: ${reasons.get(actionIndex) ?? ''}`,
+    reason: `the action this trail mapped to was withheld ${by}: ${reasons.get(actionIndex) ?? ''}`,
   }));
   return { ...dropped, withheldActions: [...(output.withheldActions ?? []), ...withheld] };
 }

@@ -6,7 +6,9 @@
  * here, and each caller skips what it cannot see.
  */
 
-import type { ExecutionPlan, PlanObligations, PlanTransition } from './types';
+import { actionIntent, isManagerDm, isStatusChange, parseSurfaceAction, type ParsedSurfaceAction } from '../surfaces/policy';
+import type { SurfaceRecord } from '../surfaces/types';
+import type { ExecutionPlan, MockAction, PlanObligations, PlanTransition } from './types';
 
 /** A surface the run can act on, by slug, with the name the card shows. */
 export interface ObligationSurface {
@@ -164,4 +166,155 @@ export function transitionWithheld(plan: Pick<ExecutionPlan, 'steps' | 'obligati
     WITHHELD_TRANSITIONS.has(declared.transition) ||
     (declared.plannerTransition !== undefined && WITHHELD_TRANSITIONS.has(declared.plannerTransition))
   );
+}
+
+type ObligedPlan = Pick<ExecutionPlan, 'steps' | 'obligations'>;
+
+/** Whether either reading of the plan conditions the ticket state on the manager. */
+function conditionedOnManager(declared: PlanObligations): boolean {
+  return declared.transition === 'conditional-on-manager' || declared.plannerTransition === 'conditional-on-manager';
+}
+
+/**
+ * The one-based steps the plan leaves to the manager: under a transition
+ * conditioned on the manager, in either reading, every `conditional-write`
+ * step and the step that carries the state change. A plan whose transition
+ * is promised, settled by evidence, withheld or unsaid conditions nothing on
+ * the manager here, whatever its steps condition on: an evidence condition is
+ * the closing phase's to settle, not a question's.
+ *
+ * Args:
+ *   plan: The approved plan.
+ *
+ * Returns:
+ *   Sorted step numbers; empty when the plan leaves no write to the manager.
+ */
+export function managerConditionalSteps(plan: ObligedPlan): number[] {
+  const declared = planObligations(plan);
+  if (!declared || !conditionedOnManager(declared)) return [];
+  return declared.steps.flatMap((row, index) =>
+    row.kind === 'conditional-write' || declared.transitionStep === index + 1 ? [index + 1] : [],
+  );
+}
+
+/** A question mark that ends a clause; one inside a link's query string asks nothing. */
+const QUESTION_MARK = /\?(?=$|[\s"'\u201d\u2019)\]*_])/;
+/** The most of a question a stop reason carries. */
+const QUESTION_CHARS = 600;
+
+/** The text a manager message carries, whichever transport it takes. */
+function messageText(parsed: ParsedSurfaceAction): string {
+  if (parsed.kind === 'mcp.call') {
+    const text = ['text', 'message', 'body'].map((key) => parsed.toolArgs[key]).find((value) => typeof value === 'string');
+    return typeof text === 'string' ? text : '';
+  }
+  return typeof parsed.bodyJson?.text === 'string' ? parsed.bodyJson.text : '';
+}
+
+/** The sentences of a message that ask, in order; the whole message when none can be cut out. */
+function questionsIn(text: string): string {
+  const asked = text.split(/(?<=[.?!])\s+|\n+/).filter((sentence) => QUESTION_MARK.test(sentence));
+  const question = (asked.length > 0 ? asked.join(' ') : text).trim();
+  return question.length > QUESTION_CHARS ? `${question.slice(0, QUESTION_CHARS - 1).trimEnd()}…` : question;
+}
+
+/** A question put to the manager that the plan's conditional writes wait on. */
+export interface OpenManagerQuestion {
+  /** The question as the manager DM asked it. */
+  question: string;
+  /** The actions to withhold, by index in the set, each with the one-based plan step it belongs to. */
+  withheld: Array<{ index: number; step: number }>;
+  /** The plan steps that wait on the answer, sorted. */
+  steps: number[];
+}
+
+/**
+ * The question a set leaves open, and the writes that wait on it.
+ *
+ * A set that asks the manager a question and also carries writes the approved
+ * plan left to the manager has answered its own question for them. The writes
+ * are the state change, and any other write to a surface that only
+ * manager-conditional steps write; the question is a manager DM, in this set
+ * or landed earlier in the run, that ends a clause with a question mark. A
+ * message that reports, or sends a draft for approval, asks nothing: the
+ * approval of the held write is that answer. Whether the manager has already
+ * answered is the caller's to read from the ledger.
+ *
+ * Args:
+ *   args: The plan, the set, the agent's surfaces, the manager messages this
+ *     run already landed, and whether the manager has answered.
+ *
+ * Returns:
+ *   The open question with the actions to withhold, or undefined when the
+ *   set goes on as it stands.
+ */
+export function openManagerQuestion(args: {
+  plan: ObligedPlan;
+  actions: readonly MockAction[];
+  surfaces: readonly SurfaceRecord[];
+  askedEarlier?: readonly MockAction[];
+  answered: boolean;
+}): OpenManagerQuestion | undefined {
+  if (args.answered) return undefined;
+  const steps = managerConditionalSteps(args.plan);
+  const declared = planObligations(args.plan);
+  if (steps.length === 0 || !declared) return undefined;
+  const parsedWith = (action: MockAction): { parsed: ParsedSurfaceAction; surface: SurfaceRecord } | undefined => {
+    const result = parseSurfaceAction(action);
+    const surface = result.ok ? args.surfaces.find((row) => row.slug === result.action.surface) : undefined;
+    return result.ok && surface ? { parsed: result.action, surface } : undefined;
+  };
+  const asked = [...args.actions, ...(args.askedEarlier ?? [])].flatMap((action) => {
+    const row = parsedWith(action);
+    if (!row || !isManagerDm(row.parsed, row.surface)) return [];
+    const text = messageText(row.parsed);
+    return QUESTION_MARK.test(text) ? [questionsIn(text)] : [];
+  });
+  if (asked.length === 0) return undefined;
+  const stepOf = (parsed: ParsedSurfaceAction): number | undefined => {
+    if (isStatusChange(parsed)) return declared.transitionStep ?? steps[steps.length - 1];
+    const slug = parsed.surface.toLowerCase();
+    const writes = (step: number): boolean =>
+      (declared.steps[step - 1]!.writes ?? []).some((written) => written.toLowerCase() === slug);
+    const unconditional = declared.steps.some((row, index) => row.kind === 'write' && writes(index + 1));
+    return unconditional ? undefined : steps.find(writes);
+  };
+  const waiting = args.actions.flatMap((action, index) => {
+    const row = parsedWith(action);
+    if (!row || actionIntent(row.parsed) !== 'write' || isManagerDm(row.parsed, row.surface)) return [];
+    const step = stepOf(row.parsed);
+    return step === undefined ? [] : [{ index, step }];
+  });
+  if (waiting.length === 0) return undefined;
+  return {
+    question: asked[0]!,
+    withheld: waiting,
+    steps: [...new Set(waiting.map((row) => row.step))].sort((a, b) => a - b),
+  };
+}
+
+const WITHHELD_FOR_ANSWER = 'withheld: the approved plan leaves step ';
+
+/** The ledger reason on a write withheld for the manager's answer. */
+export function withheldForAnswerReason(step: number): string {
+  return `${WITHHELD_FOR_ANSWER}${step} to the manager's answer, and the question put to the manager is still open`;
+}
+
+/** Whether a withheld action's reason is the wait for the manager's answer. */
+export function isWithheldForAnswer(reason: string): boolean {
+  return reason.startsWith(WITHHELD_FOR_ANSWER);
+}
+
+/**
+ * Why a run stops with its question open.
+ *
+ * Args:
+ *   open: The open question and the steps that wait on it.
+ *
+ * Returns:
+ *   The reason the card shows, with the question as it was asked.
+ */
+export function openQuestionStopReason(open: Pick<OpenManagerQuestion, 'question' | 'steps'>): string {
+  const steps = open.steps.map((step) => `step ${step}`).join(' and ');
+  return `the approved plan leaves ${steps} to the manager's answer, and the question is still open. Asked in the manager DM: ${open.question}`;
 }

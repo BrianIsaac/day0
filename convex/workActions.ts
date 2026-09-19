@@ -28,6 +28,7 @@ import {
   repairHeldWriteArguments,
   repairToolArguments,
   withArgumentRepairs,
+  withholdActions,
   runDependentSkill,
   runSkill,
 } from '../src/work/execute-skill';
@@ -46,7 +47,10 @@ import {
 import {
   closingPhaseOwed,
   declaredReads,
+  openManagerQuestion,
+  openQuestionStopReason,
   transitionPromised,
+  withheldForAnswerReason,
   type DeclaredRead,
 } from '../src/work/obligations';
 import { replyTargetFor } from '../src/work/reply-target';
@@ -972,9 +976,34 @@ async function holdDay0Actions(
             },
           })
         : staged;
-    const stagedOutput = repairedStaged.argumentRepairs?.some((attempt) => attempt.repaired)
+    const auditedOutput = repairedStaged.argumentRepairs?.some((attempt) => attempt.repaired)
       ? await auditRepairedPayloads(ctx, repairedStaged, args, surfaces)
       : repairedStaged;
+    const stagedOutput =
+      SURFACE_MODE === 'real'
+        ? withOpenQuestionHeld(auditedOutput, {
+            plan: args.plan,
+            surfaces,
+            answered: managerHasAnswered(args.item, args.plan),
+            // A question an earlier run landed and nobody answered is still the open one.
+            askedEarlier: (args.landedWrites ?? []).map((write) => write.action),
+          })
+        : auditedOutput;
+    await recordConditionalWritesWithheld(
+      ctx, { agentId: args.agentId, workItemId: args.workItemId, runId: args.runId, phase: stagedOutput.needsDependentPhase ? 'prerequisite' : 'single' }, auditedOutput, stagedOutput,
+    );
+    if (stagedOutput.openQuestion && stagedOutput.actions.length === 0 && !stagedOutput.needsDependentPhase) {
+      // Every action waited on the answer to a question an earlier run asked:
+      // nothing is left to apply, and the run ends on the question.
+      const reason = openQuestionStopReason(stagedOutput.openQuestion);
+      await ctx.runMutation(internal.work.setFailed, {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        reason,
+        output: { ...stagedOutput, applied: [] },
+      });
+      return result({ ok: false, reason });
+    }
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -1184,6 +1213,126 @@ export function needsDependentPhase(output: ExecutionOutput, plan: ExecutionPlan
  */
 export function prerequisiteOutput(output: ExecutionOutput, plan: ExecutionPlan): ExecutionOutput {
   return { ...output, needsDependentPhase: needsDependentPhase(output, plan) };
+}
+
+/**
+ * Whether the ledger shows the manager's word on this item already: a live
+ * rejection reason or retry note, answers given when the plan was approved,
+ * or a kept correction the approved plan applied. A write the plan left to
+ * the manager's answer is then no longer waiting on a question.
+ *
+ * Args:
+ *   item: The work item as the run read it.
+ *   plan: Its approved plan.
+ *
+ * Returns:
+ *   True when the manager has spoken on the item or a kept correction is in scope.
+ */
+export function managerHasAnswered(
+  item: Pick<Doc<'workItems'>, 'managerFeedback' | 'managerAnswers'>,
+  plan: Pick<ExecutionPlan, 'appliedCorrections'>,
+): boolean {
+  return (
+    liveManagerFeedback(item.managerFeedback) !== undefined ||
+    (item.managerAnswers ?? []).length > 0 ||
+    (plan.appliedCorrections ?? []).length > 0
+  );
+}
+
+const CONDITIONAL_WRITES_WITHHELD = 'work.conditional-writes-withheld';
+
+/** An action by its tool, surface and verb, with no payload. */
+function actionName(action: MockAction): string {
+  const verb = action.args.tool ?? `${String(action.args.method ?? '')} ${String(action.args.path ?? '')}`.trim();
+  return `${action.tool} ${String(action.args.surface ?? '')} · ${String(verb)}`;
+}
+
+/** A set that may carry a question to the manager beside the writes that wait on its answer. */
+type QuestionableOutput = Parameters<typeof withholdActions>[0] & {
+  argumentRepairs?: ArgumentRepairAttempt[];
+  openQuestion?: ExecutionOutput['openQuestion'];
+};
+
+/**
+ * The set with the writes the approved plan left to the manager's answer
+ * withheld, when the run asks the manager a question nobody has answered
+ * (`openManagerQuestion`). The question and everything else in the set go on;
+ * the withheld writes stay on the output with their reason, and the open
+ * question is recorded so the run stops with it once the rest has settled.
+ *
+ * Args:
+ *   output: The set as it would reach the gate.
+ *   context: The plan, the surfaces, whether the manager has answered, and
+ *     the manager messages this run already landed.
+ *
+ * Returns:
+ *   The same output when nothing waits on a question.
+ */
+export function withOpenQuestionHeld<T extends QuestionableOutput>(
+  output: T,
+  context: {
+    plan: ExecutionPlan;
+    surfaces: readonly SurfaceRecord[];
+    answered: boolean;
+    askedEarlier?: readonly MockAction[];
+  },
+): T {
+  const open = openManagerQuestion({ ...context, actions: output.actions });
+  if (!open) return output;
+  const removed = new Set(open.withheld.map((row) => row.index));
+  const withheld = withholdActions(
+    output,
+    open.withheld.map(({ index, step }) => ({ index, reason: withheldForAnswerReason(step) })),
+    "for the manager's answer",
+  );
+  const reindex = (index: number): number => index - [...removed].filter((removedIndex) => removedIndex < index).length;
+  return {
+    ...withheld,
+    ...(output.argumentRepairs
+      ? {
+          argumentRepairs: output.argumentRepairs
+            .filter((attempt) => !removed.has(attempt.index))
+            .map((attempt) => ({ ...attempt, index: reindex(attempt.index) })),
+        }
+      : {}),
+    openQuestion: { question: open.question, steps: open.steps },
+  };
+}
+
+/**
+ * Record on the timeline what a phase had withheld for the manager's answer.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   run: The agent, the work item, the run and the phase.
+ *   before: The set as it was authored.
+ *   after: The set as it reaches the gate.
+ */
+async function recordConditionalWritesWithheld(
+  ctx: ActionCtx,
+  run: { agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'>; phase: 'single' | 'prerequisite' | 'closing' },
+  before: QuestionableOutput,
+  after: QuestionableOutput,
+): Promise<void> {
+  if (after === before || !after.openQuestion) return;
+  const kept = new Set(after.actions);
+  await ctx.runMutation(internal.events.log, {
+    agentId: run.agentId,
+    type: CONDITIONAL_WRITES_WITHHELD,
+    payload: {
+      workItemId: run.workItemId,
+      runId: run.runId,
+      phase: run.phase,
+      steps: after.openQuestion.steps,
+      withheld: before.actions.filter((action) => !kept.has(action)).map((action) => actionName(action)),
+    },
+  });
+}
+
+/** The reason a run ends on when it, or the phase before it, left a question to the manager open. */
+function openQuestionStop(output: { openQuestion?: ExecutionOutput['openQuestion']; initial?: { openQuestion?: ExecutionOutput['openQuestion'] } }): string | undefined {
+  const open = output.openQuestion ?? output.initial?.openQuestion;
+  return open ? openQuestionStopReason(open) : undefined;
 }
 
 function successfulReadSurfaces(
@@ -1437,6 +1586,9 @@ function flattenedDependentOutput(
     prerequisiteCount: output.initial.closingRound?.prerequisiteCount ?? output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
+    ...(output.openQuestion ?? output.initial.openQuestion
+      ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
+      : {}),
   };
 }
 
@@ -1989,9 +2141,23 @@ export const authorDependentActions = internalAction({
           payload: { workItemId: args.workItemId, runId: args.runId, removedIndices: [], reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}` },
         });
       }
-      if (dependent.actions.length === 0) {
-        const finalOutput = flattenedDependentOutput(dependent, []);
-        const failure = (initial.resumedClosing ? undefined : initial.initialFailure) ?? blockedPlanReason(output.planStepOutcomes);
+      // A question this run put to the manager, here or in phase one, that
+      // nobody has answered: the writes the plan left to the answer wait.
+      const asked = [
+        ...initial.actions.filter((_action, index) => initial!.applied[index]?.ok === true && initial!.applied[index]?.held !== true),
+        ...(initial.landedWrites ?? []).map((write) => write.action),
+      ];
+      const gated = withOpenQuestionHeld(dependent, {
+        plan, surfaces, answered: managerHasAnswered(item, plan), askedEarlier: asked,
+      });
+      await recordConditionalWritesWithheld(
+        ctx, { agentId: item.agentId, workItemId: args.workItemId, runId: args.runId, phase: 'closing' }, dependent, gated,
+      );
+      if (gated.actions.length === 0) {
+        const finalOutput = flattenedDependentOutput(gated, []);
+        const failure = (initial.resumedClosing ? undefined : initial.initialFailure) ??
+          scrubKnownValues(openQuestionStop(gated), knownValues) ??
+          blockedPlanReason(output.planStepOutcomes);
         const reason = failure ? (gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? failure) : undefined;
         if (reason) {
           await ctx.runMutation(internal.work.setFailed, {
@@ -2013,7 +2179,7 @@ export const authorDependentActions = internalAction({
         workItemId: args.workItemId,
         runId: args.runId,
         authoringAttemptId: claim.authoringAttemptId,
-        output: dependent,
+        output: gated,
       });
       if (!pending.pending) {
         throw new Error('the run moved on before its dependent actions reached the gate');
@@ -2904,6 +3070,7 @@ async function finishRun(
     const finalReason =
       (output.initial.resumedClosing ? undefined : output.initial.initialFailure) ??
       reason ??
+      openQuestionStop(output) ??
       blockedPlanReason(output.planStepOutcomes, {
         plan: item?.plan as ExecutionPlan,
         actions: finalOutput.actions,
@@ -3010,6 +3177,18 @@ async function finishRun(
       return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
     }
     return { ok: true, reason: "automatic actions applied; the rest await the manager's approval" };
+  }
+  // The question went out and the writes that wait on its answer were
+  // withheld: the run ends on the question, and Retry with a note answers it.
+  const openQuestion = openQuestionStop(output);
+  if (openQuestion) {
+    await ctx.runMutation(internal.work.setFailed, {
+      workItemId,
+      reason: openQuestion,
+      runId: claim.runId,
+      output: { ...output, applied },
+    });
+    return { ok: false, reason: openQuestion };
   }
   await ctx.runMutation(internal.work.setCompleted, {
     workItemId,

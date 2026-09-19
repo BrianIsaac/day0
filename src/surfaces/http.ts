@@ -5,6 +5,7 @@ import { decryptCredential, type DecryptCredential } from './credentials';
 import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
   actionIntent,
+  documentedRpcRead,
   parseSurfaceAction,
   resolveRequestUrl,
   surfaceRefusal,
@@ -62,6 +63,58 @@ export interface HttpAdapterDeps {
  *   Error: If the endpoint is not a URL or the path escapes it.
  */
 export { resolveRequestUrl };
+
+/**
+ * Move a documented RPC read's body parameters into the query.
+ *
+ * Slack's read methods take their parameters from the query string or a form
+ * body and do not read a JSON one, and a GET's body is never sent at all, so a
+ * read whose parameters the model wrote in a body, as JSON or as a form, lands
+ * with none of them and is answered `channel_not_found`. The
+ * adapter, not the model, puts them where the provider reads them: a parameter
+ * already in the query stands, an empty one is skipped, a list is
+ * comma-joined as Slack's `types` is, and `conversations.replies` takes the
+ * `thread_ts` a model tends to write as the `ts` Slack asks for. The
+ * credential never goes in a URL, so a placeholder among them is refused and
+ * a `token` argument is left behind.
+ *
+ * Args:
+ *   request: The parsed request.
+ *   url: The resolved request URL, mutated in place.
+ *
+ * Returns:
+ *   True when the body was moved and must not be sent.
+ *
+ * Raises:
+ *   SecretTemplateError: If a parameter carries a placeholder.
+ */
+function moveReadBodyIntoQuery(request: ParsedHttpRequest, url: URL): boolean {
+  const method = documentedRpcRead(request);
+  if (method === undefined || request.body === undefined || request.body.trim() === '') return false;
+  const given: Array<[string, unknown]> = request.bodyJson
+    ? Object.entries(request.bodyJson)
+    : [...new URLSearchParams(request.body.trim())];
+  for (const [name, value] of given) {
+    if (value === null || value === undefined || url.searchParams.has(name)) continue;
+    // Slack still reads a `token` argument; the bearer header is the only place one goes.
+    if (name.toLowerCase() === 'token') continue;
+    const text = Array.isArray(value)
+      ? value.map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join(',')
+      : typeof value === 'object'
+        ? JSON.stringify(value)
+        : String(value);
+    if (text === '') continue;
+    if (hasPlaceholder(name) || hasPlaceholder(text)) {
+      throw new SecretTemplateError("secret placeholders are not allowed in a read's parameters");
+    }
+    url.searchParams.set(name, text);
+  }
+  const threadTs = url.searchParams.get('thread_ts');
+  if (method === 'conversations.replies' && threadTs !== null && !url.searchParams.has('ts')) {
+    url.searchParams.set('ts', threadTs);
+  }
+  return true;
+}
 
 /**
  * Read at most the response evidence limit without treating truncation as JSON.
@@ -225,15 +278,18 @@ export class HttpAdapter implements SurfaceAdapter {
     let writeAttempted = false;
     try {
       secret = await this.deps.decrypt(ctx, surface.credentialId);
+      const bodyMoved = moveReadBodyIntoQuery(request, url);
       const headers: Record<string, string> = {};
       for (const [key, value] of Object.entries(request.headers)) {
         if (hasPlaceholder(key)) {
           throw new SecretTemplateError('secret placeholders are not allowed in header names');
         }
+        // The content type described the body that is no longer sent.
+        if (bodyMoved && key.toLowerCase() === 'content-type') continue;
         headers[key] = injectSecret(value, secret, surface.slug);
       }
       const body =
-        request.body === undefined || request.method === 'GET' || request.method === 'HEAD'
+        bodyMoved || request.body === undefined || request.method === 'GET' || request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
       const authorityRefusal = transportAuthority
