@@ -344,7 +344,7 @@ def check_action(action, case_index, action_index, inputs):
         fail(f"{at} targets surface {slug!r}, which is not a connected surface (connected: {listed})")
     if surface.get("path") not in VERB_PATHS[verb]:
         reason = f"{at} uses {verb} on {slug}, whose path is {surface.get('path') or 'unknown'}"
-        if carries_reply_channel(args, inputs):
+        if verb == "http.request" and carries_reply_channel(args, inputs):
             reason += (
                 "; it carries the case's <reply-channel>, and a reply is an action on <reply-surface>, "
                 "the connected chat surface, never on the surface the ticket is on"

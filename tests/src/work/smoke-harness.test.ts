@@ -583,6 +583,13 @@ describe('the real-mode smoke harness', (): void => {
       );
     });
 
+    it('keeps that sentence for a reply sent by HTTP, not for a wrong verb on the chat surface itself', (): void => {
+      const smoke = replySmoke('inputs["reply-surface"]').replace('"tool": "http.request", "args": {', '"tool": "mcp.call", "args": {');
+      const run = runHarnessed(smoke, contract);
+
+      expect(run.stderr.split('\n')[0]).toBe('smoke harness: case 2 action 3 uses mcp.call on slack, whose path is documented-api');
+    });
+
     it('passes a ticket-born case with a reply target when the reply goes to the reply surface', (): void => {
       const run = runHarnessed(replySmoke('inputs["reply-surface"]'), contract);
 
