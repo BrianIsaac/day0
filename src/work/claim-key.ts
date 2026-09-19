@@ -11,7 +11,8 @@ import {
   type ParsedSurfaceAction,
 } from '../surfaces/policy';
 import { messageTexts } from './evidence-claims';
-import type { MockAction } from './types';
+import { planObligations } from './obligations';
+import type { ExecutionPlan, MockAction } from './types';
 
 /** What a provider item's identity is read from on the surface that found it. */
 export interface ClaimKeySurface {
@@ -424,6 +425,68 @@ export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefine
       ? ['A page field listed here is filled and saved by its holder alone: a fill or a Save from this work is withheld and never sent. Open the page, sign in and read it (navigate, the sign-in form, the snapshot), and cite the figure and the audit line you read; say in your reply which work item refreshes the field, and never that this work did.']
       : []),
   ];
+}
+
+/** A ticket id as a plan step writes one: `FIN-1`, `REVOPS-27`. */
+const TICKET_ID = /(?<![A-Za-z0-9-])[A-Za-z][A-Za-z0-9]{1,9}-\d+(?![A-Za-z0-9])/g;
+
+function namesWhole(text: string, name: string): boolean {
+  const lower = text.toLowerCase();
+  const wanted = name.toLowerCase();
+  for (let at = lower.indexOf(wanted); at !== -1; at = lower.indexOf(wanted, at + 1)) {
+    const before = at === 0 ? '' : lower[at - 1]!;
+    const after = lower[at + wanted.length] ?? '';
+    if (!/[a-z0-9-]/.test(before) && !/[a-z0-9]/.test(after)) return true;
+  }
+  return false;
+}
+
+/**
+ * The held item a blocked plan step was left out for, if it was.
+ *
+ * The held-items block tells the executor not to author a write addressed to
+ * an item another work item holds. One that obeys authors nothing and reports
+ * the step blocked; the apply guard would have withheld the write had it been
+ * authored, so the step is the holder's to land either way. On 19 September
+ * (third sitting) the `#finance-close` ask did exactly that and was stopped
+ * for it, its thread reply withheld with the rest.
+ *
+ * A step is a held item's when the step's own words or the executor's
+ * evidence name the item whole, by either of its names; the declared
+ * obligations, when the plan has them, make the step a write to the surface
+ * the item is on; and the step's own words name no other ticket. A page field
+ * is never matched here: its name is ordinary words.
+ *
+ * Args:
+ *   outcome: The blocked step's accounting.
+ *   plan: The approved plan.
+ *   held: The items other work items hold, as the prompt listed them.
+ *
+ * Returns:
+ *   The held item, or undefined when the step was blocked for another reason.
+ */
+export function heldItemOfBlockedStep(
+  outcome: { step: number; evidence: string },
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+  held: readonly HeldExternalItem[] | undefined,
+): HeldExternalItem | undefined {
+  if (!held || held.length === 0) return undefined;
+  const words = plan.steps[outcome.step - 1];
+  if (words === undefined) return undefined;
+  const declared = planObligations(plan)?.steps[outcome.step - 1];
+  if (declared && declared.kind !== 'write' && declared.kind !== 'conditional-write') return undefined;
+  return held.find((item): boolean => {
+    if (item.pageField) return false;
+    const names = [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])];
+    if (declared && !(declared.writes ?? []).some((slug) => slug.toLowerCase() === item.sourceSystem.toLowerCase())) {
+      return false;
+    }
+    const tickets = words.match(TICKET_ID) ?? [];
+    if (tickets.length > 0 && !tickets.some((ticket) => names.some((name) => name.toLowerCase() === ticket.toLowerCase()))) {
+      return false;
+    }
+    return names.some((name) => namesWhole(words, name) || namesWhole(outcome.evidence, name));
+  });
 }
 
 /** A set whose reply does not say where a write it makes to a held item is, or will be. */

@@ -198,6 +198,26 @@ const HTTP_MUTATION_WORDS = new Set([
   'write',
 ]);
 /**
+ * Read methods of a documented RPC-style Web API that take POST.
+ *
+ * Slack's Web API names its operation in the path (`/conversations.list`) and
+ * accepts POST for every method, reads included. These are the read methods of
+ * the list the Slack probe allows and the company's Slack policy page gives as
+ * what automations use; `conversations.open` and `chat.postMessage`, the other
+ * two on that list, change the workspace and are not here. Compared in lower case.
+ */
+const DOCUMENTED_RPC_READS = new Set([
+  'auth.test',
+  'users.lookupbyemail',
+  'conversations.list',
+  'conversations.history',
+  'conversations.replies',
+]);
+/** Verbs an undocumented RPC method must lead its operation with to be read as a read. */
+const RPC_READ_VERBS = new Set(['get', 'history', 'info', 'list', 'lookup', 'replies', 'search', 'test']);
+/** One dotted method and nothing else: `family.operation`, with no further path segment. */
+const RPC_METHOD_PATH = /^\/*([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)\/*$/;
+/**
  * Words that join a second operation onto a read verb.
  *
  * The read prefix decides the intent of a whole name, so a catalogue tool
@@ -420,7 +440,34 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
 }
 
 /**
+ * Whether a POST path names a read of an RPC-style Web API.
+ *
+ * The path must be one dotted method and nothing more, so `POST /graphql`,
+ * a REST collection and a method under a longer path all stay writes. A
+ * documented read method is a read; an undocumented one is a read only when
+ * its operation leads with a read verb, and a write otherwise, which is the
+ * side to err on. The caller has already refused any mutation word.
+ *
+ * Args:
+ *   path: The request path, with or without its query.
+ *
+ * Returns:
+ *   True when the operation is a read whatever verb carries it.
+ */
+function isRpcRead(path: string): boolean {
+  const method = RPC_METHOD_PATH.exec(path.split(/[?#]/, 1)[0] ?? '')?.[1];
+  if (method === undefined) return false;
+  if (DOCUMENTED_RPC_READS.has(method.toLowerCase())) return true;
+  const operation = operationTokens(method.slice(method.lastIndexOf('.') + 1))[0];
+  return operation !== undefined && RPC_READ_VERBS.has(operation);
+}
+
+/**
  * Whether an action reads from or writes to its surface.
+ *
+ * An HTTP request is classed by its operation, not its verb: a documented
+ * read method sent as POST is a read (`isRpcRead`), and a mutation named in a
+ * GET path is a write. PUT, PATCH and DELETE are always writes.
  *
  * Unknown MCP tool names count as writes, so an unrecognised tool needs the
  * stronger grant rather than slipping through as a read. A name that conjoins
@@ -435,13 +482,13 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
  */
 export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
   if (parsed.kind === 'http.request') {
-    if (parsed.method !== 'GET' && parsed.method !== 'HEAD') return 'write';
-    if (parsed.body !== undefined && parsed.body.trim() !== '') return 'write';
     // RPC APIs can accept mutations over GET. Treat an operation carrying an
     // explicit mutation verb as a write even when its transport method lies.
-    return operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token))
-      ? 'write'
-      : 'read';
+    if (operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
+    // And they can take POST for a read: the operation decides, not the verb.
+    if (parsed.method === 'POST') return isRpcRead(parsed.path) ? 'read' : 'write';
+    if (parsed.method !== 'GET' && parsed.method !== 'HEAD') return 'write';
+    return parsed.body !== undefined && parsed.body.trim() !== '' ? 'write' : 'read';
   }
   if (BROWSER_READ_TOOLS.has(parsed.tool)) return 'read';
   const tokens = operationTokens(parsed.tool);

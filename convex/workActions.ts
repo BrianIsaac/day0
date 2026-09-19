@@ -21,6 +21,7 @@ import {
   DEFERRALS_KEPT,
   deferralAudit,
   dependentActionCap,
+  HELD_ITEM_REPLY_COMPLETED,
   removePrewrittenClosingActions,
   repairableReadFailures,
   repairFailedReads,
@@ -57,7 +58,7 @@ import {
   type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import { plannedWriteTargets, withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
+import { heldItemOfBlockedStep, heldItemReplyFindings, plannedWriteTargets, withHeldItemsSaid, withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -83,18 +84,20 @@ import {
   scrubbedCorrectionEntries,
   type PlannerCorrection,
 } from '../src/work/corrections';
-import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
+import { droppedReadRefusal, gateRefusalStop, landedWork, WITHHELD_ON_STOP, withRefusedReadsDropped } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
 import { carriedDeclaredReads, groundingReadSurfaces, noteReleasesRead } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
+import { redactTokenShapes } from '../src/surfaces/redact';
 import {
   grantRefusal,
   actionIntent,
   describeAction,
   isAutomatic,
   isAuditComment,
+  isGateRefusal,
   isManagerDm,
   isStatusChange,
   needsStandingGrant,
@@ -1110,6 +1113,12 @@ interface DependentPendingOutput extends DependentExecutionOutput {
   actionIndexOffset: number;
   initial: DependentAuthoringOutput;
   applied?: AppliedAction[];
+  /**
+   * The held items this set's blocked steps were left to when it was authored.
+   * Kept with the set, as a claim-withheld row keeps its line: what becomes of
+   * a holder after the reply has said where the work is does not fail the run.
+   */
+  leftToHolders?: HeldExternalItem[];
 }
 
 function isDependentPendingOutput(
@@ -1418,6 +1427,8 @@ export function blockedPlanReason(
     plan: ExecutionPlan;
     actions: readonly ExecutionOutput['actions'][number][];
     applied: readonly (Partial<AppliedAction> | undefined)[];
+    /** The items other work items hold, as the executor was told before it authored. */
+    heldElsewhere?: readonly HeldExternalItem[];
   },
 ): string | undefined {
   const blocked = outcomes.filter((outcome) => outcome.status === 'blocked');
@@ -1427,11 +1438,28 @@ export function blockedPlanReason(
       const row = run.applied[index];
       return row?.ok === true && row.held !== true;
     };
+    // A read the gate refused was never sent and had nothing to change: the
+    // step that needed it is the blocked step, not an action that did not land.
+    const refusedRead = (index: number): boolean => {
+      const row = run.applied[index];
+      if (row?.held !== true) return false;
+      if (!isGateRefusal(droppedReadRefusal(row.reason) ?? row.reason)) return false;
+      const parsed = parseSurfaceAction(run.actions[index]!);
+      return parsed.ok && actionIntent(parsed.action) === 'read';
+    };
     // A write withheld for another work item's claim is that item's to land;
     // it is not work this run left undone.
     const everyActionLanded = run.actions.every(
-      (_action, index) => landed(index) || withheldByClaim(run.applied[index]),
+      (_action, index) => landed(index) || withheldByClaim(run.applied[index]) || refusedRead(index),
     );
+    // A step the executor left out because its target has a work item of its
+    // own is accounted for as the withheld write would have been: the holder
+    // lands it. With every blocked step such a step, nothing here was left
+    // undone; one blocked for any other reason is judged as before.
+    const leftToHolders = blocked.every(
+      (outcome) => heldItemOfBlockedStep(outcome, run.plan, run.heldElsewhere) !== undefined,
+    );
+    if (everyActionLanded && leftToHolders) return undefined;
     const closePromised =
       run.plan.expectedOutputType === 'ticket-update' && transitionPromised(run.plan);
     const transitionLanded = run.actions.some((action, index): boolean => {
@@ -1498,6 +1526,8 @@ export function closingStopReason(run: {
   closingActions: readonly ExecutionOutput['actions'][number][];
   initialFailure?: string;
   surfaces: readonly SurfaceRecord[];
+  /** The items other work items hold, as the closing executor was told. */
+  heldElsewhere?: readonly HeldExternalItem[];
 }): string | undefined {
   const landed = landedWork(
     { actions: run.initialActions, applied: run.initialApplied },
@@ -1518,7 +1548,60 @@ export function closingStopReason(run: {
     plan: run.plan,
     actions: [...run.initialActions, ...run.closingActions],
     applied: [...run.initialApplied, ...asIfLanded],
+    heldElsewhere: run.heldElsewhere,
   });
+}
+
+/**
+ * The closing set with where a held item's work is said in its reply, for the
+ * steps the executor left to that item's own work item.
+ *
+ * The authoring's own check asks this of a set that writes to a held item. An
+ * executor that obeyed the held-items block wrote to none, so the check never
+ * ran; the person who asked is owed the same sentence, and it is Day0's, built
+ * from the holder's row.
+ *
+ * Args:
+ *   actions: The closing set, after its repairs.
+ *   outcomes: The closing phase's plan-step accounting.
+ *   plan: The approved plan.
+ *   heldElsewhere: The items other work items hold, as the executor was told.
+ *   surfaces: The agent's surfaces.
+ *   replyTarget: The thread the work item answers, when it came from chat.
+ *
+ * Returns:
+ *   The set, and the sentences added to it; the same set when none was owed.
+ */
+export function withLeftStepsSaid(
+  actions: ExecutionOutput['actions'],
+  outcomes: readonly PlanStepOutcome[],
+  plan: ExecutionPlan,
+  heldElsewhere: readonly HeldExternalItem[],
+  surfaces: readonly SurfaceRecord[],
+  replyTarget?: { channel: string; threadTs?: string },
+): { actions: ExecutionOutput['actions']; said: string[] } {
+  const owed = outcomes.flatMap((outcome) => {
+    const item = outcome.status === 'blocked' ? heldItemOfBlockedStep(outcome, plan, heldElsewhere) : undefined;
+    return item ? [item] : [];
+  });
+  if (owed.length === 0) return { actions, said: [] };
+  // The manager DM reports on the work; it is not where the person who asked reads.
+  const toTheAsker = actions.filter((action) => {
+    const parsed = parseSurfaceAction(action);
+    const surface = parsed.ok ? surfaces.find((row) => row.slug === parsed.action.surface) : undefined;
+    return !(parsed.ok && surface && isManagerDm(parsed.action, surface));
+  });
+  const findings = heldItemReplyFindings(toTheAsker, heldElsewhere, surfaces, owed).filter((finding) =>
+    owed.includes(finding.item),
+  );
+  const answered = withHeldItemsSaid(toTheAsker, findings, surfaces, replyTarget) as ExecutionOutput['actions'];
+  const next = actions.map((action) => {
+    const at = toTheAsker.indexOf(action);
+    return at === -1 ? action : answered[at]!;
+  });
+  return next.every((action, index) => action === actions[index])
+    ? { actions, said: [] }
+    : { actions: next, said: findings.map((finding) => finding.sentence) };
 }
 
 /** Author the one bounded closing action set from the persisted prerequisite ledger. */
@@ -1664,22 +1747,32 @@ export const authorDependentActions = internalAction({
       // the set that came back.
       const gate = closingGate(output);
       if (gate.length > 0) throw new ClosingGateRefusal(gate, output);
-      const held = await recordingModelCalls(ctx, step, () => repairedForHold(output, {
+      const repaired = await recordingModelCalls(ctx, step, () => repairedForHold(output, {
         surfaces,
         skill: { name: skill.name },
         candidate: rowToCandidate(item),
         onAdditionalModelCall: (): void => {},
       }));
+      const leftSaid = withLeftStepsSaid(repaired.actions, repaired.planStepOutcomes, plan, heldElsewhere, surfaces, item.replyTarget);
+      const held = leftSaid.said.length > 0 ? { ...repaired, actions: leftSaid.actions } : repaired;
       authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
         plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes, initialFailure,
       });
       if (repairedTransitionRefusal) throw new ClosingGateRefusal([repairedTransitionRefusal], held);
+      const leftToHolders = held.planStepOutcomes.flatMap((outcome) => {
+        const holder = outcome.status === 'blocked' ? heldItemOfBlockedStep(outcome, plan, heldElsewhere) : undefined;
+        // Kept on the row, so the holder's title passes the structural redaction the prompt rows pass.
+        return holder ? [{ ...holder, title: redactTokenShapes(holder.title) }] : [];
+      });
       const dependent: DependentPendingOutput = {
         ...held,
         phase: 'dependent',
         actionIndexOffset: initial.actions.length,
         initial,
+        ...(leftToHolders.length > 0
+          ? { leftToHolders: leftToHolders.filter((holder, at) => leftToHolders.findIndex((row) => row.externalId === holder.externalId) === at) }
+          : {}),
       };
       const stop = closingStopReason({
         plan,
@@ -1689,6 +1782,7 @@ export const authorDependentActions = internalAction({
         closingActions: held.actions,
         initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
         surfaces,
+        heldElsewhere,
       });
       if (stop) {
         const offset = initial.actions.length;
@@ -1711,6 +1805,12 @@ export const authorDependentActions = internalAction({
           output: flattenedDependentOutput(dependent, withheld),
         });
         return { ok: false, reason: stop };
+      }
+      if (leftSaid.said.length > 0) {
+        await ctx.runMutation(internal.events.log, {
+          agentId: item.agentId, type: 'audit.corrected',
+          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices: [], reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}` },
+        });
       }
       if (dependent.actions.length === 0) {
         const finalOutput = flattenedDependentOutput(dependent, []);
@@ -2503,7 +2603,9 @@ async function finishRun(
   // the adapters already applied it to provider text, and this covers every
   // other string the dashboard renders from the run, whatever wrote it.
   const output = scrubKnownValues(rawOutput, knownValues);
-  const applied = scrubKnownValues(rawApplied, knownValues);
+  // A read the gate refused is dropped with its ledger line and is no failure
+  // of the run; a refused write still is.
+  const applied = scrubKnownValues(withRefusedReadsDropped(rawOutput.actions ?? [], rawApplied), knownValues);
   const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
   const reason =
     applied.length === 0
@@ -2547,6 +2649,16 @@ async function finishRun(
         plan: (await ctx.runQuery(internal.work.getInternal, { workItemId }))?.plan as ExecutionPlan,
         actions: finalOutput.actions,
         applied: finalOutput.applied,
+        // The holders the set was authored under stand, as a claim-withheld
+        // row's line does. A set kept before they were recorded reads them now.
+        heldElsewhere:
+          output.leftToHolders ??
+          (SURFACE_MODE === 'real' && output.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
+            ? scrubKnownValues(
+                (await ctx.runQuery(internal.work.itemsHeldElsewhere, { workItemId })) as HeldExternalItem[],
+                knownValues,
+              )
+            : undefined),
       });
     if (finalReason) {
       const ended = gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? finalReason;

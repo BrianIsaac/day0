@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
 import { isGateRefusal } from '../src/surfaces/policy';
+import { droppedReadRefusal } from '../src/work/stop';
 import { assertOwnsAgent, getCaller } from './ownership';
 
 type UnknownRecord = Record<string, unknown>;
@@ -408,10 +409,13 @@ function actionMetrics(
     // A rule that refuses at apply time (a write with nothing attributable,
     // a status change with no audit comment) is seen by no hold-time review,
     // so the ledger is the only place it is recorded.
-    if (reason && observation.entry.held !== true && isGateRefusal(reason)) {
+    // A read the gate refused and the run went on without is kept as a held
+    // row; the refusal under its line counts as any other does.
+    const refusal = droppedReadRefusal(reason) ?? (observation.entry.held !== true ? reason : undefined);
+    if (refusal && isGateRefusal(refusal)) {
       refused.add(key);
       if (observation.observedAt !== null && !refusalObservations.has(key)) {
-        refusalObservations.set(key, { reason, at: observation.observedAt });
+        refusalObservations.set(key, { reason: refusal, at: observation.observedAt });
       }
     }
   }
