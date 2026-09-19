@@ -87,6 +87,7 @@ import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop'
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
+import { carriedDeclaredReads, groundingReadSurfaces, noteReleasesRead } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
@@ -1161,17 +1162,9 @@ function successfulReadSurfaces(
  * (`declaredReads`, the same reading the closing resume makes), and only of
  * surfaces the gate holds: an absent or ungranted surface is never owed. A
  * plan with no declared obligations owes no read here; the prose is never
- * consulted.
+ * consulted. What may stand behind a declared read is `unmetDeclaredReads`'.
  */
-export function validatePlanStepOutcomes(args: {
-  plan: ExecutionPlan;
-  outcomes: readonly PlanStepOutcome[];
-  initialActions: readonly ExecutionOutput['actions'][number][];
-  initialLedger: readonly AppliedAction[];
-  surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
-  /** The manager's live feedback on the run; a step may rest on it only when it is here. */
-  managerFeedback?: string;
-}): void {
+export function validatePlanStepOutcomes(args: PlanStepOutcomeCheck): void {
   const ordered = [...args.outcomes].sort((a, b) => a.step - b.step);
   if (
     ordered.length !== args.plan.steps.length ||
@@ -1187,20 +1180,140 @@ export function validatePlanStepOutcomes(args: {
       );
     }
   }
+  const unmet = unmetDeclaredReads(args)[0];
+  if (unmet) throw new Error(missingReadReason(unmet));
+}
+
+/** What the promised-read gate is given: the plan, the closing phase's account of it, and what the run read. */
+export interface PlanStepOutcomeCheck {
+  plan: ExecutionPlan;
+  outcomes: readonly PlanStepOutcome[];
+  initialActions: readonly ExecutionOutput['actions'][number][];
+  initialLedger: readonly AppliedAction[];
+  surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
+  /** The manager's live feedback on the run; a step may rest on it only when it is here. */
+  managerFeedback?: string;
+  /** The live feedback again when it is a note given with Retry: only such a note can release a declared read. */
+  retryNote?: string;
+  /** The work item, so its own plan-grounding read can be told from another ticket's. */
+  candidate?: Pick<WorkCandidate, 'externalId'>;
+  /** The item's plan-grounding reads, as `internal.work.planGroundingReads` returns them. */
+  groundingReads?: readonly GroundingRead[];
+}
+
+/**
+ * The declared reads a closing account leaves with nothing behind them.
+ *
+ * A declared read is met by a landed read of its surface in phase one's
+ * ledger, or by the item's own plan-grounding read of that surface: the
+ * product made that read itself, under standing authority, before the plan
+ * that declares it was drafted. It is released when the manager's retry
+ * note removes it and the step's outcome rests on that note
+ * (`noteReleasesRead`). Otherwise the step may not be reported satisfied,
+ * and must say why it is not.
+ *
+ * Args:
+ *   args: The same arguments the gate takes.
+ *
+ * Returns:
+ *   The unmet reads in step order; empty when the gate has nothing to refuse.
+ */
+export function unmetDeclaredReads(args: PlanStepOutcomeCheck): DeclaredRead[] {
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
-  for (const read of declaredReads(args.plan, args.surfaces)) {
-    if (reads.has(read.surface.slug.toLowerCase())) continue;
-    const outcome = ordered[read.step - 1]!;
-    if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
-      throw new Error(missingReadReason(read));
+  for (const surface of groundingReadSurfaces(args.candidate?.externalId, args.groundingReads)) reads.add(surface);
+  const note = args.retryNote?.trim();
+  return declaredReads(args.plan, args.surfaces).filter((read): boolean => {
+    if (reads.has(read.surface.slug.toLowerCase())) return false;
+    const outcome = args.outcomes.find((row) => row.step === read.step);
+    if (!outcome) return true;
+    if (note && outcome.basis === 'manager-feedback' && outcome.evidence.trim() !== '' && noteReleasesRead(note, read)) {
+      return false;
     }
-  }
+    return outcome.status === 'satisfied' || outcome.evidence.trim() === '';
+  });
 }
 
 /** Why a declared read has no landed read behind it: the step and the surface it declared. */
 export function missingReadReason(read: DeclaredRead): string {
   const surface = read.surface.displayName;
   return `approved plan step ${read.step} declares a read of ${surface}, but no landed ${surface} read or blocking ledger reason was recorded`;
+}
+
+/** The event a closing phase logs when it applied the reads its refused set carried. */
+const CARRIED_READS_APPLIED = 'work.carried-reads-applied';
+
+/**
+ * Apply the reads a closing set carried for its own declared reads, as added
+ * prerequisites of the run.
+ *
+ * The gate reads the ledger, so a read inside the closing set can never
+ * stand behind the step that declares it, and the model cannot repair that:
+ * nothing it returns lands a read. The reads go out the way a resumed
+ * closing phase takes its carried reads again: one invocation of the apply
+ * path in the auto phase, with every rule and the transport check a read
+ * passes, each under the key `<item>:<run>:<index>` after the last
+ * prerequisite. Every row is kept, landed or not, so the second authoring
+ * reads what happened and the gate judges that account.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The run, its agent and surfaces, the prerequisites so far and the reads to add.
+ *
+ * Returns:
+ *   The prerequisites with the reads and their ledger rows appended.
+ */
+async function applyCarriedReads(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+    agent: Doc<'agents'>;
+    surfaces: SurfaceRecord[];
+    knownValues: readonly string[];
+    initial: DependentAuthoringOutput;
+    reads: MockAction[];
+  },
+): Promise<DependentAuthoringOutput> {
+  const offset = args.initial.actions.length;
+  const actions = [...args.initial.actions, ...args.reads];
+  const indexes = args.reads.map((_, index) => offset + index);
+  const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
+    agentId: args.agent._id,
+  });
+  const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
+  const rows = await applySurfaceActions(
+    ctx,
+    SURFACE_MODE,
+    args.surfaces,
+    { agentId: args.agent._id, agentName: args.agent.name, workItemId: args.workItemId, runId: args.runId },
+    actions,
+    {
+      deps: realAdapterDeps(
+        authorityBeforeTransport(ctx, args.agent._id, 'auto', browserMcpUrl),
+        browserMcpUrl,
+        args.knownValues,
+      ),
+      grants: new Set(grantRows.map((grant) => grant.scope)),
+      approvedIndexes: new Set(indexes),
+      priorLedger: [...args.initial.applied, ...args.reads.map(() => undefined)],
+      resumedRunIds: ledgerRunIds(args.initial.applied),
+      autoPhase: true,
+      autonomousActions: autonomousActionsOn(args.agent),
+    },
+  );
+  const applied = scrubKnownValues(rows, args.knownValues);
+  await ctx.runMutation(internal.events.log, {
+    agentId: args.agent._id,
+    type: CARRIED_READS_APPLIED,
+    payload: {
+      workItemId: args.workItemId,
+      runId: args.runId,
+      indexes,
+      surfaces: [...new Set(args.reads.map((read) => String(read.args.surface)))],
+      landed: indexes.every((index) => applied[index]?.ok === true && !applied[index]?.held),
+    },
+  });
+  return { ...args.initial, actions, applied };
 }
 
 /**
@@ -1452,26 +1565,42 @@ export const authorDependentActions = internalAction({
         runId: args.runId,
         knownValues,
       });
-      const prerequisites = initial;
+      let prerequisites = initial;
       const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
       // Only a connected surface can be owed: an absent or ungranted one is
       // dropped from the list the gate holds, whatever the plan declares.
       const gateSurfaces = surfaces
         .filter((surface) => verdictFor(surface, Date.now()) === 'connected')
         .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
+      const groundingReads = await itemGroundingReads(ctx, args.workItemId);
+      const readCheck = (candidateOutput: DependentExecutionOutput): PlanStepOutcomeCheck => ({
+        plan,
+        outcomes: candidateOutput.planStepOutcomes,
+        initialActions: prerequisites.actions,
+        initialLedger: prerequisites.applied,
+        surfaces: gateSurfaces,
+        managerFeedback: feedback,
+        retryNote: item.managerFeedback?.kind === 'retry-note' ? feedback : undefined,
+        candidate: rowToCandidate(item),
+        groundingReads,
+      });
+      // A declared read the set carries itself is applied before the set is
+      // judged (`applyCarriedReads`), once: the first authoring is not asked
+      // to repair a gap no response can close.
+      let carriedReadsOwed = true;
+      const carriedBy = (candidateOutput: DependentExecutionOutput): MockAction[] =>
+        carriedReadsOwed
+          ? carriedDeclaredReads(unmetDeclaredReads(readCheck(candidateOutput)), candidateOutput.actions, surfaces)
+          : [];
       const closingGate = (candidateOutput: DependentExecutionOutput): string[] => {
         const issues: string[] = [];
         try {
-          validatePlanStepOutcomes({
-            plan,
-            outcomes: candidateOutput.planStepOutcomes,
-            initialActions: prerequisites.actions,
-            initialLedger: prerequisites.applied,
-            surfaces: gateSurfaces,
-            managerFeedback: feedback,
-          });
+          validatePlanStepOutcomes(readCheck(candidateOutput));
         } catch (error) {
-          issues.push(error instanceof Error ? error.message : String(error));
+          const reason = error instanceof Error ? error.message : String(error);
+          const carried = carriedBy(candidateOutput).length > 0 &&
+            unmetDeclaredReads(readCheck(candidateOutput)).map(missingReadReason).includes(reason);
+          if (!carried) issues.push(reason);
         }
         const transitionRefusal = dependentTransitionRefusal({
           plan,
@@ -1483,9 +1612,8 @@ export const authorDependentActions = internalAction({
         return issues;
       };
       const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
-      const groundingReads = await itemGroundingReads(ctx, args.workItemId);
       const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
-      const output = await recordingModelCalls(ctx, step, () => runDependentSkill({
+      const authorClosingSet = (): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, step, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
         candidate: rowToCandidate(item),
@@ -1513,8 +1641,20 @@ export const authorDependentActions = internalAction({
           });
         },
       }));
-      authored = output;
+      let output = await authorClosingSet();
       const cap = dependentActionCap(initial);
+      // A set over the cap is refused below as it stands: nothing in it is applied first.
+      const carriedReads = output.actions.length > cap ? [] : carriedBy(output);
+      carriedReadsOwed = false;
+      if (carriedReads.length > 0) {
+        authored = output;
+        initial = await applyCarriedReads(ctx, {
+          workItemId: args.workItemId, runId: args.runId, agent, surfaces, knownValues, initial, reads: carriedReads,
+        });
+        prerequisites = initial;
+        output = await authorClosingSet();
+      }
+      authored = output;
       if (output.actions.length > cap) {
         throw new Error(
           `dependent phase emitted ${output.actions.length} actions; cap is ${cap}`,

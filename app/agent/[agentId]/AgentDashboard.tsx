@@ -2116,6 +2116,32 @@ export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback })
 }
 
 /**
+ * The steps a refused closing phase recorded as blocked or not verifiable,
+ * in the open beside the gate's reason. The card's headline is the gate's
+ * sentence; when the employee stopped for a reason of their own (no answer
+ * from the manager yet, a prerequisite that did not land), that reason is
+ * theirs to give and the manager's to read without opening the refused set.
+ */
+export function RefusedBlockedSteps({ refused }: { refused: RefusedClosingRow | undefined }) {
+  const blocked = (refused?.planStepOutcomes ?? []).filter((outcome) => outcome.status !== 'satisfied');
+  if (blocked.length === 0) return null;
+  const unverified = blocked.some((outcome) => outcome.status === 'not-verifiable');
+  return (
+    <div className="mt-2 p-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs">
+      <p className="font-medium text-[var(--color-fg)] mb-1">
+        The employee recorded {blocked.length} {blocked.length === 1 ? 'step' : 'steps'} as blocked
+        {unverified ? ' or not verifiable' : ''}
+      </p>
+      <ol className="space-y-0.5 text-[var(--color-muted)] break-words">
+        {blocked.map((outcome) => (
+          <li key={outcome.step}>{`Step ${outcome.step} · ${outcome.status} - ${outcome.evidence}`}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/**
  * The closing set a gate refused, behind a disclosure under the failed run.
  * Read-only: nothing in it reached a surface, the row keeps it so the
  * manager can read what the agent wrote against the reason it was turned
@@ -3275,6 +3301,8 @@ export function WorkItemCard({
       ) : null}
 
       <PlanExecutionLedger outcomes={output?.planStepOutcomes ?? []} />
+
+      <RefusedBlockedSteps refused={output?.refusedClosing} />
 
       <RefusedClosingDetails refused={output?.refusedClosing} />
 

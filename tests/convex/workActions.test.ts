@@ -79,6 +79,20 @@ import {
 } from './fixtures/plan-obligations-2026-09-16';
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
 import { REFUSED_CREATE_ACTION, REFUSED_CREATE_RUN } from '../fixtures/refused-ticket-create-2026-09-19';
+import {
+  FIN_1_RETRY_NOTE,
+  LOG_1_REFUSAL,
+  LOG_1_RETRY_NOTE,
+  fin1Candidate,
+  fin1Plan,
+  fin1RefusedClosing,
+  log1Candidate,
+  log1FirstStopPhaseOne,
+  log1FirstStopRefusedClosing,
+  log1GroundingRead,
+  log1Plan,
+  log1RefusedClosing,
+} from '../fixtures/work/full-run-3-2026-09-19-log-1';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -115,6 +129,9 @@ const recorded = vi.hoisted(() => ({
   planRecords: [] as unknown[],
   skillOutput: undefined as ExecutionOutput | undefined,
   dependentOutput: undefined as DependentExecutionOutput | undefined,
+  /** Closing outputs answered in order before `dependentOutput`, and the ledger each authoring was given. */
+  dependentOutputs: [] as DependentExecutionOutput[],
+  dependentLedgers: [] as AppliedAction[][],
   dependentRuns: 0,
   additionalModelCalls: 0,
   /** What the mocked argument repair answers; undefined means the model produced nothing usable. */
@@ -451,9 +468,13 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       autonomousActions?: boolean;
       managerFeedback?: string;
       groundingReads?: unknown;
+      initialLedger?: AppliedAction[];
       plan: { steps: string[] };
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
+      recorded.dependentLedgers.push([...(args.initialLedger ?? [])]);
+      const queued = recorded.dependentOutputs.shift();
+      if (queued) return queued;
       recorded.dependentGroundingReads.push(args.groundingReads);
       recorded.dependentSwitches.push(args.autonomousActions);
       recorded.dependentFeedback.push(args.managerFeedback);
@@ -638,6 +659,8 @@ afterEach((): void => {
   recorded.dependentFeedback.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
+  recorded.dependentOutputs.length = 0;
+  recorded.dependentLedgers.length = 0;
   recorded.dependentRuns = 0;
   recorded.additionalModelCalls = 0;
   recorded.repairedToolArgsJson = undefined;
@@ -5228,5 +5251,224 @@ describe('a step the gate refuses does not strand the rest of the run (19 Sep ru
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
     expect(failed.skipReason).toContain('actions did not change the work environment');
+  });
+});
+
+describe('the promised-read gate on a retry (finding T, 19 September)', (): void => {
+  const closingOf = (refused: typeof log1RefusedClosing): DependentExecutionOutput => ({
+    draft: refused.draft,
+    notes: refused.notes,
+    actions: refused.actions,
+    planStepOutcomes: refused.planStepOutcomes,
+  });
+
+  /** LOG-1 as the retry found it: plan approved, the manager's note live, phase one carrying nothing. */
+  const seedLog1 = async (harness: Harness, options: { groundingRead: boolean }): Promise<Seeded> => {
+    const seeded = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(seeded.workItemId, {
+        externalId: log1Candidate.externalId,
+        title: log1Candidate.title,
+        contentSummary: log1Candidate.contentSummary,
+        contentRefs: log1Candidate.contentRefs,
+        plan: log1Plan,
+        managerFeedback: { reason: LOG_1_RETRY_NOTE, at: Date.now(), kind: 'retry-note' },
+      });
+      if (options.groundingRead) {
+        await ctx.db.insert('events', {
+          agentId: seeded.agentId,
+          type: 'work.plan-grounding-read',
+          payload: { workItemId: seeded.workItemId, ...log1GroundingRead },
+          createdAt: Date.now(),
+        });
+      }
+    });
+    return seeded;
+  };
+
+  const authorClosing = async (harness: Harness, workItemId: Id<'workItems'>): Promise<{ ok: boolean; reason?: string }> => {
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    return await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+  };
+
+  it('takes the run\'s closing set to the manager once the item\'s grounding read stands behind step 1', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    recorded.dependentOutput = closingOf(log1RefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: true });
+
+    // The read in the set applies on its own; the comment and Done wait for the manager.
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({ ok: true, reason: 'dependent actions applying' });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    expect((pending.output as { actions: unknown[] }).actions).toEqual(log1RefusedClosing.actions);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    expect(recorded.dependentRuns).toBe(1);
+  });
+
+  it('applies a read the refused closing set carried itself, then authors the set again from its result', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    // The second authoring reads the ledger and carries only the comment and Done.
+    const [read, comment, done] = log1RefusedClosing.actions;
+    recorded.dependentOutputs.push(closingOf(log1RefusedClosing), {
+      ...closingOf(log1RefusedClosing),
+      actions: [comment!, done!],
+    });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({
+      ok: true,
+      reason: "dependent actions pending the manager's approval",
+    });
+    expect(recorded.dependentRuns).toBe(2);
+    expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([['get_issue', { id: 'LOG-1' }]]);
+    // The second authoring was given the read's landed row.
+    expect(recorded.dependentLedgers[0]).toEqual([]);
+    expect(recorded.dependentLedgers[1]).toHaveLength(1);
+    expect(recorded.dependentLedgers[1]![0]).toMatchObject({ ok: true, tool: 'mcp.call' });
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    const output = pending.output as { actions: unknown[]; actionIndexOffset: number; initial: { actions: unknown[]; applied: AppliedAction[] } };
+    expect(output.initial.actions).toEqual([read]);
+    expect(output.initial.applied[0]!.idempotencyKey).toBe(`${workItemId}:${pending.executionRunId}:0`);
+    expect(output.actionIndexOffset).toBe(1);
+    expect(output.actions).toEqual([comment, done]);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect());
+    expect(events.filter((event) => event.type === 'work.carried-reads-applied').map((event) => event.payload)).toEqual([
+      { workItemId, runId: pending.executionRunId, indexes: [0], surfaces: ['linear'], landed: true },
+    ]);
+  });
+
+  it('applies carried reads once: a second set that still declares a read nobody made is refused', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    recorded.failedMcpTool = 'get_issue';
+    recorded.dependentOutput = closingOf(log1RefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({ ok: false, reason: LOG_1_REFUSAL });
+    expect(recorded.dependentRuns).toBe(2);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    const output = failed.output as { applied: AppliedAction[]; refusedClosing?: { reason: string; actions: unknown[] } };
+    // The read that did not land stays on the row, beside the refused set.
+    expect(output.applied).toHaveLength(1);
+    expect(output.applied[0]!.ok).toBe(false);
+    expect(output.refusedClosing?.reason).toBe(LOG_1_REFUSAL);
+    expect(output.refusedClosing?.actions).toEqual(log1RefusedClosing.actions);
+  });
+
+  it('applies nothing from a closing set over the cap, whatever it carries', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    const [read, comment, done] = log1RefusedClosing.actions;
+    const flood = Array.from({ length: CLOSING_SET_CAP }, () => read!);
+    recorded.dependentOutput = { ...closingOf(log1RefusedClosing), actions: [...flood, comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    const result = await authorClosing(harness, workItemId);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain(`cap is ${CLOSING_SET_CAP}`);
+    expect(recorded.dependentRuns).toBe(1);
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('refuses a closing set that declares a read it neither made nor carries, with no second authoring', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    const [, comment, done] = log1RefusedClosing.actions;
+    recorded.dependentOutput = { ...closingOf(log1RefusedClosing), actions: [comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({ ok: false, reason: LOG_1_REFUSAL });
+    expect(recorded.dependentRuns).toBe(1);
+    expect(recorded.mcp).toEqual([]);
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+  });
+
+  /**
+   * FIN-1 as its retry found it. The harness's Linear double lists no
+   * `list_issues`, so phase one's landed Linear read is a `get_issue` here;
+   * the plan, the note and the closing set are the run's.
+   */
+  const fin1Retry = async (kind: 'retry-note' | 'rejection'): Promise<{ result: { ok: boolean; reason?: string }; item: Doc<'workItems'> }> => {
+    recorded.skillOutput = {
+      draft: 'Reading the close tickets.', notes: '', needsDependentPhase: true,
+      actions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'FIN-2' }) } }],
+    };
+    recorded.dependentOutput = closingOf(fin1RefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        externalId: fin1Candidate.externalId,
+        title: fin1Candidate.title,
+        contentSummary: fin1Candidate.contentSummary,
+        plan: fin1Plan,
+        managerFeedback: { reason: FIN_1_RETRY_NOTE, at: Date.now(), kind },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    const result = await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    return { result, item: await readItem(harness, workItemId) };
+  };
+
+  it('lets FIN-1\'s closing set through when the retry note removed the Slack read it declares', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { result, item } = await fin1Retry('retry-note');
+    expect(result).toEqual({ ok: true, reason: "dependent actions pending the manager's approval" });
+    expect(item.state).toBe('actions-pending');
+    expect(recorded.http).toEqual([]);
+  });
+
+  it('releases nothing on the same words given as a rejection reason: only a note given with Retry counts', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { result, item } = await fin1Retry('rejection');
+    expect(result).toEqual({ ok: false, reason: fin1RefusedClosing.reason });
+    expect(item.state).toBe('failed');
+  });
+
+  it('still stops SH-4471 first try, before any write to the ticket, and in the employee\'s own words', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Escalating to the manager.', notes: '', needsDependentPhase: true,
+      actions: log1FirstStopPhaseOne.actions,
+    };
+    recorded.dependentOutput = closingOf(log1FirstStopRefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: true });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { managerFeedback: undefined });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).not.toContain('declares a read of Linear');
+    expect(stopped.skipReason).toContain('No manager answer is in the applied ledger');
+    // A stop withholds the closing set whole: nothing reaches the ticket, not even the re-read.
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http.filter((call) => call.url.includes('chat.postMessage'))).toHaveLength(1);
   });
 });
