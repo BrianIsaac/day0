@@ -123,6 +123,9 @@ const recorded = vi.hoisted(() => ({
   planRecords: [] as unknown[],
   skillOutput: undefined as ExecutionOutput | undefined,
   dependentOutput: undefined as DependentExecutionOutput | undefined,
+  /** Closing outputs answered in order before `dependentOutput`, and the ledger each authoring was given. */
+  dependentOutputs: [] as DependentExecutionOutput[],
+  dependentLedgers: [] as AppliedAction[][],
   dependentRuns: 0,
   additionalModelCalls: 0,
   /** What the mocked argument repair answers; undefined means the model produced nothing usable. */
@@ -459,9 +462,13 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       autonomousActions?: boolean;
       managerFeedback?: string;
       groundingReads?: unknown;
+      initialLedger?: AppliedAction[];
       plan: { steps: string[] };
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
+      recorded.dependentLedgers.push([...(args.initialLedger ?? [])]);
+      const queued = recorded.dependentOutputs.shift();
+      if (queued) return queued;
       recorded.dependentGroundingReads.push(args.groundingReads);
       recorded.dependentSwitches.push(args.autonomousActions);
       recorded.dependentFeedback.push(args.managerFeedback);
@@ -646,6 +653,8 @@ afterEach((): void => {
   recorded.dependentFeedback.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
+  recorded.dependentOutputs.length = 0;
+  recorded.dependentLedgers.length = 0;
   recorded.dependentRuns = 0;
   recorded.additionalModelCalls = 0;
   recorded.repairedToolArgsJson = undefined;
@@ -5295,5 +5304,75 @@ describe('the promised-read gate on a retry (finding T, 19 September)', (): void
     expect((pending.output as { actions: unknown[] }).actions).toEqual(log1RefusedClosing.actions);
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
     expect(recorded.dependentRuns).toBe(1);
+  });
+
+  it('applies a read the refused closing set carried itself, then authors the set again from its result', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    // The second authoring reads the ledger and carries only the comment and Done.
+    const [read, comment, done] = log1RefusedClosing.actions;
+    recorded.dependentOutputs.push(closingOf(log1RefusedClosing), {
+      ...closingOf(log1RefusedClosing),
+      actions: [comment!, done!],
+    });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({
+      ok: true,
+      reason: "dependent actions pending the manager's approval",
+    });
+    expect(recorded.dependentRuns).toBe(2);
+    expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([['get_issue', { id: 'LOG-1' }]]);
+    // The second authoring was given the read's landed row.
+    expect(recorded.dependentLedgers[0]).toEqual([]);
+    expect(recorded.dependentLedgers[1]).toHaveLength(1);
+    expect(recorded.dependentLedgers[1]![0]).toMatchObject({ ok: true, tool: 'mcp.call' });
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    const output = pending.output as { actions: unknown[]; actionIndexOffset: number; initial: { actions: unknown[]; applied: AppliedAction[] } };
+    expect(output.initial.actions).toEqual([read]);
+    expect(output.initial.applied[0]!.idempotencyKey).toBe(`${workItemId}:${pending.executionRunId}:0`);
+    expect(output.actionIndexOffset).toBe(1);
+    expect(output.actions).toEqual([comment, done]);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect());
+    expect(events.filter((event) => event.type === 'work.carried-reads-applied').map((event) => event.payload)).toEqual([
+      { workItemId, runId: pending.executionRunId, indexes: [0], surfaces: ['linear'], landed: true },
+    ]);
+  });
+
+  it('applies carried reads once: a second set that still declares a read nobody made is refused', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    recorded.failedMcpTool = 'get_issue';
+    recorded.dependentOutput = closingOf(log1RefusedClosing);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({ ok: false, reason: LOG_1_REFUSAL });
+    expect(recorded.dependentRuns).toBe(2);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    const output = failed.output as { applied: AppliedAction[]; refusedClosing?: { reason: string; actions: unknown[] } };
+    // The read that did not land stays on the row, beside the refused set.
+    expect(output.applied).toHaveLength(1);
+    expect(output.applied[0]!.ok).toBe(false);
+    expect(output.refusedClosing?.reason).toBe(LOG_1_REFUSAL);
+    expect(output.refusedClosing?.actions).toEqual(log1RefusedClosing.actions);
+  });
+
+  it('refuses a closing set that declares a read it neither made nor carries, with no second authoring', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { draft: 'Nothing to send before the closing set.', notes: '', needsDependentPhase: true, actions: [] };
+    const [, comment, done] = log1RefusedClosing.actions;
+    recorded.dependentOutput = { ...closingOf(log1RefusedClosing), actions: [comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedLog1(harness, { groundingRead: false });
+
+    await expect(authorClosing(harness, workItemId)).resolves.toEqual({ ok: false, reason: LOG_1_REFUSAL });
+    expect(recorded.dependentRuns).toBe(1);
+    expect(recorded.mcp).toEqual([]);
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
   });
 });

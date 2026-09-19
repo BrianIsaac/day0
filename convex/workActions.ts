@@ -87,7 +87,7 @@ import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop'
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
-import { groundingReadSurfaces } from '../src/work/promised-reads';
+import { carriedDeclaredReads, groundingReadSurfaces } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
@@ -1231,6 +1231,83 @@ export function missingReadReason(read: DeclaredRead): string {
   return `approved plan step ${read.step} declares a read of ${surface}, but no landed ${surface} read or blocking ledger reason was recorded`;
 }
 
+/** The event a closing phase logs when it applied the reads its refused set carried. */
+const CARRIED_READS_APPLIED = 'work.carried-reads-applied';
+
+/**
+ * Apply the reads a closing set carried for its own declared reads, as added
+ * prerequisites of the run.
+ *
+ * The gate reads the ledger, so a read inside the closing set can never
+ * stand behind the step that declares it, and the model cannot repair that:
+ * nothing it returns lands a read. The reads go out the way a resumed
+ * closing phase takes its carried reads again: one invocation of the apply
+ * path in the auto phase, with every rule and the transport check a read
+ * passes, each under the key `<item>:<run>:<index>` after the last
+ * prerequisite. Every row is kept, landed or not, so the second authoring
+ * reads what happened and the gate judges that account.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The run, its agent and surfaces, the prerequisites so far and the reads to add.
+ *
+ * Returns:
+ *   The prerequisites with the reads and their ledger rows appended.
+ */
+async function applyCarriedReads(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+    agent: Doc<'agents'>;
+    surfaces: SurfaceRecord[];
+    knownValues: readonly string[];
+    initial: DependentAuthoringOutput;
+    reads: MockAction[];
+  },
+): Promise<DependentAuthoringOutput> {
+  const offset = args.initial.actions.length;
+  const actions = [...args.initial.actions, ...args.reads];
+  const indexes = args.reads.map((_, index) => offset + index);
+  const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
+    agentId: args.agent._id,
+  });
+  const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
+  const rows = await applySurfaceActions(
+    ctx,
+    SURFACE_MODE,
+    args.surfaces,
+    { agentId: args.agent._id, agentName: args.agent.name, workItemId: args.workItemId, runId: args.runId },
+    actions,
+    {
+      deps: realAdapterDeps(
+        authorityBeforeTransport(ctx, args.agent._id, 'auto', browserMcpUrl),
+        browserMcpUrl,
+        args.knownValues,
+      ),
+      grants: new Set(grantRows.map((grant) => grant.scope)),
+      approvedIndexes: new Set(indexes),
+      priorLedger: [...args.initial.applied, ...args.reads.map(() => undefined)],
+      resumedRunIds: ledgerRunIds(args.initial.applied),
+      autoPhase: true,
+      autonomousActions: autonomousActionsOn(args.agent),
+    },
+  );
+  const applied = scrubKnownValues(rows, args.knownValues);
+  await ctx.runMutation(internal.events.log, {
+    agentId: args.agent._id,
+    type: CARRIED_READS_APPLIED,
+    payload: {
+      workItemId: args.workItemId,
+      runId: args.runId,
+      indexes,
+      surfaces: [...new Set(args.reads.map((read) => String(read.args.surface)))],
+      landed: indexes.every((index) => applied[index]?.ok === true && !applied[index]?.held),
+    },
+  });
+  return { ...args.initial, actions, applied };
+}
+
 /**
  * Why a closing action set may not stand, judged against the plan it closes.
  *
@@ -1480,7 +1557,7 @@ export const authorDependentActions = internalAction({
         runId: args.runId,
         knownValues,
       });
-      const prerequisites = initial;
+      let prerequisites = initial;
       const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
       // Only a connected surface can be owed: an absent or ungranted one is
       // dropped from the list the gate holds, whatever the plan declares.
@@ -1498,12 +1575,23 @@ export const authorDependentActions = internalAction({
         candidate: rowToCandidate(item),
         groundingReads,
       });
+      // A declared read the set carries itself is applied before the set is
+      // judged (`applyCarriedReads`), once: the first authoring is not asked
+      // to repair a gap no response can close.
+      let carriedReadsOwed = true;
+      const carriedBy = (candidateOutput: DependentExecutionOutput): MockAction[] =>
+        carriedReadsOwed
+          ? carriedDeclaredReads(unmetDeclaredReads(readCheck(candidateOutput)), candidateOutput.actions, surfaces)
+          : [];
       const closingGate = (candidateOutput: DependentExecutionOutput): string[] => {
         const issues: string[] = [];
         try {
           validatePlanStepOutcomes(readCheck(candidateOutput));
         } catch (error) {
-          issues.push(error instanceof Error ? error.message : String(error));
+          const reason = error instanceof Error ? error.message : String(error);
+          const carried = carriedBy(candidateOutput).length > 0 &&
+            unmetDeclaredReads(readCheck(candidateOutput)).map(missingReadReason).includes(reason);
+          if (!carried) issues.push(reason);
         }
         const transitionRefusal = dependentTransitionRefusal({
           plan,
@@ -1516,7 +1604,7 @@ export const authorDependentActions = internalAction({
       };
       const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
       const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
-      const output = await recordingModelCalls(ctx, step, () => runDependentSkill({
+      const authorClosingSet = (): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, step, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
         candidate: rowToCandidate(item),
@@ -1544,6 +1632,17 @@ export const authorDependentActions = internalAction({
           });
         },
       }));
+      let output = await authorClosingSet();
+      const carriedReads = carriedBy(output);
+      carriedReadsOwed = false;
+      if (carriedReads.length > 0) {
+        authored = output;
+        initial = await applyCarriedReads(ctx, {
+          workItemId: args.workItemId, runId: args.runId, agent, surfaces, knownValues, initial, reads: carriedReads,
+        });
+        prerequisites = initial;
+        output = await authorClosingSet();
+      }
       authored = output;
       const cap = dependentActionCap(initial);
       if (output.actions.length > cap) {
