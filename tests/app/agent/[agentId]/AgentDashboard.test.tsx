@@ -1396,6 +1396,15 @@ describe('what Retry does to an unregistered skill', (): void => {
       );
     });
 
+    it('says nothing of the kind on a failed attempt, which was never registered and is authored again on Retry', (): void => {
+      const failed = { ...refused, body: '', refusedBody: before } as unknown as Doc<'skills'>;
+      const markup = renderToStaticMarkup(
+        <RegisteredSkillsPanel skills={[]} unregistered={[failed]} authoringFailure={null} onAuthoringAttempt={noop} surfaceMode="real" />,
+      );
+      expect(markup).toContain('&lt;reply-channel&gt;');
+      expect(markup).not.toContain('bound by Day0');
+    });
+
     it('lists it as the author declared it once taught, and adds nothing in mock mode', (): void => {
       expect(render(taught, 'real')).toContain('&lt;reply-surface&gt;');
       expect(render(taught, 'real')).not.toContain('bound by Day0');

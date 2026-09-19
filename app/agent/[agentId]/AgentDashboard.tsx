@@ -1479,7 +1479,7 @@ export function RegisteredSkillsPanel({
                             : (s.verificationLog ?? s.description)
                       }
                     />
-                    <SkillInputs body={s.body || s.refusedBody || ''} surfaceMode={surfaceMode} />
+                    <SkillInputs body={s.body || s.refusedBody || ''} />
                     <RefusedDraftDetails skill={s} />
                   </div>
                   <button
@@ -1553,7 +1553,9 @@ function SkillStatusLine({ text }: { text: string }) {
  * this says so beside the name rather than letting it pass as the author's.
  * In real mode the executor also binds the reply surface for a skill that was
  * registered before that input was taught; it is listed last, marked as
- * bound by Day0, so the line shows every input a run is given.
+ * bound by Day0, so the line shows every input a run is given. Only a
+ * registered skill is given the mode: an attempt that never registered runs
+ * nothing, and Retry authors it again under the taught lines.
  */
 function SkillInputs({ body, surfaceMode }: { body: string; surfaceMode?: 'mock' | 'real' }) {
   const authored = declaredSkillInputs(body) ?? [];
