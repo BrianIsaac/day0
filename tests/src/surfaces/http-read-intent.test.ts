@@ -4,6 +4,8 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import {
   actionIntent,
   grantRefusal,
+  isAutomatic,
+  needsStandingGrant,
   parseSurfaceAction,
   requiredScope,
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
@@ -179,6 +181,12 @@ describe('a documented-API read carried by POST (19 Sep third run, finding R)', 
     );
     expect(applied[0]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
     expect(sent).toEqual([]);
+  });
+
+  it('applies on its own as any read does, switch off, while the write beside it waits for the manager', (): void => {
+    expect(isAutomatic(parsed(refused), slack, false)).toBe(true);
+    expect(needsStandingGrant(parsed(refused), slack)).toBe(true);
+    expect(isAutomatic(parsed(post('/conversations.open', { users: 'U0BTFHN6MKJ' })), slack, false)).toBe(false);
   });
 
   it('still asks the write scope of a chat post, which the read grant alone does not carry', (): void => {

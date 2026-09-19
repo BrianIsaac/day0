@@ -5116,7 +5116,11 @@ describe('an ask that leaves a held ticket to its own work item still answers (1
     return seeded;
   }
 
-  async function runBothPhases(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
+  async function runBothPhases(
+    harness: Harness,
+    workItemId: Id<'workItems'>,
+    afterAuthoring: () => Promise<void> = async (): Promise<void> => {},
+  ): Promise<Doc<'workItems'>> {
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     const prepared = await readItem(harness, workItemId);
@@ -5124,6 +5128,7 @@ describe('an ask that leaves a held ticket to its own work item still answers (1
     if (!runId) throw new Error(`execution run missing: ${prepared.state} ${prepared.skipReason ?? ''}`);
     await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
     const authored = await readItem(harness, workItemId);
+    await afterAuthoring();
     if (authored.state === 'executing') await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     return await readItem(harness, workItemId);
   }
@@ -5154,6 +5159,26 @@ describe('an ask that leaves a held ticket to its own work item still answers (1
     // The blocked steps stay on the record as the executor accounted for them.
     const kept = (done.output as { planStepOutcomes: Array<{ step: number; status: string }> }).planStepOutcomes;
     expect(kept.filter((row) => row.status === 'blocked').map((row) => row.step)).toEqual([3, 5]);
+  });
+
+  it('keeps the accounting it authored under when the holder is gone by the time the reply has landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    useRunOutputs(FINANCE_CLOSE_ASK.planStepOutcomes as DependentExecutionOutput['planStepOutcomes']);
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedAskAndTicket(harness);
+
+    // As a claim-withheld row stays withheld whatever becomes of its holder: the
+    // reply has said where the note will be, and failing the ask now unsays nothing.
+    const done = await runBothPhases(harness, workItemId, async (): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        const holder = (await ctx.db.query('workItems').collect()).find((row) => row.externalId === 'FIN-1');
+        if (holder) await ctx.db.patch(holder._id, { state: 'cancelled' });
+      });
+    });
+
+    expect(recorded.http.some((call) => call.url.includes('chat.postMessage'))).toBe(true);
+    expect(done.skipReason).toBeUndefined();
+    expect(done.state).toBe('completed');
   });
 
   it('adds where the note is to a reply that does not say it', async (): Promise<void> => {
