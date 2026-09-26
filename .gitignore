@@ -48,3 +48,10 @@ phase*.txt
 
 # demo bed kit: snapshots and offline-rung results (`pnpm demo:bed`)
 /.demo-bed/
+
+# design tooling: agent skills and everything they write are dev-only, never public
+/.agents/
+/.impeccable/
+/PRODUCT.md
+/DESIGN.md
+/DESIGN.md.*
