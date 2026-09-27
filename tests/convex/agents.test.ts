@@ -929,7 +929,8 @@ describe('the employee roster', (): void => {
         openCount: 0,
         parkedCount: 0,
         stoppedCount: 0,
-        needsYou: 0,
+        // The drafted charter waits on the manager's approval.
+        needsYou: 1,
         docSourceCount: 1,
       },
       {
@@ -1235,6 +1236,41 @@ describe('the employee roster', (): void => {
     const mateo = await deployEmployee(harness, 'owner', 'Mateo');
     await seedCharter(harness, mateo, { version: '0.0' }, true);
     await expect(roleLines()).resolves.toMatchObject({ Mateo: 'role not stated' });
+  });
+
+  it('counts a drafted charter under needs-you until the manager approves it or sends it back (P10-4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const needsYou = async (): Promise<Record<string, number>> =>
+      Object.fromEntries(
+        (await owner.query(api.agents.rosterForUser, {})).map((row): [string, number] => [
+          row.name,
+          row.needsYou,
+        ]),
+      );
+
+    const aiko = await deployEmployee(harness, 'owner', 'Aiko');
+    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+    const sentBack = await seedCharter(harness, aiko, runThroughBody(), false);
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
+    await owner.mutation(api.charters.requestChanges, { charterId: sentBack });
+    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+
+    const approved = await seedCharter(harness, aiko, runThroughBody(), false);
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
+    await owner.mutation(api.charters.approve, { charterId: approved });
+    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+
+    // A redraft after approval waits on the manager too, while the approved role still shows.
+    await seedCharter(
+      harness,
+      aiko,
+      { ...runThroughBody(), proposedFunction: 'A redraft.' },
+      false,
+    );
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
   });
 
   it('lists at most 20 employees, newest first, and an evaluation agent never takes a place', async (): Promise<void> => {
