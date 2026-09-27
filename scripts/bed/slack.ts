@@ -244,11 +244,11 @@ export function bedMessages(messages: readonly BedMessage[], botId: string, epoc
   );
 }
 
-/** One ask `bed/company/slack-asks.md` lists: where it stands and what it says after the mention. */
-export interface StandingAsk {
+/** One ask `bed/company/slack-asks.md` lists: where it is posted and what it says after the mention. */
+export interface SlackAsk {
   channel: string;
   text: string;
-  /** The named sets of `linear.json` whose sitting keeps this ask; the full run keeps every ask. */
+  /** The named sets of `linear.json` whose sitting posts this ask; the full run posts every ask. */
   sets: string[];
 }
 
@@ -265,8 +265,8 @@ export interface StandingAsk {
  * Raises:
  *   Error: If the file lists no ask, so a check never calls an empty table complete.
  */
-export function standingAsksFromFile(markdown: string): StandingAsk[] {
-  const asks: StandingAsk[] = [];
+export function asksFromFile(markdown: string): SlackAsk[] {
+  const asks: SlackAsk[] = [];
   for (const line of markdown.split('\n')) {
     const cells = line.split('|').map((cell: string): string => cell.trim());
     const channel = /^`#([a-z0-9_-]+)`$/.exec(cells[2] ?? '')?.[1];
@@ -277,80 +277,6 @@ export function standingAsksFromFile(markdown: string): StandingAsk[] {
   }
   if (asks.length === 0) throw new Error('bed/company/slack-asks.md lists no ask.');
   return asks;
-}
-
-/**
- * Whether a standing message is one of the file's asks, whatever the spacing or case.
- *
- * Args:
- *   message: A message that mentions the bot.
- *   ask: One ask from the tracked file.
- *
- * Returns:
- *   True when the message carries the ask's text.
- */
-export function carriesAsk(message: BedMessage, ask: StandingAsk): boolean {
-  const flat = (value: string): string => value.replace(/\s+/g, ' ').trim().toLowerCase();
-  return flat(message.text).includes(flat(ask.text));
-}
-
-/**
- * Messages that mention the bot and that intake would read: a new deployment's
- * first poll reads a channel's whole history, so each of these is work it
- * takes up. A person's message and another app's post both count; nothing the
- * bed's own app posted does, under any display name, because intake never
- * reads the app's own posts.
- *
- * Args:
- *   messages: A channel's messages.
- *   botUserId: The bot's user id, as a mention carries it.
- *   botId: The app's bot id, as its customised posts carry it.
- *
- * Returns:
- *   The mentions not posted by the app itself, oldest first.
- */
-export function standingMentions(
-  messages: readonly BedMessage[],
-  botUserId: string,
-  botId: string,
-): BedMessage[] {
-  const mention = `<@${botUserId}>`;
-  return messages
-    .filter(
-      (message: BedMessage): boolean =>
-        message.text.includes(mention) && message.botId !== botId && message.user !== botUserId,
-    )
-    // Slack timestamps are fixed-width strings; a float would round the last microsecond.
-    .sort((left: BedMessage, right: BedMessage): number =>
-      left.ts < right.ts ? -1 : left.ts > right.ts ? 1 : 0,
-    );
-}
-
-/**
- * Mentions of the bot that the app itself posted with no provenance trailer:
- * an ask sent through the bot token under a person's name, which reads like a
- * standing ask in Slack and which intake never reads.
- *
- * Args:
- *   messages: A channel's messages.
- *   botUserId: The bot's user id, as a mention carries it.
- *   botId: The app's bot id.
- *
- * Returns:
- *   The app's own mentions.
- */
-export function ownMentions(
-  messages: readonly BedMessage[],
-  botUserId: string,
-  botId: string,
-): BedMessage[] {
-  const mention = `<@${botUserId}>`;
-  return messages.filter(
-    (message: BedMessage): boolean =>
-      message.text.includes(mention) &&
-      message.botId === botId &&
-      !containsProvenanceTrailer(message.text),
-  );
 }
 
 /**
