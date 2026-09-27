@@ -388,5 +388,20 @@ export function openQuestionStopReason(
   open: Pick<OpenManagerQuestion, 'question' | 'steps'>,
 ): string {
   const steps = open.steps.map((step) => `step ${step}`).join(' and ');
-  return `the approved plan leaves ${steps} to the manager's answer, and the question put to the manager is still open: ${open.question}`;
+  return `${OPEN_QUESTION_STOP_START}${steps}${OPEN_QUESTION_STOP_TURN}${open.question}`;
+}
+
+const OPEN_QUESTION_STOP_START = 'the approved plan leaves step ';
+const OPEN_QUESTION_STOP_TURN =
+  " to the manager's answer, and the question put to the manager is still open: ";
+
+/**
+ * Whether a run's recorded stop is the one `openQuestionStopReason` gives,
+ * so a note given with Retry on it is the manager's answer to the question
+ * (review D2); a note on any other stop answers nothing.
+ *
+ * @param detail - The stop's reason with any stopped prefix removed.
+ */
+export function isOpenQuestionStop(detail: string): boolean {
+  return detail.startsWith(OPEN_QUESTION_STOP_START) && detail.includes(OPEN_QUESTION_STOP_TURN);
 }

@@ -6616,6 +6616,37 @@ describe('a question asked in the notes when no chat surface can carry the manag
     expect((await readItem(harness, workItemId)).state).toBe('actions-pending');
   });
 
+  it('keeps holding a declared question when the Retry note answered a re-read stop, not a question (review D2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const asked = 'Please confirm which template the notice should use.';
+    recorded.skillOutput = {
+      ...sitting4Log1PhaseOne,
+      notes: `The notice template is not documented for an unconfirmed ETA. ${asked}`,
+      declaredQuestion: asked,
+      actions: [read!, comment!, done!],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+    // The last run stopped because a colleague took the ticket, not on a question.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason:
+          'stopped: withheld before the first write: LOG-1 changed since the plan was made: it changed hands: it is assigned to another person. Nothing was sent.',
+      });
+    });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain(`is still open: ${asked}`);
+    expect(ticketWrites()).toEqual([]);
+  });
+
   it('lands the comment and Done for the manager once Retry carries the answer', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = { ...sitting4Log1PhaseOne, notes: ENGLISH, actions: [read!, comment!, done!] };

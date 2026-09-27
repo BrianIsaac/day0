@@ -512,6 +512,8 @@ export default defineSchema({
         ),
         /** Set when a run completed with this feedback as its direction; it is then a record, not an instruction. */
         addressedAt: v.optional(v.number()),
+        /** Set on a Retry note given on a run that stopped with a question open: the note answers it (review D2). */
+        answersQuestion: v.optional(v.boolean()),
       }),
     ),
     /**

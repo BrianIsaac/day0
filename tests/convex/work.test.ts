@@ -9,6 +9,7 @@ import { allConvexModules } from './all-modules';
 import { PLAN_CANCELLED_REASON, REEVALUATION_BATCH } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
+import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
@@ -1759,6 +1760,8 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       kind: 'retry-note',
     });
     expect(row.managerFeedback?.addressedAt).toBeUndefined();
+    // The stop asked nothing, so the note is a direction and answers no question (review D2).
+    expect(row.managerFeedback?.answersQuestion).toBeUndefined();
     const retries = await harness.run(
       async (ctx) =>
         (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
@@ -1774,6 +1777,27 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
         feedback: 'The three checks are done; propose Done.',
       },
     ]);
+  });
+
+  it('marks a note given with Retry on a question stop as the answer to it (review D2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: `stopped: ${openQuestionStopReason({ question: 'Which template?', steps: [2] })}`,
+      });
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: 'Use delay notice B.' });
+
+    expect((await readItem(harness, workItemId)).managerFeedback).toMatchObject({
+      reason: 'Use delay notice B.',
+      kind: 'retry-note',
+      answersQuestion: true,
+    });
   });
 
   it('records the eligibility waiver when the manager retries an out-of-scope skip', async (): Promise<void> => {

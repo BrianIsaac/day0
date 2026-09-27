@@ -1278,25 +1278,26 @@ export function prerequisiteOutput(output: ExecutionOutput, plan: ExecutionPlan)
 
 /**
  * Whether the row shows the manager's word on this item already: a live
- * rejection reason or retry note, or answers given when the plan was
- * approved. A write the plan left to the manager's answer is then no longer
- * waiting on a question. A kept correction is not an answer (review D4): it
- * was written about earlier work, and on a sibling it is another employee's
- * rejection, never a reply to the question this run asked.
+ * rejection reason, a live Retry note given on a run that stopped with its
+ * question open, or answers given when the plan was approved. A write the
+ * plan left to the manager's answer is then no longer waiting on a
+ * question. A Retry note on any other stop, such as the re-read finding the
+ * ticket changed, answers nothing (review D2). A kept correction is not an
+ * answer (review D4): it was written about earlier work, and on a sibling it
+ * is another employee's rejection, never a reply to the question this run
+ * asked.
  *
- * Args:
- *   item: The work item as the run read it.
- *
- * Returns:
- *   True when the manager has spoken on the item itself.
+ * @param item - The work item as the run read it.
+ * @returns True when the manager has spoken on the item itself.
  */
 export function managerHasAnswered(
   item: Pick<Doc<'workItems'>, 'managerFeedback' | 'managerAnswers'>,
 ): boolean {
-  return (
-    liveManagerFeedback(item.managerFeedback) !== undefined ||
-    (item.managerAnswers ?? []).length > 0
-  );
+  const feedback = item.managerFeedback;
+  const answers =
+    liveManagerFeedback(feedback) !== undefined &&
+    (feedback?.kind !== 'retry-note' || feedback.answersQuestion === true);
+  return answers || (item.managerAnswers ?? []).length > 0;
 }
 
 const CONDITIONAL_WRITES_WITHHELD = 'work.conditional-writes-withheld';

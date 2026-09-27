@@ -41,7 +41,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { transitionWithheld } from '../src/work/obligations';
+import { isOpenQuestionStop, transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
@@ -3113,7 +3113,19 @@ export const retryFailed = mutation({
       ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
       ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
       ...(feedback
-        ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
+        ? {
+            managerFeedback: {
+              reason: feedback,
+              at: Date.now(),
+              kind: 'retry-note' as const,
+              // Only a note on a question stop answers the question (review D2).
+              ...(row.state === 'failed' &&
+              row.skipReason !== undefined &&
+              isOpenQuestionStop(stopDetail(row.skipReason))
+                ? { answersQuestion: true }
+                : {}),
+            },
+          }
         : {}),
       // A retry starts every step afresh; no claim from an earlier attempt holds it back.
       ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
