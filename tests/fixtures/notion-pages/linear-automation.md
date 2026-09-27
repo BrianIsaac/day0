@@ -8,7 +8,7 @@ Linear is the team's formal work queue and audit trail. Day0 works only in team 
 - Team: `RevOps`, identifier `REVOPS` (issue ids are `REVOPS-n`).
 - Project: `Q3 close`.
 - Integration endpoint: Linear's MCP server, Streamable HTTP, `https://mcp.linear.app/mcp`. Authentication is a bearer token in the `Authorization` header.
-- Tools the automation is allowed to use: `list_issues`, `get_issue`, `list_comments`, `save_comment`, `save_issue`.
+- Tools the automation is allowed to use: `list_issues`, `get_issue`, `get_user`, `list_comments`, `save_comment`, `save_issue`.
 
 ## Access
 

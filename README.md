@@ -232,7 +232,7 @@ The footer of the same card reads 8 decisions requested, 0 partial, 31 actions a
 
 ## What this is, and what it is not
 
-Day0 is a working demonstration rather than a product and has no users. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
+Day0 is at the pilot stage and has no production users yet. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
 
 Day0 does bounded operational work under an approved charter. It makes no financial, employment, legal, medical, safety-critical or customer-credit decision and replaces no qualified professional, manager or institution. A request outside the approved role, its permissions or the connected systems is meant to be refused, deferred or escalated, and the [evaluation](#evaluation) measures how often it is; a person stays accountable for final decisions and for every external effect.
 
@@ -1284,7 +1284,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 ### 它是什么，以及不是什么
 
-Day0 是一个可运行的演示，而不是已投入生产的产品，目前没有用户。它的量化结论刻意限定在很窄的范围内：仓库提供一项[受控且由程序评分的比较](evaluation/README.md)，让完成入职的 Day0 与普通 Agent 在相同的 15 项陌生 mock-office 任务上运行。该基准不用于预测所有真实团队的工作表现。
+Day0 目前处于试点阶段，尚无生产用户。它的量化结论刻意限定在很窄的范围内：仓库提供一项[受控且由程序评分的比较](evaluation/README.md)，让完成入职的 Day0 与普通 Agent 在相同的 15 项陌生 mock-office 任务上运行。该基准不用于预测所有真实团队的工作表现。
 
 Day0 在已批准的章程内执行有边界的运营工作。它不做财务、雇佣、法律、医疗、安全攸关或客户信用方面的决定，也不取代合格的专业人员、经理或机构。超出已批准角色、其权限或已连接系统的请求应当被拒绝、延后或上报，[评测](#评测)衡量了它做到这一点的频率；最终决定与每一项外部影响仍由人负责。
 
