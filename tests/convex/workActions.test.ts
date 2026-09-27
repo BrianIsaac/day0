@@ -6471,6 +6471,42 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     ).toEqual([{ action: comment, applied: applied('wi:run:1') }]);
   });
 
+  it('leaves nothing awaiting the manager on a run the re-read stopped', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    // The comment is parked for the manager before the Done reaches the re-read.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        approvedIndexes: [1],
+        actionVerdicts: [
+          { disposition: 'held' as const, reason: 'the manager words the note' },
+          { disposition: 'auto' as const },
+        ],
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'In Progress',
+      statusType: 'started',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(linearTools()).toEqual(['get_issue']);
+    expect(ledger(stopped).some((row) => row.awaitingApproval)).toBe(false);
+    expect(ledger(stopped)[0]).toMatchObject({
+      held: true,
+      reason: expect.stringContaining('its state moved from Todo to In Progress'),
+    });
+    expect(ledger(stopped)[1]).toMatchObject({
+      held: true,
+      reason: expect.stringContaining('its state moved from Todo to In Progress'),
+    });
+  });
+
   it('withholds when the ticket cannot be re-read', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());

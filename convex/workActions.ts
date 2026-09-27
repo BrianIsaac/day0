@@ -2631,8 +2631,9 @@ function firstHold(...holds: ReadonlyArray<ClaimHold | undefined>): ClaimHold {
 
 /**
  * Stop a run whose ticket changed before its first write: the writes the
- * re-read held carry the reason, nothing after it was sent, and the run
- * fails, as stopped when nothing landed, so Retry stands.
+ * re-read held, and any parked for the manager, carry the reason, nothing
+ * after it was sent, and the run fails, as stopped when nothing landed, so
+ * Retry stands.
  */
 async function stopForChangedTicket(
   ctx: ActionCtx,
@@ -2646,9 +2647,14 @@ async function stopForChangedTicket(
   },
 ): Promise<{ ok: false; reason: string }> {
   const reason = scrubKnownValues(args.reason, args.knownValues);
+  // A row parked for the manager before the re-read is withheld with the
+  // rest: approving it could not send it.
+  const applied = args.applied.map((entry) =>
+    entry.awaitingApproval ? { ...entry, awaitingApproval: undefined, reason } : entry,
+  );
   const output = isDependentPendingOutput(args.output)
-    ? flattenedDependentOutput(args.output, args.applied)
-    : { ...args.output, applied: args.applied };
+    ? flattenedDependentOutput(args.output, applied)
+    : { ...args.output, applied };
   await ctx.runMutation(internal.work.setFailed, {
     workItemId: args.workItemId,
     runId: args.runId,
