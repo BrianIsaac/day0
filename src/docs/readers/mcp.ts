@@ -45,6 +45,8 @@ export interface McpConnectionConfig {
   id: string;
   url: URL;
   headers: Record<string, string>;
+  /** Day0's own Notion component on the compose network: a Notion source at its service name. */
+  bundled?: boolean;
 }
 
 type McpClientFactory = (config: McpConnectionConfig) => McpClientLike;
@@ -126,7 +128,7 @@ export function productionClient(
 ): McpClientLike {
   let created: Promise<{ client: McpClientLike; session: SessionBoundFetch }> | undefined;
   const create = async (): Promise<{ client: McpClientLike; session: SessionBoundFetch }> => {
-    const transport: SessionTransport = isBundledNotionLocator(config.url.href)
+    const transport: SessionTransport = config.bundled
       ? fetch
       : pinnedFetch(
           await checkMcpAddress(config.url, connection.resolveHostname),
@@ -188,7 +190,12 @@ function connectionConfig(source: DocSourceRecord, secret: string): McpConnectio
   } else {
     headers = { Authorization: authorizationHeader(secret) };
   }
-  return { id: randomUUID(), url, headers };
+  return {
+    id: randomUUID(),
+    url,
+    headers,
+    bundled: source.serverKind === 'notion' && isBundledNotionLocator(url.href),
+  };
 }
 
 /**

@@ -574,13 +574,25 @@ describe('the documentation MCP client reaches only the address it checked (M16)
     expect(JSON.stringify(sent)).toContain('Bearer docs-secret');
   });
 
-  it("leaves Day0's own Notion component on the compose network unchecked", async (): Promise<void> => {
+  it("checks a non-Notion source that names the component's host like any other", async (): Promise<void> => {
     mastra.configs.length = 0;
     const client = productionClient(config('http://docs-notion-mcp:3000/mcp'), {
-      resolveHostname: async (): Promise<string[]> => {
-        throw new Error('the bundled component was resolved');
-      },
+      resolveHostname: async (): Promise<string[]> => ['93.184.216.34'],
     });
+    await expect(client.listTools()).rejects.toThrow('public HTTPS hostname');
+    expect(mastra.configs).toEqual([]);
+  });
+
+  it("leaves Day0's own Notion component on the compose network unchecked", async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const client = productionClient(
+      { ...config('http://docs-notion-mcp:3000/mcp'), bundled: true },
+      {
+        resolveHostname: async (): Promise<string[]> => {
+          throw new Error('the bundled component was resolved');
+        },
+      },
+    );
     await expect(client.listTools()).resolves.toEqual({ docs_search: {} });
     expect(mastra.configs).toHaveLength(1);
   });

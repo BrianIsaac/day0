@@ -87,7 +87,8 @@ export function validateLinkInput(input: LinkInput): LinkInput {
     // Only Day0's own Notion component is reached over plain HTTP, on the
     // compose network; every other MCP server gets a secret, and the reader
     // connects to it over HTTPS at a checked public address alone (M16).
-    const bundled = input.kind === 'mcp' && isBundledNotionLocator(url.href);
+    const bundled =
+      input.kind === 'mcp' && input.serverKind === 'notion' && isBundledNotionLocator(url.href);
     if (url.protocol !== 'https:' && !(bundled && url.protocol === 'http:')) {
       throw new Error('Remote documentation locators must use HTTPS.');
     }

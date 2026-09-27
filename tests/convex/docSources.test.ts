@@ -119,6 +119,8 @@ describe('documentation source validation', (): void => {
     const mcp = (locator: string) => (): unknown =>
       validateLinkInput({ label: 'Docs', kind: 'mcp', locator, serverKind: 'confluence' });
     expect(mcp('http://docs.example.com/mcp')).toThrow('must use HTTPS');
+    // The component's host under another server kind is not the component.
+    expect(mcp('http://docs-notion-mcp:3000/mcp')).toThrow('must use HTTPS');
     expect(mcp('https://docs.example.com/mcp')).not.toThrow();
     expect(() =>
       validateLinkInput({
