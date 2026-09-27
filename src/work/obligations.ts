@@ -277,7 +277,7 @@ function managerDmReachable(surfaces: readonly SurfaceRecord[], now: number): bo
   return surfaces.some(
     (surface) =>
       surface.class === 'chat' &&
-      surface.managerDmChannelId !== undefined &&
+      !!surface.managerDmChannelId &&
       verdictFor(surface, now) === 'connected',
   );
 }

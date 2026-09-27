@@ -98,6 +98,11 @@ describe('openManagerQuestion over the notes when no chat surface can carry the 
     );
   });
 
+  it('reads the notes when the chat surface has no manager DM channel to post to', (): void => {
+    const blank = { ...slack, managerDmChannelId: '' } as SurfaceRecord;
+    expect(ask([blank, linear], [NOTES])?.question).toBe('Which template should the notice use?');
+  });
+
   it('ignores the notes while a connected chat surface carries the manager DM', (): void => {
     expect(ask([slack, linear], [NOTES])).toBeUndefined();
   });
