@@ -22,6 +22,7 @@ import { reevaluatePendingInTransaction } from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
+import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -1084,6 +1085,10 @@ export const recordProbeRetry = internalMutation({
  * closes the gate; the next probe, finding the row no longer connected,
  * descends. Establishing a connection still walks the whole ladder at once,
  * because a freshly approved row is never `connected`.
+ *
+ * A failed manager lookup never descends either: the route answered, and the
+ * person it looked up is what changed. The failure is recorded on the same
+ * rung, and changing the manager (`agents.setBossEmail`) re-probes it (Q6).
  */
 export const demoteAfterProbeFailure = internalMutation({
   args: {
@@ -1099,7 +1104,8 @@ export const demoteAfterProbeFailure = internalMutation({
       surface.probeGeneration !== args.generation ||
       !['approved', 'ungranted', 'listed-dead'].includes(surface.verdict) ||
       surface.managerApprovedAt === undefined ||
-      surface.itApprovedAt === undefined
+      surface.itApprovedAt === undefined ||
+      isManagerLookupFailure(args.reason)
     ) {
       return null;
     }
