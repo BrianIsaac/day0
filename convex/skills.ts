@@ -6,6 +6,7 @@ import {
   internalQuery,
   type MutationCtx,
 } from './_generated/server';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { applyVerdict, requeueBehindRegisteredSkill, skillRejectedReason } from './work';
@@ -147,33 +148,8 @@ async function waitingRows(
   skill: Doc<'skills'>,
   scope: WaitingScope = {},
 ): Promise<Doc<'workItems'>[]> {
-  const sameNameSkill = new Map<Id<'skills'>, boolean>();
-  const namesThisSkill = async (skillId: Id<'skills'>): Promise<boolean> => {
-    const known = sameNameSkill.get(skillId);
-    if (known !== undefined) return known;
-    const other = await ctx.db.get(skillId);
-    const same = other?.agentId === skill.agentId && other.name === skill.name;
-    sameNameSkill.set(skillId, same);
-    return same;
-  };
-  const waitsForThis = async (row: Doc<'workItems'>): Promise<boolean> => {
-    if (row.proposedSkillId === skill._id) return true;
-    if (row.proposedSkillId) {
-      return scope.sameName === true && (await namesThisSkill(row.proposedSkillId));
-    }
-    if (row._id === skill.proposedFor) return true;
-    return (
-      scope.sameName === true &&
-      (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName ===
-        skill.name
-    );
-  };
-
-  const source = skill.proposedFor ? await ctx.db.get(skill.proposedFor) : null;
-  if (source && source.agentId !== skill.agentId) {
-    throw new Error('skill and work item belong to different agents');
-  }
-
+  const waitsForThis = waitingPredicate(ctx, skill, scope);
+  const source = await waitingSource(ctx, skill);
   const rows: Doc<'workItems'>[] = [];
   const states = scope.queued
     ? (['discovered', 'needs-skill'] as const)
@@ -192,15 +168,234 @@ async function waitingRows(
 }
 
 /**
- * Put every work item waiting for this skill back where the boss can see what
- * it is waiting for. Always inside the same transaction as the skill write that
- * caused it: a callable skill with a work item still parked behind it, or a
- * parked work item whose skill never landed, is a state nothing in the product
- * knows how to leave.
+ * The row a skill was proposed for, refused when it belongs to another employee.
  *
- * Each row takes the verdict path the first one takes, oldest first. The
- * work-in-progress cap is `applyVerdict`'s: re-queued rows are evaluated in
- * turn, one claims the free slot and the rest queue behind it.
+ * Args:
+ *   ctx: Mutation context.
+ *   skill: The skill.
+ *
+ * Returns:
+ *   The source row, or null when the skill has none or it is gone.
+ */
+async function waitingSource(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+): Promise<Doc<'workItems'> | null> {
+  const source = skill.proposedFor ? await ctx.db.get(skill.proposedFor) : null;
+  if (source && source.agentId !== skill.agentId) {
+    throw new Error('skill and work item belong to different agents');
+  }
+  return source;
+}
+
+/**
+ * Whether one row of the employee is waiting for this skill; see `waitingRows`.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   skill: The skill whose transition is being applied.
+ *   scope: How far the transition reaches.
+ *
+ * Returns:
+ *   The test, which reads another proposal at most once per call site.
+ */
+function waitingPredicate(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+  scope: WaitingScope,
+): (row: Doc<'workItems'>) => Promise<boolean> {
+  const sameNameSkill = new Map<Id<'skills'>, boolean>();
+  const namesThisSkill = async (skillId: Id<'skills'>): Promise<boolean> => {
+    const known = sameNameSkill.get(skillId);
+    if (known !== undefined) return known;
+    const other = await ctx.db.get(skillId);
+    const same = other?.agentId === skill.agentId && other.name === skill.name;
+    sameNameSkill.set(skillId, same);
+    return same;
+  };
+  return async (row: Doc<'workItems'>): Promise<boolean> => {
+    if (row.proposedSkillId === skill._id) return true;
+    if (row.proposedSkillId) {
+      return scope.sameName === true && (await namesThisSkill(row.proposedSkillId));
+    }
+    if (row._id === skill.proposedFor) return true;
+    return (
+      scope.sameName === true &&
+      (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName ===
+        skill.name
+    );
+  };
+}
+
+/** Waiting rows one transaction moves; the rest continue by schedule, as `reevaluatePending` does. */
+export const WAITING_BATCH = 25;
+
+/** Rows of one state one transaction reads while looking for the ones waiting. */
+const WAITING_SCAN = 200;
+
+const waitingState = v.union(v.literal('discovered'), v.literal('needs-skill'));
+
+/** What a skill's transition does to each row waiting for it. */
+const waitingMove = v.union(
+  v.object({
+    kind: v.literal('verdict'),
+    verdict: v.object({ decision: v.string(), reason: v.string() }),
+  }),
+  v.object({ kind: v.literal('cancel') }),
+);
+type WaitingMove = typeof waitingMove.type;
+
+const waitingScope = v.object({
+  queued: v.optional(v.boolean()),
+  sameName: v.optional(v.boolean()),
+});
+
+/** Where a batched walk stopped: the state being read and the last row read in it. */
+const waitingProgress = v.object({
+  state: waitingState,
+  after: v.optional(v.number()),
+  /** The source row was moved first, from `discovered`, and is not moved again. */
+  skipSource: v.boolean(),
+});
+type WaitingProgress = typeof waitingProgress.type;
+
+/**
+ * Move every work item waiting for this skill, a batch per transaction.
+ *
+ * The first batch lands in the transaction of the skill write that caused
+ * it, and the continuation is scheduled in that same transaction, so a
+ * callable skill with work still parked behind it, or parked work whose skill
+ * never landed, lasts only until the continuation runs; nothing is left for a
+ * later write to find. A continuation stops once the skill has left the state
+ * this transition put it in: the next transition walks the rows itself.
+ *
+ * The needs-skill rows are read before the discovered ones, so a row this
+ * walk moves into a later state is never read twice. Each row takes the move
+ * the first one takes, oldest first within a state; the work-in-progress cap
+ * is the loop's, which evaluates the queue's next row when a slot is free.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   skill: The skill as the transition left it.
+ *   move: The verdict each waiting row takes, or `cancel` for a rejection.
+ *   scope: How far the transition reaches.
+ *   from: Where an earlier batch stopped; absent for the first.
+ *
+ * Returns:
+ *   How many rows this batch moved.
+ */
+async function moveWaitingWork(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+  move: WaitingMove,
+  scope: WaitingScope = {},
+  from?: WaitingProgress,
+): Promise<number> {
+  const waitsForThis = waitingPredicate(ctx, skill, scope);
+  const apply = async (row: Doc<'workItems'>): Promise<boolean> => {
+    if (move.kind === 'verdict') {
+      await applyVerdict(ctx, row._id, move.verdict);
+      return true;
+    }
+    if (row.state !== 'needs-skill') return false;
+    await ctx.db.patch(row._id, {
+      state: 'cancelled',
+      skipReason: skillRejectedReason(skill.name),
+    });
+    await scheduleNextStep(ctx, { ...row, state: 'cancelled' });
+    return true;
+  };
+
+  let moved = 0;
+  let skipSource = from?.skipSource ?? false;
+  if (from === undefined) {
+    const source = await waitingSource(ctx, skill);
+    if (!scope.queued && source?.state === 'discovered' && (await waitsForThis(source))) {
+      skipSource = await apply(source);
+      if (skipSource) moved += 1;
+    }
+  }
+
+  const states = scope.queued
+    ? (['needs-skill', 'discovered'] as const)
+    : (['needs-skill'] as const);
+  let stateIndex = from === undefined ? 0 : states.findIndex((state) => state === from.state);
+  let after = from?.after;
+  for (; stateIndex < states.length; stateIndex += 1, after = undefined) {
+    const state = states[stateIndex];
+    const page = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => {
+        const inState = q.eq('agentId', skill.agentId).eq('state', state);
+        return after === undefined ? inState : inState.gt('_creationTime', after);
+      })
+      .take(WAITING_SCAN);
+    for (const row of page) {
+      if (moved === WAITING_BATCH) {
+        await continueLater(ctx, skill, move, scope, { state, after, skipSource });
+        return moved;
+      }
+      after = row._creationTime;
+      if (skipSource && row._id === skill.proposedFor) continue;
+      if ((await waitsForThis(row)) && (await apply(row))) moved += 1;
+    }
+    if (page.length === WAITING_SCAN) {
+      await continueLater(ctx, skill, move, scope, { state, after, skipSource });
+      return moved;
+    }
+  }
+  return moved;
+}
+
+/**
+ * Schedule the next batch of a walk, fenced on the state the transition wrote.
+ *
+ * The skill is read again because callers hold the row as it was before
+ * their own write.
+ */
+async function continueLater(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+  move: WaitingMove,
+  scope: WaitingScope,
+  from: WaitingProgress,
+): Promise<void> {
+  const current = await ctx.db.get(skill._id);
+  if (!current) return;
+  await ctx.scheduler.runAfter(0, internal.skills.continueWaitingWork, {
+    skillId: skill._id,
+    skillState: current.state,
+    move,
+    scope,
+    from,
+  });
+}
+
+/**
+ * The next batch of a walk over the rows waiting for a skill.
+ *
+ * Internal; scheduled by `moveWaitingWork` only. Does nothing once the skill
+ * has left the state the walk began in.
+ */
+export const continueWaitingWork = internalMutation({
+  args: {
+    skillId: v.id('skills'),
+    skillState: v.string(),
+    move: waitingMove,
+    scope: waitingScope,
+    from: waitingProgress,
+  },
+  handler: async (ctx, args): Promise<{ moved: number }> => {
+    const skill = await ctx.db.get(args.skillId);
+    if (!skill || skill.state !== args.skillState) return { moved: 0 };
+    return { moved: await moveWaitingWork(ctx, skill, args.move, args.scope, args.from) };
+  },
+});
+
+/**
+ * Put every work item waiting for this skill back where the boss can see what
+ * it is waiting for, starting in the transaction of the skill write that
+ * caused it; see `moveWaitingWork`.
  */
 async function requeueWaitingWork(
   ctx: MutationCtx,
@@ -208,9 +403,7 @@ async function requeueWaitingWork(
   verdict: { decision: string; reason: string },
   scope: WaitingScope = {},
 ): Promise<void> {
-  for (const row of await waitingRows(ctx, skill, scope)) {
-    await applyVerdict(ctx, row._id, verdict);
-  }
+  await moveWaitingWork(ctx, skill, { kind: 'verdict', verdict }, scope);
 }
 
 /**
@@ -549,16 +742,9 @@ export const reject = mutation({
     }
     await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
     // Every row still waiting for this proposal leaves `needs-skill` with the
-    // reason on its card. A row that has moved on, or is now linked to a
-    // different proposal, is not this rejection's to cancel.
-    for (const waiting of await waitingRows(ctx, row)) {
-      if (waiting.state !== 'needs-skill') continue;
-      await ctx.db.patch(waiting._id, {
-        state: 'cancelled',
-        skipReason: skillRejectedReason(row.name),
-      });
-      await scheduleNextStep(ctx, { ...waiting, state: 'cancelled' });
-    }
+    // reason on its card, a batch at a time. A row that has moved on, or is
+    // now linked to a different proposal, is not this rejection's to cancel.
+    await moveWaitingWork(ctx, row, { kind: 'cancel' });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'skill.rejected',

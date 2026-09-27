@@ -1127,3 +1127,149 @@ describe('the verdict write and the registration side meeting on one late item',
     expect(await charterChanged(harness, agentId, stamp.key)).toBe(0);
   });
 });
+
+describe('a long wait behind one skill (P9-1)', (): void => {
+  /**
+   * Park many tickets behind one skill of the given state, oldest first.
+   *
+   * Args:
+   *   harness: Convex test harness with the limits the test enforces.
+   *   state: The skill's state.
+   *   count: How many tickets wait.
+   *
+   * Returns:
+   *   The agent, the skill and the waiting rows in discovery order.
+   */
+  async function seedLongWait(
+    harness: Harness,
+    state: Doc<'skills'>['state'],
+    count: number,
+  ): Promise<{ agentId: Id<'agents'>; skillId: Id<'skills'>; rows: Id<'workItems'>[] }> {
+    const agentId = await seedEmployee(harness);
+    const rows: Id<'workItems'>[] = [];
+    // Ten rows a transaction, so the seeding stays inside the limits the test enforces.
+    for (let start = 0; start < count; start += 10) {
+      await harness.run(async (ctx) => {
+        for (let index = start; index < Math.min(count, start + 10); index += 1) {
+          rows.push(
+            await ctx.db.insert('workItems', {
+              agentId,
+              sourceCategory: 'ticket-queue',
+              sourceSystem: 'linear',
+              externalId: `LOG-${100 + index}`,
+              title: `Post the shipment status note on LOG-${100 + index}`,
+              contentSummary:
+                'Comment on this Linear ticket with the shipment status and close it.',
+              contentRefs: [`ticket://LOG-${100 + index}`],
+              state: 'needs-skill',
+              verdict: {
+                decision: 'needs-skill',
+                reason:
+                  'no registered skill covers this; agent will propose "kanban-comment-and-close"',
+                suggestedSkillName: 'kanban-comment-and-close',
+              },
+              observedAt: Date.now(),
+              createdAt: Date.now(),
+            }),
+          );
+        }
+      });
+    }
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '',
+          sourceType: 'agent-authored',
+          state,
+          proposedFor: rows[0],
+          requiredScopes: ['linear:read', 'linear:write'],
+          targetSurface: 'linear',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          createdAt: Date.now(),
+        }),
+    );
+    for (let start = 0; start < count; start += 10) {
+      await harness.run(async (ctx) => {
+        for (const row of rows.slice(start, start + 10)) {
+          await ctx.db.patch(row, { proposedSkillId: skillId });
+        }
+      });
+    }
+    return { agentId, skillId, rows };
+  }
+
+  /** How many of the rows are in each state. */
+  async function stateCounts(
+    harness: Harness,
+    rows: readonly Id<'workItems'>[],
+  ): Promise<Record<string, number>> {
+    const counts: Record<string, number> = {};
+    for (const workItemId of rows) {
+      const { state } = await readItem(harness, workItemId);
+      counts[state] = (counts[state] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  it('registration re-queues sixty waiting rows in batches, within the transaction limits', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { functionsScheduled: 40 },
+    });
+    const { skillId, rows } = await seedLongWait(harness, 'approved', 60);
+
+    await register(harness, skillId, await claim(harness, skillId));
+    expect(await stateCounts(harness, rows)).toEqual({ discovered: 25, 'needs-skill': 35 });
+
+    await drain(harness);
+    expect(await stateCounts(harness, rows)).toEqual({ discovered: 59, 'plan-pending': 1 });
+    expect((await readItem(harness, rows[0])).state).toBe('plan-pending');
+    expect(recorded.planCalls).toEqual(['Post the shipment status note on LOG-100']);
+  });
+
+  it('stops a continuation once the skill has moved on', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { skillId, rows } = await seedLongWait(harness, 'approved', 60);
+    await register(harness, skillId, await claim(harness, skillId));
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, { state: 'approved' });
+    });
+
+    await drain(harness);
+
+    // The rows past the first batch were never re-queued, so never evaluated.
+    const evaluated = new Set(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+        .filter((event) => event.type === 'work.evaluated')
+        .map((event) => String((event.payload as { workItemId: string }).workItemId)),
+    );
+    expect(rows.slice(25).filter((row) => evaluated.has(String(row)))).toEqual([]);
+    expect(rows.slice(0, 25).every((row) => evaluated.has(String(row)))).toBe(true);
+  });
+
+  it('rejection cancels a long wait in batches, within the transaction limits', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { documentsWritten: 40 },
+    });
+    const { skillId, rows } = await seedLongWait(harness, 'proposed', 60);
+
+    await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
+    expect(await stateCounts(harness, rows)).toEqual({ cancelled: 25, 'needs-skill': 35 });
+
+    await drain(harness);
+    expect(await stateCounts(harness, rows)).toEqual({ cancelled: 60 });
+  });
+});
