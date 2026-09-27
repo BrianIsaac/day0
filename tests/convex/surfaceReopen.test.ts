@@ -49,9 +49,9 @@ describe('reopenAbsent', (): void => {
     await expect(
       harness.mutation(internal.surfaceReopen.reopenAbsent, {
         surfaceId,
-        reason: 'A linked page now records Northstar CRM; orientation runs again.',
+        charterNamesSystems: false,
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe('oriented');
     const { surface, events } = await harness.run(async (ctx) => {
       const surface = await ctx.db.get(surfaceId);
       const events = await ctx.db.query('events').collect();
@@ -65,13 +65,65 @@ describe('reopenAbsent', (): void => {
     expect(events.map((event) => event.type)).toEqual(['surface.reopened']);
   });
 
+  it('re-opens a system the charter does not name to wait for the manager, with no orientation job (review m34)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedSurface(harness, 'absent');
+    await expect(
+      harness.mutation(internal.surfaceReopen.reopenAbsent, {
+        surfaceId,
+        charterNamesSystems: true,
+      }),
+    ).resolves.toBe('awaiting-proposal');
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      verdict: 'declared',
+      reason:
+        'A linked page now records Northstar CRM. The charter does not name it, so it waits for the manager to propose it.',
+    });
+    expect(surface?.orientationJobId).toBeUndefined();
+  });
+
+  it('orients a re-opened system the charter names, whatever else it names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedSurface(harness, 'absent');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        discoveryEvidence: [
+          {
+            kind: 'charter',
+            ref: 'charter',
+            quote: 'We use Northstar CRM.',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+      });
+    });
+    await expect(
+      harness.mutation(internal.surfaceReopen.reopenAbsent, {
+        surfaceId,
+        charterNamesSystems: true,
+      }),
+    ).resolves.toBe('oriented');
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      verdict: 'declared',
+      reason: 'A linked page now records Northstar CRM; orientation runs again.',
+    });
+    expect(surface?.orientationJobId).toBeDefined();
+  });
+
   it('leaves a surface that is no longer absent alone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     for (const verdict of ['declared', 'proposed'] as const) {
       const surfaceId = await seedSurface(harness, verdict);
       await expect(
-        harness.mutation(internal.surfaceReopen.reopenAbsent, { surfaceId, reason: 'again' }),
-      ).resolves.toBe(false);
+        harness.mutation(internal.surfaceReopen.reopenAbsent, {
+          surfaceId,
+          charterNamesSystems: false,
+        }),
+      ).resolves.toBe('not-absent');
       expect((await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.verdict).toBe(
         verdict,
       );

@@ -1020,6 +1020,64 @@ describe('orientation run', (): void => {
     }
   });
 
+  it('re-opens a system the charter does not name with a reason that stays true, and orients nothing (review m34)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      {
+        'netledger.md':
+          '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.',
+      },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    const netledgerId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.0',
+        body: { version: '0.0', namedSystems: [{ name: 'Linear', class: 'kanban' }] },
+        approved: true,
+        approvedAt: 3,
+        createdAt: 3,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'netledger',
+        displayName: 'NetLedger',
+        class: 'other',
+        verdict: 'absent',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+        reason: 'No approved surface found after searching: NetLedger, other',
+      });
+    });
+
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId }),
+    ).resolves.toEqual({ reopened: 1 });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const netledger = await harness.run(async (ctx) => await ctx.db.get(netledgerId));
+    const waiting =
+      'A linked page now records NetLedger. The charter does not name it, so it waits for the manager to propose it.';
+    expect(netledger).toMatchObject({ verdict: 'declared', reason: waiting });
+    expect(netledger?.orientationJobId).toBeUndefined();
+    const reopened = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (index) =>
+            index.eq('agentId', agentId).eq('type', 'surface.reopened'),
+          )
+          .collect(),
+    );
+    expect(reopened.map((event) => event.payload)).toEqual([
+      { surfaceId: netledgerId, reason: waiting },
+    ]);
+  });
+
   it('leaves an absent system absent while its page still denies a surface', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'escalate';

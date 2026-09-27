@@ -15,6 +15,7 @@ import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
 import type { PrivateHostAllowlist } from '../src/lib/private-hosts';
+import type { ReopenOutcome } from './surfaceReopen';
 import {
   channelDescriptions,
   groundScopePicks,
@@ -710,12 +711,10 @@ export function documentedEndpoints(
     (url: string): boolean => !isCredentialSafeEndpoint(url) && documentsRung(url),
   );
   const judge = (candidates: readonly string[]): JudgedEndpoint[] =>
-    candidates
-      .filter(isCredentialSafeEndpoint)
-      .map((endpoint: string) => ({
-        endpoint,
-        reason: probeAddressRefusal(endpoint, privateHosts),
-      }));
+    candidates.filter(isCredentialSafeEndpoint).map((endpoint: string) => ({
+      endpoint,
+      reason: probeAddressRefusal(endpoint, privateHosts),
+    }));
   const judgedMcp = judge(urls.filter((url: string): boolean => MCP_SEGMENT.test(url)));
   const mcp = firstAdmitted(judgedMcp);
   const judgedApi = judge(urls.filter((url: string): boolean => url !== mcp && API_BASE.test(url)));
@@ -1733,28 +1732,51 @@ export const orientOne = internalAction({
  * still says nothing, or still denies the system, leaves it absent and
  * nothing loops.
  *
- * @returns How many surfaces were re-opened, each with its orientation job placed.
+ * @param absent - The agent's `absent` surfaces.
+ * @param charterNamesSystems - Whether the employee's approved charter names any work system.
+ * @returns How many surfaces were re-opened, and how many of them were given an orientation job.
  */
 async function reopenDocumentedAbsences(
   ctx: OrientationCtx,
   agentId: Id<'agents'>,
-  surfaces: readonly Doc<'surfaces'>[],
-): Promise<number> {
-  const absent = surfaces.filter((surface): boolean => surface.verdict === 'absent');
-  if (absent.length === 0) return 0;
+  absent: readonly Doc<'surfaces'>[],
+  charterNamesSystems: boolean,
+): Promise<ReopenedAbsences> {
+  const reopened: ReopenedAbsences = { reopened: 0, oriented: 0 };
+  if (absent.length === 0) return reopened;
   const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
     agentId,
   });
-  let reopened = 0;
   for (const surface of absent) {
     if (surfaceDocumentation(pages, surface).absent) continue;
-    const done: boolean = await ctx.runMutation(internal.surfaceReopen.reopenAbsent, {
+    const outcome: ReopenOutcome = await ctx.runMutation(internal.surfaceReopen.reopenAbsent, {
       surfaceId: surface._id,
-      reason: `A linked page now records ${surface.displayName}; orientation runs again.`,
+      charterNamesSystems,
     });
-    if (done) reopened += 1;
+    if (outcome !== 'not-absent') reopened.reopened += 1;
+    if (outcome === 'oriented') reopened.oriented += 1;
   }
   return reopened;
+}
+
+/** What one agent's re-open pass did. */
+interface ReopenedAbsences {
+  reopened: number;
+  oriented: number;
+}
+
+/** The `absent` surfaces among an agent's surfaces. */
+function absentSurfaces(surfaces: readonly Doc<'surfaces'>[]): Doc<'surfaces'>[] {
+  return surfaces.filter((surface): boolean => surface.verdict === 'absent');
+}
+
+/** Whether the employee's approved charter names any work system. */
+async function charterNamesSystemsFor(
+  ctx: OrientationCtx,
+  agentId: Id<'agents'>,
+): Promise<boolean> {
+  const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, { agentId });
+  return charterNamesWorkSystems(charter?.namedSystems);
 }
 
 /**
@@ -1776,7 +1798,16 @@ export const reorientAbsent = internalAction({
         internal.orientationData.surfacesForAgent,
         { agentId: agent._id },
       );
-      reopened += await reopenDocumentedAbsences(ctx, agent._id, surfaces);
+      const absent = absentSurfaces(surfaces);
+      if (absent.length === 0) continue;
+      reopened += (
+        await reopenDocumentedAbsences(
+          ctx,
+          agent._id,
+          absent,
+          await charterNamesSystemsFor(ctx, agent._id),
+        )
+      ).reopened;
     }
     return { reopened };
   },
@@ -1801,16 +1832,20 @@ export const run = internalAction({
       internal.orientationData.surfacesForAgent,
       args,
     );
-    const reopened = await reopenDocumentedAbsences(ctx, args.agentId, surfaces);
-    const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, args);
-    const namesSystems = charterNamesWorkSystems(charter?.namedSystems);
+    const namesSystems = await charterNamesSystemsFor(ctx, args.agentId);
+    const { oriented } = await reopenDocumentedAbsences(
+      ctx,
+      args.agentId,
+      absentSurfaces(surfaces),
+      namesSystems,
+    );
     // A system the charter does not name waits for the manager's Propose;
     // scheduling it here would only be a job that decides to do nothing.
     const declared = surfaces.filter(
       (surface: Doc<'surfaces'>): boolean =>
         surface.verdict === 'declared' && !awaitsManagerProposal(surface, namesSystems),
     );
-    let scheduled = reopened;
+    let scheduled = oriented;
     for (const surface of declared) {
       const claimed: boolean = await ctx.runMutation(internal.surfaces.scheduleOrientation, {
         surfaceId: surface._id,
