@@ -46,6 +46,7 @@ vi.mock('../../src/lib/mastra', async (importOriginal) => {
         recorded.prompts.push(user);
         const next = recorded.answers.shift();
         if (next === undefined) throw new Error('unscripted scope judgement');
+        if (next instanceof Error) throw next;
         return { object: next };
       },
     }),
@@ -215,6 +216,36 @@ describe('finding K on the rows: REVOPS-27', (): void => {
         overruled: [K_REASON, second],
       },
     ]);
+  });
+
+  it('records no admission when the second asking fails, and judges the row afresh next time (M19)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { charterId, workItemId } = await seed(harness, 'priya');
+    recorded.answers.push(skip(K_REASON), new Error('the provider did not answer in time'));
+
+    await expect(evaluate(harness, workItemId)).resolves.toBe('scope-judgement-unavailable');
+
+    const parked = await row(harness, workItemId);
+    expect(parked.state).toBe('discovered');
+    expect(parked.scopeAdmission).toBeUndefined();
+    expect(await eventsOf(harness, 'work.scope-skip-overruled')).toEqual([]);
+    expect(await eventsOf(harness, 'work.evaluated')).toEqual([]);
+    expect(
+      (await eventsOf(harness, 'work.scope-judgement-unavailable')).map((event) => event.payload),
+    ).toEqual([{ workItemId, cause: 'the provider did not answer in time' }]);
+
+    vi.advanceTimersByTime(10 * 60 * 1000);
+    recorded.prompts.length = 0;
+    recorded.answers.push(inScope);
+    await expect(evaluate(harness, workItemId)).resolves.toBe('needs-skill');
+    expect(recorded.prompts).toHaveLength(1);
+    expect((await row(harness, workItemId)).scopeAdmission).toEqual({
+      charterId,
+      at: expect.any(Number),
+      basis: 'charter-judgement',
+    });
   });
 
   it('writes no admission for a skip that cites', async (): Promise<void> => {

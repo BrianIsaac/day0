@@ -9,7 +9,11 @@ import {
 } from '../../../src/work/evaluate';
 import type { AgentContext, WorkCandidate } from '../../../src/work/types';
 
-const model = vi.hoisted(() => ({ calls: [] as string[] }));
+const model = vi.hoisted(() => ({
+  calls: [] as string[],
+  /** Thrown by the charter scope judgement instead of an answer. */
+  scopeFailure: undefined as Error | undefined,
+}));
 
 const { schemaChecked } = await vi.hoisted(async () => await import('../../convex/fakes/mastra'));
 
@@ -17,6 +21,7 @@ vi.mock('../../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: schemaChecked(async (args): Promise<unknown> => {
     model.calls.push(args.agent.name);
+    if (model.scopeFailure) throw model.scopeFailure;
     return {
       inScope: true,
       fit: true,
@@ -129,6 +134,24 @@ function lookups(
 describe('work surface enablement', (): void => {
   beforeEach((): void => {
     model.calls.length = 0;
+    model.scopeFailure = undefined;
+  });
+
+  it('defers a real-mode candidate whose scope call fails, under autonomy too, before reading a grant or a skill', async (): Promise<void> => {
+    model.scopeFailure = new Error('provider answered 503');
+    const hasGrantForScope = vi.fn(async (): Promise<boolean> => true);
+    const reads = lookups(hasGrantForScope);
+    const findMatchingSkill = vi.spyOn(reads, 'findMatchingSkill');
+
+    await expect(
+      evaluateCandidate(candidate(), context('real', [surface('linear')], true), reads),
+    ).resolves.toEqual({
+      decision: 'defer',
+      reason: 'scope-judgement-unavailable',
+      cause: 'provider answered 503',
+    });
+    expect(hasGrantForScope).not.toHaveBeenCalled();
+    expect(findMatchingSkill).not.toHaveBeenCalled();
   });
 
   it('asks the charter judgement once for a real-mode candidate and never in mock mode', async (): Promise<void> => {

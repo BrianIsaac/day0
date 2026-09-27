@@ -4342,10 +4342,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
   });
 
-  it('admits a real-mode item on the lexical inputs and records it when the charter judgement is unavailable', async (): Promise<void> => {
+  it('parks a real-mode item whose charter judgement is unavailable: one unavailable event, no verdict, no admission', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.scopeJudgementFails = true;
-    // The claim schedules the server's draft; this test reads the verdict alone.
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'real');
@@ -4360,16 +4359,21 @@ describe('the autonomous-actions switch through the gate', (): void => {
 
     await expect(
       harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
-    ).resolves.toEqual({ decision: 'claim' });
-    const unavailable = (
-      await harness.run(
-        async (ctx) =>
-          await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
-      )
-    ).filter((event) => event.type === 'work.scope-judgement-unavailable');
-    expect(unavailable.map((event) => event.payload)).toEqual([
-      { workItemId, cause: 'model unavailable in tests' },
-    ]);
+    ).resolves.toEqual({ decision: 'scope-judgement-unavailable' });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+    );
+    expect(
+      events
+        .filter((event) => event.type === 'work.scope-judgement-unavailable')
+        .map((event) => event.payload),
+    ).toEqual([{ workItemId, cause: 'model unavailable in tests' }]);
+    expect(events.filter((event) => event.type === 'work.evaluated')).toEqual([]);
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({ state: 'discovered', evaluationClaimedAt: expect.any(Number) });
+    expect(parked).not.toHaveProperty('verdict');
+    expect(parked).not.toHaveProperty('scopeAdmission');
   });
 
   it('re-evaluates an out-of-scope skip the manager retried without the eligibility rule and records the decision', async (): Promise<void> => {

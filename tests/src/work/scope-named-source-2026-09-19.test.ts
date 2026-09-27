@@ -315,32 +315,31 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
     expect(verdict).toEqual({ decision: 'skip', reason: `out-of-scope: ${cited}` });
   });
 
-  it('keeps the item on the named source when the second asking cannot be reached, and says so', async (): Promise<void> => {
+  it('defers the item unjudged when the second asking cannot be reached, admitting nothing (M19)', async (): Promise<void> => {
     model.answers.push(uncitedSkip, new Error('provider answered 503'));
 
     const { verdict, judgements } = await evaluate(revops27, runContext('priya'));
 
-    expect(verdict.decision).toBe('needs-skill');
+    expect(verdict).toEqual({
+      decision: 'defer',
+      reason: 'scope-judgement-unavailable',
+      cause: 'provider answered 503',
+    });
     expect(judgements).toEqual([
-      {
-        admitted: true,
-        basis: 'source-named',
-        namedBy: 'Work the tickets in Linear, team REVOPS, project Q3 close.',
-        overruled: [K_REASON],
-        failedOpen: 'provider answered 503',
-      },
+      { admitted: false, basis: 'unavailable', cause: 'provider answered 503' },
     ]);
   });
 
-  it('reads an answer without the citation field as citing nothing', async (): Promise<void> => {
-    model.answers.push(
-      { inScope: false, fit: true, reason: K_REASON },
-      { inScope: false, fit: true, reason: K_REASON },
-    );
+  it('defers the item unjudged when an answer lacks the citation field: the reply is out of shape', async (): Promise<void> => {
+    model.answers.push({ inScope: false, fit: true, reason: K_REASON });
 
     const { verdict } = await evaluate(revops27, runContext('priya'));
 
-    expect(verdict.decision).toBe('needs-skill');
+    expect(verdict).toEqual({
+      decision: 'defer',
+      reason: 'scope-judgement-unavailable',
+      cause: 'agentJson(day0-scope-judgement): reply did not satisfy the schema',
+    });
   });
 });
 

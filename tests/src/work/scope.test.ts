@@ -27,19 +27,26 @@ const model = vi.hoisted(() => ({
         exclusion: { kind: 'none' | 'will-not-do' | 'absent-system'; quote: string };
       }
     | Error,
+  /** Hand the reply over without the schema, as a transport that skipped it would. */
+  unchecked: false,
 }));
 
 const { schemaChecked } = await vi.hoisted(async () => await import('../../convex/fakes/mastra'));
 
-vi.mock('../../../src/lib/mastra', () => ({
-  makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: schemaChecked(async (args): Promise<unknown> => {
+vi.mock('../../../src/lib/mastra', () => {
+  const reply = async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
     model.calls.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name === 'day0-quality-fit') return { pass: false, reason: 'busywork' };
     if (model.answer instanceof Error) throw model.answer;
     return model.answer;
-  }),
-}));
+  };
+  const checked = schemaChecked(reply);
+  return {
+    makeAgent: (name: string): { name: string } => ({ name }),
+    agentJson: async (args: Parameters<typeof checked>[0]): Promise<unknown> =>
+      model.unchecked ? await reply(args) : await checked(args),
+  };
+});
 
 const NOW = Date.parse('2026-09-15T02:00:00.000Z');
 
@@ -159,6 +166,7 @@ describe('one scope judgement for the R6 card', (): void => {
 
   beforeEach((): void => {
     model.calls.length = 0;
+    model.unchecked = false;
     model.answer = { inScope: true, fit: true, reason: 'inside the role', exclusion: NO_EXCLUSION };
   });
 
@@ -275,18 +283,46 @@ describe('one scope judgement for the R6 card', (): void => {
     expect(model.calls).toEqual([]);
   });
 
-  it('admits the item on the lexical inputs alone when the model cannot be reached, and says so', async (): Promise<void> => {
-    model.answer = new Error('model unavailable');
-    const judgements: ScopeJudgement[] = [];
+  it.each([
+    ['throws', new Error('model unavailable'), 'model unavailable'],
+    [
+      'times out',
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      'The operation was aborted due to timeout',
+    ],
+    [
+      "answers `inScope: 'yes'`",
+      { inScope: 'yes', fit: true, reason: 'inside the role', exclusion: NO_EXCLUSION },
+      'agentJson(day0-scope-judgement): reply did not satisfy the schema',
+    ],
+  ])(
+    'defers the item unjudged when the charter call %s, and never admits it',
+    async (_how, answer, cause): Promise<void> => {
+      model.answer = answer as typeof model.answer;
+      const judgements: ScopeJudgement[] = [];
+      const lookups = { ...noSkill, hasGrantForScope: vi.fn(noSkill.hasGrantForScope) };
 
-    const verdict = await evaluateCandidate(r6Card, context('real'), noSkill, {
-      onScopeJudgement: (judgement): void => void judgements.push(judgement),
+      const verdict = await evaluateCandidate(r6Card, context('real'), lookups, {
+        onScopeJudgement: (judgement): void => void judgements.push(judgement),
+      });
+
+      expect(verdict).toEqual({ decision: 'defer', reason: 'scope-judgement-unavailable', cause });
+      expect(judgements).toEqual([{ admitted: false, basis: 'unavailable', cause }]);
+      expect(lookups.hasGrantForScope).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reads a reply that reached it out of shape as an unavailable judgement, whatever the transport did', async (): Promise<void> => {
+    model.unchecked = true;
+    model.answer = { inScope: true, fit: true, reason: 'inside the role' } as typeof model.answer;
+
+    await expect(
+      judgeScope(r6Card, context('real'), { provenance: true, namesDocumentedSystem: false }),
+    ).resolves.toEqual({
+      admitted: false,
+      basis: 'unavailable',
+      cause: expect.stringContaining('the scope judgement reply did not satisfy the schema'),
     });
-
-    expect(verdict.decision).toBe('needs-skill');
-    expect(judgements).toEqual([
-      { admitted: true, basis: 'provenance', failedOpen: 'model unavailable' },
-    ]);
   });
 
   it('counts the fit half only when a good-habits memory exists and the filter is not waived', async (): Promise<void> => {

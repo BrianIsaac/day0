@@ -39,12 +39,21 @@ import type { SurfaceMode } from '../surfaces/types';
  * the citation a skip needs. And a row judged in scope once is not judged
  * again under the same charter: `scopeHeld` skips the model and leaves the
  * lexical inputs and the rest of the evaluation to run.
+ *
+ * A charter call that throws, times out or answers out of shape judges
+ * nothing, so it admits nothing: the item is `unavailable` and waits to be
+ * judged again. No reading of the lexical inputs alone ever admits a
+ * real-mode item the model was asked about.
  */
 
 /** The reason the lexical rule writes when nothing ties the item to the charter. */
 export const NO_OVERLAP_REASON = `${OUT_OF_SCOPE_SKIP_PREFIX}no charter or current documented-system overlap`;
 
-/** What placed a candidate in scope, or why it is not. */
+/**
+ * What placed a candidate in scope, why it is not, or that no judgement was
+ * made. An `unavailable` judgement carries no `reason`: it is not a skip, and
+ * a reader has to decide what to do with an item nobody judged.
+ */
 export type ScopeJudgement =
   | {
       admitted: true;
@@ -56,8 +65,6 @@ export type ScopeJudgement =
         | 'charter-judgement'
         | 'source-named'
         | 'held';
-      /** The model could not be reached; the lexical inputs admitted the item alone. */
-      failedOpen?: string;
       /** The willDo clause naming the item's source, when a skip was set aside on it. */
       namedBy?: string;
       /** The skip readings set aside, in the order they were given. */
@@ -68,6 +75,12 @@ export type ScopeJudgement =
       basis: 'no-overlap' | 'charter-judgement' | 'quality-fit';
       /** The skip reason the queue shows, prefixed by the kind of refusal. */
       reason: string;
+    }
+  | {
+      admitted: false;
+      basis: 'unavailable';
+      /** Why the charter call gave no judgement: the error it threw, or the reply that failed the schema. */
+      cause: string;
     };
 
 /** The surface facts the evaluator derives, handed in as inputs. */
@@ -433,9 +446,7 @@ function readExclusion(
   charter: Charter,
   systems: { live: readonly string[]; absent: readonly string[] },
 ): ExclusionReading {
-  // A test double or an older provider reply may lack the field altogether.
-  const exclusion = judgement.exclusion as CharterJudgement['exclusion'] | undefined;
-  if (!exclusion) return { holds: false };
+  const exclusion = judgement.exclusion;
   if (exclusion.kind === 'will-not-do') {
     const clause = quotedWillNotDo(charter, exclusion.quote);
     if (clause === undefined) return { holds: false };
@@ -460,18 +471,44 @@ function readExclusion(
 /**
  * Ask the model to judge the candidate against the whole charter.
  *
- * Args:
- *   args: The candidate, the charter and AGENTS.md.
- *
- * Returns:
- *   The model's judgement; throws when the model cannot be reached.
+ * @param args - The candidate, the charter and AGENTS.md.
+ * @returns The model's judgement, parsed against `scopeJudgementSchema`.
+ * @throws When the model cannot be reached, times out, or answers out of shape.
  */
 export async function judgeAgainstCharter(args: CharterJudgementArgs): Promise<CharterJudgement> {
-  return await agentJson({
+  const reply: unknown = await agentJson({
     agent: scopeJudgementAgent,
     user: charterJudgementPrompt(args),
     schema: scopeJudgementSchema,
   });
+  // The client validates the reply against the schema too; parsing here keeps
+  // the boundary in this module whatever transport or double answered.
+  const parsed = scopeJudgementSchema.safeParse(reply);
+  if (!parsed.success) {
+    throw new Error(
+      `the scope judgement reply did not satisfy the schema: ${parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'} ${issue.message}`)
+        .join('; ')}`,
+    );
+  }
+  return parsed.data;
+}
+
+/** One charter call's outcome: the judgement, or why there is none. */
+type CharterAsking = { ok: true; judgement: CharterJudgement } | { ok: false; cause: string };
+
+/**
+ * Ask the charter judgement once, keeping a failed call as a value.
+ *
+ * @param args - The candidate, the charter and AGENTS.md, and a first reading when asking again.
+ * @returns The judgement, or the cause the call gave none.
+ */
+async function askCharter(args: CharterJudgementArgs): Promise<CharterAsking> {
+  try {
+    return { ok: true, judgement: await judgeAgainstCharter(args) };
+  } catch (error) {
+    return { ok: false, cause: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
@@ -481,11 +518,12 @@ export async function judgeAgainstCharter(args: CharterJudgementArgs): Promise<C
  * a shared charter token, a documented system), which refuse without a model
  * call when nothing ties the item to the charter. In real mode the charter
  * judgement then decides on the whole charter, with the quality-fit question
- * folded into the same call and counted only when a good-habits memory exists;
- * a model failure admits the item on the lexical inputs alone and says so.
+ * folded into the same call and counted only when a good-habits memory exists.
  * A skip of an item whose source a willDo clause names stands only on an
  * `exclusion` that holds; without one the model is asked once more, and a
  * second such skip admits the item as `source-named` with both readings.
+ * Either call failing (a throw, a timeout, a reply out of shape) leaves the
+ * item `unavailable`: never admitted, and never a skip.
  * In mock mode the quality-fit filter runs as it always has and nothing else.
  *
  * Args:
@@ -494,7 +532,7 @@ export async function judgeAgainstCharter(args: CharterJudgementArgs): Promise<C
  *   inputs: The surface facts the evaluator derived.
  *
  * Returns:
- *   One judgement with one reason.
+ *   One judgement with one reason, or `unavailable` with its cause.
  */
 export async function judgeScope(
   candidate: WorkCandidate,
@@ -547,13 +585,9 @@ export async function judgeScope(
     liveSystems: inputs.liveSystems,
   };
 
-  let judgement: CharterJudgement;
-  try {
-    judgement = await judgeAgainstCharter(ask);
-  } catch (error) {
-    const cause = error instanceof Error ? error.message : String(error);
-    return { admitted: true, basis, failedOpen: cause };
-  }
+  const asked = await askCharter(ask);
+  if (!asked.ok) return { admitted: false, basis: 'unavailable', cause: asked.cause };
+  let judgement = asked.judgement;
   let reason = readingOf(judgement);
 
   // A skip of an item whose source the willDo names has to cite what excludes
@@ -570,16 +604,15 @@ export async function judgeScope(
   const first = exclusionOf(judgement);
   if (namedBy !== undefined && !first.holds) {
     overruled = [reason];
-    try {
-      judgement = await judgeAgainstCharter({
-        ...ask,
-        uncitedReading: reason,
-        ...(first.authority !== undefined ? { citedAuthority: first.authority } : {}),
-      });
-    } catch (error) {
-      const cause = error instanceof Error ? error.message : String(error);
-      return { admitted: true, basis: 'source-named', namedBy, overruled, failedOpen: cause };
-    }
+    const askedAgain = await askCharter({
+      ...ask,
+      uncitedReading: reason,
+      ...(first.authority !== undefined ? { citedAuthority: first.authority } : {}),
+    });
+    // The first reading was a skip that did not stand and the second never
+    // came: nothing judged the item in scope, so it is not admitted (M19).
+    if (!askedAgain.ok) return { admitted: false, basis: 'unavailable', cause: askedAgain.cause };
+    judgement = askedAgain.judgement;
     reason = readingOf(judgement);
     if (!exclusionOf(judgement).holds) {
       overruled.push(reason);

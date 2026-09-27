@@ -9,6 +9,7 @@ import type { ExecutionOutput } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { STEP_LEASE_MS } from '../../convex/workLoop';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -22,6 +23,8 @@ const recorded = vi.hoisted(() => ({
   scopeCalls: [] as string[],
   /** Holds the charter judgement open until the test releases it. */
   scopeGate: undefined as Promise<void> | undefined,
+  /** Thrown or answered by the charter judgement instead of its in-scope reply. */
+  scopeOutcome: undefined as unknown,
   planCalls: [] as string[],
   /** Holds the planner open until the test releases it. */
   planGate: undefined as Promise<void> | undefined,
@@ -37,6 +40,8 @@ vi.mock('../../src/lib/mastra', () => ({
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
       await recorded.scopeGate;
+      if (recorded.scopeOutcome instanceof Error) throw recorded.scopeOutcome;
+      if (recorded.scopeOutcome !== undefined) return recorded.scopeOutcome;
       return {
         inScope: true,
         fit: true,
@@ -116,6 +121,7 @@ const OWNER = { subject: 'owner' };
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
   recorded.scopeGate = undefined;
+  recorded.scopeOutcome = undefined;
   recorded.planCalls.length = 0;
   recorded.planGate = undefined;
   recorded.skillRuns.length = 0;
@@ -775,6 +781,76 @@ describe('the loop under load (P9-1)', (): void => {
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
     expect(await scheduledEvaluations(harness)).toEqual([String(oldest)]);
+  });
+});
+
+describe('a scope call that fails parks the row (E-70)', (): void => {
+  it.each([
+    ['throws', new Error('provider answered 503'), 'provider answered 503'],
+    [
+      'times out',
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      'The operation was aborted due to timeout',
+    ],
+    [
+      "answers `inScope: 'yes'`",
+      { inScope: 'yes', fit: true, reason: 'looks fine', exclusion: { kind: 'none', quote: '' } },
+      'agentJson(day0-scope-judgement): reply did not satisfy the schema',
+    ],
+  ])(
+    'never executes an item whose scope call %s under autonomy, and records only the unavailable event',
+    async (_how, outcome, cause): Promise<void> => {
+      useSurfaceMode('real');
+      vi.useFakeTimers();
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const agentId = await seedEmployee(harness, { autonomousActions: true });
+      recorded.scopeOutcome = outcome;
+
+      const workItemId = await seedTicket(harness, agentId, 'REVOPS-70');
+      await drain(harness);
+
+      const row = await readItem(harness, workItemId);
+      expect(row.state).toBe('discovered');
+      expect(row).not.toHaveProperty('verdict');
+      expect(row).not.toHaveProperty('scopeAdmission');
+      expect(recorded.scopeCalls).toHaveLength(1);
+      expect(recorded.planCalls).toEqual([]);
+      expect(recorded.skillRuns).toEqual([]);
+      expect((await eventsOf(harness, 'work.scope-judgement-unavailable')).map((e) => e.payload)).toEqual([
+        { workItemId, cause },
+      ]);
+      expect(await eventsOf(harness, 'work.evaluated')).toEqual([]);
+      expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
+    },
+  );
+
+  it('re-admits a parked row at the first sweep after its lease, once the scope call answers', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    recorded.scopeOutcome = new Error('provider answered 503');
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-71');
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('discovered');
+
+    // Inside the lease the sweep leaves the parked row alone: no second call.
+    recorded.scopeOutcome = undefined;
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await drain(harness);
+    expect(recorded.scopeCalls).toHaveLength(1);
+    expect((await readItem(harness, workItemId)).state).toBe('discovered');
+
+    vi.advanceTimersByTime(STEP_LEASE_MS);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await drain(harness);
+
+    expect(recorded.scopeCalls).toHaveLength(2);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect(await eventsOf(harness, 'work.scope-judgement-unavailable')).toHaveLength(1);
+    expect((await eventsOf(harness, 'work.evaluated')).map((event) => event.payload)).toEqual([
+      expect.objectContaining({ workItemId, decision: 'claim' }),
+    ]);
   });
 });
 
