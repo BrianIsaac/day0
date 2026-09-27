@@ -11,6 +11,7 @@ import { getFunctionName } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
+import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -677,12 +678,44 @@ describe('URL attribution', (): void => {
       webUi: 'http://mcp.evil.example/mcp',
       insecure: 'http://mcp.evil.example/mcp',
     });
-    expect(documentedEndpoints(['http://playwright-mcp:8931/mcp'])).toEqual({
-      mcp: 'http://playwright-mcp:8931/mcp',
+  });
+
+  it('admits a private MCP endpoint only when DAY0_PRIVATE_HOSTS lists its host', (): void => {
+    const listed = privateHostAllowlist('mcp.corp.internal');
+    expect(documentedEndpoints(['https://mcp.corp.internal/mcp'], listed)).toEqual({
+      mcp: 'https://mcp.corp.internal/mcp',
       api: undefined,
       webUi: undefined,
       insecure: undefined,
+      refusedMcp: undefined,
     });
+  });
+
+  it('refuses a private MCP endpoint the probe would refuse, with the probe reason', (): void => {
+    const unlisted = documentedEndpoints(
+      ['https://mcp.corp.internal/mcp', 'http://playwright-mcp:8931/mcp'],
+      privateHostAllowlist(''),
+    );
+    expect(unlisted.mcp).toBeUndefined();
+    expect(unlisted.refusedMcp?.endpoint).toBe('https://mcp.corp.internal/mcp');
+    expect(unlisted.refusedMcp?.reason).toContain('DAY0_PRIVATE_HOSTS');
+    // Listed but plaintext: the probe sends a bearer over https only.
+    expect(
+      documentedEndpoints(
+        ['http://playwright-mcp:8931/mcp'],
+        privateHostAllowlist('playwright-mcp'),
+      ).mcp,
+    ).toBeUndefined();
+  });
+
+  it('reads the allowlist from the environment when none is passed', (): void => {
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '.corp.internal');
+    expect(documentedEndpoints(['https://mcp.corp.internal/mcp']).mcp).toBe(
+      'https://mcp.corp.internal/mcp',
+    );
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    expect(documentedEndpoints(['https://mcp.corp.internal/mcp']).mcp).toBeUndefined();
+    vi.unstubAllEnvs();
   });
 
   it('never takes a URL from a sentence that denies the surface', (): void => {

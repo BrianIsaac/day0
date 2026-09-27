@@ -12,6 +12,8 @@ import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../sr
 import { storedCredentialGuardReason } from './credentialCryptoActions';
 import { browserTitleMarker } from '../src/surfaces/browser';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
+import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
+import type { PrivateHostAllowlist } from '../src/lib/private-hosts';
 import {
   channelDescriptions,
   groundScopePicks,
@@ -147,6 +149,14 @@ export interface DocumentedEndpoints {
   webUi?: string;
   /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
   insecure?: string;
+  /** The first MCP endpoint the probe's address rule refuses, with the probe's own reason. */
+  refusedMcp?: RefusedMcpEndpoint;
+}
+
+/** A documented MCP endpoint orientation did not admit because the probe would refuse it. */
+export interface RefusedMcpEndpoint {
+  readonly endpoint: string;
+  readonly reason: string;
 }
 
 export interface SurfacePathCandidate {
@@ -650,23 +660,54 @@ export function isCredentialSafeEndpoint(url: string): boolean {
 /**
  * Group attributed URLs by the kind of surface they document.
  *
- * Args:
- *   urls: URLs attributed to one system.
- *
- * Returns:
- *   The first MCP endpoint, the first API base, the first other URL, and
- *   the first plaintext public endpoint refused as an MCP or API base.
+ * @param urls - URLs attributed to one system.
+ * @param privateHosts - The operator's private-host allowlist; the environment's when omitted.
+ * @returns The first MCP endpoint the probe would admit, the first API base, the first other
+ *   URL, the first plaintext public endpoint refused as an MCP or API base, and the first MCP
+ *   endpoint the probe's address rule refuses when none is admitted.
  */
-export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
+export function documentedEndpoints(
+  urls: string[],
+  privateHosts?: PrivateHostAllowlist,
+): DocumentedEndpoints {
   const safe = urls.filter(isCredentialSafeEndpoint);
   const insecure = urls.find(
     (url: string): boolean =>
       !isCredentialSafeEndpoint(url) && (MCP_SEGMENT.test(url) || API_BASE.test(url)),
   );
-  const mcp = safe.find((url: string): boolean => MCP_SEGMENT.test(url));
+  const judged = safe
+    .filter((url: string): boolean => MCP_SEGMENT.test(url))
+    .map((endpoint: string) => ({ endpoint, reason: mcpEndpointRefusal(endpoint, privateHosts) }));
+  const mcp = judged.find(({ reason }): boolean => reason === undefined)?.endpoint;
+  const refused = mcp === undefined ? judged[0] : undefined;
+  const refusedMcp =
+    refused?.reason === undefined
+      ? undefined
+      : { endpoint: refused.endpoint, reason: refused.reason };
   const api = safe.find((url: string): boolean => url !== mcp && API_BASE.test(url));
   const webUi = urls.find((url: string): boolean => url !== mcp && url !== api);
-  return { mcp, api, webUi, insecure };
+  return { mcp, api, webUi, insecure, refusedMcp };
+}
+
+/**
+ * Hold an MCP endpoint to the probe's own address rule before proposing it.
+ *
+ * The probe and every MCP client admit a private host only when
+ * `DAY0_PRIVATE_HOSTS` lists it, and only over https; orientation applies the
+ * same function so it never proposes an endpoint the probe will refuse.
+ *
+ * @param url - A documented MCP endpoint.
+ * @param privateHosts - The operator's allowlist; the environment's when omitted.
+ * @returns The probe's refusal message, or `undefined` when the probe would admit the endpoint.
+ */
+function mcpEndpointRefusal(url: string, privateHosts?: PrivateHostAllowlist): string | undefined {
+  try {
+    approvedMcpEndpoint(url, privateHosts);
+    return undefined;
+  } catch (error) {
+    if (error instanceof McpAddressRefusal) return error.message;
+    throw error;
+  }
 }
 
 /**
@@ -1460,6 +1501,11 @@ export async function orientSurface(
   if (endpoints.insecure) {
     openQuestions.push(
       `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,
+    );
+  }
+  if (endpoints.refusedMcp) {
+    openQuestions.push(
+      `The documented MCP endpoint ${endpoints.refusedMcp.endpoint} was not admitted: ${endpoints.refusedMcp.reason}`,
     );
   }
   if (registrySuggestion) {
