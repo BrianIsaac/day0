@@ -596,11 +596,7 @@ export default defineSchema({
         confirmedAt: v.number(),
         entries: v.array(
           v.object({
-            phase: v.union(
-              v.literal('single'),
-              v.literal('prerequisite'),
-              v.literal('closing'),
-            ),
+            phase: v.union(v.literal('single'), v.literal('prerequisite'), v.literal('closing')),
             actionIndex: v.number(),
             tool: v.string(),
             outcome: v.union(v.literal('landed'), v.literal('outcome-unknown')),

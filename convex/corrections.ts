@@ -123,9 +123,11 @@ async function firstPlanRejectionCorrection(
         correction.kind === 'plan-rejection' &&
         correction.retiredAt === undefined,
     )
-    .reduce<
-      Doc<'corrections'> | undefined
-    >((earliest, correction) => (earliest && earliest.createdAt <= correction.createdAt ? earliest : correction), undefined);
+    .reduce<Doc<'corrections'> | undefined>(
+      (earliest, correction) =>
+        earliest && earliest.createdAt <= correction.createdAt ? earliest : correction,
+      undefined,
+    );
 }
 
 /**
