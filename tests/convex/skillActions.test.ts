@@ -15,7 +15,11 @@ import {
 import { harnessedSmokeTest, smokeHarnessContract } from '../../src/work/smoke-harness';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import type { SurfaceRecord } from '../../src/surfaces/types';
-import { clipRefusedDraft, REFUSED_DRAFT_CHARS, REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
+import {
+  clipRefusedDraft,
+  REFUSED_DRAFT_CHARS,
+  REFUSED_DRAFT_PROMPT_CHARS,
+} from '../../src/work/authored-skill';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -49,11 +53,19 @@ const skill = {
 describe('skill author prompts', (): void => {
   it('teaches the two surface verbs, their arguments and the connected-surface rule', (): void => {
     expect(AUTHOR_SYSTEM).toContain('mcp.call             — { surface, tool, toolArgsJson }');
-    expect(AUTHOR_SYSTEM).toContain('http.request         — { surface, method, path, headersJson, body }');
+    expect(AUTHOR_SYSTEM).toContain(
+      'http.request         — { surface, method, path, headersJson, body }',
+    );
     expect(AUTHOR_SYSTEM).toContain('name the surface exactly as the Surfaces list does');
-    expect(AUTHOR_SYSTEM).toContain('take the tool sequence and paths from the runbook for that system and the argument names from the probed schema');
-    expect(AUTHOR_SYSTEM).toContain('emit the reply as its own `http.request` POST `chat.postMessage` action with `channel` set to the source channel and `thread_ts` set to the source thread timestamp');
-    expect(AUTHOR_SYSTEM).toContain('it must never carry a draft reply that belongs in the channel');
+    expect(AUTHOR_SYSTEM).toContain(
+      'take the tool sequence and paths from the runbook for that system and the argument names from the probed schema',
+    );
+    expect(AUTHOR_SYSTEM).toContain(
+      'emit the reply as its own `http.request` POST `chat.postMessage` action with `channel` set to the source channel and `thread_ts` set to the source thread timestamp',
+    );
+    expect(AUTHOR_SYSTEM).toContain(
+      'it must never carry a draft reply that belongs in the channel',
+    );
     expect(AUTHOR_SYSTEM).not.toContain(
       'If the skill drafts text for human review, ALSO emit a `slack.postMessage` to `dm-manager`',
     );
@@ -66,46 +78,69 @@ describe('skill author prompts', (): void => {
     );
     expect(AUTHOR_SYSTEM).not.toContain('If the skill\'s purpose is "draft a tweet reply"');
     expect(AUTHOR_SYSTEM).not.toContain('If "update the spreadsheet"');
-    expect(AUTHOR_SYSTEM).toContain(
-      'A public reply draft is never copied into the manager DM',
-    );
+    expect(AUTHOR_SYSTEM).toContain('A public reply draft is never copied into the manager DM');
     expect(AUTHOR_SYSTEM).toContain('never include a token or key');
     expect(AUTHOR_SYSTEM).toContain('you may only target a connected surface');
     expect(AUTHOR_SYSTEM).toContain('The first real call is the gated execution');
     expect(AUTHOR_SYSTEM).toContain('A registered skill runs under either live action mode');
-    expect(AUTHOR_SYSTEM).toContain('Never hardcode approval-state language into the skill body or into comments and messages');
+    expect(AUTHOR_SYSTEM).toContain(
+      'Never hardcode approval-state language into the skill body or into comments and messages',
+    );
     expect(AUTHOR_SYSTEM).toContain('read the current mode from the run context');
-    expect(AUTHOR_SYSTEM).toContain('do not say a write is queued, pending, awaiting approval or "for your approval"');
-    for (const verb of ['spreadsheet.appendRow', 'slack.postMessage', 'twitter.reply', 'ticket.update']) {
+    expect(AUTHOR_SYSTEM).toContain(
+      'do not say a write is queued, pending, awaiting approval or "for your approval"',
+    );
+    for (const verb of [
+      'spreadsheet.appendRow',
+      'slack.postMessage',
+      'twitter.reply',
+      'ticket.update',
+    ]) {
       expect(AUTHOR_SYSTEM).toContain(verb);
     }
   });
 
   it('teaches a reusable procedure with declared inputs and no work-item constants', (): void => {
     expect(AUTHOR_SYSTEM).not.toContain('no template placeholders');
-    expect(AUTHOR_SYSTEM).toContain('A skill is a reusable procedure for one operation on one surface class');
+    expect(AUTHOR_SYSTEM).toContain(
+      'A skill is a reusable procedure for one operation on one surface class',
+    );
     expect(AUTHOR_SYSTEM).toContain('`## Inputs`');
     expect(AUTHOR_SYSTEM).toContain('`<record-id>`');
     expect(AUTHOR_SYSTEM).toContain('`{{secret}}` stays the only double-brace placeholder');
-    expect(AUTHOR_SYSTEM).toContain('no percentage, amount, identifier, channel, thread or quoted request from any single work item');
+    expect(AUTHOR_SYSTEM).toContain(
+      'no percentage, amount, identifier, channel, thread or quoted request from any single work item',
+    );
   });
 
   it('takes invoke conditions from the runbook and leaves scope to the evaluator', (): void => {
-    expect(AUTHOR_SYSTEM).toContain('`## When to invoke` describes the operation and its preconditions as the runbook states them');
+    expect(AUTHOR_SYSTEM).toContain(
+      '`## When to invoke` describes the operation and its preconditions as the runbook states them',
+    );
     expect(AUTHOR_SYSTEM).toContain('never restates the charter');
     expect(AUTHOR_SYSTEM).toContain('owned, prioritised, assigned');
   });
 
   it('makes the probed schema the authority for argument names over runbook examples', (): void => {
-    expect(AUTHOR_SYSTEM).toContain('the probed argument names in the Surfaces list are the authority for every tool\'s `toolArgsJson` keys, over any example in a runbook');
-    expect(AUTHOR_SYSTEM).toContain('the runbook is the authority for the sequence, the element names and the verification');
-    expect(AUTHOR_SYSTEM).not.toContain('take the action shape (tool names, argument names, paths) from the runbook for that system');
+    expect(AUTHOR_SYSTEM).toContain(
+      "the probed argument names in the Surfaces list are the authority for every tool's `toolArgsJson` keys, over any example in a runbook",
+    );
+    expect(AUTHOR_SYSTEM).toContain(
+      'the runbook is the authority for the sequence, the element names and the verification',
+    );
+    expect(AUTHOR_SYSTEM).not.toContain(
+      'take the action shape (tool names, argument names, paths) from the runbook for that system',
+    );
   });
 
   it('asks for a smoke test that runs the procedure with two different input sets', (): void => {
     expect(AUTHOR_SYSTEM).toContain('reads every value it needs from `inputs`');
-    expect(AUTHOR_SYSTEM).toContain('Call run() once for each of two different representative input dicts');
-    expect(AUTHOR_SYSTEM).toContain('none of them the values of the work item that first needed this skill');
+    expect(AUTHOR_SYSTEM).toContain(
+      'Call run() once for each of two different representative input dicts',
+    );
+    expect(AUTHOR_SYSTEM).toContain(
+      'none of them the values of the work item that first needed this skill',
+    );
     expect(AUTHOR_SYSTEM).not.toContain('Call run() once.');
   });
 
@@ -116,14 +151,26 @@ describe('skill author prompts', (): void => {
     expect(real).toContain('reads every value it needs from `inputs`');
     expect(real).toContain('Define `CASES`, a list of two different representative input dicts');
     expect(real).toContain('none of them the values of the work item that first needed this skill');
-    expect(real).toContain('no call to run(), no assertion, no check and no print() at the top level');
+    expect(real).toContain(
+      'no call to run(), no assertion, no check and no print() at the top level',
+    );
     expect(real).toContain('The harness calls run() once per case and checks those rules itself');
     expect(real).toContain('`{"tool": "mcp.call", "args": {"surface", "tool", "toolArgsJson"}}`');
-    expect(real).toContain('`{"tool": "http.request", "args": {"surface", "method", "path", "headersJson", "body"}}`');
-    expect(real).toContain("with a tool from that surface's allowed tools. Both cases emit actions");
-    expect(real).toContain("Name in SKILL.md's procedure, by its exact name, every tool `run()` uses");
-    expect(real).toContain('the record id, and the reply channel and thread when a case gives them, reach the arguments');
-    expect(real).not.toContain('Call run() once for each of two different representative input dicts');
+    expect(real).toContain(
+      '`{"tool": "http.request", "args": {"surface", "method", "path", "headersJson", "body"}}`',
+    );
+    expect(real).toContain(
+      "with a tool from that surface's allowed tools. Both cases emit actions",
+    );
+    expect(real).toContain(
+      "Name in SKILL.md's procedure, by its exact name, every tool `run()` uses",
+    );
+    expect(real).toContain(
+      'the record id, and the reply channel and thread when a case gives them, reach the arguments',
+    );
+    expect(real).not.toContain(
+      'Call run() once for each of two different representative input dicts',
+    );
     expect(real).not.toContain('print() one concise success line per call');
     // Everything but the smoke-test contract is the mock prompt, word for word.
     const [mockHead, mockTail] = AUTHOR_SYSTEM.split('You also produce a small Python smoke test');
@@ -136,10 +183,16 @@ describe('skill author prompts', (): void => {
     const real = z.toJSONSchema(authorSchemaFor('real')) as {
       properties: Record<string, { description?: string }>;
     };
-    const mock = z.toJSONSchema(authorSchema) as { properties: Record<string, { description?: string }> };
+    const mock = z.toJSONSchema(authorSchema) as {
+      properties: Record<string, { description?: string }>;
+    };
     expect(real.properties.body).toEqual(mock.properties.body);
-    expect(real.properties.smokeTest?.description).toContain('CASES, a list of two different representative input dicts');
-    expect(real.properties.smokeTest?.description).toContain('the verification harness calls run() once per case');
+    expect(real.properties.smokeTest?.description).toContain(
+      'CASES, a list of two different representative input dicts',
+    );
+    expect(real.properties.smokeTest?.description).toContain(
+      'the verification harness calls run() once per case',
+    );
     expect(real.properties.smokeTest?.description).not.toContain('print one success line');
   });
 
@@ -177,17 +230,27 @@ describe('skill author prompts', (): void => {
     endpoint: 'https://slack.com/api/',
     toolAllowlist: ['chat.postMessage', 'conversations.replies'],
   };
-  const kanbanSkill = { ...skill, name: 'kanban-comment-and-close', surfaceClass: 'kanban', operation: 'comment-and-close', targetSurface: 'linear' };
+  const kanbanSkill = {
+    ...skill,
+    name: 'kanban-comment-and-close',
+    surfaceClass: 'kanban',
+    operation: 'comment-and-close',
+    targetSurface: 'linear',
+  };
 
   it('keeps the mock author prompt with a shape and surfaces byte-identical', (): void => {
     const prompt = buildAuthorPrompt(kanbanSkill, [linear, slack], now, [], 'mock');
     expect(prompt).not.toContain('<reply-surface>');
-    expect(createHash('sha256').update(prompt).digest('hex')).toMatchInlineSnapshot(`"de4943a3dd8b2b14e7c067511b0637a36dc1f2b6a98f1a598b3647359a6ca492"`);
+    expect(createHash('sha256').update(prompt).digest('hex')).toMatchInlineSnapshot(
+      `"de4943a3dd8b2b14e7c067511b0637a36dc1f2b6a98f1a598b3647359a6ca492"`,
+    );
   });
 
   it('teaches a real-mode author the reply surface as an input, and names it from the connected surfaces', (): void => {
     const prompt = buildAuthorPrompt(kanbanSkill, [linear, slack], now, [], 'real');
-    expect(prompt).toContain('The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface\'s own path');
+    expect(prompt).toContain(
+      "The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface's own path",
+    );
     expect(prompt).toContain('never on `<originating-surface>` unless that is the chat surface.');
     expect(prompt).toContain('  - `<reply-surface>`: the slug of the connected chat surface');
     expect(prompt).not.toContain('a reply in the thread on chat');
@@ -204,7 +267,7 @@ describe('skill author prompts', (): void => {
 
   it('tells a real-mode author that a case with a reply channel gives the reply surface too', (): void => {
     expect(AUTHOR_SYSTEM_REAL).toContain(
-      'A case that gives `reply-channel` gives `reply-surface` too, and the reply action\'s `surface` is that input, never `originating-surface`.',
+      "A case that gives `reply-channel` gives `reply-surface` too, and the reply action's `surface` is that input, never `originating-surface`.",
     );
     expect(AUTHOR_SYSTEM).not.toContain('reply-surface');
   });
@@ -220,20 +283,27 @@ describe('skill author prompts', (): void => {
         'Author SKILL.md and smoke.py now.',
       ].join('\n'),
     );
-    expect(buildAuthorPrompt(skill, [{ ...linear, verdict: 'approved', credentialLanded: false }], now)).not.toContain('Connected real surfaces');
+    expect(
+      buildAuthorPrompt(skill, [{ ...linear, verdict: 'approved', credentialLanded: false }], now),
+    ).not.toContain('Connected real surfaces');
   });
 
   it('passes the connected surfaces, their allowlists and the target into the prompt', (): void => {
     const prompt = buildAuthorPrompt({ ...skill, targetSurface: 'linear' }, [linear], now);
     expect(prompt).toContain('Target surface: linear');
     expect(prompt).toContain('Connected real surfaces');
-    expect(prompt).toContain('linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue');
+    expect(prompt).toContain(
+      'linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue',
+    );
     expect(prompt).toContain('{{secret}}');
     expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
   });
 
   it('preserves the mock author prompt with persisted probed surfaces', () => {
-    const probed = { ...linear, toolArguments: [{ tool: 'save_comment', arguments: ['issueId', 'body'] }] };
+    const probed = {
+      ...linear,
+      toolArguments: [{ tool: 'save_comment', arguments: ['issueId', 'body'] }],
+    };
     expect(buildAuthorPrompt(skill, [probed], now, [], 'mock')).toBe(
       buildAuthorPrompt(skill, [linear], now, [], 'mock'),
     );
@@ -254,7 +324,9 @@ describe('skill author prompts', (): void => {
       ],
       now,
     );
-    expect(prompt).toContain('allowed tools: get_issue(id, includeRelations), save_comment(issueId, body)');
+    expect(prompt).toContain(
+      'allowed tools: get_issue(id, includeRelations), save_comment(issueId, body)',
+    );
     expect(prompt).toContain('probed argument names');
   });
 
@@ -311,8 +383,12 @@ describe('skill author prompts', (): void => {
       '`browser_fill_form` with `{"fields":[{"name":"Password","value":"{{secret}}"}]}`',
     );
     expect(prompt).toContain('preserve its tool name, its sequence and its element names');
-    expect(prompt).toContain('a literal value in an example is that document\'s instance value, not the skill\'s: write the named input it stands for');
-    expect(prompt).toContain('argument names come from the probed schema in the Surfaces list when it shows them');
+    expect(prompt).toContain(
+      "a literal value in an example is that document's instance value, not the skill's: write the named input it stands for",
+    );
+    expect(prompt).toContain(
+      'argument names come from the probed schema in the Surfaces list when it shows them',
+    );
     expect(prompt).not.toContain('literal values exactly');
     expect(prompt).toContain('never invent a selector, driver reference or path');
     expect(prompt).not.toContain('runbooks/how-to-post-slack.md');
@@ -347,11 +423,16 @@ describe('skill author prompts', (): void => {
       skipped: false,
     };
     const verify = vi.fn(async (): Promise<SkillSandboxRun> => sandboxResult);
-    const program = 'def run(inputs: dict) -> dict:\n    return {"actions": []}\nprint("ok", run({}))';
+    const program =
+      'def run(inputs: dict) -> dict:\n    return {"actions": []}\nprint("ok", run({}))';
 
     await expect(
       verifyAuthoredSkill(
-        { skillName: 'update-spreadsheet', skillBody: '# Update spreadsheet', smokeTest: '```python\n' + program + '\n```' },
+        {
+          skillName: 'update-spreadsheet',
+          skillBody: '# Update spreadsheet',
+          smokeTest: '```python\n' + program + '\n```',
+        },
         verify,
       ),
     ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest: program, unwrapped: true });
@@ -480,11 +561,18 @@ describe('skill author prompts', (): void => {
 
     await expect(
       verifyAuthoredSkill(
-        { skillName: 's', skillBody: '# s', smokeTest: 'def main(inputs: dict) -> dict:\n    return {}\nCASES = []\n' },
+        {
+          skillName: 's',
+          skillBody: '# s',
+          smokeTest: 'def main(inputs: dict) -> dict:\n    return {}\nCASES = []\n',
+        },
         verify,
         'real',
       ),
-    ).resolves.toEqual({ ok: false, reason: expect.stringContaining('must define run(inputs: dict) -> dict') });
+    ).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining('must define run(inputs: dict) -> dict'),
+    });
     expect(verify).not.toHaveBeenCalled();
   });
 
@@ -509,8 +597,10 @@ describe('skill author prompts', (): void => {
   });
 
   it('hands the refused draft back with the reasons and asks for one corrected full replacement', (): void => {
-    const refusedBody = '# Refresh\n## Inputs\n- analytics-surface: the tile\n## Procedure\nOpen <analytics-surface>.';
-    const refusedSmokeTest = 'def run(inputs: dict) -> dict:\n    return {"actions": []}\nprint(run({}))';
+    const refusedBody =
+      '# Refresh\n## Inputs\n- analytics-surface: the tile\n## Procedure\nOpen <analytics-surface>.';
+    const refusedSmokeTest =
+      'def run(inputs: dict) -> dict:\n    return {"actions": []}\nprint(run({}))';
     const prompt = buildAuthorPrompt(
       {
         ...skill,
@@ -523,7 +613,9 @@ describe('skill author prompts', (): void => {
     );
 
     expect(prompt).toContain('Previous authoring attempt failed before registration:');
-    expect(prompt).toContain('SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`');
+    expect(prompt).toContain(
+      'SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`',
+    );
     expect(prompt).toContain('--- Required correction ---');
     expect(prompt).toContain('Return one corrected full replacement of both SKILL.md and smoke.py');
     expect(prompt).toContain('Refused SKILL.md:\n' + refusedBody);
@@ -531,7 +623,9 @@ describe('skill author prompts', (): void => {
     expect(prompt).not.toContain('do not repeat the rejected output');
     expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
     expect(prompt.indexOf('Refused SKILL.md:')).toBeLessThan(prompt.indexOf('Refused smoke.py:'));
-    expect(prompt.indexOf('Previous authoring attempt')).toBeLessThan(prompt.indexOf('--- Required correction ---'));
+    expect(prompt.indexOf('Previous authoring attempt')).toBeLessThan(
+      prompt.indexOf('--- Required correction ---'),
+    );
   });
 
   it('bounds each refused draft in the prompt below what the row keeps, so a local window is not overrun', (): void => {
@@ -542,28 +636,44 @@ describe('skill author prompts', (): void => {
     const prompt = buildAuthorPrompt(
       {
         ...skill,
-        previousAuthoringFailure: 'the authored skill is not a reusable procedure: SKILL.md declares no `## Inputs` section',
+        previousAuthoringFailure:
+          'the authored skill is not a reusable procedure: SKILL.md declares no `## Inputs` section',
         previousAuthoringDraft: { body: refusedBody, smokeTest: refusedSmokeTest },
       },
       [],
       now,
     );
-    const body = prompt.slice(prompt.indexOf('Refused SKILL.md:\n') + 'Refused SKILL.md:\n'.length, prompt.indexOf('\n\nRefused smoke.py:'));
-    const smokeTest = prompt.slice(prompt.indexOf('Refused smoke.py:\n') + 'Refused smoke.py:\n'.length, prompt.lastIndexOf('\n\nAuthor SKILL.md and smoke.py now.'));
+    const body = prompt.slice(
+      prompt.indexOf('Refused SKILL.md:\n') + 'Refused SKILL.md:\n'.length,
+      prompt.indexOf('\n\nRefused smoke.py:'),
+    );
+    const smokeTest = prompt.slice(
+      prompt.indexOf('Refused smoke.py:\n') + 'Refused smoke.py:\n'.length,
+      prompt.lastIndexOf('\n\nAuthor SKILL.md and smoke.py now.'),
+    );
     expect(body).toBe(clipRefusedDraft(refusedBody, REFUSED_DRAFT_PROMPT_CHARS.body));
-    expect(smokeTest).toBe(clipRefusedDraft(refusedSmokeTest, REFUSED_DRAFT_PROMPT_CHARS.smokeTest));
+    expect(smokeTest).toBe(
+      clipRefusedDraft(refusedSmokeTest, REFUSED_DRAFT_PROMPT_CHARS.smokeTest),
+    );
     expect(body).toMatch(/more characters not kept\)$/);
     expect(smokeTest).toMatch(/more characters not kept\)$/);
-    expect(REFUSED_DRAFT_PROMPT_CHARS.body + REFUSED_DRAFT_PROMPT_CHARS.smokeTest).toBeLessThan(REFUSED_DRAFT_CHARS);
+    expect(REFUSED_DRAFT_PROMPT_CHARS.body + REFUSED_DRAFT_PROMPT_CHARS.smokeTest).toBeLessThan(
+      REFUSED_DRAFT_CHARS,
+    );
   });
 
   it('keeps the draft-free failure notice when nothing was kept', (): void => {
     const prompt = buildAuthorPrompt(
-      { ...skill, previousAuthoringFailure: 'authoring failed before any sandbox ran: model unavailable' },
+      {
+        ...skill,
+        previousAuthoringFailure: 'authoring failed before any sandbox ran: model unavailable',
+      },
       [],
       now,
     );
-    expect(prompt).toContain('Correct that failure in this attempt; do not repeat the rejected output.');
+    expect(prompt).toContain(
+      'Correct that failure in this attempt; do not repeat the rejected output.',
+    );
     expect(prompt).not.toContain('Refused SKILL.md');
     expect(prompt).not.toContain('--- Required correction ---');
   });
@@ -572,12 +682,16 @@ describe('skill author prompts', (): void => {
   // the author's instructions and the schema it answers in are byte-for-byte
   // what they were when those runs were recorded.
   it('keeps the mock author system prompt byte-identical', (): void => {
-    expect(createHash('sha256').update(AUTHOR_SYSTEM).digest('hex')).toMatchInlineSnapshot(`"18ef5587bdadf6bac04c6dde98ac05c08025f135ff46caf6297f2fa34ad3ba20"`);
+    expect(createHash('sha256').update(AUTHOR_SYSTEM).digest('hex')).toMatchInlineSnapshot(
+      `"18ef5587bdadf6bac04c6dde98ac05c08025f135ff46caf6297f2fa34ad3ba20"`,
+    );
   });
 
   it('keeps the mock author schema byte-identical', (): void => {
     const schema = JSON.stringify(z.toJSONSchema(authorSchema));
-    expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(`"5e9fdc6c1f59fcee97c4b1504d62e838f1042c27436ff368467881945ca43a22"`);
+    expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(
+      `"5e9fdc6c1f59fcee97c4b1504d62e838f1042c27436ff368467881945ca43a22"`,
+    );
   });
 
   it('tells the next authoring attempt why the prior smoke source was rejected', (): void => {
