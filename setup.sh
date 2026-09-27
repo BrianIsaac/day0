@@ -79,8 +79,15 @@ for argument in "$@"; do
 done
 
 major() {
-  # The first integer in whatever a tool prints for --version.
-  printf '%s' "$1" | grep -oE '[0-9]+' | head -n1
+  # The first integer in whatever a tool prints for --version, or nothing.
+  # awk exits 0 either way, so no pipeline here can stop the script under
+  # errexit and pipefail before it has said what is missing.
+  printf '%s\n' "$1" | awk 'match($0, /[0-9]+/) { print substr($0, RSTART, RLENGTH); exit }'
+}
+
+first_line() {
+  # The first line with anything on it, or nothing.
+  printf '%s\n' "$1" | awk 'NF { print; exit }'
 }
 
 missing=0
@@ -98,7 +105,8 @@ fi
 # runs under whichever bash is first on the path; macOS ships 3.2.
 path_bash="$(major "$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || true)")"
 if [ "${path_bash:-0}" -lt 4 ]; then
-  echo "gap  bash 4 or newer is needed on the path; found: $(bash -c 'echo "$BASH_VERSION"' 2>/dev/null || echo 'none')." >&2
+  found_bash="$(bash -c 'echo "$BASH_VERSION"' 2>/dev/null || true)"
+  echo "gap  bash 4 or newer is needed on the path; found: ${found_bash:-none}." >&2
   echo "     macOS ships bash 3.2: brew install bash, then open a new terminal." >&2
   missing=1
 fi
@@ -108,7 +116,8 @@ if ! command -v docker >/dev/null 2>&1 || ! docker --version >/dev/null 2>&1; th
 elif ! daemon="$(docker info --format '{{.ServerVersion}}' 2>&1)"; then
   # The client answers on its own; only the daemon can say whether it runs and
   # whether this user may talk to it, so its own words are kept.
-  reason="$(printf '%s' "$daemon" | grep -v '^[[:space:]]*$' | head -n1)"
+  reason="$(first_line "$daemon")"
+  reason="${reason:-no message}"
   case "$daemon" in
     *"permission denied"*)
       echo "gap  Docker is installed and this user may not reach its daemon: ${reason}" >&2
@@ -121,7 +130,8 @@ elif ! daemon="$(docker info --format '{{.ServerVersion}}' 2>&1)"; then
   esac
   missing=1
 elif ! compose_version="$(docker compose version 2>&1)"; then
-  reason="$(printf '%s' "$compose_version" | grep -v '^[[:space:]]*$' | head -n1)"
+  reason="$(first_line "$compose_version")"
+  reason="${reason:-no message}"
   echo "gap  The Docker Compose v2 plugin (\`docker compose\`) did not answer: ${reason}" >&2
   echo "     Install it: Docker Desktop carries it; on Linux, the docker-compose-plugin package." >&2
   missing=1

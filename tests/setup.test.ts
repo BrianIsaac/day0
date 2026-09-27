@@ -24,7 +24,7 @@ interface Machine {
   daemon?: { ok: true } | { ok: false; stderr: string };
   /** What `docker compose version` answers. */
   compose?: { ok: true; version: string } | { ok: false; stderr: string };
-  /** The major version the bash on the path reports. */
+  /** The major version the bash on the path reports; negative for one that prints nothing. */
   bashMajor?: number;
   /** Whether the clone already has its dependencies. */
   installed?: boolean;
@@ -91,9 +91,15 @@ function runSetupSh(machine: Machine, args: string[]): Outcome {
     'esac',
   ]);
   if (machine.bashMajor !== undefined) {
-    executable(join(bin, 'bash'), [
-      `if [ "$1" = "-c" ]; then case "$2" in *VERSINFO*) echo ${machine.bashMajor} ;; *) echo ${machine.bashMajor}.2.57 ;; esac; fi`,
-    ]);
+    // A negative major stands for a bash that prints nothing at all.
+    executable(
+      join(bin, 'bash'),
+      machine.bashMajor < 0
+        ? ['exit 0']
+        : [
+            `if [ "$1" = "-c" ]; then case "$2" in *VERSINFO*) echo ${machine.bashMajor} ;; *) echo ${machine.bashMajor}.2.57 ;; esac; fi`,
+          ],
+    );
   }
   const result = spawnSync(BASH, [join(clone, 'setup.sh'), ...args], {
     cwd: clone,
@@ -137,6 +143,13 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     expect(outcome.pnpm).toEqual([]);
   });
 
+  it('still reports the gap when the daemon fails without a word', (): void => {
+    const outcome = runSetupSh({ daemon: { ok: false, stderr: '' } }, ['--dry-run']);
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain('gap  Docker is installed and its daemon did not answer');
+    expect(outcome.stderr).toContain('Nothing was started and nothing was written.');
+  });
+
   it('tells a user outside the docker group how to join it', (): void => {
     const outcome = runSetupSh(
       {
@@ -165,6 +178,12 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     );
     expect(outcome.stderr).toContain('docker-compose-plugin');
     expect(outcome.stderr).not.toContain('v1 is not enough');
+  });
+
+  it('reports a bash on the path that prints no version, rather than stopping without a word', (): void => {
+    const outcome = runSetupSh({ bashMajor: -1 }, ['--dry-run']);
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain('gap  bash 4 or newer is needed on the path; found: none.');
   });
 
   it('refuses a bash older than 4 on the path, which the env sync needs', (): void => {
