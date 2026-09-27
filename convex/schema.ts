@@ -21,7 +21,7 @@ export default defineSchema({
      * before or after the deploy, is inherited. */
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
     /** Clerk user id (`identity.subject`). Optional for legacy rows; new
-     * deploys must populate it. Queries scope by this so each judge's
+     * deploys must populate it. Queries scope by this so each owner's
      * agents are isolated. */
     userId: v.optional(v.string()),
     state: v.union(
