@@ -1122,6 +1122,7 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
   return updates;
 }
 
+/** What decides the order of the setup's steps. */
 export interface SequenceInput {
   mode?: SetupMode;
   /** Real mode: whether a warm project's redactor volumes are copied first. */
@@ -1158,12 +1159,9 @@ export interface SequenceInput {
  * everything when asked for. A model the volume already holds is not pulled
  * again.
  *
- * Args:
- *   route: The chosen route.
- *   input: Mode and the real-mode choices; mock when omitted.
- *
- * Returns:
- *   Step names, in order.
+ * @param route - The chosen route.
+ * @param input - Mode and the real-mode choices; mock when omitted.
+ * @returns Step names, in order.
  */
 export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): string[] {
   const real = (input.mode ?? 'mock') === 'real';
@@ -2341,28 +2339,42 @@ function adoptDeploymentCredentialKey(
  * @returns Lines to print after the failure.
  */
 export function pushRefusalAdvice(output: string, mode: SetupMode): string[] {
-  if (!/InvalidAuthConfig|no identity provider configured/.test(output)) return [];
-  return [
-    '',
-    "The deployment's env names no identity provider, so its auth config refused the push. " +
-      `\`pnpm sync:env\` puts the one in ${ENV_FILE} on the deployment (\`pnpm dev:no-auth-key\` ` +
-      `writes the local issuer's keys if the file has none); then run \`${entryCommand(mode)}\` again.`,
-  ];
+  if (/no identity provider configured/.test(output)) {
+    return [
+      '',
+      "The deployment's env names no identity provider, so its auth config refused the push. " +
+        `\`pnpm sync:env\` puts the one in ${ENV_FILE} on the deployment (\`pnpm dev:no-auth-key\` ` +
+        `writes the local issuer's keys if the file has none); then run \`${entryCommand(mode)}\` again.`,
+    ];
+  }
+  if (/InvalidAuthConfig/.test(output)) {
+    return [
+      '',
+      "The deployment's auth config refused the push for the reason above. Correct the identity " +
+        `settings in ${ENV_FILE}, push them with \`pnpm sync:env\`, then run \`${entryCommand(mode)}\` again.`,
+    ];
+  }
+  return [];
 }
 
-/** One failed step, printed with the state it leaves behind and how to resume. */
+/**
+ * One failed step, printed with the state it leaves behind and how to resume.
+ *
+ * @param tail - How many of the output's last lines to print; the whole output when absent.
+ */
 function reportFailure(
   io: SetupIo,
   what: string,
   result: RunResult,
   project: string,
   mode: SetupMode,
+  tail: number = 12,
 ): void {
   io.log('');
   io.log(`error: ${what} failed (status ${result.status}).`);
   const detail = `${result.stdout}${result.stderr}`.trim();
   if (detail !== '') {
-    for (const line of detail.split('\n').slice(-12)) io.log(`  ${line}`);
+    for (const line of detail.split('\n').slice(-tail)) io.log(`  ${line}`);
   } else {
     io.log('  Its own output is above.');
   }
@@ -2943,6 +2955,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const streamed: RunOptions = { env: environment, inherit: true, timeoutMs: 900_000 };
     io.log('');
     io.log(`Starting. Steps: ${steps.join(' → ')}`);
+    if (existingDeployment) {
+      io.log(
+        '(a volume with no tables yet takes sync:env ahead of the push; the release check says)',
+      );
+    }
     io.log('');
     started = true;
 
@@ -2968,9 +2985,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const runStep = (
       name: string,
       label: string,
-      extra: RunOptions & { onFailure?: (result: RunResult) => void } = {},
+      extra: RunOptions & { onFailure?: (result: RunResult) => void; tail?: number } = {},
     ): RunResult | undefined => {
-      const { onFailure, ...runOptions } = extra;
+      const { onFailure, tail, ...runOptions } = extra;
       let last: RunResult | undefined;
       for (const planned of stepCommands(name, context)) {
         last = step(io, steps, name, label, planned.command, planned.args, {
@@ -2979,7 +2996,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
           env: { ...environment, ...(runOptions.env ?? {}), ...(planned.env ?? {}) },
         });
         if (last.status !== 0) {
-          reportFailure(io, label, last, resolvedProject, options.mode);
+          reportFailure(io, label, last, resolvedProject, options.mode, tail);
           onFailure?.(last);
           return undefined;
         }
@@ -3215,10 +3232,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         return 1;
       }
       io.log(`    ${verdict.note}`);
+      // A verdict with no `from` is a deployment whose table listing was empty.
       if (verdict.from === undefined) {
         deploymentHasRows = false;
         steps = sequenceSteps(route, { ...sequence, empty: true });
-        io.log('    nothing was ever pushed here, so the env goes first, as on a new volume');
+        io.log('    nothing was ever pushed here, so the env goes first, as on a new volume:');
+        io.log(`    ${steps.slice(steps.indexOf('release:check') + 1).join(' → ')}`);
       }
     }
     if (options.adoptCredentialKey) {
@@ -3231,9 +3250,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const pushFunctions = (): boolean => {
-      // Captured rather than streamed, so an auth config refusal can be named.
+      // Captured rather than streamed, so an auth config refusal can be named;
+      // a refusal prints whole, since a typecheck's first error is its head.
       const pushed = runStep('convex dev --once', 'npx convex dev --once', {
         inherit: false,
+        tail: Number.POSITIVE_INFINITY,
         onFailure: (result: RunResult): void => {
           for (const line of pushRefusalAdvice(`${result.stdout}${result.stderr}`, options.mode)) {
             io.log(line);

@@ -610,6 +610,20 @@ describe('a rerun over a volume nothing was pushed to', (): void => {
     const printed = h.output.join('\n');
     expect(printed).toContain('a new volume, starting at 0.3.0');
     expect(printed).toContain('nothing was ever pushed here, so the env goes first');
+    expect(printed).toContain(
+      '    sync:env → convex dev --once → migrations → release:stamp → convex:restart → check:setup',
+    );
+  });
+
+  it('prints the whole of a refused push, not its last lines only', async (): Promise<void> => {
+    const errors = Array.from({ length: 20 }, (_, index) => `convex/x.ts(${index + 1},1): error`);
+    const h = configured({
+      services: ['backend'],
+      deploymentTables: ['agents'],
+      failing: [{ match: 'convex dev --once', status: 1, stderr: errors.join('\n') }],
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('convex/x.ts(1,1): error');
   });
 
   it('names pnpm sync:env when the auth config refuses the push', async (): Promise<void> => {

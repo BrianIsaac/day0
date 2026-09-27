@@ -1055,6 +1055,15 @@ describe('the advice under a refused push', (): void => {
     expect(advice).toContain('`pnpm setup:local` again');
   });
 
+  it('points at the reason above for any other auth config refusal, not at a missing provider', (): void => {
+    const advice = pushRefusalAdvice(
+      'InvalidAuthConfig: DAY0_OIDC_ISSUER is set without DAY0_OIDC_AUDIENCE',
+      'real',
+    ).join('\n');
+    expect(advice).toContain('refused the push for the reason above');
+    expect(advice).not.toContain('names no identity provider');
+  });
+
   it('says nothing more for any other refusal', (): void => {
     expect(pushRefusalAdvice('Schema validation failed', 'mock')).toEqual([]);
   });
