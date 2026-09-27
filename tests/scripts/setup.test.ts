@@ -528,6 +528,54 @@ describe('a mock setup over a real-mode installation', (): void => {
   });
 });
 
+describe('an --endpoint the backend container cannot reach', (): void => {
+  /** A harness whose backend container answers the dial with what curl would print. */
+  function dialling(answer: RunResult): Harness {
+    const h = harness({ services: ['backend'] });
+    const original = h.io.run;
+    h.io.run = (command, args, options) =>
+      args.includes('curl')
+        ? (h.commands.push({ command, args: [...args] }), answer)
+        : original(command, args, options);
+    return h;
+  }
+
+  it("refuses before anything is pushed, keeping curl's words and naming the fix", async (): Promise<void> => {
+    const h = dialling({
+      status: 28,
+      stdout: '000',
+      stderr: 'curl: (28) Connection timed out after 10002 milliseconds\n',
+    });
+    const status = await runSetup(
+      keyRoute({ route: 'endpoint', endpoint: 'http://172.18.0.5:11434/v1' }),
+      h.io,
+    );
+    expect(status).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'error: the backend container could not reach http://172.18.0.5:11434/v1: curl: (28) Connection timed out',
+    );
+    expect(printed).toContain('http://host.docker.internal:11434/v1');
+    const dial = h.commands.find((call) => call.args.includes('curl'));
+    expect(dial?.args).toContain('http://172.18.0.5:11434/v1/models');
+    expect(dial?.args.slice(0, 3)).toEqual(['compose', '--env-file', '.env.local']);
+    expect(h.commands.some((call) => call.args.includes('sync:env'))).toBe(false);
+  });
+
+  it('carries on once the container has an answer from the endpoint, any status at all', async (): Promise<void> => {
+    const h = dialling({ status: 0, stdout: '401', stderr: '' });
+    expect(
+      await runSetup(
+        keyRoute({ route: 'endpoint', endpoint: 'https://gateway.example.com/v1' }),
+        h.io,
+      ),
+    ).toBe(0);
+    expect(h.output.join('\n')).toContain(
+      'the backend container reached https://gateway.example.com/v1 (HTTP 401)',
+    );
+  });
+});
+
 describe('refusing anything that is not this machine', (): void => {
   it('refuses to run as part of a hosted build', (): void => {
     expect(buildEnvironmentRefusal({ VERCEL: '1' })).toContain('Vercel');

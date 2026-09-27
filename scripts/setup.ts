@@ -74,6 +74,7 @@ import {
   WAY_NAMES,
 } from '../src/setup/quickstart';
 import { composeArguments, PROFILES } from './compose';
+import { containerDialArguments, readContainerDial, unreachableFix } from './model-reach';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
 import {
@@ -2798,6 +2799,39 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         options.mode,
       );
       return 1;
+    }
+
+    if (route === 'endpoint') {
+      // The address the backend dials is only known to work from inside it:
+      // the bed's own stop was an endpoint on another Docker bridge that the
+      // host reached and the container did not (pass 11, section 3b).
+      const backendUrl = readEnvValues(envPath).CONVEX_OPENAI_BASE_URL?.trim() ?? '';
+      if (backendUrl !== '') {
+        const dial = readContainerDial(
+          io.run('docker', composeArguments(containerDialArguments(backendUrl)), {
+            env: environment,
+            timeoutMs: 30_000,
+          }),
+        );
+        if (dial.reach === 'unreachable') {
+          io.log('');
+          io.log(`error: the backend container could not reach ${backendUrl}: ${dial.detail}.`);
+          io.log(
+            '       The 1:1 would run from this machine and the charter, synthesised inside the ' +
+              'container, would never arrive. Nothing was pushed.',
+          );
+          for (const line of unreachableFix(backendUrl, resolvedProject)) io.log(`       ${line}`);
+          io.log(
+            `       Then run \`${entryCommand(options.mode)}\` again; it keeps what is already set up.`,
+          );
+          return 1;
+        }
+        io.log(
+          dial.reach === 'reached'
+            ? `    the backend container reached ${backendUrl} (${dial.detail})`
+            : `    note: ${backendUrl} could not be dialled from the backend container (${dial.detail}); \`pnpm check:setup\` tries again`,
+        );
+      }
     }
 
     io.log(
