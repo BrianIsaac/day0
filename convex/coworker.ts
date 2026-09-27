@@ -2,87 +2,80 @@ import { v } from 'convex/values';
 import { internalMutation } from './_generated/server';
 
 /**
- * Lightweight coworker auto-reply. After the agent posts a message to a
- * Slack channel/DM, we schedule a delayed reply from a teammate (Priya,
- * Aman, the manager, etc.) to make the demo loop feel alive.
+ * A colleague's acknowledgement of a message Day0 posted in the mock office.
  *
- * We pick the responder + reply style based on the channel; bodies are
- * short canned templates to keep the reply deterministic and cheap.
+ * Mock follows real (decision Q2): in real mode nothing reads a reply to
+ * Day0, so a canned reply that asks Day0 to hold, add, pin or forward
+ * something teaches the demo a behaviour the product lacks. Every reply here
+ * acknowledges and asks for nothing. A channel with no colleague gets no
+ * reply, rather than one in the manager's name, and one message always gets
+ * the same reply, so a replayed demo shows the same office.
  */
 
 interface ResponderProfile {
-  responder: string;
-  senderKind: 'manager' | 'teammate' | 'requester';
-  templates: Array<(snippet: string) => string>;
+  readonly responder: string;
+  readonly senderKind: 'manager' | 'teammate' | 'requester';
+  readonly replies: readonly string[];
 }
 
-const PROFILES: Record<string, ResponderProfile> = {
+const PROFILES: Readonly<Record<string, ResponderProfile>> = {
   'dm-manager': {
     responder: 'Manager',
     senderKind: 'manager',
-    templates: [
-      () => 'Thanks — looks good. I’ll forward it after a quick read.',
-      () => "Got it. Make sure the close-date column is populated before we send to committee.",
-      () => 'Nice. Pin it to the channel and I’ll ratify on Tuesday.',
-    ],
+    replies: ['Thanks, seen.', 'Got it, thanks.'],
   },
   'dm-priya': {
     responder: 'Priya',
     senderKind: 'teammate',
-    templates: [
-      () => 'Thanks — I’ll cross-check against Looker and send any tweaks back to you.',
-      () => 'Good first pass. Add the source link for the four-week window before I forward.',
-      () => 'Looks aligned with how I’d frame it. One caveat I’d add: enterprise stage gates.',
-    ],
+    replies: ['Thanks, I have it.', 'Seen, thanks.'],
   },
   'dm-aman': {
     responder: 'Aman',
     senderKind: 'teammate',
-    templates: [
-      () => 'Got it — appreciate you catching this without breaking the model side.',
-    ],
+    replies: ['Got it, thanks.'],
   },
   'revops-asks': {
     responder: 'Priya',
     senderKind: 'requester',
-    templates: [
-      () =>
-        'Thanks Day0. I’ll review the draft and ratify or push back by EOD; please hold for my sign-off before any external send.',
-      () =>
-        'Appreciate the quick triage — leaving the pipeline interpretation to me, but the framing here is clean.',
-    ],
+    replies: ['Thanks, Day0.', 'Seen, thank you.'],
   },
   revops: {
     responder: 'Sara',
     senderKind: 'teammate',
-    templates: [
-      () => 'Tagging this for the team to review — looks like a good template for similar asks.',
-    ],
+    replies: ['Noted, thanks.'],
   },
 };
 
-function pickReply(channelSlug: string, originalBody: string): {
-  responder: string;
-  senderKind: ResponderProfile['senderKind'];
-  body: string;
-} {
+/**
+ * The reply a channel's colleague gives to one message, or none.
+ *
+ * Args:
+ *   channelSlug: The channel Day0 posted on.
+ *   originalBody: What Day0 posted; it chooses among the colleague's replies.
+ *
+ * Returns:
+ *   The responder and the reply, or undefined for a channel with no colleague.
+ */
+function pickReply(
+  channelSlug: string,
+  originalBody: string,
+): { responder: string; senderKind: ResponderProfile['senderKind']; body: string } | undefined {
   const profile = PROFILES[channelSlug];
-  if (!profile) {
-    return {
-      responder: 'Manager',
-      senderKind: 'manager',
-      body: 'Acknowledged.',
-    };
-  }
-  const idx = Math.floor(Math.random() * profile.templates.length);
-  const tmpl = profile.templates[idx];
+  if (!profile) return undefined;
+  let seed = 0;
+  for (const char of originalBody) seed = (seed + (char.codePointAt(0) ?? 0)) % 9_973;
   return {
     responder: profile.responder,
     senderKind: profile.senderKind,
-    body: tmpl(originalBody.slice(0, 60)),
+    body: profile.replies[seed % profile.replies.length],
   };
 }
 
+/**
+ * Post a colleague's acknowledgement under a message Day0 posted. Internal;
+ * scheduled by the mock Slack verb once the post lands. Writes the reply and
+ * a `coworker.replied` event, or nothing on a channel with no colleague.
+ */
 export const replyToAgentMessage = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -90,8 +83,10 @@ export const replyToAgentMessage = internalMutation({
     threadKey: v.optional(v.string()),
     originalBody: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<void> => {
     const reply = pickReply(args.channelSlug, args.originalBody);
+    if (!reply) return;
+    const now = Date.now();
     await ctx.db.insert('mockSlackMessages', {
       agentId: args.agentId,
       channelSlug: args.channelSlug,
@@ -99,13 +94,13 @@ export const replyToAgentMessage = internalMutation({
       sender: reply.responder,
       senderKind: reply.senderKind,
       body: reply.body,
-      timestamp: Date.now(),
+      timestamp: now,
     });
     await ctx.db.insert('events', {
       agentId: args.agentId,
       type: 'coworker.replied',
       payload: { channelSlug: args.channelSlug, responder: reply.responder },
-      createdAt: Date.now(),
+      createdAt: now,
     });
   },
 });
