@@ -252,6 +252,16 @@ const TRAILING_PUNCTUATION = /[.,;:)\]}'"`，。；：、！？）」』】》]+
 /** An ASCII value that runs straight on into CJK text: the value ends where the sentence starts. */
 const ASCII_BEFORE_CJK =
   /^[\x21-\x7e]+(?=[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60])/;
+/** A label and a `:`, `=` or `：` directly before the value; prose ("the password is ...") is not one. */
+const LABEL_SEPARATOR_BEFORE = new RegExp(`${SECRET_LABEL}\\s*[:=：]\\s*$`, 'i');
+/** A CJK password-class label, with or without a separator, directly before the value. */
+const CJK_LABEL_BEFORE = /(?:密码|口令|令牌|密钥|秘钥|凭证)\s*(?:[:=：]|是|为)?\s*$/;
+/**
+ * A span that swallowed a CJK password-class label and its CJK value:
+ * "密码是开门芝麻". The value is what follows the separator.
+ */
+const CJK_LABEL_THEN_VALUE =
+  /^(?:密码|口令|令牌|密钥|秘钥|凭证)\s*(?:[:=：]|是|为)\s*([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]{2,})[。，]?$/;
 /** Letters only: the first word of a phrase when more words follow it on the line. */
 const LATIN_LETTERS = /^[A-Za-z]+$/;
 const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
@@ -342,7 +352,10 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   }
   const explicitPassword = label === 'password' && PASSWORD_ASSIGNMENT.test(text.slice(0, start));
   const wrappedPassword = explicitPassword && /^[^\s]+\r?\n[0-9]+$/.test(value);
-  const narrowed = label === 'private key' ? null : LABEL_THEN_VALUE.exec(value);
+  const narrowed =
+    label === 'private key'
+      ? null
+      : (LABEL_THEN_VALUE.exec(value) ?? CJK_LABEL_THEN_VALUE.exec(value));
   if (narrowed && narrowed[1] !== value) {
     start += value.lastIndexOf(narrowed[1]);
     end = start + narrowed[1].length;
@@ -385,7 +398,7 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   // secret that reads as a word.
   if (
     LATIN_LETTERS.test(value) &&
-    assignedAt(start) &&
+    LABEL_SEPARATOR_BEFORE.test(before) &&
     !/[`'"]$/.test(before) &&
     PHRASE_CONTINUES.test(text.slice(end).split('\n', 1)[0] ?? '')
   ) {
@@ -401,6 +414,9 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     ) {
       return false;
     }
+    // A CJK value right after a CJK password label ("门禁密码 开门芝麻") is the
+    // label's value, whatever separator the author used.
+    if (shape.name === 'cjk words' && CJK_LABEL_BEFORE.test(before)) return false;
     return shapeRejects(shape, value, assignedValue);
   });
   return rejected || sampleValueReason(value) ? undefined : { start, end };

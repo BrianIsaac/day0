@@ -488,3 +488,23 @@ describe('provider-format samples a model marks', (): void => {
     ).toEqual(spanOf(issued, 'lin_api_Zq8rT2vLm4Xw9KpB7nHc'));
   });
 });
+
+describe('what the guard still keeps from the model (review of the phrase and CJK rules)', (): void => {
+  const kept = (text: string, span: string): string | undefined => {
+    const start = text.indexOf(span);
+    const narrowed = guardSecretSpan(text, { start, end: start + span.length }, 'password');
+    return narrowed === undefined ? undefined : text.slice(narrowed.start, narrowed.end);
+  };
+
+  it('keeps a word a prose assignment names, and a CJK value after a CJK password label', (): void => {
+    expect(kept('The wifi password is Sunshine for guests', 'Sunshine')).toBe('Sunshine');
+    expect(kept('密码是开门芝麻', '密码是开门芝麻')).toBe('开门芝麻');
+    expect(kept('门禁密码 开门芝麻', '开门芝麻')).toBe('开门芝麻');
+    expect(kept('备用口令 天王盖地虎', '天王盖地虎')).toBe('天王盖地虎');
+  });
+
+  it('still refuses the first word of a phrase a label assigns with a colon, and a bare CJK label', (): void => {
+    expect(kept('Login: Google Workspace SSO', 'Google')).toBeUndefined();
+    expect(kept('请填写身份证号', '身份证号')).toBeUndefined();
+  });
+});
