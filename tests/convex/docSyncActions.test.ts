@@ -42,9 +42,11 @@ vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {
   return { ...original, openOwnedCredential: vi.fn(original.openOwnedCredential) };
 });
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (): Promise<{ systems: never[] }> => ({ systems: [] }),
+  agentJson: schemaChecked(() => ({ systems: [] })),
 }));
 
 /** Build a token-shaped value at runtime so no fixture stores one verbatim. */

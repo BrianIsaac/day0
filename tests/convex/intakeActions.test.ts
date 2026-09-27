@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
 import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /** The configurations the production intake client built, when a test reaches it. */
 const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
@@ -51,6 +51,8 @@ import type { WorkCandidate } from '../../src/work/types';
 import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { WAITING_WORK_LIMIT } from '../../convex/workLoop';
 
 type CredentialId = GenericId<'credentials'>;
 
@@ -78,6 +80,14 @@ interface RuntimeHarness {
   botIdentities: Array<{ surfaceId: Id<'surfaces'>; generation: number; providerBotId: string }>;
   /** Tickets intake refused on a poll, with why they left the queue. */
   withdrawn: Array<{ externalId: string; leftQueue: string }>;
+  /** Scopes the manager revoked; every surface's read scope is granted otherwise. */
+  revoked: Set<string>;
+  /** Credentials intake decrypted, in order. */
+  decrypted: string[];
+  /** Rows waiting to be evaluated, per agent id; none unless a test sets it. */
+  waiting: Map<string, number>;
+  /** `<sourceSystem>:<externalId>` of the items that already have a row. */
+  seeded: Set<string>;
 }
 
 /**
@@ -200,6 +210,10 @@ function runtimeHarness(
   const openRequests = new Map<string, Array<{ ts: string }>>();
   const botIdentities: RuntimeHarness['botIdentities'] = [];
   const withdrawn: RuntimeHarness['withdrawn'] = [];
+  const revoked = new Set<string>();
+  const decrypted: string[] = [];
+  const waiting = new Map<string, number>();
+  const seeded = new Set<string>();
   const runtime: IntakeRuntime = {
     recordBotIdentity: async (record): Promise<void> => {
       botIdentities.push(record);
@@ -214,7 +228,22 @@ function runtimeHarness(
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       agents.find((agent: Doc<'agents'>): boolean => agent._id === agentId) ?? null,
     listPages: async (): Promise<Doc<'docPages'>[]> => pages,
+    seededItems: async (
+      _agentId: Id<'agents'>,
+      sourceSystem: string,
+      externalIds: readonly string[],
+    ): Promise<string[]> => externalIds.filter((id) => seeded.has(`${sourceSystem}:${id}`)),
+    waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> => ({
+      waiting: waiting.get(String(agentId)) ?? 0,
+      limit: WAITING_WORK_LIMIT,
+    }),
+    grantedScopes: async (agentId: Id<'agents'>): Promise<string[]> =>
+      surfaces
+        .filter((surface: Doc<'surfaces'>): boolean => surface.agentId === agentId)
+        .map((surface: Doc<'surfaces'>): string => `${surface.slug}:read`)
+        .filter((scope: string): boolean => !revoked.has(scope)),
     decrypt: async (credentialId: CredentialId): Promise<string> => {
+      decrypted.push(String(credentialId));
       const value = credentials.get(String(credentialId));
       if (!value) throw new Error('credential unavailable');
       return value;
@@ -265,6 +294,10 @@ function runtimeHarness(
     seeds,
     openRequests,
     withdrawn,
+    revoked,
+    decrypted,
+    waiting,
+    seeded,
   };
 }
 
@@ -1160,6 +1193,9 @@ describe('real surface intake', (): void => {
       listChatSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       getAgent: vi.fn(),
       listPages: vi.fn(),
+      grantedScopes: vi.fn(),
+      waitingWork: vi.fn(),
+      seededItems: vi.fn(),
       decrypt: vi.fn(),
       recordIntake: vi.fn(),
       recordDecisionPoll: vi.fn(),
@@ -3363,5 +3399,345 @@ describe('the Linear intake client reaches only the address it checked (M16)', (
       body: '{}',
     });
     expect(dialled).toEqual([[{ address: '93.184.216.34', family: 4 }]]);
+  });
+});
+
+describe('the read grant (Q7, N2)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('reads nothing from a connected surface whose read scope is revoked, and says why', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-linear');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId,
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const harness = runtimeHarness(
+      [linear],
+      [pageRow('linear.md', 'Linear automation', LINEAR)],
+      new Map([[String(credentialId), 'linear-test-value']]),
+    );
+    harness.revoked.add('linear:read');
+    const makeMcpClient = vi.fn();
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => 10_000,
+        makeMcpClient,
+      }),
+    ).resolves.toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(harness.records).toEqual([
+      {
+        surfaceId: linear._id,
+        waterfallPosition: 1,
+        skipReason:
+          'read scope linear:read is not granted; intake reads nothing here until the manager grants it again',
+      },
+    ]);
+    expect(harness.decrypted).toEqual([]);
+    expect(makeMcpClient).not.toHaveBeenCalled();
+    expect(harness.seeds.size).toBe(0);
+  });
+
+  it("keeps polling the manager's decisions on a chat surface whose read scope is revoked", async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-slack');
+    const slack = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: Date.parse('2026-08-26T01:04:00.000Z'),
+    });
+    const harness = runtimeHarness(
+      [slack],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(credentialId), 'slack-test-value']]),
+    );
+    harness.revoked.add('slack:read');
+    const fetcher = async (): Promise<Response> =>
+      slackResponse({
+        ok: true,
+        messages: [{ ts: '1770000001.000100', user: 'UMANAGER', text: 'approve bq2wxy' }],
+        response_metadata: { next_cursor: '' },
+      });
+
+    await expect(
+      runDecisionSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T01:05:00.000Z'),
+        fetcher,
+      }),
+    ).resolves.toEqual({ mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: slack._id,
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000100',
+        reply: { verb: 'approve', id: 'bq2wxy' },
+      },
+    ]);
+  });
+
+  it('reads the grants the database holds, and stops once the manager revokes the scope', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'read grant',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'jira',
+        displayName: 'Jira',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId,
+        scope: 'jira:read',
+        source: 'surface',
+        createdAt: 1,
+      });
+      return { agentId, surfaceId };
+    });
+    const skipReason = async (): Promise<string | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.intakeSkipReason;
+
+    await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
+    expect(await skipReason()).toBe(
+      'connected surface has no stored credential; re-probe required',
+    );
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(liveApi.agents.revokeScope, { agentId, scope: 'jira:read' });
+    await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
+    expect(await skipReason()).toBe(
+      'read scope jira:read is not granted; intake reads nothing here until the manager grants it again',
+    );
+  });
+});
+
+describe('the Linear list order (P9-1)', (): void => {
+  it('asks for creation order when the schema offers it, so a ticket updated mid-walk keeps its page', (): void => {
+    const request = (orderBy: Record<string, unknown> | undefined): Record<string, unknown> =>
+      linearListArguments(
+        { properties: { project: {}, ...(orderBy === undefined ? {} : { orderBy }) } },
+        { project: 'Q3 close' },
+      ).args;
+
+    expect(request({ type: 'string', enum: ['createdAt', 'updatedAt'] })).toEqual({
+      project: 'Q3 close',
+      orderBy: 'createdAt',
+    });
+    expect(request({ type: 'string' })).toEqual({ project: 'Q3 close', orderBy: 'createdAt' });
+    expect(request({ type: 'string', enum: ['updatedAt'] })).toEqual({ project: 'Q3 close' });
+    expect(request(undefined)).toEqual({ project: 'Q3 close' });
+  });
+});
+
+describe('the bound on seeding (N7)', (): void => {
+  const LINEAR_LIST_SCHEMA = { properties: { project: {}, team: {}, limit: {} } };
+
+  /**
+   * A connected Linear surface whose list returns the given ticket ids.
+   *
+   * Args:
+   *   ids: The listed ticket identifiers, in list order.
+   *
+   * Returns:
+   *   The harness, the surface and its MCP client factory.
+   */
+  function listing(ids: readonly string[]): {
+    harness: RuntimeHarness;
+    linear: Doc<'surfaces'>;
+    makeMcpClient: NonNullable<IntakeDependencies['makeMcpClient']>;
+  } {
+    const credentialId = id<'credentials'>('credential-linear');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId,
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const harness = runtimeHarness(
+      [linear],
+      [pageRow('linear.md', 'Linear automation', LINEAR)],
+      new Map([[String(credentialId), 'linear-test-value']]),
+    );
+    const makeMcpClient = vi.fn(() => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: { surface: { list_issues: { inputSchema: LINEAR_LIST_SCHEMA } } },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (): Promise<unknown> => ({
+          issues: ids.map((identifier) => ({
+            id: identifier,
+            title: `Triage ${identifier}`,
+            url: `https://linear.app/day00/issue/${identifier}`,
+            project: 'Q3 close',
+            team: 'RevOps',
+          })),
+        }),
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    }));
+    return { harness, linear, makeMcpClient };
+  }
+
+  it('seeds only the room left in the waiting queue and holds the checkpoint for the rest', async (): Promise<void> => {
+    const { harness, linear, makeMcpClient } = listing(['REVOPS-1', 'REVOPS-2', 'REVOPS-3']);
+    harness.waiting.set(String(agentRow()._id), WAITING_WORK_LIMIT - 2);
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, makeMcpClient }),
+    ).resolves.toMatchObject({ candidates: 2, polled: 1 });
+
+    expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual([
+      'REVOPS-1',
+      'REVOPS-2',
+    ]);
+    expect(harness.records).toEqual([
+      {
+        surfaceId: linear._id,
+        waterfallPosition: 1,
+        skipReason: `${WAITING_WORK_LIMIT} items are waiting to be evaluated; intake reads 1 more once the queue drains`,
+      },
+    ]);
+    expect(linear.lastPolledAt).toBeUndefined();
+  });
+
+  it('re-lists the tickets it already holds whatever the room, so a long listing cannot hold the checkpoint for ever', async (): Promise<void> => {
+    const { harness, linear, makeMcpClient } = listing(['REVOPS-1', 'REVOPS-2', 'REVOPS-3']);
+    harness.waiting.set(String(agentRow()._id), WAITING_WORK_LIMIT - 1);
+    harness.seeded.add('linear:REVOPS-1');
+    harness.seeded.add('linear:REVOPS-2');
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, makeMcpClient }),
+    ).resolves.toMatchObject({ candidates: 3, polled: 1 });
+
+    expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual([
+      'REVOPS-1',
+      'REVOPS-2',
+      'REVOPS-3',
+    ]);
+    expect(harness.records).toEqual([
+      { surfaceId: linear._id, waterfallPosition: 1, polledAt: 10_000 },
+    ]);
+  });
+
+  it('reads nothing while the waiting queue is full', async (): Promise<void> => {
+    const { harness, linear, makeMcpClient } = listing(['REVOPS-1']);
+    harness.waiting.set(String(agentRow()._id), WAITING_WORK_LIMIT);
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, makeMcpClient }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+
+    expect(makeMcpClient).not.toHaveBeenCalled();
+    expect(harness.decrypted).toEqual([]);
+    expect(harness.records).toEqual([
+      {
+        surfaceId: linear._id,
+        waterfallPosition: 1,
+        skipReason: `${WAITING_WORK_LIMIT} items are waiting to be evaluated; intake reads more once the queue drains`,
+      },
+    ]);
+  });
+
+  it("names the listed items that already have a row for this employee, not another's", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = await harness.run(async (ctx) => {
+      const agent = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          state: 'active',
+          createdAt: 1,
+        });
+      const ids = [await agent('Priya'), await agent('Mateo')];
+      for (const [agentId, externalId] of [
+        [ids[0], 'REVOPS-1'],
+        [ids[1], 'REVOPS-2'],
+      ] as const) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: 'Triage',
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'skipped',
+          createdAt: 1,
+        });
+      }
+      return ids;
+    });
+
+    await expect(
+      harness.query(internal.workLoop.seededItems, {
+        agentId: priya,
+        sourceSystem: 'linear',
+        externalIds: ['REVOPS-1', 'REVOPS-2', 'REVOPS-3', 'REVOPS-1'],
+      }),
+    ).resolves.toEqual(['REVOPS-1']);
+    await expect(
+      harness.query(internal.workLoop.seededItems, {
+        agentId: mateo,
+        sourceSystem: 'slack',
+        externalIds: ['REVOPS-2'],
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('counts the rows the database holds waiting', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'waiting count',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (const [index, state] of (
+        ['discovered', 'discovered', 'claimed', 'skipped'] as const
+      ).entries()) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${index}`,
+          title: 'Triage',
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          state,
+          createdAt: 1,
+        });
+      }
+      return agentId;
+    });
+
+    await expect(harness.query(internal.workLoop.waitingWork, { agentId })).resolves.toEqual({
+      waiting: 2,
+      limit: WAITING_WORK_LIMIT,
+    });
   });
 });

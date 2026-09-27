@@ -243,11 +243,15 @@ describe('a write to an external item another work item holds (finding D, 19 Sep
   beforeEach((): void => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
+    // The apply an approval schedules waits on the faked clock, so the one
+    // each test runs by hand is the only apply of the item (P11-1).
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   });
 
   afterEach((): void => {
     recorded.mcp.length = 0;
     recorded.http.length = 0;
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     restoreSurfaceMode();
   });

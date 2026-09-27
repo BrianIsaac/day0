@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 
+import { makeFunctionReference } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
@@ -102,6 +103,11 @@ describe('the stalled-step sweep', (): void => {
     restoreSurfaceMode();
   });
 
+  /** The sweep runs as one transaction, so its harness enforces Convex's limits. */
+  function sweepHarness(): Harness {
+    return convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+  }
+
   it('runs with the five-minute intake poll', (): void => {
     expect(crons.crons['resume stalled work steps']).toMatchObject({
       name: 'work:resumeStalledSteps',
@@ -109,10 +115,10 @@ describe('the stalled-step sweep', (): void => {
     });
   });
 
-  it('reschedules a row whose lease expired and leaves a live claim alone', async (): Promise<void> => {
+  it('reschedules a lapsed step, leaves a live claim alone, and evaluates nothing while the cap is full', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, true);
     const now = Date.now();
     const ids = await harness.run(async (ctx) => ({
@@ -145,21 +151,59 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
+    // The two claimed rows and the approved plan hold all three slots, so the
+    // lapsed evaluation waits for one rather than spending a scope call to
+    // learn it would queue.
     const scheduled = await scheduledSteps(harness);
     expect(scheduled).toEqual(
       expect.arrayContaining([
-        ['workActions:evaluateWorkItemInternal', ids.lapsedEvaluation],
         ['workActions:draftPlanInternal', ids.lapsedDraft],
         ['workActions:executeApprovedPlanInternal', ids.approved],
       ]),
     );
-    expect(scheduled).toHaveLength(3);
+    expect(scheduled).toHaveLength(2);
+  });
+
+  it('resumes a lapsed evaluation when a slot is free, a live evaluation holding another', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = sweepHarness();
+    const agentId = await seedAgent(harness, true);
+    const now = Date.now();
+    const ids = await harness.run(async (ctx) => ({
+      open: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-36', now),
+        state: 'plan-pending',
+        plan: PLAN,
+        planPendingAt: now,
+      }),
+      lapsed: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-37', now),
+        state: 'discovered',
+        evaluationClaimedAt: now - LEASE_MS - 1,
+      }),
+      live: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-38', now),
+        state: 'discovered',
+        evaluationClaimedAt: now - 60_000,
+      }),
+      waiting: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-39', now),
+        state: 'discovered',
+      }),
+    }));
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledSteps(harness)).toEqual([
+      ['workActions:evaluateWorkItemInternal', ids.lapsed],
+    ]);
   });
 
   it('wakes the oldest queued row only when the employee has a free slot', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const queued = {
@@ -193,7 +237,7 @@ describe('the stalled-step sweep', (): void => {
   it('recovers a plan whose drafting action died before deciding it', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const workItemId = await harness.run(async (ctx) =>
@@ -212,7 +256,7 @@ describe('the stalled-step sweep', (): void => {
   it('continues an autonomous plan when the recovered decision wins', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, true);
     const now = Date.now();
     const workItemId = await harness.run(async (ctx) =>
@@ -235,7 +279,7 @@ describe('the stalled-step sweep', (): void => {
   it('recovers a killed execution without touching a live run or gate apply', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const ids = await harness.run(async (ctx) => {
@@ -306,7 +350,7 @@ describe('the stalled-step sweep', (): void => {
   it('wakes ordinary work behind retained revocation trials', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const ordinary = await harness.run(async (ctx) => {
@@ -336,7 +380,7 @@ describe('the stalled-step sweep', (): void => {
   it('reaches a stale draft behind one hundred live claims', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, true);
     const now = Date.now();
     const stale = await harness.run(async (ctx) => {
@@ -365,7 +409,7 @@ describe('the stalled-step sweep', (): void => {
   it('does nothing in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     await harness.run(async (ctx) => {
@@ -379,5 +423,75 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
     expect(await scheduledSteps(harness)).toEqual([]);
+  });
+});
+
+describe('the cron targets, run by the names they are scheduled under', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+    restoreSurfaceMode();
+  });
+
+  /**
+   * Run one cron's target the way the scheduler does: by its name and its arguments.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   label: The cron's label in `crons.ts`.
+   *
+   * Returns:
+   *   What the target returned.
+   */
+  async function runCron(harness: Harness, label: string): Promise<unknown> {
+    const cron = crons.crons[label] as { name: string; args: Array<Record<string, unknown>> };
+    return await harness.action(makeFunctionReference<'action'>(cron.name), cron.args[0] ?? {});
+  }
+
+  it('polls, polls decisions, re-probes and syncs one connected surface with no read grant', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const agentId = await seedAgent(harness, false);
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          managerApprovedAt: 1,
+          itApprovedAt: 1,
+          credentialLanded: true,
+          createdAt: 1,
+        }),
+    );
+
+    await expect(runCron(harness, 'poll connected surfaces for work')).resolves.toEqual({
+      candidates: 0,
+      mode: 'real',
+      polled: 0,
+      skipped: 1,
+      surfaces: 1,
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.intakeSkipReason).toBe(
+      'read scope linear:read is not granted; intake reads nothing here until the manager grants it again',
+    );
+    await expect(runCron(harness, 'poll manager decision replies')).resolves.toEqual({
+      mode: 'real',
+      polled: 0,
+      skipped: 0,
+      surfaces: 0,
+    });
+    await expect(runCron(harness, 're-probe connected surfaces')).resolves.toEqual({
+      expired: 0,
+      noticed: 0,
+      scheduled: 1,
+    });
+    await expect(runCron(harness, 'sync documentation sources')).resolves.toEqual({
+      sources: 0,
+      passed: 0,
+    });
   });
 });

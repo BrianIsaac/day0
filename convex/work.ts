@@ -4112,6 +4112,10 @@ function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
 /**
  * Schedule the apply for the row's current approved set, with its recovery timer.
  *
+ * This timer reschedules an apply that never started. An apply that started
+ * is covered by the timer its claim arms (`armApplySwitch`), so a start that
+ * comes late is measured from the claim, not from here.
+ *
  * Args:
  *   ctx: Mutation context.
  *   workItemId: The work item.
@@ -4124,10 +4128,29 @@ async function scheduleApply(
   phase: 'auto' | 'approved',
 ): Promise<void> {
   await ctx.scheduler.runAfter(0, internal.workActions.applyApprovedActions, { workItemId });
+  await armApplySwitch(ctx, workItemId, pendingRunId, phase);
+}
+
+/**
+ * Arm the apply's dead-man switch: `recoverInterruptedApply` after `APPLY_RECOVERY_MS`.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   workItemId: The work item.
+ *   pendingRunId: The run the approval belongs to.
+ *   phase: Which apply phase the switch guards.
+ */
+async function armApplySwitch(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  pendingRunId: Id<'events'>,
+  phase: 'auto' | 'approved',
+): Promise<void> {
   await ctx.scheduler.runAfter(APPLY_RECOVERY_MS, internal.work.recoverInterruptedApply, {
     workItemId,
     pendingRunId,
     phase,
+    fromTimer: true,
   });
 }
 
@@ -4829,6 +4852,9 @@ export const claimApprovedActions = internalMutation({
       applyAttemptId,
       applyClaimedAt: Date.now(),
     });
+    // The switch counts from the claim: an apply that started late still has
+    // its whole window before its outcomes are recorded as unknown (P9-1).
+    await armApplySwitch(ctx, args.workItemId, row.pendingRunId, autoPhase ? 'auto' : 'approved');
     const count = actionsOf(row.output).length;
     return {
       claimed: true,
@@ -4854,13 +4880,17 @@ export const claimApprovedActions = internalMutation({
  * safe to reschedule. Once an apply claim exists, the provider may already
  * have accepted a request, so recovery records every outcome of this phase
  * as unknown, keeps what an earlier phase already recorded, and refuses
- * automatic replay.
+ * automatic replay. A timer that fires on a claim younger than
+ * `APPLY_RECOVERY_MS` leaves it alone: that claim armed its own timer. The
+ * apply action's own failure calls this without `fromTimer` and is acted on
+ * at once.
  */
 export const recoverInterruptedApply = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     pendingRunId: v.id('events'),
     phase: v.union(v.literal('auto'), v.literal('approved')),
+    fromTimer: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -4877,6 +4907,9 @@ export const recoverInterruptedApply = internalMutation({
       return { recovered: 'rescheduled' };
     }
     if (row.state !== 'executing' || !row.applyAttemptId || !row.applyClaimedAt) {
+      return { recovered: 'ignored' };
+    }
+    if (args.fromTimer && Date.now() - row.applyClaimedAt < APPLY_RECOVERY_MS) {
       return { recovered: 'ignored' };
     }
     const output = (row.output ?? {}) as {
@@ -4953,12 +4986,15 @@ export const setProposedSkill = internalMutation({
 
 const OPEN_CLAIM_STATES = new Set<string>(OPEN_WORK_STATES);
 
+/**
+ * The employee's rows holding a slot, counted up to the largest cap.
+ *
+ * Read state by state through the index, so the employee's closed rows and
+ * their outputs are never read: every caller compares the count with a cap
+ * no larger than `AUTONOMOUS_WIP_LIMIT` (P9-1).
+ */
 async function countOpenForAgentImpl(ctx: QueryCtx, agentId: Id<'agents'>): Promise<number> {
-  const open = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
-    .collect();
-  return open.filter((w) => OPEN_CLAIM_STATES.has(w.state)).length;
+  return await openSlotCount(ctx, agentId, Math.max(AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT));
 }
 
 async function findExistingClaimImpl(

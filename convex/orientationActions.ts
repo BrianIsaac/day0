@@ -823,7 +823,7 @@ function fallbackDraft(surface: Doc<'surfaces'>, relevantText: string): Orientat
     credential: { found: 'none', method: 'unknown' },
     blastRadius: 'One named work system for this agent.',
     costBand: 'none',
-    expiresInDays: 30,
+    expiresInDays: 90,
     rollback: 'Revoke the credential and reject the surface.',
     openQuestions: ['Confirm the approved connection details.'],
   };

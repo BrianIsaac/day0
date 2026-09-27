@@ -6,7 +6,11 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { PLAN_CANCELLED_REASON, REEVALUATION_BATCH } from '../../convex/work';
+import {
+  INTERRUPTED_APPLY_REASON,
+  PLAN_CANCELLED_REASON,
+  REEVALUATION_BATCH,
+} from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
 import { openQuestionStopReason } from '../../src/work/obligations';
@@ -317,7 +321,7 @@ describe('batched decisions', (): void => {
       harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActionsBatch, {
         members: [{ workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] }],
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
   });
 
   async function batchOnChannel(harness: Harness): Promise<{
@@ -873,7 +877,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity({ subject: 'stranger' }).mutation(api.work.resendDecisionRequest, {
         workItemId,
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     await harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId });
     expect(
       (await scheduledFunctionNames(harness)).filter(
@@ -4075,6 +4079,89 @@ describe('the execution claim and the skill body it runs', (): void => {
       skillId,
       skillRegisteredAt: 5,
       skillBodyHash: skillBodyHash('Comment, then close.'),
+    });
+  });
+});
+
+describe('the cap count behind every evaluation (P9-1)', (): void => {
+  it('counts open work up to the largest cap without reading the closed rows', async (): Promise<void> => {
+    // More closed rows than the read limit allows in one query: the count
+    // reads the open states by index, never the employee's whole history.
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 60 },
+    });
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    const insert = async (state: Doc<'workItems'>['state'], from: number, count: number) => {
+      await harness.run(async (ctx) => {
+        for (let index = from; index < from + count; index += 1) {
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: `REVOPS-${index}`,
+            title: `Triage REVOPS-${index}`,
+            contentSummary: 'Triage.',
+            contentRefs: [],
+            observedAt: 1,
+            state,
+            createdAt: 1,
+          });
+        }
+      });
+    };
+    for (let from = 0; from < 100; from += 20) await insert('completed', from, 20);
+    await insert('plan-pending', 100, 5);
+
+    await expect(harness.query(internal.work.countOpenForAgentInternal, { agentId })).resolves.toBe(
+      3,
+    );
+  });
+});
+
+describe('the apply dead-man switch (P9-1)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('fires six minutes after the apply claim, not six minutes after the apply was scheduled', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await pend(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    // The apply action starts five minutes late, so its scheduled run is held back here.
+    await harness.run(async (ctx) => {
+      for (const job of await ctx.db.system.query('_scheduled_functions').collect()) {
+        if (job.name === 'workActions:applyApprovedActions') await ctx.scheduler.cancel(job._id);
+      }
+    });
+    vi.advanceTimersByTime(5 * 60_000);
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+
+    vi.advanceTimersByTime(60_000);
+    await harness.finishInProgressScheduledFunctions();
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'executing' });
+
+    vi.advanceTimersByTime(5 * 60_000);
+    await harness.finishInProgressScheduledFunctions();
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'failed',
+      skipReason: INTERRUPTED_APPLY_REASON,
     });
   });
 });

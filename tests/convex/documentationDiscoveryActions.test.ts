@@ -15,14 +15,16 @@ const model = vi.hoisted(() => ({
   systems: [] as Array<{ name: string; class: 'chat'; pageRef: string }>,
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (): Promise<{ systems: typeof model.systems }> => {
+  agentJson: schemaChecked(async (): Promise<unknown> => {
     model.calls += 1;
     model.onCall?.();
     if (model.error) throw model.error;
     return { systems: model.systems };
-  },
+  }),
 }));
 
 beforeEach((): void => {

@@ -52,6 +52,12 @@ async function runInPython(args: AuthorSkillArgs): Promise<SkillSandboxRun> {
   }
 }
 
+/** Whether this machine can run the program as both sandboxes do; the cases that run it skip without. */
+const HAS_PYTHON = spawnSync('python3', ['--version']).status === 0;
+
+/** A case that runs the program under `python3`, skipped on a machine without it. */
+const itWithPython = it.skipIf(!HAS_PYTHON);
+
 /** The two surfaces Mateo's author was shown as connected on the rehearsal bed. */
 const REHEARSAL_CONTRACT: SmokeHarnessContract = {
   body: RECORDED_BODY_2026_09_18,
@@ -86,47 +92,58 @@ describe("the rehearsal's kanban-comment-and-close authoring (F2, 18 Sep)", (): 
     expect(RECORDED_BODY_2026_09_18).not.toContain(ids.asserted);
   });
 
-  it('fails in mock mode exactly as the rehearsal saw it, because the program runs as written', async (): Promise<void> => {
-    const ids = rehearsalSmokeIds();
-    const smokeTest = reconstructedSmokeTest(ids);
+  itWithPython(
+    'fails in mock mode exactly as the rehearsal saw it, because the program runs as written',
+    async (): Promise<void> => {
+      const ids = rehearsalSmokeIds();
+      const smokeTest = reconstructedSmokeTest(ids);
 
-    useSurfaceMode('mock');
-    const verification = await verifyAsLoaded(smokeTest);
+      useSurfaceMode('mock');
+      const verification = await verifyAsLoaded(smokeTest);
 
-    expect(verification.ok).toBe(true);
-    if (!verification.ok) return;
-    expect(verification.smokeTest).toBe(smokeTest);
-    expect(verification.result.ok).toBe(false);
-    expect(verification.result.failureReason).toBe('smoke test exited 1');
-    expect(verification.result.stderr).toContain(`line ${RECORDED_ASSERTION_LINE}, in <module>`);
-    expect(verification.result.stderr).toContain(recordedAssertion(ids.asserted));
-    expect(verification.result.stderr).toContain('AssertionError');
-  });
+      expect(verification.ok).toBe(true);
+      if (!verification.ok) return;
+      expect(verification.smokeTest).toBe(smokeTest);
+      expect(verification.result.ok).toBe(false);
+      expect(verification.result.failureReason).toBe('smoke test exited 1');
+      expect(verification.result.stderr).toContain(`line ${RECORDED_ASSERTION_LINE}, in <module>`);
+      expect(verification.result.stderr).toContain(recordedAssertion(ids.asserted));
+      expect(verification.result.stderr).toContain('AssertionError');
+    },
+  );
 
-  it('registers first time in real mode: no assertion the author wrote decides the verdict', async (): Promise<void> => {
-    const ids = rehearsalSmokeIds();
-    const smokeTest = reconstructedSmokeTest(ids);
+  itWithPython(
+    'registers first time in real mode: no assertion the author wrote decides the verdict',
+    async (): Promise<void> => {
+      const ids = rehearsalSmokeIds();
+      const smokeTest = reconstructedSmokeTest(ids);
 
-    useSurfaceMode('real');
-    const verification = await verifyAsLoaded(smokeTest, REHEARSAL_CONTRACT);
+      useSurfaceMode('real');
+      const verification = await verifyAsLoaded(smokeTest, REHEARSAL_CONTRACT);
 
-    expect(verification.ok).toBe(true);
-    if (!verification.ok) return;
-    // The row keeps what the author wrote; the harness is only what ran.
-    expect(verification.smokeTest).toBe(smokeTest);
-    expect(verification.result.failureReason).toBeUndefined();
-    expect(verification.result.ok).toBe(true);
-    expect(verification.result.stdout).toContain(ids.asserted);
-    expect(verification.result.stdout).toContain(ids.other);
-  });
+      expect(verification.ok).toBe(true);
+      if (!verification.ok) return;
+      // The row keeps what the author wrote; the harness is only what ran.
+      expect(verification.smokeTest).toBe(smokeTest);
+      expect(verification.result.failureReason).toBeUndefined();
+      expect(verification.result.ok).toBe(true);
+      expect(verification.result.stdout).toContain(ids.asserted);
+      expect(verification.result.stdout).toContain(ids.other);
+    },
+  );
 
-  it('refuses the same sound program in real mode when the caller gives no contract: no surface is known, so none is allowed', async (): Promise<void> => {
-    useSurfaceMode('real');
-    const verification = await verifyAsLoaded(reconstructedSmokeTest(rehearsalSmokeIds()));
+  itWithPython(
+    'refuses the same sound program in real mode when the caller gives no contract: no surface is known, so none is allowed',
+    async (): Promise<void> => {
+      useSurfaceMode('real');
+      const verification = await verifyAsLoaded(reconstructedSmokeTest(rehearsalSmokeIds()));
 
-    expect(verification.ok).toBe(true);
-    if (!verification.ok) return;
-    expect(verification.result.ok).toBe(false);
-    expect(verification.result.stderr).toContain("targets surface 'linear', which is not a connected surface (connected: none)");
-  });
+      expect(verification.ok).toBe(true);
+      if (!verification.ok) return;
+      expect(verification.result.ok).toBe(false);
+      expect(verification.result.stderr).toContain(
+        "targets surface 'linear', which is not a connected surface (connected: none)",
+      );
+    },
+  );
 });

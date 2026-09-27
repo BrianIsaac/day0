@@ -35,7 +35,12 @@ vi.mock('../../src/lib/mastra', async (importOriginal) => {
         recorded.prompts.push(user);
         if (name === 'day0-scope-judgement') {
           const next = recorded.scopeOutcomes.shift() ?? {
-            object: { inScope: true, fit: true, reason: 'close summaries are the charter work' },
+            object: {
+              inScope: true,
+              fit: true,
+              reason: 'close summaries are the charter work',
+              exclusion: { kind: 'none', quote: '' },
+            },
           };
           if ('statusCode' in next)
             throw Object.assign(

@@ -105,15 +105,11 @@ const model = vi.hoisted(() => ({
   scopePrompts: [] as string[],
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async ({
-    agent,
-    user,
-  }: {
-    agent: { name: string };
-    user: string;
-  }): Promise<Record<string, unknown>> => {
+  agentJson: schemaChecked(async ({ agent, user }): Promise<unknown> => {
     if (agent.name === 'intake-scope') {
       model.scopePrompts.push(user);
       if (!model.scopeFor) throw new Error('scope model unavailable in tests');
@@ -145,7 +141,7 @@ vi.mock('../../src/lib/mastra', () => ({
       rollback: echo('Reject the surface.'),
       openQuestions: model.echoInput ? [user] : [],
     };
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 
@@ -1297,7 +1293,7 @@ describe('orientation run', (): void => {
     expect(model.prompts).toHaveLength(1);
   });
 
-  it('reports a model failure on the card and still files the evidence-backed proposal', async (): Promise<void> => {
+  it('reports a model failure on the card and still files the evidence-backed proposal at the 90-day default', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = undefined;
     const harness = convexTest(schema, orientationModules());
@@ -1329,6 +1325,7 @@ describe('orientation run', (): void => {
     expect((linear.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
       'could not classify this system (model unavailable in tests)',
     );
+    expect((linear.request as { expiresInDays: number }).expiresInDays).toBe(90);
   });
 
   it('fans out one scheduled job per declared system and isolates a stale job', async (): Promise<void> => {
@@ -2036,7 +2033,7 @@ describe('each employee reads its own role', (): void => {
       harness
         .withIdentity({ subject: 'other-owner' })
         .mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     await expect(owner.mutation(requestProposal, { surfaceId: before.linear._id })).rejects.toThrow(
       'Only a declared system can be proposed; this one is proposed.',
     );
@@ -2431,7 +2428,7 @@ describe('each employee reads its own role', (): void => {
     };
     model.scopeFor = (): Record<string, unknown> => ({ team: 'FIN' });
     const shapeless = await pickIntakeScope(question, 1_000);
-    expect(shapeless.note).toContain('its answer was not a list of picks');
+    expect(shapeless.note).toContain('reply did not satisfy the schema');
     expect(shapeless.picks.map((pick): string => candidates[pick.candidate - 1].value)).toEqual([
       'FIN',
       'September close',
@@ -2450,7 +2447,7 @@ describe('each employee reads its own role', (): void => {
       reasoning: 'The role is finance close.',
     });
     expect((await pickIntakeScope(question, 1_000)).note).toContain(
-      'its answer was not a list of picks',
+      'reply did not satisfy the schema',
     );
 
     // One number that is not a whole number makes the whole answer out of shape; none throws.
@@ -2460,7 +2457,7 @@ describe('each employee reads its own role', (): void => {
         reasoning: 'The role is finance close.',
       });
       const malformed = await pickIntakeScope(question, 1_000);
-      expect(malformed.note).toContain('its answer was not a list of picks');
+      expect(malformed.note).toContain('reply did not satisfy the schema');
       expect(malformed.picks.map((pick): string => candidates[pick.candidate - 1].value)).toEqual([
         'FIN',
         'September close',
