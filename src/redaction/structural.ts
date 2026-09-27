@@ -10,8 +10,8 @@
  * login (Looker tile): \`…\``, the second half of `login: user / pass`) are
  * secrets wherever they occur, whatever a model thinks. The last one is a
  * grammar and not a guess only because the label is the line's own word for
- * it; a value that names a reference, a placeholder or a plain lowercase word
- * is left to the model. One personal-data format sits beside them: a
+ * it; a value that names a reference, a placeholder, a plain word or an
+ * unquoted phrase is left to the model. One personal-data format sits beside them: a
  * national identifier whose check letter verifies (the Singapore NRIC and
  * FIN), which no context keeps. The grammar is synchronous and
  * dependency-free, which is why it is also the floor applied where no model
@@ -103,16 +103,40 @@ const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"']+)/g;
  * directly before the separator (an optional parenthetical allowed), so
  * "password policy: rotate quarterly" is prose and "PIN for the phone: 0419"
  * is the model's to find. A quoted value is taken whole; a bare value stops
- * at whitespace and closing punctuation, and is not taken when it starts a
- * `user / password` pair, which `LOGIN_PAIR` reads instead.
+ * at whitespace and closing punctuation, ASCII or full-width, never gives back
+ * a character to let the rest of the pattern match (so `login: Admin / pass`
+ * cannot store `Admi`), and is not taken when it starts a `user / password`
+ * pair, which `LOGIN_PAIR` reads instead.
  */
 const LABELLED_PASSWORD =
-  /(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)(?:[ \t]*\([^)\n]{0,60}\))?[ \t]*[:=：][ \t]*(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|([^\s`'",;)]+)(?![ \t]*\/[ \t]*[^\s/]))/gi;
+  /(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)(?:[ \t]*\([^)\n]{0,60}\))?[ \t]*[:=：][ \t]*(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|([^\s`'",;)，。；、）]+)(?![^\s`'",;)，。；、）])(?![ \t]*\/[ \t]*[^\s/]))/gi;
 /** `login: user / password`, `credentials: user/password`: the second half is the secret. */
 const LOGIN_PAIR =
-  /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)]+)/gi;
-/** A bare value that is only lowercase letters is a word before it is a password. */
-const LOWERCASE_WORD = /^[a-z]+$/;
+  /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)，。；、）]+)/gi;
+/** A bare value that is a plain word, lowercase or Capitalised, is a word before it is a password. */
+const PLAIN_WORD = /^[A-Z]?[a-z]+$/;
+/** Letters only: the first word of a phrase when more words follow it on the line. */
+const LATIN_LETTERS = /^[A-Za-z]+$/;
+const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
+/** A Chinese, Japanese or Korean character: an unquoted run of them is a sentence, not a value. */
+const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/**
+ * Whether an unquoted value after a password-class label is the author's
+ * prose rather than a password: "Login: Google Workspace SSO", "Password:
+ * Managed by Okta", "密码：请联系IT管理员". A quoted value is the author's
+ * own marking of the secret and is never refused here.
+ *
+ * @param value - The bare value, trailing punctuation shed.
+ * @param rest - The line after the value.
+ */
+function bareValueIsProse(value: string, rest: string): boolean {
+  return (
+    PLAIN_WORD.test(value) ||
+    CJK_CHARACTER.test(value) ||
+    (LATIN_LETTERS.test(value) && PHRASE_CONTINUES.test(rest))
+  );
+}
 /** A Singapore NRIC or FIN: a series letter, seven digits and a check letter. */
 const NATIONAL_ID = /(?<![A-Za-z0-9])([STFGM])(\d{7})([A-Z])(?![A-Za-z0-9])/g;
 const NATIONAL_ID_WEIGHTS = [2, 7, 6, 5, 4, 3, 2];
@@ -209,7 +233,8 @@ export function structuralSpans(text: string): StructuralSpan[] {
   for (const match of text.matchAll(LOGIN_PAIR)) {
     if (match.index === undefined) continue;
     const value = match[2].replace(PASSWORD_TRAILING, '');
-    if (!value || guardReason(value, { assigned: true })) continue;
+    const rest = text.slice(match.index + match[0].length);
+    if (!value || guardReason(value, { assigned: true }) || bareValueIsProse(value, rest)) continue;
     const start = match.index + match[0].lastIndexOf(match[2]);
     spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }
@@ -218,10 +243,11 @@ export function structuralSpans(text: string): StructuralSpan[] {
     const quoted = match[1] ?? match[2] ?? match[3];
     const raw = quoted ?? match[4] ?? '';
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
+    const rest = text.slice(match.index + match[0].length);
     if (
       !value ||
       guardReason(value, { assigned: true }) ||
-      (quoted === undefined && LOWERCASE_WORD.test(value))
+      (quoted === undefined && bareValueIsProse(value, rest))
     )
       continue;
     const start = match.index + match[0].lastIndexOf(raw);

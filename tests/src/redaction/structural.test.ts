@@ -172,6 +172,52 @@ describe('the labelled password grammar', (): void => {
   });
 });
 
+describe("the labelled password grammar on an author's page", (): void => {
+  it('never stores the prefix of a username that starts a login pair', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['login: Admin / hunter2x9', ['hunter2x9']],
+      ['Login: Admin / S3cret!', ['S3cret!']],
+      ['password: Admin / x', []],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+
+  it('leaves a bare capitalised word, a Latin phrase and a CJK phrase to the model', (): void => {
+    for (const text of [
+      'Login: Google Workspace SSO',
+      'Password: Managed by Okta',
+      'Password: Summer',
+      '密码：请联系IT管理员',
+      'Login: 请联系管理员',
+      'パスワード: see IT; password: 管理者に連絡',
+    ]) {
+      expect(structuralSpans(text), text).toEqual([]);
+    }
+  });
+
+  it('still takes a quoted value, and a bare value that is not a plain word, in a sentence', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['Password: "Summer"', ['Summer']],
+      ['密码："开门芝麻2026"', ['开门芝麻2026']],
+      ['Password: S3cret! then press Enter', ['S3cret!']],
+      ['Password: Winter2026 for the shared login', ['Winter2026']],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+});
+
 describe('the national identifier grammar', (): void => {
   it('takes a Singapore NRIC or FIN whose check letter verifies, as an id number', (): void => {
     const text =
