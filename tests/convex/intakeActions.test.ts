@@ -3963,3 +3963,59 @@ describe('the manager decision poll under a rate limit', (): void => {
     ]);
   });
 });
+
+describe("one agent's failed read in the intake sweep (step 49)", (): void => {
+  it("records the failure on that agent's surfaces and still polls every other agent", async (): Promise<void> => {
+    const other = { ...agentRow(), _id: id<'agents'>('agent-other'), name: 'Other agent' };
+    const slackCredential = id<'credentials'>('credential-slack');
+    const surfaceFor = (agentId: Id<'agents'>, slug: string): Doc<'surfaces'> => ({
+      ...surfaceRow(slug, 'Slack', 'chat', {
+        credentialId: slackCredential,
+        endpoint: 'https://slack.com/api/',
+        toolAllowlist: ['conversations.list', 'conversations.history'],
+        providerIdentityId: 'UBOT',
+        providerBotId: 'BBOT',
+        providerWorkspaceId: 'TTEAM',
+      }),
+      agentId,
+    });
+    const harness = runtimeHarness(
+      [surfaceFor(id<'agents'>('agent-intake'), 'slack'), surfaceFor(other._id, 'slack-other')],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+      [agentRow(), other],
+    );
+    const listPages = harness.runtime.listPages;
+    harness.runtime.listPages = async (agentId) => {
+      if (agentId === id<'agents'>('agent-intake')) throw new Error('pages read failed');
+      return await listPages(agentId);
+    };
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher: async (input: string | URL | Request): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) {
+            return slackResponse({
+              ok: true,
+              channels: [
+                { id: 'CASKS', name: 'revops-asks' },
+                { id: 'CREVOPS', name: 'revops' },
+              ],
+              response_metadata: { next_cursor: '' },
+            });
+          }
+          return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+        },
+      }),
+    ).resolves.toMatchObject({ polled: 1, skipped: 1 });
+    expect(harness.records).toEqual([
+      expect.objectContaining({
+        surfaceId: id<'surfaces'>('surface-slack'),
+        skipReason: 'intake failed: pages read failed',
+      }),
+      expect.objectContaining({ surfaceId: id<'surfaces'>('surface-slack-other') }),
+    ]);
+  });
+});

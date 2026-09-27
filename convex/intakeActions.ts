@@ -1863,11 +1863,28 @@ export async function runIntakeSweep(
     if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
-    const [pages, scopes, queue] = await Promise.all([
-      runtime.listPages(agentId),
-      runtime.grantedScopes(agentId),
-      runtime.waitingWork(agentId),
-    ]);
+    let pages: Doc<'docPages'>[];
+    let scopes: string[];
+    let queue: { waiting: number; limit: number };
+    try {
+      [pages, scopes, queue] = await Promise.all([
+        runtime.listPages(agentId),
+        runtime.grantedScopes(agentId),
+        runtime.waitingWork(agentId),
+      ]);
+    } catch (error) {
+      // One employee's reads failing is that employee's poll failing, not the sweep's.
+      for (const surface of agentSurfaces.filter(inScope)) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          // The order is read from the pages that could not be read; keep the last one.
+          waterfallPosition: surface.waterfallPosition ?? 0,
+          skipReason: `intake failed: ${safeIntakeError(error, '')}`,
+        });
+        skipped += 1;
+      }
+      continue;
+    }
     const granted = new Set(scopes);
     let waiting = queue.waiting;
     const documentedNames = extractDocumentedSystemOrder(
