@@ -593,6 +593,21 @@ describe('amending an approved charter', (): void => {
   });
 });
 
+describe('editing the clause that enforces a rule', (): void => {
+  it('refuses to delete the only clause that enforces a standing rule, and keeps the charter as it was', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApproved(harness);
+
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+        agentId,
+        changes: [{ kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' }],
+      }),
+    ).rejects.toThrow(/edit refused: .* is the only clause that enforces/);
+    expect((await latestCharter(harness, agentId))._id).toBe(charterId);
+  });
+});
+
 describe('amending the people fields', (): void => {
   it('takes an adjacent role, a collaborator and who approves through the dashboard, and IDENTITY.md shows the collaborator', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

@@ -303,3 +303,53 @@ describe('amending the people fields', (): void => {
     );
   });
 });
+
+describe('editing a bounding clause (P8-9)', (): void => {
+  const ruled = (): Charter => ({
+    ...approvedBody(),
+    proposedBoundaries: {
+      ...approvedBody().proposedBoundaries,
+      willNotDo: ['Post to public Slack channels.', 'Never edit the forecast sheet.'],
+    },
+    constraints: [
+      ...(approvedBody().constraints ?? []),
+      {
+        kind: 'system-boundary',
+        quote: 'Never touch the forecast sheet.',
+        wording: ['forecast sheet'],
+        origin: 'manager',
+      },
+    ],
+  });
+
+  it('refuses an edit that deletes or rewords away the only clause enforcing a standing rule', (): void => {
+    expect(() =>
+      applyCharterChanges(ruled(), [
+        { kind: 'edit-clause', field: 'willNotDo', index: 1, text: '' },
+      ]),
+    ).toThrow(/edit refused: .* is the only clause that enforces .Never touch the forecast sheet/);
+    expect(() =>
+      applyCharterChanges(ruled(), [
+        { kind: 'edit-clause', field: 'willNotDo', index: 1, text: 'Never edit the budget.' },
+      ]),
+    ).toThrow(/edit refused/);
+  });
+
+  it('lets an edit keep the rule enforced, and lets the manager remove a clause that only names a system', (): void => {
+    const reworded = applyCharterChanges(ruled(), [
+      {
+        kind: 'edit-clause',
+        field: 'willNotDo',
+        index: 1,
+        text: 'Never edit or share the forecast sheet.',
+      },
+    ]).charter;
+    expect(reworded.proposedBoundaries.willNotDo[1]).toBe(
+      'Never edit or share the forecast sheet.',
+    );
+    const removed = applyCharterChanges(ruled(), [
+      { kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' },
+    ]).charter;
+    expect(removed.proposedBoundaries.willNotDo).toEqual(['Never edit the forecast sheet.']);
+  });
+});

@@ -9,6 +9,7 @@ import type {
 import { SYSTEM_CLASSES } from './system-classes';
 import {
   CONSTRAINT_KINDS,
+  assertEditKeepsBoundaries,
   clauseTexts,
   withoutConstraints,
   wordingPresent,
@@ -227,14 +228,12 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       } else {
         items.splice(change.index, 1);
       }
-      return {
-        charter: {
-          ...charter,
-          proposedBoundaries: { ...charter.proposedBoundaries, [change.field]: items },
-        },
-        systemsAdded: added,
-        systemsRemoved: removed,
+      const edited: Charter = {
+        ...charter,
+        proposedBoundaries: { ...charter.proposedBoundaries, [change.field]: items },
       };
+      assertEditKeepsBoundaries(charter, edited);
+      return { charter: edited, systemsAdded: added, systemsRemoved: removed };
     }
     case 'answer-question': {
       const key = questionKey(change.question);
