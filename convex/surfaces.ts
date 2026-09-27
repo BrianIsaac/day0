@@ -1967,9 +1967,10 @@ const APPROVED_TOOLS_LIMIT = 200;
  *
  * Public, owner-guarded, real mode only; the card's re-approval control. The
  * list replaces the approved one, is recorded as `surface.tools-approved`
- * with what it added and removed, and the surface is probed at once so the
- * tools the provider offers from the new list reach the row; no tool the
- * provider does not offer is ever stored.
+ * with what it added and removed. A tool taken off leaves the stored list at
+ * once; the surface is probed at once so the tools the provider offers from
+ * the new list reach the row, and no tool the provider does not offer is
+ * ever stored.
  *
  * @throws ConvexError when the surface is not connected, or the list is
  *   empty, repeats a tool or passes the limit.
@@ -1979,7 +1980,7 @@ export const approveTools = mutation({
   handler: async (ctx, args): Promise<{ approved: string[] }> => {
     assertRealMode('Approving surface tools');
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     if (surface.verdict !== 'connected') {
       throw new ConvexError(
@@ -1997,8 +1998,16 @@ export const approveTools = mutation({
       throw new ConvexError(`Approve at most ${APPROVED_TOOLS_LIMIT} tools on one card.`);
     }
     const before = new Set(surface.approvedToolAllowlist ?? surface.toolAllowlist ?? []);
+    const approved = new Set(tools);
     const now = Date.now();
-    await ctx.db.patch(surface._id, { approvedToolAllowlist: tools, toolAllowlistApprovedAt: now });
+    // A tool the manager took off is uncallable at once; one added waits for
+    // the probe, so only a tool the provider offers is ever stored.
+    await ctx.db.patch(surface._id, {
+      approvedToolAllowlist: tools,
+      toolAllowlistApprovedAt: now,
+      toolAllowlist: (surface.toolAllowlist ?? []).filter((tool) => approved.has(tool)),
+      toolArguments: (surface.toolArguments ?? []).filter((entry) => approved.has(entry.tool)),
+    });
     await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.tools-approved',

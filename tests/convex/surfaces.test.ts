@@ -3214,6 +3214,20 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
     ).rejects.toThrow('forbidden');
   });
 
+  it('takes a tool the manager removes off the stored list at once, before any probe', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues'],
+      toolArguments: [{ tool: 'list_issues', arguments: [] }],
+      approvedToolAllowlist: ['list_issues'],
+    });
+  });
+
   it('clears the approved list on a demotion to another route and on a rejection', async (): Promise<void> => {
     useSurfaceMode('real');
     const { harness, surfaceId, probe } = await approvedCard();
