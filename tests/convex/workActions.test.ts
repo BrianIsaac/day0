@@ -6696,6 +6696,37 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     ]);
   });
 
+  it('withholds the apply of a row retried after a refused listing withdrew it (review B1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    const taken = { ...asPlanned, assigned: true, assigneeId: 'user-ana' };
+    // A poll refused the ticket, the manager pressed Retry, and the plan was made after both.
+    await harness.run(async (ctx): Promise<void> => {
+      const row = (await ctx.db.get(workItemId))!;
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.listed',
+        payload: { workItemId, tracker: taken, refused: 'the ticket is assigned to someone else' },
+        createdAt: 2,
+      });
+      await ctx.db.patch(workItemId, { planPendingAt: 3 });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      assigneeId: 'user-ana',
+      status: 'Todo',
+      statusType: 'unstarted',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('it changed hands');
+    expect(linearTools()).toEqual(['get_issue']);
+  });
+
   it('withholds when the state moved since the plan', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
