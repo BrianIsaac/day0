@@ -703,15 +703,27 @@ export function documentedEndpoints(
       ? undefined
       : { endpoint: refused.endpoint, reason: refused.reason };
   const api = safe.find((url: string): boolean => url !== mcp && API_BASE.test(url));
-  // A refused MCP address is not a web UI either: the browser rung would reach
-  // the same unlisted host the probe refused.
-  const refusedAddresses = new Set(
-    judged.filter(({ reason }): boolean => reason !== undefined).map(({ endpoint }) => endpoint),
+  // No page on a refused MCP host is a web UI either: the browser rung would
+  // reach the same unlisted host the probe refused.
+  const refusedHosts = new Set(
+    judged
+      .filter(({ reason }): boolean => reason !== undefined)
+      .map(({ endpoint }) => hostnameOf(endpoint)),
   );
   const webUi = urls.find(
-    (url: string): boolean => url !== mcp && url !== api && !refusedAddresses.has(url),
+    (url: string): boolean => url !== mcp && url !== api && !refusedHosts.has(hostnameOf(url)),
   );
   return { mcp, api, webUi, insecure, refusedMcp };
+}
+
+/** A URL's lower-case hostname, or the empty string for one that does not parse. */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    // Not a URL: it names no host, so it matches no refused one.
+    return '';
+  }
 }
 
 /**
