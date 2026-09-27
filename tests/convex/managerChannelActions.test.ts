@@ -541,12 +541,37 @@ describe('the notes the gate sends for the manager', (): void => {
       });
     });
     clockAt(QUARTER_PAST + 2_000);
-    const inFlight = await keepNote(harness, agentId, workItemId, 'landed', 'a per-run note');
+    const inFlight = await harness.run(
+      async (ctx) => await ctx.db.insert('managerNotes', { agentId, workItemId, kind: 'landed', text: 'a per-run note', createdAt: Date.now(), keptFor: 'per-run' }),
+    );
+    // Kept in digest mode by a run that read the agent before the switch
+    // committed: its stamp, not its time, makes it the digest's.
+    const racing = await harness.run(
+      async (ctx) => await ctx.db.insert('managerNotes', { agentId, workItemId, kind: 'landed', text: 'kept as the switch landed', createdAt: Date.now(), keptFor: 'digest' }),
+    );
     await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 1, failed: 0 });
     expect(JSON.parse(sent[0].body).text).toContain('kept for the digest');
+    expect(JSON.parse(sent[0].body).text).toContain('kept as the switch landed');
+    expect((await harness.run(async (ctx) => await ctx.db.get(racing)))?.providerTs).toBe('provider-1');
     expect(JSON.parse(sent[0].body).text).not.toContain('a per-run note');
     expect((await harness.run(async (ctx) => await ctx.db.get(stranded)))?.providerTs).toBe('provider-1');
     expect((await harness.run(async (ctx) => await ctx.db.get(inFlight)))?.claimedAt).toBeUndefined();
+  });
+
+  it('sends no second digest in the same quarter hour, whatever asks for one', async (): Promise<void> => {
+    clockAt(TOP_OF_HOUR);
+    recordSends();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest' });
+    });
+    await keepNote(harness, agentId, workItemId, 'landed', 'first');
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 1, failed: 0 });
+    clockAt(TOP_OF_HOUR + 5 * 60_000);
+    await keepNote(harness, agentId, workItemId, 'landed', 'second');
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 0, failed: 0 });
+    expect(sent).toHaveLength(1);
   });
 
   it('releases the notes of a digest that did not land for the next one', async (): Promise<void> => {

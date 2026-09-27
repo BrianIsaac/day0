@@ -3934,6 +3934,7 @@ async function queueManagerNote(
     kind,
     text: text(agent.name),
     createdAt: Date.now(),
+    keptFor: mode,
   });
   if (mode === 'per-run') {
     await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerNote, { noteId });
@@ -4022,65 +4023,82 @@ export const recordManagerNote = internalMutation({
   },
 });
 
+/** The most unsent notes one digest check reads across agents, and one agent's digest takes. */
+const DIGEST_NOTE_LIMIT = 500;
+
+/** A digest this soon after the last one waits: at most one per quarter hour, whatever triggered it. */
+const DIGEST_MIN_GAP_MS = 15 * 60_000;
+
 /**
- * The agents holding kept notes: digest agents, and agents switched to per
- * run with notes the switch stranded. `prepareManagerDigest` decides which
- * are due now.
+ * The agents holding notes not sent yet: digest agents, and agents switched
+ * to per run with notes the switch stranded. Reads the unsent notes only;
+ * `prepareManagerDigest` decides which agents are due now.
  */
 export const digestCandidates = internalQuery({
   args: {},
   handler: async (ctx): Promise<Id<'agents'>[]> => {
-    const agents = await ctx.db.query('agents').collect();
-    const due: Id<'agents'>[] = [];
-    for (const agent of agents) {
-      const notes = await ctx.db
-        .query('managerNotes')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .collect();
-      if (notes.some((note) => note.claimedAt === undefined && note.providerTs === undefined)) {
-        due.push(agent._id);
-      }
-    }
-    return due;
+    const unsent = await ctx.db
+      .query('managerNotes')
+      .withIndex('by_unsent', (q) => q.eq('claimedAt', undefined).eq('providerTs', undefined))
+      .take(DIGEST_NOTE_LIMIT);
+    return [...new Set(unsent.map((note) => note.agentId))];
   },
 });
 
 /**
+ * Whether a note is the digest's to send. A digest agent's notes all are. A
+ * per-run agent's own notes go one by one; only those kept in digest mode
+ * before the switch are the digest's, by the mode stamped on the note, or
+ * for a note from before the stamp, by the time of the last switch.
+ */
+async function digestNoteFilter(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+): Promise<(note: Doc<'managerNotes'>) => boolean> {
+  if (managerNotificationMode(agent) === 'digest') return () => true;
+  const lastSwitch = await ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (q) =>
+      q.eq('agentId', agent._id).eq('type', 'agent.notifications-changed'),
+    )
+    .order('desc')
+    .first();
+  const keptUntil = lastSwitch?.createdAt ?? Number.NEGATIVE_INFINITY;
+  return (note) =>
+    note.keptFor !== undefined ? note.keptFor === 'digest' : note.createdAt <= keptUntil;
+}
+
+/**
  * Claim every kept note of one agent for a single digest send, when it is
  * due: at the top of the hour in the agent's zone, or at once for notes a
- * switch to per run stranded.
+ * switch to per run stranded; never twice in one quarter hour.
  */
 export const prepareManagerDigest = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
     const agent = await ctx.db.get(args.agentId);
-    if (!agent || !digestDue(agent, Date.now())) return { prepared: false as const };
-    // A per-run agent's own notes are on their way one by one; only those
-    // kept before the switch are the digest's to send.
-    const keptUntil =
-      managerNotificationMode(agent) === 'digest'
-        ? Number.POSITIVE_INFINITY
-        : ((
-            await ctx.db
-              .query('events')
-              .withIndex('by_agent_type', (q) =>
-                q.eq('agentId', args.agentId).eq('type', 'agent.notifications-changed'),
-              )
-              .order('desc')
-              .first()
-          )?.createdAt ?? Number.NEGATIVE_INFINITY);
+    const now = Date.now();
+    if (!agent || !digestDue(agent, now)) return { prepared: false as const };
+    if (managerNotificationMode(agent) === 'digest') {
+      const last = await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) =>
+          q.eq('agentId', args.agentId).eq('type', 'work.manager-digest-sending'),
+        )
+        .order('desc')
+        .first();
+      if (last && now - last.createdAt < DIGEST_MIN_GAP_MS) return { prepared: false as const };
+    }
+    const belongs = await digestNoteFilter(ctx, agent);
     const notes = (
       await ctx.db
         .query('managerNotes')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .collect()
+        .withIndex('by_agent_unsent', (q) =>
+          q.eq('agentId', args.agentId).eq('claimedAt', undefined).eq('providerTs', undefined),
+        )
+        .take(DIGEST_NOTE_LIMIT)
     )
-      .filter(
-        (note) =>
-          note.claimedAt === undefined &&
-          note.providerTs === undefined &&
-          note.createdAt <= keptUntil,
-      )
+      .filter(belongs)
       .sort((left, right) => left.createdAt - right.createdAt);
     if (notes.length === 0) return { prepared: false as const };
     const delivery = await managerDelivery(ctx, args.agentId);
@@ -4089,10 +4107,10 @@ export const prepareManagerDigest = internalMutation({
       agentId: args.agentId,
       type: 'work.manager-digest-sending',
       payload: { noteIds: notes.map((note) => note._id), count: notes.length },
-      createdAt: Date.now(),
+      createdAt: now,
     });
     for (const note of notes) {
-      await ctx.db.patch(note._id, { claimedAt: Date.now(), digestId });
+      await ctx.db.patch(note._id, { claimedAt: now, digestId });
     }
     return {
       prepared: true as const,

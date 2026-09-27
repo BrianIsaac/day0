@@ -862,7 +862,13 @@ export default defineSchema({
     digestId: v.optional(v.id('events')),
     providerTs: v.optional(v.string()),
     failure: v.optional(v.string()),
-  }).index('by_agent', ['agentId']),
+    /** The mode the note was kept under: a digest note stays the digest's to send after a switch to per run. */
+    keptFor: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
+  })
+    .index('by_agent', ['agentId'])
+    /** The notes not sent yet, across agents, so the digest never reads the sent history. */
+    .index('by_unsent', ['claimedAt', 'providerTs'])
+    .index('by_agent_unsent', ['agentId', 'claimedAt', 'providerTs']),
 
   /**
    * The manager's corrections, kept for the employee's later work: a note
