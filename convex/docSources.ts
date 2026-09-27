@@ -682,27 +682,48 @@ export const finishSync = internalMutation({
       if (!mirror.sourceRef || !current.has(mirror.sourceRef)) await ctx.db.delete(mirror._id);
     }
     if (SURFACE_MODE === 'real') {
-      const currentPages = new Map(pages.filter((page) => current.has(page.ref)).map((page) => [page.ref, page.markdown]));
-      const agents = await ctx.db.query('agents')
+      const currentPages = new Map(
+        pages.filter((page) => current.has(page.ref)).map((page) => [page.ref, page.markdown]),
+      );
+      const agents = await ctx.db
+        .query('agents')
         .withIndex('by_userId', (index) => index.eq('userId', source.userId))
         .take(101);
       if (agents.length > 100) throw new Error('Documentation source exceeds 100 agents.');
       for (const agent of agents) {
         if (!agentReadsSource(agent, source._id)) continue;
-        const surfaces = await ctx.db.query('surfaces')
+        const surfaces = await ctx.db
+          .query('surfaces')
           .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
           .take(1_001);
         if (surfaces.length > 1_000) throw new Error('Agent exceeds 1,000 surfaces.');
         for (const surface of surfaces) {
-          if (!surface.intakeScope || !['proposed', 'approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) continue;
-          const changed = intakeScopeValues(surface.intakeScope).some((value) =>
-            value.sourceId === source._id &&
-            !currentPages.get(value.ref)?.split(/\r?\n/).some((line) => line.trim() === value.quote)
+          if (
+            !surface.intakeScope ||
+            !['proposed', 'approved', 'connected', 'ungranted', 'listed-dead'].includes(
+              surface.verdict,
+            )
+          )
+            continue;
+          const changed = intakeScopeValues(surface.intakeScope).some(
+            (value) =>
+              value.sourceId === source._id &&
+              !currentPages
+                .get(value.ref)
+                ?.split(/\r?\n/)
+                .some((line) => line.trim() === value.quote),
           );
-          if (!changed || (surface.verdict === 'proposed' && surface.managerApprovedAt === undefined && surface.itApprovedAt === undefined)) continue;
+          if (
+            !changed ||
+            (surface.verdict === 'proposed' &&
+              surface.managerApprovedAt === undefined &&
+              surface.itApprovedAt === undefined)
+          )
+            continue;
           await ctx.db.patch(surface._id, {
             verdict: 'proposed',
-            reason: 'A documented intake queue changed. Reject this card and re-run orientation before approval.',
+            reason:
+              'A documented intake queue changed. Reject this card and re-run orientation before approval.',
             managerApprovedAt: undefined,
             itApprovedAt: undefined,
             probeGeneration: (surface.probeGeneration ?? 0) + 1,
@@ -734,19 +755,22 @@ export const finishSync = internalMutation({
       .take(1_001);
     if (credentials.length > 1_000) throw new Error('Source exceeds 1,000 credentials.');
     for (const credential of credentials) {
-      if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref)) continue;
+      if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
+        continue;
       await ctx.db.patch(credential._id, {
         status: 'superseded',
         statusReason: 'No longer detected in synced documentation.',
         revokedAt: credential.revokedAt ?? Date.now(),
       });
-      const surfaces = await ctx.db.query('surfaces')
+      const surfaces = await ctx.db
+        .query('surfaces')
         .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
         .take(1_001);
       if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
       for (const surface of surfaces) {
         const request = surface.request as { credential?: Record<string, unknown> } | undefined;
-        const location = surface.credentialLocation ??
+        const location =
+          surface.credentialLocation ??
           'Ask the system administrator to land a valid credential using the linked documentation.';
         await ctx.db.patch(surface._id, {
           credentialId: undefined,
@@ -754,11 +778,22 @@ export const finishSync = internalMutation({
           credentialRef: undefined,
           credentialLocation: location,
           credentialLanded: false,
-          request: request ? { ...request, credential: {
-            ...request.credential, found: 'location', location, governanceFinding: undefined,
-          } } : undefined,
-          verdict: ['connected', 'approved', 'listed-dead'].includes(surface.verdict) ? 'ungranted' : surface.verdict,
-          reason: 'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
+          request: request
+            ? {
+                ...request,
+                credential: {
+                  ...request.credential,
+                  found: 'location',
+                  location,
+                  governanceFinding: undefined,
+                },
+              }
+            : undefined,
+          verdict: ['connected', 'approved', 'listed-dead'].includes(surface.verdict)
+            ? 'ungranted'
+            : surface.verdict,
+          reason:
+            'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
           // A probe that already decrypted the retired value cannot reconnect this surface.
           probeGeneration: (surface.probeGeneration ?? 0) + 1,
           toolAllowlist: undefined,

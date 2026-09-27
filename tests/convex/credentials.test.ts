@@ -247,27 +247,37 @@ describe('credential contract', (): void => {
   });
 });
 
-
 describe('credential persistence after unlink', () => {
-  it.each([false, true])('refuses late ciphertext after unlink (existing row: %s)', async (existing) => {
-    useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules());
-    const sourceId = await seedSource(harness, 'owner');
-    const args = {
-      userId: 'owner', kind: 'value' as const, label: 'linear service token',
-      source: { sourceId, ref: 'page' }, ciphertext: 'late-ciphertext', iv: 'late-iv',
-      reactivate: true,
-    };
-    if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
-    // Encryption began while the source existed; its final transaction arrives after unlink.
-    await expect(harness.mutation(internal.credentials.persistEncrypted, args)).rejects.toThrow('does not belong');
-    const stored = await rows(harness);
-    expect(stored).toHaveLength(existing ? 1 : 0);
-    for (const row of stored) {
-      expect(row).not.toHaveProperty('ciphertext');
-      expect(row).not.toHaveProperty('iv');
-      expect(row.revokedAt).toEqual(expect.any(Number));
-    }
-  });
+  it.each([false, true])(
+    'refuses late ciphertext after unlink (existing row: %s)',
+    async (existing) => {
+      useSurfaceMode('real');
+      const harness = convexTest(schema, allConvexModules());
+      const sourceId = await seedSource(harness, 'owner');
+      const args = {
+        userId: 'owner',
+        kind: 'value' as const,
+        label: 'linear service token',
+        source: { sourceId, ref: 'page' },
+        ciphertext: 'late-ciphertext',
+        iv: 'late-iv',
+        reactivate: true,
+      };
+      if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);
+      await harness
+        .withIdentity({ subject: 'owner' })
+        .mutation(api.docSources.unlink, { sourceId });
+      // Encryption began while the source existed; its final transaction arrives after unlink.
+      await expect(harness.mutation(internal.credentials.persistEncrypted, args)).rejects.toThrow(
+        'does not belong',
+      );
+      const stored = await rows(harness);
+      expect(stored).toHaveLength(existing ? 1 : 0);
+      for (const row of stored) {
+        expect(row).not.toHaveProperty('ciphertext');
+        expect(row).not.toHaveProperty('iv');
+        expect(row.revokedAt).toEqual(expect.any(Number));
+      }
+    },
+  );
 });
