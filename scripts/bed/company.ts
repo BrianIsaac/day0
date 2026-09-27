@@ -792,6 +792,11 @@ async function slackView(
   return { token, botId: auth.botId, botUserId: auth.userId, channels };
 }
 
+/** What a caught value says, whatever was thrown. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Name the asks the sitting the check is for posts, and when.
  *
@@ -816,7 +821,7 @@ function reportAsksToPost(
   for (const ask of posted) {
     report.line(
       'note',
-      `#${ask.channel}: once the employees are deployed, post "@bot ${ask.text}" as yourself`,
+      `#${ask.channel}: once the employees are deployed, post "${ask.text}" as yourself, mentioning the bot (type @ and pick it)`,
     );
   }
   const unread =
@@ -895,7 +900,7 @@ async function deleteBedMessages(
   } catch (error) {
     report.line(
       'gap',
-      `the bot's direct messages were not read (${(error as Error).message}); only the channels were cleaned`,
+      `the bot's direct messages were not read (${errorText(error)}); only the channels were cleaned`,
     );
   }
   const client = new SlackClient(view.token, io.fetch, retry, (): number => io.now());
@@ -914,7 +919,7 @@ async function deleteBedMessages(
         (): number => io.now(),
       );
     } catch (error) {
-      report.line('gap', `${where} was not read (${(error as Error).message})`);
+      report.line('gap', `${where} was not read (${errorText(error)})`);
       continue;
     }
     for (const message of bedMessages(messages, view.botId, epoch)) {
@@ -922,7 +927,7 @@ async function deleteBedMessages(
         await client.deleteMessage(conversation.id, message.ts);
         deleted += 1;
       } catch (error) {
-        const reason = (error as Error).message;
+        const reason = errorText(error);
         report.line(
           'gap',
           reason.includes('cant_delete_message')
@@ -980,7 +985,7 @@ async function checkNotion(io: CompanyIo, report: Report): Promise<void> {
       throw new Error((read.stderr || read.stdout).trim().split('\n').pop() ?? 'no output');
     pages = parseNotionRead(read.stdout);
   } catch (error) {
-    const reason = (error as Error).message;
+    const reason = errorText(error);
     report.line(
       'gap',
       reason.startsWith('Notion refused')
@@ -1112,7 +1117,7 @@ export async function runCheck(
     try {
       await read();
     } catch (error) {
-      report.line('gap', `could not be read: ${(error as Error).message}`);
+      report.line('gap', `could not be read: ${errorText(error)}`);
     }
   }
   checkTile(io, report);
@@ -1208,7 +1213,7 @@ class BedWrites {
     labelName: string,
     report: Report,
   ): Promise<void> {
-    report.line('gap', `${verb} stopped: ${(error as Error).message}`);
+    report.line('gap', `${verb} stopped: ${errorText(error)}`);
     for (const result of await this.undo.runAll()) {
       report.line(
         result.ok ? 'ok' : 'gap',
@@ -1413,7 +1418,7 @@ export async function runSeed(
       report,
     );
   } catch (error) {
-    report.line('gap', `Slack: ${(error as Error).message}`);
+    report.line('gap', `Slack: ${errorText(error)}`);
   }
 
   report.section('Looker pipeline tile');
@@ -1507,7 +1512,7 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
 
 /** What failed, said once: a retry's own line already names the call. */
 function failure(what: string, error: unknown): string {
-  const message = (error as Error).message;
+  const message = errorText(error);
   return message.startsWith(what) ? message : `${what} failed: ${message}`;
 }
 
@@ -1628,7 +1633,7 @@ export async function runTeardown(io: CompanyIo, report: Report): Promise<number
     try {
       await deleteBedMessages(io, await slackView(io, token, report, false), epoch, report);
     } catch (error) {
-      report.line('gap', `Slack: ${(error as Error).message}`);
+      report.line('gap', `Slack: ${errorText(error)}`);
     }
     if (report.gaps === 0) rmSync(join(io.cwd, STATE_FILE));
   }
@@ -1669,7 +1674,7 @@ export async function runCompany(options: CompanyOptions, io: CompanyIo): Promis
         return 2;
     }
   } catch (error) {
-    report.say(`error: ${(error as Error).message}`);
+    report.say(`error: ${errorText(error)}`);
     return 1;
   }
 }
@@ -1704,7 +1709,7 @@ async function main(): Promise<number> {
   try {
     options = parseCompanyArguments(process.argv.slice(2));
   } catch (error) {
-    process.stderr.write(`error: ${(error as Error).message}\n\n${USAGE}\n`);
+    process.stderr.write(`error: ${errorText(error)}\n\n${USAGE}\n`);
     return 2;
   }
   if (options.help || options.verb === undefined) {

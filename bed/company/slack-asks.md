@@ -41,7 +41,10 @@ answered in its thread. Finance close and the logistics desk each work their Lin
 figure; that reset belongs to the seed, not to any ticket.
 
 - **Post only ask 3**, once the employees are deployed. Asks 1 and 2 are not posted in this
-  sitting; their copies from an earlier sitting stay where they are, unread.
+  sitting; their copies from an earlier sitting stay where they are, unread by any bed deployed
+  after them. A bed restored from a snapshot is the exception: it resumes from the snapshot's last
+  poll, so it reads every mention posted since, and asks left from a later sitting become work
+  for it.
 - **`pnpm bed:company check --set one-each` names only ask 3.**
 
 During a sitting, post nothing else that mentions the bot in these five channels: every employee

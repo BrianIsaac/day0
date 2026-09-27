@@ -1762,13 +1762,13 @@ describe('check', (): void => {
     expect(await run(h, ['check'])).toBe(0);
     const printed = h.logs.join('\n');
     expect(printed).toContain(
-      'note #revops-asks: once the employees are deployed, post "@bot can you confirm pipeline coverage for the three Friday standup deals before the Q3 close summary goes out?" as yourself',
+      'note #revops-asks: once the employees are deployed, post "can you confirm pipeline coverage for the three Friday standup deals before the Q3 close summary goes out?" as yourself, mentioning the bot (type @ and pick it)',
     );
     expect(printed).toContain(
-      'note #finance-close: once the employees are deployed, post "@bot can you post where the September close stands?" as yourself',
+      'note #finance-close: once the employees are deployed, post "can you post where the September close stands?" as yourself, mentioning the bot (type @ and pick it)',
     );
     expect(printed).toContain(
-      'note #ops-requests: once the employees are deployed, post "@bot please refresh the pipeline tile to the standup figure" as yourself',
+      'note #ops-requests: once the employees are deployed, post "please refresh the pipeline tile to the standup figure" as yourself, mentioning the bot (type @ and pick it)',
     );
     expect(printed).toContain(
       "note the full sitting posts all three of slack-asks.md's asks; a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting",
@@ -1801,7 +1801,7 @@ describe('check', (): void => {
     expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
     const printed = h.logs.join('\n');
     expect(printed).toContain(
-      'note #ops-requests: once the employees are deployed, post "@bot please refresh the pipeline tile to the standup figure" as yourself',
+      'note #ops-requests: once the employees are deployed, post "please refresh the pipeline tile to the standup figure" as yourself, mentioning the bot (type @ and pick it)',
     );
     expect(printed).not.toContain('note #revops-asks:');
     expect(printed).not.toContain('note #finance-close:');
