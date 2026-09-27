@@ -46,6 +46,14 @@ a plan without an ownership gate, the browser batch held whole, a wrong-key read
 repaired once when it occurs, the closing comment quoting the read-back, and
 completion. Afterwards it puts the workspaces back and tears the bed down.
 
+It is the one deliberate second deployment on a workspace, so it runs only
+against the maintainers' own demonstration workspaces. Arrange exclusive use of
+the demonstration ticket during a run: restoration is not atomic with
+concurrent provider edits, and an effect the run cannot attribute is left for
+reconciliation. Only comments and bot DMs carrying this work item's server
+provenance are deleted, and a ticket's state is put back only when a receipt or
+Linear's own history shows this key made the move.
+
 Options:
   --secrets <file>         env file with LINEAR_API_KEY and SLACK_BOT_TOKEN (0600; required)
   --env-from <file>        application values to copy (default: <primary>/.env.local, read-only)

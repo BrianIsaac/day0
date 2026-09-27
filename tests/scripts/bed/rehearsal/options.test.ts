@@ -81,6 +81,12 @@ describe('command line', (): void => {
     expect(USAGE).toContain('--dry-run');
     expect(USAGE).toContain('provider write');
   });
+
+  it('carries the guards the public README no longer describes', (): void => {
+    expect(USAGE).toContain('exclusive use of\nthe demonstration ticket');
+    expect(USAGE).toContain("carrying this work item's server\nprovenance are deleted");
+    expect(USAGE).toContain('deliberate second deployment on a workspace');
+  });
 });
 
 describe('the compose project the bed runs as', (): void => {

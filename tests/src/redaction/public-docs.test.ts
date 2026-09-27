@@ -6,7 +6,8 @@ describe('public redaction setup contract', () => {
     const components = readFileSync('docs/running/components.md', 'utf8');
     const readme = readFileSync('README.md', 'utf8');
     expect(components).not.toContain('the guard does not yet exempt');
-    expect(readme).toContain('exclusive use of the demonstration ticket');
+    expect(readme).toContain('Run one Day0 deployment per Slack workspace and per Linear team.');
+    for (const internal of ['rehearse', 'rehearsal']) expect(readme).not.toContain(internal);
     expect(readme).toContain('a different approval identity');
     expect(readme).toContain('Only out-of-scope and quality-fit skips');
   });
