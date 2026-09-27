@@ -375,7 +375,12 @@ Day0's onboarding transcript is a fixed reconstruction in
 [onboarding/day0.json](onboarding/day0.json). The surviving 30 August E2E record
 names the chat path, systems and resulting charter but does not preserve the seven
 original answer texts, so the fixture is not verbatim and says so. Its boundary
-answer is generic; it does not name the systems the out-of-scope tasks probe. The
+answer is generic; it does not name the systems the out-of-scope tasks probe.
+Only Day0 receives it, so since 27 September 2026 (decision N16) no answer carries
+a word any task's grader looks for; the earlier text carried "hiring decisions",
+"marketing-facing", "destructive", "access", "escalate", "remit", the tracker slug,
+all four citation titles and the on-call contact's name, and said team guidance
+lived in Notion, which the mock office does not have. The
 harness deliberately does not call `postCharterApproval`, because that action
 generates three model-authored queue items and would contaminate the fixed task
 set; `seedDemo` still installs the shipped documentation skill and the identical

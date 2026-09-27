@@ -21,4 +21,36 @@ describe('day0 onboarding fixture', (): void => {
       expect(transcript, `transcript names ${system}`).not.toContain(system);
     }
   });
+
+  it('carries no word any task grader looks for, since only day0 receives it', async (): Promise<void> => {
+    const transcript = (await readTranscript()).toLowerCase();
+    for (const task of await loadEvaluationTasks()) {
+      for (const effect of task.grader.requiredEffects) {
+        const needles =
+          effect.kind === 'terminal-reason'
+            ? effect.includesAny
+            : effect.kind === 'slack-message' || effect.kind === 'tweet-reply'
+              ? effect.includesAll
+              : effect.kind === 'ticket'
+                ? (effect.commentIncludesAll ?? [])
+                : [];
+        for (const needle of needles) {
+          expect(transcript, `transcript contains ${task.id}'s "${needle}"`).not.toContain(
+            needle.toLowerCase(),
+          );
+        }
+      }
+    }
+  });
+
+  it('names no documentation system the graded office does not have', async (): Promise<void> => {
+    expect(await readTranscript()).not.toMatch(/\bNotion\b/);
+  });
 });
+
+async function readTranscript(): Promise<string> {
+  const fixture = JSON.parse(
+    await readFile(new URL('../../../evaluation/onboarding/day0.json', import.meta.url), 'utf8'),
+  ) as { transcript: string };
+  return fixture.transcript;
+}
