@@ -55,7 +55,11 @@ async function charter(harness: Harness, charterId: Id<'charters'>): Promise<Doc
   return row;
 }
 
-async function workspaceFile(harness: Harness, agentId: Id<'agents'>, fileName: string): Promise<string> {
+async function workspaceFile(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  fileName: string,
+): Promise<string> {
   return await harness.run(async (ctx) => {
     const row = await ctx.db
       .query('workspace')
@@ -289,7 +293,9 @@ async function scheduledJobs(harness: Harness): Promise<Array<{ name: string; ar
 }
 
 async function latestCharter(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'charters'>> {
-  const row = await harness.withIdentity({ subject: 'owner' }).query(api.charters.latest, { agentId });
+  const row = await harness
+    .withIdentity({ subject: 'owner' })
+    .query(api.charters.latest, { agentId });
   if (!row) throw new Error('no charter');
   return row;
 }
@@ -299,14 +305,15 @@ describe('amending an approved charter', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApproved(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
-    const draftId = await harness.run(async (ctx) =>
-      await ctx.db.insert('charters', {
-        agentId,
-        version: '0.1',
-        body: { ...runThroughBody(), proposedFunction: 'An unapproved new role.' },
-        approved: false,
-        createdAt: 3,
-      }),
+    const draftId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '0.1',
+          body: { ...runThroughBody(), proposedFunction: 'An unapproved new role.' },
+          approved: false,
+          createdAt: 3,
+        }),
     );
 
     await owner.mutation(api.charters.requestChanges, { charterId: draftId });
@@ -329,9 +336,9 @@ describe('amending an approved charter', (): void => {
       });
     });
     const owner = harness.withIdentity({ subject: 'owner' });
-    await expect(
-      owner.mutation(api.charters.requestChanges, { charterId }),
-    ).rejects.toThrow(/latest/i);
+    await expect(owner.mutation(api.charters.requestChanges, { charterId })).rejects.toThrow(
+      /latest/i,
+    );
     expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe(
       'charter-pending',
     );
@@ -360,9 +367,16 @@ describe('amending an approved charter', (): void => {
     const { agentId, charterId } = await seedApproved(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
     const changes = [
-      { kind: 'edit-function' as const, text: 'Own routine revenue operations work from Linear tickets for the RevOps team.' },
+      {
+        kind: 'edit-function' as const,
+        text: 'Own routine revenue operations work from Linear tickets for the RevOps team.',
+      },
     ];
-    const result = await owner.mutation(api.charters.amend, { agentId, changes, reason: 'Ownership is not a rule.' });
+    const result = await owner.mutation(api.charters.amend, {
+      agentId,
+      changes,
+      reason: 'Ownership is not a rule.',
+    });
     expect(result.version).toBe('0.1');
 
     const amended = await latestCharter(harness, agentId);
@@ -371,7 +385,9 @@ describe('amending an approved charter', (): void => {
     expect(amended.approvedAt).toEqual(expect.any(Number));
     const body = amended.body as Charter;
     expect(body.version).toBe('0.1');
-    expect(body.proposedFunction).toBe('Own routine revenue operations work from Linear tickets for the RevOps team.');
+    expect(body.proposedFunction).toBe(
+      'Own routine revenue operations work from Linear tickets for the RevOps team.',
+    );
     expect(body.proposedBoundaries).toEqual(runThroughBody().proposedBoundaries);
 
     const previous = await charter(harness, charterId);
@@ -401,7 +417,10 @@ describe('amending an approved charter', (): void => {
     );
     expect(await workspaceFile(harness, agentId, 'TOOLS.md')).toContain('# TOOLS');
     expect(await scheduledJobs(harness)).toEqual([
-      { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: result.charterId }] },
+      {
+        name: 'work:reevaluatePending',
+        args: [{ agentId, trigger: 'charter', key: result.charterId }],
+      },
     ]);
   });
 
@@ -425,7 +444,10 @@ describe('amending an approved charter', (): void => {
           skipReason: reason,
         });
       return {
-        outOfScope: await insert('REVOPS-10', 'out-of-scope: no charter or current documented-system overlap'),
+        outOfScope: await insert(
+          'REVOPS-10',
+          'out-of-scope: no charter or current documented-system overlap',
+        ),
         lowValue: await insert('REVOPS-12', 'low-value: 10'),
       };
     });
@@ -435,14 +457,22 @@ describe('amending an approved charter', (): void => {
     try {
       result = await owner.mutation(api.charters.amend, {
         agentId,
-        changes: [{ kind: 'edit-function', text: 'Own routine revenue operations work from Linear tickets for the RevOps team.' }],
+        changes: [
+          {
+            kind: 'edit-function',
+            text: 'Own routine revenue operations work from Linear tickets for the RevOps team.',
+          },
+        ],
       });
 
       // The amendment schedules the intake stage's one trigger with the new
       // charter row as its idempotency key, and that job re-admits only the
       // skips the charter can change.
       expect(await scheduledJobs(harness)).toEqual([
-        { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: result.charterId }] },
+        {
+          name: 'work:reevaluatePending',
+          args: [{ agentId, trigger: 'charter', key: result.charterId }],
+        },
       ]);
       await harness.finishAllScheduledFunctions(vi.runAllTimers);
     } finally {
@@ -477,36 +507,62 @@ describe('amending an approved charter', (): void => {
   it('keeps an execution claim stable through amendment and refuses a mid-run retry', async () => {
     const t = convexTest(schema, allConvexModules());
     const { agentId } = await seedApproved(t);
-    const ids = await t.run(async ctx => {
+    const ids = await t.run(async (ctx) => {
       const skillId = await ctx.db.insert('skills', {
-        agentId, name: 'ticket-read', description: 'Read ticket', body: 'Read ticket',
-        sourceType: 'agent-authored', state: 'registered', createdAt: 1,
+        agentId,
+        name: 'ticket-read',
+        description: 'Read ticket',
+        body: 'Read ticket',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        createdAt: 1,
       });
       const workItemId = await ctx.db.insert('workItems', {
-        agentId, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-7',
-        title: 'Read ticket', contentSummary: 'Read ticket', contentRefs: [],
-        observedAt: 1, createdAt: 1, state: 'plan-approved',
-        plan: { summary: 'Read', steps: ['Read ticket'], expectedOutputType: 'draft',
-          riskNotes: '', reversibility: 'read-only', estimatedMinutes: 1 },
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-7',
+        title: 'Read ticket',
+        contentSummary: 'Read ticket',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+        state: 'plan-approved',
+        plan: {
+          summary: 'Read',
+          steps: ['Read ticket'],
+          expectedOutputType: 'draft',
+          riskNotes: '',
+          reversibility: 'read-only',
+          estimatedMinutes: 1,
+        },
       });
       return { workItemId, skillId };
     });
     const owner = t.withIdentity({ subject: 'owner' });
     const claim = await t.mutation(internal.work.claimForExecution, ids);
     expect(claim.claimed).toBe(true);
-    const before = await t.run(ctx => ctx.db.get(ids.workItemId));
+    const before = await t.run((ctx) => ctx.db.get(ids.workItemId));
     vi.useFakeTimers();
     try {
       await owner.mutation(api.charters.amend, {
-        agentId, changes: [{ kind: 'edit-function', text: 'Read the revenue documentation.' }],
+        agentId,
+        changes: [{ kind: 'edit-function', text: 'Read the revenue documentation.' }],
       });
       await t.finishAllScheduledFunctions(vi.runAllTimers);
-    } finally { vi.useRealTimers(); }
-    await expect(owner.mutation(api.work.retryFailed, {
-      workItemId: ids.workItemId, feedback: 'Try again now',
-    })).rejects.toThrow('workItem state is executing');
-    expect(await t.run(ctx => ctx.db.get(ids.workItemId))).toEqual(before);
-    expect(await t.mutation(internal.work.claimForExecution, ids)).toMatchObject({ claimed: false });
+    } finally {
+      vi.useRealTimers();
+    }
+    await expect(
+      owner.mutation(api.work.retryFailed, {
+        workItemId: ids.workItemId,
+        feedback: 'Try again now',
+      }),
+    ).rejects.toThrow('workItem state is executing');
+    expect(await t.run((ctx) => ctx.db.get(ids.workItemId))).toEqual(before);
+    expect(await t.mutation(internal.work.claimForExecution, ids)).toMatchObject({
+      claimed: false,
+    });
   });
 
   it('numbers a second amendment v0.2 over v0.1', async (): Promise<void> => {
@@ -515,7 +571,14 @@ describe('amending an approved charter', (): void => {
     const owner = harness.withIdentity({ subject: 'owner' });
     const first = await owner.mutation(api.charters.amend, {
       agentId,
-      changes: [{ kind: 'edit-clause', field: 'escalationTriggers', index: 1, text: 'A request to change a forecast.' }],
+      changes: [
+        {
+          kind: 'edit-clause',
+          field: 'escalationTriggers',
+          index: 1,
+          text: 'A request to change a forecast.',
+        },
+      ],
     });
     const second = await owner.mutation(api.charters.amend, {
       agentId,
@@ -534,12 +597,14 @@ describe('amending an approved charter', (): void => {
     const draft = await seedDraft(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
     const edit = { kind: 'edit-function' as const, text: 'Something else.' };
-    await expect(owner.mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] })).rejects.toThrow(
-      /not approved/,
-    );
+    await expect(
+      owner.mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] }),
+    ).rejects.toThrow(/not approved/);
     await owner.mutation(api.charters.approve, { charterId: draft.charterId });
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] }),
+      harness
+        .withIdentity({ subject: 'stranger' })
+        .mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] }),
     ).rejects.toThrow(/forbidden/);
     await expect(
       owner.mutation(api.charters.amend, {
@@ -553,7 +618,9 @@ describe('amending an approved charter', (): void => {
         changes: [{ kind: 'edit-clause', field: 'willDo', index: 7, text: 'x' }],
       }),
     ).rejects.toThrow(/no willDo clause at index 7/);
-    expect(await owner.query(api.charters.listForAgent, { agentId: draft.agentId })).toHaveLength(1);
+    expect(await owner.query(api.charters.listForAgent, { agentId: draft.agentId })).toHaveLength(
+      1,
+    );
     // The approval's own seeding and re-evaluation are the only jobs: no refused amendment scheduled anything.
     expect(await scheduledJobs(harness)).toEqual([
       {
@@ -572,10 +639,17 @@ describe('amending an approved charter', (): void => {
     const { agentId } = await seedApproved(harness);
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.charters.amend, { agentId, changes: [{ kind: 'strike-constraint', index: 0 }] });
+      .mutation(api.charters.amend, {
+        agentId,
+        changes: [{ kind: 'strike-constraint', index: 0 }],
+      });
     const body = (await latestCharter(harness, agentId)).body as Charter;
-    expect(body.proposedFunction).toBe('Own routine revenue operations work from Linear tickets for the RevOps team.');
-    expect(body.proposedBoundaries.willDo[0]).toBe('Handle Linear tickets in the Q3 close project.');
+    expect(body.proposedFunction).toBe(
+      'Own routine revenue operations work from Linear tickets for the RevOps team.',
+    );
+    expect(body.proposedBoundaries.willDo[0]).toBe(
+      'Handle Linear tickets in the Q3 close project.',
+    );
     expect(body.constraints?.[0]).toMatchObject({ struck: true });
     expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).not.toMatch(/owned/);
   });
@@ -588,19 +662,39 @@ describe('amending an approved charter', (): void => {
       changes: [
         {
           kind: 'add-constraint',
-          constraint: { kind: 'system-boundary', quote: 'Never edit the forecast sheet.', clause: 'willNotDo' },
+          constraint: {
+            kind: 'system-boundary',
+            quote: 'Never edit the forecast sheet.',
+            clause: 'willNotDo',
+          },
         },
-        { kind: 'answer-question', question: 'Who owns the Looker pipeline tile.', answer: 'Priya.' },
+        {
+          kind: 'answer-question',
+          question: 'Who owns the Looker pipeline tile.',
+          answer: 'Priya.',
+        },
       ],
     });
     const body = (await latestCharter(harness, agentId)).body as Charter;
-    expect(body.proposedBoundaries.willNotDo).toEqual(['Post to public Slack channels.', 'Never edit the forecast sheet.']);
-    expect(body.constraints?.[2]).toMatchObject({ origin: 'manager', wording: ['Never edit the forecast sheet.'] });
+    expect(body.proposedBoundaries.willNotDo).toEqual([
+      'Post to public Slack channels.',
+      'Never edit the forecast sheet.',
+    ]);
+    expect(body.constraints?.[2]).toMatchObject({
+      origin: 'manager',
+      wording: ['Never edit the forecast sheet.'],
+    });
     expect(body.openQuestions).toEqual(['Whether Northstar CRM access will be granted.']);
     expect(body.answeredQuestions).toEqual([
-      { question: 'Who owns the Looker pipeline tile.', answer: 'Priya.', answeredAt: expect.any(String) },
+      {
+        question: 'Who owns the Looker pipeline tile.',
+        answer: 'Priya.',
+        answeredAt: expect.any(String),
+      },
     ]);
-    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toContain('Never edit the forecast sheet.');
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toContain(
+      'Never edit the forecast sheet.',
+    );
   });
 });
 
@@ -674,7 +768,14 @@ describe('amending the named systems', (): void => {
     const result = await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
       agentId,
       changes: [
-        { kind: 'add-system', system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile is in Looker.' } },
+        {
+          kind: 'add-system',
+          system: {
+            name: 'Looker',
+            class: 'analytics',
+            whereMentioned: 'The pipeline tile is in Looker.',
+          },
+        },
       ],
     });
 
@@ -689,13 +790,20 @@ describe('amending the named systems', (): void => {
     const looker = surfaces.find((surface) => surface.slug === 'looker');
     expect(looker).toMatchObject({ verdict: 'declared', class: 'analytics' });
     expect(looker?.discoveryEvidence).toEqual([
-      expect.objectContaining({ kind: 'charter', quote: 'The pipeline tile is in Looker.', current: true }),
+      expect.objectContaining({
+        kind: 'charter',
+        quote: 'The pipeline tile is in Looker.',
+        current: true,
+      }),
     ]);
     const jobs = await scheduledJobs(harness);
     expect(jobs).toEqual(
       expect.arrayContaining([
         { name: 'orientationActions:orientOne', args: [{ surfaceId: looker?._id }] },
-        { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: result.charterId }] },
+        {
+          name: 'work:reevaluatePending',
+          args: [{ agentId, trigger: 'charter', key: result.charterId }],
+        },
       ]),
     );
     expect(jobs).toHaveLength(2);
@@ -725,8 +833,12 @@ describe('amending the named systems', (): void => {
           .unique(),
     );
     expect(slack).toMatchObject({ verdict: 'declared' });
-    expect(slack?.discoveryEvidence).toEqual([expect.objectContaining({ kind: 'charter', current: false })]);
-    expect((await scheduledJobs(harness)).map((job) => job.name)).toEqual(['work:reevaluatePending']);
+    expect(slack?.discoveryEvidence).toEqual([
+      expect.objectContaining({ kind: 'charter', current: false }),
+    ]);
+    expect((await scheduledJobs(harness)).map((job) => job.name)).toEqual([
+      'work:reevaluatePending',
+    ]);
     expect(((await latestCharter(harness, agentId)).body as Charter).namedSystems).toEqual([
       runThroughBody().namedSystems[0],
     ]);
@@ -739,7 +851,10 @@ describe('amending the named systems', (): void => {
     await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
       agentId,
       changes: [
-        { kind: 'add-system', system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile.' } },
+        {
+          kind: 'add-system',
+          system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile.' },
+        },
       ],
     });
     const surfaces = await harness.run(
@@ -750,7 +865,9 @@ describe('amending the named systems', (): void => {
           .collect(),
     );
     expect(surfaces).toEqual([]);
-    expect((await scheduledJobs(harness)).map((job) => job.name)).toEqual(['work:reevaluatePending']);
+    expect((await scheduledJobs(harness)).map((job) => job.name)).toEqual([
+      'work:reevaluatePending',
+    ]);
     expect(((await latestCharter(harness, agentId)).body as Charter).namedSystems).toHaveLength(3);
   });
 });
