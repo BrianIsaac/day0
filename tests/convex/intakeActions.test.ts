@@ -74,6 +74,8 @@ interface RuntimeHarness {
   openRequests: Map<string, Array<{ ts: string }>>;
   /** Bot identities intake read for rows connected before the probe stored one. */
   botIdentities: Array<{ surfaceId: Id<'surfaces'>; generation: number; providerBotId: string }>;
+  /** Tickets intake refused on a poll, with why they left the queue. */
+  withdrawn: Array<{ externalId: string; leftQueue: string }>;
 }
 
 /**
@@ -195,6 +197,7 @@ function runtimeHarness(
   const seeds = new Map<string, SeededCandidate>();
   const openRequests = new Map<string, Array<{ ts: string }>>();
   const botIdentities: RuntimeHarness['botIdentities'] = [];
+  const withdrawn: RuntimeHarness['withdrawn'] = [];
   const runtime: IntakeRuntime = {
     recordBotIdentity: async (record): Promise<void> => {
       botIdentities.push(record);
@@ -227,6 +230,9 @@ function runtimeHarness(
         candidate,
       );
     },
+    withdraw: async (candidate): Promise<void> => {
+      withdrawn.push({ externalId: candidate.externalId, leftQueue: candidate.leftQueue });
+    },
     resolveDecision: async (reply): Promise<void> => {
       decisions.push(reply);
     },
@@ -248,7 +254,16 @@ function runtimeHarness(
     listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
       openRequests.get(String(surfaceId)) ?? [],
   };
-  return { botIdentities, decisionPolls, decisions, records, runtime, seeds, openRequests };
+  return {
+    botIdentities,
+    decisionPolls,
+    decisions,
+    records,
+    runtime,
+    seeds,
+    openRequests,
+    withdrawn,
+  };
 }
 
 const ONBOARDING = [
@@ -1147,6 +1162,7 @@ describe('real surface intake', (): void => {
       recordIntake: vi.fn(),
       recordDecisionPoll: vi.fn(),
       seed: vi.fn(),
+      withdraw: vi.fn(),
       resolveDecision: vi.fn(),
       listOpenDecisionRequests: vi.fn(async (): Promise<Array<{ ts: string }>> => []),
       recordBotIdentity: vi.fn(),
@@ -1254,6 +1270,7 @@ describe('intake provider contracts', (): void => {
       projectEnforced: true,
       teamEnforced: true,
       checkpointEnforced: true,
+      unselectable: [],
     });
     expect(
       linearListArguments(
@@ -1266,6 +1283,7 @@ describe('intake provider contracts', (): void => {
       projectEnforced: false,
       teamEnforced: false,
       checkpointEnforced: false,
+      unselectable: [],
     });
     expect(
       (): LinearListRequest =>
@@ -2442,7 +2460,13 @@ describe('each employee reads its own approved queues', (): void => {
     const properties: Record<string, unknown> = Object.fromEntries(
       liveArguments.map((name) => [name, {}]),
     );
-    properties.fields = { type: 'array', items: { type: 'string', enum: Object.keys(fin1) } };
+    // The enum is built from the printed issue, which is not the live enum
+    // (unverified, review M8); the person fields intake needs are added so
+    // this case still proves the alias.
+    properties.fields = {
+      type: 'array',
+      items: { type: 'string', enum: [...Object.keys(fin1), 'assignee', 'assigneeId'] },
+    };
     const requested: unknown[] = [];
     const harness = runtimeHarness(
       [companySurfaces()[1]],
@@ -2608,6 +2632,159 @@ describe('each employee reads its own approved queues', (): void => {
         { owner: { error: 'not found' } },
       );
       expect(unanswered).toEqual(['FIN-1']);
+    });
+
+    it('compares the owner by id, then by email, and never takes a ticket on a bare name (M9)', async (): Promise<void> => {
+      const seeded = await seededFrom(
+        [
+          // The same name as the key's owner, and another person's id.
+          ticket('FIN-1', { assignee: 'Kestrel Ops', assigneeId: 'user-ana' }),
+          // A name alone cannot say whose ticket this is.
+          ticket('FIN-2', { assignee: 'Kestrel Ops' }),
+          ticket('FIN-3', { assignee: { name: 'ops', email: 'OPS@kestrel.test' } }),
+          // Both carry an id and they differ: the email does not overrule it.
+          ticket('FIN-4', { assignee: { id: 'user-ana', email: 'ops@kestrel.test' } }),
+          ticket('FIN-5', { assignee: 'ops@kestrel.test' }),
+        ],
+        { owner: KEY_OWNER },
+      );
+      expect(seeded).toEqual(['FIN-3', 'FIN-5']);
+    });
+
+    it('holds the checkpoint when the key owner answers with a name alone', async (): Promise<void> => {
+      records.length = 0;
+      const seeded = await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops', assigneeId: 'user-key' })],
+        { owner: { name: 'Kestrel Ops' } },
+      );
+      expect(seeded).toEqual(['FIN-1']);
+      expect(records[0]?.polledAt).toBeUndefined();
+      expect(records[0]?.skipReason).toContain("the key's owner could not be read");
+    });
+
+    it('withdraws the row of a ticket that left the queue, and never one whose owner is unread', async (): Promise<void> => {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient(
+          [
+            ticket('FIN-1'),
+            ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' }),
+            ticket('FIN-3', { status: 'Done', statusType: 'completed' }),
+            ticket('FIN-4', { labels: ['do-not-automate'] }),
+          ],
+          { owner: KEY_OWNER },
+        ),
+      });
+      expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual(['FIN-1']);
+      expect(harness.withdrawn).toEqual([
+        { externalId: 'FIN-2', leftQueue: 'the ticket is assigned to someone else' },
+        { externalId: 'FIN-3', leftQueue: 'the ticket is completed' },
+        { externalId: 'FIN-4', leftQueue: 'the ticket is labelled do-not-automate' },
+      ]);
+
+      const unread = runtimeHarness(
+        [{ ...finance, toolAllowlist: ['list_issues'] }],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(unread.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient([ticket('FIN-2', { assigneeId: 'user-ana' })]),
+      });
+      expect(unread.withdrawn).toEqual([]);
+    });
+
+    it('holds the checkpoint and takes no ticket when the fields selector cannot select who owns it (M8)', async (): Promise<void> => {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      const listed: unknown[] = [];
+      const enumWithout = ['id', 'title', 'project', 'team', 'updatedAt', 'labels', 'statusType'];
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: {
+                list_issues: {
+                  name: 'list_issues',
+                  inputSchema: {
+                    properties: {
+                      project: {},
+                      team: {},
+                      fields: { type: 'array', items: { type: 'string', enum: enumWithout } },
+                    },
+                  },
+                },
+              },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              listed.push(args);
+              return { issues: [ticket('FIN-1'), ticket('FIN-2')] };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+      });
+      expect(harness.seeds.size).toBe(0);
+      expect(listed).toEqual([]);
+      expect(harness.records).toEqual([
+        expect.objectContaining({
+          skipReason:
+            'Day0 cannot see who owns these tickets on this server: its list_issues cannot select an assignee. No ticket is taken until the schema is confirmed.',
+        }),
+      ]);
+      expect(harness.records[0]?.polledAt).toBeUndefined();
+      expect(
+        linearListArguments(
+          {
+            properties: {
+              fields: { type: 'array', items: { type: 'string', enum: ['id', 'title'] } },
+            },
+          },
+          {},
+        ).unselectable,
+      ).toEqual(['an assignee', 'a label', 'a state type']);
+      expect(
+        linearListArguments(
+          {
+            properties: {
+              fields: {
+                type: 'array',
+                items: { type: 'string', enum: ['id', 'assigneeId', 'labels', 'state'] },
+              },
+            },
+          },
+          {},
+        ),
+      ).toMatchObject({
+        unselectable: [],
+        args: { fields: ['id', 'assigneeId', 'labels', 'state'] },
+      });
     });
 
     it('honours a do-not-automate label in the shapes the provider returns it', async (): Promise<void> => {

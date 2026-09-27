@@ -92,6 +92,8 @@ export interface IntakeRuntime {
     failure?: string;
   }): Promise<void>;
   seed(candidate: IntakeSeed): Promise<void>;
+  /** Bring the row of a ticket intake refused up to the listing, and withdraw it if it waits. */
+  withdraw(candidate: IntakeSeed & { leftQueue: string }): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
   /** Decision requests that landed on this surface and are still undecided. */
   listOpenDecisionRequests(surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>>;
@@ -276,6 +278,12 @@ export interface LinearListRequest {
   teamEnforced: boolean;
   /** True when the schema had an updated-at argument; otherwise issues are filtered here. */
   checkpointEnforced: boolean;
+  /**
+   * What the person-ticket rule reads that the schema's `fields` selector
+   * cannot select (`an assignee`, `a label`, `a state type`); empty when it
+   * can, or when there is no selector and the provider's default fields apply.
+   */
+  unselectable: string[];
 }
 
 /**
@@ -300,10 +308,21 @@ const LINEAR_ISSUE_FIELDS = [
   'assignee',
   'assigneeId',
   'labels',
+  'state',
   'project',
   'projectId',
   'team',
 ] as const;
+
+/**
+ * The fields that let the person-ticket rule see each fact it reads (Q11):
+ * who the ticket is assigned to, its labels, and its workflow state type.
+ */
+const PERSON_TICKET_FIELDS: ReadonlyArray<{ fact: string; fields: readonly string[] }> = [
+  { fact: 'an assignee', fields: ['assignee', 'assigneeId'] },
+  { fact: 'a label', fields: ['labels'] },
+  { fact: 'a state type', fields: ['statusType', 'status', 'state'] },
+];
 
 /**
  * Read the field names a schema's `fields` selector accepts.
@@ -368,6 +387,11 @@ export function linearListArguments(
     const fields = LINEAR_ISSUE_FIELDS.filter((name: string): boolean => selectable.has(name));
     if (fields.length > 0) args.fields = fields;
   }
+  const unselectable = selectable
+    ? PERSON_TICKET_FIELDS.filter(({ fields }) => !fields.some((name) => selectable.has(name))).map(
+        ({ fact }) => fact,
+      )
+    : [];
 
   let checkpointEnforced = false;
   if (lastPolledAt !== undefined) {
@@ -393,6 +417,7 @@ export function linearListArguments(
     projectEnforced: projectName !== undefined,
     teamEnforced: teamName !== undefined,
     checkpointEnforced,
+    unselectable,
   };
 }
 
@@ -542,9 +567,41 @@ function labelKey(value: string): string {
     .replace(/[\s_]+/g, '-');
 }
 
-/** A person's name, id or address as the assignee rule compares them. */
+/** Why a ticket assigned to somebody Day0 can name but not identify is left alone. */
+const ASSIGNEE_UNIDENTIFIED =
+  'the ticket is assigned to a person named without an id or email Day0 can compare';
+
+/** A person's id or address as the assignee rule compares them. */
 function personKey(value: string): string {
   return value.trim().toLowerCase();
+}
+
+/** A person as the assignee rule identifies them: by id, then by email, never by name (M9). */
+interface PersonIdentity {
+  id?: string;
+  email?: string;
+}
+
+/** The first non-empty string among the values, compared case-insensitively. */
+function firstKey(...values: unknown[]): string | undefined {
+  const found = values.find(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  );
+  return found === undefined ? undefined : personKey(found);
+}
+
+/**
+ * Whether two people are the same person: their ids decide when both carry
+ * one, their addresses when both carry one and an id is missing, and
+ * nothing decides otherwise. Names are not unique in Linear.
+ *
+ * Returns:
+ *   True or false when the two can be compared, undefined when they cannot.
+ */
+function samePerson(left: PersonIdentity, right: PersonIdentity): boolean | undefined {
+  if (left.id !== undefined && right.id !== undefined) return left.id === right.id;
+  if (left.email !== undefined && right.email !== undefined) return left.email === right.email;
+  return undefined;
 }
 
 /**
@@ -584,46 +641,45 @@ function issueLabels(issue: Record<string, unknown>): string[] {
 }
 
 /**
- * Every way an issue names its assignee: the display name, a nested object's
- * id, name, display name and address, and the assignee id.
+ * An issue's assignee, as the rule identifies a person: the assignee id or a
+ * nested object's id, and a nested object's address or an assignee printed
+ * as one. A printed name is only evidence that somebody is assigned.
  *
  * Args:
  *   issue: Provider issue object.
  *
  * Returns:
- *   Lower-cased identifiers; empty when nobody is assigned.
+ *   The assignee's id and address, or undefined when nobody is assigned.
  */
-function issueAssignee(issue: Record<string, unknown>): string[] {
+function issueAssignee(issue: Record<string, unknown>): PersonIdentity | undefined {
   const nested = asRecord(issue.assignee);
-  return [
-    typeof issue.assignee === 'string' ? issue.assignee : undefined,
-    issue.assigneeId,
-    nested?.id,
-    nested?.name,
-    nested?.displayName,
-    nested?.email,
-  ].flatMap((value: unknown): string[] =>
-    typeof value === 'string' && value.trim() !== '' ? [personKey(value)] : [],
-  );
+  const printed = typeof issue.assignee === 'string' ? issue.assignee.trim() : '';
+  const identity: PersonIdentity = {
+    id: firstKey(issue.assigneeId, nested?.id),
+    email: firstKey(nested?.email, printed.includes('@') ? printed : undefined),
+  };
+  const named = printed !== '' || firstKey(nested?.name, nested?.displayName) !== undefined;
+  return identity.id !== undefined || identity.email !== undefined || named ? identity : undefined;
 }
 
 /**
  * Why intake leaves a Linear ticket alone, by the kanban's own primitives
  * (Q11): a completed or cancelled state, the do-not-automate label, or an
- * assignee who is not the person whose key Day0 reads with. When the key's
- * owner could not be read, any assigned ticket is left alone: it may be
- * somebody else's, and the unassigned ones are still worked.
+ * assignee who is not the person whose key Day0 reads with, compared by id
+ * and then by email, never by name. When the key's owner could not be read,
+ * any assigned ticket is left alone: it may be somebody else's, and the
+ * unassigned ones are still worked.
  *
  * Args:
  *   issue: Provider issue object.
- *   owner: The key owner's identifiers, lower-cased, or undefined when unread.
+ *   owner: The key owner's id and address, or undefined when unread.
  *
  * Returns:
  *   The reason to skip, or undefined when the ticket is intake's to take.
  */
 export function linearIntakeRefusal(
   issue: Record<string, unknown>,
-  owner: ReadonlySet<string> | undefined,
+  owner: PersonIdentity | undefined,
 ): string | undefined {
   const state = issueStateType(issue);
   if (state !== undefined && CLOSED_STATE_TYPES.has(state)) return `the ticket is ${state}`;
@@ -631,11 +687,11 @@ export function linearIntakeRefusal(
     return `the ticket is labelled ${DO_NOT_AUTOMATE_LABEL}`;
   }
   const assignee = issueAssignee(issue);
-  if (assignee.length === 0) return undefined;
+  if (assignee === undefined) return undefined;
   if (owner === undefined) return OWNER_UNREAD;
-  return assignee.some((name: string): boolean => owner.has(name))
-    ? undefined
-    : 'the ticket is assigned to someone else';
+  const same = samePerson(assignee, owner);
+  if (same === undefined) return ASSIGNEE_UNIDENTIFIED;
+  return same ? undefined : 'the ticket is assigned to someone else';
 }
 
 /**
@@ -649,15 +705,15 @@ export function linearIntakeRefusal(
  *   credential: The decrypted bearer, kept out of any logged reason.
  *
  * Returns:
- *   The owner's id, names and address, lower-cased; undefined when the tool is
- *   not allowed or the answer names nobody.
+ *   The owner's id and address, lower-cased; undefined when the tool is not
+ *   allowed or the answer carries neither, since a name identifies nobody.
  */
 async function linearKeyOwner(
   client: McpIntakeClient,
   tools: Record<string, McpToolDefinition> | undefined,
   allowlist: readonly string[] | undefined,
   credential: string,
-): Promise<ReadonlySet<string> | undefined> {
+): Promise<PersonIdentity | undefined> {
   const definition = tools?.get_user;
   if (!definition || !allowlist?.includes('get_user')) return undefined;
   const argument = discoveredArgument(schemaProperties(definition.inputSchema), [
@@ -679,11 +735,8 @@ async function linearKeyOwner(
       ),
     );
     const user = asRecord(answer?.user) ?? answer;
-    const names = [user?.id, user?.name, user?.displayName, user?.email].flatMap(
-      (value: unknown): string[] =>
-        typeof value === 'string' && value.trim() !== '' ? [personKey(value)] : [],
-    );
-    return names.length > 0 ? new Set(names) : undefined;
+    const owner: PersonIdentity = { id: firstKey(user?.id), email: firstKey(user?.email) };
+    return owner.id !== undefined || owner.email !== undefined ? owner : undefined;
   } catch (error) {
     log.warn('linear key owner unreadable; assigned tickets are left alone this poll', {
       reason: safeIntakeError(error, credential),
@@ -865,6 +918,36 @@ export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
   return surface.path === 'mcp' && surface.endpoint === LINEAR_MCP_ENDPOINT;
 }
 
+/** A ticket intake refused on this poll, and why it left the queue. */
+interface WithdrawnTicket {
+  candidate: WorkCandidate;
+  leftQueue: string;
+}
+
+/** What one Linear poll found. */
+interface LinearPoll {
+  candidates: WorkCandidate[];
+  withdrawn: WithdrawnTicket[];
+  holdCheckpoint?: string;
+}
+
+/**
+ * The card line for a server whose list cannot show who owns a ticket.
+ *
+ * Args:
+ *   unselectable: The facts the `fields` selector cannot select.
+ *
+ * Returns:
+ *   The surface's intake reason while the checkpoint is held.
+ */
+function unreadableOwnershipHold(unselectable: readonly string[]): string {
+  const facts =
+    unselectable.length > 1
+      ? `${unselectable.slice(0, -1).join(', ')} or ${unselectable.at(-1)}`
+      : unselectable.join('');
+  return `Day0 cannot see who owns these tickets on this server: its list_issues cannot select ${facts}. No ticket is taken until the schema is confirmed.`;
+}
+
 /**
  * Poll all bounded Linear pages and map their issues to candidates.
  *
@@ -881,10 +964,12 @@ export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
  *   makeClient: Injectable MCP client factory.
  *
  * Returns:
- *   Normalised candidates newer than the previous checkpoint, and why the
- *   checkpoint must stay where it is when an assigned ticket was left alone
- *   only because the key's owner could not be read: it may be the owner's,
- *   and the next poll reads the same window again.
+ *   Normalised candidates newer than the previous checkpoint; the tickets
+ *   the rule refused, with why each left the queue, so a row seeded before
+ *   is withdrawn; and why the checkpoint must stay where it is when the
+ *   schema cannot show who owns a ticket, or an assigned ticket was left
+ *   alone only because the key's owner could not be read: it may be the
+ *   owner's, and the next poll reads the same window again.
  */
 async function pollLinear(
   surface: Doc<'surfaces'>,
@@ -892,7 +977,7 @@ async function pollLinear(
   credential: string,
   observedAt: number,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
-): Promise<{ candidates: WorkCandidate[]; holdCheckpoint?: string }> {
+): Promise<LinearPoll> {
   if (!surface.toolAllowlist?.includes('list_issues')) {
     throw new Error('Connected Linear surface does not allow list_issues.');
   }
@@ -909,6 +994,16 @@ async function pollLinear(
     if (!definition) throw new Error('Linear MCP server exposes no list_issues tool.');
     const tool = await client.toolFromDefinition({ serverName: 'surface', definition });
     if (!tool.execute) throw new Error('Linear list_issues tool is not executable.');
+    // Fail closed (review M8, decision D2): a list that cannot carry who owns
+    // a ticket would seed a person's ticket as unassigned.
+    const { unselectable } = linearListArguments(definition.inputSchema, { team: scope.team });
+    if (unselectable.length > 0) {
+      return {
+        candidates: [],
+        withdrawn: [],
+        holdCheckpoint: unreadableOwnershipHold(unselectable),
+      };
+    }
     const owner = await linearKeyOwner(
       client,
       definitions.surface,
@@ -918,6 +1013,7 @@ async function pollLinear(
 
     const candidates: WorkCandidate[] = [];
     const candidateIds = new Set<string>();
+    const withdrawn: WithdrawnTicket[] = [];
     const leftAlone = new Map<string, number>();
     const projects = scope.projects?.length ? [...new Set(scope.projects)] : [scope.project];
     // Only an approved team is enforced here. A row still on the page scan
@@ -970,6 +1066,13 @@ async function pollLinear(
           const refusal = linearIntakeRefusal(issue, owner);
           if (refusal !== undefined) {
             leftAlone.set(refusal, (leftAlone.get(refusal) ?? 0) + 1);
+            // An unread owner says nothing about the ticket, so its row stays.
+            const left =
+              refusal === OWNER_UNREAD ? undefined : linearCandidate(issue, surface, observedAt);
+            if (left && !candidateIds.has(left.externalId)) {
+              withdrawn.push({ candidate: left, leftQueue: refusal });
+              candidateIds.add(left.externalId);
+            }
             continue;
           }
           const candidate = linearCandidate(issue, surface, observedAt);
@@ -1012,9 +1115,10 @@ async function pollLinear(
     }
     const unread = leftAlone.get(OWNER_UNREAD) ?? 0;
     return unread === 0
-      ? { candidates }
+      ? { candidates, withdrawn }
       : {
           candidates,
+          withdrawn,
           holdCheckpoint:
             `${unread} assigned ticket(s) left alone because the key's owner could not be read; ` +
             'the checkpoint is held so the next poll reads them again.',
@@ -1549,7 +1653,12 @@ async function seedCandidate(
   agentId: Id<'agents'>,
   candidate: WorkCandidate,
 ): Promise<void> {
-  await runtime.seed({
+  await runtime.seed(seedOf(agentId, candidate));
+}
+
+/** The seed a candidate makes for one agent. */
+function seedOf(agentId: Id<'agents'>, candidate: WorkCandidate): IntakeSeed {
+  return {
     agentId,
     sourceCategory: candidate.sourceCategory,
     sourceSystem: candidate.sourceSystem,
@@ -1563,7 +1672,7 @@ async function seedCandidate(
     owner: candidate.owner,
     requester: candidate.requester,
     replyTarget: candidate.replyTarget,
-  });
+  };
 }
 
 /** Bind the runtime's identity write to one surface. */
@@ -1722,11 +1831,14 @@ export async function runIntakeSweep(
                 rememberBotId(runtime, surface._id),
               )
             : undefined;
-        const polledPage = chat
-          ? { candidates: chat.candidates }
+        const polledPage: LinearPoll = chat
+          ? { candidates: chat.candidates, withdrawn: [] }
           : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
         const mapped = polledPage.candidates;
         for (const candidate of mapped) await seedCandidate(runtime, agentId, candidate);
+        for (const { candidate, leftQueue } of polledPage.withdrawn) {
+          await runtime.withdraw({ ...seedOf(agentId, candidate), leftQueue });
+        }
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
@@ -1839,6 +1951,9 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     },
     seed: async (candidate: IntakeSeed): Promise<void> => {
       await ctx.runMutation(internal.work.seedItem, candidate);
+    },
+    withdraw: async (candidate: IntakeSeed & { leftQueue: string }): Promise<void> => {
+      await ctx.runMutation(internal.work.withdrawListedItem, candidate);
     },
     resolveDecision: async (reply: IntakeDecisionReply): Promise<void> => {
       await ctx.runMutation(internal.work.resolveChannelDecision, reply);
