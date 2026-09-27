@@ -1922,6 +1922,9 @@ interface LedgerRow {
   repair?: { reason: string; toolArgsJson: string };
   /** The run's sign-in, replayed in this invocation's new browser before the row was sent. */
   sessionRestore?: SessionRestoreRow;
+  /** The landed row this one reuses instead of sending again, and the number of the run that sent it. */
+  reusedFrom?: string;
+  reusedFromRun?: number;
 }
 
 /** A re-established browser session as the card reads it: one row per replayed call. */
@@ -3388,6 +3391,13 @@ export function WorkItemCard({
                   </span>
                 ) : null}
                 <PhaseLabel phase={a.phase} />
+                {a.reusedFrom ? (
+                  <span className="ml-1 text-[10px] text-[var(--color-muted)]">
+                    {a.reusedFromRun
+                      ? `reused from run ${a.reusedFromRun}`
+                      : 'reused from an earlier run'}
+                  </span>
+                ) : null}
                 <RepairNote repair={a.repair} />
                 <SessionRestoreNote restore={a.sessionRestore} />
               </li>
