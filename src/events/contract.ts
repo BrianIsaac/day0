@@ -530,6 +530,13 @@ export type SurfaceApprovedPayload = SurfaceNamed;
 /** The payload of `surface.rejected`. */
 export type SurfaceRejectedPayload = SurfaceReason;
 
+/** The payload of `surface.tools-approved`: the manager's approved list, and how it changed. */
+export interface SurfaceToolsApprovedPayload extends SurfaceNamed {
+  readonly tools: string[];
+  readonly added: string[];
+  readonly removed: string[];
+}
+
 /** The payload of `surface.reopened`. */
 export type SurfaceReopenedPayload = SurfaceReason;
 
@@ -1006,6 +1013,7 @@ export interface EventPayloads {
   'surface.expiring': SurfaceExpiringPayload;
   'surface.approved': SurfaceApprovedPayload;
   'surface.rejected': SurfaceRejectedPayload;
+  'surface.tools-approved': SurfaceToolsApprovedPayload;
   'surface.reopened': SurfaceReopenedPayload;
   'surface.scope-reapproval-required': SurfaceScopeReapprovalRequiredPayload;
   'surface.configuration-token-revoked': SurfaceConfigurationTokenRevokedPayload;
@@ -1144,6 +1152,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.expiring',
   'surface.approved',
   'surface.rejected',
+  'surface.tools-approved',
   'surface.reopened',
   'surface.scope-reapproval-required',
   'surface.configuration-token-revoked',

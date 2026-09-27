@@ -1120,6 +1120,8 @@ export const demoteAfterProbeFailure = internalMutation({
       credentialLanded: false,
       probeGeneration: generation,
       toolAllowlist: undefined,
+      approvedToolAllowlist: undefined,
+      toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
       managerUserId: undefined,
@@ -1253,36 +1255,50 @@ interface ProbedTools {
   readonly allowlist: string[];
   readonly toolArguments: Array<{ tool: string; arguments: string[] }>;
   readonly withheld: string[];
+  /** The list the approval covers, which the row keeps. */
+  readonly approved: string[];
 }
 
 /**
- * Keep a surface's tool list to the one its connecting probe found.
+ * Keep a surface's tool list to the one its approval covers.
  *
- * The probe that first connects the approved row fixes the list the approval
- * covers. Any later probe that stores a list (the hourly one, one after a
- * page names another Slack method, or the one a renewal of an ended access
- * schedules) keeps only the tools of that list it still finds and withholds
- * any other, so no probe widens what an employee may call. A rejection or a
- * failed probe clears the list, and the next connection starts from its own
- * probe.
+ * The probe that first connects the approved row fixes the approved list.
+ * Any later probe (the hourly one, one after a page names another Slack
+ * method, one after a failed probe, or the one a renewal of an ended access
+ * schedules) keeps only the approved tools it still finds and withholds any
+ * other, so no probe widens what an employee may call; a tool a narrower
+ * probe dropped comes back when a probe finds it again. Only the manager's
+ * explicit approval widens the list (`approveTools`); a rejection or a
+ * demotion to another route clears it, and the next connection starts from
+ * its own probe.
  *
  * @param surface - The row before this probe's write.
  * @param probed - What the probe found.
- * @returns The tools to store, their arguments, and the tools withheld.
+ * @returns The tools to store, their arguments, the tools withheld, and the
+ *   approved list the row carries after this probe.
  */
 function frozenTools(
   surface: Doc<'surfaces'>,
   probed: { toolAllowlist: string[]; toolArguments: Array<{ tool: string; arguments: string[] }> },
 ): ProbedTools {
-  if (surface.toolAllowlist === undefined) {
-    return { allowlist: probed.toolAllowlist, toolArguments: probed.toolArguments, withheld: [] };
+  // A row connected before the approved list existed keeps the list it
+  // holds until the `surfaces-approved-tools` migration copies it across.
+  const approvedList = surface.approvedToolAllowlist ?? surface.toolAllowlist;
+  if (approvedList === undefined) {
+    return {
+      allowlist: probed.toolAllowlist,
+      toolArguments: probed.toolArguments,
+      withheld: [],
+      approved: probed.toolAllowlist,
+    };
   }
-  const approved = new Set(surface.toolAllowlist);
+  const approved = new Set(approvedList);
   const allowlist = probed.toolAllowlist.filter((tool: string): boolean => approved.has(tool));
   return {
     allowlist,
     toolArguments: probed.toolArguments.filter((entry): boolean => approved.has(entry.tool)),
     withheld: probed.toolAllowlist.filter((tool: string): boolean => !approved.has(tool)),
+    approved: approvedList,
   };
 }
 
@@ -1343,6 +1359,9 @@ export const recordConnected = internalMutation({
       lastVerifiedAt: args.verifiedAt,
       toolAllowlist: tools.allowlist,
       toolArguments: tools.toolArguments,
+      ...(surface.approvedToolAllowlist === undefined
+        ? { approvedToolAllowlist: tools.approved, toolAllowlistApprovedAt: args.verifiedAt }
+        : {}),
       managerDmChannelId: args.managerDmChannelId,
       managerUserId: args.managerUserId,
       managerName: args.managerName,
@@ -1849,6 +1868,8 @@ export const reject = mutation({
       managerUserId: undefined,
       managerName: undefined,
       toolAllowlist: undefined,
+      approvedToolAllowlist: undefined,
+      toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
@@ -1873,6 +1894,65 @@ export const reject = mutation({
       createdAt: now,
     });
     await requeueWorkAfterRejection(ctx, surface, now);
+  },
+});
+
+/** The most tools one approved list names; a provider's catalogue is a few dozen. */
+const APPROVED_TOOLS_LIMIT = 200;
+
+/**
+ * Approve the tools a connected surface may call, by the manager's explicit
+ * act: the one way an approved list widens (U10 D2 (b), wave 2 review M2).
+ *
+ * Public, owner-guarded, real mode only; the card's re-approval control. The
+ * list replaces the approved one, is recorded as `surface.tools-approved`
+ * with what it added and removed, and the surface is probed at once so the
+ * tools the provider offers from the new list reach the row; no tool the
+ * provider does not offer is ever stored.
+ *
+ * @throws ConvexError when the surface is not connected, or the list is
+ *   empty, repeats a tool or passes the limit.
+ */
+export const approveTools = mutation({
+  args: { surfaceId: v.id('surfaces'), tools: v.array(v.string()) },
+  handler: async (ctx, args): Promise<{ approved: string[] }> => {
+    assertRealMode('Approving surface tools');
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    await assertOwnsAgent(ctx, surface.agentId);
+    if (surface.verdict !== 'connected') {
+      throw new ConvexError(
+        `Tools are approved on a connected card; this one is ${surface.verdict}.`,
+      );
+    }
+    const tools = args.tools.map((tool) => tool.trim());
+    if (tools.length === 0 || tools.some((tool) => tool === '')) {
+      throw new ConvexError('Name at least one tool, and no empty one.');
+    }
+    if (new Set(tools).size !== tools.length) {
+      throw new ConvexError('Name each tool once.');
+    }
+    if (tools.length > APPROVED_TOOLS_LIMIT) {
+      throw new ConvexError(`Approve at most ${APPROVED_TOOLS_LIMIT} tools on one card.`);
+    }
+    const before = new Set(surface.approvedToolAllowlist ?? surface.toolAllowlist ?? []);
+    const now = Date.now();
+    await ctx.db.patch(surface._id, { approvedToolAllowlist: tools, toolAllowlistApprovedAt: now });
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'surface.tools-approved',
+      payload: {
+        surfaceId: surface._id,
+        tools,
+        added: tools.filter((tool) => !before.has(tool)),
+        removed: [...before].filter((tool) => !tools.includes(tool)),
+      },
+      createdAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+      surfaceId: surface._id,
+    });
+    return { approved: tools };
   },
 });
 

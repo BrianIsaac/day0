@@ -3039,3 +3039,184 @@ describe('a replaceable manager on the surface row', (): void => {
     ]);
   });
 });
+
+describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /**
+   * An approved Linear card and a way to probe it.
+   *
+   * Returns:
+   *   The harness, the surface and a probe that stores what it found.
+   */
+  async function approvedCard(): Promise<{
+    harness: TestConvex<typeof schema>;
+    surfaceId: Id<'surfaces'>;
+    probe: (tools: string[], verifiedAt: number) => Promise<void>;
+  }> {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'approved',
+        managerApprovedAt: 10,
+        itApprovedAt: 11,
+      });
+    });
+    const probe = async (tools: string[], verifiedAt: number): Promise<void> => {
+      const reserved = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!reserved) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: reserved.generation,
+        toolAllowlist: tools,
+        toolArguments: tools.map((tool) => ({ tool, arguments: [] })),
+        verifiedAt,
+      });
+    };
+    return { harness, surfaceId, probe };
+  }
+
+  it('sets the approved list at the first connection and keeps it through a re-probe after the policy page gains a method', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues', 'save_comment'],
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+      toolAllowlistApprovedAt: 100,
+    });
+  });
+
+  it('keeps the approved list through a failed probe, so the success after it is frozen still', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!failing) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: failing.generation,
+      verdict: 'listed-dead',
+      reason: 'the server did not answer',
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'listed-dead',
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+    });
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 300);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      toolAllowlist: ['list_issues', 'save_comment'],
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+    });
+  });
+
+  it('brings back an approved tool a narrower probe dropped, and nothing it never approved', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    await probe(['list_issues'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({ toolAllowlist: ['list_issues'] });
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 300);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues', 'save_comment'],
+    });
+  });
+
+  it('widens only by the manager’s approval, which the probe it schedules then applies', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.surfaces.approveTools, {
+        surfaceId,
+        tools: ['list_issues', 'save_comment', 'delete_issue'],
+      }),
+    ).resolves.toEqual({ approved: ['list_issues', 'save_comment', 'delete_issue'] });
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('surfaceActions:probeInternal');
+    await probe(['list_issues', 'save_comment', 'delete_issue', 'archive_issue'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues', 'save_comment', 'delete_issue'],
+      approvedToolAllowlist: ['list_issues', 'save_comment', 'delete_issue'],
+    });
+    const approvals = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event) => event.type === 'surface.tools-approved')
+        .map((event) => event.payload),
+    );
+    expect(approvals).toEqual([
+      {
+        surfaceId,
+        tools: ['list_issues', 'save_comment', 'delete_issue'],
+        added: ['delete_issue'],
+        removed: [],
+      },
+    ]);
+  });
+
+  it('refuses to approve tools on a card that is not connected, a repeated tool, or another owner’s card', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] }),
+    ).rejects.toThrow('Tools are approved on a connected card; this one is approved.');
+    await probe(['list_issues'], 100);
+    await expect(
+      owner.mutation(api.surfaces.approveTools, {
+        surfaceId,
+        tools: ['list_issues', 'list_issues'],
+      }),
+    ).rejects.toThrow('Name each tool once.');
+    await expect(
+      harness
+        .withIdentity({ subject: 'stranger' })
+        .mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] }),
+    ).rejects.toThrow('forbidden');
+  });
+
+  it('clears the approved list on a demotion to another route and on a rejection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        fallbackPath: 'browser-driven',
+        pathCandidates: [
+          { path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' },
+          { path: 'browser-driven', endpoint: 'https://linear.app' },
+        ],
+      });
+    });
+    await probe(['list_issues'], 100);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { verdict: 'listed-dead' });
+    });
+    const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!failing) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+      surfaceId,
+      generation: failing.generation,
+      reason: 'the MCP server refused the token',
+      attemptedAt: 200,
+    });
+    const demoted = await readSurface(harness, surfaceId);
+    expect(demoted).toMatchObject({ verdict: 'approved', path: 'browser-driven' });
+    expect(demoted).not.toHaveProperty('approvedToolAllowlist');
+
+    await probe(['browser_navigate'], 300);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { verdict: 'approved' });
+    });
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId, reason: 'not this route' });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('approvedToolAllowlist');
+  });
+});

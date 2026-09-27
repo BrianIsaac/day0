@@ -753,6 +753,8 @@ export const finishSync = internalMutation({
             itApprovedAt: undefined,
             probeGeneration: (surface.probeGeneration ?? 0) + 1,
             toolAllowlist: undefined,
+            approvedToolAllowlist: undefined,
+            toolAllowlistApprovedAt: undefined,
             toolArguments: undefined,
             lastVerifiedAt: undefined,
             providerIdentityId: undefined,

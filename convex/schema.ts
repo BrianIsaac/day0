@@ -308,6 +308,17 @@ export default defineSchema({
     // The manager's Slack display name from the probe's `users.lookupByEmail`.
     managerName: v.optional(v.string()),
     toolAllowlist: v.optional(v.array(v.string())),
+    /**
+     * The tools the approval covers: the list the first connection after an
+     * approval found, or the list the manager approved since (`approveTools`).
+     * Every later probe keeps only these (`frozenTools`); a failed probe, an
+     * expiry and a renewal leave it, and only a rejection or a demotion to
+     * another route clears it. The `surfaces-approved-tools` migration fills it
+     * on rows connected before it.
+     */
+    approvedToolAllowlist: v.optional(v.array(v.string())),
+    /** When `approvedToolAllowlist` was set, by a connection or by the manager. */
+    toolAllowlistApprovedAt: v.optional(v.number()),
     toolArguments: v.optional(
       v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),
     ),
