@@ -1253,7 +1253,7 @@ export type NewEvent = {
   };
 }[EventType];
 
-/** An event an action logs through `events.log` (`logEvent`), stamped when it lands. */
+/** An event an action logs through `eventLog.log` (`logEvent`), stamped when it lands. */
 export type LoggedEvent = {
   [Type in EventType]: EventOf<Type> & { readonly agentId: Id<'agents'> };
 }[EventType];
