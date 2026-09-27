@@ -335,6 +335,37 @@ describe('the upgrade migrations', (): void => {
   });
 });
 
+describe('the agents-zone migration (N12, the M2 backfill)', (): void => {
+  it('gives every agent with no zone the deployment’s zone and a mode, keeps a zone the manager set, and says which zone in the status', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const bare = await agent(harness, { userId: 'owner' });
+    const zoned = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Aiko',
+          state: 'active',
+          zone: 'Asia/Singapore',
+          mode: 'real',
+          createdAt: 2,
+        }),
+    );
+    await runAll(harness);
+    const [bareRow, zonedRow] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(bare), ctx.db.get(zoned)]),
+    );
+    expect(bareRow).toMatchObject({ zone: 'UTC', mode: 'mock' });
+    expect(zonedRow).toMatchObject({ zone: 'Asia/Singapore', mode: 'real' });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'agents-zone')).toMatchObject({
+      release: '0.5.0',
+      read: 2,
+      changed: 1,
+      note: 'agents with no zone given the deployment’s zone, UTC; with no mode, mock',
+    });
+  });
+});
+
 describe('the release stamp', (): void => {
   it('is refused while a migration is unfinished, then kept once per release and commit', async (): Promise<void> => {
     const harness = limitedHarness();

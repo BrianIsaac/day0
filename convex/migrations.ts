@@ -32,6 +32,8 @@ import { migrateSandboxIdPage } from './skills';
 import { restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { deploymentZone } from '../src/lib/zone';
 
 /**
  * Every migration, in the order the upgrade runs them. The access clocks come
@@ -49,6 +51,7 @@ export const MIGRATION_NAMES = [
   'surfaces-credential-ref',
   'credentials-sync-revoke',
   'ticket-listings',
+  'agents-zone',
 ] as const;
 
 /** One migration's name. */
@@ -64,6 +67,9 @@ export interface MigrationDescription {
 
 /** The release that ships the first set of migrations. */
 const FIRST_MIGRATIONS_RELEASE = '0.4.0';
+
+/** The release after it, which gives every agent a zone and a mode (N12, the M2 backfill). */
+const ZONE_RELEASE = '0.5.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -107,6 +113,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'copies each kept work.listed snapshot into ticketListings, where the re-read before apply now looks',
     thenRemoves: 'nothing: work.listed events stay as the feed’s record',
   },
+  'agents-zone': {
+    release: ZONE_RELEASE,
+    does: 'gives an agent with no zone the deployment’s current zone, and one with no mode the deployment’s mode; the status note names the zone',
+    thenRemoves: 'nothing: an absent zone still reads as the deployment’s',
+  },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
@@ -140,6 +151,8 @@ interface MigrationPage {
   readonly changed: number;
   readonly cursor: string;
   readonly isDone: boolean;
+  /** What the migration chose where it had to choose, kept on its row. */
+  readonly note?: string;
 }
 
 /** A migration as far as it has got. */
@@ -149,6 +162,8 @@ export interface MigrationProgress {
   readonly read: number;
   readonly changed: number;
   readonly completedAt?: number;
+  /** What the migration chose where it had to choose. */
+  readonly note?: string;
   /** Set when the migration had already finished before this call, so nothing ran. */
   readonly finishedEarlier?: true;
 }
@@ -362,6 +377,30 @@ async function copyListings(ctx: MutationCtx, cursor: string | null): Promise<Mi
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
+/**
+ * Give every agent without one the deployment's zone and mode (N12's M2
+ * backfill). The deployment's zone is the backend process's own, UTC on the
+ * pinned image unless `TZ` is set; the manager changes it on the card.
+ */
+async function stampZoneAndMode(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const zone = deploymentZone();
+  const page = await ctx.db.query('agents').paginate({ cursor, numItems: MIGRATION_PAGE });
+  const missing = page.page.filter((agent) => agent.zone === undefined || agent.mode === undefined);
+  for (const agent of missing) {
+    await ctx.db.patch(agent._id, {
+      ...(agent.zone === undefined ? { zone } : {}),
+      ...(agent.mode === undefined ? { mode: SURFACE_MODE } : {}),
+    });
+  }
+  return {
+    read: page.page.length,
+    changed: missing.length,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+    note: `agents with no zone given the deployment’s zone, ${zone}; with no mode, ${SURFACE_MODE}`,
+  };
+}
+
 /** Each migration's page, keyed by name, so a name with no page fails the typecheck. */
 const MIGRATION_PAGES: Readonly<
   Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
@@ -377,6 +416,7 @@ const MIGRATION_PAGES: Readonly<
   'surfaces-credential-ref': clearCredentialRef,
   'credentials-sync-revoke': clearSyncRevokes,
   'ticket-listings': copyListings,
+  'agents-zone': stampZoneAndMode,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
 };
@@ -392,7 +432,7 @@ async function migrationRow(ctx: QueryCtx, name: MigrationName): Promise<Doc<'mi
 /** A migration's progress as the upgrade reports it. */
 function progressOf(
   name: MigrationName,
-  row: Pick<Doc<'migrations'>, 'read' | 'changed' | 'completedAt'> | null,
+  row: Pick<Doc<'migrations'>, 'read' | 'changed' | 'completedAt' | 'note'> | null,
 ): MigrationProgress {
   return {
     name,
@@ -400,6 +440,7 @@ function progressOf(
     read: row?.read ?? 0,
     changed: row?.changed ?? 0,
     ...(row?.completedAt !== undefined ? { completedAt: row.completedAt } : {}),
+    ...(row?.note !== undefined ? { note: row.note } : {}),
   };
 }
 
@@ -422,6 +463,7 @@ export const runMigrationPage = internalMutation({
       read: (row?.read ?? 0) + page.read,
       changed: (row?.changed ?? 0) + page.changed,
       completedAt: page.isDone ? now : undefined,
+      note: page.note ?? row?.note,
     };
     if (row === null) {
       await ctx.db.insert('migrations', {

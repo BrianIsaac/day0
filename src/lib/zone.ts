@@ -44,7 +44,7 @@ function partsFormatter(zone: string): Intl.DateTimeFormat {
  *
  * @returns True for an IANA name such as `Asia/Singapore` or `UTC`.
  */
-export function isTimeZone(value: unknown): value is string {
+export function isTimeZone(value: unknown): boolean {
   if (typeof value !== 'string' || value === '') return false;
   try {
     partsFormatter(value);
@@ -60,8 +60,8 @@ export function isTimeZone(value: unknown): value is string {
  * unless `TZ` is set), the viewer's in the browser.
  */
 export function deploymentZone(): string {
-  const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return isTimeZone(zone) ? zone : 'UTC';
+  const zone: string | undefined = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return zone !== undefined && isTimeZone(zone) ? zone : 'UTC';
 }
 
 /**
@@ -69,7 +69,7 @@ export function deploymentZone(): string {
  * the deployment's otherwise.
  */
 export function agentZone(agent: { readonly zone?: string }): string {
-  return isTimeZone(agent.zone) ? agent.zone : deploymentZone();
+  return agent.zone !== undefined && isTimeZone(agent.zone) ? agent.zone : deploymentZone();
 }
 
 /** The calendar and clock of an instant in a zone. */
