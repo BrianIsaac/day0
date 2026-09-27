@@ -423,7 +423,8 @@ function isCredentialField(description: unknown): boolean {
  * `browser_fill_form` field that is one. Nothing else - not a URL, not an
  * element's name, not a comment box - may carry it. Once the elements are
  * resolved, the element the page actually offered must be a credential field
- * too, so a description that loosely matched "Password notes" does not count.
+ * too, so a description that loosely matched "Password notes" does not count,
+ * and it must be a text box, so a button or link named "Password" does not.
  */
 function credentialSlots(
   tool: string,
@@ -432,7 +433,8 @@ function credentialSlots(
 ): Set<string> {
   const slots = new Set<string>();
   const onPage = (index: number): boolean =>
-    resolved === undefined || isCredentialField(resolved[index]?.name);
+    resolved === undefined ||
+    (resolved[index]?.role === 'textbox' && isCredentialField(resolved[index]?.name));
   if (tool === 'browser_type' && isCredentialField(toolArgs.element) && onPage(0)) {
     slots.add('text');
   }

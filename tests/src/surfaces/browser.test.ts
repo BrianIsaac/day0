@@ -527,6 +527,26 @@ describe('where a browser action may carry the credential', (): void => {
     ).toContain('fields.0.name');
   });
 
+  it('refuses once the page resolved a password name to a control that is not a text box', (): void => {
+    const toolArgs = { fields: [{ name: 'Password', value: '{{secret}}' }] };
+    for (const role of ['button', 'link', 'combobox', 'checkbox']) {
+      expect(
+        secretPlacementRefusal('browser_fill_form', toolArgs, 'tile', [
+          { name: 'Password', ref: 'e14', role },
+        ]),
+      ).toContain('typed only into a credential field');
+    }
+    expect(
+      withSecretTyped(
+        'browser_fill_form',
+        { fields: [{ name: 'Password', target: 'e14', value: '{{secret}}' }] },
+        [{ name: 'Password', ref: 'e14', role: 'button' }],
+        'tile-password',
+        'tile',
+      ),
+    ).toEqual({ fields: [{ name: 'Password', target: 'e14', value: '{{secret}}' }] });
+  });
+
   it("refuses a placeholder naming another surface's credential", (): void => {
     expect(
       secretPlacementRefusal(
