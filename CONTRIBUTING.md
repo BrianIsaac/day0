@@ -44,7 +44,7 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | `pnpm probe:mcp <docSourceId>` | Real mode: lists a linked MCP documentation source's tools, from the backend |
 | `pnpm probe:docs-source <docSourceId>` | Real mode: syncs one documentation source and prints its page and redaction counts |
 | `pnpm probe:surface <surfaceId>` | Real mode: probes one surface card and prints the verdict |
-| `pnpm demo:bed <subcommand>` | The demo laptop's kit: snapshot, restore, up, preflight, offline-rung, down |
+| `pnpm demo:bed <subcommand>` | A restorable demonstration bed: snapshot, restore, up, preflight, offline-rung, down |
 | `pnpm bed:company <subcommand>` | The synthetic company bed: its pages, its check and its seed |
 | `pnpm bed:record-spans` | Records the span model's answers over the company bed's pages |
 | `pnpm rehearse:real` | The maintainers' internal rehearsal of the real path; not a way to run Day0 |
