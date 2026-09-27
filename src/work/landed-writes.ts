@@ -3,6 +3,7 @@ import {
   isAuditComment,
   isManagerDm,
   isStatusChange,
+  ISSUE_KEYS,
   messageTarget,
   parseSurfaceAction,
   statusChangeTarget,
@@ -150,21 +151,39 @@ export function writeTarget(
 }
 
 /**
- * The ticket and state a status change sets, as a key two changes share when
- * they set the same state on the same ticket; undefined for anything else.
+ * The ticket a status change sets a state on, the state, and whether the
+ * call writes that state and nothing else; undefined for anything that is not
+ * a status change.
  */
-function statusKey(
+function statusChange(
   parsed: ParsedSurfaceAction,
-): { key: string; state: string; ticket: string } | undefined {
-  if (!isStatusChange(parsed)) return undefined;
+): { ticketKey: string; state: string; ticket: string; alone: boolean } | undefined {
+  if (!isStatusChange(parsed) || parsed.kind !== 'mcp.call') return undefined;
   const ticket = targetIssue(parsed)?.trim();
   const state = statusChangeTarget(parsed)?.trim();
   if (!ticket || !state) return undefined;
+  const written = Object.entries(parsed.toolArgs).filter(([key]) => !ISSUE_KEYS.includes(key));
   return {
-    key: `${parsed.surface}|status|${ticket.toLowerCase()}|${state.toLowerCase()}`,
+    ticketKey: `${parsed.surface}|status|${ticket.toLowerCase()}`,
     state,
     ticket,
+    alone: written.length === 1 && written[0]?.[1] === state,
   };
+}
+
+/**
+ * Whether the manager's note directs this state in so many words and nothing
+ * just before the word declines it: "set it Done again" does, "do not move it
+ * to Done yet" does not.
+ */
+function stateDirected(feedback: string | undefined, state: string): boolean {
+  if (!feedback?.trim()) return false;
+  const escaped = state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const match of feedback.matchAll(new RegExp(`\\b${escaped}\\b`, 'gi'))) {
+    const before = feedback.slice(0, match.index).trim().split(/\s+/).slice(-5).join(' ');
+    if (!DECLINED.test(before)) return true;
+  }
+  return false;
 }
 
 const CORRECTION_VERB =
@@ -246,8 +265,9 @@ function payload(action: MockAction): string | undefined {
 /**
  * The ledger rows a phase's actions reuse from what already landed, by
  * index: a comment or message on a target an earlier landed row already
- * carries, a status change setting the state an earlier landed change set
- * on the same ticket, and, only when the caller says the sources are a
+ * carries, a status change that writes nothing but the state an earlier
+ * run last landed on the same ticket (unless the manager's note directs that
+ * state in so many words), and, only when the caller says the sources are a
  * resumed closing set's previous attempt, a row of identical payload. When
  * the manager's note asked for a correction or a further message, no
  * comment or message is reused by target; a read is never reused.
@@ -289,14 +309,15 @@ export function reusedLedger(
   const correction = correctionRequested(options.managerFeedback);
   const byPayload = new Map<string, AppliedAction>();
   const byTarget = new Map<string, { applied: AppliedAction; kind: 'comment' | 'message' }>();
-  const byStatus = new Map<string, AppliedAction>();
+  // The last state an earlier run landed on each ticket; sources are oldest first.
+  const byStatus = new Map<string, { state: string; applied: AppliedAction }>();
   for (const source of sources) {
     if (!landed(source.applied)) continue;
     const key = options.identicalPayloads ? payload(source.action) : undefined;
     if (key && !byPayload.has(key)) byPayload.set(key, source.applied);
     const parsed = parsedWrite(source.action);
-    const status = parsed ? statusKey(parsed) : undefined;
-    if (status && !byStatus.has(status.key)) byStatus.set(status.key, source.applied);
+    const status = parsed ? statusChange(parsed) : undefined;
+    if (status) byStatus.set(status.ticketKey, { state: status.state, applied: source.applied });
     const target = parsed ? writeTarget(parsed, source.action, surfaces) : undefined;
     if (target && !byTarget.has(target.key))
       byTarget.set(target.key, { applied: source.applied, kind: target.kind });
@@ -311,11 +332,17 @@ export function reusedLedger(
     const identical = key ? byPayload.get(key) : undefined;
     if (identical) return { ...identical, reason: REUSED_IDENTICAL_NOTE, idempotencyKey: identity };
     const parsed = parsedWrite(action);
-    const status = parsed ? statusKey(parsed) : undefined;
-    const setBefore = status ? byStatus.get(status.key) : undefined;
-    if (status && setBefore) {
+    const status = parsed ? statusChange(parsed) : undefined;
+    const setBefore = status ? byStatus.get(status.ticketKey) : undefined;
+    if (
+      status &&
+      setBefore &&
+      status.alone &&
+      setBefore.state.toLowerCase() === status.state.toLowerCase() &&
+      !stateDirected(options.managerFeedback, status.state)
+    ) {
       return {
-        ...setBefore,
+        ...setBefore.applied,
         reason: reusedStatusNote(status.state, status.ticket),
         idempotencyKey: identity,
       };

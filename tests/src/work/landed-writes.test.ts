@@ -381,6 +381,46 @@ describe('the writes earlier runs landed', () => {
     expect(reusedLedger([rewritten], [], run, { surfaces })).toEqual([undefined]);
   });
 
+  it('reuses a status change only while it is still the last state an earlier run set, and only a call that writes the state alone', () => {
+    const review = call('linear', 'save_issue', { id: 'REVOPS-5', state: 'In Review' });
+    const doneThenReview: LandedWrite[] = [
+      { action: done, applied: row({ idempotencyKey: 'c' }) },
+      { action: review, applied: row({ idempotencyKey: 'e' }) },
+    ];
+    // Day0 itself moved the ticket on from Done, so a Done now is a new change, not a re-send.
+    expect(reusedLedger([done], doneThenReview, run, { surfaces })).toEqual([undefined]);
+    expect(reusedLedger([review], doneThenReview, run, { surfaces })[0]?.reason).toContain(
+      'reused landed status change to In Review',
+    );
+    // A call that writes more than the state is sent whole: its other fields are new.
+    const doneAndLabel = call('linear', 'save_issue', {
+      id: 'REVOPS-5',
+      state: 'Done',
+      labels: ['audited'],
+    });
+    expect(
+      reusedLedger([doneAndLabel], [{ action: done, applied: row({ idempotencyKey: 'c' }) }], run, {
+        surfaces,
+      }),
+    ).toEqual([undefined]);
+  });
+
+  it("sends a landed status change again when the manager's note directs that state, and not when it declines it", () => {
+    const sources: LandedWrite[] = [{ action: done, applied: row({ idempotencyKey: 'c' }) }];
+    expect(
+      reusedLedger([done], sources, run, {
+        surfaces,
+        managerFeedback: 'Ana reopened it by mistake; set it Done again.',
+      }),
+    ).toEqual([undefined]);
+    expect(
+      reusedLedger([done], sources, run, {
+        surfaces,
+        managerFeedback: 'Do not move it to Done yet; fix the comment.',
+      })[0]?.reason,
+    ).toContain('reused landed status change');
+  });
+
   it('lists each landed write on one bounded line for the prompt, with the rule after them', () => {
     const long = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'x'.repeat(200) });
     const lines = landedWriteLines(
