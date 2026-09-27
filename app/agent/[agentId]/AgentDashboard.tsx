@@ -3832,7 +3832,10 @@ export function waitingLine(
   if (item.state === 'deferred' && verdict?.reason === 'scope-judgement-unavailable') {
     return `Waiting: the scope check could not reach the model${unavailableAt ? ` at ${unavailableAt}` : ''}${because}, ${attempts} times. Check for new work asks it again; nothing runs until it answers.`;
   }
-  if (item.state !== 'discovered' || verdict !== undefined) return undefined;
+  // A row back in `discovered` waits for a free slot whatever it was judged
+  // before: Retry and a re-admission leave the old verdict on the row. Only a
+  // verdict that queued it at the cap says something else, on its own line.
+  if (item.state !== 'discovered' || verdict?.decision === 'queue') return undefined;
   if (
     item.evaluationUnavailableAt !== undefined &&
     item.evaluationUnavailableAt >= (item.evaluationClaimedAt ?? 0)

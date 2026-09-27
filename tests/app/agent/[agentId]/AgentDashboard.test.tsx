@@ -2386,6 +2386,31 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
     expect(render(waiting({}), false)).not.toContain('Waiting for a free slot');
   });
 
+  it('reads a row Retry sent back as waiting for a free slot, not by the verdict it carried before', (): void => {
+    const markup = render(
+      waiting({
+        verdict: {
+          decision: 'defer',
+          reason: 'evaluation-attempts-spent',
+          attempts: 3,
+          missingPermissions: [],
+        },
+      }),
+    );
+    expect(markup).toContain('Waiting for a free slot');
+    expect(markup).not.toContain('evaluation-attempts-spent');
+    expect(
+      waitingLine(
+        {
+          state: 'discovered',
+          verdict: { decision: 'queue', reason: 'WIP cap reached' },
+        } as Doc<'workItems'>,
+        undefined,
+        undefined,
+      ),
+    ).toBeUndefined();
+  });
+
   it("gives the parked row's time in the employee's day and the cause from the latest unavailable event", (): void => {
     const markup = render(
       waiting({
