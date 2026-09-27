@@ -137,7 +137,9 @@ The Tracker API base is https://tracker.example.com/api/v2/.
   segment; `/issues/{id}.json` matches nothing.
 - The key's header is the first header in backticks that carries `{{secret}}`
   (`X-Api-Key: {{secret}}`, `Authorization: Token {{secret}}`), or an `Authorization` header
-  with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token.
+  with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token. The key
+  goes only in a header: a request that puts `{{secret}}` in its body or its path is refused, so
+  a key can never be posted as a comment.
 - The probe read is the one request day0 sends, with the key, when it checks the connection:
   on approval and every hour after. Write it on its own line, `Probe read:` and a `GET` in
   backticks, and pick a request that changes nothing, such as the API's "who am I" call. It must

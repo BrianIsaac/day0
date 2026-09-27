@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasPlaceholder,
+  httpSecretPlacementRefusal,
   injectSecret,
   redactValue,
   REDACTED,
@@ -56,5 +57,40 @@ describe('secret injection', (): void => {
     expect(redactValue(`{"error":"${escaped}"} ${encoded}`, secret)).toBe(
       `{"error":"${REDACTED}"} ${REDACTED}`,
     );
+  });
+});
+
+describe('where an http.request may carry the credential', (): void => {
+  it('admits it in a header value and nowhere else (review M4)', (): void => {
+    expect(
+      httpSecretPlacementRefusal({
+        path: '/comments',
+        headers: { Authorization: 'Bearer {{secret}}', 'X-Api-Key': '{{secret:tracker}}' },
+        body: '{"body":"Done."}',
+      }),
+    ).toBeUndefined();
+    expect(
+      httpSecretPlacementRefusal({
+        path: '/comments',
+        headers: {},
+        body: '{"body":"key: {{ secret }}"}',
+      }),
+    ).toBe(
+      '{{secret}} goes only in a header value, never in the body, so the credential was not sent',
+    );
+    expect(
+      httpSecretPlacementRefusal({
+        path: '/issues/{{secret}}',
+        headers: { '{{secret}}': 'x' },
+      }),
+    ).toBe(
+      '{{secret}} goes only in a header value, never in the path, the header name {{secret}}, so the credential was not sent',
+    );
+  });
+
+  it('leaves a placeholder that is not the credential to the unfilled-value rule', (): void => {
+    expect(
+      httpSecretPlacementRefusal({ path: '/issues/{{issue}}', headers: {}, body: '{{figure}}' }),
+    ).toBeUndefined();
   });
 });

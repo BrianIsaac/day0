@@ -349,7 +349,8 @@ describe('HTTP adapter', (): void => {
     );
     expect(badHeader).toMatchObject({
       ok: false,
-      reason: 'secret placeholders are not allowed in header names',
+      reason:
+        '{{secret}} goes only in a header value, never in the header name {{secret}}, so the credential was not sent',
     });
     expect(fetchImpl.calls).toHaveLength(0);
     await expect(adapter(fetchImpl).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
@@ -816,5 +817,38 @@ describe('the HTTP rung on a documented API that is not Slack', (): void => {
     expect(sent.calls.map((call) => call.url)).toEqual([
       'https://tracker.example.com/api/v2/issues/TRK-7',
     ]);
+  });
+
+  it('never puts the credential in a body, a documented field or not, or a path (review M4)', async (): Promise<void> => {
+    const sent = fakeFetch(() => Response.json({ ok: true }));
+    const rung = adapter(sent, [tracker], 'tracker-key');
+    const inBody = await rung.apply(
+      ctx,
+      run,
+      request('POST', '/comments', JSON.stringify({ issue: 'TRK-7', body: 'key: {{secret}}' })),
+      0,
+      'k',
+    );
+    expect(inBody).toMatchObject({
+      ok: false,
+      reason:
+        '{{secret}} goes only in a header value, never in the body, so the credential was not sent',
+    });
+    const inPath = await rung.apply(ctx, run, request('GET', '/issues/{{secret}}'), 0, 'k');
+    expect(inPath).toMatchObject({ ok: false });
+    expect(inPath.reason).toContain('never in the path');
+    const unfilled = await rung.apply(ctx, run, request('GET', '/issues/{{issue}}'), 0, 'k');
+    expect(unfilled.reason).toContain('a value was left unfilled');
+    expect(sent.calls).toEqual([]);
+    // The header is where the key goes.
+    await rung.apply(
+      ctx,
+      run,
+      request('POST', '/comments', '{"issue":"TRK-7","body":"Done."}'),
+      0,
+      'k',
+    );
+    expect(new Headers(sent.calls[0]!.init.headers).get('x-api-key')).toBe('tracker-key');
+    expect(sent.calls[0]!.init.body).toBe('{"issue":"TRK-7","body":"Done."}');
   });
 });

@@ -17,7 +17,12 @@ import {
   type HttpMethod,
   type ParsedHttpRequest,
 } from './policy';
-import { hasPlaceholder, injectSecret, SecretTemplateError } from './secrets';
+import {
+  hasPlaceholder,
+  httpSecretPlacementRefusal,
+  injectSecret,
+  SecretTemplateError,
+} from './secrets';
 import { redactOutcome } from './redact';
 import type { SpanModel } from '../redaction/client';
 import { isSlackApiEndpoint, slackApiBaseUrl } from './slack-endpoint';
@@ -547,6 +552,28 @@ export class HttpAdapter implements SurfaceAdapter {
       operationUnderBase(url, transportEndpoint),
     );
     if (unlisted) return { tool: action.tool, ok: false, reason: unlisted, idempotencyKey };
+    // A documented RPC read's body travels in the query, where every
+    // parameter is checked and a `token` is left behind, and a GET or HEAD
+    // sends none; only a body that is sent can carry the credential away.
+    const bodySent =
+      documentedRpcRead(request) === undefined &&
+      request.method !== 'GET' &&
+      request.method !== 'HEAD';
+    const misplaced = httpSecretPlacementRefusal({
+      path: request.path,
+      headers: request.headers,
+      ...(bodySent && request.body !== undefined ? { body: request.body } : {}),
+    });
+    if (misplaced) return { tool: action.tool, ok: false, reason: misplaced, idempotencyKey };
+    if (hasPlaceholder(request.path)) {
+      return {
+        tool: action.tool,
+        ok: false,
+        reason:
+          'the path carries a placeholder: a value was left unfilled, so the call was not sent',
+        idempotencyKey,
+      };
+    }
     if (!surface.credentialId) {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }
@@ -564,6 +591,8 @@ export class HttpAdapter implements SurfaceAdapter {
         if (bodyMoved && key.toLowerCase() === 'content-type') continue;
         headers[key] = injectSecret(value, secret, surface.slug);
       }
+      // The placement rule kept `{{secret}}` out of the body, so this only
+      // refuses a placeholder the skill left unfilled.
       const body =
         bodyMoved ||
         request.body === undefined ||
