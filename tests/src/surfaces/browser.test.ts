@@ -28,6 +28,7 @@ import {
   type SnapshotElement,
 } from '../../../src/surfaces/browser';
 import { dashboardPage, SIGN_IN_PAGE } from '../../fixtures/browser-phase-split-2026-09-16';
+import { RELABELLED_SIGN_IN_PAGE } from '../../fixtures/browser-sign-in-relabelled-2026-09-28';
 
 const TILE = 'http://looker-tile:8080/';
 
@@ -328,6 +329,30 @@ describe('resolving an element a skill named', (): void => {
   it('does not resolve a shorter generic name just because a role word was removed', (): void => {
     const page = '- generic "Save" [ref=e1]';
     expect(resolveElementRef(page, 'Save button')).toBeUndefined();
+  });
+
+  // P8-5, executed in pass 9: once the button is relabelled, "Sign in" named
+  // only the heading, and the click on it came back ok as a completed sign-in.
+  it('finds nothing to click once a redesign leaves only a heading with the name', (): void => {
+    expect(resolveElementRef(SIGN_IN_PAGE, 'Sign in')?.ref).toBe('e15');
+    expect(resolveElementRef(RELABELLED_SIGN_IN_PAGE, 'Sign in')).toBeUndefined();
+    expect(resolveElementRef(RELABELLED_SIGN_IN_PAGE, 'Sign in', 'write')).toBeUndefined();
+  });
+
+  it('still lets a read name the lone heading', (): void => {
+    expect(resolveElementRef(RELABELLED_SIGN_IN_PAGE, 'Sign in', 'read')).toEqual({
+      name: 'Sign in',
+      ref: 'e7',
+      role: 'heading',
+    });
+  });
+
+  it('does not let a write reach a lone non-interactive element through a longer name', (): void => {
+    const page = ['- heading "Sign in to Looker" [ref=e7]', '- button "Log in" [ref=e15]'].join(
+      '\n',
+    );
+    expect(resolveElementRef(page, 'Sign in')).toBeUndefined();
+    expect(resolveElementRef(page, 'Sign in', 'read')?.ref).toBe('e7');
   });
 
   it('still resolves a field whose name adds a unit to the description', (): void => {
