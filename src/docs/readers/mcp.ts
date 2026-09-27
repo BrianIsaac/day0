@@ -401,6 +401,32 @@ function batchFailure(source: DocSourceRecord, error: unknown): unknown {
   return interruptedReadError(error, 'The documentation read') ?? error;
 }
 
+/**
+ * The refusal for a reply Day0 cannot read as a list of pages.
+ *
+ * A walk that took such a reply as "no pages" would complete, and completing
+ * deletes every stored page the walk did not list, supersedes their
+ * credentials and demotes the surfaces bound to them.
+ */
+function unrecognisedReply(provider: string, missing: string): string {
+  return `${provider} answered without ${missing}, in a shape Day0 does not recognise; the sync stops here rather than delete the pages it could not list.`;
+}
+
+/** The page list a provider reply carries under `key`, refused when it is not a list. */
+function pageList(payload: Record<string, unknown>, key: string, provider: string): unknown[] {
+  const list = payload[key];
+  if (!Array.isArray(list)) throw new Error(unrecognisedReply(provider, `a ${key} list`));
+  return list;
+}
+
+/** One listed item as an object, refused when it is not one. */
+function listedItem(value: unknown, provider: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(unrecognisedReply(provider, 'an item object'));
+  }
+  return value as Record<string, unknown>;
+}
+
 /** Return an object-shaped provider payload. */
 function providerPayload(result: unknown): Record<string, unknown> {
   const value = providerValue(result);
@@ -655,12 +681,12 @@ export class McpReader implements DocSourceReader {
         {},
       ),
     );
-    const files = Array.isArray(searchResult.files) ? searchResult.files : [];
+    const files = pageList(searchResult, 'files', 'Google Drive');
     const pages: DocPage[] = [];
     for (const value of files) {
-      if (!value || typeof value !== 'object') continue;
-      const file = value as Record<string, unknown>;
-      if (typeof file.id !== 'string') continue;
+      const file = listedItem(value, 'Google Drive');
+      if (typeof file.id !== 'string')
+        throw new Error(unrecognisedReply('Google Drive', 'a file id'));
       const content = providerPayload(
         await read.execute!({ fileId: file.id, includeComments: false }, {}),
       );
@@ -727,17 +753,16 @@ export class McpReader implements DocSourceReader {
         {},
       ),
     );
-    const results = Array.isArray(searchResult.results) ? searchResult.results : [];
+    const results = pageList(searchResult, 'results', 'Confluence');
     const pages: DocPage[] = [];
     for (const value of results) {
-      if (!value || typeof value !== 'object') continue;
-      const result = value as Record<string, unknown>;
+      const result = listedItem(value, 'Confluence');
       const content =
         result.content && typeof result.content === 'object' && !Array.isArray(result.content)
           ? (result.content as Record<string, unknown>)
           : result;
       const pageId = typeof content.id === 'string' ? content.id : undefined;
-      if (!pageId) continue;
+      if (!pageId) throw new Error(unrecognisedReply('Confluence', 'a page id'));
       const retrieved = providerValue(
         await retrieve.execute!({ cloudId, pageId, contentFormat: 'markdown' }, {}),
       );
@@ -791,12 +816,11 @@ export class McpReader implements DocSourceReader {
         {},
       ),
     );
-    const results = Array.isArray(searchResult.results) ? searchResult.results : [];
+    const results = pageList(searchResult, 'results', 'Notion');
     const pages: DocPage[] = [];
     for (const value of results) {
-      if (!value || typeof value !== 'object') continue;
-      const result = value as Record<string, unknown>;
-      if (typeof result.id !== 'string') continue;
+      const result = listedItem(value, 'Notion');
+      if (typeof result.id !== 'string') throw new Error(unrecognisedReply('Notion', 'a page id'));
       const retrieved = providerPayload(
         await retrieve.execute!({ page_id: result.id, include_transcript: false }, {}),
       );

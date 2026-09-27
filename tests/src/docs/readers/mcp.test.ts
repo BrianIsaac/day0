@@ -311,6 +311,33 @@ describe('MCP documentation reader', (): void => {
     expect(waits).toEqual([PROVIDER_BACKOFF.baseMs]);
   });
 
+  it('refuses a reply with no page list, or a page with no id, instead of completing as empty (P5-13)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    for (const reply of [
+      { object: 'list', has_more: false, data: [{ id: 'page-1' }] },
+      { object: 'list', has_more: false, results: [{ title: 'no id' }] },
+      { object: 'list', has_more: false, results: ['page-1'] },
+    ]) {
+      const reader = new McpReader(
+        () => ({
+          listTools: async () => ({
+            'docs_API-post-search': { execute: async () => textResult(reply) },
+            'docs_API-retrieve-page-markdown': {
+              execute: async () => textResult({ markdown: '# Page' }),
+            },
+          }),
+          resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+          disconnect: vi.fn().mockResolvedValue(undefined),
+        }),
+        componentUp,
+      );
+      await expect(
+        reader.listPageBatch(notionSource(), 'ntn_value', undefined, 25),
+        JSON.stringify(reply),
+      ).rejects.toThrow('the sync stops here rather than delete the pages it could not list');
+    }
+  });
+
   it('authenticates the private hop under the new service name and the old alias', async (): Promise<void> => {
     vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
     for (const locator of ['http://docs-notion-mcp:3000/mcp', 'http://notion-mcp:3000/mcp']) {
