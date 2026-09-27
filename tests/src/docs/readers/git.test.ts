@@ -5,11 +5,13 @@ import {
   cloneArguments,
   cloneEnvironment,
   cloneFailure,
+  downloadArchive,
   gitPinsResolve,
   GitReader,
   parseGitLocator,
 } from '../../../../src/docs/readers/git';
 import { privateHostAllowlist } from '../../../../src/lib/private-hosts';
+import { PROVIDER_BACKOFF } from '../../../../src/lib/transport-error';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import type { DocSourceRecord } from '../../../../src/docs/types';
 
@@ -221,4 +223,28 @@ describe('the clone of a listed git host', (): void => {
       );
     },
   );
+});
+
+describe('the repository archive download', (): void => {
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+  });
+
+  it('waits out a server error and downloads the archive instead of failing the source', async (): Promise<void> => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (): Promise<Response> => {
+        calls += 1;
+        return calls === 1 ? new Response('busy', { status: 503 }) : new Response('archive-bytes');
+      }),
+    );
+    const waits: number[] = [];
+    const archive = await downloadArchive(new URL('https://codeload.example.com/a.tar.gz'), {
+      ...PROVIDER_BACKOFF,
+      sleep: async (ms: number): Promise<void> => void waits.push(ms),
+    });
+    expect(archive.toString()).toBe('archive-bytes');
+    expect(waits).toEqual([PROVIDER_BACKOFF.baseMs]);
+  });
 });

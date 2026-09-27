@@ -1,4 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { fetchWithBackoff, PROVIDER_BACKOFF, type BackoffPolicy } from '../../lib/transport-error';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isIP } from 'node:net';
@@ -95,8 +96,11 @@ export function archiveUrlFor(locator: GitLocator): URL {
 /**
  * Download one bounded repository archive.
  *
+ * A rate limit or a server error is tried again under the provider backoff.
+ *
  * Args:
  *   url: Provider archive URL.
+ *   backoff: How a rate-limited or failed download is tried again.
  *
  * Returns:
  *   Tar-gzip bytes.
@@ -104,8 +108,16 @@ export function archiveUrlFor(locator: GitLocator): URL {
  * Raises:
  *   Error: If the response fails or exceeds the size limit.
  */
-async function downloadArchive(url: URL): Promise<Buffer> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+export async function downloadArchive(
+  url: URL,
+  backoff: BackoffPolicy = PROVIDER_BACKOFF,
+): Promise<Buffer> {
+  const read = fetchWithBackoff(
+    (input: URL, init?: RequestInit): Promise<Response> => fetch(input, init),
+    30_000,
+    backoff,
+  );
+  const response = await read(url);
   if (!response.ok) throw new Error(`Git archive returned HTTP ${response.status}.`);
   const declaredLength = Number(response.headers.get('content-length') || 0);
   if (declaredLength > MAX_ARCHIVE_BYTES) throw new Error('Git archive exceeds 25 MiB.');

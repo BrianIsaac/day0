@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { htmlPageTitle, parseUrlLocator, UrlsReader } from '../../../../src/docs/readers/urls';
 import type { DocSourceRecord } from '../../../../src/docs/types';
+import { PROVIDER_BACKOFF } from '../../../../src/lib/transport-error';
 
 afterEach((): void => {
   vi.unstubAllGlobals();
@@ -56,6 +57,33 @@ describe('URL documentation reader', (): void => {
     expect(first.pages.map((page) => page.title)).toEqual(['One']);
     expect(first.nextCursor).toBe('1');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits out a 429 and reads the page instead of failing the source', async (): Promise<void> => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (): Promise<Response> => {
+        calls += 1;
+        return calls === 1
+          ? new Response('slow down', { status: 429, headers: { 'Retry-After': '4' } })
+          : new Response('# Rate limited once', { headers: { 'content-type': 'text/markdown' } });
+      }),
+    );
+    const waits: number[] = [];
+    const source: DocSourceRecord = {
+      _id: 'source-urls' as Id<'docSources'>,
+      label: 'Pages',
+      kind: 'urls',
+      locator: 'https://example.com/one',
+    };
+    const reader = new UrlsReader({
+      ...PROVIDER_BACKOFF,
+      sleep: async (ms: number): Promise<void> => void waits.push(ms),
+    });
+    const [page] = await reader.listPages(source);
+    expect(page?.title).toBe('Rate limited once');
+    expect(waits).toEqual([4_000]);
   });
 
   it('extracts a plain fallback-safe HTML title', (): void => {
