@@ -366,6 +366,75 @@ describe('the agents-zone migration (N12, the M2 backfill)', (): void => {
   });
 });
 
+describe('the retirements migration (Q15, N1)', (): void => {
+  it('copies each older retire tombstone into the owner’s retirements once, and leaves a tombstone that already names its row', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const gone = await agent(harness, { userId: 'owner' });
+    const named = await agent(harness, { userId: 'owner' });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId: gone,
+        type: 'agent.retired',
+        payload: {
+          userId: 'owner',
+          agentId: gone,
+          retiredAt: 7,
+          rowCounts: { events: 3, surfaces: 1 },
+          revokedCredentials: 1,
+          keptCredentials: 2,
+        },
+        createdAt: 7,
+      });
+      const retirementId = await ctx.db.insert('retirements', {
+        userId: 'owner',
+        agentId: named,
+        agentName: 'Mateo',
+        retiredAt: 9,
+        rowCounts: {},
+        revokedCredentials: 0,
+        keptCredentials: 0,
+        claims: [],
+        rejections: [],
+      });
+      await ctx.db.insert('events', {
+        agentId: named,
+        type: 'agent.retired',
+        payload: { retirementId, agentId: named, retiredAt: 9 },
+        createdAt: 9,
+      });
+      await ctx.db.insert('events', {
+        agentId: gone,
+        type: 'work.completed',
+        payload: {},
+        createdAt: 8,
+      });
+      await ctx.db.delete(gone);
+      await ctx.db.delete(named);
+    });
+
+    await runAll(harness);
+    await runAll(harness);
+
+    const rows = await harness.run(
+      async (ctx) => await ctx.db.query('retirements').order('asc').collect(),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.agentId === gone)).toMatchObject({
+      userId: 'owner',
+      retiredAt: 7,
+      rowCounts: { events: 3, surfaces: 1 },
+      revokedCredentials: 1,
+      keptCredentials: 2,
+      claims: [],
+      rejections: [],
+    });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((row) => row.name === 'retirements-from-tombstones'),
+    ).toMatchObject({ release: '0.6.0', read: 2, changed: 1, completedAt: expect.any(Number) });
+  });
+});
+
 describe('the release stamp', (): void => {
   it('is refused while a migration is unfinished, then kept once per release and commit', async (): Promise<void> => {
     const harness = limitedHarness();

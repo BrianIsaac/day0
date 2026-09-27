@@ -32,6 +32,7 @@ import { migrateSandboxIdPage } from './skills';
 import { restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
+import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { deploymentZone } from '../src/lib/zone';
 
@@ -52,6 +53,7 @@ export const MIGRATION_NAMES = [
   'credentials-sync-revoke',
   'ticket-listings',
   'agents-zone',
+  'retirements-from-tombstones',
 ] as const;
 
 /** One migration's name. */
@@ -70,6 +72,9 @@ const FIRST_MIGRATIONS_RELEASE = '0.4.0';
 
 /** The release after it, which gives every agent a zone and a mode (N12, the M2 backfill). */
 const ZONE_RELEASE = '0.5.0';
+
+/** The schema step after that: retirements, the freeze's approved list, the attempt count. */
+const SCHEMA_STEP_RELEASE = '0.6.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -117,6 +122,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: ZONE_RELEASE,
     does: 'gives an agent with no zone the deployment’s current zone, and one with no mode the deployment’s mode; the status note names the zone',
     thenRemoves: 'nothing: an absent zone still reads as the deployment’s',
+  },
+  'retirements-from-tombstones': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies each retire tombstone an older release wrote as an agent.retired payload into the owner’s retirements table, where the export’s owner section now reads it',
+    thenRemoves: 'nothing: the agent.retired events stay as the ledger’s record',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -401,6 +411,44 @@ async function stampZoneAndMode(ctx: MutationCtx, cursor: string | null): Promis
   };
 }
 
+/**
+ * Copy the retire tombstones older releases kept on `agent.retired` events
+ * into `retirements`. A tombstone this release wrote names its row already
+ * and is passed over; so is one without an owner, which no owner section
+ * could list.
+ */
+async function copyRetirements(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db
+    .query('events')
+    .withIndex('by_type', (q) => q.eq('type', AGENT_RETIRED_EVENT))
+    .paginate({ cursor, numItems: EVENT_PAGE });
+  let changed = 0;
+  for (const event of page.page) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    if (payload.retirementId !== undefined || typeof payload.userId !== 'string') continue;
+    const count = (value: unknown): number => (typeof value === 'number' ? value : 0);
+    const rowCounts = Object.fromEntries(
+      Object.entries(
+        typeof payload.rowCounts === 'object' && payload.rowCounts !== null
+          ? (payload.rowCounts as Record<string, unknown>)
+          : {},
+      ).flatMap(([table, rows]) => (typeof rows === 'number' ? [[table, rows]] : [])),
+    );
+    await ctx.db.insert('retirements', {
+      userId: payload.userId,
+      agentId: event.agentId,
+      retiredAt: typeof payload.retiredAt === 'number' ? payload.retiredAt : event.createdAt,
+      rowCounts,
+      revokedCredentials: count(payload.revokedCredentials),
+      keptCredentials: count(payload.keptCredentials),
+      claims: [],
+      rejections: [],
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
 /** Each migration's page, keyed by name, so a name with no page fails the typecheck. */
 const MIGRATION_PAGES: Readonly<
   Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
@@ -417,6 +465,7 @@ const MIGRATION_PAGES: Readonly<
   'credentials-sync-revoke': clearSyncRevokes,
   'ticket-listings': copyListings,
   'agents-zone': stampZoneAndMode,
+  'retirements-from-tombstones': copyRetirements,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
 };
