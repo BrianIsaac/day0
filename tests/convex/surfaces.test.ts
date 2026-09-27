@@ -2622,54 +2622,72 @@ describe('access expiry (Q5)', (): void => {
     ]);
   });
 
-  it('restarts, once, every connected clock the proposal started', async (): Promise<void> => {
+  it('restarts, once, every approved clock the proposal started, as an upgrade migration', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const current = await approvedSurface(harness);
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.patch(current, { verdict: 'connected', credentialLanded: true });
     });
     const agentId = await seedAgent(harness);
-    const legacy = await harness.run(
-      async (ctx): Promise<Id<'surfaces'>> =>
-        await ctx.db.insert('surfaces', {
-          agentId,
-          slug: 'linear',
-          displayName: 'Linear',
-          class: 'kanban',
-          verdict: 'connected',
-          whereFound: [],
-          request: { expiresInDays: 30 },
-          managerApprovedAt: PROPOSED_AT + DAY,
-          itApprovedAt: PROPOSED_AT + DAY,
-          credentialLanded: true,
-          expiresAt: PROPOSED_AT + 30 * DAY,
-          createdAt: 1,
-        }),
-    );
+    const legacy = async (
+      fields: Partial<Doc<'surfaces'>> & Pick<Doc<'surfaces'>, 'slug' | 'verdict'>,
+    ): Promise<Id<'surfaces'>> =>
+      await harness.run(
+        async (ctx): Promise<Id<'surfaces'>> =>
+          await ctx.db.insert('surfaces', {
+            agentId,
+            displayName: fields.slug,
+            class: 'kanban',
+            whereFound: [],
+            request: { expiresInDays: 30 },
+            managerApprovedAt: PROPOSED_AT + DAY,
+            itApprovedAt: PROPOSED_AT + DAY,
+            credentialLanded: fields.verdict === 'connected',
+            expiresAt: PROPOSED_AT + 30 * DAY,
+            createdAt: 1,
+            ...fields,
+          }),
+      );
+    const connected = await legacy({ slug: 'linear', verdict: 'connected' });
+    const approved = await legacy({ slug: 'notion', verdict: 'approved' });
+    const ungranted = await legacy({ slug: 'looker', verdict: 'ungranted' });
+    const ended = await legacy({ slug: 'jira', verdict: 'approved', reason: 'expired' });
     const declared = await seedDeclared(harness, agentId, 'Slack', 'chat');
     const upgradedAt = PROPOSED_AT + 20 * DAY;
     vi.setSystemTime(upgradedAt);
 
-    await expect(harness.mutation(internal.surfaces.restartAccessClocks, {})).resolves.toEqual({
-      restarted: 1,
-      continued: false,
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'surfaces-access-clock' }),
+    ).resolves.toMatchObject({ name: 'surfaces-access-clock', changed: 3 });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-access-clock')).toMatchObject({
+      changed: 3,
+      completedAt: upgradedAt,
     });
     vi.setSystemTime(upgradedAt + DAY);
-    await expect(harness.mutation(internal.surfaces.restartAccessClocks, {})).resolves.toEqual({
-      restarted: 0,
-      continued: false,
-    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'surfaces-access-clock' }),
+    ).resolves.toMatchObject({ finishedEarlier: true, changed: 3 });
 
-    expect((await readSurface(harness, legacy)).expiresAt).toBe(upgradedAt + 90 * DAY);
+    for (const surfaceId of [connected, approved, ungranted]) {
+      expect((await readSurface(harness, surfaceId)).expiresAt).toBe(upgradedAt + 90 * DAY);
+    }
+    expect((await readSurface(harness, ended)).expiresAt).toBe(PROPOSED_AT + 30 * DAY);
     expect((await readSurface(harness, declared)).expiresAt).toBeUndefined();
     expect((await readSurface(harness, current)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
-    expect((await payloads(harness, 'surface.access-set')).at(-1)).toEqual({
-      surfaceId: legacy,
-      by: 'upgrade',
-      days: 90,
-      from: PROPOSED_AT + 30 * DAY,
-      expiresAt: upgradedAt + 90 * DAY,
-    });
+    expect(
+      (await payloads(harness, 'surface.access-set')).filter(
+        (payload) => (payload as { by?: unknown }).by === 'upgrade',
+      ),
+    ).toEqual(
+      [connected, approved, ungranted].map((surfaceId) => ({
+        surfaceId,
+        by: 'upgrade',
+        days: 90,
+        from: PROPOSED_AT + 30 * DAY,
+        expiresAt: upgradedAt + 90 * DAY,
+      })),
+    );
   });
 });
 

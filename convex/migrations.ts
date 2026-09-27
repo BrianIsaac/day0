@@ -29,6 +29,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { migrateSandboxIdPage } from './skills';
+import { restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 
@@ -45,6 +46,7 @@ export const MIGRATION_NAMES = [
   'surfaces-credential-ref',
   'credentials-sync-revoke',
   'ticket-listings',
+  'surfaces-access-clock',
 ] as const;
 
 /** One migration's name. */
@@ -102,6 +104,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'copies each kept work.listed snapshot into ticketListings, where the re-read before apply now looks',
     thenRemoves: 'nothing: work.listed events stay as the feed’s record',
+  },
+  'surfaces-access-clock': {
+    release: FIRST_MIGRATIONS_RELEASE,
+    does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
+    thenRemoves: 'nothing: the surface.access-set event it writes is the record',
   },
 };
 
@@ -368,6 +375,8 @@ const MIGRATION_PAGES: Readonly<
   'surfaces-credential-ref': clearCredentialRef,
   'credentials-sync-revoke': clearSyncRevokes,
   'ticket-listings': copyListings,
+  'surfaces-access-clock': async (ctx, cursor) =>
+    await restartAccessClocksPage(ctx, cursor, Date.now()),
 };
 
 /** A migration's row, if it has started. */

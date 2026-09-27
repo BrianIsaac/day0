@@ -1395,7 +1395,7 @@ export const SURFACE_ACCESS_MAX_DAYS = 365;
 /** How long before the end date the manager is told it is coming (Q5). */
 export const EXPIRY_NOTICE_MS = 7 * DAY_MS;
 
-/** Surfaces the backfill reads per transaction; the rest continue by schedule. */
+/** Surfaces one page of the access-clock migration reads. */
 const ACCESS_BACKFILL_BATCH = 100;
 
 /** The verdicts of a surface both approvals reached, whose access runs on a clock. */
@@ -1639,47 +1639,49 @@ export const recordExpiryNotice = internalMutation({
 });
 
 /**
- * One-off at the upgrade to Q5's clock: restart every connected surface's
- * access at the default length from now.
+ * One page of the `surfaces-access-clock` migration: restart the access clock
+ * of every approved card at the default length from the upgrade (Q5).
  *
- * Before this release the clock started at proposal, so a connected row's end
- * date is the model's length counted from before the manager approved. Each
- * such row gets `SURFACE_ACCESS_DEFAULT_DAYS` from the upgrade; a row with a
- * `surface.access-set` event already has a clock this release set and is left
- * alone, which also makes a second run a no-op. Batched, with continuations.
+ * Before this release the clock started at proposal, so an approved,
+ * connected, ungranted or listed-dead row's end date is the model's length
+ * counted from before the manager approved. Each such row gets
+ * `SURFACE_ACCESS_DEFAULT_DAYS` from the upgrade. A row with a
+ * `surface.access-set` event already has a clock this release set, and an
+ * ended access stays ended until a manager renews it; both are left alone,
+ * which also makes a second run a no-op. Run by `migrations:runPending`.
  *
- *   npx convex run surfaces:restartAccessClocks
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @param now - The upgrade's moment, from which the new clocks run.
+ * @returns What the page read and changed, and where the next one starts.
  */
-export const restartAccessClocks = internalMutation({
-  args: { cursor: v.optional(v.string()) },
-  handler: async (ctx, args): Promise<{ restarted: number; continued: boolean }> => {
-    const now = Date.now();
-    const page = await ctx.db
-      .query('surfaces')
-      .paginate({ cursor: args.cursor ?? null, numItems: ACCESS_BACKFILL_BATCH });
-    let restarted = 0;
-    for (const surface of page.page) {
-      if (surface.verdict !== 'connected' || surface.expiresAt === undefined) continue;
-      if (await surfaceEventExists(ctx, surface, 'surface.access-set')) continue;
-      const expiresAt = now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
-      await ctx.db.patch(surface._id, { expiresAt });
-      await logAccessSet(ctx, surface, {
-        by: 'upgrade',
-        days: SURFACE_ACCESS_DEFAULT_DAYS,
-        from: surface.expiresAt,
-        expiresAt,
-        at: now,
-      });
-      restarted += 1;
-    }
-    if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.surfaces.restartAccessClocks, {
-        cursor: page.continueCursor,
-      });
-    }
-    return { restarted, continued: !page.isDone };
-  },
-});
+export async function restartAccessClocksPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+  now: number,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (!ACCESS_VERDICTS.includes(surface.verdict) || surface.reason === 'expired') continue;
+    if (await surfaceEventExists(ctx, surface, 'surface.access-set')) continue;
+    const expiresAt = now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
+    await ctx.db.patch(surface._id, { expiresAt });
+    await logAccessSet(ctx, surface, {
+      by: 'upgrade',
+      days: SURFACE_ACCESS_DEFAULT_DAYS,
+      from: surface.expiresAt,
+      expiresAt,
+      at: now,
+    });
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
 
 /** Record this poll's waterfall position and visible skip outcome. */
 export const recordIntake = internalMutation({
