@@ -86,6 +86,52 @@ describe('URL documentation reader', (): void => {
     expect(waits).toEqual([4_000]);
   });
 
+  it('names a page that fails and reads the rest of the batch (P5-11)', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request): Promise<Response> => {
+        const url = String(input);
+        if (url.endsWith('/gone')) return new Response('missing', { status: 404 });
+        if (url.endsWith('/huge')) {
+          return new Response('x', { headers: { 'content-length': String(3 * 1024 * 1024) } });
+        }
+        if (url.startsWith('https://down.example')) {
+          throw new TypeError('fetch failed', {
+            cause: Object.assign(new Error('getaddrinfo ENOTFOUND down.example'), {
+              code: 'ENOTFOUND',
+            }),
+          });
+        }
+        return new Response('# Kept', { headers: { 'content-type': 'text/markdown' } });
+      }),
+    );
+    const source: DocSourceRecord = {
+      _id: 'source-urls' as Id<'docSources'>,
+      label: 'Pages',
+      kind: 'urls',
+      locator: [
+        'https://example.com/gone',
+        'https://example.com/kept',
+        'https://example.com/huge',
+        'https://down.example/page',
+      ].join('\n'),
+    };
+    const batch = await new UrlsReader({
+      ...PROVIDER_BACKOFF,
+      sleep: async () => undefined,
+    }).listPageBatch(source, undefined, undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toEqual(['https://example.com/kept']);
+    expect(batch.unread).toEqual([
+      { ref: 'https://example.com/gone', reason: 'https://example.com/gone returned HTTP 404.' },
+      { ref: 'https://example.com/huge', reason: 'https://example.com/huge exceeds 2 MiB.' },
+      {
+        ref: 'https://down.example/page',
+        reason: 'fetch failed (getaddrinfo ENOTFOUND down.example)',
+      },
+    ]);
+    expect(batch.nextCursor).toBeUndefined();
+  });
+
   it('extracts a plain fallback-safe HTML title', (): void => {
     expect(htmlPageTitle('<title>  Team   docs </title>', 'fallback')).toBe('Team docs');
     expect(htmlPageTitle('<p>none</p>', 'fallback')).toBe('fallback');

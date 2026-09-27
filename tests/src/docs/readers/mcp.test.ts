@@ -196,6 +196,76 @@ describe('MCP documentation reader', (): void => {
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
+  it('names a Notion page it cannot read and reads the rest of the batch (P5-11)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    const listed = ['page-1', 'page-2', 'page-3'].map((id) => ({
+      id,
+      properties: { Name: { type: 'title', title: [{ plain_text: id }] } },
+    }));
+    const retrieve = vi.fn(async (input: Record<string, unknown>) =>
+      input.page_id === 'page-2'
+        ? textResult({ markdown: '# Half', truncated: true })
+        : textResult({ markdown: `# ${String(input.page_id)}` }),
+    );
+    const reader = new McpReader(
+      () => ({
+        listTools: async () => ({
+          'docs_API-post-search': {
+            execute: async () => textResult({ results: listed, has_more: false }),
+          },
+          'docs_API-retrieve-page-markdown': { execute: retrieve },
+        }),
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: async () => undefined,
+      }),
+      componentUp,
+    );
+    const batch = await reader.listPageBatch(notionSource(), 'ntn_contract_value', undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toEqual(['page-1', 'page-3']);
+    expect(batch.unread).toEqual([
+      { ref: 'page-2', reason: 'Notion page Markdown was truncated.' },
+    ]);
+  });
+
+  it('retries the batch, not the page, when one page read meets a rate limit', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    let limited = true;
+    const retrieve = vi.fn(async (input: Record<string, unknown>) => {
+      if (input.page_id === 'page-2' && limited) {
+        limited = false;
+        return textResult({ object: 'error', code: 'rate_limited' });
+      }
+      return textResult({ markdown: `# ${String(input.page_id)}` });
+    });
+    const sleeps: number[] = [];
+    const reader = new McpReader(
+      () => ({
+        listTools: async () => ({
+          'docs_API-post-search': {
+            execute: async () =>
+              textResult({ results: [{ id: 'page-1' }, { id: 'page-2' }], has_more: false }),
+          },
+          'docs_API-retrieve-page-markdown': { execute: retrieve },
+        }),
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: async () => undefined,
+      }),
+      componentUp,
+      {
+        attempts: 2,
+        baseMs: 5_000,
+        maxWaitMs: 30_000,
+        sleep: async (ms: number): Promise<void> => {
+          sleeps.push(ms);
+        },
+      },
+    );
+    const batch = await reader.listPageBatch(notionSource(), 'ntn_contract_value', undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toEqual(['page-1', 'page-2']);
+    expect(batch.unread).toEqual([]);
+    expect(sleeps).toEqual([5_000]);
+  });
+
   it('rejects provider errors and always disconnects', async (): Promise<void> => {
     vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
     const disconnect = vi.fn().mockResolvedValue(undefined);

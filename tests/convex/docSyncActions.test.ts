@@ -211,6 +211,7 @@ describe('documentation sync action helpers', (): void => {
       credentialRefs: pages.map((page: DocPage): string => page.ref),
       pages: pages.length,
       redactions: values.length,
+      unread: [],
     });
     expect(actionCalls).toHaveLength(values.length);
     for (const value of values) {
@@ -413,6 +414,74 @@ describe('documentation sync batching', (): void => {
     expect(source?.lastError).toBe(
       'redaction component unreachable at redactor:8000: read ECONNRESET',
     );
+  });
+
+  it('keeps a page it cannot store at its last version, with its credential, and completes the sync (P5-11)', async (): Promise<void> => {
+    const root = temporary('day0-sync-unread-');
+    await mkdir(join(root, 'few'));
+    const value = token(['lin', 'api'], '_', 'unread-contract-0123456789abcdef');
+    await writeFile(join(root, 'few', 'handbook.md'), '# Handbook\n\nFirst.\n', 'utf8');
+    await writeFile(
+      join(root, 'few', 'tile.md'),
+      `# Tile runbook\n\nService token: ${value}\n`,
+      'utf8',
+    );
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Few',
+      kind: 'folder',
+      locator: 'few',
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    const before = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (index) =>
+            index.eq('sourceId', sourceId).eq('ref', 'tile.md'),
+          )
+          .unique(),
+    );
+    expect(before?.markdown).toContain('<credential: linear service token, stored>');
+
+    // The runbook grows past what Day0 stores; the handbook changes as usual.
+    await writeFile(
+      join(root, 'few', 'tile.md'),
+      `# Tile runbook\n\nService token: ${value}\n\n${'Step.\n'.repeat(160_000)}`,
+      'utf8',
+    );
+    await writeFile(join(root, 'few', 'handbook.md'), '# Handbook\n\nSecond.\n', 'utf8');
+    await expect(
+      harness.action(internal.docSyncActions.syncSource, { sourceId }),
+    ).resolves.toMatchObject({ ok: true, pages: 1, complete: true });
+
+    const after = await harness.run(async (ctx) => ({
+      pages: await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .collect(),
+      credentials: await ctx.db.query('credentials').collect(),
+      runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+      source: await ctx.db.get(sourceId),
+    }));
+    expect(after.pages.find((page) => page.ref === 'tile.md')).toMatchObject({
+      markdown: before?.markdown,
+      updatedAt: before?.updatedAt,
+    });
+    expect(after.pages.find((page) => page.ref === 'handbook.md')?.markdown).toContain('Second.');
+    expect(after.credentials).toHaveLength(1);
+    expect(after.credentials[0].status).toBeUndefined();
+    expect(after.runs[0]).toMatchObject({ state: 'completed' });
+    expect(after.runs[0].reason).toMatch(
+      /^1 page could not be read this sync and keeps its last stored version\n- tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
+    );
+    expect(after.source).toMatchObject({ status: 'synced' });
+    expect(after.source?.lastError).toMatch(
+      /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads them again\.$/,
+    );
+    expect(JSON.stringify(after)).not.toContain(value);
   });
 
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {

@@ -22,6 +22,7 @@ import { restatedScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
+import { unreadPagesLine, withUnreadPages } from '../src/docs/sync-record';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -43,6 +44,9 @@ const sourceStatus = v.union(
   v.literal('error'),
   v.literal('credential-not-landed'),
 );
+
+/** The listed pages a batch could not read, each kept at its last stored version (P5-11). */
+const unreadPages = v.optional(v.array(v.object({ ref: v.string(), reason: v.string() })));
 
 export interface LinkInput {
   label: string;
@@ -634,7 +638,13 @@ export const syncContext = internalQuery({
   },
 });
 
-/** Record one non-final batch and advance its provider-safe cursor. */
+/**
+ * Record one non-final batch and advance its provider-safe cursor.
+ *
+ * The batch's `refs` and `credentialRefs` include the pages it could not
+ * read and their stored credentials, so the finished generation keeps them;
+ * `unread` names those pages in the run's record.
+ */
 export const recordSyncBatch = internalMutation({
   args: {
     sourceId: v.id('docSources'),
@@ -645,6 +655,7 @@ export const recordSyncBatch = internalMutation({
     credentialRefs: v.array(v.string()),
     pageCount: v.number(),
     redactionCount: v.number(),
+    unread: unreadPages,
   },
   handler: async (ctx, args): Promise<boolean> => {
     const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
@@ -663,13 +674,20 @@ export const recordSyncBatch = internalMutation({
       credentialRefs: [...run.credentialRefs, ...args.credentialRefs],
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
+      reason: withUnreadPages(run.reason, args.unread ?? []),
     });
     await ctx.db.patch(source._id, { updatedAt: Date.now() });
     return true;
   },
 });
 
-/** Complete the final batch, delete stale mirrors and publish one synced state. */
+/**
+ * Complete the final batch, delete stale mirrors and publish one synced state.
+ *
+ * A page the generation could not read is in its refs, so it keeps its last
+ * stored version, mirror and credentials; the run's reason names it and the
+ * source's line says so until a sync reads it (P5-11).
+ */
 export const finishSync = internalMutation({
   args: {
     sourceId: v.id('docSources'),
@@ -679,6 +697,7 @@ export const finishSync = internalMutation({
     credentialRefs: v.array(v.string()),
     pageCount: v.number(),
     redactionCount: v.number(),
+    unread: unreadPages,
   },
   handler: async (
     ctx,
@@ -862,6 +881,7 @@ export const finishSync = internalMutation({
     }
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
+    const unreadRecord = withUnreadPages(run.reason, args.unread ?? []);
     const now = Date.now();
     await ctx.db.patch(run._id, {
       cursor: undefined,
@@ -871,6 +891,7 @@ export const finishSync = internalMutation({
       redactionCount,
       state: 'completed',
       completedAt: now,
+      reason: unreadRecord,
       summary: {
         pagesKept: pages.length - pagesRemoved,
         pagesRemoved,
@@ -883,7 +904,7 @@ export const finishSync = internalMutation({
       activeSyncId: undefined,
       lastCompletedSyncId: run._id,
       status: 'synced',
-      lastError: undefined,
+      lastError: unreadPagesLine(unreadRecord),
       lastSyncAt: now,
       updatedAt: now,
     });

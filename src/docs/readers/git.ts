@@ -11,7 +11,8 @@ import {
   type PrivateHostAllowlist,
 } from '../../lib/private-hosts';
 import { resolveHostname, type HostResolver } from '../../surfaces/mcp-address';
-import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import type { DocPage, DocSourceRecord } from '../types';
+import type { DocumentationReader, ReadPageBatch } from './batch';
 import { readMarkdownDirectory, readMarkdownDirectoryBatch } from './folder';
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
@@ -247,7 +248,7 @@ export function cloneFailure(
 }
 
 /** Reader for public GitHub and GitLab Markdown repositories, and repositories on listed private hosts. */
-export class GitReader implements DocSourceReader {
+export class GitReader implements DocumentationReader {
   private readonly resolve: HostResolver;
 
   /** @param resolve - Resolves a listed host's name; the system's resolver by default. */
@@ -272,11 +273,11 @@ export class GitReader implements DocSourceReader {
     _secret: string | undefined,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     void _secret;
     return await this.withCheckout(
       source,
-      async (checkout: string): Promise<DocPageBatch> =>
+      async (checkout: string): Promise<ReadPageBatch> =>
         await readMarkdownDirectoryBatch(source, checkout, cursor, limit),
     );
   }
