@@ -1297,7 +1297,7 @@ describe('orientation run', (): void => {
     expect(model.prompts).toHaveLength(1);
   });
 
-  it('reports a model failure on the card and still files the evidence-backed proposal', async (): Promise<void> => {
+  it('reports a model failure on the card and still files the evidence-backed proposal at the 90-day default', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = undefined;
     const harness = convexTest(schema, orientationModules());
@@ -1329,6 +1329,7 @@ describe('orientation run', (): void => {
     expect((linear.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
       'could not classify this system (model unavailable in tests)',
     );
+    expect((linear.request as { expiresInDays: number }).expiresInDays).toBe(90);
   });
 
   it('fans out one scheduled job per declared system and isolates a stale job', async (): Promise<void> => {
