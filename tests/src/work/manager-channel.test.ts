@@ -35,11 +35,13 @@ describe('manager channel decision requests', (): void => {
       alphabet.slice(0, 6),
     );
     expect(decisionIdFromBytes(new Uint8Array([247, 30, 31, 61, 62, 93, 200]))).toBe(
-      [alphabet[247 % 31], alphabet[30], alphabet[0], alphabet[30], alphabet[0], alphabet[0]].join(''),
+      [alphabet[247 % 31], alphabet[30], alphabet[0], alphabet[30], alphabet[0], alphabet[0]].join(
+        '',
+      ),
     );
-    expect(() => decisionIdFromBytes(new Uint8Array([248, 249, 250, 251, 252, 253, 1, 2, 3]))).toThrow(
-      /random bytes/,
-    );
+    expect(() =>
+      decisionIdFromBytes(new Uint8Array([248, 249, 250, 251, 252, 253, 1, 2, 3])),
+    ).toThrow(/random bytes/);
   });
 
   it('derives a six-character token from random bytes without ambiguous characters', (): void => {
@@ -116,7 +118,11 @@ describe('manager channel decision requests', (): void => {
   it('says an approval covers every held action listed, and where to approve some (P5-8)', (): void => {
     const held: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"iss-1","state":"Done"}' },
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: '{"id":"iss-1","state":"Done"}',
+      },
     };
     const text = decisionRequestText({
       agentName: 'ops worker',
@@ -159,7 +165,11 @@ describe('manager channel decision requests', (): void => {
   it('tells the manager a second request closes the run they already approved', (): void => {
     const held: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"iss-1","state":"Done"}' },
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: '{"id":"iss-1","state":"Done"}',
+      },
     };
     const text = decisionRequestText({
       agentName: 'ops worker',
@@ -251,7 +261,10 @@ describe('manager channel decision requests', (): void => {
     // courtesy is ignored, but a condition is not an approval of everything (P5-9).
     expect(parseDecisionReply('“please approve ab3xyz”')).toBeUndefined();
     expect(parseDecisionReply('approve ab3xyz thanks')).toEqual({ verb: 'approve', id: 'ab3xyz' });
-    expect(parseDecisionReply('approve ab3xyz, thank you!')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('approve ab3xyz, thank you!')).toEqual({
+      verb: 'approve',
+      id: 'ab3xyz',
+    });
     expect(parseDecisionReply('approve ab3xyz but not the Done')).toBeUndefined();
     expect(parseDecisionReply('approve ab3xyz except the close')).toBeUndefined();
   });
