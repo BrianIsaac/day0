@@ -36,12 +36,12 @@ KEYS=(
   DAY0_TEST_SLACK_API_URL
   DAY0_TEST_SLACK_AUTHORIZE_URL
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
-  CLERK_JWT_ISSUER_DOMAIN
 )
 
 # The pairs `convex/auth.config.ts` reads to decide who may call the
-# deployment: the local key's flag and its public half, and the customer's
-# issuer (A7) with its audience and the profile that runs it. They are handled
+# deployment: the local key's flag and its public half, the customer's issuer
+# (A7) with its audience and the profile that runs it, and Clerk's issuer for
+# the hosted demo. They are handled
 # apart from KEYS because their order is load-bearing and it is not the same
 # order in both directions: a deployment that already has functions on it
 # validates its auth config on *every* env change, and rejects any single step
@@ -56,6 +56,7 @@ NO_AUTH_JWKS=DEV_NO_AUTH_JWKS
 OIDC_ISSUER=DAY0_OIDC_ISSUER
 OIDC_AUDIENCE=DAY0_OIDC_AUDIENCE
 PROFILE=DAY0_PROFILE
+CLERK_ISSUER=CLERK_JWT_ISSUER_DOMAIN
 
 # Their absence is also meaningful, which is why they are removed rather than
 # skipped when empty: leaving a stale flag or issuer on the deployment would
@@ -258,6 +259,13 @@ sync_key() {
 no_auth_flag_value=$(read_local "$NO_AUTH_FLAG")
 no_auth_jwks_value=$(read_local "$NO_AUTH_JWKS")
 oidc_issuer_value=$(read_local "$OIDC_ISSUER")
+# Clerk, the hosted demo's way in, needs no partner; left alone when empty.
+clerk_value=$(read_local "$CLERK_ISSUER")
+if [ -n "$clerk_value" ]; then
+  set_key "$CLERK_ISSUER" "$clerk_value"
+else
+  echo "skip ${CLERK_ISSUER} (empty in $ENV_FILE)"
+fi
 if [ -n "$oidc_issuer_value" ]; then
   sync_key "$PROFILE"
   sync_key "$OIDC_AUDIENCE" "before the issuer that requires it"

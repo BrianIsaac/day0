@@ -262,6 +262,19 @@ describe('sync-convex-env.sh', (): void => {
       ).toEqual([...CUSTOMER].sort());
     });
 
+    it('puts Clerk on before it takes the local key off, so a move to Clerk never leaves no way in', (): void => {
+      const { status, stderr, deployment } = runSync(
+        LOCAL_KEY,
+        'CLERK_JWT_ISSUER_DOMAIN=https://demo.clerk.accounts.dev\n',
+        '',
+        true,
+      );
+      expect(stderr).not.toContain('InvalidAuthConfig');
+      expect(status).toBe(0);
+      expect(deployment).toContain('CLERK_JWT_ISSUER_DOMAIN=https://demo.clerk.accounts.dev');
+      expect(deployment.some((line) => line.startsWith('NEXT_PUBLIC_DEV_NO_AUTH='))).toBe(false);
+    });
+
     it('removes the issuer before the audience, and the profile and private hosts with it', (): void => {
       const { status, calls, deployment } = runSync(
         [...LOCAL_KEY, ...CUSTOMER, 'DAY0_PRIVATE_HOSTS=.corp.internal'],
