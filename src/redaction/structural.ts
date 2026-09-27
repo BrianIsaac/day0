@@ -104,7 +104,10 @@ const CREDENTIAL_HEADER =
   /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]{8,})/gi;
 /** curl's `-u user:password` and `--user user:password`. */
 const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"'　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/g;
-/** What a bare labelled value is made of: no whitespace, quote mark, closing punctuation or CJK text. */
+/**
+ * What a bare labelled value is made of: no whitespace, ASCII quote, comma,
+ * semicolon or closing parenthesis, and no CJK or full-width character.
+ */
 const BARE_VALUE_CHARACTER = '[^\\s`\'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]';
 /**
  * A line that assigns a value to a password-class label. The label must sit
