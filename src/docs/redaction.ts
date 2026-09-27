@@ -15,7 +15,7 @@ import {
   type Finding,
   type RedactOptions,
 } from '../redaction/redact';
-import { explicitlyAssignedCredential, guardReason } from '../redaction/guard';
+import { explicitlyAssignedCredential, guardReason, QUOTE_PAIRS } from '../redaction/guard';
 import type { ModelSpan, SpanModel } from '../redaction/client';
 import { PROVIDER_LABELS } from '../redaction/structural';
 
@@ -23,6 +23,12 @@ export interface RedactedCredential {
   label: string;
   plaintext: string;
   explicitlyAssigned?: boolean;
+  /**
+   * True when the page gave the value between an author's quote pair and the
+   * quote is what makes it a value rather than prose, so the re-checks take
+   * the phrase whole.
+   */
+  quoted?: boolean;
 }
 
 export interface RedactedMarkdown {
@@ -300,13 +306,21 @@ export async function redactCredentials(
   ] as const) {
     for (const finding of findings) {
       if (finding.kind !== 'secret') continue;
+      const quotedHere = quotedByAuthor(context, finding.start, finding.end);
       const assigned =
         explicitlyAssignedCredential(context, finding.start, finding.end) &&
         guardReason(finding.value) !== undefined &&
-        guardReason(finding.value, { assigned: true }) === undefined;
+        guardReason(finding.value, { assigned: true, quoted: quotedHere }) === undefined;
+      // Kept only where the quote is what lets the guard take the value, as
+      // `explicitlyAssigned` is kept only where the assignment is.
+      const quoted =
+        quotedHere &&
+        guardReason(finding.value, { assigned: true }) !== undefined &&
+        guardReason(finding.value, { assigned: true, quoted: true }) === undefined;
       const existing = credentials.find((row) => row.plaintext === finding.value);
       if (existing) {
         if (assigned) existing.explicitlyAssigned = true;
+        if (quoted) existing.quoted = true;
         continue;
       }
       // A stored value met in its escaped or encoded form is the same
@@ -317,10 +331,27 @@ export async function redactCredentials(
         label: labels.get(finding.value) ?? finding.label,
         plaintext: finding.value,
         ...(assigned ? { explicitlyAssigned: true } : {}),
+        ...(quoted ? { quoted: true } : {}),
       });
     }
   }
   return { markdown: bodyResult.text, title: safeTitle, credentials };
+}
+
+/**
+ * Whether a found value sits between one of the author's quote pairs, the
+ * marks right against it on either side.
+ *
+ * @param text - The text the value was found in.
+ * @param start - Where the value starts.
+ * @param end - Where it ends.
+ */
+function quotedByAuthor(text: string, start: number, end: number): boolean {
+  return QUOTE_PAIRS.some(
+    ([open, close]) =>
+      text.slice(Math.max(0, start - open.length), start) === open &&
+      text.slice(end, end + close.length) === close,
+  );
 }
 
 /** What joins a page's ref to one of several credentials found on it. */

@@ -82,6 +82,7 @@ type StoredCredentialSummary = {
   ciphertext?: string;
   iv?: string;
   explicitlyAssigned?: boolean;
+  quoted?: boolean;
 };
 
 /** The stored row an orientation run attaches to a surface. */

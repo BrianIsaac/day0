@@ -116,6 +116,12 @@ export default defineSchema({
     iv: v.optional(v.string()),
     /** True only when documentation explicitly assigned this value as a credential. */
     explicitlyAssigned: v.optional(v.boolean()),
+    /**
+     * True when the page gave the value between an author's quote pair, so the
+     * re-checks read a quoted phrase as the author's value, as the floor did
+     * when it found it, and the owner-wide exact layer carries it.
+     */
+    quoted: v.optional(v.boolean()),
     /** Where the value came from: a documentation page, a field the approver
      * typed into, or - Phase 3 - the provider's own OAuth install redirect. */
     source: v.union(
