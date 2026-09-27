@@ -36,6 +36,7 @@ import {
   runSetup,
   SetupCancelled,
   firstSuccessLines,
+  pushRefusalAdvice,
   sequenceSteps,
   setupEnvUpdates,
   shouldCaptureAdminKey,
@@ -1025,6 +1026,46 @@ describe('the order the helpers run in', (): void => {
       'convex:restart',
       'check:setup',
     ]);
+  });
+
+  it('puts the env first on a reused volume the release check found empty', (): void => {
+    expect(sequenceSteps('key', { existing: true, empty: true })).toEqual([
+      'dev:no-auth-key',
+      'convex:up',
+      'sandbox:up',
+      'admin-key',
+      'release:check',
+      'sync:env',
+      'convex dev --once',
+      'migrations',
+      'release:stamp',
+      'convex:restart',
+      'check:setup',
+    ]);
+  });
+});
+
+describe('the advice under a refused push', (): void => {
+  it('names pnpm sync:env when the auth config refused it', (): void => {
+    const advice = pushRefusalAdvice(
+      'Error: Unable to push deployment config\nInvalidAuthConfig: This deployment has no identity provider configured',
+      'mock',
+    ).join('\n');
+    expect(advice).toContain('`pnpm sync:env` puts the one in .env.local on the deployment');
+    expect(advice).toContain('`pnpm setup:local` again');
+  });
+
+  it('points at the reason above for any other auth config refusal, not at a missing provider', (): void => {
+    const advice = pushRefusalAdvice(
+      'InvalidAuthConfig: DAY0_OIDC_ISSUER is set without DAY0_OIDC_AUDIENCE',
+      'real',
+    ).join('\n');
+    expect(advice).toContain('refused the push for the reason above');
+    expect(advice).not.toContain('names no identity provider');
+  });
+
+  it('says nothing more for any other refusal', (): void => {
+    expect(pushRefusalAdvice('Schema validation failed', 'mock')).toEqual([]);
   });
 });
 

@@ -63,7 +63,7 @@ Three ways to run it, and the two local ways are real mode: Day0 reads the docum
 - **Local, cloud model** - `./setup.sh --route featherless`: GLM 5.3 Flash through Featherless, with a Featherless key; `--route key` for OpenAI or any OpenAI-compatible key, `--route endpoint` for a server you already run. Your chat and relevant content are sent to the provider, which charges per token.
 - **Local, local model** - `./setup.sh --route local`: the bundled model (`qwen3:8b` tested) in Docker on this machine, nothing signed up for and nothing metered.
 
-You need Node 22+, pnpm 9+, bash 4 or newer (macOS ships 3.2: `brew install bash`), and Docker with the Compose v2 plugin, its daemon running and reachable by your user. `./setup.sh` checks each of those - the daemon itself, not only the `docker` command - and the ports it is about to publish, before it starts anything, and says what to do about anything missing. The clone can sit in a directory of any name: the setup names its Compose project after the directory, and gives a clone called `day0` a short suffix of its own.
+You need Node 22+, pnpm 9+, bash (the 3.2 macOS ships is enough), and Docker with the Compose v2 plugin, its daemon running and reachable by your user. `./setup.sh` checks each of those - the daemon itself, not only the `docker` command - and the ports it is about to publish, before it starts anything, and says what to do about anything missing. The clone can sit in a directory of any name: the setup names its Compose project after the directory, and gives a clone called `day0` a short suffix of its own.
 
 ```bash
 git clone https://github.com/BrianIsaac/day0.git
@@ -278,7 +278,7 @@ The choice this way offers is the provider. `--route featherless` is the tested 
 
 **On the key route the two addresses collapse into one, which is the point.** Empty means `https://api.openai.com/v1`, and that address means the same thing from Next as it does from inside the backend container - so the trap that costs an afternoon on a local model server cannot be sprung. Next reaches it over this machine's ordinary outbound connection and the backend over its container's, and the charter arrives from the Node action just as the chat streams from Next. Leave both variables empty rather than writing the default into them; there is nothing to point anywhere. Featherless is likewise one hosted address both sides reach.
 
-`./setup.sh` checks Node 22, pnpm 9, bash 4, a Docker daemon that answers your user (it prints the daemon's own words and the fix when it does not) and the Compose v2 plugin, installs the dependencies if `node_modules` is missing (never on `--dry-run`, which writes nothing), and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence under [What the setup does](#what-the-setup-does) in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first (without `--project`, the Compose project is the checkout directory's name in lower case with `-` for anything Compose refuses, and a clone called `day0` gets a short suffix from its path, because `day0` is a name the maintainers' own stacks hold); `--adopt` after you move the checkout, which recreates the installation's containers from the new path and keeps its volumes, the data among them; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run, writes nothing, and exits non-zero when a prerequisite is missing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
+`./setup.sh` checks Node 22, pnpm 9, a Docker daemon that answers your user (it prints the daemon's own words and the fix when it does not) and the Compose v2 plugin, installs the dependencies if `node_modules` is missing (never on `--dry-run`, which writes nothing), and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence under [What the setup does](#what-the-setup-does) in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first (without `--project`, the Compose project is the checkout directory's name in lower case with `-` for anything Compose refuses, and a clone called `day0` gets a short suffix from its path, because `day0` is a name the maintainers' own stacks hold); `--adopt` after you move the checkout, which recreates the installation's containers from the new path and keeps its volumes, the data among them; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run, writes nothing, and exits non-zero when a prerequisite is missing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
 
 Stop, resume, clear - each reads the project from `.env.local` and refuses the protected projects:
 
@@ -454,6 +454,25 @@ never sends a status change an earlier run of the item already landed, so a tick
 somebody moved back since stays where they put it; the ledger row says it was
 reused, not sent.
 
+### How long a card's access lasts
+
+A connection card's access runs from its second approval for the length the card
+asks for, capped at a year, and 90 days when it names none. The hourly re-probe
+ends it once the date has passed: the card goes back to approved, marked expired,
+and no probe renews it. The card has no renew control yet; until it does, renew
+from the checkout, as the card's owner (with the local key, `dev-no-auth|local-boss`):
+
+```bash
+npx convex data surfaces --format jsonl          # the card's _id
+npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identity '{"subject":"dev-no-auth|local-boss"}'
+```
+
+The length is 1 to 365 days from now. An ended card is probed again at once, and
+keeps the tools its last connection stored. An upgrade to 0.4.0 restarts the clock
+of every approved card still open at 90 days from the upgrade, since the older code
+started it at the proposal; a card the older code had already ended stays ended
+until you renew it.
+
 ### The documentation is yours
 
 Nothing in this repository is your team's documentation, and `docs-local/` is not in it - the setup creates the directory with one placeholder page so the read-only mount has something to bind (`pnpm convex:up` by hand creates it empty). Real mode is worth nothing until you put something there: the runbooks, onboarding page and systems list your team actually uses, in Markdown. Day0 reads that folder read-only, redacts credential values out of what it stores, and treats the systems it names as the systems that exist.
@@ -509,33 +528,33 @@ The company bed runs three digital employees in one synthetic company, Kestrel S
 | `bed/company/slack-asks.md` | the three Slack asks a person posts during each sitting, once the employees are deployed |
 | `bed/company/answers.md` | the manager's Day-1 answers per role, and the note for the logistics retry |
 
-From a fresh clone:
+The bed is maintainers' tooling rather than a product command, so it has no `pnpm` script: it is run by its path, `pnpm exec tsx scripts/bed/company.ts <verb>`. From a fresh clone:
 
 ```bash
 ./setup.sh --route featherless --company
 ```
 
-That is the ordinary real-mode setup followed by `pnpm bed:company docs`, which copies the thirteen pages into `docs-local/` and removes the setup's placeholder page (it never overwrites a page it did not write unless you pass `--replace`), then the hand steps, then `pnpm bed:company check`.
+That is the ordinary real-mode setup followed by `pnpm exec tsx scripts/bed/company.ts docs`, which copies the thirteen pages into `docs-local/` and removes the setup's placeholder page (it never overwrites a page it did not write unless you pass `--replace`), then the hand steps, then its `check`.
 
-The hand steps are done once per workspace, by you, because they are admin acts in accounts only you hold:
+The hand steps are done once per workspace (the asks of step 2 each sitting), by you, because they are admin acts in accounts only you hold:
 
 1. **Linear**, as a workspace admin: teams `REVOPS` (project `Q3 close`), `FIN` "Finance close" (project `September close`) and `LOG` "Logistics desk" (project `Shipment exceptions`), each with the workflow states `Todo`, `In Progress` and `Done`. Archive or move out any older ticket in those three projects: intake reads every ticket in a documented project, and `check` lists each one that is not the bed's.
-2. **Slack**: the public channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests` (intake reads public channels only), and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. The three asks of `bed/company/slack-asks.md` are posted by you during each sitting, as yourself, once the employees are deployed: a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting. A one-task-each sitting posts only the `#ops-requests` ask, which is that sitting's revenue operations task.
+2. **Slack**: the public channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests` (intake reads public channels only), and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. The three asks of `bed/company/slack-asks.md` are posted by you during each sitting, as yourself, once the employees are deployed: a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting. A one-task-each sitting posts only the `#ops-requests` ask, which is that sitting's revenue operations task. During a sitting, keep any other mention of the bot out of these channels: every employee deployed before it would read it as work.
 3. **Notion**: the two pages in `bed/company/notion/`, pasted under one parent page shared with your integration, with the Linear key in place of the placeholder ([`bed/company/notion/README.md`](bed/company/notion/README.md)).
-4. **`.env.local`**: `DAY0_BED_LINEAR_API_KEY`, `DAY0_BED_SLACK_BOT_TOKEN` and `DAY0_BED_NOTION_TOKEN`. Only `pnpm bed:company` reads them, and it prints none of them.
+4. **`.env.local`**: `DAY0_BED_LINEAR_API_KEY`, `DAY0_BED_SLACK_BOT_TOKEN` and `DAY0_BED_NOTION_TOKEN`. Only `scripts/bed/company.ts` reads them, and it prints none of them.
 
 Then:
 
 ```bash
-pnpm bed:company check    # every hand step read back; each gap says how to close it
-pnpm bed:company seed     # tickets created or put back, the bed's bot messages deleted, the tile back at 68%
+pnpm exec tsx scripts/bed/company.ts check    # every hand step read back; each gap says how to close it
+pnpm exec tsx scripts/bed/company.ts seed     # tickets created or put back, the bed's bot messages deleted, the tile back at 68%
 ```
 
-`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` uses tickets whose descriptions end in `day0-demo-key: <key>` and refuses active marked tickets from another clone. It deletes comments with the server's provenance trailer and attempts to delete the bot's trailer messages posted since this clone's first seed. Run it before each sitting. A sitting that runs one task per employee files only its tickets: `pnpm bed:company seed --set one-each` files `fin-status`, `log-sh4471` and the two September close step tickets the status note reads, `fin-accruals` and `fin-bankrec` (the `sets` in `bed/company/linear.json`), archives every other bed ticket a fuller seed left active, and still restarts the Looker tile at its starting figure. Revenue operations' task in that sitting is not a ticket but the `#ops-requests` ask, posted once the employees are deployed (refresh the pipeline tile to the standup figure): one employee claims it, the other two leave it at scope, and it is answered in its thread. `pnpm bed:company check` names the asks each sitting posts. During the run, `pnpm bed:company post log-sh4480` files the one late ticket at its step; afterwards, `pnpm bed:company teardown` archives only tickets this clone activated, and any ticket a run filed in the bed's teams since this clone's first seed (an employee whose charter says to triage asks into tickets files one, and its description ends with the server's provenance trailer; `check` names such a ticket as a gap), and attempts to delete its bot messages. Slack refuses `chat.delete` for posts with a customised employee name or icon. Teardown names each refused channel message and timestamp, keeps the clone's state, and exits with a gap; delete those exact messages by hand in Slack, then run teardown again. Earlier runs' messages remain outside this clone's cleanup window.
+`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` uses tickets whose descriptions end in `day0-demo-key: <key>` and refuses active marked tickets from another clone. It deletes comments with the server's provenance trailer and attempts to delete the bot's trailer messages posted since this clone's first seed. Run it before each sitting. A sitting that runs one task per employee files only its tickets: `seed --set one-each` files `fin-status`, `log-sh4471` and the two September close step tickets the status note reads, `fin-accruals` and `fin-bankrec` (the `sets` in `bed/company/linear.json`), archives every other bed ticket a fuller seed left active, and still restarts the Looker tile at its starting figure. Revenue operations' task in that sitting is not a ticket but the `#ops-requests` ask, posted once the employees are deployed (refresh the pipeline tile to the standup figure): one employee claims it, the other two leave it at scope, and it is answered in its thread. `check` names the asks each sitting posts. During the run, `post log-sh4480` files the one late ticket at its step; afterwards, `teardown` archives only tickets this clone activated, and any ticket a run filed in the bed's teams since this clone's first seed (an employee whose charter says to triage asks into tickets files one, and its description ends with the server's provenance trailer; `check` names such a ticket as a gap), and attempts to delete its bot messages. Slack refuses `chat.delete` for posts with a customised employee name or icon. Teardown names each refused channel message and timestamp, keeps the clone's state, and exits with a gap; delete those exact messages by hand in Slack, then run teardown again. Earlier runs' messages remain outside this clone's cleanup window.
 
 On `/documentation`, link the folder (`.`) and the Notion source. Thirteen folder pages and three Notion pages (the parent and its two) sync; the only credentials taken from the pages are the tile's login, on its two pages, and the Linear token from the Notion page, and the Notion source's own connection secret is stored beside them, from the field you typed it into.
 
-The redaction model reads a page as a whole, and a wording change can make it take a channel or a method name for a token, which the owner-wide layer then removes from every page. So a page you edit is checked against the model again: `tests/bed/company-docs.test.ts` replays the model's recorded answers and fails on a page it has no answer for until you run `DAY0_REDACTOR_URL=<a component you can reach> pnpm bed:record-spans` and read what it stores.
+The redaction model reads a page as a whole, and a wording change can make it take a channel or a method name for a token, which the owner-wide layer then removes from every page. So a page you edit is checked against the model again: `tests/bed/company-docs.test.ts` replays the model's recorded answers and fails on a page it has no answer for until you run `DAY0_REDACTOR_URL=<a component you can reach> pnpm exec tsx scripts/bed/record-spans.ts` and read what it stores.
 
 ### Teardown
 
@@ -559,6 +578,8 @@ A real-mode installation is durable: the data volume holds the credentials, the 
 ./setup.sh upgrade                 # after git pull: a backup, pnpm install --frozen-lockfile, then resume
 ```
 
+These are the real-mode forms. A mock deployment, the seeded office `pnpm setup:local` sets up, takes the same verbs through the pnpm form: `pnpm setup:local backup`, `pnpm setup:local restore <file>` and, after a `git pull`, `pnpm setup:local upgrade`; `./setup.sh upgrade` always runs the upgrade in real mode.
+
 **`backup`** stops the backend for the copy, because a tar of a live database is not a backup, and starts it again after. It writes `<project>-<time>.tar.gz` beside a `.sha256` and a `.json` naming the release, the commit and the time, under `~/day0-backups/<project>/` or wherever `--to <dir>` says, and refuses a directory inside the checkout, which a `git clean` or a deleted clone would take with it. The tar holds the deployment's env as well as its rows, `DAY0_CREDENTIAL_KEY` among it: it is written readable only by you, and it belongs where you keep secrets.
 
 **`restore`** checks the file against its checksum, asks, backs up the data volume it is about to replace (under a name of its own, beside the others), takes the project down, replaces the volume and resumes on it. Before the env sync it adopts the restored deployment's credential key into `.env.local`, so the credentials the backup holds stay readable. It refuses while `.env.local` points Slack at the test double (`DAY0_TEST_SLACK_API_URL`): that is the demo bed's own restore, `pnpm demo:bed restore`, which stays demo-only. A restore rewinds everything to the moment of the backup, the intake checkpoints included, so work that landed on your systems after it is unknown to the restored rows and can be picked up again; read the queue before you approve anything.
@@ -566,7 +587,7 @@ A real-mode installation is durable: the data volume holds the credentials, the 
 **`upgrade`** is what to run after a `git pull`. It takes a backup first, installs the dependencies the new lockfile names, and resumes, and the resume on a volume that already holds a deployment does the upgrade in this order:
 
 1. **The release check.** The release the rows are at is a row on the deployment (`deploymentVersions`), read before anything is pushed. The releases are the `## vX.Y.Z` headings of `CHANGELOG.md` and this checkout's is `package.json`'s version. The same release again or the next one goes ahead; a jump of more than one release is refused and names the release to go through first, and older functions over rows a newer release migrated are refused, because each release's migrations run once, in order. Rows from before the stamp existed count as 0.3.0.
-2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
+2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. A volume nothing was ever pushed to (a first run that stopped before its push) has no tables, and takes the env first as a new one does, since the auth config is read from the deployment's env at the push. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
 3. **The env, then the restart.** `pnpm sync:env`, then `pnpm convex:restart` once everything before it succeeded.
 
 A schema change existing rows do not fit ships as two releases: the first declares both shapes and migrates, the second removes the old declaration. The migrations in `convex/migrations.ts` say what the release after theirs may remove: `agents.posture`, `agents.docSourceIds` and its read, `skills.daytonaSandboxId`, `skills.supervisedRunsCompleted` and `surfaces.credentialRef`. `npx convex run skills:requeueStranded` is an earlier one-off that no migration runs; the sandbox-id move it sat beside is now the `skills-sandbox-id` migration.
@@ -1140,7 +1161,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - **本地运行，云端模型**：`./setup.sh --route featherless`，通过 Featherless 使用 GLM 5.3 Flash，需要一个 Featherless key；`--route key` 使用 OpenAI 或任意 OpenAI-compatible key，`--route endpoint` 使用你已经在运行的服务器。你的聊天内容及相关内容会发送给该提供商，并按 token 计费。
 - **本地运行，本地模型**：`./setup.sh --route local`，在本机 Docker 中运行内置模型（已测试 `qwen3:8b`），不注册任何账户，也不产生任何费用。
 
-需要 Node 22+、pnpm 9+、bash 4 或更新版本（macOS 自带 3.2：`brew install bash`），以及带 Compose v2 插件的 Docker，且其守护进程正在运行、当前用户可以访问。`./setup.sh` 会在启动任何服务之前检查这些工具（检查的是守护进程本身，而不只是 `docker` 命令）以及它将要占用的端口，并说明缺什么、怎么补。仓库可以克隆到任意名称的目录：setup 以目录名命名 Compose project，克隆到 `day0` 目录时会自动加上一个短后缀。
+需要 Node 22+、pnpm 9+、bash（macOS 自带的 3.2 即可），以及带 Compose v2 插件的 Docker，且其守护进程正在运行、当前用户可以访问。`./setup.sh` 会在启动任何服务之前检查这些工具（检查的是守护进程本身，而不只是 `docker` 命令）以及它将要占用的端口，并说明缺什么、怎么补。仓库可以克隆到任意名称的目录：setup 以目录名命名 Compose project，克隆到 `day0` 目录时会自动加上一个短后缀。
 
 ```bash
 git clone https://github.com/BrianIsaac/day0.git
@@ -1334,7 +1355,7 @@ pnpm dev                           # prints an unlock URL - open that, not local
 
 key 路线上两个模型地址归并为同一个默认值。变量留空表示 `https://api.openai.com/v1`，从 Next 和后端容器访问时含义相同。不要把默认 URL 手工写入变量。Featherless 同样是两侧都能访问的同一个托管地址。
 
-`./setup.sh` 会检查 Node 22、pnpm 9、bash 4、当前用户能否访问 Docker 守护进程（不能时打印守护进程自己的原话和修复办法）以及 Compose v2 插件，在缺少 `node_modules` 时安装依赖（`--dry-run` 时从不安装，它不写入任何内容），然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成[安装过程做了什么](#安装过程做了什么)中的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套（不加 `--project` 时，Compose project 名取 checkout 目录名，转为小写，Compose 不接受的字符换成 `-`；克隆到 `day0` 目录时会按路径加一个短后缀，因为 `day0` 是维护者自己的环境所用的名字）；移动 checkout 之后用 `--adopt`，它会从新路径重建该安装的容器，并保留其数据卷及其中的数据；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容，缺少前置条件时以非零状态退出；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线；`pnpm --silent check:setup --report > day0-setup-report.json` 则把同样的检查写成一份供支持人员使用的 JSON：工具版本、固定的镜像及其是否在运行、redactor 依赖锁定文件和模型清单的摘要、配置中出现的每个出站主机，以及每一节的状态。其中不含任何 key，也不含文档内容；`.env.local` 中的模型、Daytona 和 Clerk 地址只以主机名出现，出站主机列表本就由这些主机名组成。`--route endpoint` 时，setup 会在推送任何内容之前从 backend 容器内部拨测该地址（不带 key），容器访问不到时拒绝继续，并给出 curl 的原话和修复办法；`pnpm check:setup` 每次运行也会做同样的拨测。
+`./setup.sh` 会检查 Node 22、pnpm 9、当前用户能否访问 Docker 守护进程（不能时打印守护进程自己的原话和修复办法）以及 Compose v2 插件，在缺少 `node_modules` 时安装依赖（`--dry-run` 时从不安装，它不写入任何内容），然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成[安装过程做了什么](#安装过程做了什么)中的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套（不加 `--project` 时，Compose project 名取 checkout 目录名，转为小写，Compose 不接受的字符换成 `-`；克隆到 `day0` 目录时会按路径加一个短后缀，因为 `day0` 是维护者自己的环境所用的名字）；移动 checkout 之后用 `--adopt`，它会从新路径重建该安装的容器，并保留其数据卷及其中的数据；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容，缺少前置条件时以非零状态退出；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线；`pnpm --silent check:setup --report > day0-setup-report.json` 则把同样的检查写成一份供支持人员使用的 JSON：工具版本、固定的镜像及其是否在运行、redactor 依赖锁定文件和模型清单的摘要、配置中出现的每个出站主机，以及每一节的状态。其中不含任何 key，也不含文档内容；`.env.local` 中的模型、Daytona 和 Clerk 地址只以主机名出现，出站主机列表本就由这些主机名组成。`--route endpoint` 时，setup 会在推送任何内容之前从 backend 容器内部拨测该地址（不带 key），容器访问不到时拒绝继续，并给出 curl 的原话和修复办法；`pnpm check:setup` 每次运行也会做同样的拨测。
 
 停止、恢复、清除：每条命令都从 `.env.local` 读取项目名，并拒绝受保护的项目：
 
@@ -1481,6 +1502,17 @@ intake 不会接手它。无法读取 key 的所有者时，所有已指派的�
 请在其卡片上取消。Retry 不会再次发送之前某次运行已经成功的状态变更，因此别人之后改回的状态会保持原样；
 ledger 中该行会注明是复用，而非重新发送。
 
+#### 卡片的访问期限
+
+连接卡片的访问从第二次批准起算，时长取卡片申请的天数，最长一年；未注明时为 90 天。到期之后，每小时一次的重新探测会结束访问：卡片回到已批准状态并标记为过期，任何探测都不会为它续期。卡片目前还没有续期控件；在它上线之前，请以卡片所有者的身份在 checkout 中续期（使用本地密钥时为 `dev-no-auth|local-boss`）：
+
+```bash
+npx convex data surfaces --format jsonl          # 卡片的 _id
+npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identity '{"subject":"dev-no-auth|local-boss"}'
+```
+
+时长为自现在起 1 到 365 天。已结束的卡片会立即重新探测，并保留其最近一次连接存储的工具列表。升级到 0.4.0 时，每张仍在有效期内的已批准卡片的期限都会从升级时刻重新计为 90 天，因为旧代码是从提议时刻开始计时的；旧代码已经结束的卡片仍保持结束状态，直到你为它续期。
+
 #### 文档由你提供
 
 本仓库不包含你团队的文档，`docs-local/` 也不在其中；setup 会创建这个目录并放入一个占位页面，让只读挂载有内容可绑定（手动执行 `pnpm convex:up` 时只创建空目录）。真实模式在你放入内容之前没有意义：把团队实际使用的 runbook、onboarding 页面和系统清单以 Markdown 放进去。day0 以只读方式读取该文件夹，在存储前将凭据值脱敏，并把其中出现的系统视为存在的系统。
@@ -1537,33 +1569,33 @@ ledger 中该行会注明是复用，而非重新发送。
 | `bed/company/slack-asks.md` | 三条 Slack 请求：员工部署完成后，由真人在每次演示中发布 |
 | `bed/company/answers.md` | manager 对每个角色 Day-1 的回答，以及物流重试时给出的备注 |
 
-从一个全新 clone 开始：
+这个演示环境是维护者的工具，而不是产品命令，因此没有 `pnpm` 脚本：按路径运行，即 `pnpm exec tsx scripts/bed/company.ts <verb>`。从一个全新 clone 开始：
 
 ```bash
 ./setup.sh --route featherless --company
 ```
 
-这就是普通的 real-mode 安装，之后执行 `pnpm bed:company docs`：把十三个页面复制进 `docs-local/`，并删除 setup 的占位页面（除非传入 `--replace`，否则它绝不覆盖不是它写入的页面）；然后打印手工步骤，并运行 `pnpm bed:company check`。
+这就是普通的 real-mode 安装，之后执行 `pnpm exec tsx scripts/bed/company.ts docs`：把十三个页面复制进 `docs-local/`，并删除 setup 的占位页面（除非传入 `--replace`，否则它绝不覆盖不是它写入的页面）；然后打印手工步骤，并运行它的 `check`。
 
-手工步骤每个 workspace 只做一次，由你完成，因为它们是只有你持有的账户中的管理员操作：
+手工步骤每个 workspace 只做一次（第 2 步的请求每次演示都要发布），由你完成，因为它们是只有你持有的账户中的管理员操作：
 
 1. **Linear**，以 workspace 管理员身份：team `REVOPS`（project `Q3 close`）、`FIN` "Finance close"（project `September close`）和 `LOG` "Logistics desk"（project `Shipment exceptions`），每个 team 都有 `Todo`、`In Progress`、`Done` 三个工作流状态。把这三个 project 中较早的工单归档或移出：intake 会读取文档所记录 project 中的每一张工单，`check` 会列出每一张不属于演示环境的工单。
-2. **Slack**：公开频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`（intake 只读取公开频道），以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。`bed/company/slack-asks.md` 中的三条请求由你在每次演示中以本人身份发布，且要在员工部署完成之后：部署不会读取早于其员工的任何提及，因此上一次演示留下的请求不会被读取，也无需删除。每名员工一项任务的演示只发布 `#ops-requests` 中的那一条，它就是该演示中 revenue operations 的任务。
+2. **Slack**：公开频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`（intake 只读取公开频道），以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。`bed/company/slack-asks.md` 中的三条请求由你在每次演示中以本人身份发布，且要在员工部署完成之后：部署不会读取早于其员工的任何提及，因此上一次演示留下的请求不会被读取，也无需删除。每名员工一项任务的演示只发布 `#ops-requests` 中的那一条，它就是该演示中 revenue operations 的任务。演示期间，不要在这些频道中发布其他提及 bot 的消息：在它之前部署的每名员工都会把它当作工作读取。
 3. **Notion**：把 `bed/company/notion/` 下的两个页面粘贴到一个与你的 integration 共享的父页面之下，并把占位符换成 Linear key（见 [`bed/company/notion/README.md`](bed/company/notion/README.md)）。
-4. **`.env.local`**：`DAY0_BED_LINEAR_API_KEY`、`DAY0_BED_SLACK_BOT_TOKEN` 和 `DAY0_BED_NOTION_TOKEN`。只有 `pnpm bed:company` 读取它们，且不会打印其中任何一个。
+4. **`.env.local`**：`DAY0_BED_LINEAR_API_KEY`、`DAY0_BED_SLACK_BOT_TOKEN` 和 `DAY0_BED_NOTION_TOKEN`。只有 `scripts/bed/company.ts` 读取它们，且不会打印其中任何一个。
 
 然后：
 
 ```bash
-pnpm bed:company check    # 逐项读回手工步骤；每个缺口都会说明如何补上
-pnpm bed:company seed     # 创建或复位工单，删除演示环境的 bot 消息，tile 回到 68%
+pnpm exec tsx scripts/bed/company.ts check    # 逐项读回手工步骤；每个缺口都会说明如何补上
+pnpm exec tsx scripts/bed/company.ts seed     # 创建或复位工单，删除演示环境的 bot 消息，tile 回到 68%
 ```
 
-`check` 读取 Linear 的 team、project 与状态，频道与应用的 scope，经由内置 Notion 组件读取的 Notion 页面（除 token 行外逐行与 `bed/company/notion/` 比较），以及 tile。`seed` 使用描述以 `day0-demo-key: <key>` 结尾的工单；若另一 clone 留下仍启用的标记工单，则拒绝改动。它删除带服务端来源标记的评论，并尝试删除本 clone 首次 seed 之后由 bot 发送、带来源标记的消息。每次录制前运行一次。若一次演示每位员工只做一项任务，只提交它的工单：`pnpm bed:company seed --set one-each` 提交 `fin-status`、`log-sh4471`，以及状态说明要读取的两张九月结账步骤工单 `fin-accruals` 和 `fin-bankrec`（即 `bed/company/linear.json` 中的 `sets`），归档更完整的 seed 留下的其他所有演示工单，并照常把 Looker tile 重启回初始数值。该演示中 revenue operations 的任务不是工单，而是员工部署完成后发布在 `#ops-requests` 中的那条请求（把 pipeline tile 刷新为 standup 数值）：一名员工认领它，另外两名因不在职责范围内而放下，并在其线程中回复。`pnpm bed:company check` 会列出每次演示需要发布的请求。运行期间，`pnpm bed:company post log-sh4480` 在对应步骤提交迟到工单；结束后，`pnpm bed:company teardown` 只归档本 clone 激活的工单，并尝试删除本 clone 的 bot 消息。Slack 不允许 bot 用 `chat.delete` 删除带自定义员工姓名或头像的消息；teardown 会列出每条无法删除的消息所在频道和时间戳，保留本 clone 的状态并报告缺口。请在 Slack 中手动删除这些确切消息，再次运行 teardown。较早运行的消息不在本 clone 的清理范围内。
+`check` 读取 Linear 的 team、project 与状态，频道与应用的 scope，经由内置 Notion 组件读取的 Notion 页面（除 token 行外逐行与 `bed/company/notion/` 比较），以及 tile。`seed` 使用描述以 `day0-demo-key: <key>` 结尾的工单；若另一 clone 留下仍启用的标记工单，则拒绝改动。它删除带服务端来源标记的评论，并尝试删除本 clone 首次 seed 之后由 bot 发送、带来源标记的消息。每次录制前运行一次。若一次演示每位员工只做一项任务，只提交它的工单：`seed --set one-each` 提交 `fin-status`、`log-sh4471`，以及状态说明要读取的两张九月结账步骤工单 `fin-accruals` 和 `fin-bankrec`（即 `bed/company/linear.json` 中的 `sets`），归档更完整的 seed 留下的其他所有演示工单，并照常把 Looker tile 重启回初始数值。该演示中 revenue operations 的任务不是工单，而是员工部署完成后发布在 `#ops-requests` 中的那条请求（把 pipeline tile 刷新为 standup 数值）：一名员工认领它，另外两名因不在职责范围内而放下，并在其线程中回复。`check` 会列出每次演示需要发布的请求。运行期间，`post log-sh4480` 在对应步骤提交迟到工单；结束后，`teardown` 只归档本 clone 激活的工单，并尝试删除本 clone 的 bot 消息。Slack 不允许 bot 用 `chat.delete` 删除带自定义员工姓名或头像的消息；teardown 会列出每条无法删除的消息所在频道和时间戳，保留本 clone 的状态并报告缺口。请在 Slack 中手动删除这些确切消息，再次运行 teardown。较早运行的消息不在本 clone 的清理范围内。
 
 在 `/documentation` 上链接文件夹（`.`）和 Notion 来源。同步后有十三个文件夹页面和三个 Notion 页面（父页面及其两个子页面）；从页面中取出的凭据只有 tile 的登录（出现在它的两个页面上）和 Notion 页面里的 Linear token，此外还会存储 Notion 来源自身的连接密钥（connection secret），也就是你填进表单的那一个。
 
-脱敏模型以整页为单位读取页面，措辞改动可能让它把频道名或方法名当成 token，随后 owner 级精确值层会把它从每个页面中删除。因此修改过的页面要重新经过模型检查：`tests/bed/company-docs.test.ts` 回放模型记录下的回答，遇到没有记录的页面就会失败，直到你运行 `DAY0_REDACTOR_URL=<可访问的组件地址> pnpm bed:record-spans` 并确认它存储了什么。
+脱敏模型以整页为单位读取页面，措辞改动可能让它把频道名或方法名当成 token，随后 owner 级精确值层会把它从每个页面中删除。因此修改过的页面要重新经过模型检查：`tests/bed/company-docs.test.ts` 回放模型记录下的回答，遇到没有记录的页面就会失败，直到你运行 `DAY0_REDACTOR_URL=<可访问的组件地址> pnpm exec tsx scripts/bed/record-spans.ts` 并确认它存储了什么。
 
 #### 停止
 
@@ -1587,6 +1619,8 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 ./setup.sh upgrade                 # git pull 之后：先备份，再 pnpm install --frozen-lockfile，然后 resume
 ```
 
+以上是 real mode 的写法。mock 部署（`pnpm setup:local` 搭建的种子办公室）用 pnpm 形式执行同样的动作：`pnpm setup:local backup`、`pnpm setup:local restore <file>`，以及 `git pull` 之后的 `pnpm setup:local upgrade`；`./setup.sh upgrade` 总是以 real mode 运行升级。
+
 **`backup`** 在复制期间停止 backend（运行中的数据库打出的 tar 不算备份），完成后再启动。它在 `~/day0-backups/<project>/`（或 `--to <dir>` 指定的目录）写出 `<project>-<时间>.tar.gz`，旁边是 `.sha256` 和记录版本、commit 与时间的 `.json`；它拒绝写入 checkout 内部的目录，因为 `git clean` 或删除克隆会把它一起带走。tar 里既有数据，也有 deployment 的 env，其中包括 `DAY0_CREDENTIAL_KEY`：文件只对你可读，应放在保管密钥的地方。
 
 **`restore`** 先按校验和检查文件，然后询问，先备份即将被替换的数据卷（使用独立的文件名，与其他备份放在一起），再停下项目、替换数据卷并在其上 resume。在同步 env 之前，它会把恢复出的 deployment 的凭据密钥写入 `.env.local`，使备份中的凭据仍可读取。若 `.env.local` 把 Slack 指向测试替身（`DAY0_TEST_SLACK_API_URL`），它会拒绝：那是演示环境自己的恢复 `pnpm demo:bed restore`，仍只用于演示。恢复会把一切回退到备份时刻，包括 intake 的检查点，因此备份之后已在你的系统上落地的工作不为恢复出的数据所知，可能被再次领取；批准任何操作前请先查看队列。
@@ -1594,7 +1628,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 **`upgrade`** 用于 `git pull` 之后。它先备份，再安装新 lockfile 指定的依赖，然后 resume；在已有 deployment 的数据卷上，resume 按以下顺序升级：
 
 1. **版本检查。** 数据所处的版本是 deployment 上的一行（`deploymentVersions`），在推送任何内容之前读取。版本列表取自 `CHANGELOG.md` 的 `## vX.Y.Z` 标题，本 checkout 的版本取自 `package.json`。同一版本或下一版本可以继续；跨越多个版本会被拒绝，并指出应先经过哪个版本；把旧 functions 推到已被新版本迁移过的数据上也会被拒绝，因为每个版本的迁移只按顺序运行一次。版本记录出现之前的数据视为 0.3.0。
-2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
+2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。从未推送过任何内容的数据卷（首次运行在推送前停止）没有任何表，会像新数据卷一样先推送 env，因为 auth config 在推送时读取 deployment 的 env。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
 3. **env，然后重启。** `pnpm sync:env`，此前各步都成功后 `pnpm convex:restart`。
 
 现有数据不符合的 schema 变更分两个版本发布：第一个同时声明新旧两种结构并迁移，第二个删除旧声明。`convex/migrations.ts` 中的迁移注明了下一版本可以删除的内容：`agents.posture`、`agents.docSourceIds` 及其读取、`skills.daytonaSandboxId`、`skills.supervisedRunsCompleted` 和 `surfaces.credentialRef`。`npx convex run skills:requeueStranded` 是更早的一次性命令，不由任何迁移运行；与它并列的 sandbox id 迁移现在是 `skills-sandbox-id` 迁移。

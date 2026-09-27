@@ -510,7 +510,7 @@ describe('retire in real mode', (): void => {
       harness
         .withIdentity({ subject: 'stranger' })
         .mutation(api.reset.deleteMyData, { agentId: retiring }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
   });
 });

@@ -1034,7 +1034,7 @@ function warmProjects(volumes: readonly string[]): string[] {
  * hazard, so the bed's redactor volumes are either already there or cloned,
  * read-only, from a warm project's, labelled as compose labels its own so
  * `down --volumes` removes them with the rest. The command shapes match
- * `redactorVolumeClone` in `scripts/rehearsal/docker.ts`.
+ * `redactorVolumeClone` in `scripts/lib/docker.ts`.
  *
  * Args:
  *   input: The bed, the warm project if any, the machine's volumes, the image.

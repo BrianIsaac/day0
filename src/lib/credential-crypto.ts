@@ -130,9 +130,9 @@ export function decrypt(
  * A value sealed bound to the owner opens only for that owner. A value sealed
  * without associated data opens unbound; that fallback is the one way a moved
  * value still opens. It can end only once a re-seal (not built yet) has bound
- * every row and a marker on the row says so. The sealing and opening paths
- * in `convex/credentials.ts` do not pass the owner yet, and must start doing
- * so together: a bound value no longer opens through an unbound call.
+ * every row and a marker on the row says so. `convex/credentials.ts` seals
+ * with the owner and opens as the row's owner; a bound value never opens
+ * through an unbound call.
  *
  * @param encrypted - The row's ciphertext and IV.
  * @param keyBase64 - The deployment's credential key.

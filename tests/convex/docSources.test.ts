@@ -115,6 +115,33 @@ describe('documentation source validation', (): void => {
     ).not.toThrow();
   });
 
+  it('refuses a user name or token in every remote locator, and never repeats it', (): void => {
+    for (const [kind, locator] of [
+      ['git', 'https://oauth2:glpat-abc@git.corp.internal/team/docs#main'],
+      ['git', 'https://ghp_secret123@github.com/example/docs'],
+      ['urls', 'https://docs.example.com/a\nhttps://deploy:hunter2@docs.example.com/b'],
+      ['mcp', 'https://svc:hunter2@docs.example.com/mcp'],
+      ['git', 'https://ghp_secret123#en@github.com/org/docs#main'],
+      ['urls', 'https://hunter2#x@docs.example.com/page'],
+    ] as const) {
+      let message = '';
+      try {
+        validateLinkInput({
+          label: 'Docs',
+          kind,
+          locator,
+          ...(kind === 'mcp' ? { serverKind: 'confluence' as const } : {}),
+        });
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message, locator).toContain('must not carry a user name or password');
+      for (const secret of ['glpat-abc', 'ghp_secret123', 'hunter2', 'oauth2', 'deploy', 'svc']) {
+        expect(message).not.toContain(secret);
+      }
+    }
+  });
+
   it("refuses a plain HTTP MCP locator except Day0's own component, before a secret is stored (M16)", (): void => {
     const mcp = (locator: string) => (): unknown =>
       validateLinkInput({ label: 'Docs', kind: 'mcp', locator, serverKind: 'confluence' });
@@ -325,6 +352,21 @@ describe('documentation sources in real mode', (): void => {
     await expect(
       harness.withIdentity({ subject: 'other-owner' }).query(api.docSources.listMine, {}),
     ).resolves.toEqual([]);
+  });
+
+  it('refuses a git locator carrying a token at link, so no row stores it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.action(api.docSources.link, {
+        label: 'Runbooks',
+        kind: 'git',
+        locator: 'https://oauth2:glpat-abc@github.com/team/docs#main',
+      }),
+    ).rejects.toThrow('must not carry a user name or password');
+    await expect(owner.query(api.docSources.listMine, {})).resolves.toEqual([]);
   });
 
   it('persists only a credential id on an authenticated source', async (): Promise<void> => {

@@ -108,7 +108,7 @@ import {
   type RedactorGpuDecision,
   type VenvDevice,
 } from './redactor-device';
-import { companyHandSteps, loadBedSpec } from './bed/spec';
+import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from './bed/spec';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './lib/docker';
 import { setupRoute } from './setup-route';
 import {
@@ -337,8 +337,8 @@ const USAGE = `Usage: pnpm setup:local [options]
   --sandbox <local|daytona>     real mode: what verifies authored skills (default local)
   --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
   --company                     real mode: then copy the company bed's pages into the
-                                documentation folder (pnpm bed:company docs), print its
-                                hand steps and run pnpm bed:company check
+                                documentation folder (scripts/bed/company.ts docs), print
+                                its hand steps and run its check
   --dry-run                     print the plan of commands and write nothing
   --reset                       clear this project (containers and volumes) first
   --adopt                       re-adopt the installation of a checkout that moved here:
@@ -1122,6 +1122,7 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
   return updates;
 }
 
+/** What decides the order of the setup's steps. */
 export interface SequenceInput {
   mode?: SetupMode;
   /** Real mode: whether a warm project's redactor volumes are copied first. */
@@ -1135,12 +1136,18 @@ export interface SequenceInput {
   /** Real mode: the company bed's pages copied in, then its check. */
   company?: boolean;
   /**
-   * Whether the data volume already holds a deployment. Its functions are then
-   * pushed before the env, so a push the new schema refuses leaves the old
-   * functions with the old env; a new volume takes the env first, because the
-   * auth config is read from the deployment's env at the first push.
+   * Whether the data volume is reused, so the release its rows are at is
+   * checked before anything is pushed. A deployment with rows then takes its
+   * functions before the env, so a push the new schema refuses leaves the old
+   * functions with the old env.
    */
   existing?: boolean;
+  /**
+   * Whether that check found no tables: nothing was ever pushed, so the env
+   * goes first as on a new volume. The auth config is read from the
+   * deployment's env at the push and refuses one with no identity provider.
+   */
+  empty?: boolean;
 }
 
 /**
@@ -1152,12 +1159,9 @@ export interface SequenceInput {
  * everything when asked for. A model the volume already holds is not pulled
  * again.
  *
- * Args:
- *   route: The chosen route.
- *   input: Mode and the real-mode choices; mock when omitted.
- *
- * Returns:
- *   Step names, in order.
+ * @param route - The chosen route.
+ * @param input - Mode and the real-mode choices; mock when omitted.
+ * @returns Step names, in order.
  */
 export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): string[] {
   const real = (input.mode ?? 'mock') === 'real';
@@ -1170,12 +1174,13 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
     ...(real ? ['redactor:up'] : []),
     'admin-key',
-    ...(input.existing
-      ? ['release:check', 'convex dev --once', 'migrations', 'release:stamp', 'sync:env']
+    ...(input.existing ? ['release:check'] : []),
+    ...(input.existing && !input.empty
+      ? ['convex dev --once', 'migrations', 'release:stamp', 'sync:env']
       : ['sync:env', 'convex dev --once', 'migrations', 'release:stamp']),
     'convex:restart',
     'check:setup',
-    ...(real && input.company ? ['bed:company docs', 'bed:company check'] : []),
+    ...(real && input.company ? ['company bed docs', 'company bed check'] : []),
   ];
 }
 
@@ -1622,14 +1627,13 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
       return [{ command: 'pnpm', args: ['run', 'convex:restart'] }];
     case 'check:setup':
       return [{ command: 'pnpm', args: ['run', 'check:setup'] }];
-    case 'bed:company docs':
-      return [{ command: 'pnpm', args: ['run', 'bed:company', 'docs'] }];
-    case 'bed:company check':
+    case 'company bed docs':
+      return [{ command: 'pnpm', args: ['exec', 'tsx', COMPANY_SCRIPT, 'docs'] }];
+    case 'company bed check':
       // A check that only lists the hand steps still owed exits non-zero by
-      // design, and the setup says so in the line under it. Silencing pnpm's
-      // own reporter keeps `ELIFECYCLE  Command failed with exit code 1` out
-      // of a setup that worked; the checker's own output is unchanged.
-      return [{ command: 'pnpm', args: ['--reporter=silent', 'run', 'bed:company', 'check'] }];
+      // design, and the setup says so in the line under it; `pnpm exec` adds
+      // no failure line of its own to a setup that worked.
+      return [{ command: 'pnpm', args: ['exec', 'tsx', COMPANY_SCRIPT, 'check'] }];
     default:
       throw new Error(`no command for step "${step}"`);
   }
@@ -1702,7 +1706,8 @@ export function planLines(input: PlanInput): string[] {
       lines.push('     (only when the file has no key or the backend refuses the one it has)');
     }
     if (step === 'release:check') {
-      lines.push('     (refuses to skip a release, or to push older functions over newer rows)');
+      lines.push('     (refuses to skip a release, or to push older functions over newer rows;');
+      lines.push('     a deployment with no tables yet takes the env before the push)');
     }
     if (step === 'redactor:up' && input.redactor) lines.push(`     ${input.redactor.reason}`);
   });
@@ -2324,19 +2329,52 @@ function adoptDeploymentCredentialKey(
   return undefined;
 }
 
-/** One failed step, printed with the state it leaves behind and how to resume. */
+/**
+ * What to do about a push the deployment's auth config refused, or nothing
+ * for any other refusal. The config is read from the deployment's env at the
+ * push, so the way out is the env, not another push.
+ *
+ * @param output - The push's own output.
+ * @param mode - The setup mode, for the command to run again.
+ * @returns Lines to print after the failure.
+ */
+export function pushRefusalAdvice(output: string, mode: SetupMode): string[] {
+  if (/no identity provider configured/.test(output)) {
+    return [
+      '',
+      "The deployment's env names no identity provider, so its auth config refused the push. " +
+        `\`pnpm sync:env\` puts the one in ${ENV_FILE} on the deployment (\`pnpm dev:no-auth-key\` ` +
+        `writes the local issuer's keys if the file has none); then run \`${entryCommand(mode)}\` again.`,
+    ];
+  }
+  if (/InvalidAuthConfig/.test(output)) {
+    return [
+      '',
+      "The deployment's auth config refused the push for the reason above. Correct the identity " +
+        `settings in ${ENV_FILE}, push them with \`pnpm sync:env\`, then run \`${entryCommand(mode)}\` again.`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * One failed step, printed with the state it leaves behind and how to resume.
+ *
+ * @param tail - How many of the output's last lines to print; the whole output when absent.
+ */
 function reportFailure(
   io: SetupIo,
   what: string,
   result: RunResult,
   project: string,
   mode: SetupMode,
+  tail: number = 12,
 ): void {
   io.log('');
   io.log(`error: ${what} failed (status ${result.status}).`);
   const detail = `${result.stdout}${result.stderr}`.trim();
   if (detail !== '') {
-    for (const line of detail.split('\n').slice(-12)) io.log(`  ${line}`);
+    for (const line of detail.split('\n').slice(-tail)) io.log(`  ${line}`);
   } else {
     io.log('  Its own output is above.');
   }
@@ -2794,10 +2832,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     const profiles = real ? REAL_MODE_PROFILES : [];
     const warm = real && options.warmFrom !== undefined;
-    // A deployment with rows takes its functions before its env and is
-    // checked against its release first; --reset leaves a new volume.
+    // A reused volume is checked against its release first; --reset leaves a
+    // new volume. Whether it has rows, and so takes its functions before its
+    // env, is the check's answer, not the volume's existence: a first run
+    // stopped before its push leaves a volume with nothing in it.
     const existingDeployment = decision === 'rerun' && !options.reset;
-    const steps = sequenceSteps(route, {
+    const sequence: SequenceInput = {
       mode: options.mode,
       warm,
       sandbox: options.sandbox,
@@ -2805,7 +2845,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       pull,
       company: options.company,
       existing: existingDeployment,
-    });
+    };
+    let steps = sequenceSteps(route, sequence);
+    let deploymentHasRows = existingDeployment;
     const head = io.run('git', ['rev-parse', '--short=12', 'HEAD'], { timeoutMs: 30_000 });
     const commit =
       head.status === 0 && /^[0-9a-f]{7,40}$/.test(head.stdout.trim())
@@ -2913,6 +2955,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const streamed: RunOptions = { env: environment, inherit: true, timeoutMs: 900_000 };
     io.log('');
     io.log(`Starting. Steps: ${steps.join(' → ')}`);
+    if (existingDeployment) {
+      io.log(
+        '(a volume with no tables yet takes sync:env ahead of the push; the release check says)',
+      );
+    }
     io.log('');
     started = true;
 
@@ -2938,17 +2985,19 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const runStep = (
       name: string,
       label: string,
-      extra: RunOptions = {},
+      extra: RunOptions & { onFailure?: (result: RunResult) => void; tail?: number } = {},
     ): RunResult | undefined => {
+      const { onFailure, tail, ...runOptions } = extra;
       let last: RunResult | undefined;
       for (const planned of stepCommands(name, context)) {
         last = step(io, steps, name, label, planned.command, planned.args, {
           ...streamed,
-          ...extra,
-          env: { ...environment, ...(extra.env ?? {}), ...(planned.env ?? {}) },
+          ...runOptions,
+          env: { ...environment, ...(runOptions.env ?? {}), ...(planned.env ?? {}) },
         });
         if (last.status !== 0) {
-          reportFailure(io, label, last, resolvedProject, options.mode);
+          reportFailure(io, label, last, resolvedProject, options.mode, tail);
+          onFailure?.(last);
           return undefined;
         }
       }
@@ -3183,6 +3232,13 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         return 1;
       }
       io.log(`    ${verdict.note}`);
+      // A verdict with no `from` is a deployment whose table listing was empty.
+      if (verdict.from === undefined) {
+        deploymentHasRows = false;
+        steps = sequenceSteps(route, { ...sequence, empty: true });
+        io.log('    nothing was ever pushed here, so the env goes first, as on a new volume:');
+        io.log(`    ${steps.slice(steps.indexOf('release:check') + 1).join(' → ')}`);
+      }
     }
     if (options.adoptCredentialKey) {
       const unread = adoptDeploymentCredentialKey(io, environment, envPath);
@@ -3194,15 +3250,30 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const pushFunctions = (): boolean => {
-      if (!runStep('convex dev --once', 'npx convex dev --once')) {
-        if (existingDeployment) {
+      // Captured rather than streamed, so an auth config refusal can be named;
+      // a refusal prints whole, since a typecheck's first error is its head.
+      const pushed = runStep('convex dev --once', 'npx convex dev --once', {
+        inherit: false,
+        tail: Number.POSITIVE_INFINITY,
+        onFailure: (result: RunResult): void => {
+          for (const line of pushRefusalAdvice(`${result.stdout}${result.stderr}`, options.mode)) {
+            io.log(line);
+          }
+        },
+      });
+      if (pushed) {
+        for (const line of `${pushed.stdout}${pushed.stderr}`.split('\n')) {
+          if (line.trim() !== '') io.log(`    ${line.trimEnd()}`);
+        }
+      } else {
+        if (deploymentHasRows) {
           io.log(
             '    The push was refused before anything changed: the old functions keep serving ' +
               'with the env they had, and no migration has run.',
           );
         }
-        return false;
       }
+      if (!pushed) return false;
       const corrections = publicUrlCorrections(readEnvValues(envPath), ports);
       if (Object.keys(corrections).length > 0) {
         writeEnvValues(envPath, corrections);
@@ -3261,7 +3332,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     // Functions before env on a deployment with rows, so a refused push
     // leaves the old functions on the old env; the restart only once every
     // step before it succeeded.
-    if (existingDeployment) {
+    if (deploymentHasRows) {
       if (!pushFunctions() || !runMigrations() || !stampRelease()) return 1;
       if (!runStep('sync:env', 'pnpm sync:env')) return 1;
     } else {
@@ -3302,22 +3373,22 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     if (real && options.company) {
       io.log('');
-      const [docsCommand] = stepCommands('bed:company docs', context);
+      const [docsCommand] = stepCommands('company bed docs', context);
       const docs = step(
         io,
         steps,
-        'bed:company docs',
-        'pnpm bed:company docs',
+        'company bed docs',
+        `${COMPANY_COMMAND} docs`,
         docsCommand.command,
         docsCommand.args,
         streamed,
       );
       if (docs.status !== 0) {
-        reportFailure(io, 'pnpm bed:company docs', docs, resolvedProject, options.mode);
+        reportFailure(io, `${COMPANY_COMMAND} docs`, docs, resolvedProject, options.mode);
         return 1;
       }
       io.log('');
-      io.log("The company bed's hand steps, once per workspace:");
+      io.log("The company bed's hand steps, once per workspace (step 2's asks each sitting):");
       for (const line of companyHandSteps(loadBedSpec(io.cwd))) {
         // A hanging indent, so each numbered step reads as one block.
         const wrapped = wrapIndented(line, '     ');
@@ -3325,12 +3396,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         for (const printed of wrapped) io.log(printed);
       }
       io.log('');
-      const [bedCheckCommand] = stepCommands('bed:company check', context);
+      const [bedCheckCommand] = stepCommands('company bed check', context);
       const bedCheck = step(
         io,
         steps,
-        'bed:company check',
-        'pnpm bed:company check',
+        'company bed check',
+        `${COMPANY_COMMAND} check`,
         bedCheckCommand.command,
         bedCheckCommand.args,
         { ...streamed, inherit: false },
@@ -3343,12 +3414,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         if (onlyOwedCompanyTokenGaps(bedCheckOutput)) {
           io.log(
             '    The setup itself is done; the gaps above are the hand steps still owed. Run ' +
-              '`pnpm bed:company check` again after each, then `pnpm bed:company seed`.',
+              `\`${COMPANY_COMMAND} check\` again after each, then \`${COMPANY_COMMAND} seed\`.`,
           );
         } else {
           io.log(
             '    The company bed check found a gap beyond the token hand steps. ' +
-              'Fix the GAP lines above, then run `pnpm bed:company check` again.',
+              `Fix the GAP lines above, then run \`${COMPANY_COMMAND} check\` again.`,
           );
           return 1;
         }

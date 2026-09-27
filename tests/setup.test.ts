@@ -24,7 +24,7 @@ interface Machine {
   daemon?: { ok: true; arch?: string } | { ok: false; stderr: string };
   /** What `docker compose version` answers. */
   compose?: { ok: true; version: string } | { ok: false; stderr: string };
-  /** The major version the bash on the path reports; negative for one that prints nothing. */
+  /** The major version the bash on the path reports. */
   bashMajor?: number;
   /** Whether the clone already has its dependencies. */
   installed?: boolean;
@@ -93,15 +93,9 @@ function runSetupSh(machine: Machine, args: string[]): Outcome {
     'esac',
   ]);
   if (machine.bashMajor !== undefined) {
-    // A negative major stands for a bash that prints nothing at all.
-    executable(
-      join(bin, 'bash'),
-      machine.bashMajor < 0
-        ? ['exit 0']
-        : [
-            `if [ "$1" = "-c" ]; then case "$2" in *VERSINFO*) echo ${machine.bashMajor} ;; *) echo ${machine.bashMajor}.2.57 ;; esac; fi`,
-          ],
-    );
+    executable(join(bin, 'bash'), [
+      `if [ "$1" = "-c" ]; then case "$2" in *VERSINFO*) echo ${machine.bashMajor} ;; *) echo ${machine.bashMajor}.2.57 ;; esac; fi`,
+    ]);
   }
   const result = spawnSync(BASH, [join(clone, 'setup.sh'), ...args], {
     cwd: clone,
@@ -182,17 +176,23 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     expect(outcome.stderr).not.toContain('v1 is not enough');
   });
 
-  it('reports a bash on the path that prints no version, rather than stopping without a word', (): void => {
-    const outcome = runSetupSh({ bashMajor: -1 }, ['--dry-run']);
-    expect(outcome.status).toBe(1);
-    expect(outcome.stderr).toContain('gap  bash 4 or newer is needed on the path; found: none.');
+  it('runs with the bash 3.2 macOS ships on the path, since the env sync needs nothing newer', (): void => {
+    const outcome = runSetupSh({ bashMajor: 3, installed: true }, [
+      '--dry-run',
+      '--route',
+      'local',
+    ]);
+    expect(outcome.stderr).not.toContain('bash 4');
+    expect(outcome.status).toBe(0);
+    expect(outcome.pnpm).toEqual(['setup:local --mode real --dry-run --route local']);
   });
 
-  it('refuses a bash older than 4 on the path, which the env sync needs', (): void => {
-    const outcome = runSetupSh({ bashMajor: 3 }, ['--dry-run']);
-    expect(outcome.status).toBe(1);
-    expect(outcome.stderr).toContain('gap  bash 4 or newer is needed on the path; found: 3.2.57.');
-    expect(outcome.stderr).toContain('brew install bash');
+  it('names backup, restore and upgrade in its usage', (): void => {
+    const outcome = runSetupSh({}, ['--help']);
+    expect(outcome.status).toBe(0);
+    expect(outcome.stdout).toContain('./setup.sh backup | restore <file> | upgrade');
+    expect(outcome.stdout).toContain('./setup.sh restore <file>');
+    expect(outcome.stdout).toContain('A mock deployment upgrades with pnpm setup:local upgrade.');
   });
 
   it('refuses an arm64 daemon before it installs anything, since the redactor wheel locks are x86_64 only', (): void => {

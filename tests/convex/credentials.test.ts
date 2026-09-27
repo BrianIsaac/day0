@@ -14,6 +14,7 @@ import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
+import { decrypt as decryptCredential, openOwnedCredential } from '../../src/lib/credential-crypto';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 
 /** The Linear writes the MCP transport received, with the bearer it was opened with. */
@@ -231,6 +232,75 @@ describe('credential contract', (): void => {
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
       'unavailable',
     );
+  });
+
+  it("seals a stored value to its owner, so its ciphertext moved to another owner's row no longer opens", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Notion connection secret',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    const sealed = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+    const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
+    const material = { ciphertext: sealed?.ciphertext ?? '', iv: sealed?.iv ?? '' };
+    expect(() => decryptCredential(material, key)).toThrow();
+    expect(openOwnedCredential(material, key, 'owner')).toBe(SECRET);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
+      SECRET,
+    );
+
+    const moved = await harness.mutation(internal.credentials.persistEncrypted, {
+      userId: 'neighbour',
+      kind: 'value',
+      label: 'Notion connection secret',
+      ...material,
+      source: 'entered',
+      rotated: false,
+    });
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: moved }),
+    ).rejects.toThrow();
+  });
+
+  it("does not take a value moved onto another owner's page row as that owner's own", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ownerId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'linear service token',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    const sealed = await harness.run(async (ctx) => await ctx.db.get(ownerId));
+    const sourceId = await seedSource(harness, 'neighbour');
+    const source = { sourceId, ref: 'linear-automation' };
+    const movedId = await harness.mutation(internal.credentials.persistEncrypted, {
+      userId: 'neighbour',
+      kind: 'value',
+      label: 'linear service token',
+      ciphertext: sealed?.ciphertext ?? '',
+      iv: sealed?.iv ?? '',
+      source,
+      rotated: false,
+    });
+    // The page names the same value: the moved row is unreadable to its owner, so the value is sealed again for them.
+    await expect(
+      harness.action(internal.credentials.store, {
+        userId: 'neighbour',
+        kind: 'value',
+        label: 'linear service token',
+        plaintext: SECRET,
+        source,
+      }),
+    ).resolves.toBe(movedId);
+    const resealed = await harness.run(async (ctx) => await ctx.db.get(movedId));
+    expect(resealed?.ciphertext).not.toBe(sealed?.ciphertext);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: movedId }),
+    ).resolves.toBe(SECRET);
   });
 
   it('replaces a row sealed under a rotated deployment key instead of failing the sync', async (): Promise<void> => {

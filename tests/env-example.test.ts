@@ -43,4 +43,15 @@ describe('.env.example', (): void => {
     );
     for (const name of read) expect(DECLARED, name).toContain(name);
   });
+
+  it('names only pnpm scripts package.json defines', (): void => {
+    const manifest = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { scripts: Record<string, string> };
+    const named = [...EXAMPLE.matchAll(/`pnpm ([a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)+)/g)].map(
+      (match) => match[1],
+    );
+    expect(named.length).toBeGreaterThan(0);
+    for (const name of named) expect(Object.keys(manifest.scripts), name).toContain(name);
+  });
 });

@@ -66,6 +66,18 @@ export function validateLinkInput(input: LinkInput): LinkInput {
   const locator = input.locator.trim();
   if (!label) throw new Error('Documentation label is required.');
   if (!locator) throw new Error('Documentation locator is required.');
+  // The locator is stored on the row and shown on the page, so a token in it
+  // would sit in plaintext on both; no refusal repeats the locator.
+  // Read on the raw text as well as the parsed URL: a `#` before the `@`
+  // moves the userinfo into the fragment, where the parser does not see it.
+  const refuseUserinfo = (url: URL, raw: string): void => {
+    if (url.username !== '' || url.password !== '' || /^[a-z][a-z0-9+.-]*:\/\/[^/?]*@/i.test(raw)) {
+      throw new Error(
+        'Documentation locators must not carry a user name or password; a credential is ' +
+          'linked with the source, never inside its address.',
+      );
+    }
+  };
   if (input.kind === 'folder') {
     if (locator.startsWith('/') || locator.split(/[\\/]/).includes('..')) {
       throw new Error('Folder locator must be relative and stay inside DAY0_DOCS_ROOT.');
@@ -81,10 +93,12 @@ export function validateLinkInput(input: LinkInput): LinkInput {
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
         throw new Error('Documentation URLs must use HTTP or HTTPS.');
       }
+      refuseUserinfo(url, value);
     }
   } else {
     const rawUrl = input.kind === 'git' ? locator.split('#')[0] : locator;
     const url = new URL(rawUrl);
+    refuseUserinfo(url, locator);
     // Only Day0's own Notion component is reached over plain HTTP, on the
     // compose network; every other MCP server gets a secret, and the reader
     // connects to it over HTTPS at a checked public address alone (M16).

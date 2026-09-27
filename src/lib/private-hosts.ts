@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { isDiallablePrivateAddress } from './network-addresses';
 
 /**
  * The operator's list of hosts inside their own network that day0 may reach.
@@ -38,7 +39,8 @@ const HOST_NAME =
  *
  * @param value - The variable's value: entries separated by commas or whitespace.
  * @returns The names and suffixes, lower-cased, without a trailing dot or IPv6 brackets.
- * @throws Error naming the variable when an entry is not a host name, an IP address or a `.suffix`.
+ * @throws Error naming the variable when an entry is not a host name, an IP address or a
+ *   `.suffix`, or names loopback, link-local, multicast, an unspecified address or `localhost`.
  */
 export function privateHostAllowlist(value: string | undefined): PrivateHostAllowlist {
   const names: string[] = [];
@@ -46,7 +48,18 @@ export function privateHostAllowlist(value: string | undefined): PrivateHostAllo
   for (const entry of (value ?? '').split(/[\s,]+/).filter(Boolean)) {
     const key = hostKey(entry);
     const suffix = key.startsWith('.') ? key.slice(1) : undefined;
-    if (suffix !== undefined && HOST_NAME.test(suffix)) {
+    if (
+      (isIP(key) !== 0 && !isDiallablePrivateAddress(key)) ||
+      key === 'localhost' ||
+      key.endsWith('.localhost')
+    ) {
+      throw new Error(
+        `${PRIVATE_HOSTS_VAR} lists "${entry}", which is this machine or an address day0 never ` +
+          'dials (loopback, link-local, multicast or unspecified), listed or not.',
+      );
+    }
+    // A suffix whose last label is a number would match IP literals by pattern.
+    if (suffix !== undefined && HOST_NAME.test(suffix) && !/(?:^|\.)\d+$/.test(suffix)) {
       suffixes.push(`.${suffix}`);
     } else if (suffix === undefined && (isIP(key) !== 0 || HOST_NAME.test(key))) {
       names.push(key);

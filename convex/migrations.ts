@@ -29,14 +29,18 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { migrateSandboxIdPage } from './skills';
+import { restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 
 /**
- * Every migration, in the order the upgrade runs them. Owners come first so
- * the inclusion-list conversion can read an adopted agent's sources.
+ * Every migration, in the order the upgrade runs them. The access clocks come
+ * first, so the hourly sweep has the least time to end a card on the clock
+ * they restart; owners come before the inclusion-list conversion, which reads
+ * an adopted agent's sources.
  */
 export const MIGRATION_NAMES = [
+  'surfaces-access-clock',
   'agents-owner',
   'agents-inclusion-list',
   'agents-posture',
@@ -102,6 +106,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'copies each kept work.listed snapshot into ticketListings, where the re-read before apply now looks',
     thenRemoves: 'nothing: work.listed events stay as the feed’s record',
+  },
+  'surfaces-access-clock': {
+    release: FIRST_MIGRATIONS_RELEASE,
+    does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
+    thenRemoves: 'nothing: the surface.access-set event it writes is the record',
   },
 };
 
@@ -368,6 +377,8 @@ const MIGRATION_PAGES: Readonly<
   'surfaces-credential-ref': clearCredentialRef,
   'credentials-sync-revoke': clearSyncRevokes,
   'ticket-listings': copyListings,
+  'surfaces-access-clock': async (ctx, cursor) =>
+    await restartAccessClocksPage(ctx, cursor, Date.now()),
 };
 
 /** A migration's row, if it has started. */
