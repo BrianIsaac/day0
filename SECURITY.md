@@ -39,7 +39,7 @@ What the code checks, in the order a reader meets them. Each is tested under `te
 ## What is out of scope
 
 - The self-hosted Convex backend has no authentication of its own beyond the token the app presents. `CONVEX_BIND_ADDR` defaults to loopback; widening it publishes a database to your network, and the README says so where it explains the setting.
-- Provider-side processing and retention (OpenAI, Featherless, Notion, Linear, Slack, ElevenLabs, Exa, Daytona) follow your account terms with those providers and were not audited by this project.
+- Provider-side processing and retention (OpenAI, Featherless, Notion, Linear, Slack, ElevenLabs, Daytona) follow your account terms with those providers and were not audited by this project.
 - A container escape from the local sandbox, or a compromised Docker host, is outside what the sandbox claims to hold.
 - Day0 is not a secret manager, and shared credentials found in documentation should be rotated into one; the card that finds one says so.
 

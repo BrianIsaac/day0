@@ -44,7 +44,6 @@ describe('the bed environment', (): void => {
     const source: Record<string, string> = {
       OPENAI_API_KEY: 'sk-test',
       OPENAI_MODEL: 'gpt-5.6-terra',
-      EXA_API_KEY: 'exa',
       DAYTONA_API_KEY: 'dt',
       NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'boss@example.com',
       CONVEX_SELF_HOSTED_ADMIN_KEY: 'convex-self-hosted|old',
@@ -58,7 +57,6 @@ describe('the bed environment', (): void => {
     };
     const values = bedEnvValues({ project: 'day0-rehearsal-1', ports, docsHostDir: '/d', source });
     expect(values.OPENAI_MODEL).toBe('gpt-5.6-terra');
-    expect(values.EXA_API_KEY).toBe('exa');
     expect(values.DAYTONA_API_KEY).toBe('dt');
     for (const key of NEVER_COPIED_KEYS) expect(values[key] ?? '').toBe('');
     expect(values.COMPOSE_PROJECT_NAME).toBe('day0-rehearsal-1');
