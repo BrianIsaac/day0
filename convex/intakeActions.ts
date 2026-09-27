@@ -837,27 +837,24 @@ export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
 
 /** A ticket intake refused on this poll, and why it left the queue. */
 interface WithdrawnTicket {
-  candidate: WorkCandidate;
-  leftQueue: string;
+  readonly candidate: WorkCandidate;
+  readonly leftQueue: string;
 }
 
 /** What one Linear poll found. */
 interface LinearPoll {
-  candidates: WorkCandidate[];
-  withdrawn: WithdrawnTicket[];
+  readonly candidates: readonly WorkCandidate[];
+  readonly withdrawn: readonly WithdrawnTicket[];
   /** Each listed ticket as the ownership rule read it, by external id. */
-  trackers: ReadonlyMap<string, TicketSnapshot>;
-  holdCheckpoint?: string;
+  readonly trackers: ReadonlyMap<string, TicketSnapshot>;
+  readonly holdCheckpoint?: string;
 }
 
 /**
  * The card line for a server whose list cannot show who owns a ticket.
  *
- * Args:
- *   unselectable: The facts the `fields` selector cannot select.
- *
- * Returns:
- *   The surface's intake reason while the checkpoint is held.
+ * @param unselectable - The facts the `fields` selector cannot select.
+ * @returns The surface's intake reason while the checkpoint is held.
  */
 function unreadableOwnershipHold(unselectable: readonly string[]): string {
   const facts =

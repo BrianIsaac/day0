@@ -517,11 +517,9 @@ const LISTED_FIELDS = [
  * row intake withdrew is cancelled with the reason, or returned to
  * `discovered` when its ticket is back in the queue.
  *
- * Args:
- *   ctx: Mutation context of the seed.
- *   existing: The row the ticket already has.
- *   args: The ticket as this poll listed it.
- *   leftQueue: Why the ticket left the queue, when this poll refused it.
+ * @param existing - The row the ticket already has.
+ * @param args - The ticket as this poll listed it.
+ * @param leftQueue - Why the ticket left the queue, when this poll refused it.
  */
 async function refreshListedItem(
   ctx: MutationCtx,

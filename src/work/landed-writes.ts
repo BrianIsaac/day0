@@ -81,11 +81,8 @@ export interface ReusedAppliedAction extends AppliedAction {
 /**
  * The key of the row a ledger row reused, when it is a reuse.
  *
- * Args:
- *   applied: A ledger row.
- *
- * Returns:
- *   The reused row's idempotency key, or undefined for a row that was sent.
+ * @param applied - A ledger row.
+ * @returns The reused row's idempotency key, or undefined for a row that was sent.
  */
 export function reusedFrom(applied: AppliedAction): string | undefined {
   const source = (applied as Partial<ReusedAppliedAction>).reusedFrom;
@@ -95,12 +92,9 @@ export function reusedFrom(applied: AppliedAction): string | undefined {
 /**
  * Number each reused row by the run that sent what it reuses.
  *
- * Args:
- *   rows: A phase's ledger rows, reused or not.
- *   runIds: The item's runs, oldest first.
- *
- * Returns:
- *   The rows, each reuse with `reusedFromRun` when its run is among them.
+ * @param rows - A phase's ledger rows, reused or not.
+ * @param runIds - The item's runs, oldest first.
+ * @returns The rows, each reuse with `reusedFromRun` when its run is among them.
  */
 export function withReusedRunNumbers<T extends AppliedAction | undefined>(
   rows: readonly T[],
@@ -266,13 +260,8 @@ function statusChange(
  * The last state an earlier run of the item set on a ticket, from the
  * writes it carries; the re-read before apply counts that move as Day0's own.
  *
- * Args:
- *   writes: The landed writes the row carries, oldest first.
- *   surface: The ticket's surface.
- *   ticket: The ticket's id.
- *
- * Returns:
- *   The state, or undefined when no earlier run set one.
+ * @param writes - The landed writes the row carries, oldest first.
+ * @returns The state, or undefined when no earlier run set one.
  */
 export function lastLandedState(
   writes: readonly LandedWrite[],
