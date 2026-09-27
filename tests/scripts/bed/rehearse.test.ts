@@ -14,7 +14,7 @@ function rehearse(args: readonly string[]): {
 } {
   const result = spawnSync(TSX, [SCRIPT, ...args], {
     encoding: 'utf8',
-    env: { PATH: process.env.PATH ?? '' },
+    env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
     timeout: 60_000,
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
