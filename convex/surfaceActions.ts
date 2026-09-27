@@ -41,6 +41,7 @@ import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
 import { actionIntent } from '../src/surfaces/policy';
+import { DocumentedApiLimitation, probeDocumentedApi } from '../src/surfaces/http';
 
 const SLACK_METHOD_DEFAULTS = [
   'auth.test',
@@ -98,6 +99,8 @@ interface ProbeDependencies {
   probeBrowser: typeof probeBrowserSurface;
   probeMcp: typeof probeMcpSurface;
   probeSlack: typeof probeSlackSurface;
+  /** The documented-API probe for a system that is not Slack; the network one unless a test replaces it. */
+  probeApi?: typeof probeDocumentedApi;
   now(): number;
   /** The pause before a probe's one retry; real time unless a test replaces it. */
   wait?(milliseconds: number): Promise<void>;
@@ -1092,14 +1095,33 @@ export async function runSurfaceProbe(
         );
         toolAllowlist = discovery.toolAllowlist;
         toolArguments = discovery.toolArguments;
+      } else if (
+        surface.path === 'documented-api' &&
+        (surface.class !== 'chat' || !isSlackApiEndpoint(surface.endpoint))
+      ) {
+        const pages: Doc<'docPages'>[] = await day0Step(
+          'read the linked documentation',
+          (): Promise<Doc<'docPages'>[]> =>
+            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
+        );
+        // Scoped to this surface's own pages, as the browser marker is: another
+        // system's documented operations are not this one's to call.
+        const documentation = pages
+          .map((page: Doc<'docPages'>): string =>
+            relevantSystemText(page.markdown, surface.displayName, page.title),
+          )
+          .join('\n\n');
+        const probeApi = dependencies.probeApi ?? probeDocumentedApi;
+        const discovery = await withOneRetry(credential, known, () =>
+          probeApi(surface.endpoint, credential, documentation).catch((error: unknown) => {
+            throw error instanceof DocumentedApiLimitation
+              ? new Day0ProbeLimitation(error.message)
+              : error;
+          }),
+        );
+        toolAllowlist = discovery.toolAllowlist;
+        toolArguments = discovery.toolArguments;
       } else if (surface.path === 'documented-api') {
-        if (surface.class !== 'chat' || !isSlackApiEndpoint(surface.endpoint)) {
-          throw new Day0ProbeLimitation(
-            `Day0 has no documented-API probe for ${surface.displayName} at ${surface.endpoint ?? 'an undocumented address'}. ` +
-              `This is a limitation of this Day0 deployment, not evidence that ${surface.displayName} is unavailable. ` +
-              'The approved endpoint remains on the card.',
-          );
-        }
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
