@@ -126,7 +126,7 @@ describe('the README quick starts', (): void => {
 });
 
 describe('the three ways to run it', (): void => {
-  it('are hosted, then local with a cloud model, then local with a local model, by the README\'s names', (): void => {
+  it("are hosted, then local with a cloud model, then local with a local model, by the README's names", (): void => {
     expect(RUN_WAYS.map((way) => way.id)).toEqual(['hosted', 'cloud', 'local']);
     expect(RUN_WAYS.map((way) => way.title)).toEqual([
       'Hosted demo',
@@ -174,11 +174,16 @@ describe('the three ways to run it', (): void => {
     const [, cloud, local] = RUN_WAYS;
     // `./setup.sh <args>` is `pnpm setup:local --mode real <args>`.
     for (const way of [cloud, local]) {
-      const args = way.commands!.find((c) => c.startsWith(SETUP_SCRIPT))!.split(' ').slice(1);
+      const args = way
+        .commands!.find((c) => c.startsWith(SETUP_SCRIPT))!
+        .split(' ')
+        .slice(1);
       expect(parseSetupArguments(['--mode', 'real', ...args]).mode).toBe('real');
       expect(JSON.stringify(way)).not.toContain('pnpm setup:local');
     }
-    expect(parseSetupArguments(['--mode', 'real', '--route', 'featherless']).route).toBe('featherless');
+    expect(parseSetupArguments(['--mode', 'real', '--route', 'featherless']).route).toBe(
+      'featherless',
+    );
     expect(parseSetupArguments(['--mode', 'real', '--route', 'local']).route).toBe('local');
     for (const verb of REAL_MODE_VERBS) {
       const word = verb.command.split(' ')[1];
@@ -204,7 +209,11 @@ describe('the three ways to run it', (): void => {
   it('are the commands the README gives for the same ways, in both halves', (): void => {
     const [, cloud, local] = RUN_WAYS;
     const chineseAt = README.indexOf(CHINESE_HEADING);
-    for (const command of [cloud.commands![3], local.commands![3], ...REAL_MODE_VERBS.map((v) => v.command)]) {
+    for (const command of [
+      cloud.commands![3],
+      local.commands![3],
+      ...REAL_MODE_VERBS.map((v) => v.command),
+    ]) {
       const offsets = offsetsOf(README, command);
       expect(offsets.length, command).toBeGreaterThanOrEqual(2);
       expect(offsets[0]).toBeLessThan(chineseAt);
@@ -298,7 +307,7 @@ describe('the two places a model runs', (): void => {
 });
 
 describe('what first success looks like', (): void => {
-  it('is real mode\'s four steps: unlock, link the documentation, the charter, the connection cards', (): void => {
+  it("is real mode's four steps: unlock, link the documentation, the charter, the connection cards", (): void => {
     expect(FIRST_SUCCESS).toHaveLength(4);
     expect(FIRST_SUCCESS[1].action).toContain('Link your documentation first');
     expect(FIRST_SUCCESS[2].action).toContain('approve the charter');
@@ -318,7 +327,7 @@ describe('what first success looks like', (): void => {
     });
   });
 
-  it('keeps the mock office\'s own four for the mock entry, seeded and synthetic', (): void => {
+  it("keeps the mock office's own four for the mock entry, seeded and synthetic", (): void => {
     expect(MOCK_FIRST_SUCCESS).toHaveLength(4);
     expect(MOCK_FIRST_SUCCESS[0]).toBe(FIRST_SUCCESS[0]);
     expect(MOCK_FIRST_SUCCESS[1].detail).toContain('seeded and synthetic');
