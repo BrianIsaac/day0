@@ -887,7 +887,7 @@ export function modelAddresses(
 /**
  * Free VRAM in MiB, from `nvidia-smi --query-gpu=memory.free`.
  *
- * `scripts/model-up.ts:107` asks `nvidia-smi -L` whether a driver exists at
+ * `hasNvidiaDriver` in `scripts/model-up.ts` asks `nvidia-smi -L` whether a driver exists at
  * all; it reads no memory figure, so the query is made here rather than reused.
  * The largest card is what matters: the model loads onto one of them.
  *
