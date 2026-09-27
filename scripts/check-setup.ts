@@ -122,7 +122,6 @@ const WATCHED = [
   'OPENAI_MODEL',
   'DAYTONA_API_KEY',
   'DAYTONA_API_URL',
-  'EXA_API_KEY',
   'SKILL_SANDBOX_SOCKET',
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_AGENT_ID',
@@ -1258,7 +1257,6 @@ export function egressHosts(values: Readonly<Record<string, string>>): EgressHos
       'Daytona, verifying authored skills',
     );
   }
-  if (values.EXA_API_KEY) add('api.exa.ai', 'Exa research during orientation');
   if (values.ELEVENLABS_API_KEY) add('api.elevenlabs.io', 'the voice 1:1');
   add(outboundHost(values.CLERK_JWT_ISSUER_DOMAIN), 'Clerk, signing users in');
   add('registry-1.docker.io', 'image pulls at setup (ollama, python, node)');
