@@ -219,14 +219,16 @@ export function managerConditionalSteps(plan: ObligedPlan): number[] {
   );
 }
 
-/**
- * A question mark that ends a clause; one inside a link's query string asks
- * nothing. The full-width mark a Chinese question ends with never sits in a
- * link, so it asks wherever it stands.
- */
-const QUESTION_MARK = /\?(?=$|[\s"'\u201d\u2019)\]*_])|？/;
-/** The most of a question a stop reason carries. */
-const QUESTION_CHARS = 600;
+/** The most of a question the hold keeps, so the card and the stop reason can show it. */
+export const QUESTION_CHARS = 600;
+
+/** A question cut to the length the card shows. */
+export function boundedQuestion(question: string): string {
+  const trimmed = question.trim();
+  return trimmed.length > QUESTION_CHARS
+    ? `${trimmed.slice(0, QUESTION_CHARS - 1).trimEnd()}…`
+    : trimmed;
+}
 
 /** The text a manager message carries, whichever transport it takes. */
 function messageText(parsed: ParsedSurfaceAction): string {
@@ -239,28 +241,38 @@ function messageText(parsed: ParsedSurfaceAction): string {
   return typeof parsed.bodyJson?.text === 'string' ? parsed.bodyJson.text : '';
 }
 
-/** The sentences of a message that ask, in order; the whole message when none can be cut out. */
-function questionsIn(text: string): string {
-  // A Chinese sentence ends at its full-width stop with no space after it.
-  const asked = text
-    .split(/(?<=[.?!])\s+|(?<=[。？！])\s*|\n+/)
-    .filter((sentence) => QUESTION_MARK.test(sentence));
-  const joined = asked.reduce(
-    (together, sentence) =>
-      together === '' || /[。？！]$/.test(together)
-        ? `${together}${sentence}`
-        : `${together} ${sentence}`,
-    '',
-  );
-  const question = (asked.length > 0 ? joined : text).trim();
-  return question.length > QUESTION_CHARS
-    ? `${question.slice(0, QUESTION_CHARS - 1).trimEnd()}…`
-    : question;
+/** An action parsed against the agent's surface it names, when both exist. */
+function parsedOn(
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+): { parsed: ParsedSurfaceAction; surface: SurfaceRecord } | undefined {
+  const result = parseSurfaceAction(action);
+  const surface = result.ok
+    ? surfaces.find((row) => row.slug === result.action.surface)
+    : undefined;
+  return result.ok && surface ? { parsed: result.action, surface } : undefined;
+}
+
+/**
+ * The text of every manager DM in a set, in order. A set that carries no
+ * declared question is read through these: the model judgement decides
+ * whether each asks, never a word list or a question mark.
+ */
+export function managerMessageTexts(
+  actions: readonly MockAction[],
+  surfaces: readonly SurfaceRecord[],
+): string[] {
+  return actions.flatMap((action) => {
+    const row = parsedOn(action, surfaces);
+    if (!row || !isManagerDm(row.parsed, row.surface)) return [];
+    const text = messageText(row.parsed).trim();
+    return text === '' ? [] : [text];
+  });
 }
 
 /** A question put to the manager that the plan's conditional writes wait on. */
 export interface OpenManagerQuestion {
-  /** The question as the manager DM, or the notes when no chat surface could carry one, asked it. */
+  /** The question as the executor declared it, or as the judgement read it from a message that declared nothing. */
   question: string;
   /** The actions to withhold, by index in the set, each with the one-based plan step it belongs to. */
   withheld: Array<{ index: number; step: number }>;
@@ -270,10 +282,10 @@ export interface OpenManagerQuestion {
 
 /**
  * Whether a connected chat surface can carry the manager DM. Without one the
- * executor is told to put its question in `notes`, so that is where the
- * question is read from.
+ * executor is told to put its question in `notes`, so a set that declared
+ * nothing is read there.
  */
-function managerDmReachable(surfaces: readonly SurfaceRecord[], now: number): boolean {
+export function managerDmReachable(surfaces: readonly SurfaceRecord[], now: number): boolean {
   return surfaces.some(
     (surface) =>
       surface.class === 'chat' &&
@@ -283,61 +295,21 @@ function managerDmReachable(surfaces: readonly SurfaceRecord[], now: number): bo
 }
 
 /**
- * The question a set leaves open, and the writes that wait on it.
+ * The writes in a set the approved plan leaves to the manager's answer, each
+ * with the step it belongs to: the state change, and any other write to a
+ * surface that only manager-conditional steps write.
  *
- * A set that asks the manager a question and also carries writes the approved
- * plan left to the manager has answered its own question for them. The writes
- * are the state change, and any other write to a surface that only
- * manager-conditional steps write; the question is a manager DM, in this set
- * or landed earlier in the run, that ends a clause with a question mark. With
- * no chat surface to carry a DM the executor asks in its notes instead, and a
- * question there holds the same writes: the dashboard is then the only place
- * the manager can answer it. A message that reports, or sends a draft for
- * approval, asks nothing: the approval of the held write is that answer.
- * Whether the manager has already answered is the caller's to read from the
- * ledger.
- *
- * @param args - The plan, the set, the agent's surfaces, the manager messages
- *   this run already landed, and whether the manager has answered. `notes` are
- *   the executor's notes for this set and the phase before it, read only when
- *   no connected chat surface carries the manager DM at `now`.
- * @returns The open question with the actions to withhold, or undefined when
- *   the set goes on as it stands.
+ * @param args - The plan, the set and the agent's surfaces.
+ * @returns The writes by index in the set; empty when the plan leaves none to the manager.
  */
-export function openManagerQuestion(
-  args: {
-    plan: ObligedPlan;
-    actions: readonly MockAction[];
-    surfaces: readonly SurfaceRecord[];
-    askedEarlier?: readonly MockAction[];
-    answered: boolean;
-  } & ({ notes?: undefined } | { notes: readonly string[]; now: number }),
-): OpenManagerQuestion | undefined {
-  if (args.answered) return undefined;
+export function writesAwaitingAnswer(args: {
+  plan: ObligedPlan;
+  actions: readonly MockAction[];
+  surfaces: readonly SurfaceRecord[];
+}): Array<{ index: number; step: number }> {
   const steps = managerConditionalSteps(args.plan);
   const declared = planObligations(args.plan);
-  if (steps.length === 0 || !declared) return undefined;
-  const parsedWith = (
-    action: MockAction,
-  ): { parsed: ParsedSurfaceAction; surface: SurfaceRecord } | undefined => {
-    const result = parseSurfaceAction(action);
-    const surface = result.ok
-      ? args.surfaces.find((row) => row.slug === result.action.surface)
-      : undefined;
-    return result.ok && surface ? { parsed: result.action, surface } : undefined;
-  };
-  const askedInDm = [...args.actions, ...(args.askedEarlier ?? [])].flatMap((action) => {
-    const row = parsedWith(action);
-    if (!row || !isManagerDm(row.parsed, row.surface)) return [];
-    const text = messageText(row.parsed);
-    return QUESTION_MARK.test(text) ? [questionsIn(text)] : [];
-  });
-  const askedInNotes =
-    args.notes === undefined || managerDmReachable(args.surfaces, args.now)
-      ? []
-      : args.notes.flatMap((notes) => (QUESTION_MARK.test(notes) ? [questionsIn(notes)] : []));
-  const asked = [...askedInDm, ...askedInNotes];
-  if (asked.length === 0) return undefined;
+  if (steps.length === 0 || !declared) return [];
   const stepOf = (parsed: ParsedSurfaceAction): number | undefined => {
     if (isStatusChange(parsed)) return declared.transitionStep ?? steps[steps.length - 1];
     const slug = parsed.surface.toLowerCase();
@@ -348,16 +320,45 @@ export function openManagerQuestion(
     );
     return unconditional ? undefined : steps.find(writes);
   };
-  const waiting = args.actions.flatMap((action, index) => {
-    const row = parsedWith(action);
+  return args.actions.flatMap((action, index) => {
+    const row = parsedOn(action, args.surfaces);
     if (!row || actionIntent(row.parsed) !== 'write' || isManagerDm(row.parsed, row.surface))
       return [];
     const step = stepOf(row.parsed);
     return step === undefined ? [] : [{ index, step }];
   });
+}
+
+/**
+ * The question a set leaves open, and the writes that wait on it.
+ *
+ * A set that asks the manager a question and also carries writes the approved
+ * plan left to the manager has answered its own question for them. The
+ * question is the one the executor declared in its `openQuestion` field for
+ * this set, for the phase before it or for an earlier run's landed message
+ * (the caller resolves which, and has the model judge a message that declared
+ * nothing), wherever it was put: the manager DM, or the notes when no chat
+ * surface could carry one, where the dashboard is the only place the manager
+ * can answer it. Whether the manager has already answered is the caller's to
+ * read from the row.
+ *
+ * @param args - The plan, the set, the agent's surfaces, the question put to
+ *   the manager if any, and whether the manager has answered.
+ * @returns The open question with the actions to withhold, or undefined when
+ *   the set goes on as it stands.
+ */
+export function openManagerQuestion(args: {
+  plan: ObligedPlan;
+  actions: readonly MockAction[];
+  surfaces: readonly SurfaceRecord[];
+  question: string | undefined;
+  answered: boolean;
+}): OpenManagerQuestion | undefined {
+  if (args.answered || args.question === undefined || args.question.trim() === '') return undefined;
+  const waiting = writesAwaitingAnswer(args);
   if (waiting.length === 0) return undefined;
   return {
-    question: asked[0]!,
+    question: boundedQuestion(args.question),
     withheld: waiting,
     steps: [...new Set(waiting.map((row) => row.step))].sort((a, b) => a - b),
   };

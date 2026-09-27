@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import {
   blockedPlanReason,
   browserTransportRefusal,
+  closingSetAsks,
   closingStopReason,
   completionFailure,
   dependentTransitionRefusal,
@@ -40,7 +41,7 @@ import {
   HELD_WRITE,
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
 } from '../../src/surfaces/policy';
-import type { AppliedAction } from '../../src/surfaces/types';
+import type { AppliedAction, SurfaceRecord } from '../../src/surfaces/types';
 import { DROPPED_READ_PREFIX, isStopped, STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
 import { actionIdempotencyKey } from '../../src/work/idempotency';
 import {
@@ -48,6 +49,7 @@ import {
   type PlanObligations,
   type DependentExecutionOutput,
   type ExecutionOutput,
+  type MockAction,
   type PlanStepOutcome,
 } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
@@ -129,6 +131,10 @@ afterAll(async (): Promise<void> => {
 const recorded = vi.hoisted(() => ({
   /** Thrown by the next plan draft instead of returning a plan. */
   planFailure: undefined as unknown,
+  /** Every message the manager-question judgement was asked about, as its prompt. */
+  questionJudgements: [] as string[],
+  /** Set to make the manager-question judgement unavailable. */
+  questionJudgementFails: false,
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; method?: string; authorization: string | undefined; body: unknown }>,
   failMcpAfterRequest: false,
@@ -438,10 +444,37 @@ describe('browser authority at provider transport', (): void => {
   });
 });
 
+/**
+ * What the manager-question judgement reads in the recorded messages: the
+ * sentences that put a question to the manager, as the model copies them.
+ * The recorded runs predate the executor's `openQuestion` field, so every one
+ * of their messages goes through the judgement.
+ */
+const RECORDED_ASKS = [
+  'Which template should the notice use',
+  '请问通知应使用哪个模板',
+  '下次更新时间定在几点',
+  'Please confirm which template the notice should use',
+  '请确认通知使用哪个模板',
+];
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (): Promise<never> => {
-    throw new Error('model unavailable in tests');
+  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+    if (args.agent.name !== 'day0-manager-question') throw new Error('model unavailable in tests');
+    recorded.questionJudgements.push(args.user);
+    if (recorded.questionJudgementFails) throw new Error('model unavailable in tests');
+    const asked = args.user
+      .split(/(?<=[.?!])\s+|(?<=[。？！])/)
+      .filter((sentence) => RECORDED_ASKS.some((ask) => sentence.includes(ask)));
+    const question = asked.reduce(
+      (together, sentence) =>
+        /[。？！]$/.test(together) ? `${together}${sentence}` : `${together} ${sentence}`,
+      '',
+    );
+    return asked.length > 0
+      ? { asks: true, question: question.trim() }
+      : { asks: false, question: null };
   },
   agentText: async (): Promise<string> => '',
 }));
@@ -665,6 +698,8 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 
 afterEach((): void => {
   recorded.planFailure = undefined;
+  recorded.questionJudgements.length = 0;
+  recorded.questionJudgementFails = false;
   recorded.mcp.length = 0;
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
@@ -1195,7 +1230,8 @@ describe('stopping blocked work with only a manager message left', (): void => {
       body: JSON.stringify({ channel: 'D0MANAGER', text }),
     },
   });
-  const run = (text: string) => ({
+  const run = (text: string, asksManager = false) => ({
+    asksManager,
     plan: {
       summary: 'Confirm the owner, then add the audit note and close.',
       steps: ['Confirm REVOPS-7 has an owner', 'Comment and close REVOPS-7'],
@@ -1211,20 +1247,81 @@ describe('stopping blocked work with only a manager message left', (): void => {
     surfaces: [slack as never],
   });
 
-  it('lets a question or an ask for a decision through', (): void => {
-    expect(closingStopReason(run('Who should own REVOPS-7 so I can continue?'))).toBeUndefined();
-    expect(closingStopReason(run('Please assign REVOPS-7 an owner and I will pick it up.'))).toBeUndefined();
+  it('lets a manager DM set through when it asks the manager something', (): void => {
+    expect(
+      closingStopReason(run('Who should own REVOPS-7 so I can continue?', true)),
+    ).toBeUndefined();
+    expect(
+      closingStopReason(run('Please assign REVOPS-7 an owner and I will pick it up.', true)),
+    ).toBeUndefined();
+    expect(
+      closingStopReason(run('请为 REVOPS-7 指派负责人，之后我会继续处理。', true)),
+    ).toBeUndefined();
   });
 
   it('still stops on a note that asks the manager nothing', (): void => {
     expect(closingStopReason(run('REVOPS-7 has no owner, so nothing was changed and I stopped.'))).toContain('blocked');
+    expect(closingStopReason(run('已确认 REVOPS-7 没有负责人，我已停止。'))).toContain('blocked');
+  });
+});
+
+describe('closingSetAsks', (): void => {
+  const slack = {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: 1,
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage'],
+    managerDmChannelId: 'D0MANAGER',
+  } as unknown as SurfaceRecord;
+  const dm = (text: string): MockAction => ({
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel: 'D0MANAGER', text }),
+    },
+  });
+  const never = async (): Promise<never> => {
+    throw new Error('a declared set is never judged');
+  };
+
+  it('reads the declaration and asks the model nothing', async (): Promise<void> => {
+    const report = [dm('已确认 REVOPS-7 没有负责人，我已停止。')];
+    expect(
+      await closingSetAsks({ actions: report, declaredQuestion: '应该指派给谁？' }, [slack], never),
+    ).toBe(true);
+    expect(await closingSetAsks({ actions: report, declaredQuestion: null }, [slack], never)).toBe(
+      false,
+    );
   });
 
-  it('lets a Chinese question or ask for a decision through, and stops on a Chinese report', (): void => {
-    expect(closingStopReason(run('REVOPS-7 没有负责人，应该指派给谁？'))).toBeUndefined();
-    expect(closingStopReason(run('请为 REVOPS-7 指派负责人，之后我会继续处理。'))).toBeUndefined();
-    expect(closingStopReason(run('REVOPS-7 没有负责人，因此没有做任何更改，我已停止。'))).toContain('blocked');
-    expect(closingStopReason(run('REVOPS-7 的请求已记录，但没有负责人，我已停止。'))).toContain('blocked');
+  it('has the model judge the DMs of a set from before the declaration, never a word list', async (): Promise<void> => {
+    const judged: string[] = [];
+    const judge = async (text: string): Promise<string | null> => {
+      judged.push(text);
+      return text.includes('指派给谁') ? '应该指派给谁？' : null;
+    };
+    expect(
+      await closingSetAsks(
+        { actions: [dm('已确认 REVOPS-7 没有负责人，我已停止。')] },
+        [slack],
+        judge,
+      ),
+    ).toBe(false);
+    expect(
+      await closingSetAsks({ actions: [dm('REVOPS-7 没有负责人，应该指派给谁')] }, [slack], judge),
+    ).toBe(true);
+    expect(judged).toEqual([
+      '已确认 REVOPS-7 没有负责人，我已停止。',
+      'REVOPS-7 没有负责人，应该指派给谁',
+    ]);
   });
 });
 
@@ -1333,9 +1430,13 @@ describe('writes the plan left to the manager\'s answer stop with the question (
     expect(stopped.skipReason).toContain('Which template should the notice use');
     expect(posts()).toHaveLength(1);
     expect(ticketWrites()).toEqual([]);
+    // The landed DM carries no declaration: the model read it, and the run keeps what it read.
+    expect((stopped.output as { earlierQuestion?: string }).earlierQuestion).toContain(
+      'Which template should the notice use',
+    );
   });
 
-  it("lands SH-4480 without a stop: its plan applied the corrections kept from SH-4471", async (): Promise<void> => {
+  it('lands SH-4480 without a stop: the model reads its draft for approval as asking nothing, whatever corrections its plan applied', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = log3PhaseOne;
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -2383,6 +2484,7 @@ describe('executing an approved plan through the gate', (): void => {
           body: JSON.stringify({ channel: 'D0MANAGER', text: 'Who should own REVOPS-7 so I can continue?' }),
         },
       }],
+      declaredQuestion: 'Who should own REVOPS-7 so I can continue?',
       planStepOutcomes: [
         { step: 1, status: 'blocked', evidence: 'get_issue shows no assignee.' },
         { step: 2, status: 'blocked', evidence: 'Nothing to close without an owner.' },
@@ -5300,6 +5402,7 @@ describe('the closing gates against the 16 September plans', (): void => {
         initialActions: auditNotePrerequisites,
         initialApplied: auditNotePrerequisiteLedger,
         closingActions: auditNoteClosing.actions,
+        asksManager: false,
         surfaces: surfaces.map((surface) => ({
           ...surface,
           class: surface.slug === 'linear' ? 'kanban' : surface.slug === 'slack' ? 'chat' : 'analytics',
@@ -6185,6 +6288,135 @@ describe('a question asked in the notes when no chat surface can carry the manag
     expect(output.withheldActions?.every((row) => row.reason.includes("the manager's answer"))).toBe(true);
     const events = await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect());
     expect(events.filter((event) => event.type === 'work.conditional-writes-withheld').map((event) => (event.payload as { steps: number[] }).steps)).toEqual([[2, 3]]);
+  });
+
+  it.each([
+    ['English', 'Please confirm which template the notice should use.'],
+    ['Chinese', '请确认通知使用哪个模板。'],
+  ])(
+    'holds the comment and Done under autonomy for a %s question the executor declared with no question mark',
+    async (_language, asked): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.skillOutput = {
+        ...sitting4Log1PhaseOne,
+        notes: `The notice template is not documented for an unconfirmed ETA. ${asked}`,
+        declaredQuestion: asked,
+        actions: [read!, comment!, done!],
+      };
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { agentId, workItemId } = await seedWithoutChat(harness);
+      await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: true }));
+
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+      const stopped = await readItem(harness, workItemId);
+      expect(stopped.state).toBe('failed');
+      expect(stopped.skipReason).toContain(`is still open: ${asked}`);
+      expect(ticketWrites()).toEqual([]);
+      const output = stopped.output as {
+        openQuestion?: unknown;
+        withheldActions?: Array<{ action: unknown }>;
+      };
+      expect(output.openQuestion).toEqual({ question: asked, steps: [2, 3] });
+      expect(output.withheldActions?.map((row) => row.action)).toEqual([comment, done]);
+      // A declaration is read as it stands: the model is not asked about it.
+      expect(recorded.questionJudgements).toEqual([]);
+    },
+  );
+
+  it('holds nothing for a rhetorical line the executor declared no question for, and asks the model nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...sitting4Log1PhaseOne,
+      notes:
+        'Which template should the notice use? The handbook answers that: the unconfirmed-ETA template.',
+      declaredQuestion: null,
+      actions: [read!, comment!, done!],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    expect((pending.output as { openQuestion?: unknown }).openQuestion).toBeUndefined();
+    expect(recorded.questionJudgements).toEqual([]);
+  });
+
+  it('has the model judge the notes of a set from before the declaration, and holds when it reads a question', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const notes =
+      'The template is not documented. Please confirm which template the notice should use.';
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, notes, actions: [read!, comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect(recorded.questionJudgements).toEqual([expect.stringContaining(notes)]);
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect((stopped.output as { openQuestion?: unknown }).openQuestion).toEqual({
+      question: 'Please confirm which template the notice should use.',
+      steps: [2, 3],
+    });
+  });
+
+  it('holds the writes when the judgement of a set from before the declaration cannot be had', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.questionJudgementFails = true;
+    recorded.skillOutput = {
+      ...sitting4Log1PhaseOne,
+      notes: 'The notice is left pending.',
+      actions: [read!, comment!, done!],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('is still open: The notice is left pending.');
+    expect(ticketWrites()).toEqual([]);
+  });
+
+  it('does not take a kept correction on the plan as the answer to the question (review D4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...sitting4Log1PhaseOne,
+      notes: 'Which template should the notice use?',
+      declaredQuestion: 'Which template should the notice use?',
+      actions: [read!, comment!, done!],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutChat(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      const kept = await ctx.db.insert('corrections', {
+        agentId,
+        workItemId,
+        kind: 'rejection',
+        text: 'Word the audit comment as the handbook does.',
+        itemTitle: sitting4Log1Candidate.title,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        surfaces: ['linear'],
+        createdAt: Date.now(),
+        appliedTo: [workItemId],
+      });
+      await ctx.db.patch(workItemId, { plan: { ...sitting4Log1Plan, appliedCorrections: [kept] } });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+    expect(ticketWrites()).toEqual([]);
   });
 
   it('holds nothing when the notes ask nothing, so the comment and Done reach the gate as before', async (): Promise<void> => {
