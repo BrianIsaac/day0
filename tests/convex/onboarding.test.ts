@@ -180,19 +180,22 @@ describe('charter approval by surface mode', (): void => {
     async (mode): Promise<void> => {
       vi.useFakeTimers();
       useSurfaceMode(mode);
-      const fetch = vi.fn(async (): Promise<Response> => {
+      const webCall = vi.fn(async (): Promise<Response> => {
         throw new Error('no network in tests');
       });
-      vi.stubGlobal('fetch', fetch);
+      vi.stubGlobal('fetch', webCall);
       const harness = convexTest(schema, allConvexModules());
       const { agentId, charterId } = await seedApprovedCharter(harness);
       const owner = harness.withIdentity({ subject: 'owner' });
       await owner.action(api.onboarding.postCharterApproval, { agentId, charterId });
       await harness.finishAllScheduledFunctions(vi.runAllTimers);
       const result = await outcome(harness, agentId);
-      expect(fetch).not.toHaveBeenCalled();
+      expect(webCall).not.toHaveBeenCalled();
       expect(result.events.filter((type): boolean => type.startsWith('good-habits'))).toEqual([]);
-      const agentsMd = await owner.query(api.workspace.readFile, { agentId, fileName: 'AGENTS.md' });
+      const agentsMd = await owner.query(api.workspace.readFile, {
+        agentId,
+        fileName: 'AGENTS.md',
+      });
       expect(agentsMd).not.toMatch(/Good-habits memory/i);
     },
   );
