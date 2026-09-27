@@ -113,7 +113,7 @@ fi
 if ! command -v docker >/dev/null 2>&1 || ! docker --version >/dev/null 2>&1; then
   echo "gap  Docker is needed and is not on the path. Install Docker Desktop or Docker Engine." >&2
   missing=1
-elif ! daemon="$(docker info --format '{{.ServerVersion}}' 2>&1)"; then
+elif ! daemon="$(docker info --format '{{.ServerVersion}} {{.Architecture}}' 2>&1)"; then
   # The client answers on its own; only the daemon can say whether it runs and
   # whether this user may talk to it, so its own words are kept.
   reason="$(first_line "$daemon")"
@@ -128,6 +128,12 @@ elif ! daemon="$(docker info --format '{{.ServerVersion}}' 2>&1)"; then
       echo "     Start Docker Desktop, or the service: sudo systemctl start docker" >&2
       ;;
   esac
+  missing=1
+elif case "$daemon" in *aarch64* | *arm64*) true ;; *) false ;; esac; then
+  # This entry is real mode, and real mode reads documentation through the
+  # redactor, whose wheel locks are compiled for x86_64 Linux only.
+  echo "gap  This Docker daemon runs $(printf '%s' "$daemon" | awk '{ print $NF }') containers, and the redactor's wheel locks are x86_64 only." >&2
+  echo "     Real mode needs an x86_64 machine for now; mock mode (pnpm setup:local) runs here." >&2
   missing=1
 elif ! compose_version="$(docker compose version 2>&1)"; then
   reason="$(first_line "$compose_version")"

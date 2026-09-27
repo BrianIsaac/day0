@@ -20,8 +20,8 @@ const BASH = spawnSync('sh', ['-c', 'command -v bash'], { encoding: 'utf8' }).st
 const directories: string[] = [];
 
 interface Machine {
-  /** What `docker info` answers: a server version, or the daemon's refusal on stderr. */
-  daemon?: { ok: true } | { ok: false; stderr: string };
+  /** What `docker info` answers: a server version and architecture, or the daemon's refusal on stderr. */
+  daemon?: { ok: true; arch?: string } | { ok: false; stderr: string };
   /** What `docker compose version` answers. */
   compose?: { ok: true; version: string } | { ok: false; stderr: string };
   /** The major version the bash on the path reports; negative for one that prints nothing. */
@@ -84,7 +84,9 @@ function runSetupSh(machine: Machine, args: string[]): Outcome {
   executable(join(bin, 'docker'), [
     'case "$1" in',
     '  --version) echo "Docker version 29.8.0, build 88096ef" ;;',
-    daemon.ok ? '  info) echo 29.8.0 ;;' : `  info) echo '${daemon.stderr}' >&2; exit 1 ;;`,
+    daemon.ok
+      ? `  info) echo '29.8.0 ${daemon.arch ?? 'x86_64'}' ;;`
+      : `  info) echo '${daemon.stderr}' >&2; exit 1 ;;`,
     compose.ok
       ? `  compose) echo '${compose.version}' ;;`
       : `  compose) echo '${compose.stderr}' >&2; exit 1 ;;`,
@@ -191,6 +193,14 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     expect(outcome.status).toBe(1);
     expect(outcome.stderr).toContain('gap  bash 4 or newer is needed on the path; found: 3.2.57.');
     expect(outcome.stderr).toContain('brew install bash');
+  });
+
+  it('refuses an arm64 daemon before it installs anything, since the redactor wheel locks are x86_64 only', (): void => {
+    const outcome = runSetupSh({ daemon: { ok: true, arch: 'aarch64' } }, ['--route', 'local']);
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain('gap  This Docker daemon runs aarch64 containers');
+    expect(outcome.stderr).toContain('pnpm setup:local');
+    expect(outcome.pnpm).toEqual([]);
   });
 
   it('never installs dependencies on a dry run, and says what the setup would run', (): void => {
