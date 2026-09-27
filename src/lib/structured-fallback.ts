@@ -35,7 +35,7 @@
  * native failure was the kind of thing that passes on its own. Hence two
  * outputs rather than one: whether to try, and whether success would prove
  * anything.
-*/
+ */
 
 /** Only the host belongs in provider diagnostics; a URL may carry credentials or query values. */
 export function providerEndpointLabel(baseUrl?: string): string {
