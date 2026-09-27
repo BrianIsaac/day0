@@ -1,10 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join} from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const SCRIPT = resolve('scripts/sync-convex-env.sh');
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
+const SCRIPT = join(ROOT, 'scripts/sync-convex-env.sh');
 
 /**
  * Run the sync script against a fake `npx` that records every Convex CLI call.

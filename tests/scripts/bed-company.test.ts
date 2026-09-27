@@ -11,7 +11,8 @@ import {
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join} from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   parseCompanyArguments,
@@ -29,6 +30,9 @@ import { asksFromFile } from '../../scripts/bed/slack';
 import { loadBedSpec } from '../../scripts/bed/spec';
 import { DOCS_STUB } from '../../scripts/setup';
 import { REFUSED_CREATE_ACTION } from '../fixtures/refused-ticket-create-2026-09-19';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 const LINEAR_KEY = `${['lin', 'api'].join('_')}_bedTestKey0123456789`;
 const SLACK_TOKEN = `${['xox', 'b'].join('')}-1111-bedTestToken0123456789`;
@@ -446,7 +450,7 @@ const roots: string[] = [];
 
 function notionPages(overrides: Record<string, string> = {}): string {
   const text = (file: string): string =>
-    readFileSync(resolve('bed', 'company', 'notion', file), 'utf8').replace(
+    readFileSync(join(ROOT, 'bed', 'company', 'notion', file), 'utf8').replace(
       'PASTE_LINEAR_API_KEY_HERE',
       LINEAR_KEY,
     );
@@ -476,7 +480,7 @@ function harness(
 ): Harness {
   const root = mkdtempSync(join(tmpdir(), 'day0-bed-company-'));
   roots.push(root);
-  cpSync(resolve('bed', 'company'), join(root, 'bed', 'company'), { recursive: true });
+  cpSync(join(ROOT, 'bed', 'company'), join(root, 'bed', 'company'), { recursive: true });
   const logs: string[] = [];
   const runs: Harness['runs'] = [];
   const linear = new FakeLinear();
@@ -541,11 +545,11 @@ describe('the command line', (): void => {
   });
 
   it('is run by its script path, with no package alias (N4)', (): void => {
-    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
+    const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
     expect(Object.keys(manifest.scripts).filter((name) => name.startsWith('bed:'))).toEqual([]);
-    const help = spawnSync(resolve('node_modules/.bin/tsx'), ['scripts/bed/company.ts', '--help'], {
+    const help = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), ['scripts/bed/company.ts', '--help'], {
       encoding: 'utf8',
       env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
       timeout: 60_000,
@@ -556,7 +560,7 @@ describe('the command line', (): void => {
   });
 
   it('reads the tracked tickets: ten, one of them late, every team and state declared', (): void => {
-    const spec = loadBedSpec(process.cwd());
+    const spec = loadBedSpec(ROOT);
     expect(spec.tickets).toHaveLength(10);
     expect(spec.tickets.filter((ticket) => ticket.late).map((ticket) => ticket.key)).toEqual([
       'log-sh4480',
@@ -744,14 +748,14 @@ describe('a named set of tickets', (): void => {
       .map((ticket) => ticket.key);
 
   it("tracks the one-each set: a ticket for finance and logistics, the two FIN steps the note reads, none late, and revenue operations' task is the standing Slack ask", (): void => {
-    const raw = JSON.parse(readFileSync(resolve('bed/company/linear.json'), 'utf8')) as {
+    const raw = JSON.parse(readFileSync(join(ROOT, 'bed/company/linear.json'), 'utf8')) as {
       sets?: Record<string, string[]>;
     };
     expect(raw.sets?.['one-each']).toEqual(ONE_EACH);
-    const spec = loadBedSpec(process.cwd());
+    const spec = loadBedSpec(ROOT);
     const tickets = ONE_EACH.map((key) => spec.tickets.find((ticket) => ticket.key === key)!);
     expect(tickets.map((ticket) => ticket.team)).toEqual(['FIN', 'FIN', 'FIN', 'LOG']);
-    const asks = asksFromFile(readFileSync(resolve('bed/company/slack-asks.md'), 'utf8'));
+    const asks = asksFromFile(readFileSync(join(ROOT, 'bed/company/slack-asks.md'), 'utf8'));
     expect(asks.filter((ask) => ask.sets.includes('one-each')).map((ask) => ask.channel)).toEqual([
       'ops-requests',
     ]);
@@ -1680,7 +1684,7 @@ describe('docs', (): void => {
     expect(await run(h, ['docs'])).toBe(0);
     expect(existsSync(join(h.docs, 'README.md'))).toBe(false);
     expect(readFileSync(join(h.docs, 'finance/handbook.md'), 'utf8')).toBe(
-      readFileSync(resolve('bed/company/folder/finance/handbook.md'), 'utf8'),
+      readFileSync(join(ROOT, 'bed/company/folder/finance/handbook.md'), 'utf8'),
     );
     const manifest = JSON.parse(readFileSync(join(h.docs, MANIFEST_FILE), 'utf8')) as {
       files: Record<string, string>;
@@ -1752,7 +1756,7 @@ describe('check', (): void => {
     'logistics-desk': 'C4',
     'ops-requests': 'C5',
   };
-  const FILE_ASKS = asksFromFile(readFileSync(resolve('bed/company/slack-asks.md'), 'utf8'));
+  const FILE_ASKS = asksFromFile(readFileSync(join(ROOT, 'bed/company/slack-asks.md'), 'utf8'));
 
   async function readyBed(): Promise<Harness> {
     const h = harness();
@@ -1986,7 +1990,7 @@ describe('check', (): void => {
 });
 
 describe('the Notion comparison', (): void => {
-  const tracked = readFileSync(resolve('bed/company/notion/linear-automation.md'), 'utf8');
+  const tracked = readFileSync(join(ROOT, 'bed/company/notion/linear-automation.md'), 'utf8');
 
   it('matches a pasted page with the token filled, its heading dropped and a trailing empty block', (): void => {
     const pasted = tracked

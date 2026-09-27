@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   BED_PROFILES,
@@ -49,7 +50,10 @@ import { redactorVolumeClone } from '../../scripts/lib/docker';
 import { PROFILES } from '../../scripts/compose';
 import { READ_ONLY_PROJECTS as SETUP_READ_ONLY_PROJECTS } from '../../scripts/setup';
 
-const COMPOSE_FILE = readFileSync('docker-compose.yml', 'utf8');
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
+const COMPOSE_FILE = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
 
 /** Every pre-flight fact true, so one test flips one at a time. */
 const READY: TierInputs = {
@@ -212,8 +216,8 @@ describe('what removes data asks first (Q12), and what a snapshot records (step 
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     const down = (extra: string[]) =>
       spawnSync(
-        join(process.cwd(), 'node_modules/.bin/tsx'),
-        [join(process.cwd(), 'scripts/demo-bed.ts'), 'down', '--volumes', ...extra],
+        join(ROOT, 'node_modules/.bin/tsx'),
+        [join(ROOT, 'scripts/demo-bed.ts'), 'down', '--volumes', ...extra],
         {
           cwd: scratch,
           input: '',
@@ -247,8 +251,8 @@ describe('the protected volumes and projects', (): void => {
       'COMPOSE_PROJECT_NAME=day0-p11r-test\nCOMPOSE_FILE=alternate.yml\n');
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     try {
-      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'), [
-        join(process.cwd(), 'scripts/demo-bed.ts'), 'down', '--project', 'day0-p11r-test',
+      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), [
+        join(ROOT, 'scripts/demo-bed.ts'), 'down', '--project', 'day0-p11r-test',
       ], {
         cwd: scratch,
         env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls,
@@ -272,8 +276,8 @@ describe('the protected volumes and projects', (): void => {
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
-    const command = join(process.cwd(), 'node_modules/.bin/tsx');
-    const script = join(process.cwd(), 'scripts/demo-bed.ts');
+    const command = join(ROOT, 'node_modules/.bin/tsx');
+    const script = join(ROOT, 'scripts/demo-bed.ts');
     const invoke = (args: string[]): void => {
       const result = spawnSync(command, [script, ...args], {
         cwd: scratch,
@@ -366,8 +370,8 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
     writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
     try {
-      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'), [
-        join(process.cwd(), 'scripts/demo-bed.ts'), 'restore', '--project', 'day0-p11r-test',
+      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), [
+        join(ROOT, 'scripts/demo-bed.ts'), 'restore', '--project', 'day0-p11r-test',
         '--snapshot', 'snapshot.tar.gz',
       ], {
         cwd: scratch,
@@ -403,8 +407,8 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     try {
-      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'), [
-        join(process.cwd(), 'scripts/demo-bed.ts'), 'snapshot', '--from-volume',
+      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), [
+        join(ROOT, 'scripts/demo-bed.ts'), 'snapshot', '--from-volume',
         'day0-p11r-test_convex_data', '--snapshot', target,
       ], {
         cwd: scratch,
@@ -431,8 +435,8 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0\n');
     writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
-    const command = join(process.cwd(), 'node_modules/.bin/tsx');
-    const script = join(process.cwd(), 'scripts/demo-bed.ts');
+    const command = join(ROOT, 'node_modules/.bin/tsx');
+    const script = join(ROOT, 'scripts/demo-bed.ts');
     try {
       for (const args of [
         ['restore', '--project', 'day0-p11r-a18', '--snapshot', 'snapshot.tar.gz'],
@@ -464,7 +468,7 @@ describe('snapshot and restore run through a throwaway container', (): void => {
       const result = spawnSync('pnpm', ['exec', 'tsx', 'scripts/demo-bed.ts', 'snapshot',
         '--from-volume', 'day0-demo-7c65e7_convex_data', '--snapshot',
         join(scratch, 'docker', 'volumes', 'recorded', '_data', 'snapshot.tar.gz')], {
-        cwd: process.cwd(),
+        cwd: ROOT,
         env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
         encoding: 'utf8',
       });
@@ -680,7 +684,7 @@ describe('the env file', (): void => {
 });
 
 describe("a restored volume carries the recording bed's deployment env", (): void => {
-  const SYNC_SCRIPT = readFileSync('scripts/sync-convex-env.sh', 'utf8');
+  const SYNC_SCRIPT = readFileSync(join(ROOT, 'scripts/sync-convex-env.sh'), 'utf8');
 
   it('reads the key list the sync script pushes, so the two never drift', (): void => {
     const keys = syncScriptKeys(SYNC_SCRIPT);
@@ -830,8 +834,8 @@ describe('the warm redactor volumes', (): void => {
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     try {
-      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'),
-        [join(process.cwd(), 'scripts/demo-bed.ts'), 'up', '--project', 'day0-p11r-test',
+      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'),
+        [join(ROOT, 'scripts/demo-bed.ts'), 'up', '--project', 'day0-p11r-test',
           '--warm-from', 'day0'], {
           cwd: scratch,
           env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },

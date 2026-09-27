@@ -2,8 +2,12 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { inheritedProductVariables } from './clean-env';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /** The addresses a machine that runs a local model exports in its shell. */
 const MODEL_SHELL = {
@@ -77,7 +81,7 @@ describe('the suite environment', (): void => {
       const report = JSON.parse(readFileSync(reportFile, 'utf8')) as NestedReport;
       expect(
         report.testResults
-          .map((file) => [relative(process.cwd(), file.name), file.status])
+          .map((file) => [relative(ROOT, file.name), file.status])
           .sort(([left], [right]) => left.localeCompare(right)),
       ).toEqual([
         ['tests/src/evaluation/harness-parity.test.ts', 'passed'],

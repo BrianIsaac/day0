@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   redactorGpuDecision,
@@ -10,11 +12,14 @@ import {
   venvStampCommand,
 } from '../../scripts/redactor-device';
 
-const START_SCRIPT = readFileSync('redactor/start.sh', 'utf8');
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
+const START_SCRIPT = readFileSync(join(ROOT, 'redactor/start.sh'), 'utf8');
 
 describe('the stamp the start script keeps', (): void => {
   it('digests the two requirements files the way sha256sum does', (): void => {
-    const digests = requirementsDigests(process.cwd());
+    const digests = requirementsDigests(ROOT);
     const expected = createHash('sha256').update(readFileSync(REQUIREMENTS_FILES.cpu)).digest('hex');
     expect(digests.cpu).toBe(expected);
     expect(digests.cuda).not.toBe(digests.cpu);

@@ -2,6 +2,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -25,6 +26,9 @@ import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
 /**
  * Finding W of the fourth full run (19 September): two asks of one employee,
  * one tile. The `#ops-requests` ask took the page-field claim while the
@@ -40,7 +44,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const SLUG = 'looker-pipeline-tile';
 const MANAGER_DM = 'D0BS5SXMXPZ';
-const RUNBOOK = readFileSync(join(process.cwd(), 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'), 'utf8');
+const RUNBOOK = readFileSync(join(ROOT, 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'), 'utf8');
 
 interface ClosingAnswer {
   draft: string;
