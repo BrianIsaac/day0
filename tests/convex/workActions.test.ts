@@ -2480,10 +2480,13 @@ describe('executing an approved plan through the gate', (): void => {
 
     // The batch schedules one apply per member; they start on the faked clock
     // and finish, rather than being raced by hand or waited for on the real one.
+    // The clock is pumped at zero while they run: fetch's zero-delay timers (the
+    // idle-socket check before a pooled connection is reused, from undici 6.28)
+    // are faked too, and the apply's redaction call waits on one. Nothing is
+    // moved forward, so the six-minute dead-man switches stay armed.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, { members });
-    vi.advanceTimersByTime(0);
-    await harness.finishInProgressScheduledFunctions();
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
 
     const done = await Promise.all([readItem(harness, first), readItem(harness, second)]);
     expect(done.map((row) => [row.state, row.skipReason])).toEqual([
