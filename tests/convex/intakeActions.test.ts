@@ -1169,7 +1169,7 @@ describe('real surface intake', (): void => {
     expect(runtime.listChatSurfaces).not.toHaveBeenCalled();
   });
 
-  it('relies on seedItem to deduplicate repeated provider identities', async (): Promise<void> => {
+  it('relies on seedItem to deduplicate repeated provider identities and keep the row at the latest listing', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
@@ -1204,7 +1204,7 @@ describe('real surface intake', (): void => {
       _id: first,
       sourceSystem: 'linear',
       externalId: 'issue-stable-id',
-      title: 'First observed title',
+      title: 'Changed provider title',
     });
   });
 

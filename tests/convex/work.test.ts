@@ -3459,3 +3459,118 @@ describe('re-admitting pending work when the policy changes', (): void => {
     vi.useRealTimers();
   });
 });
+
+describe('a re-listed ticket keeps its row current (Q11)', (): void => {
+  const listed = (agentId: Id<'agents'>) => ({
+    agentId,
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-9',
+    title: 'Reconcile the September pipeline',
+    contentSummary: 'First read of the ticket.',
+    contentRefs: ['https://linear.app/day0/issue/REVOPS-9'],
+    owner: 'Kestrel Ops',
+  });
+
+  /** An owned agent with no work yet, for the seed to fill. */
+  async function emptyAgent(harness: Harness): Promise<Id<'agents'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+  }
+
+  async function onlyRow(harness: Harness): Promise<Doc<'workItems'>> {
+    const rows = await harness.run(async (ctx) => await ctx.db.query('workItems').collect());
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  }
+
+  it('updates the title, summary and owner the tracker now shows instead of keeping the first read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const first = await harness.mutation(internal.work.seedItem, listed(agentId));
+    const again = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      title: 'Reconcile the September pipeline by Friday',
+      contentSummary: 'The ticket as it reads now.',
+      owner: 'day0 bot',
+    });
+    expect(again).toBe(first);
+    expect(await onlyRow(harness)).toMatchObject({
+      state: 'discovered',
+      title: 'Reconcile the September pipeline by Friday',
+      contentSummary: 'The ticket as it reads now.',
+      owner: 'day0 bot',
+    });
+  });
+
+  it('withdraws a waiting row whose ticket left the queue, says why on the card, and takes it back when it returns', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    await harness.mutation(internal.work.seedItem, listed(agentId));
+    await harness.mutation(internal.work.withdrawListedItem, {
+      ...listed(agentId),
+      owner: 'Ana Ruiz',
+      leftQueue: 'the ticket is assigned to someone else',
+    });
+    expect(await onlyRow(harness)).toMatchObject({
+      state: 'cancelled',
+      owner: 'Ana Ruiz',
+      skipReason: 'withdrawn from the queue on the tracker: the ticket is assigned to someone else',
+    });
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), owner: undefined });
+    const returned = await onlyRow(harness);
+    expect(returned.state).toBe('discovered');
+    expect(returned.skipReason).toBeUndefined();
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.map((event) => event.type)).toEqual([
+      'work.discovered',
+      'work.withdrawn',
+      'work.returned',
+    ]);
+  });
+
+  it('creates no row for a ticket that left the queue before Day0 saw it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    await expect(
+      harness.mutation(internal.work.withdrawListedItem, {
+        ...listed(agentId),
+        leftQueue: 'the ticket is completed',
+      }),
+    ).resolves.toBeNull();
+    expect(await harness.run(async (ctx) => await ctx.db.query('workItems').collect())).toEqual(
+      [],
+    );
+  });
+
+  it('leaves a row with a plan or a run to the re-read before apply, and a finished row alone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    const row = await harness.run(async (ctx) => (await ctx.db.get(workItemId))!);
+    const relisted = {
+      agentId,
+      sourceCategory: row.sourceCategory,
+      sourceSystem: row.sourceSystem,
+      externalId: row.externalId,
+      title: 'Renamed on the tracker',
+      contentSummary: row.contentSummary,
+      contentRefs: row.contentRefs,
+      leftQueue: 'the ticket is assigned to someone else',
+    };
+    await harness.mutation(internal.work.withdrawListedItem, relisted);
+    const planned = await harness.run(async (ctx) => (await ctx.db.get(workItemId))!);
+    expect(planned).toMatchObject({ state: 'plan-pending', title: 'Renamed on the tracker' });
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'completed' }));
+    await harness.mutation(internal.work.withdrawListedItem, { ...relisted, title: 'Renamed again' });
+    const finished = await harness.run(async (ctx) => (await ctx.db.get(workItemId))!);
+    expect(finished).toMatchObject({ state: 'completed', title: 'Renamed on the tracker' });
+  });
+});

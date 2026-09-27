@@ -341,19 +341,119 @@ async function rememberExternalAlias(
   }
 }
 
-/** Share intake's idempotency boundary with fixed evaluation task batches. */
-export async function seedItemInTransaction(
+/** How a row intake withdrew says so on the card; its return is found by the same words. */
+export const WITHDRAWN_FROM_QUEUE_PREFIX = 'withdrawn from the queue on the tracker: ';
+
+/**
+ * The states a withdrawal moves to `cancelled`: work that is only waiting.
+ * A row with a plan, a decision or a run in flight is left to the re-read
+ * before apply, which withholds its first write; a finished row stays as it
+ * finished.
+ */
+const WITHDRAWABLE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'discovered',
+  'deferred',
+  'needs-skill',
+]);
+
+/** The states whose row no longer follows the tracker: the work is done or given up. */
+const SETTLED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['completed', 'cancelled']);
+
+/** The fields a re-listing brings up to date, as the tracker now shows them. */
+const LISTED_FIELDS = [
+  'title',
+  'contentSummary',
+  'contentRefs',
+  'priority',
+  'requesterLabel',
+  'owner',
+  'requester',
+] as const;
+
+/**
+ * Bring an existing row up to what the tracker lists now (Q11): the fields
+ * that changed are patched on a row still being worked or waiting, and a
+ * row intake withdrew is cancelled with the reason, or returned to
+ * `discovered` when its ticket is back in the queue.
+ *
+ * Args:
+ *   ctx: Mutation context of the seed.
+ *   existing: The row the ticket already has.
+ *   args: The ticket as this poll listed it.
+ *   leftQueue: Why the ticket left the queue, when this poll refused it.
+ */
+async function refreshListedItem(
   ctx: MutationCtx,
+  existing: Doc<'workItems'>,
   args: WorkItemSeedInput,
-): Promise<Id<'workItems'>> {
-  const existing = await ctx.db
+  leftQueue: string | undefined,
+): Promise<void> {
+  const withdrawn =
+    existing.state === 'cancelled' && existing.skipReason?.startsWith(WITHDRAWN_FROM_QUEUE_PREFIX);
+  if (SETTLED_STATES.has(existing.state) && !withdrawn) return;
+  const changed = Object.fromEntries(
+    LISTED_FIELDS.flatMap((field) =>
+      JSON.stringify(existing[field]) === JSON.stringify(args[field]) ? [] : [[field, args[field]]],
+    ),
+  ) as Partial<Pick<Doc<'workItems'>, (typeof LISTED_FIELDS)[number]>>;
+  const now = Date.now();
+  if (leftQueue !== undefined && WITHDRAWABLE_STATES.has(existing.state)) {
+    const skipReason = `${WITHDRAWN_FROM_QUEUE_PREFIX}${leftQueue}`;
+    await ctx.db.patch(existing._id, { ...changed, state: 'cancelled', skipReason });
+    await releaseExternalClaim(ctx, existing._id, now);
+    await ctx.db.insert('events', {
+      agentId: existing.agentId,
+      type: 'work.withdrawn',
+      payload: { workItemId: existing._id, reason: skipReason, fromState: existing.state },
+      createdAt: now,
+    });
+    await scheduleNextStep(ctx, { ...existing, state: 'cancelled' });
+    return;
+  }
+  if (leftQueue === undefined && withdrawn) {
+    await ctx.db.patch(existing._id, {
+      ...changed,
+      state: 'discovered',
+      skipReason: undefined,
+      evaluationClaimedAt: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: existing.agentId,
+      type: 'work.returned',
+      payload: { workItemId: existing._id, title: args.title },
+      createdAt: now,
+    });
+    await scheduleNextStep(ctx, { ...existing, state: 'discovered' });
+    return;
+  }
+  if (Object.keys(changed).length > 0) await ctx.db.patch(existing._id, changed);
+}
+
+/** The row an agent already holds for a listed item, if any. */
+async function listedRow(
+  ctx: MutationCtx,
+  args: Pick<WorkItemSeedInput, 'agentId' | 'sourceSystem' | 'externalId'>,
+): Promise<Doc<'workItems'> | null> {
+  return await ctx.db
     .query('workItems')
     .withIndex('by_extId', (q) =>
       q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
     )
     .filter((q) => q.eq(q.field('agentId'), args.agentId))
     .first();
-  // An existing row is read again only while it still lacks the other name.
+}
+
+/**
+ * Seed one listed item, or bring its existing row up to the listing.
+ * Shares intake's idempotency boundary with fixed evaluation task batches.
+ */
+export async function seedItemInTransaction(
+  ctx: MutationCtx,
+  args: WorkItemSeedInput,
+): Promise<Id<'workItems'>> {
+  const existing = await listedRow(ctx, args);
+  if (existing) await refreshListedItem(ctx, existing, args, undefined);
+  // An existing row is read again for its other name only while it still lacks it.
   if (existing && (args.externalAlias === undefined || existing.externalClaimAlias !== undefined)) {
     return existing._id;
   }
@@ -404,10 +504,28 @@ export async function seedItemInTransaction(
   return id;
 }
 
+/** Seed one listed item or bring its row up to the listing. Internal; called by intake. */
 export const seedItem = internalMutation({
   args: { agentId: v.id('agents'), ...workItemSeedFields },
   handler: async (ctx, args): Promise<Id<'workItems'>> =>
     await seedItemInTransaction(ctx, args),
+});
+
+/**
+ * Bring the row of a ticket intake refused on this poll up to the listing
+ * and withdraw it when it is only waiting. Internal; called by intake. A
+ * ticket with no row gets none.
+ *
+ * @returns The ticket's row, or null when it never had one.
+ */
+export const withdrawListedItem = internalMutation({
+  args: { agentId: v.id('agents'), ...workItemSeedFields, leftQueue: v.string() },
+  handler: async (ctx, { leftQueue, ...listed }): Promise<Id<'workItems'> | null> => {
+    const existing = await listedRow(ctx, listed);
+    if (!existing) return null;
+    await refreshListedItem(ctx, existing, listed, leftQueue);
+    return existing._id;
+  },
 });
 
 /**
