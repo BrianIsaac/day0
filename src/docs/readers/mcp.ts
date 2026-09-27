@@ -12,6 +12,7 @@ import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../../surfaces/mcp-address';
 import type { McpConnection } from '../../surfaces/mcp';
 import {
+  fetchWithBackoff,
   interruptedReadError,
   PROVIDER_BACKOFF,
   TransientProviderError,
@@ -125,22 +126,31 @@ export function sessionBoundFetch(
  * one exception is Day0's own Notion component, reached by its service name
  * on the compose network, which no public check could pass.
  *
+ * A request the server answers with a 429 or a 5xx is tried again under the
+ * provider backoff, keeping the client's own signal.
+ *
  * @param config - The session's endpoint and credential headers.
  * @param connection - The resolver and transport; a test supplies its own.
+ * @param backoff - How a rate-limited request waits; a test records the waits.
  * @returns A client that connects on first use.
  */
 export function productionClient(
   config: McpConnectionConfig,
   connection: McpConnection = { resolveHostname },
+  backoff: BackoffPolicy = PROVIDER_BACKOFF,
 ): McpClientLike {
   let created: Promise<{ client: McpClientLike; session: SessionBoundFetch }> | undefined;
   const create = async (): Promise<{ client: McpClientLike; session: SessionBoundFetch }> => {
-    const transport: SessionTransport = config.bundled
-      ? fetch
-      : pinnedFetch(
-          await checkMcpAddress(config.url, connection.resolveHostname),
-          connection.request,
-        );
+    const transport: SessionTransport = fetchWithBackoff(
+      config.bundled
+        ? (input: string | URL, init?: RequestInit): Promise<Response> => fetch(input, init)
+        : pinnedFetch(
+            await checkMcpAddress(config.url, connection.resolveHostname),
+            connection.request,
+          ),
+      undefined,
+      backoff,
+    );
     const session = sessionBoundFetch(config, transport);
     const client = createSecretMcpClient({
       id: config.id,

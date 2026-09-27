@@ -633,6 +633,40 @@ describe('the documentation MCP client reaches only the address it checked (M16)
     expect(JSON.stringify(sent)).toContain('Bearer docs-secret');
   });
 
+  it('waits out a 429 from the documentation server and sends the request again', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const statuses = [429, 200];
+    const waits: number[] = [];
+    const client = productionClient(
+      config('https://docs.example.com/mcp'),
+      {
+        resolveHostname: async (): Promise<string[]> => ['93.184.216.34'],
+        request: (_url, _options, callback) => ({
+          on: (): void => undefined,
+          end: (): void => {
+            const statusCode = statuses.shift() ?? 200;
+            const response = Object.assign(new PassThrough(), {
+              statusCode,
+              headers: statusCode === 429 ? { 'retry-after': '5' } : {},
+            });
+            callback(response as unknown as IncomingMessage);
+            response.end('{}');
+          },
+        }),
+      },
+      { ...PROVIDER_BACKOFF, sleep: async (ms: number): Promise<void> => void waits.push(ms) },
+    );
+    await client.listTools();
+    const built = mastra.configs[0] as {
+      servers: Record<string, { fetch: (url: URL, init?: RequestInit) => Promise<Response> }>;
+    };
+    const response = await built.servers.docs.fetch(new URL('https://docs.example.com/mcp'), {
+      method: 'POST',
+    });
+    expect(response.status).toBe(200);
+    expect(waits).toEqual([5_000]);
+  });
+
   it("checks a non-Notion source that names the component's host like any other", async (): Promise<void> => {
     mastra.configs.length = 0;
     const client = productionClient(config('http://docs-notion-mcp:3000/mcp'), {
