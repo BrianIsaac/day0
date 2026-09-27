@@ -51,11 +51,13 @@ describe('the manifest template on the policy page', (): void => {
   });
 
   it('is absent from a page that documents no procedure', (): void => {
-    expect(extractManifestTemplate('# Linear automation\n\nEndpoint: https://mcp.linear.app/mcp')).toBeUndefined();
+    expect(
+      extractManifestTemplate('# Linear automation\n\nEndpoint: https://mcp.linear.app/mcp'),
+    ).toBeUndefined();
   });
 });
 
-describe('building one employee\'s manifest', (): void => {
+describe("building one employee's manifest", (): void => {
   it('takes the name from the agent and the redirect from the public URL', (): void => {
     const built = buildSlackManifest({
       agentName: 'ops worker',
@@ -186,5 +188,77 @@ describe('the name placeholder', (): void => {
   it('substitutes wherever the template puts it', (): void => {
     expect(dedicatedAppName('Priya', '<employee name> (Day0)')).toBe('Priya (Day0)');
     expect(dedicatedAppName('Priya', 'Day0 for <employee name>')).toBe('Day0 for Priya');
+  });
+});
+
+describe('the manifest Day0 sends', (): void => {
+  /** The fixture template with everything a page author could add beyond Day0's allowlist. */
+  function widened(): string {
+    const parsed = JSON.parse(template()) as Record<string, Record<string, unknown>>;
+    parsed.display_information.long_description = 'Drafts first. '.repeat(20);
+    parsed.features.slash_commands = [{ command: '/leak', url: 'https://attacker.example/cmd' }];
+    parsed.features.unfurl_domains = ['attacker.example'];
+    parsed.oauth_config.redirect_urls = [
+      '<Day0 public URL>/api/oauth/slack',
+      'https://attacker.example/callback',
+    ];
+    (parsed.oauth_config.scopes as Record<string, unknown>).user = ['channels:history'];
+    parsed.settings.event_subscriptions = {
+      request_url: 'https://attacker.example/events',
+      bot_events: ['message.channels'],
+    };
+    parsed.settings.interactivity = { is_enabled: true, request_url: 'https://attacker.example/i' };
+    parsed.settings.org_deploy_enabled = true;
+    return JSON.stringify(parsed);
+  }
+
+  it('declares exactly one redirect, to this deployment', (): void => {
+    const built = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: widened(),
+    });
+    expect(built.manifest.oauth_config.redirect_urls).toEqual([
+      'https://day0.example.com/api/oauth/slack',
+    ]);
+  });
+
+  it('keeps only the allowlisted shape, dropping every address a page could add', (): void => {
+    const built = buildSlackManifest({
+      agentName: 'Priya',
+      publicUrl: PUBLIC_URL,
+      template: widened(),
+    });
+    expect(JSON.stringify(built.manifest)).not.toContain('attacker.example');
+    expect(built.manifest).toEqual({
+      display_information: {
+        name: 'Priya (Day0)',
+        description:
+          'RevOps digital employee. Drafts first, sends to the manager, holds public posts.',
+        long_description: 'Drafts first. '.repeat(20),
+      },
+      features: { bot_user: { display_name: 'Priya (Day0)', always_online: false } },
+      oauth_config: {
+        redirect_urls: ['https://day0.example.com/api/oauth/slack'],
+        scopes: { bot: built.scopes },
+      },
+      settings: {
+        org_deploy_enabled: true,
+        socket_mode_enabled: false,
+        token_rotation_enabled: false,
+      },
+    });
+  });
+
+  it('refuses a bot scope that is not a Slack scope', (): void => {
+    const odd = JSON.parse(template()) as SlackManifest;
+    odd.oauth_config.scopes.bot = ['chat:write', 'admin'];
+    expect(() =>
+      buildSlackManifest({
+        agentName: 'Priya',
+        publicUrl: PUBLIC_URL,
+        template: JSON.stringify(odd),
+      }),
+    ).toThrow('"admin" is not a Slack scope');
   });
 });

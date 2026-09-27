@@ -8,6 +8,8 @@ import {
   EFFECT_LENGTH,
   interpretToolResult,
   McpAdapter,
+  MCP_RESULT_TEXT_LIMIT,
+  MCP_SECRET_ARGUMENT_REFUSAL,
   providerErrorMessage,
   type McpClientLike,
   type McpClientOptions,
@@ -25,7 +27,11 @@ import type {
   SurfaceRecord,
 } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
-import { slackPhaseOne, TileDriver, type TileDriverCall } from '../../fixtures/browser-phase-split-2026-09-16';
+import {
+  slackPhaseOne,
+  TileDriver,
+  type TileDriverCall,
+} from '../../fixtures/browser-phase-split-2026-09-16';
 
 /** This deployment runs the browser component, at the address the profile starts it on. */
 const DRIVER = DEFAULT_BROWSER_MCP_URL;
@@ -134,15 +140,29 @@ describe('MCP adapter', (): void => {
 
   it('marks the row degraded when redacting its extracted error fails', async () => {
     let calls = 0;
-    const spanModel = { name: 'intermittent', spans: async () => {
-      if (++calls > 1) throw new RedactorUnavailableError('offline');
-      return [];
-    } };
-    const client = fakeClient({ linear_save_comment: async () => ({
-      isError: true, content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'password: hunter2 opaque-known' }) }],
-    }) });
+    const spanModel = {
+      name: 'intermittent',
+      spans: async () => {
+        if (++calls > 1) throw new RedactorUnavailableError('offline');
+        return [];
+      },
+    };
+    const client = fakeClient({
+      linear_save_comment: async () => ({
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ error: true, message: 'password: hunter2 opaque-known' }),
+          },
+        ],
+      }),
+    });
     const surfaceAdapter = new McpAdapter([linear], {
-      decrypt: async () => 'opaque-known', now: () => now, createClient: client.create, spanModel,
+      decrypt: async () => 'opaque-known',
+      now: () => now,
+      createClient: client.create,
+      spanModel,
     });
     const result = await surfaceAdapter.apply(ctx, run, commentCall, 0, 'k');
     expect(calls).toBeGreaterThan(1);
@@ -159,8 +179,12 @@ describe('MCP adapter', (): void => {
       })),
     });
     const client = fakeClient({
-      linear_list_issues: async (): Promise<unknown> => ({ content: [{ type: 'text', text: long }] }),
-      linear_save_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: long }] }),
+      linear_list_issues: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: long }],
+      }),
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: long }],
+      }),
     });
     const listCall: MockAction = {
       tool: 'mcp.call',
@@ -528,11 +552,10 @@ describe('tool result interpretation', (): void => {
 
 describe('Mastra client construction', (): void => {
   it('builds a client whose only server is the surface, restricted to its host', (): void => {
-    const client = createMastraMcpClient({
-      serverName: 'linear',
-      url: new URL('https://mcp.linear.app/mcp'),
-      bearer: 'lin-secret',
-    });
+    const client = createMastraMcpClient(
+      { serverName: 'linear', url: new URL('https://mcp.linear.app/mcp'), bearer: 'lin-secret' },
+      { resolveHostname: async (): Promise<string[]> => ['93.184.216.34'] },
+    );
     expect(typeof client.listTools).toBe('function');
     expect(typeof client.disconnect).toBe('function');
   });
@@ -782,7 +805,9 @@ describe('the browser floor across one run', (): void => {
         const make = (tool: string) => ({
           execute: async (args: unknown): Promise<unknown> => {
             calls.push({ tool, args });
-            if (tool === 'browser_navigate') context.page = snapshot;
+            if (tool === 'browser_navigate') {
+              context.page = `### Page\n- Page URL: http://looker-tile:8080/\n### Snapshot\n${snapshot}`;
+            }
             return {
               content: [
                 {
@@ -932,7 +957,11 @@ describe('the browser floor across one run', (): void => {
       'k',
     );
     expect(applied.ok).toBe(true);
-    expect(calls.map((c) => c.tool)).toEqual(['browser_navigate', 'browser_snapshot', 'browser_click']);
+    expect(calls.map((c) => c.tool)).toEqual([
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_click',
+    ]);
     expect(calls[2].args).toEqual({ element: 'Save', target: 'e23' });
   });
 
@@ -1043,7 +1072,6 @@ describe('the browser floor across one run', (): void => {
   });
 });
 
-
 describe('signing a new browser in again for a run', (): void => {
   const looker: SurfaceRecord = {
     slug: 'looker',
@@ -1083,12 +1111,14 @@ describe('signing a new browser in again for a run', (): void => {
     });
   }
 
-  it('replays the sign-in on the run\'s browser, so the next action finds the signed-in page', async (): Promise<void> => {
+  it("replays the sign-in on the run's browser, so the next action finds the signed-in page", async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const adapter = adapterFor(driver);
     const restored = await adapter.restoreSession(ctx, run, looker, recipe, 'wi:run:4');
     expect(restored.ok).toBe(true);
-    expect(restored.steps.map((step) => [step.ok, step.idempotencyKey, step.replayOf, step.authority])).toEqual([
+    expect(
+      restored.steps.map((step) => [step.ok, step.idempotencyKey, step.replayOf, step.authority]),
+    ).toEqual([
       [true, 'wi:run:4.session-0', 'wi:run:0', 'autonomous'],
       [true, 'wi:run:4.session-1', 'wi:run:1', 'autonomous'],
       [true, 'wi:run:4.session-2', 'wi:run:2', 'autonomous'],
@@ -1138,7 +1168,8 @@ describe('signing a new browser in again for a run', (): void => {
     const restored = await adapter.restoreSession(ctx, run, looker, recipe, 'wi:run:4');
     expect(restored).toMatchObject({
       ok: false,
-      reason: 'browser session could not be re-established: browser_fill_form no grant (looker:write)',
+      reason:
+        'browser session could not be re-established: browser_fill_form no grant (looker:write)',
     });
     expect(restored.steps.map((step) => [step.ok, step.reason])).toEqual([
       [true, undefined],
@@ -1179,7 +1210,10 @@ describe('signing a new browser in again for a run', (): void => {
       [{ action: commentCall, replayOf: 'wi:run:0', authority: 'manager' }],
       'wi:run:4',
     );
-    expect(restored).toMatchObject({ ok: false, steps: [{ ok: false, reason: 'a replayed call must target looker' }] });
+    expect(restored).toMatchObject({
+      ok: false,
+      steps: [{ ok: false, reason: 'a replayed call must target looker' }],
+    });
     expect(driver.calls).toEqual([]);
   });
 
@@ -1189,7 +1223,8 @@ describe('signing a new browser in again for a run', (): void => {
     const make = (tool: string) => ({
       execute: async (args: unknown): Promise<unknown> => {
         sent.push({ tool, args });
-        if (tool === 'browser_click' && (args as { element?: string }).element === 'Next') external = true;
+        if (tool === 'browser_click' && (args as { element?: string }).element === 'Next')
+          external = true;
         const page = external
           ? '### Page\n- Page URL: https://outside.example/login\n### Snapshot\n- textbox "Password" [ref=e2]\n- button "Sign in" [ref=e3]'
           : '### Page\n- Page URL: http://looker-tile:8080/login\n### Snapshot\n- textbox "Email" [ref=e2]\n- button "Next" [ref=e3]';
@@ -1199,11 +1234,12 @@ describe('signing a new browser in again for a run', (): void => {
     const adapter = new McpAdapter([looker], {
       decrypt: async (): Promise<string> => 'pipeline-tile-local',
       createClient: (): McpClientLike => ({
-        listTools: async () => Object.fromEntries(
-          ['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_click'].map((tool) => [
-            `looker_${tool}`, make(tool),
-          ]),
-        ),
+        listTools: async () =>
+          Object.fromEntries(
+            ['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_click'].map(
+              (tool) => [`looker_${tool}`, make(tool)],
+            ),
+          ),
         disconnect: async (): Promise<void> => undefined,
       }),
       now: (): number => now,
@@ -1219,7 +1255,11 @@ describe('signing a new browser in again for a run', (): void => {
       browser('browser_click', { element: 'Next' }),
       browser('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
       browser('browser_click', { element: 'Sign in' }),
-    ].map((action, index) => ({ action, replayOf: `wi:run:${index}`, authority: 'autonomous' as const }));
+    ].map((action, index) => ({
+      action,
+      replayOf: `wi:run:${index}`,
+      authority: 'autonomous' as const,
+    }));
     const restored = await adapter.restoreSession(ctx, run, looker, steps, 'wi:run:5');
     expect(external).toBe(true);
     expect(restored).toMatchObject({
@@ -1232,19 +1272,26 @@ describe('signing a new browser in again for a run', (): void => {
 
   it('does not resolve a credential field from a failed browser snapshot', async (): Promise<void> => {
     const sent: string[] = [];
-    const page = '### Page\n- Page URL: http://looker-tile:8080/login\n### Snapshot\n- textbox "Password" [ref=e2]';
+    const page =
+      '### Page\n- Page URL: http://looker-tile:8080/login\n### Snapshot\n- textbox "Password" [ref=e2]';
     const adapter = new McpAdapter([looker], {
       decrypt: async (): Promise<string> => 'pipeline-tile-local',
       createClient: (): McpClientLike => ({
-        listTools: async () => Object.fromEntries(
-          ['browser_navigate', 'browser_snapshot', 'browser_fill_form'].map((tool) => [
-            `looker_${tool}`,
-            { execute: async () => {
-              sent.push(tool);
-              return { content: [{ type: 'text', text: page }], ...(tool === 'browser_snapshot' ? { isError: true } : {}) };
-            } },
-          ]),
-        ),
+        listTools: async () =>
+          Object.fromEntries(
+            ['browser_navigate', 'browser_snapshot', 'browser_fill_form'].map((tool) => [
+              `looker_${tool}`,
+              {
+                execute: async () => {
+                  sent.push(tool);
+                  return {
+                    content: [{ type: 'text', text: page }],
+                    ...(tool === 'browser_snapshot' ? { isError: true } : {}),
+                  };
+                },
+              },
+            ]),
+          ),
         disconnect: async (): Promise<void> => undefined,
       }),
       now: (): number => now,
@@ -1257,9 +1304,16 @@ describe('signing a new browser in again for a run', (): void => {
     const steps = [
       action('browser_navigate', { url: 'http://looker-tile:8080/' }),
       action('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
-    ].map((entry, index) => ({ action: entry, replayOf: `wi:run:${index}`, authority: 'autonomous' as const }));
+    ].map((entry, index) => ({
+      action: entry,
+      replayOf: `wi:run:${index}`,
+      authority: 'autonomous' as const,
+    }));
     const restored = await adapter.restoreSession(ctx, run, looker, steps, 'wi:run:2');
-    expect(restored).toMatchObject({ ok: false, reason: expect.stringContaining('browser_snapshot') });
+    expect(restored).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('browser_snapshot'),
+    });
     expect(sent).toEqual(['browser_navigate', 'browser_snapshot']);
   });
 });
@@ -1267,18 +1321,29 @@ describe('signing a new browser in again for a run', (): void => {
 describe('provider error envelope variants', () => {
   it.each([
     { content: [], structuredContent: { error: true, message: 'validation failed: id required' } },
-    { content: [{ type: 'text', text: 'Request received' }, { type: 'text', text: '{"validationErrors":["id required"]}' }] },
+    {
+      content: [
+        { type: 'text', text: 'Request received' },
+        { type: 'text', text: '{"validationErrors":["id required"]}' },
+      ],
+    },
   ])('never ledgers a failure body as a successful read', async (result) => {
-    const client = fakeClient({ 'linear_list_issues': async () => result });
-    const outcome = await adapter(client).apply(ctx, run, {
-      tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{}' },
-    }, 0, 'review:read:0');
+    const client = fakeClient({ linear_list_issues: async () => result });
+    const outcome = await adapter(client).apply(
+      ctx,
+      run,
+      {
+        tool: 'mcp.call',
+        args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{}' },
+      },
+      0,
+      'review:read:0',
+    );
     expect(outcome.ok).toBe(false);
     expect(outcome.reason).toContain('id required');
     expect(outcome.effect).toBeUndefined();
   });
 });
-
 
 describe('an empty validation report', (): void => {
   it('is not a failure at interpretation', (): void => {
@@ -1289,14 +1354,18 @@ describe('an empty validation report', (): void => {
       'validation failed: ["id required"]',
     );
     expect(
-      interpretToolResult({ content: [{ type: 'text', text: '{"id":"iss-1","validationErrors":[]}' }] }),
+      interpretToolResult({
+        content: [{ type: 'text', text: '{"id":"iss-1","validationErrors":[]}' }],
+      }),
     ).toMatchObject({ isError: false, providerId: 'iss-1' });
   });
 
   it('is ledgered as the successful read it is', async (): Promise<void> => {
     const client = fakeClient({
       linear_list_issues: async () => ({
-        content: [{ type: 'text', text: '{"id":"iss-1","identifier":"REVOPS-7","validationErrors":[]}' }],
+        content: [
+          { type: 'text', text: '{"id":"iss-1","identifier":"REVOPS-7","validationErrors":[]}' },
+        ],
       }),
     });
     const outcome = await adapter(client).apply(
@@ -1309,5 +1378,203 @@ describe('an empty validation report', (): void => {
     expect(outcome.ok).toBe(true);
     expect(outcome.providerId).toBe('iss-1');
     expect(outcome.effect).toContain('REVOPS-7');
+  });
+});
+
+describe('where the credential is substituted', (): void => {
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: [...BROWSER_TOOLS],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+  const SECRET = 'pipeline-tile-local';
+
+  function call(tool: string, toolArgs: unknown): MockAction {
+    return {
+      tool: 'mcp.call',
+      args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: JSON.stringify(toolArgs) },
+    } as MockAction;
+  }
+
+  /**
+   * A driver whose current page the test sets: what `browser_snapshot` reports
+   * is whatever the last action left the browser on, as a real one would.
+   */
+  function driverOn(page: { url: string; elements: string }) {
+    const calls: Array<{ tool: string; args: unknown }> = [];
+    const adapter = new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => SECRET,
+      createClient: (): McpClientLike => ({
+        listTools: async () =>
+          Object.fromEntries(
+            BROWSER_TOOLS.map((tool: string) => [
+              `looker-pipeline-tile_${tool}`,
+              {
+                execute: async (args: unknown): Promise<unknown> => {
+                  calls.push({ tool, args });
+                  const text =
+                    tool === 'browser_snapshot'
+                      ? `### Page\n- Page URL: ${page.url}\n### Snapshot\n${page.elements}`
+                      : 'ok';
+                  return { content: [{ type: 'text', text }] };
+                },
+              },
+            ]),
+          ),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+    });
+    return { adapter, calls };
+  }
+
+  const LOGIN = '- textbox "Username" [ref=e11]\n- textbox "Password" [ref=e14]';
+
+  it('types the credential into a password field on the surface', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({ url: 'http://looker-tile:8080/login', elements: LOGIN });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_type', { element: 'Password', text: '{{secret}}' }),
+      0,
+      'k',
+    );
+    expect(applied.ok).toBe(true);
+    expect(calls[1]).toEqual({
+      tool: 'browser_type',
+      args: { element: 'Password', target: 'e14', text: SECRET },
+    });
+  });
+
+  it('refuses the credential in a field that is not a credential field', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({
+      url: 'http://looker-tile:8080/',
+      elements: '- textbox "Pipeline coverage" [ref=e21]',
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '{{secret}}' }] }),
+      0,
+      'k',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('typed only into a credential field'),
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses when the element the page offered is not a credential field', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({
+      url: 'http://looker-tile:8080/',
+      elements: '- textbox "Password notes" [ref=e30]',
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
+      0,
+      'k',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('typed only into a credential field'),
+    });
+    expect(calls.map((entry) => entry.tool)).toEqual(['browser_snapshot']);
+  });
+
+  it('refuses the credential in a navigation address', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({ url: 'http://looker-tile:8080/', elements: LOGIN });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/?token={{secret}}' }),
+      0,
+      'k',
+    );
+    expect(applied.ok).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it('leaves other double-brace text in a typed value as it was written', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({
+      url: 'http://looker-tile:8080/',
+      elements: '- textbox "Pipeline coverage" [ref=e21]',
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', {
+        fields: [{ name: 'Pipeline coverage', value: '{{quarter}} 74%' }],
+      }),
+      0,
+      'k',
+    );
+    expect(applied.ok).toBe(true);
+    expect(calls[1].args).toMatchObject({ fields: [{ value: '{{quarter}} 74%' }] });
+  });
+
+  it('never substitutes the credential into an MCP tool argument', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+    });
+    const leak: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Here it is: {{secret}}' }),
+      },
+    };
+    const applied = await adapter(client).apply(ctx, run, leak, 0, 'k');
+    expect(applied).toMatchObject({ ok: false, reason: MCP_SECRET_ARGUMENT_REFUSAL });
+    expect(client.executions).toEqual([]);
+    expect(client.options).toEqual([]);
+  });
+});
+
+describe('reading a large tool result', (): void => {
+  it('redacts a bounded prefix, with the credential removed before the cut', async (): Promise<void> => {
+    const seen: number[] = [];
+    const spanModel = {
+      name: 'measuring',
+      spans: async (text: string): Promise<never[]> => {
+        seen.push(text.length);
+        return [];
+      },
+    };
+    const secret = 'lin-secret-value';
+    const long = `${'a'.repeat(MCP_RESULT_TEXT_LIMIT - 5)}${secret}${'b'.repeat(200_000)}`;
+    const client = fakeClient({
+      linear_list_issues: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: long }],
+      }),
+    });
+    const surfaceAdapter = new McpAdapter([linear], {
+      decrypt: async (): Promise<string> => secret,
+      createClient: client.create,
+      now: (): number => now,
+      spanModel,
+    });
+    const listCall: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ team: 'T' }) },
+    };
+    const applied = await surfaceAdapter.apply(ctx, run, listCall, 0, 'k');
+    expect(applied.ok).toBe(true);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(MCP_RESULT_TEXT_LIMIT);
+    expect(JSON.stringify(applied)).not.toContain('lin-secret');
   });
 });

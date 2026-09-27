@@ -24,9 +24,11 @@ import { DEV_NO_AUTH } from './dev-auth';
  * `pnpm dev:no-auth-key` and kept in `.env.local`:
  *
  *   - `DEV_NO_AUTH_SECRET` unlocks the app itself. It arrives once in the URL
- *     `pnpm dev` prints, and is kept in an httpOnly cookie afterwards. Without
- *     it `proxy.ts` refuses every route, so an attacker who can reach the dev
- *     server gets a 403 and nothing else.
+ *     `pnpm dev` prints; the browser then keeps a session of its own, signed
+ *     with the secret, in an httpOnly cookie. The secret never sits in a
+ *     cookie, and rotating it (`pnpm dev:no-auth-key --rotate-unlock`) ends
+ *     every session at once. Without a session `proxy.ts` refuses every route,
+ *     so an attacker who can reach the dev server gets a 403 and nothing else.
  *   - `DEV_NO_AUTH_SIGNING_KEY` signs the short-lived token Convex accepts. The
  *     deployment holds only its public half, so an attacker who can reach the
  *     Convex socket directly — bypassing this process entirely — still cannot
@@ -37,8 +39,11 @@ import { DEV_NO_AUTH } from './dev-auth';
  * could never have.
  */
 
-/** Carries `DEV_NO_AUTH_SECRET` after the first unlock. httpOnly, so page scripts cannot read it. */
+/** Carries this browser's no-auth session after the first unlock. httpOnly, so page scripts cannot read it. */
 export const DEV_NO_AUTH_COOKIE = 'day0_dev_no_auth';
+
+/** How long one browser's session lasts before the unlock URL is needed again. */
+export const DEV_NO_AUTH_SESSION_SECONDS = 60 * 60 * 24 * 30;
 
 /** Carries `DEV_NO_AUTH_SECRET` on the unlock URL `pnpm dev` prints. */
 export const DEV_NO_AUTH_UNLOCK_PARAM = 'day0_key';
@@ -71,6 +76,91 @@ export function isDevNoAuthSecret(candidate: string | null | undefined): boolean
   return difference === 0;
 }
 
+const SESSION_VERSION = 'v1';
+const SESSION_CONTEXT = 'day0-no-auth-session';
+
+/** The HMAC key a session is signed with: the unlock secret, so rotating it ends every session. */
+async function sessionKey(secret: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify'],
+  );
+}
+
+function base64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(value: string): Uint8Array<ArrayBuffer> | undefined {
+  // A length of one past a multiple of four is not base64 at all, and `atob` throws on it.
+  if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return undefined;
+  const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/**
+ * Mint a session for one browser that has just shown the unlock secret.
+ *
+ * The value is a random id and an expiry, signed with the secret. It proves
+ * the browser once held the secret without carrying it, so a copied cookie
+ * never reveals the key that unlocks every other browser, and rotating the
+ * secret ends every session without any state on the server.
+ *
+ * @param now - The current time in milliseconds.
+ * @returns The cookie value.
+ * @throws Error when no unlock secret is configured; the proxy refuses before this is reached.
+ */
+export async function mintDevNoAuthSession(now: number = Date.now()): Promise<string> {
+  const secret = process.env.DEV_NO_AUTH_SECRET;
+  if (!secret) throw new Error('DEV_NO_AUTH_SECRET is not set, so no session can be signed.');
+  const id = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const expires = Math.floor(now / 1000) + DEV_NO_AUTH_SESSION_SECONDS;
+  const payload = `${SESSION_VERSION}.${id}.${expires}`;
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    await sessionKey(secret),
+    new TextEncoder().encode(`${SESSION_CONTEXT}.${payload}`),
+  );
+  return `${payload}.${base64Url(new Uint8Array(signature))}`;
+}
+
+/**
+ * Whether a cookie value is a live session signed with this machine's current
+ * unlock secret. The signature is checked by `crypto.subtle.verify`, which does
+ * not leak how much of it matched; an unset secret, a malformed value, an
+ * expired session and the raw secret itself all answer false.
+ *
+ * @param candidate - The cookie value the browser sent.
+ * @param now - The current time in milliseconds.
+ */
+export async function isDevNoAuthSession(
+  candidate: string | null | undefined,
+  now: number = Date.now(),
+): Promise<boolean> {
+  const secret = process.env.DEV_NO_AUTH_SECRET;
+  if (!secret || !candidate) return false;
+  const parts = candidate.split('.');
+  if (parts.length !== 4 || parts[0] !== SESSION_VERSION) return false;
+  const [version, id, expiresText, signatureText] = parts;
+  const expires = Number(expiresText);
+  if (!/^\d{1,12}$/.test(expiresText) || expires * 1000 <= now) return false;
+  const signature = fromBase64Url(signatureText);
+  if (!id || !signature) return false;
+  return crypto.subtle.verify(
+    'HMAC',
+    await sessionKey(secret),
+    signature,
+    new TextEncoder().encode(`${SESSION_CONTEXT}.${version}.${id}.${expiresText}`),
+  );
+}
+
 /** The caller a handler is running for, or the refusal to answer with. */
 export type Caller = { ok: true; userId: string } | { ok: false; refusal: NextResponse };
 
@@ -87,14 +177,14 @@ export type Caller = { ok: true; userId: string } | { ok: false; refusal: NextRe
  * of picking one of the two checks, so the boundary holds in whichever mode is
  * running rather than in the one the handler was written for.
  *
- * The no-auth branch re-reads the cookie the proxy already checked, as the
+ * The no-auth branch re-checks the session the proxy already checked, as the
  * routes that mint Convex tokens do: a boundary this far in front of the
  * owner's keys should not rest on a matcher pattern continuing to cover it.
  */
 export async function establishCaller(): Promise<Caller> {
   if (DEV_NO_AUTH) {
     const jar = await cookies();
-    if (!isDevNoAuthSecret(jar.get(DEV_NO_AUTH_COOKIE)?.value)) {
+    if (!(await isDevNoAuthSession(jar.get(DEV_NO_AUTH_COOKIE)?.value))) {
       return {
         ok: false,
         refusal: NextResponse.json({ error: 'not authenticated' }, { status: 403 }),

@@ -8,7 +8,6 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import {
-  approvedMcpEndpoint,
   argumentNamesFromSchema,
   inspectMcpEndpoint,
   managerUserId,
@@ -57,7 +56,9 @@ const SLACK_POLICY = [
  * Returns:
  *   A `runAction` for a fake action context.
  */
-function fakeRunAction(credential: string | Error): (reference: unknown) => Promise<string | string[]> {
+function fakeRunAction(
+  credential: string | Error,
+): (reference: unknown) => Promise<string | string[]> {
   return async (reference: unknown): Promise<string | string[]> => {
     if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return [];
     if (credential instanceof Error) throw credential;
@@ -76,7 +77,6 @@ function slackResponse(payload: Record<string, unknown>, status = 200): Response
 const publicDns = async (): Promise<string[]> => ['93.184.216.34'];
 
 describe('surface MCP probing', (): void => {
-
   it('admits the server catalogue for any class and leaves writes to the action gate', (): void => {
     expect(
       mcpAllowlist({
@@ -158,30 +158,6 @@ describe('surface MCP probing', (): void => {
     });
     expect(disconnect).toHaveBeenCalledOnce();
     expect(JSON.stringify(result)).not.toContain(credential);
-  });
-
-  it('accepts the exact approved public HTTPS endpoint and rejects SSRF targets before bearer use', (): void => {
-    expect(approvedMcpEndpoint('https://mcp.atlassian.example/mcp').href).toBe(
-      'https://mcp.atlassian.example/mcp',
-    );
-    expect(approvedMcpEndpoint('https://mcp.example.com:8443/rpc').href).toBe(
-      'https://mcp.example.com:8443/rpc',
-    );
-    for (const endpoint of [
-      'http://mcp.example.com/mcp',
-      'https://localhost/mcp',
-      'https://mcp.internal/mcp',
-      'https://127.0.0.1/mcp',
-      'https://10.0.0.8/mcp',
-      'https://169.254.169.254/latest/meta-data',
-      'https://[::1]/mcp',
-      'https://user:pass@mcp.example.com/mcp',
-      'https://mcp.example.com/mcp#other',
-    ]) {
-      expect((): URL => approvedMcpEndpoint(endpoint), endpoint).toThrow(
-        'approved MCP endpoint must use a public HTTPS hostname',
-      );
-    }
   });
 
   it('always disconnects when provider discovery fails', async (): Promise<void> => {
@@ -317,6 +293,28 @@ describe('surface MCP probing', (): void => {
         async (): Promise<string[]> => ['2606:4700:4700::1111'],
       ),
     ).resolves.toMatchObject({ toolAllowlist: ['list_issues'] });
+  });
+
+  it('hands the bearer client the addresses it checked, so it cannot dial a later answer', async (): Promise<void> => {
+    let answers = ['93.184.216.34'];
+    const checkedAddresses: unknown[] = [];
+    await probeMcpSurface(
+      'https://mcp.example.com/mcp',
+      'contract-value',
+      (checked) => {
+        checkedAddresses.push(checked.addresses);
+        answers = ['127.0.0.1'];
+        return {
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: { surface: { list_issues: {} } },
+            errors: {},
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        };
+      },
+      async (): Promise<string[]> => answers,
+    );
+    expect(checkedAddresses).toEqual([['93.184.216.34']]);
   });
 
   it('separates a resolver that would not answer from a name that does not exist', async (): Promise<void> => {
@@ -558,7 +556,8 @@ describe('surface probe action state', (): void => {
       },
       probeMcp: vi.fn(),
       expectedVerdict: 'ungranted',
-      expectedReason: 'limitation of this Day0 deployment, not evidence that Microsoft Teams is unavailable',
+      expectedReason:
+        'limitation of this Day0 deployment, not evidence that Microsoft Teams is unavailable',
     },
     {
       label: 'a live MCP server refusing its credential',
@@ -588,60 +587,66 @@ describe('surface probe action state', (): void => {
       expectedVerdict: 'listed-dead',
       expectedReason: 'connect ETIMEDOUT',
     },
-  ])('keeps the verdict honest for $label', async ({
-    surface: partialSurface,
-    probeMcp,
-    expectedVerdict,
-    expectedReason,
-  }): Promise<void> => {
-    const agentId = 'test-agent-id' as Id<'agents'>;
-    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
-    const failures: Array<Record<string, unknown>> = [];
-    const surface = {
-      _id: surfaceId,
-      agentId,
-      slug: 'work-system',
-      verdict: 'approved',
-      credentialId: 'test-credential-id',
-      credentialLanded: false,
-      managerApprovedAt: 2,
-      itApprovedAt: 3,
-      pathCandidates: [{ path: partialSurface.path, endpoint: partialSurface.endpoint }],
-      whereFound: [],
-      createdAt: 1,
-      ...partialSurface,
-    };
-    const ctx = {
-      runMutation: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
-        if (Object.keys(args).length === 1) return { surface, generation: 1 };
-        if ('verdict' in args) {
-          failures.push(args);
-          return true;
-        }
-        if ('retryAfterMs' in args) return true;
-        return null;
-      },
-      runQuery: async (): Promise<unknown> => ({
-        surface: { ...surface, probeGeneration: 1 },
-        agent: { _id: agentId, bossEmail: 'boss@day0.local' },
-      }),
-      runAction: fakeRunAction('provider-contract-value'),
-    } as unknown as ActionCtx;
-
-    const outcome = await runSurfaceProbe(ctx, surfaceId, false, {
+  ])(
+    'keeps the verdict honest for $label',
+    async ({
+      surface: partialSurface,
       probeMcp,
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait: async (): Promise<void> => undefined,
-    });
+      expectedVerdict,
+      expectedReason,
+    }): Promise<void> => {
+      const agentId = 'test-agent-id' as Id<'agents'>;
+      const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+      const failures: Array<Record<string, unknown>> = [];
+      const surface = {
+        _id: surfaceId,
+        agentId,
+        slug: 'work-system',
+        verdict: 'approved',
+        credentialId: 'test-credential-id',
+        credentialLanded: false,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        pathCandidates: [{ path: partialSurface.path, endpoint: partialSurface.endpoint }],
+        whereFound: [],
+        createdAt: 1,
+        ...partialSurface,
+      };
+      const ctx = {
+        runMutation: async (
+          _reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
+          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if ('verdict' in args) {
+            failures.push(args);
+            return true;
+          }
+          if ('retryAfterMs' in args) return true;
+          return null;
+        },
+        runQuery: async (): Promise<unknown> => ({
+          surface: { ...surface, probeGeneration: 1 },
+          agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+        }),
+        runAction: fakeRunAction('provider-contract-value'),
+      } as unknown as ActionCtx;
 
-    expect(outcome).toMatchObject({ verdict: expectedVerdict });
-    expect(outcome.reason).toContain(expectedReason);
-    expect(failures).toContainEqual(
-      expect.objectContaining({ verdict: expectedVerdict, attemptedAt: 1_000 }),
-    );
-  });
+      const outcome = await runSurfaceProbe(ctx, surfaceId, false, {
+        probeMcp,
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait: async (): Promise<void> => undefined,
+      });
+
+      expect(outcome).toMatchObject({ verdict: expectedVerdict });
+      expect(outcome.reason).toContain(expectedReason);
+      expect(failures).toContainEqual(
+        expect.objectContaining({ verdict: expectedVerdict, attemptedAt: 1_000 }),
+      );
+    },
+  );
 
   it.each(['https://slack.com/api/', 'https://slack.com/api'])(
     'reaches the Slack probe for a documented base written as %s',
@@ -685,10 +690,7 @@ describe('surface probe action state', (): void => {
             if ('verifiedAt' in args || 'providerBotId' in args) return true;
             return null;
           },
-          runQuery: async (
-            _reference: unknown,
-            args: Record<string, unknown>,
-          ): Promise<unknown> =>
+          runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
             'surfaceId' in args
               ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
               : [],
@@ -732,7 +734,9 @@ describe('surface probe action state', (): void => {
       providerIdentityId: 'UBOT',
       providerBotId: 'BBOT',
     }));
-    const run = async (identityStored: boolean): Promise<{ outcome: unknown; writes: string[] }> => {
+    const run = async (
+      identityStored: boolean,
+    ): Promise<{ outcome: unknown; writes: string[] }> => {
       const writes: string[] = [];
       const outcome = await runSurfaceProbe(
         {
@@ -742,7 +746,9 @@ describe('surface probe action state', (): void => {
           ): Promise<unknown> => {
             if (Object.keys(args).length === 1) return { surface, generation: 1 };
             if ('providerBotId' in args) {
-              writes.push(`identity ${String(args.providerBotId)} at generation ${String(args.generation)}`);
+              writes.push(
+                `identity ${String(args.providerBotId)} at generation ${String(args.generation)}`,
+              );
               return identityStored;
             }
             if ('verifiedAt' in args) {
@@ -751,10 +757,7 @@ describe('surface probe action state', (): void => {
             }
             return null;
           },
-          runQuery: async (
-            _reference: unknown,
-            args: Record<string, unknown>,
-          ): Promise<unknown> =>
+          runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
             'surfaceId' in args
               ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
               : [],
@@ -1609,7 +1612,7 @@ describe('probing the browser floor', (): void => {
     });
   });
 
-  it('reads the probe marker from the surface\'s own documentation', async (): Promise<void> => {
+  it("reads the probe marker from the surface's own documentation", async (): Promise<void> => {
     const { harness } = await tileHarness();
     // A second browser-driven system on the same agent. Read across every page,
     // one marker would serve both: this system would be checked against the
@@ -1741,65 +1744,63 @@ describe('probing the browser floor', (): void => {
 
   it('falls from a failed generic MCP route to the approved browser floor', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const { surfaceId } = await harness.run(
-      async (ctx): Promise<{ surfaceId: Id<'surfaces'> }> => {
-        const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
-          name: 'Jira employee',
-          userId: 'owner',
-          state: 'active',
-          createdAt: 1,
-        });
-        const credentialId = await ctx.db.insert('credentials', {
-          userId: 'owner',
-          kind: 'location',
-          label: 'Jira automation credential',
-          ciphertext: 'not-read-by-this-contract',
-          iv: 'not-read-by-this-contract',
-          source: 'entered',
-          createdAt: 1,
-        });
-        const surfaceId = await ctx.db.insert('surfaces', {
-          agentId,
-          slug: 'jira',
-          displayName: 'Jira',
-          class: 'kanban',
-          verdict: 'approved',
-          whereFound: [],
-          path: 'mcp',
-          fallbackPath: 'browser-driven',
-          pathCandidates: [
-            { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
-            { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
-          ],
-          endpoint: 'https://mcp.jira.example/mcp',
-          credentialId,
-          credentialKind: 'location',
-          credentialLanded: false,
-          managerApprovedAt: 2,
-          itApprovedAt: 3,
-          request: { expiresInDays: 30 },
-          createdAt: 1,
-        });
-        const sourceId = await ctx.db.insert('docSources', {
-          userId: 'owner',
-          label: 'Jira runbook',
-          kind: 'folder',
-          locator: '.',
-          status: 'synced',
-          createdAt: 1,
-          updatedAt: 1,
-        });
-        await ctx.db.insert('docPages', {
-          sourceId,
-          ref: 'jira.md',
-          title: 'Jira',
-          markdown: '# Jira\n\n- Probe marker: page title `Jira - Issues`.',
-          updatedAt: 1,
-        });
-        return { surfaceId };
-      },
-    );
+    const { surfaceId } = await harness.run(async (ctx): Promise<{ surfaceId: Id<'surfaces'> }> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Jira employee',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'location',
+        label: 'Jira automation credential',
+        ciphertext: 'not-read-by-this-contract',
+        iv: 'not-read-by-this-contract',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'jira',
+        displayName: 'Jira',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'mcp',
+        fallbackPath: 'browser-driven',
+        pathCandidates: [
+          { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
+          { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
+        ],
+        endpoint: 'https://mcp.jira.example/mcp',
+        credentialId,
+        credentialKind: 'location',
+        credentialLanded: false,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        request: { expiresInDays: 30 },
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Jira runbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'jira.md',
+        title: 'Jira',
+        markdown: '# Jira\n\n- Probe marker: page title `Jira - Issues`.',
+        updatedAt: 1,
+      });
+      return { surfaceId };
+    });
     vi.stubEnv('DAY0_BROWSER_MCP_URL', DEFAULT_BROWSER_MCP_URL);
     const probeMcp = vi.fn(async (): Promise<never> => {
       throw new Error('MCP server returned HTTP 503');
@@ -2285,7 +2286,9 @@ describe('one failed probe does not write listed-dead', (): void => {
     const probeBrowser = vi
       .fn<() => Promise<McpDiscovery>>()
       .mockRejectedValueOnce(
-        new Error('the documented page could not be opened: net::ERR_CONNECTION_RESET at https://looker.example/tile'),
+        new Error(
+          'the documented page could not be opened: net::ERR_CONNECTION_RESET at https://looker.example/tile',
+        ),
       )
       .mockResolvedValueOnce({ toolAllowlist: ['browser_navigate'], toolArguments: [] });
 
