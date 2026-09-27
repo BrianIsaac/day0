@@ -1905,45 +1905,6 @@ export function adoptionRefusal(
 }
 
 /**
- * Remove the containers a moved checkout left, so the next `up` recreates
- * them from this one. Only containers whose Compose working directory is the
- * recorded path are touched; volumes never are.
- *
- * Args:
- *   io: The setup environment.
- *   project: The Compose project.
- *   recordedRoot: Where the checkout was.
- *   dryRun: Say what would be removed and remove nothing.
- *
- * Returns:
- *   A refusal when a container belongs to a third path, else undefined.
- */
-function readoptContainers(
-  io: SetupIo,
-  project: string,
-  recordedRoot: string,
-  dryRun: boolean,
-): string | undefined {
-  const containers = projectContainers(io, project, recordedRoot);
-  if (containers.refusal !== undefined) {
-    return `${containers.refusal} Nothing was removed; \`docker ps -a --filter label=com.docker.compose.project=${project}\` lists them.`;
-  }
-  if (containers.ids.length === 0) return undefined;
-  if (dryRun) {
-    io.log(`    would remove ${containers.ids.length} container(s) created from ${recordedRoot}`);
-    return undefined;
-  }
-  const removed = io.run('docker', ['rm', '-f', ...containers.ids], { timeoutMs: 120_000 });
-  if (removed.status !== 0) {
-    return `the containers created from ${recordedRoot} could not be removed: ${removed.stderr.trim()}`;
-  }
-  io.log(
-    `    removed ${containers.ids.length} container(s) created from ${recordedRoot}; the volumes are kept`,
-  );
-  return undefined;
-}
-
-/**
  * The volumes Docker lists under a project's compose label.
  *
  * Args:
@@ -2344,16 +2305,27 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         `Moved checkout: re-adopting ${resolvedProject}, set up at ${recordedRoot}. Its volumes are kept; ` +
           'its containers are recreated from this checkout.',
       );
-      const readopted = readoptContainers(io, resolvedProject, recordedRoot, options.dryRun);
-      if (readopted !== undefined) {
-        io.log(`error: ${readopted}`);
-        return 1;
-      }
     }
-    const containers =
-      adopting && options.dryRun
-        ? { ids: [] }
-        : projectContainers(io, resolvedProject, checkoutRoot);
+    // Only read here: the moved checkout's containers are removed just before
+    // the first step, so a cancelled prompt or a gap leaves them as they were.
+    const movedContainers = adopting
+      ? projectContainers(io, resolvedProject, recordedRoot)
+      : { ids: [] };
+    if (movedContainers.refusal !== undefined) {
+      io.log(
+        `error: ${movedContainers.refusal} Nothing was removed; ` +
+          `\`docker ps -a --filter label=com.docker.compose.project=${resolvedProject}\` lists them.`,
+      );
+      return 1;
+    }
+    if (adopting && options.dryRun && movedContainers.ids.length > 0) {
+      io.log(
+        `    would remove ${movedContainers.ids.length} container(s) created from ${recordedRoot}`,
+      );
+    }
+    const containers = adopting
+      ? { ids: [] }
+      : projectContainers(io, resolvedProject, checkoutRoot);
     if (containers.refusal !== undefined && (containers.ids.length > 0 || !options.dryRun)) {
       io.log(`error: ${containers.refusal}`);
       return 1;
@@ -2751,6 +2723,25 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     io.log(`Starting. Steps: ${steps.join(' → ')}`);
     io.log('');
     started = true;
+
+    if (movedContainers.ids.length > 0) {
+      const removed = io.run('docker', ['rm', '-f', ...movedContainers.ids], {
+        timeoutMs: 120_000,
+      });
+      if (removed.status !== 0) {
+        reportFailure(
+          io,
+          `removing the containers created from ${recordedRoot}`,
+          removed,
+          resolvedProject,
+          options.mode,
+        );
+        return 1;
+      }
+      io.log(
+        `    removed ${movedContainers.ids.length} container(s) created from ${recordedRoot}; the volumes are kept`,
+      );
+    }
 
     const runStep = (
       name: string,

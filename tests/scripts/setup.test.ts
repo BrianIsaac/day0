@@ -628,6 +628,21 @@ describe('a checkout that moved', (): void => {
     expect(h.output.join('\n')).toContain('re-adopting day0-setup-test');
   });
 
+  it('removes nothing when the run stops before its first step', async (): Promise<void> => {
+    const h = moved('/home/someone/old-place/day0');
+    // No key on file and none answered: the prompt is cancelled.
+    writeFileSync(
+      join(h.directory, '.env.local'),
+      'COMPOSE_PROJECT_NAME=day0-setup-test\nDAY0_SETUP_ROOT=/home/someone/old-place/day0\n',
+      'utf8',
+    );
+    h.io.ask = async (): Promise<string> => {
+      throw new SetupCancelled('the reader stopped at the prompt');
+    };
+    expect(await runSetup(keyRoute({ project: undefined, adopt: true }), h.io)).toBe(130);
+    expect(h.commands.some((call) => call.args[0] === 'rm')).toBe(false);
+  });
+
   it('refuses --adopt while the old path still holds a checkout that claims the project', async (): Promise<void> => {
     const other = mkdtempSync(join(tmpdir(), 'day0-setup-other-'));
     directories.push(other);
