@@ -92,12 +92,18 @@ export interface TraceAgent {
   readonly creationTime: number;
 }
 
-/** One retired employee of the owner, as its tombstone event records it. */
-export interface TraceRetirement {
+/** One retired employee of the owner, as a version 2 trace carried it: its tombstone event's payload. */
+export interface TombstoneRetirement {
   readonly agentId: string;
   readonly retiredAt: number;
   readonly payload: Record<string, unknown>;
 }
+
+/**
+ * One retired employee of the owner: its `retirements` row, redacted as the
+ * export redacts, or in a version 2 trace its tombstone event.
+ */
+export type TraceRetirement = Doc<'retirements'> | TombstoneRetirement;
 
 /**
  * Who and what the trace is of, and where it came from: the release and

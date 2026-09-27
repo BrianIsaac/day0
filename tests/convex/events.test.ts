@@ -301,10 +301,20 @@ describe('the paged trace export', (): void => {
     expect(trace.sections.events.at(-1)?.payload).toEqual({ index: 249 });
   });
 
-  it('names the owner’s retired employees from their tombstones, and no other owner’s', async (): Promise<void> => {
+  it('lists the owner’s retirements in its owner section, and no other owner’s', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedTracedAgent(harness);
     await harness.run(async (ctx) => {
+      const retirement = (userId: string, agentName: string, retiredAt: number) => ({
+        userId,
+        agentName,
+        retiredAt,
+        rowCounts: { events: 3 },
+        revokedCredentials: 1,
+        keptCredentials: 0,
+        claims: [],
+        rejections: [],
+      });
       const gone = await ctx.db.insert('agents', {
         bossEmail: 'boss@day0.local',
         name: 'Mateo',
@@ -319,17 +329,10 @@ describe('the paged trace export', (): void => {
         state: 'active',
         createdAt: 1,
       });
-      await ctx.db.insert('events', {
-        agentId: gone,
-        type: 'agent.retired',
-        payload: { userId: 'owner', agentId: gone, retiredAt: 7, rowCounts: { events: 3 } },
-        createdAt: 7,
-      });
-      await ctx.db.insert('events', {
+      await ctx.db.insert('retirements', { ...retirement('owner', 'Mateo', 7), agentId: gone });
+      await ctx.db.insert('retirements', {
+        ...retirement('someone-else', 'Other', 8),
         agentId: elsewhere,
-        type: 'agent.retired',
-        payload: { userId: 'someone-else', agentId: elsewhere, retiredAt: 8, rowCounts: {} },
-        createdAt: 8,
       });
       await ctx.db.delete(gone);
       await ctx.db.delete(elsewhere);
@@ -337,8 +340,12 @@ describe('the paged trace export', (): void => {
     const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
     expect(trace.owner.retired).toEqual([
       expect.objectContaining({
+        agentName: 'Mateo',
         retiredAt: 7,
-        payload: expect.objectContaining({ rowCounts: { events: 3 } }),
+        rowCounts: { events: 3 },
+        revokedCredentials: 1,
+        claims: [],
+        rejections: [],
       }),
     ]);
   });

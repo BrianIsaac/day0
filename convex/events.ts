@@ -4,7 +4,7 @@ import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { isEvaluationAgent } from './metrics';
-import { AGENT_RETIRED_EVENT } from './reset';
+import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { agentZone, dayKey } from '../src/lib/zone';
 import {
@@ -124,37 +124,17 @@ export function redactForExport(value: unknown): unknown {
   return value;
 }
 
-/** The most of the owner's retirements the owner section lists, newest first. */
-const RETIREMENT_LIMIT = 1_000;
-
-/** The most tombstones, of any owner, one owner section walks. */
-const RETIREMENT_SCAN_LIMIT = 10_000;
-
-/** The owner's retired employees, from the tombstone events their retire left. */
-async function ownerRetirements(
+/**
+ * The owner's retired employees, newest first, each its `retirements` row
+ * redacted for export: what the retire deleted and revoked, and the claims
+ * and rejections its colleagues still meet (N1's owner-keyed tombstone).
+ */
+async function retiredEmployees(
   ctx: QueryCtx,
   owner: string | undefined,
 ): Promise<TraceRetirement[]> {
   if (owner === undefined) return [];
-  // U14 D1 (a): the next schema step's owner-keyed `retirements` table replaces this walk.
-  const retired: TraceRetirement[] = [];
-  let scanned = 0;
-  for await (const event of ctx.db
-    .query('events')
-    .withIndex('by_type', (q) => q.eq('type', AGENT_RETIRED_EVENT))
-    .order('desc')) {
-    scanned += 1;
-    const payload = event.payload as Record<string, unknown> | undefined;
-    if (payload?.userId === owner) {
-      retired.push({
-        agentId: event.agentId,
-        retiredAt: typeof payload.retiredAt === 'number' ? payload.retiredAt : event.createdAt,
-        payload: redactForExport(payload) as Record<string, unknown>,
-      });
-    }
-    if (retired.length >= RETIREMENT_LIMIT || scanned >= RETIREMENT_SCAN_LIMIT) break;
-  }
-  return retired;
+  return (await ownerRetirements(ctx, owner)).map((row) => redactForExport(row) as TraceRetirement);
 }
 
 /**
@@ -175,7 +155,7 @@ export const exportHead = internalQuery({
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .take(TRACE_PAGE_ROWS),
-      ownerRetirements(ctx, agent.userId),
+      retiredEmployees(ctx, agent.userId),
     ]);
     const credentials = await Promise.all(
       [
