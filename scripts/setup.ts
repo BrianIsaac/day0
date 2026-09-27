@@ -2163,6 +2163,16 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       return 1;
     }
 
+    // DAY0_SURFACE_MODE is written only where the file has none in mock mode,
+    // so a mock run over a real-mode file would keep real mode and say mock.
+    if (!real && existing.DAY0_SURFACE_MODE?.trim() === 'real') {
+      io.log(
+        `error: ${ENV_FILE} here is a real-mode installation (DAY0_SURFACE_MODE=real), and this is the ` +
+          `mock-mode setup. Real mode is set up and resumed with \`${SETUP_SCRIPT}\`. Mock mode, the seeded office, ` +
+          'needs a checkout of its own: its data would otherwise sit beside your documentation and systems.',
+      );
+      return 1;
+    }
     const project = options.project ?? existing.COMPOSE_PROJECT_NAME?.trim() ?? '';
     const resolvedProject = project !== '' ? project : defaultProjectName(realpathSync(io.cwd));
     const nameRefusal = composeProjectRefusal(resolvedProject);

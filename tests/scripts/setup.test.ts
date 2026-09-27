@@ -513,6 +513,21 @@ describe('the Featherless key', (): void => {
   });
 });
 
+describe('a mock setup over a real-mode installation', (): void => {
+  it('refuses before it writes anything, rather than keeping real mode and printing mock', async (): Promise<void> => {
+    const envLocal =
+      'COMPOSE_PROJECT_NAME=day0-setup-test\nDAY0_SURFACE_MODE=real\nOPENAI_API_KEY=synthetic\n';
+    const h = harness({ envLocal, services: ['backend'] });
+    expect(await runSetup(keyRoute(), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('is a real-mode installation');
+    expect(printed).toContain('./setup.sh');
+    expect(printed).not.toContain('Mock mode: the office is seeded');
+    expect(readFileSync(join(h.directory, '.env.local'), 'utf8')).toBe(envLocal);
+    expect(h.commands.some((call) => call.command === 'pnpm')).toBe(false);
+  });
+});
+
 describe('refusing anything that is not this machine', (): void => {
   it('refuses to run as part of a hosted build', (): void => {
     expect(buildEnvironmentRefusal({ VERCEL: '1' })).toContain('Vercel');
