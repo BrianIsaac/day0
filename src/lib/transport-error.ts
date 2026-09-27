@@ -290,9 +290,12 @@ export function fetchWithBackoff<I = string | URL | Request>(
         );
         const transient = transientFromResponse(response, 'The provider', now());
         if (transient) {
+          // The previous refused answer is let go, so its connection is freed before the next try.
+          await last?.body?.cancel();
           last = response;
           throw transient;
         }
+        await last?.body?.cancel();
         return response;
       }, policy);
     } catch (error) {

@@ -161,6 +161,23 @@ describe('a fetch with one bounded backoff', (): void => {
     expect(signals[0]).not.toBe(signals[1]);
   });
 
+  it('lets go of a refused answer before the next try, and keeps the last one readable', async (): Promise<void> => {
+    const answers = [
+      new Response('first', { status: 429 }),
+      new Response('second', { status: 503 }),
+      new Response('third', { status: 429 }),
+    ];
+    const handed = [...answers];
+    const fetcher = fetchWithBackoff(async (): Promise<Response> => handed.shift()!, 10_000, {
+      ...PROVIDER_BACKOFF,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const last = await fetcher('https://slack.com/api/x');
+    expect(answers[0]!.bodyUsed).toBe(true);
+    expect(answers[1]!.bodyUsed).toBe(true);
+    expect(await last.text()).toBe('third');
+  });
+
   it('returns the last 429 once the tries are spent', async (): Promise<void> => {
     const fetcher = fetchWithBackoff(
       async (): Promise<Response> => new Response('{}', { status: 429 }),
