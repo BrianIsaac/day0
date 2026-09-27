@@ -1065,14 +1065,30 @@ export function allowlistEntry(method: HttpMethod, operation: string): string {
   return `${method} ${operation}`;
 }
 
-/** Whether a path matches an entry's path, a `{name}` segment standing for any one non-empty segment. */
+/**
+ * Whether one request segment may stand in for a `{name}` segment: not empty,
+ * and not a path in disguise. An encoded slash or backslash would reach a
+ * server that decodes it as a deeper path the entry never documented, so
+ * `issues/{id}` would admit `issues/7%2Fdelete`.
+ */
+function templateValue(segment: string): boolean {
+  if (segment === '') return false;
+  try {
+    return !/[/\\]/.test(decodeURIComponent(segment));
+  } catch {
+    // Not decodable, so not a value a server would read the same way.
+    return false;
+  }
+}
+
+/** Whether a path matches an entry's path, a `{name}` segment standing for any one value segment. */
 function pathMatches(pattern: string, operation: string): boolean {
   const wanted = pattern.split('/');
   const given = operation.split('/');
   return (
     wanted.length === given.length &&
     wanted.every((segment: string, index: number): boolean =>
-      /^\{[^/{}]+\}$/.test(segment) ? given[index] !== '' : segment === given[index],
+      /^\{[^/{}]+\}$/.test(segment) ? templateValue(given[index]!) : segment === given[index],
     )
   );
 }

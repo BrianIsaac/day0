@@ -1745,6 +1745,19 @@ describe('the operations a documented API allowlist admits', (): void => {
     expect(operationRefusal(['GET issues/{id}'], 'GET', 'issues/')).toBeDefined();
   });
 
+  it('never lets a value segment carry an encoded path (second pass)', (): void => {
+    for (const operation of [
+      'issues/7%2Fdelete',
+      'issues/7%2fdelete',
+      'issues/7%5Cadmin',
+      'issues/%E0%A4',
+    ]) {
+      expect(operationRefusal(['GET issues/{id}'], 'GET', operation)).toBeDefined();
+    }
+    expect(toolRefusal(http('PATCH', '/issues/7%2Fdelete'), tracker)).toBeDefined();
+    expect(operationRefusal(['GET issues/{id}'], 'GET', 'issues/ENG%2012')).toBeUndefined();
+  });
+
   it('keeps an RPC method path-only, and admits nothing for a bare REST path', (): void => {
     expect(operationRefusal(['chat.postMessage'], 'POST', 'chat.postMessage')).toBeUndefined();
     expect(operationRefusal(['chat.postMessage'], 'GET', 'chat.postMessage')).toBeUndefined();
