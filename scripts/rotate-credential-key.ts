@@ -239,6 +239,13 @@ export async function rotateCredentialKey(io: RotationIo): Promise<RotationOutco
     io.log('A rotation is under way on this deployment; carrying on with its re-seal.');
     return await finishRotation(deployment, held, inFlight, io.log);
   }
+  if (held === undefined && inFlight !== undefined) {
+    const reason =
+      `The deployment holds ${PREVIOUS_KEY_NAME} but no ${KEY_NAME}, so the rows it sealed open under ` +
+      `nothing else; set ${KEY_NAME} on the deployment back to the key in ${ENV_FILE}, then run this again.`;
+    io.log(reason);
+    return { kind: 'refused', reason };
+  }
   if (inFlight !== undefined) {
     // An earlier run set the old key aside and never set a new one: nothing is re-sealed yet.
     await deployment.envRemove(PREVIOUS_KEY_NAME);

@@ -334,6 +334,18 @@ describe('rotating the credential key on purpose', (): void => {
     expect(await readable(deployment, [rows.stored])).toEqual(['stored-value']);
   });
 
+  it('keeps a set-aside key when the deployment has lost its current one, and changes nothing', async (): Promise<void> => {
+    const { deployment } = await storedUnder(OLD_KEY);
+    deployment.env.delete(KEY);
+    deployment.env.set(PREVIOUS_KEY_NAME, OLD_KEY);
+    const run = io(deployment, OLD_KEY);
+
+    expect(await rotateCredentialKey(run)).toMatchObject({ kind: 'refused' });
+    expect(run.asked).toEqual([]);
+    expect(deployment.env.get(PREVIOUS_KEY_NAME)).toBe(OLD_KEY);
+    expect(deployment.env.has(KEY)).toBe(false);
+  });
+
   it('refuses from a file whose key the deployment does not hold, and changes nothing', async (): Promise<void> => {
     const { deployment } = await storedUnder(OLD_KEY);
     const run = io(deployment, newKey());
