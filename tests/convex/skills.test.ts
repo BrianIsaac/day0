@@ -306,7 +306,7 @@ describe('revising a registered authored skill', (): void => {
   });
 });
 
-describe('the Revise window before the first execution', (): void => {
+describe('the Revise window while the source work waits', (): void => {
   /**
    * Seed a registered authored skill whose source work is in a given state.
    *
@@ -340,7 +340,7 @@ describe('the Revise window before the first execution', (): void => {
     return { skillId, workItemId };
   }
 
-  it.each(['claimed', 'plan-pending'] as const)(
+  it.each(['deferred'] as const)(
     'reopens the skill while its source work is %s and leaves that work where it is',
     async (state): Promise<void> => {
       useSurfaceMode('real');
@@ -360,7 +360,9 @@ describe('the Revise window before the first execution', (): void => {
     },
   );
 
-  it.each(['plan-approved', 'executing', 'completed'] as const)(
+  // A claimed or plan-pending row would be approved and then failed by the
+  // executor, which picks only registered skills.
+  it.each(['claimed', 'plan-pending', 'plan-approved', 'executing', 'completed'] as const)(
     'refuses once the source work is %s',
     async (state): Promise<void> => {
       useSurfaceMode('real');

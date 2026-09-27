@@ -569,13 +569,18 @@ export const reject = mutation({
   },
 });
 
-/** Where a skill's source work may be for the skill to be revised: nothing has approved a plan that runs it. */
+/**
+ * Where a skill's source work may be for the skill to be revised: waiting, so
+ * nothing can reach an approved plan and the executor's pick while the skill
+ * is unregistered. A claimed or plan-pending row would be approved (by the
+ * manager, or by the sweep under autonomy) and failed by the executor for
+ * want of a registered skill, since neither approval nor the pick waits for
+ * one under revision.
+ */
 const REVISABLE_SOURCE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
   'discovered',
   'needs-skill',
   'deferred',
-  'claimed',
-  'plan-pending',
 ]);
 
 /**
@@ -585,13 +590,10 @@ const REVISABLE_SOURCE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(
  *
  * Registration makes a skill callable, so revision is deliberately narrower
  * than rejection: the manager may reopen only the proposal's own skill while
- * no execution has ever claimed it and its source work has not reached an
- * approved plan. The source work may be waiting for the skill, claimed or
- * waiting on the manager's plan decision (the first moment there is a body to
- * read, P5-15); it stays where it is and runs the revised body once that
- * registers, since the execution claim refuses a skill under revision. Once a
- * work row names the skill under `skillId`, its body is part of a durable run
- * and this transition is permanently closed.
+ * no execution has ever claimed it and its source work is still waiting
+ * (`REVISABLE_SOURCE_STATES`). Once a work row names the skill under
+ * `skillId`, its body is part of a durable run and this transition is
+ * permanently closed.
  */
 export const requestRevision = mutation({
   args: { skillId: v.id('skills') },
