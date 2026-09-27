@@ -6635,9 +6635,16 @@ describe('a question asked in the notes when no chat surface can carry the manag
           'stopped: withheld before the first write: LOG-1 changed since the plan was made: it changed hands: it is assigned to another person. Nothing was sent.',
       });
     });
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
+    // The run the retry schedules is driven by hand below; its timer is faked so it
+    // never fires beside it (draining it lets the apply's stall check fire first).
+    vi.useFakeTimers();
+    try {
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.work.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
+    } finally {
+      vi.useRealTimers();
+    }
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
 
