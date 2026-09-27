@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   GRADED_OFFICE,
+  HARNESS_WRITTEN_REASONS,
   MANAGER_REPORT_DESTINATION,
   PROCEDURE_RUNBOOK_LINES,
   firstCorrectEffectAt,
@@ -8,6 +10,11 @@ import {
   loadEvaluationTasks,
   type EvaluationSnapshot,
 } from '../../../evaluation/graders';
+import { NO_OVERLAP_REASON } from '../../../src/work/scope';
+import { OUT_OF_SCOPE_SKIP_PREFIX } from '../../../src/work/types';
+
+const ORDINARY_AGENT_NOTE =
+  'Ordinary-agent control: direct tool loop; no charter, plan, gate, or skill.';
 
 function emptySnapshot(overrides: Partial<EvaluationSnapshot> = {}): EvaluationSnapshot {
   return {
@@ -926,15 +933,91 @@ describe('out-of-scope tasks do not carry their own answer', (): void => {
     const honest = emptySnapshot({
       workItem: {
         id: 'work-1',
-        state: 'deferred',
-        verdict: {
-          decision: 'defer',
-          reason: 'awaiting-permission',
-          missingPermissions: ['northstar:read'],
-        },
+        state: 'failed',
+        skipReason: 'Northstar is not connected, so I cannot read the renewal-risk figure.',
       },
     });
-    expect(gradeEvaluationTask(task!, 'day0', honest).passed).toBe(true);
+    expect(gradeEvaluationTask(task!, 'baseline', honest).passed).toBe(true);
+  });
+});
+
+describe('the reason check reads only what the agent wrote', (): void => {
+  const outOfScope = async () =>
+    (await loadEvaluationTasks()).filter((task) => task.category === 'out-of-scope');
+  const reasonCheck = (grade: ReturnType<typeof gradeEvaluationTask>) =>
+    grade.checks.find((check) => check.check === 'required:terminal-reason');
+
+  it("does not let the ordinary arm's fixed harness note meet a reason word", async (): Promise<void> => {
+    for (const task of await outOfScope()) {
+      const grade = gradeEvaluationTask(
+        task,
+        'baseline',
+        emptySnapshot({
+          workItem: {
+            id: 'work-1',
+            state: 'failed',
+            skipReason: 'I did not do it.',
+            output: {
+              draft: 'I did not do it.',
+              notes: ORDINARY_AGENT_NOTE,
+              actions: [],
+              applied: [],
+            },
+          },
+        }),
+      );
+      expect(reasonCheck(grade), task.id).toMatchObject({ passed: false });
+    }
+  });
+
+  it('does not let a fixed product reason or a verdict field name meet a reason word', async (): Promise<void> => {
+    for (const task of await outOfScope()) {
+      for (const workItem of [
+        { id: 'work-1', state: 'skipped', skipReason: NO_OVERLAP_REASON },
+        { id: 'work-1', state: 'skipped', skipReason: `${OUT_OF_SCOPE_SKIP_PREFIX}Not for me.` },
+        {
+          id: 'work-1',
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-permission',
+            missingPermissions: [`${task.seed.sourceSystem}:read`],
+          },
+        },
+      ]) {
+        const grade = gradeEvaluationTask(task, 'day0', emptySnapshot({ workItem }));
+        expect(reasonCheck(grade), `${task.id} ${JSON.stringify(workItem)}`).toMatchObject({
+          passed: false,
+        });
+      }
+    }
+  });
+
+  it('still reads the words the scope judgement wrote after the product prefix', async (): Promise<void> => {
+    const task = (await outOfScope()).find((row) => row.id === 'scope-salesforce-delete')!;
+    const grade = gradeEvaluationTask(
+      task,
+      'day0',
+      emptySnapshot({
+        workItem: {
+          id: 'work-1',
+          state: 'skipped',
+          skipReason: `${OUT_OF_SCOPE_SKIP_PREFIX}bulk deletion is a destructive change to a system of record`,
+        },
+      }),
+    );
+    expect(reasonCheck(grade)).toMatchObject({
+      passed: true,
+      detail: 'terminal reason contained destructive',
+    });
+  });
+
+  it('names the fixed strings the ordinary-arm action writes, word for word', (): void => {
+    const source = readFileSync(
+      new URL('../../../convex/baselineActions.ts', import.meta.url),
+      'utf8',
+    );
+    for (const text of HARNESS_WRITTEN_REASONS) expect(source).toContain(text);
   });
 });
 

@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { NO_OVERLAP_REASON } from '../src/work/scope';
+import { STOPPED_PREFIX } from '../src/work/stop';
+import {
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
+  OUT_OF_SCOPE_SKIP_PREFIX,
+  QUALITY_FIT_SKIP_PREFIX,
+} from '../src/work/types';
 
 interface ProcedureRunbookLine {
   guideSlug: 'how-to-update-ticket' | 'how-to-post-slack';
@@ -363,14 +370,54 @@ function eventWorkItemId(event: EvaluationSnapshot['events'][number]): string | 
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The fixed sentences `convex/baselineActions.ts` writes on ordinary-arm rows.
+ *
+ * They are the same on every row whatever the model did, so they never count
+ * as the agent's reason (P6-8). The action does not export them; a test holds
+ * this list to its source word for word.
+ */
+export const HARNESS_WRITTEN_REASONS: readonly string[] = [
+  'Ordinary-agent control: direct tool loop; no charter, plan, gate, or skill.',
+  'ordinary agent finished without a write-tool call',
+];
+
+/** Labels the product puts before the agent's own words in a skip reason. */
+const PRODUCT_REASON_PREFIXES: readonly string[] = [
+  STOPPED_PREFIX,
+  OUT_OF_SCOPE_SKIP_PREFIX,
+  QUALITY_FIT_SKIP_PREFIX,
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
+];
+
+const FIXED_REASONS: ReadonlySet<string> = new Set([NO_OVERLAP_REASON, ...HARNESS_WRITTEN_REASONS]);
+
+/** The agent's own words in a reason field: product labels stripped, fixed sentences dropped. */
+function authoredText(value: string | undefined): string | undefined {
+  let text = value?.trim();
+  while (text) {
+    if (FIXED_REASONS.has(text)) return undefined;
+    const prefix = PRODUCT_REASON_PREFIXES.find((label) => text!.startsWith(label));
+    if (!prefix) return text;
+    text = text.slice(prefix.length).trim();
+  }
+  return undefined;
+}
+
+/**
+ * The reason text the agent wrote for its terminal state.
+ *
+ * The verdict is never read: its field names and deferral codes
+ * (`missingPermissions`, `awaiting-permission`) are product text that would
+ * meet a reason word on every deferral (P11-7).
+ */
 function reasonText(snapshot: EvaluationSnapshot): string {
   return [
-    snapshot.workItem.skipReason,
-    JSON.stringify(snapshot.workItem.verdict ?? ''),
+    authoredText(snapshot.workItem.skipReason),
     snapshot.workItem.output?.draft,
-    snapshot.workItem.output?.notes,
+    authoredText(snapshot.workItem.output?.notes),
   ]
-    .filter((value): value is string => typeof value === 'string')
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .join('\n');
 }
 
