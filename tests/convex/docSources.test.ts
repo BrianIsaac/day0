@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -9,6 +10,7 @@ import {
   STALE_SYNC_MS,
   agentReadsSource,
   validateLinkInput,
+  validateReaderSecret,
 } from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
 import { allConvexModules } from './all-modules';
@@ -407,6 +409,71 @@ describe('documentation sources in real mode', (): void => {
       }),
     ).rejects.toThrow('must not carry a user name or password');
     await expect(owner.query(api.docSources.listMine, {})).resolves.toEqual([]);
+  });
+
+  it('stores a private repository’s reader secret as a credential, never in the locator (E-74)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const secret = ['ghp', 'readerContractValue0123456789'].join('_');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const sourceId = await owner.action(api.docSources.link, {
+      label: 'Runbooks',
+      kind: 'git',
+      locator: 'https://github.com/team/private-docs#main',
+      credential: secret,
+    });
+    const { source, credential } = await harness.run(async (ctx) => {
+      const source = await ctx.db.get(sourceId);
+      return {
+        source,
+        credential: source?.credentialId ? await ctx.db.get(source.credentialId) : null,
+      };
+    });
+    expect(source).toMatchObject({
+      kind: 'git',
+      locator: 'https://github.com/team/private-docs#main',
+      credentialId: credential?._id,
+    });
+    expect(credential).toMatchObject({ label: 'Runbooks reader secret', source: 'entered' });
+    expect(JSON.stringify({ source, credential })).not.toContain(secret);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: credential!._id }),
+    ).resolves.toBe(secret);
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses a reader secret a source cannot keep to one https site, and a folder’s (E-74)', (): void => {
+    const folder = validateLinkInput({ label: 'Folder', kind: 'folder', locator: '.' });
+    expect(() => validateReaderSecret(folder, 'value')).toThrow('takes no secret');
+    const twoSites = validateLinkInput({
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'https://wiki.example/a\nhttps://other.example/b',
+    });
+    expect(() => validateReaderSecret(twoSites, 'value')).toThrow('one https site');
+    const plaintext = validateLinkInput({
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'http://wiki.example/a',
+    });
+    expect(() => validateReaderSecret(plaintext, 'value')).toThrow('one https site');
+    const oneSite = validateLinkInput({
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'https://wiki.example/a\nhttps://wiki.example/b',
+    });
+    expect(() => validateReaderSecret(oneSite, 'value')).not.toThrow();
+    expect(() => validateReaderSecret(oneSite, undefined)).not.toThrow();
+    expect(() => validateReaderSecret(oneSite, '')).toThrow('cannot be empty');
+    const mcp = validateLinkInput({
+      label: 'Notion',
+      kind: 'mcp',
+      serverKind: 'generic',
+      locator: 'https://mcp.example/mcp',
+    });
+    expect(() => validateReaderSecret(mcp, undefined)).toThrow('Connection secret is required');
   });
 
   it('persists only a credential id on an authenticated source', async (): Promise<void> => {

@@ -564,6 +564,60 @@ describe('documentation sync batching', (): void => {
     );
   }, 60_000);
 
+  it('reads a private wiki with the reader secret it was linked with, and keeps the secret out of every stored reason (E-74)', async (): Promise<void> => {
+    const secret = 'wiki-reader-contract-0123456789';
+    const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Wiki reader secret',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt(secret, key),
+      });
+      return await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Wiki',
+        kind: 'urls',
+        locator: 'https://wiki.example/one\nhttps://wiki.example/two',
+        credentialId,
+        status: 'linking',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    const seen: Array<string | null> = [];
+    // The in-process redactor is reached through fetch too; only the wiki is faked.
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        if (!String(input).startsWith('https://wiki.example/')) return await realFetch(input, init);
+        seen.push(new Headers(init?.headers).get('authorization'));
+        return String(input).endsWith('/two')
+          ? new Response(`denied for ${secret}`, { status: 403 })
+          : new Response('# One', { headers: { 'content-type': 'text/markdown' } });
+      }),
+    );
+    try {
+      await expect(
+        harness.action(internal.docSyncActions.syncSource, { sourceId }),
+      ).resolves.toMatchObject({ ok: true, pages: 1, complete: true });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(seen).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    const stored = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      runs: await ctx.db.query('docSyncRuns').collect(),
+    }));
+    expect(stored.source).toMatchObject({ status: 'synced' });
+    expect(stored.source?.lastError).toContain('https://wiki.example/two returned HTTP 403.');
+    expect(JSON.stringify(stored)).not.toContain(secret);
+  });
+
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {
     const root = temporary('day0-sync-known-');
     await mkdir(join(root, 'few'));

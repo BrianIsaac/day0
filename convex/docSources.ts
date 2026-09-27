@@ -190,6 +190,54 @@ export function validateLinkInput(input: LinkInput): LinkInput {
   return { ...input, label, locator };
 }
 
+/** The source kinds that read with a secret of their own: required for MCP, optional for the others. */
+const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set(['mcp', 'git', 'urls']);
+
+/**
+ * Check the secret a source is linked with, before anything is stored (E-74).
+ *
+ * An MCP server needs its connection secret. A private git repository or a
+ * wiki behind a login may be linked with the reader's own secret, which is
+ * stored as a credential and never written into the locator. A URL list
+ * read with a secret must list pages of one https site, since the secret is
+ * that site's and is sent to no other. A folder is read from the mounted
+ * directory and takes none.
+ *
+ * @param input - The validated link values.
+ * @param secret - The secret the owner entered, if any.
+ * @throws Error saying which rule the secret breaks; the message never repeats the secret.
+ */
+export function validateReaderSecret(input: LinkInput, secret: string | undefined): void {
+  if (input.kind === 'mcp' && !secret) {
+    throw new Error('Connection secret is required for an MCP source.');
+  }
+  if (secret === undefined) return;
+  if (!SECRET_KINDS.has(input.kind)) {
+    throw new Error('A folder is read from the mounted directory and takes no secret.');
+  }
+  if (!secret) throw new Error('A secret, when given, cannot be empty.');
+  if (input.kind === 'urls') {
+    const origins = new Set(
+      input.locator
+        .split(/\r?\n/)
+        .map((value: string): string => value.trim())
+        .filter(Boolean)
+        .map((value: string): string => new URL(value).origin),
+    );
+    const [origin] = [...origins];
+    if (origins.size !== 1 || !origin.startsWith('https://')) {
+      throw new Error(
+        'A reader secret belongs to one https site: list pages of one https site to read them with it.',
+      );
+    }
+  }
+}
+
+/** What a source's own secret is called on its credential row. */
+function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
+  return `${source.label} ${source.kind === 'mcp' ? 'connection secret' : 'reader secret'}`;
+}
+
 /**
  * Check whether an agent inherits a source.
  *
@@ -297,9 +345,11 @@ export const byIds = query({
 /**
  * Link one owner-level documentation location and start its first sync.
  *
- * Refused outside real mode: a linked source makes the deployment fetch its
- * locator on every periodic sync, which the hosted mock must never do on a
- * caller's behalf.
+ * Public, for the signed-in owner. An MCP source's connection secret, or a
+ * git or URL source's own reader secret (E-74), is stored as an encrypted
+ * credential and only its id is kept on the source. Refused outside real
+ * mode: a linked source makes the deployment fetch its locator on every
+ * periodic sync, which the hosted mock must never do on a caller's behalf.
  */
 export const link = action({
   args: {
@@ -319,12 +369,7 @@ export const link = action({
       serverKind: args.serverKind,
     });
     const credential = args.credential;
-    if (input.kind === 'mcp' && !credential) {
-      throw new Error('Connection secret is required for an MCP source.');
-    }
-    if (input.kind !== 'mcp' && credential !== undefined) {
-      throw new Error('Only MCP sources may include a connection secret.');
-    }
+    validateReaderSecret(input, credential);
     // Checked before anything is written, so a component that is not running is
     // answered in the form the operator is looking at rather than as a failed
     // sync minutes later. The same check runs on every sync, which is where a
@@ -340,7 +385,7 @@ export const link = action({
         storedCredentialId = await ctx.runAction(internal.credentials.store, {
           userId: identity.subject,
           kind: 'value',
-          label: `${input.label} connection secret`,
+          label: secretLabel(input),
           plaintext: credential,
           source: 'entered',
         });
@@ -363,7 +408,13 @@ export const link = action({
   },
 });
 
-/** Rotate an owned MCP source secret without placing it in scheduler arguments. */
+/**
+ * Rotate an owned source's secret without placing it in scheduler arguments.
+ *
+ * Public, for the source's owner: an MCP connection secret, or the reader
+ * secret of a git or URL source (E-74). The old credential is revoked and
+ * the source syncs again from page one.
+ */
 export const rotateCredential = action({
   args: { sourceId: v.id('docSources'), credential: v.string() },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
@@ -374,11 +425,14 @@ export const rotateCredential = action({
       sourceId: args.sourceId,
       userId: identity.subject,
     });
-    if (!source || source.kind !== 'mcp') throw new Error('Documentation source not found.');
+    if (!source || !SECRET_KINDS.has(source.kind)) {
+      throw new Error('Documentation source not found.');
+    }
+    validateReaderSecret(source, args.credential);
     const credentialId = await ctx.runAction(internal.credentials.store, {
       userId: identity.subject,
       kind: 'value',
-      label: `${source.label} connection secret`,
+      label: secretLabel(source),
       plaintext: args.credential,
       source: 'entered',
     });

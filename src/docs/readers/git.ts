@@ -130,6 +130,31 @@ export async function downloadArchive(
 /** The first git release that honours `http.curloptResolve`; an older one ignores it without a word. */
 const pinningGit = { major: 2, minor: 37 } as const;
 
+/** The first git release that reads configuration from `GIT_CONFIG_COUNT`, which carries a secret off the command line. */
+const environmentConfigGit = { major: 2, minor: 31 } as const;
+
+/** Whether a `git --version` line is at least a release. */
+function gitAtLeast(version: string, release: { major: number; minor: number }): boolean {
+  const match = /git version (\d+)\.(\d+)/.exec(version);
+  if (!match) return false;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  return major > release.major || (major === release.major && minor >= release.minor);
+}
+
+/**
+ * The authorization header a repository's reader secret is sent as (E-74).
+ *
+ * An access token alone goes as the password of HTTP Basic under a
+ * placeholder user, which GitHub and GitLab both accept; a host that needs
+ * the user name takes the secret as `user:token`.
+ *
+ * @param secret - The source's reader secret.
+ */
+export function gitAuthorization(secret: string): string {
+  const pair = secret.includes(':') ? secret : `x-access-token:${secret}`;
+  return `Basic ${Buffer.from(pair, 'utf8').toString('base64')}`;
+}
+
 /**
  * Whether the git that printed this `git --version` line pins the address it
  * dials when told to.
@@ -137,10 +162,7 @@ const pinningGit = { major: 2, minor: 37 } as const;
  * @param version - The line, for example `git version 2.43.0`.
  */
 export function gitPinsResolve(version: string): boolean {
-  const match = /git version (\d+)\.(\d+)/.exec(version);
-  if (!match) return false;
-  const [major, minor] = [Number(match[1]), Number(match[2])];
-  return major > pinningGit.major || (major === pinningGit.major && minor >= pinningGit.minor);
+  return gitAtLeast(version, pinningGit);
 }
 
 /**
@@ -153,9 +175,13 @@ export function gitPinsResolve(version: string): boolean {
  * follow no redirect, so neither a later DNS answer nor a 302 to a metadata
  * address reaches past the check.
  *
+ * A clone that carries a reader secret follows no redirect on any host, so
+ * the secret's header never reaches another one.
+ *
  * @param locator - The parsed repository and ref.
  * @param checkout - The directory to clone into.
  * @param resolve - The resolver; the system's by default.
+ * @param withSecret - Whether the clone carries the source's reader secret.
  * @returns The arguments after `git`.
  * @throws Error naming the host when it does not resolve or answers with an address day0 never dials.
  */
@@ -163,6 +189,7 @@ export async function cloneArguments(
   locator: GitLocator,
   checkout: string,
   resolve: HostResolver = resolveHostname,
+  withSecret = false,
 ): Promise<string[]> {
   const clone = [
     'clone',
@@ -174,7 +201,9 @@ export async function cloneArguments(
     locator.url.href,
     checkout,
   ];
-  if (ARCHIVE_HOSTS.includes(locator.url.hostname)) return clone;
+  if (ARCHIVE_HOSTS.includes(locator.url.hostname)) {
+    return withSecret ? ['-c', 'http.followRedirects=false', ...clone] : clone;
+  }
   const host = locator.url.hostname.replace(/^\[|\]$/g, '');
   let addresses: string[];
   if (isIP(host) !== 0) {
@@ -217,10 +246,25 @@ const PROXY_VARIABLES = [
  * address only: no proxy (which would resolve the name itself) and no LFS
  * download (whose server `.lfsconfig` may name). Markdown needs neither.
  *
+ * A reader secret travels as an `http.extraHeader` in the environment
+ * (`GIT_CONFIG_COUNT`), never in the arguments, which any process on the
+ * machine can list, nor in the remote URL git would store (E-74).
+ *
  * @param archived - Whether the host is GitHub or GitLab, cloned as before.
+ * @param authorization - The reader secret's authorization header, when the source has one.
  */
-export function cloneEnvironment(archived: boolean): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+export function cloneEnvironment(archived: boolean, authorization?: string): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    ...(authorization === undefined
+      ? {}
+      : {
+          GIT_CONFIG_COUNT: '1',
+          GIT_CONFIG_KEY_0: 'http.extraHeader',
+          GIT_CONFIG_VALUE_0: `Authorization: ${authorization}`,
+        }),
+  };
   if (archived) return environment;
   for (const name of PROXY_VARIABLES) delete environment[name];
   return { ...environment, GIT_LFS_SKIP_SMUDGE: '1' };
@@ -261,7 +305,7 @@ export class GitReader implements DocumentationReader {
    *
    * Args:
    *   source: Linked git source.
-   *   _secret: Unused because public repositories need no credential.
+   *   secret: The source's own reader secret, when the repository is private.
    *   cursor: Optional decimal file offset.
    *   limit: Maximum pages to read.
    *
@@ -270,13 +314,13 @@ export class GitReader implements DocumentationReader {
    */
   async listPageBatch(
     source: DocSourceRecord,
-    _secret: string | undefined,
+    secret: string | undefined,
     cursor: string | undefined,
     limit: number,
   ): Promise<ReadPageBatch> {
-    void _secret;
     return await this.withCheckout(
       source,
+      secret,
       async (checkout: string): Promise<ReadPageBatch> =>
         await readMarkdownDirectoryBatch(source, checkout, cursor, limit),
     );
@@ -287,15 +331,15 @@ export class GitReader implements DocumentationReader {
    *
    * Args:
    *   source: Linked git source.
-   *   _secret: Unused because Phase 1 supports public repositories only.
+   *   secret: The source's own reader secret, if any.
    *
    * Returns:
    *   Normalised Markdown pages.
    */
-  async listPages(source: DocSourceRecord, _secret?: string): Promise<DocPage[]> {
-    void _secret;
+  async listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]> {
     return await this.withCheckout(
       source,
+      secret,
       async (checkout: string): Promise<DocPage[]> => await readMarkdownDirectory(source, checkout),
     );
   }
@@ -303,8 +347,12 @@ export class GitReader implements DocumentationReader {
   /**
    * Prepare one temporary checkout and remove it after the read completes.
    *
+   * A repository read with a secret is cloned only: the public archive
+   * fallback cannot carry it, and a private repository has no public archive.
+   *
    * Args:
    *   source: Linked git source.
+   *   secret: The source's own reader secret, if any.
    *   read: Operation to perform against the checkout directory.
    *
    * Returns:
@@ -312,33 +360,46 @@ export class GitReader implements DocumentationReader {
    */
   private async withCheckout<T>(
     source: DocSourceRecord,
+    secret: string | undefined,
     read: (checkout: string) => Promise<T>,
   ): Promise<T> {
     const locator = parseGitLocator(source.locator);
     const archived = ARCHIVE_HOSTS.includes(locator.url.hostname);
-    if (!archived) {
+    if (!archived || secret !== undefined) {
       const version = spawnSync('git', ['--version'], { encoding: 'utf8', timeout: 10_000 });
       if (version.error || version.status !== 0) {
         throw new Error(cloneFailure(locator.url.hostname, version));
       }
-      if (!gitPinsResolve(version.stdout)) {
+      if (!archived && !gitPinsResolve(version.stdout)) {
         throw new Error(
           `The backend's ${version.stdout.trim()} cannot pin the address it dials (git 2.37 or ` +
             `later can), so the repository on ${locator.url.hostname} is not cloned.`,
         );
       }
+      if (secret !== undefined && !gitAtLeast(version.stdout, environmentConfigGit)) {
+        throw new Error(
+          `The backend's ${version.stdout.trim()} can take a secret only on its command line (git ` +
+            `2.31 or later takes it from the environment), so the repository on ` +
+            `${locator.url.hostname} is not cloned.`,
+        );
+      }
     }
+    const withSecret = secret !== undefined;
     const temporary = await mkdtemp(join(tmpdir(), 'day0-docs-git-'));
     const checkout = join(temporary, 'checkout');
     try {
       const cloned = spawnSync(
         'git',
-        await cloneArguments(locator, checkout, this.resolve),
+        await cloneArguments(locator, checkout, this.resolve, withSecret),
         // A repository that wants credentials fails at once rather than waiting on a prompt.
-        { encoding: 'utf8', timeout: 30_000, env: cloneEnvironment(archived) },
+        {
+          encoding: 'utf8',
+          timeout: 30_000,
+          env: cloneEnvironment(archived, withSecret ? gitAuthorization(secret) : undefined),
+        },
       );
       if (cloned.status !== 0) {
-        if (!archived) {
+        if (!archived || withSecret) {
           throw new Error(cloneFailure(locator.url.hostname, cloned));
         }
         await rm(checkout, { recursive: true, force: true });

@@ -6,6 +6,7 @@ import {
   cloneEnvironment,
   cloneFailure,
   downloadArchive,
+  gitAuthorization,
   gitPinsResolve,
   GitReader,
   parseGitLocator,
@@ -246,5 +247,34 @@ describe('the repository archive download', (): void => {
     });
     expect(archive.toString()).toBe('archive-bytes');
     expect(waits).toEqual([PROVIDER_BACKOFF.baseMs]);
+  });
+});
+
+describe('a private repository read with its own secret (E-74)', (): void => {
+  it('sends the secret as Basic credentials, under a placeholder user unless one is named', (): void => {
+    expect(gitAuthorization('token-value')).toBe(
+      `Basic ${Buffer.from('x-access-token:token-value').toString('base64')}`,
+    );
+    expect(gitAuthorization('reader:token-value')).toBe(
+      `Basic ${Buffer.from('reader:token-value').toString('base64')}`,
+    );
+  });
+
+  it('carries the header in the environment, never in the arguments, and follows no redirect', async (): Promise<void> => {
+    const header = gitAuthorization('token-value');
+    const environment = cloneEnvironment(true, header);
+    expect(environment).toMatchObject({
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.extraHeader',
+      GIT_CONFIG_VALUE_0: `Authorization: ${header}`,
+    });
+    expect(cloneEnvironment(true).GIT_CONFIG_VALUE_0).toBeUndefined();
+    const locator = parseGitLocator('https://github.com/team/private-docs#main');
+    const argv = await cloneArguments(locator, '/tmp/checkout', undefined, true);
+    expect(argv.slice(0, 2)).toEqual(['-c', 'http.followRedirects=false']);
+    expect(argv.join(' ')).not.toContain('token-value');
+    expect(await cloneArguments(locator, '/tmp/checkout')).not.toContain(
+      'http.followRedirects=false',
+    );
   });
 });

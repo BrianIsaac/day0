@@ -21,7 +21,9 @@ vi.mock('convex/react', () => ({
 
 import {
   DocumentationPage,
+  ReaderSecretField,
   SourceKindHelp,
+  credentialForLink,
   linkFormAfterLink,
   locatorForSourceKind,
 } from '../../../app/documentation/DocumentationPage';
@@ -109,5 +111,43 @@ describe('the link form and the components a source needs', (): void => {
       expect(markup).toContain('no component');
       expect(markup).not.toContain('--profile');
     }
+  });
+});
+
+describe('a reader secret for a private repository or wiki (E-74)', (): void => {
+  it('offers the field for a git or URL source only, as a password that is never shown', (): void => {
+    for (const kind of ['git', 'urls'] as const) {
+      const markup = renderToStaticMarkup(<ReaderSecretField kind={kind} />);
+      expect(markup).toContain('Reader secret (optional)');
+      expect(markup).toContain('type="password"');
+      expect(markup).toContain('name="credential"');
+    }
+    expect(renderToStaticMarkup(<ReaderSecretField kind="folder" />)).toBe('');
+    expect(renderToStaticMarkup(<ReaderSecretField kind="mcp" />)).toBe('');
+  });
+
+  it('sends the typed secret for the kinds that take one, and nothing for a blank field or a folder', (): void => {
+    expect(credentialForLink('mcp', 'value')).toBe('value');
+    expect(credentialForLink('git', 'value')).toBe('value');
+    expect(credentialForLink('urls', 'value')).toBe('value');
+    expect(credentialForLink('git', '')).toBeUndefined();
+    expect(credentialForLink('folder', 'value')).toBeUndefined();
+  });
+
+  it('lets the owner rotate or revoke a git source’s secret as an MCP source’s', (): void => {
+    state.sources = [
+      {
+        _id: 'source-git',
+        label: 'Runbooks',
+        kind: 'git',
+        locator: 'https://github.com/team/private-docs#main',
+        status: 'synced',
+        pageCount: 3,
+        credentialId: 'credential-1',
+      },
+    ];
+    const markup = renderToStaticMarkup(<DocumentationPage />);
+    expect(markup).toContain('>Rotate<');
+    expect(markup).toContain('>Revoke<');
   });
 });

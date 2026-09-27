@@ -9,8 +9,38 @@ import {
   type UnreadPage,
 } from './batch';
 import { markdownPageTitle, offsetFromCursor } from './folder';
+import { authorizationHeader } from './mcp';
 
 const MAX_PAGE_BYTES = 2 * 1024 * 1024;
+
+/** The most redirects a page read with a secret follows, all within its site. */
+const MAX_SECRET_REDIRECTS = 5;
+
+/** How a page is fetched: the secret's header, and the one site it may be sent to. */
+interface PageAccess {
+  readonly authorization?: string;
+  readonly origin?: string;
+}
+
+/**
+ * The access a URL source's own secret gives (E-74): its authorization
+ * header, sent only to the one https site the source lists.
+ *
+ * @param urls - Every page the source lists.
+ * @param secret - The source's reader secret, when it was linked with one.
+ * @throws Error when a secret would reach more than one site, or any over plain http.
+ */
+export function pageAccess(urls: readonly URL[], secret: string | undefined): PageAccess {
+  if (secret === undefined) return {};
+  const origins = new Set(urls.map((url: URL): string => url.origin));
+  const [origin] = [...origins];
+  if (origins.size !== 1 || !origin.startsWith('https://')) {
+    throw new Error(
+      'A reader secret belongs to one https site, and this source lists pages beyond one; relink it with pages of one site.',
+    );
+  }
+  return { authorization: authorizationHeader(secret), origin };
+}
 
 /**
  * Parse a newline-separated or JSON-array URL locator.
@@ -88,7 +118,7 @@ export class UrlsReader implements DocumentationReader {
    *
    * Args:
    *   source: Linked URL-list source.
-   *   _secret: Unused because URL pages are publicly readable.
+   *   secret: The source's own reader secret, when a wiki behind a login needs one.
    *   cursor: Optional decimal URL offset.
    *   limit: Maximum pages to fetch.
    *
@@ -97,15 +127,15 @@ export class UrlsReader implements DocumentationReader {
    */
   async listPageBatch(
     source: DocSourceRecord,
-    _secret: string | undefined,
+    secret: string | undefined,
     cursor: string | undefined,
     limit: number,
   ): Promise<ReadPageBatch> {
-    void _secret;
     const urls = parseUrlLocator(source.locator);
+    const access = pageAccess(urls, secret);
     const offset = offsetFromCursor(cursor);
     const selected = urls.slice(offset, offset + limit);
-    const reads = await this.fetchPages(source, selected);
+    const reads = await this.fetchPages(source, selected, access);
     const nextOffset = offset + selected.length;
     return {
       ...splitPageReads(reads),
@@ -118,15 +148,15 @@ export class UrlsReader implements DocumentationReader {
    *
    * Args:
    *   source: Linked URL-list source.
-   *   _secret: Unused because Phase 1 URL pages are publicly readable.
+   *   secret: The source's own reader secret, if any.
    *
    * Returns:
    *   Normalised documentation pages in locator order.
    */
-  async listPages(source: DocSourceRecord, _secret?: string): Promise<DocPage[]> {
-    void _secret;
+  async listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]> {
+    const urls = parseUrlLocator(source.locator);
     const { pages, unread } = splitPageReads(
-      await this.fetchPages(source, parseUrlLocator(source.locator)),
+      await this.fetchPages(source, urls, pageAccess(urls, secret)),
     );
     if (unread.length > 0) throw new Error(`${unread[0].ref}: ${unread[0].reason}`);
     return pages;
@@ -142,6 +172,7 @@ export class UrlsReader implements DocumentationReader {
    * Args:
    *   source: Linked URL-list source.
    *   urls: Validated HTTP(S) URLs.
+   *   access: The secret's header and site, when the source has one.
    *
    * Returns:
    *   Each URL's page or unread record, in locator order.
@@ -149,6 +180,7 @@ export class UrlsReader implements DocumentationReader {
   private async fetchPages(
     source: DocSourceRecord,
     urls: URL[],
+    access: PageAccess,
   ): Promise<Array<DocPage | UnreadPage>> {
     const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
     const reads: Array<DocPage | UnreadPage> = [];
@@ -160,7 +192,7 @@ export class UrlsReader implements DocumentationReader {
     );
     for (const url of urls) {
       try {
-        reads.push(await this.fetchPage(source, url, read, turndown));
+        reads.push(await this.fetchPage(source, url, read, turndown, access));
       } catch (error) {
         reads.push({ ref: url.href, reason: unreadReason(error) });
       }
@@ -174,10 +206,9 @@ export class UrlsReader implements DocumentationReader {
     url: URL,
     read: (input: URL, init?: RequestInit) => Promise<Response>,
     turndown: TurndownService,
+    access: PageAccess,
   ): Promise<DocPage> {
-    const response = await read(url, {
-      headers: { Accept: 'text/markdown, text/html;q=0.9, text/plain;q=0.8' },
-    });
+    const response = await fetchWithinSite(url, read, access);
     const declaredLength = Number(response.headers.get('content-length') || 0);
     if (!response.ok || declaredLength > MAX_PAGE_BYTES) {
       // The refused answer is let go, so its connection is freed for the next page.
@@ -203,4 +234,40 @@ export class UrlsReader implements DocumentationReader {
       updatedAt: Date.now(),
     };
   }
+}
+
+/**
+ * Fetch one page, carrying a reader secret only within its site.
+ *
+ * Without a secret the fetch follows redirects as any reader would. With
+ * one, redirects are followed by hand and only within the secret's site, so
+ * the header never reaches another host (E-74).
+ *
+ * @throws Error when a page read with a secret redirects to another site, or too often.
+ */
+async function fetchWithinSite(
+  url: URL,
+  read: (input: URL, init?: RequestInit) => Promise<Response>,
+  access: PageAccess,
+): Promise<Response> {
+  const accept = 'text/markdown, text/html;q=0.9, text/plain;q=0.8';
+  if (access.authorization === undefined) return await read(url, { headers: { Accept: accept } });
+  let current = url;
+  for (let hop = 0; hop <= MAX_SECRET_REDIRECTS; hop += 1) {
+    const response = await read(current, {
+      headers: { Accept: accept, Authorization: access.authorization },
+      redirect: 'manual',
+    });
+    const location = response.headers.get('location');
+    if (response.status < 300 || response.status >= 400 || location === null) return response;
+    await response.body?.cancel();
+    const next = new URL(location, current);
+    if (next.origin !== access.origin) {
+      throw new Error(
+        `${url.href} redirects to ${next.origin}; a page read with a secret is not followed off its site.`,
+      );
+    }
+    current = next;
+  }
+  throw new Error(`${url.href} redirected more than ${MAX_SECRET_REDIRECTS} times.`);
 }

@@ -298,6 +298,11 @@ async function keptUnreadPages(
   return { refs: unread.map((page): string => page.ref), credentialRefs };
 }
 
+/** Whether a source is read with a secret: an MCP source always, another when linked with one. */
+function readsWithSecret(source: Doc<'docSources'>): boolean {
+  return source.kind === 'mcp' || source.credentialId !== undefined;
+}
+
 /** What one sync step reports to its caller. */
 interface SyncResult {
   ok: boolean;
@@ -364,7 +369,9 @@ export const syncBatch = internalAction({
     try {
       if (args.cursor === FINISHING_CURSOR) return await finishGeneration(ctx, source, args.runId);
       known = await ownerKnownValues(ctx, source.userId);
-      if (source.kind === 'mcp') {
+      // An MCP source always reads with its connection secret; a git or URL
+      // source reads with its own secret when it was linked with one (E-74).
+      if (readsWithSecret(source)) {
         if (!source.credentialId) throw new Error('Documentation credential is not landed.');
         secret = await ctx.runAction(internal.credentials.decrypt, {
           credentialId: source.credentialId,
@@ -442,7 +449,7 @@ export const syncBatch = internalAction({
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: source._id,
         runId: args.runId,
-        status: source.kind === 'mcp' && !secret ? 'credential-not-landed' : 'error',
+        status: readsWithSecret(source) && !secret ? 'credential-not-landed' : 'error',
         reason,
       });
       return { ok: false, pages: 0, redactions: 0, complete: true, reason };
