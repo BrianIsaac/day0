@@ -43,6 +43,7 @@ import {
   type ChecklistItem,
   type ServiceRow,
   type TierInputs,
+  snapshotManifestText,
 } from '../../scripts/demo-bed';
 import { redactorVolumeClone } from '../../scripts/rehearsal/docker';
 import { PROFILES } from '../../scripts/compose';
@@ -176,6 +177,60 @@ describe('command line', (): void => {
     expect(() =>
       parseDemoBedArguments(['down', '--volume'], { COMPOSE_PROJECT_NAME: 'p' }),
     ).toThrow('Unknown option "--volume"');
+  });
+});
+
+describe('what removes data asks first (Q12), and what a snapshot records (step 48)', (): void => {
+  it('reads --yes, and puts the commit and the backend image in the snapshot manifest', (): void => {
+    expect(
+      parseDemoBedArguments(['down', '--volumes', '--yes'], { COMPOSE_PROJECT_NAME: 'p' }),
+    ).toMatchObject({ volumes: true, yes: true });
+    expect(parseDemoBedArguments(['down'], { COMPOSE_PROJECT_NAME: 'p' }).yes).toBe(false);
+    expect(
+      JSON.parse(
+        snapshotManifestText({
+          volume: 'day0-demo-7c65e7_convex_data',
+          file: 'bed.tar.gz',
+          sha256: 'ab'.repeat(32),
+          createdAt: '2026-09-27T12:00:00.000Z',
+          release: '0.3.0',
+          commit: '06823b19abcd',
+          backendImage: 'ghcr.io/get-convex/convex-backend@sha256:' + 'c'.repeat(64),
+        }),
+      ),
+    ).toMatchObject({ commit: '06823b19abcd', release: '0.3.0' });
+  });
+
+  it('refuses down --volumes with no terminal to ask unless --yes, before Docker', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-u7-down-'));
+    const bin = join(scratch, 'bin');
+    const calls = join(scratch, 'docker-calls');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'docker'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\n');
+    chmodSync(join(bin, 'docker'), 0o755);
+    writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-u7-down\n');
+    writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    const down = (extra: string[]) =>
+      spawnSync(
+        join(process.cwd(), 'node_modules/.bin/tsx'),
+        [join(process.cwd(), 'scripts/demo-bed.ts'), 'down', '--volumes', ...extra],
+        {
+          cwd: scratch,
+          input: '',
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+          encoding: 'utf8',
+        },
+      );
+    try {
+      const asked = down([]);
+      expect(asked.status).toBe(1);
+      expect(asked.stderr).toContain('pass --yes to go on');
+      expect(existsSync(calls)).toBe(false);
+      expect(down(['--yes']).status).toBe(0);
+      expect(readFileSync(calls, 'utf8')).toContain('down --volumes');
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 
