@@ -298,9 +298,14 @@ async function moveWaitingWork(
       return true;
     }
     if (row.state !== 'needs-skill') return false;
-    await ctx.db.patch(row._id, {
-      state: 'cancelled',
-      skipReason: skillRejectedReason(skill.name),
+    const skipReason = skillRejectedReason(skill.name);
+    await ctx.db.patch(row._id, { state: 'cancelled', skipReason });
+    // The item's terminal event, as every terminal transition writes one (A9's cycle time).
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.cancelled',
+      payload: { workItemId: row._id, skillId: skill._id, reason: skipReason },
+      createdAt: Date.now(),
     });
     await scheduleNextStep(ctx, { ...row, state: 'cancelled' });
     return true;

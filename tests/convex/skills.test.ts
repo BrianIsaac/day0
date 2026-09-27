@@ -103,6 +103,16 @@ describe('rejecting a proposed skill', (): void => {
       state: 'cancelled',
       skipReason: 'skill proposal "update-linear-ticket" rejected by the manager',
     });
+    const cancelled = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+      (event) => event.type === 'work.cancelled',
+    );
+    expect(cancelled.map((event) => event.payload)).toEqual([
+      {
+        workItemId,
+        skillId,
+        reason: 'skill proposal "update-linear-ticket" rejected by the manager',
+      },
+    ]);
     await expect(
       harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId }),
     ).resolves.toEqual({ ok: true });
