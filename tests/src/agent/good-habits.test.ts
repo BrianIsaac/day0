@@ -64,10 +64,19 @@ describe('good-habits research', (): void => {
     const result = await researchAndDistil(
       'RevOps analyst',
       sources(async () => {
-        throw Object.assign(new Error('Incorrect API key provided'), { statusCode: 401 });
+        throw Object.assign(
+          new Error(
+            'Incorrect API key provided: sk-proj-abcdefghijklmnopqrstuvwxyz0123456789\n    at fetch (provider.js:1:1)',
+          ),
+          { statusCode: 401 },
+        );
       }),
     );
     expect(result).toMatchObject({ fragment: '', norms: 0, skipped: true });
-    expect(result.skipReason).toBe('good-habits distillation failed: Incorrect API key provided');
+    expect(result.skipReason).toMatch(
+      /^good-habits distillation failed: Incorrect API key provided: /,
+    );
+    expect(result.skipReason).not.toContain('sk-proj-abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(result.skipReason).not.toContain('provider.js');
   });
 });

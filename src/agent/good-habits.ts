@@ -2,6 +2,7 @@ import type { Agent } from '@mastra/core/agent';
 import { agentText, makeAgent } from '../lib/mastra';
 import { searchRole, type ExaResult, type RoleSearch } from '../lib/exa';
 import { log } from '../lib/logger';
+import { safeFailureMessage } from '../surfaces/redact';
 
 /**
  * Good-habits memory pipeline. Adapted from Protean's
@@ -109,7 +110,7 @@ export async function researchAndDistil(
   try {
     fragment = await distilGoodHabits({ role, results: search.results, agent: sources.agent });
   } catch (err) {
-    const reason = `good-habits distillation failed: ${err instanceof Error ? err.message : String(err)}`;
+    const reason = `good-habits distillation failed: ${safeFailureMessage(err, '', 'no detail')}`;
     log.warn('good-habits distillation skipped', { role, reason });
     return { fragment: '', results: search.results, norms: 0, skipped: true, skipReason: reason };
   }
