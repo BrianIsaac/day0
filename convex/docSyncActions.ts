@@ -279,6 +279,9 @@ export const syncBatch = internalAction({
           sourceId: source._id,
           runId: args.runId,
         });
+        await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
+          sourceId: source._id,
+        });
       }
       return {
         ok: completed.completed,

@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { presentSurfaceCredential } from '../../src/surfaces/credential-presentation';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -897,6 +897,101 @@ describe('orientation run', (): void => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('re-orients an absent system when a synced page first names it or drops its denial', async (): Promise<void> => {
+    const root = mkdtempSync(join(tmpdir(), 'day0-reorient-absent-'));
+    const folder = join(root, 'docs-local');
+    mkdirSync(join(folder, 'systems'), { recursive: true });
+    writeFileSync(join(folder, 'onboarding.md'), '# Onboarding\n\nRead the handbook first.\n');
+    writeFileSync(
+      join(folder, 'systems', 'northstar-crm.md'),
+      '# Northstar CRM\n\nNo approved API or MCP server is recorded for Northstar CRM.\n',
+    );
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    try {
+      const harness = convexTest(schema, orientationModules());
+      const { agentId, sourceId } = await harness.run(
+        async (ctx): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> => ({
+          agentId: await ctx.db.insert('agents', {
+            bossEmail: 'boss@day0.local',
+            name: 'reorientation test',
+            userId: 'owner',
+            state: 'active',
+            createdAt: 1,
+          }),
+          sourceId: await ctx.db.insert('docSources', {
+            userId: 'owner',
+            label: 'Team folder',
+            kind: 'folder',
+            locator: 'docs-local',
+            status: 'linking',
+            createdAt: 1,
+            updatedAt: 1,
+          }),
+        }),
+      );
+      await harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          { name: 'Northstar CRM', class: 'crm', whereMentioned: 'We use Northstar CRM.' },
+          { name: 'NetLedger', class: 'other', whereMentioned: 'We use NetLedger.' },
+        ],
+      });
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.action(internal.orientationActions.run, { agentId });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      const before = await surfacesBySlug(harness, agentId);
+      expect(before['northstar-crm']?.verdict).toBe('absent');
+      expect(before.netledger?.verdict).toBe('absent');
+
+      // The author removes the denial on one page and writes the first page for the other.
+      writeFileSync(
+        join(folder, 'systems', 'northstar-crm.md'),
+        '# Northstar CRM\n\nNorthstar CRM has a documented API at https://api.northstar.example/v1.\n',
+      );
+      writeFileSync(
+        join(folder, 'systems', 'netledger.md'),
+        '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.\n',
+      );
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const after = await surfacesBySlug(harness, agentId);
+      expect(after['northstar-crm']).toMatchObject({ verdict: 'proposed', path: 'documented-api' });
+      expect(after.netledger).toMatchObject({ verdict: 'proposed', path: 'documented-api' });
+      const reopened = await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent_type', (index) =>
+              index.eq('agentId', agentId).eq('type', 'surface.reopened'),
+            )
+            .collect(),
+      );
+      expect(reopened).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves an absent system absent while its page still denies a surface', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'escalate';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      { 'northstar.md': '# Northstar CRM\n\nNo approved API is recorded for Northstar CRM.' },
+      [{ name: 'Northstar CRM', class: 'crm' }],
+    );
+    await orientDeclared(harness, agentId);
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId }),
+    ).resolves.toEqual({ reopened: 0 });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await surfacesBySlug(harness, agentId))['northstar-crm']?.verdict).toBe('absent');
   });
 
   it("does not lend one system's MCP endpoint to another named in the same paragraph", async (): Promise<void> => {

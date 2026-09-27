@@ -12,6 +12,7 @@ import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../sr
 import { storedCredentialGuardReason } from './credentialCryptoActions';
 import { browserTitleMarker } from '../src/surfaces/browser';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
 import type { PrivateHostAllowlist } from '../src/lib/private-hosts';
 import {
@@ -1381,6 +1382,57 @@ export interface OrientationRequest {
   requested?: boolean;
 }
 
+/** What the linked pages say about one system, read the same way wherever it is read. */
+export interface SurfaceDocumentation {
+  /** Pages that name the system. */
+  readonly matches: Doc<'docPages'>[];
+  /** The text of those pages that concerns the system, token shapes redacted. */
+  readonly relevantText: string;
+  readonly endpoints: DocumentedEndpoints;
+  /** Whether the pages record no surface for the system at all. */
+  readonly absent: boolean;
+}
+
+/**
+ * Read what the linked pages say about one system.
+ *
+ * `absent` is orientation's own decision, so the check that re-opens an
+ * absent system after a page changes is the one that closed it: no page
+ * names the system, or a page denies a surface and attributes no address of
+ * any kind. A page that says "no API" while documenting the web UI staff use
+ * has recorded a surface, and it is the one the browser floor exists for.
+ *
+ * @param pages - Every page the agent reads.
+ * @param surface - The system's name and slug.
+ */
+export function surfaceDocumentation(
+  pages: readonly Doc<'docPages'>[],
+  surface: Pick<Doc<'surfaces'>, 'displayName' | 'slug'>,
+): SurfaceDocumentation {
+  const matches = pages.filter((page: Doc<'docPages'>): boolean =>
+    namesSystem(`${page.title}\n${page.markdown}`, surface.displayName),
+  );
+  const relevantText = redactTokenShapes(
+    matches
+      .map((page: Doc<'docPages'>): string =>
+        relevantSystemText(page.markdown, surface.displayName, page.title),
+      )
+      .join('\n\n'),
+  );
+  const endpoints = documentedEndpoints(
+    withoutDocumentationUrls(
+      attributedUrls(relevantText, surface.displayName, surface.slug),
+      pages,
+    ),
+  );
+  const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
+    explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
+  );
+  const absent =
+    matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api && !endpoints.webUi);
+  return { matches, relevantText, endpoints, absent };
+}
+
 /** Collaborators a test can replace to drive one orientation run. */
 export interface OrientationDependencies {
   draft: typeof draftOrientation;
@@ -1442,35 +1494,9 @@ export async function orientSurface(
   const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
     agentId: surface.agentId,
   });
-  const matches = pages.filter((page: Doc<'docPages'>): boolean =>
-    namesSystem(`${page.title}\n${page.markdown}`, surface.displayName),
-  );
+  const { matches, relevantText, endpoints, absent } = surfaceDocumentation(pages, surface);
   const evidence: Evidence[] = selectEvidence(matches, surface.displayName, surface.slug);
-  const relevantText = redactTokenShapes(
-    matches
-      .map((page: Doc<'docPages'>): string =>
-        relevantSystemText(page.markdown, surface.displayName, page.title),
-      )
-      .join('\n\n'),
-  );
-  const endpoints = documentedEndpoints(
-    withoutDocumentationUrls(
-      attributedUrls(relevantText, surface.displayName, surface.slug),
-      pages,
-    ),
-  );
-  const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
-    explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
-  );
-  // A page that says "no API" while documenting the web UI staff use has
-  // recorded a surface, and it is the one the browser floor exists for.
-  // `absent` means no surface is recorded at all, never "no API" - reading it
-  // the other way would make the floor unreachable from exactly the pages that
-  // describe it. A denial with no attributed address of any kind is still absent.
-  if (
-    matches.length === 0 ||
-    (explicitNone && !endpoints.mcp && !endpoints.api && !endpoints.webUi)
-  ) {
+  if (absent) {
     const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {
       surfaceId: surface._id,
       searched: [surface.displayName, surface.class],
@@ -1645,7 +1671,66 @@ export const orientOne = internalAction({
 });
 
 /**
+ * Re-open every `absent` system of one agent whose linked pages now record a surface.
+ *
+ * The check is orientation's own (`surfaceDocumentation`), so a page that
+ * still says nothing, or still denies the system, leaves it absent and
+ * nothing loops.
+ *
+ * @returns How many surfaces were re-opened, each with its orientation job placed.
+ */
+async function reopenDocumentedAbsences(
+  ctx: OrientationCtx,
+  agentId: Id<'agents'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<number> {
+  const absent = surfaces.filter((surface): boolean => surface.verdict === 'absent');
+  if (absent.length === 0) return 0;
+  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+    agentId,
+  });
+  let reopened = 0;
+  for (const surface of absent) {
+    if (surfaceDocumentation(pages, surface).absent) continue;
+    const done: boolean = await ctx.runMutation(internal.surfaceReopen.reopenAbsent, {
+      surfaceId: surface._id,
+      reason: `A linked page now records ${surface.displayName}; orientation runs again.`,
+    });
+    if (done) reopened += 1;
+  }
+  return reopened;
+}
+
+/**
+ * Re-orient the absent systems a newly synced source now documents.
+ *
+ * Internal: scheduled when a documentation sync completes, so the author's
+ * first page about a system the charter named, or the removal of a denial,
+ * reaches orientation without a manager's re-run. Real mode only: mock
+ * surfaces are seeded, not oriented.
+ */
+export const reorientAbsent = internalAction({
+  args: { sourceId: v.id('docSources') },
+  handler: async (ctx, args): Promise<{ reopened: number }> => {
+    if (SURFACE_MODE !== 'real') return { reopened: 0 };
+    const agents: Doc<'agents'>[] = await ctx.runQuery(internal.docSources.agentsForSource, args);
+    let reopened = 0;
+    for (const agent of agents) {
+      const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
+        internal.orientationData.surfacesForAgent,
+        { agentId: agent._id },
+      );
+      reopened += await reopenDocumentedAbsences(ctx, agent._id, surfaces);
+    }
+    return { reopened };
+  },
+});
+
+/**
  * Schedule one isolated orientation action per declared surface.
+ *
+ * An `absent` surface whose linked pages now record a surface is re-opened
+ * and oriented too, so the manager's re-run reaches it.
  *
  * Args:
  *   agentId: Agent whose declared systems should be oriented.
@@ -1660,6 +1745,7 @@ export const run = internalAction({
       internal.orientationData.surfacesForAgent,
       args,
     );
+    const reopened = await reopenDocumentedAbsences(ctx, args.agentId, surfaces);
     const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, args);
     const namesSystems = charterNamesWorkSystems(charter?.namedSystems);
     // A system the charter does not name waits for the manager's Propose;
@@ -1668,7 +1754,7 @@ export const run = internalAction({
       (surface: Doc<'surfaces'>): boolean =>
         surface.verdict === 'declared' && !awaitsManagerProposal(surface, namesSystems),
     );
-    let scheduled = 0;
+    let scheduled = reopened;
     for (const surface of declared) {
       const claimed: boolean = await ctx.runMutation(internal.surfaces.scheduleOrientation, {
         surfaceId: surface._id,
