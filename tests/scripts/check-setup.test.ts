@@ -4,11 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   browserSetupConfiguration,
   componentsSection,
+  composeImages,
   composeRunningServices,
   docSourceDependency,
+  egressHosts,
   main,
   modelSection,
   modeAndRouteLine,
+  setupReport,
   setupRoute,
 } from '../../scripts/check-setup';
 
@@ -219,5 +222,104 @@ describe('the redactor in real mode', (): void => {
       componentsSection({ DAY0_REDACTOR_URL: 'http://redactor:8000' }, 'day0-bed', ['backend'])
         .status,
     ).toBe('warn');
+  });
+});
+
+describe('the support report', (): void => {
+  const secrets = {
+    OPENAI_API_KEY: 'sk-synthetic-openai-value',
+    CONVEX_SELF_HOSTED_ADMIN_KEY: 'convex-self-hosted|synthetic-admin-value',
+    DAY0_CREDENTIAL_KEY: 'synthetic-credential-key-value',
+    DAYTONA_API_KEY: 'synthetic-daytona-value',
+  };
+
+  it('lists every outbound host the configuration names, and none that stays on this machine', (): void => {
+    const hosts = (values: Record<string, string>): string[] =>
+      egressHosts(values).map((row) => row.host);
+    expect(hosts({ OPENAI_API_KEY: 'k' })).toContain('api.openai.com');
+    expect(
+      hosts({ OPENAI_BASE_URL: 'https://api.featherless.ai/v1', OPENAI_API_KEY: 'k' }),
+    ).toContain('api.featherless.ai');
+    const local = hosts({
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_BASE_URL: 'http://127.0.0.1:11434/v1',
+      CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
+    });
+    expect(local).not.toContain('127.0.0.1');
+    expect(local).not.toContain('model');
+    expect(local).toContain('registry.ollama.ai');
+    expect(local).toContain('registry.modelcontextprotocol.io');
+    expect(local).toContain('mcp.linear.app');
+    expect(local).toContain('huggingface.co');
+    expect(
+      hosts({
+        OPENAI_API_KEY: 'k',
+        DAYTONA_API_KEY: 'd',
+        DAYTONA_API_URL: 'https://daytona.internal.example/api',
+      }),
+    ).toContain('daytona.internal.example');
+    expect(hosts({ OPENAI_API_KEY: 'k' })).not.toContain('registry.modelcontextprotocol.io');
+    for (const row of egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' })) {
+      expect(row.purpose.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('carries versions, digests and each section as a status, and no value from the env file', (): void => {
+    const report = setupReport({
+      values: {
+        ...secrets,
+        DAY0_SURFACE_MODE: 'real',
+        OPENAI_BASE_URL: 'https://gateway.example.com/v1',
+      },
+      sections: [
+        {
+          title: 'Model - needs fixing',
+          status: 'gap',
+          lines: ['The backend container could not reach https://gateway.example.com/v1'],
+        },
+      ],
+      versions: { node: 'v22.19.0', docker: '29.8.0' },
+      images: [
+        {
+          service: 'backend',
+          image: 'ghcr.io/get-convex/convex-backend:latest@sha256:abc',
+          running: true,
+        },
+      ],
+      digests: { 'redactor/requirements.txt': 'f'.repeat(64) },
+      commit: '0123abc',
+      generatedAt: '2026-09-27T09:00:00.000Z',
+    });
+    const text = JSON.stringify(report);
+    for (const value of Object.values(secrets)) expect(text).not.toContain(value);
+    expect(text).not.toContain('could not reach');
+    expect(report).toMatchObject({
+      kind: 'day0-setup-report',
+      mode: 'real',
+      route: 'endpoint',
+      commit: '0123abc',
+      sections: [{ title: 'Model - needs fixing', status: 'gap' }],
+      images: [{ service: 'backend', running: true }],
+    });
+    expect(report.egress.map((row) => row.host)).toContain('gateway.example.com');
+  });
+
+  it('reads the pinned image of every service from a compose file', (): void => {
+    expect(
+      composeImages(
+        [
+          'services:',
+          '  backend:',
+          "    profiles: ['real']",
+          '    image: ghcr.io/get-convex/convex-backend:latest@sha256:aaa',
+          '  model:',
+          '    image: ollama/ollama:latest@sha256:bbb',
+          '',
+        ].join('\n'),
+      ),
+    ).toEqual([
+      { service: 'backend', image: 'ghcr.io/get-convex/convex-backend:latest@sha256:aaa' },
+      { service: 'model', image: 'ollama/ollama:latest@sha256:bbb' },
+    ]);
   });
 });

@@ -4,6 +4,13 @@
  * a time.
  *
  *   pnpm check:setup
+ *   pnpm --silent check:setup --report > day0-setup-report.json
+ *
+ * `--report` prints one JSON document instead, the support bundle remote
+ * support works from (A12): tool versions, the pinned images and whether each
+ * runs, the digests of the redactor's locks and model manifest, every outbound
+ * host the configuration names, and each section's status. No value from the
+ * env file and no line a section explains itself with goes into it.
  *
  * It answers the question a reader actually has after following the README -
  * "did I set this up correctly?" - and the honest answer is not one boolean.
@@ -35,9 +42,11 @@
  * configured while the running route answered 503 to every delivery.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
 import {
@@ -50,7 +59,10 @@ import { isLoopback, setupRoute } from './setup-route';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
 
-const ENV_FILE = process.argv[2] ?? '.env.local';
+/** The env file named on the command line, the first argument that is not a flag. */
+const ENV_FILE =
+  process.argv.slice(2).find((argument: string): boolean => !argument.startsWith('--')) ??
+  '.env.local';
 
 /** The compose service that verifies authored skills without an account. */
 const SANDBOX_SERVICE = 'sandbox';
@@ -107,6 +119,8 @@ const WATCHED = [
   'CONVEX_OPENAI_BASE_URL',
   'OPENAI_MODEL',
   'DAYTONA_API_KEY',
+  'DAYTONA_API_URL',
+  'EXA_API_KEY',
   'SKILL_SANDBOX_SOCKET',
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_AGENT_ID',
@@ -120,9 +134,11 @@ const WATCHED = [
   'COMPOSE_PROJECT_NAME',
 ] as const;
 
-type Status = 'ok' | 'warn' | 'gap';
+/** How a section reads: complete, worth saying out loud, or half-done. */
+export type Status = 'ok' | 'warn' | 'gap';
 
-interface Section {
+/** One decision the report makes, with the lines that explain it. */
+export interface Section {
   title: string;
   status: Status;
   lines: string[];
@@ -176,7 +192,7 @@ export function modeAndRouteLine(values: Values): string {
  * Returns:
  *   The process exit status: 1 when the file is missing or a section is a gap, else 0.
  */
-export function main(envFile: string = ENV_FILE): number {
+export function main(envFile: string = ENV_FILE, options: { report?: boolean } = {}): number {
   if (!existsSync(envFile)) {
     console.error(`error: ${envFile} not found. Copy .env.example to ${envFile} first.`);
     process.exitCode = 1;
@@ -205,6 +221,30 @@ export function main(envFile: string = ENV_FILE): number {
     voiceSection(v),
     finalisationSection(v),
   ];
+
+  if (options.report) {
+    console.log(
+      JSON.stringify(
+        setupReport({
+          values: v,
+          sections,
+          versions: toolVersions(),
+          images: composeImages(readFileSync('docker-compose.yml', 'utf8')).map((row) => ({
+            ...row,
+            running: services?.includes(row.service) ?? false,
+          })),
+          digests: fileDigests(REPORTED_FILES),
+          commit: checkoutCommit(),
+          generatedAt: new Date().toISOString(),
+        }),
+        null,
+        2,
+      ),
+    );
+    const failed = sections.some((section) => section.status === 'gap');
+    process.exitCode = failed ? 1 : 0;
+    return failed ? 1 : 0;
+  }
 
   console.log(`Day0 local setup, read from ${envFile}`);
   console.log('(process environment wins wherever it declares a variable, empty included)');
@@ -1104,6 +1144,218 @@ function marker(status: Status): string {
   return status === 'ok' ? 'ok  ' : status === 'warn' ? 'note' : 'GAP ';
 }
 
+/** The files whose digests say which redactor wheels and model a machine runs. */
+const REPORTED_FILES = [
+  'redactor/requirements.txt',
+  'redactor/requirements-cuda.txt',
+  'redactor/models.sha256',
+  'docker-compose.yml',
+] as const;
+
+/** One outbound host this installation may dial, and when. */
+export interface EgressHost {
+  host: string;
+  purpose: string;
+}
+
+/** A compose service and the image it runs, as the compose file pins it. */
+export interface ComposeImage {
+  service: string;
+  image: string;
+}
+
+/** The support bundle A12 describes: versions, digests, egress and health, no content. */
+export interface SetupReport {
+  kind: 'day0-setup-report';
+  version: 1;
+  generatedAt: string;
+  commit?: string;
+  mode: string;
+  route: string;
+  versions: Record<string, string | undefined>;
+  images: Array<ComposeImage & { running: boolean }>;
+  digests: Record<string, string>;
+  egress: EgressHost[];
+  sections: Array<{ title: string; status: Status }>;
+}
+
+/** The host of an address that leaves this machine, or undefined for one that stays. */
+function outboundHost(url: string | undefined): string | undefined {
+  if (!url?.trim() || isLoopback(url)) return undefined;
+  try {
+    const host = new URL(url).hostname;
+    // A bare name is a compose service, and host.docker.internal is this host.
+    if (!host.includes('.') || host === 'host.docker.internal') return undefined;
+    return host;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Every outbound host this configuration names, and when each is dialled.
+ *
+ * The model addresses are read from the file; the rest are the fixed hosts the
+ * code dials in real mode, the ones a component fetches on its first start,
+ * and the registries the images and models are pulled from. The systems an
+ * approved card reaches are the ones the documentation names, so they are
+ * said once, not listed.
+ *
+ * Args:
+ *   values: Resolved values.
+ *
+ * Returns:
+ *   One row per host, first seen first.
+ */
+export function egressHosts(values: Readonly<Record<string, string>>): EgressHost[] {
+  const rows: EgressHost[] = [];
+  const add = (host: string | undefined, purpose: string): void => {
+    if (host && !rows.some((row) => row.host === host)) rows.push({ host, purpose });
+  };
+  const appModel = values.OPENAI_BASE_URL?.trim()
+    ? values.OPENAI_BASE_URL
+    : values.OPENAI_API_KEY
+      ? 'https://api.openai.com/v1'
+      : undefined;
+  add(outboundHost(appModel), 'the model the app calls for the 1:1');
+  add(
+    outboundHost(values.CONVEX_OPENAI_BASE_URL?.trim() ? values.CONVEX_OPENAI_BASE_URL : appModel),
+    'the model the backend calls for the charter, plans and skills',
+  );
+  if (values.DAY0_SURFACE_MODE === 'real') {
+    add('registry.modelcontextprotocol.io', "orientation, looking up a system's MCP server");
+    add('mcp.linear.app', 'Linear intake and writes, once a Linear card is approved');
+    add('slack.com', 'Slack intake and posts, once a Slack card is approved');
+    add('github.com', 'a git documentation source on GitHub, when one is linked');
+    add('gitlab.com', 'a git documentation source on GitLab, when one is linked');
+    add('api.notion.com', 'the Notion documentation component, when a Notion source is linked');
+    add('huggingface.co', "the redactor's model snapshot, on its first start");
+    add('pypi.org', "the redactor's wheels, on its first start");
+    add('files.pythonhosted.org', "the redactor's wheels, on its first start");
+    add('download.pytorch.org', "the redactor's CPU build of torch, on its first start");
+    add('registry.npmjs.org', "the Notion component's pinned package, on its first start");
+  }
+  if (
+    outboundHost(values.OPENAI_BASE_URL) === undefined &&
+    values.CONVEX_OPENAI_BASE_URL?.includes('//model:')
+  ) {
+    add('registry.ollama.ai', 'model pulls for the bundled model service');
+  }
+  if (values.DAYTONA_API_KEY) {
+    add(
+      outboundHost(values.DAYTONA_API_URL || 'https://app.daytona.io/api'),
+      'Daytona, verifying authored skills',
+    );
+  }
+  if (values.EXA_API_KEY) add('api.exa.ai', 'Exa research during orientation');
+  if (values.ELEVENLABS_API_KEY) add('api.elevenlabs.io', 'the voice 1:1');
+  add(outboundHost(values.CLERK_JWT_ISSUER_DOMAIN), 'Clerk, signing users in');
+  add('registry-1.docker.io', 'image pulls at setup (ollama, python, node)');
+  add('ghcr.io', 'image pulls at setup (the Convex backend and dashboard)');
+  add('mcr.microsoft.com', 'image pulls at setup (the browser component)');
+  return rows;
+}
+
+/**
+ * The image each compose service runs, as the compose file pins it.
+ *
+ * Args:
+ *   compose: The compose file's text.
+ *
+ * Returns:
+ *   One row per service that names an image.
+ */
+export function composeImages(compose: string): ComposeImage[] {
+  const parsed: unknown = parseYaml(compose);
+  const services =
+    parsed && typeof parsed === 'object' ? (parsed as { services?: unknown }).services : undefined;
+  if (!services || typeof services !== 'object') return [];
+  return Object.entries(services as Record<string, unknown>).flatMap(
+    ([service, definition]): ComposeImage[] => {
+      const image =
+        definition && typeof definition === 'object'
+          ? (definition as { image?: unknown }).image
+          : undefined;
+      return typeof image === 'string' ? [{ service, image }] : [];
+    },
+  );
+}
+
+/**
+ * Assemble the support report from what the checks found. Each section keeps
+ * its title and status and drops its lines, which quote addresses and names
+ * from the env file; no value from the file is carried at all.
+ *
+ * Args:
+ *   inputs: The resolved values, the sections, and what the machine reported.
+ *
+ * Returns:
+ *   The report, ready to serialise.
+ */
+export function setupReport(inputs: {
+  values: Readonly<Record<string, string>>;
+  sections: readonly Section[];
+  versions: Record<string, string | undefined>;
+  images: ReadonlyArray<ComposeImage & { running: boolean }>;
+  digests: Record<string, string>;
+  commit?: string;
+  generatedAt: string;
+}): SetupReport {
+  return {
+    kind: 'day0-setup-report',
+    version: 1,
+    generatedAt: inputs.generatedAt,
+    ...(inputs.commit === undefined ? {} : { commit: inputs.commit }),
+    mode: inputs.values.DAY0_SURFACE_MODE || 'mock',
+    route: setupRoute(inputs.values).route,
+    versions: inputs.versions,
+    images: [...inputs.images],
+    digests: inputs.digests,
+    egress: egressHosts(inputs.values),
+    sections: inputs.sections.map(({ title, status }) => ({ title, status })),
+  };
+}
+
+/** The first line a command printed, or undefined when it failed. */
+function firstOutputLine(command: string, args: readonly string[]): string | undefined {
+  const probe = spawnSync(command, args, { encoding: 'utf8', timeout: 15_000 });
+  if (probe.status !== 0) return undefined;
+  return (probe.stdout ?? '').split('\n')[0]?.trim() || undefined;
+}
+
+/** The versions support asks for first. */
+function toolVersions(): Record<string, string | undefined> {
+  return {
+    node: process.version,
+    pnpm: firstOutputLine('pnpm', ['--version']),
+    docker: firstOutputLine('docker', ['info', '--format', '{{.ServerVersion}} {{.Architecture}}']),
+    compose: firstOutputLine('docker', ['compose', 'version', '--short']),
+  };
+}
+
+/** The sha256 of each file that exists, keyed by its path. */
+function fileDigests(paths: readonly string[]): Record<string, string> {
+  return Object.fromEntries(
+    paths
+      .filter((path: string): boolean => existsSync(path))
+      .map((path: string): [string, string] => [
+        path,
+        createHash('sha256').update(readFileSync(path)).digest('hex'),
+      ]),
+  );
+}
+
+/** The checkout's commit, marked when the tree has changes, or undefined outside git. */
+function checkoutCommit(): string | undefined {
+  const commit = firstOutputLine('git', ['rev-parse', '--short=12', 'HEAD']);
+  if (commit === undefined) return undefined;
+  const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=no'], {
+    encoding: 'utf8',
+    timeout: 15_000,
+  });
+  return status.status === 0 && (status.stdout ?? '').trim() !== '' ? `${commit}-dirty` : commit;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = main();
+  process.exitCode = main(ENV_FILE, { report: process.argv.includes('--report') });
 }
