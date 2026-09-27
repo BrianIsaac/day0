@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { hasHostTools } from '../setup/host-tools';
 
 const script = resolve('scripts/probe-china-connectivity.sh');
 function exercise(scenario: string) {
@@ -79,7 +80,7 @@ print(code,end='')
 // Each case runs the probe script under bash with its own one-second network
 // timeouts and a ten-second cap on the process, so the default five-second
 // test timeout is below what the case itself allows on a loaded machine.
-describe('arrival probe response paths', { timeout: 30_000 }, () => {
+describe.skipIf(!hasHostTools('bash', 'python3'))('arrival probe response paths (needs bash and python3)', { timeout: 30_000 }, () => {
   it('bounds certificate inspection when TCP connects but TLS stalls', () => {
     const result = exercise('tls');
     expect(result.stdout).toContain('Summary');

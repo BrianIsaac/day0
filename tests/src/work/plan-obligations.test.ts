@@ -52,7 +52,7 @@ import {
   run4RefreshPrerequisiteLedger,
   run4RefreshPrerequisites,
   run4SlackPlan,
-} from '../../convex/fixtures/plan-obligations-2026-09-16';
+} from '../../fixtures/plan-obligations-2026-09-16';
 import { blockedPlanReason, dependentTransitionRefusal, validatePlanStepOutcomes } from '../../../convex/workActions';
 import { closingResume } from '../../../src/work/closing-resume';
 

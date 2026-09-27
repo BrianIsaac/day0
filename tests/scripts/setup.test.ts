@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MOCK_FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../../src/setup/quickstart';
 import { CHANGELOG, MIGRATIONS_DONE } from './setup-harness';
@@ -46,6 +47,9 @@ import {
   type SetupIo,
   type SetupOptions,
 } from '../../scripts/setup';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 const directories: string[] = [];
 
@@ -1416,7 +1420,7 @@ describe('console input from a pipe', () => {
       process.execPath,
       ['--import', 'tsx', '--input-type=module', '-e', script],
       {
-        cwd: process.cwd(),
+        cwd: ROOT,
         input: '1\nsynthetic-secret\n',
         encoding: 'utf8',
         timeout: 5000,

@@ -29,7 +29,7 @@ import {
   run3RefreshPrerequisiteLedger,
   run3RefreshPrerequisites,
   TILE_AUDIT_LINE,
-} from './fixtures/closing-gates-2026-09-16';
+} from '../fixtures/closing-gates-2026-09-16';
 import {
   run4AuditNoteClosing,
   run4AuditNotePlan,
@@ -52,7 +52,7 @@ import {
   RUN_4_SLACK_REPLY,
   RUN_4_SLACK_THREAD_TS,
   RUN_4_TILE_READ_BACK,
-} from './fixtures/plan-obligations-2026-09-16';
+} from '../fixtures/plan-obligations-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import { STOPPED_PREFIX } from '../../src/work/stop';

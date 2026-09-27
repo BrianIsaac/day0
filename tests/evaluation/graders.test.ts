@@ -9,9 +9,9 @@ import {
   gradeEvaluationTask,
   loadEvaluationTasks,
   type EvaluationSnapshot,
-} from '../../../evaluation/graders';
-import { NO_OVERLAP_REASON } from '../../../src/work/scope';
-import { OUT_OF_SCOPE_SKIP_PREFIX } from '../../../src/work/types';
+} from '../../evaluation/graders';
+import { NO_OVERLAP_REASON } from '../../src/work/scope';
+import { OUT_OF_SCOPE_SKIP_PREFIX } from '../../src/work/types';
 
 const ORDINARY_AGENT_NOTE =
   'Ordinary-agent control: direct tool loop; no charter, plan, gate, or skill.';
@@ -1192,7 +1192,7 @@ describe('the reason check reads only what the agent wrote', (): void => {
 
   it('names the fixed strings the ordinary-arm action writes, word for word', (): void => {
     const source = readFileSync(
-      new URL('../../../convex/baselineActions.ts', import.meta.url),
+      new URL('../../convex/baselineActions.ts', import.meta.url),
       'utf8',
     );
     for (const text of HARNESS_WRITTEN_REASONS) expect(source).toContain(text);

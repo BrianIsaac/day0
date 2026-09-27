@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { auditActionArguments } from '../../../evaluation/action-audit';
+import { auditActionArguments } from '../../evaluation/action-audit';
 
 describe('evaluation action argument audit', (): void => {
   it('counts fields outside the selected adapter and identifies repeated consumed effects', (): void => {

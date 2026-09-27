@@ -75,7 +75,7 @@ import {
   run3RefreshPlan,
   run3RefreshPrerequisiteLedger,
   run3RefreshPrerequisites,
-} from './fixtures/closing-gates-2026-09-16';
+} from '../fixtures/closing-gates-2026-09-16';
 import {
   run4AuditNoteClosing,
   run4AuditNoteOutcomes,
@@ -93,7 +93,7 @@ import {
   run4TileSequence,
   RUN_4_LIST_ISSUES_EFFECT,
   RUN_4_TILE_READ_BACK,
-} from './fixtures/plan-obligations-2026-09-16';
+} from '../fixtures/plan-obligations-2026-09-16';
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
 import {
   FIN_1_ITEM,

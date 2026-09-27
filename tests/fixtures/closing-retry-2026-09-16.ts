@@ -1,5 +1,5 @@
-import type { AppliedAction } from '../../../src/surfaces/types';
-import type { ExecutionPlan, MockAction } from '../../../src/work/types';
+import type { AppliedAction } from '../../src/surfaces/types';
+import type { ExecutionPlan, MockAction } from '../../src/work/types';
 
 const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({
   tool: 'mcp.call', args: { surface, tool, toolArgsJson: JSON.stringify(args) },

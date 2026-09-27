@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { noteDirectsState, transitionDirectedByNote } from '../../../src/work/transition-direction';
 import type { ExecutionPlan, MockAction, PlanStepOutcome } from '../../../src/work/types';
-import { run3AuditNotePlan, RUN_3_RETRY_OUTCOMES, RUN_3_RETRY_NOTE } from '../../convex/fixtures/retry-reentry-2026-09-16';
+import { run3AuditNotePlan, RUN_3_RETRY_OUTCOMES, RUN_3_RETRY_NOTE } from '../../fixtures/retry-reentry-2026-09-16';
 
 /**
  * A retry note that directs the ticket state change in so many words lifts

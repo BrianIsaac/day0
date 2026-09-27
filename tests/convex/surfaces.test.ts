@@ -135,6 +135,28 @@ describe('surface persistence', (): void => {
     expect(surfaceSlug(' Linear / REVOPS ')).toBe('linear-revops');
   });
 
+  it('gives each Chinese-named system its own surface row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [
+        { name: '飞书', class: 'chat', whereMentioned: '团队在飞书上沟通。' },
+        { name: '钉钉', class: 'chat', whereMentioned: '审批在钉钉里完成。' },
+      ],
+    });
+    const rows = await harness.run(
+      async (ctx): Promise<Doc<'surfaces'>[]> =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows.map((row): string => row.displayName).sort()).toEqual(['钉钉', '飞书'].sort());
+    expect(new Set(rows.map((row): string => row.slug)).size).toBe(2);
+    expect(rows.map((row): string => row.slug)).not.toContain('system');
+  });
+
   it('accepts and clears a legacy credentialRef row when orientation touches it', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

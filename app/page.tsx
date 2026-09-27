@@ -995,7 +995,7 @@ function AvatarPicker({
               key={avatar.id}
               type="button"
               onClick={() => onSelect(avatar.id)}
-              title={`${avatar.name} ${avatar.handle}`}
+              aria-label={avatar.label}
               className={`grid h-12 w-full place-items-center rounded-md border bg-[var(--color-bg)] transition ${
                 selected
                   ? 'border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]'
@@ -1062,7 +1062,7 @@ function AgentPixelAvatar({
       className={`relative grid shrink-0 place-items-center overflow-hidden rounded-sm border p-1 ${tone.border} ${tone.bg} ${
         compact ? 'shadow-[0_0_0_2px_var(--color-bg)]' : ''
       }`}
-      title={`${label} - ${avatar.name} ${avatar.handle}`}
+      title={label}
     >
       <div className={`${sizeClass} overflow-hidden rounded-sm bg-[var(--color-bg)]`}>
         <PixelAvatarSprite avatar={avatar} className="h-full w-full" />

@@ -18,6 +18,7 @@ import {
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
+import { surfaceSlug } from '../src/surfaces/slug';
 import { reevaluatePendingInTransaction, resendDecisionsAfterManagerChange } from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
@@ -63,22 +64,10 @@ function withProbeAttempt(surface: Doc<'surfaces'>, attempt: ProbeAttempt): Prob
 }
 
 /**
- * Convert a declared system name to its stable per-agent key.
- *
- * Args:
- *   name: Manager-provided system name.
- *
- * Returns:
- *   A lowercase URL-safe surface slug.
+ * Convert a declared system name to its stable per-agent key: the one slug
+ * the planner, the evaluator and the corrections compute from the same name.
  */
-export function surfaceSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'system'
-  );
-}
+export { surfaceSlug };
 
 /**
  * Whether a surface is the charter-only row an earlier build minted for this mention.

@@ -1,5 +1,5 @@
-import type { AppliedAction } from '../../../src/surfaces/types';
-import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../../src/work/types';
+import type { AppliedAction } from '../../src/surfaces/types';
+import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../src/work/types';
 
 /**
  * The two plans whose closing sets the gates refused in the 16 September

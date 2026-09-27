@@ -1,6 +1,6 @@
 'use node';
 
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { action } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -11,6 +11,17 @@ import type { AppliedAction } from '../src/surfaces/types';
 import type { MockAction } from '../src/work/types';
 import { runBaselineAgent } from '../src/evaluation/baseline-agent';
 import { EVALUATION_SCOPES } from '../src/evaluation/scopes';
+import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
+
+/**
+ * Refuse a baseline call outside mock mode or on a deployment that names no bed.
+ *
+ * @throws ConvexError naming the flag when the deployment is not a bed (N9).
+ */
+function requireBaselineBed(what: string): void {
+  if (SURFACE_MODE !== 'mock') throw new Error('baseline evaluation requires mock mode');
+  if (evaluationBedName() === undefined) throw new ConvexError(evaluationBedRefusal(what));
+}
 
 const STUB_CHARTER = {
   whyThisHire: 'Evaluation control arm.',
@@ -31,7 +42,7 @@ const STUB_CHARTER = {
 export const deployBaseline = action({
   args: { bossEmail: v.string(), name: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ agentId: Id<'agents'>; charterId: Id<'charters'> }> => {
-    if (SURFACE_MODE !== 'mock') throw new Error('baseline evaluation requires mock mode');
+    requireBaselineBed('baselineActions.deployBaseline');
     const agentId: Id<'agents'> = await ctx.runMutation(api.agents.deploy, {
       bossEmail: args.bossEmail,
       name: args.name ?? 'ordinary agent',
@@ -65,7 +76,7 @@ export const executeTask = action({
     modelCalls?: number;
     toolCalls?: number;
   }> => {
-    if (SURFACE_MODE !== 'mock') throw new Error('baseline evaluation requires mock mode');
+    requireBaselineBed('baselineActions.executeTask');
     const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, args);
     if (!item) throw new Error('workItem not found');
     const agent = await assertOwnsAgentAction(ctx, item.agentId);

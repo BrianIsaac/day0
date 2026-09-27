@@ -3,6 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
@@ -25,6 +26,9 @@ import {
   OWNER_KNOWN_VALUES_CAP_REASON,
 } from '../../src/redaction/known-values';
 import { allConvexModules } from './all-modules';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 const KEY = randomBytes(32).toString('base64');
 const OTHER_KEY = randomBytes(32).toString('base64');
@@ -174,7 +178,7 @@ describe('the owner known-value source', (): void => {
 
 describe('the public API surface and decryption', (): void => {
   it('has no public query in a module that can reach a decrypted value', (): void => {
-    const modules = readdirSync('convex').filter((name: string): boolean => name.endsWith('.ts'));
+    const modules = readdirSync(join(ROOT, 'convex')).filter((name: string): boolean => name.endsWith('.ts'));
     const reaches =
       /credential-crypto|credentialCryptoActions|ownerKnownValues|ownerValuesRef|credentials\.decrypt|DAY0_CREDENTIAL_KEY|ciphertext/;
     // Each exported definition is one chunk; a public query's chunk is its handler.
@@ -248,7 +252,7 @@ it('lets resync repair an old scope row instead of redacting it as a known value
   const known = await harness.action(internal.credentialCryptoActions.ownerValues, {
     userId: 'owner',
   });
-  const markdown = readFileSync('tests/fixtures/slack-manifest-scopes.md', 'utf8');
+  const markdown = readFileSync(join(ROOT, 'tests/fixtures/slack-manifest-scopes.md'), 'utf8');
   const model = new ScriptedSpanModel((text) =>
     [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].map((match) => ({
       start: match.index!,

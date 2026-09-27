@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   redactorGpuDecision,
@@ -10,11 +12,14 @@ import {
   venvStampCommand,
 } from '../../scripts/redactor-device';
 
-const START_SCRIPT = readFileSync('redactor/start.sh', 'utf8');
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
+const START_SCRIPT = readFileSync(join(ROOT, 'redactor/start.sh'), 'utf8');
 
 describe('the stamp the start script keeps', (): void => {
   it('digests the two requirements files the way sha256sum does', (): void => {
-    const digests = requirementsDigests(process.cwd());
+    const digests = requirementsDigests(ROOT);
     const expected = createHash('sha256').update(readFileSync(REQUIREMENTS_FILES.cpu)).digest('hex');
     expect(digests.cpu).toBe(expected);
     expect(digests.cuda).not.toBe(digests.cpu);
@@ -24,7 +29,8 @@ describe('the stamp the start script keeps', (): void => {
   it('reads the file the start script writes, at the path it writes it', (): void => {
     expect(START_SCRIPT).toContain(`STAMP="$VENV/${STAMP_FILE}"`);
     expect(START_SCRIPT).toContain('sha256sum "$REQUIREMENTS"');
-    expect(START_SCRIPT).toContain('cuda) REQUIREMENTS=/opt/day0/requirements-cuda.txt');
+    expect(START_SCRIPT).toContain('APP="${REDACTOR_APP_DIR:-/opt/day0}"');
+    expect(START_SCRIPT).toContain('cuda) REQUIREMENTS="$APP/requirements-cuda.txt"');
     const command = venvStampCommand('day0-x_redactor_venv', 'node:22-alpine@sha256:abc');
     expect(command).toEqual([
       'run',

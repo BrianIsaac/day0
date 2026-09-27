@@ -4,7 +4,7 @@ import {
   summariseRevocationTrials,
   type RevocationEvidence,
   type RevocationTrial,
-} from '../../evaluation/revocation/report';
+} from '../../../evaluation/revocation/report';
 
 const trials: RevocationTrial[] = [
   {

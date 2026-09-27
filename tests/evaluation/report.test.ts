@@ -12,11 +12,11 @@ import {
   timeToOperational,
   wilsonInterval,
   type EvaluationEvidence,
-} from '../../../evaluation/report';
+} from '../../evaluation/report';
 import {
   evaluationHarnessParameters,
   INTENTIONAL_ARM_DIFFERENCES,
-} from '../../../src/evaluation/harness-parity';
+} from '../../src/evaluation/harness-parity';
 
 const passingGrade = {
   passed: true,
@@ -249,7 +249,7 @@ describe('evaluation evidence report', (): void => {
     ];
     for (const directory of directories) {
       const file = new URL(
-        `../../../evaluation/results/${directory}/semifinal.json`,
+        `../../evaluation/results/${directory}/semifinal.json`,
         import.meta.url,
       );
       const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
@@ -261,7 +261,7 @@ describe('evaluation evidence report', (): void => {
 
   it('computes the adherence rows from the latest seeded evidence JSON', async (): Promise<void> => {
     const file = new URL(
-      '../../../evaluation/results/2026-08-30T07-05-50Z/semifinal.json',
+      '../../evaluation/results/2026-08-30T07-05-50Z/semifinal.json',
       import.meta.url,
     );
     const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
@@ -288,7 +288,7 @@ describe('evaluation evidence report', (): void => {
 
   it('recomputes the rule-preserving zero-call regrade', async (): Promise<void> => {
     const file = new URL(
-      '../../../evaluation/results/2026-08-30T12-40-05Z/semifinal.json',
+      '../../evaluation/results/2026-08-30T12-40-05Z/semifinal.json',
       import.meta.url,
     );
     const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
@@ -320,7 +320,7 @@ describe('evaluation evidence report', (): void => {
   it('uses identical a-priori denominators for both arms in both final beds', async (): Promise<void> => {
     for (const directory of ['2026-08-31T09-09-00Z', '2026-08-31T09-55-00Z']) {
       const file = new URL(
-        `../../../evaluation/results/${directory}/semifinal.json`,
+        `../../evaluation/results/${directory}/semifinal.json`,
         import.meta.url,
       );
       const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;

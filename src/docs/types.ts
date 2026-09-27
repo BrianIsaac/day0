@@ -1,4 +1,5 @@
 import type { Id } from '../../convex/_generated/dataModel';
+import { droppedScriptSuffix } from '../lib/short-hash';
 
 export type DocSourceKind = 'mcp' | 'folder' | 'git' | 'urls';
 export type DocServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -39,6 +40,10 @@ export interface DocPageBatch {
 /**
  * Build a collision-resistant mock-document slug for one linked page.
  *
+ * A reference with letters outside `[a-z0-9]`, such as a Chinese file name,
+ * keeps a digest of itself beside the ASCII part, so two such pages in one
+ * source are two documents, not one (N8).
+ *
  * Args:
  *   sourceId: Documentation source id.
  *   ref: Stable page reference within the source.
@@ -53,5 +58,5 @@ export function mirroredDocSlug(sourceId: Id<'docSources'>, ref: string): string
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 70);
-  return `source-${sourcePart}-${refPart || 'page'}`;
+  return `source-${sourcePart}-${refPart || 'page'}${droppedScriptSuffix(ref)}`;
 }

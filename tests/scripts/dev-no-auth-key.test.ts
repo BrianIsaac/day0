@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { temporaryDirectories } from '../setup/temporary-directories';
+
+const temporary = temporaryDirectories();
 
 const SCRIPT = resolve('scripts/dev-no-auth-key.ts');
 const TSX = resolve('node_modules/.bin/tsx');
@@ -82,7 +84,7 @@ function runScript(cwd: string, args: readonly string[], deployment?: Deployment
 }
 
 function envDirectory(contents: string): { cwd: string; envFile: string } {
-  const cwd = mkdtempSync(join(tmpdir(), 'day0-dev-key-'));
+  const cwd = temporary('day0-dev-key-');
   const envFile = join(cwd, '.env.local');
   writeFileSync(envFile, contents, 'utf8');
   return { cwd, envFile };
@@ -99,7 +101,7 @@ const DEPLOYMENT_TOKEN = 'deployment-notion-token_0123456789abcdefghijklmn';
 
 describe('dev-no-auth-key url mode', (): void => {
   it('starts pnpm dev without .env.local instead of failing on key generation', (): void => {
-    const cwd = mkdtempSync(join(tmpdir(), 'day0-dev-key-'));
+    const cwd = temporary('day0-dev-key-');
     const { status, output } = runScript(cwd, ['url']);
     expect(status).toBe(0);
     expect(output).not.toContain('not found');

@@ -299,22 +299,55 @@ services:
   # http://redactor:8000 (DAY0_REDACTOR_URL), and nothing else needs to.
   #
   # It runs third-party model code over every page it is sent, so it carries
-  # the sandbox's hardening where its job allows. Every capability is dropped
-  # (it runs as root only to own the two volumes Docker creates, and writes
-  # nothing it does not own), privileges cannot be regained, and processes and
-  # memory are capped so a flood of requests costs a restart rather than the
-  # host. It restarts for the same reason. Not carried, and why: it needs a
-  # network, for the backend and for the first start's wheels and model; and
-  # its root filesystem stays writable, because the first start's install
-  # unpacks the wheels (a CUDA torch is gigabytes) through /tmp.
+  # the sandbox's hardening where its job allows. It runs as an unprivileged
+  # uid with every capability dropped, privileges cannot be regained, its root
+  # filesystem is read-only, and processes and memory are capped so a flood of
+  # requests costs a restart rather than the host. It restarts for the same
+  # reason. It writes only to its three volumes: the virtual environment, the
+  # verified model snapshot, and `redactor_tmp`, the scratch volume TMPDIR,
+  # HF_HOME, HOME and the caches point into, because the first start's install
+  # unpacks the wheels (a CUDA torch is gigabytes) through TMPDIR. The uid has
+  # no passwd entry, so HOME and USER are set for the libraries that ask.
+  # Docker creates the volumes owned by root, so the one-shot
+  # `redactor-volumes` service runs first, as root with CAP_CHOWN and
+  # CAP_DAC_READ_SEARCH only and no network, and hands them to the uid
+  # (`start.sh --own-volumes`); volumes an earlier root-run build filled are
+  # handed over the same way. Not carried, and why: it needs a network, for
+  # the backend and for the first start's wheels and model.
   #
   # HF_ENDPOINT and PIP_INDEX_URL, when set in `.env.local`, point the first
   # start at a Hugging Face mirror and a PyPI mirror instead of the internet;
   # empty keeps the public ones (an empty value in the container would not).
   # The torch wheel's own index is named inside redactor/requirements.txt.
+  redactor-volumes:
+    profiles: ['redactor']
+    image: python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+    user: '0:0'
+    network_mode: none
+    read_only: true
+    cap_drop: ['ALL']
+    cap_add: ['CHOWN', 'DAC_READ_SEARCH']
+    security_opt: ['no-new-privileges:true']
+    command: ['/opt/day0/start.sh', '--own-volumes']
+    environment:
+      - REDACTOR_OWNER=10001:10001
+      - REDACTOR_MODELS_DIR=/models
+      - TMPDIR=/opt/redactor/tmp
+    volumes:
+      - ./redactor/start.sh:/opt/day0/start.sh:ro
+      - redactor_venv:/opt/redactor/venv
+      - redactor_models:/models
+      - redactor_tmp:/opt/redactor/tmp
+
   redactor:
     profiles: ['redactor']
     image: python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+    depends_on:
+      redactor-volumes:
+        condition: service_completed_successfully
+    user: '10001:10001'
+    read_only: true
+    tmpfs: ['/tmp:size=64m']
     restart: unless-stopped
     stop_grace_period: 10s
     cap_drop: ['ALL']
@@ -332,6 +365,11 @@ services:
       - REDACTOR_MANIFEST=/opt/day0/models.sha256
       - HF_HUB_DISABLE_PROGRESS_BARS=1
       - PYTHONDONTWRITEBYTECODE=1
+      - TMPDIR=/opt/redactor/tmp
+      - HF_HOME=/opt/redactor/tmp/huggingface
+      - XDG_CACHE_HOME=/opt/redactor/tmp/cache
+      - HOME=/opt/redactor/tmp/home
+      - USER=redactor
     volumes:
       - ./redactor/start.sh:/opt/day0/start.sh:ro
       - ./redactor/server.py:/opt/day0/server.py:ro
@@ -340,6 +378,7 @@ services:
       - ./redactor/models.sha256:/opt/day0/models.sha256:ro
       - redactor_venv:/opt/redactor/venv
       - redactor_models:/models
+      - redactor_tmp:/opt/redactor/tmp
     expose: ['8000']
     healthcheck:
       test: ['CMD', '/opt/redactor/venv/bin/python', '/opt/day0/server.py', '--health']
@@ -506,6 +545,8 @@ volumes:
   # Carries one unix socket between the backend and the sandbox. It is the only
   # thing the two share, and the only way into a container that has no network.
   sandbox_socket:
-  # The redaction component's virtual environment and verified model snapshot.
+  # The redaction component's virtual environment, verified model snapshot and
+  # scratch space (emptied at every start).
   redactor_venv:
   redactor_models:
+  redactor_tmp:

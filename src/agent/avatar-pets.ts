@@ -1,59 +1,49 @@
-// The pixel-art builder avatars are not ours. They come from the public
-// "Singapore Codex Pets" gallery at https://singapore-pet-share.vercel.app/ -
-// a community-run set of Codex-Pet characters, one per Singapore AI builder,
-// keyed to each person's X handle (the same `tw-<handle>` keys used here). See
-// the Credits section of the README.
+import { fnv1a32 } from '../lib/short-hash';
 
+// The pixel-art faces are not ours. They come from the public "Singapore
+// Codex Pets" community gallery, credited in the README's Credits section and
+// in NOTICE. The product names no person: each face is known by its number
+// only (decision N6).
+
+/** How many faces the gallery holds. */
+const FACE_COUNT = 29;
+
+/** One selectable agent face. */
 export interface AgentAvatarPet {
-  id: string;
-  name: string;
-  handle: string;
-  src: string;
+  readonly id: string;
+  /** The face's accessible name, `Face n`. */
+  readonly label: string;
+  readonly src: string;
 }
 
-export const SINGAPORE_AI_BUILDER_AVATARS: AgentAvatarPet[] = [
-  avatar('tw-agrimsingh', 'agrim singh', '@agrimsingh'),
-  avatar('tw-sherryyanjiang', 'Sherry Jiang', '@SherryYanJiang'),
-  avatar('tw-unprofeshme', 'rachael', '@unprofeshme'),
-  avatar('tw-kasparhidayat', 'Kaspar', '@kasparhidayat'),
-  avatar('tw-ivanleomk', 'Ivan Leo', '@ivanleomk'),
-  avatar('tw-rachpradhan', 'Rach', '@rachpradhan'),
-  avatar('tw-rubanlah', 'ruban', '@rubanlah'),
-  avatar('tw-howenyap', 'howen', '@howenyap'),
-  avatar('tw-atzydev', 'atzy', '@atzydev'),
-  avatar('tw-mxdhavgautam', 'madhav', '@mxdhavgautam'),
-  avatar('tw-sentrytoast', 'Akilesh', '@sentrytoast'),
-  avatar('tw-jonthe03', 'jon - building', '@jonthe03'),
-  avatar('tw-injaneity', 'Zane Chee', '@injaneity'),
-  avatar('tw-jiaweihq', 'Jia Wei Ng', '@jiaweihq'),
-  avatar('tw-averycode', 'Avery', '@averycode'),
-  avatar('tw-kstonekuan', 'kingston kuan', '@kstonekuan'),
-  avatar('tw-bytedunks', 'Brandon Ong', '@bytedunks'),
-  avatar('tw-ryanlohyr', 'Ryan Loh', '@ryanlohyr'),
-  avatar('tw-darenstwt', 'daren', '@darenstwt'),
-  avatar('tw-ravernkoh', 'Ravern', '@ravernkoh'),
-  avatar('tw-ilhamfputra', 'ilham', '@ilhamfputra'),
-  avatar('tw-rwhendry', 'Reynaldo Wijaya Hendry', '@rwhendry'),
-  avatar('tw-yjsoon', 'YJ Soon', '@yjsoon'),
-  avatar('tw-jensenloke', 'Jensen', '@jensenloke'),
-  avatar('tw-hewliyang', 'Li Yang', '@hewliyang'),
-  avatar('tw-baggiiiie', 'yingchao', '@baggiiiie'),
-  avatar('tw-yongquanyq', 'Yong Quan', '@yongquanYQ'),
-  avatar('tw-amodev', 'amo', '@amodev'),
-  avatar('tw-danieltskk', 'DanielTsk', '@danieltskk'),
-];
+/** Every face an agent can wear, in the picker's order. */
+export const SINGAPORE_AI_BUILDER_AVATARS: readonly AgentAvatarPet[] = Array.from(
+  { length: FACE_COUNT },
+  (_, index): AgentAvatarPet => face(index + 1),
+);
 
-export const DEFAULT_AGENT_AVATAR = SINGAPORE_AI_BUILDER_AVATARS[0];
+/** The face a new agent starts with. */
+export const DEFAULT_AGENT_AVATAR = SINGAPORE_AI_BUILDER_AVATARS[0]!;
 
-function avatar(id: string, name: string, handle: string): AgentAvatarPet {
-  return {
-    id,
-    name,
-    handle,
-    src: `/agent-avatars/singapore-ai-builders/${id}.webp`,
-  };
+function face(number: number): AgentAvatarPet {
+  const id = `face-${String(number).padStart(2, '0')}`;
+  return { id, label: `Face ${number}`, src: `/agent-avatars/faces/${id}.webp` };
 }
 
+/**
+ * The face stored under an avatar id.
+ *
+ * An id this build does not list, such as one stored by an earlier build that
+ * keyed faces by a person's handle, gets a stable face chosen by its digest, so
+ * the same row always shows the same face and no handle is needed to find it.
+ *
+ * @returns The listed face, the digest's face for an unknown id, or the
+ *   default face when there is no id.
+ */
 export function avatarById(id: string | undefined): AgentAvatarPet {
-  return SINGAPORE_AI_BUILDER_AVATARS.find((avatar) => avatar.id === id) ?? DEFAULT_AGENT_AVATAR;
+  if (id === undefined || id === '') return DEFAULT_AGENT_AVATAR;
+  return (
+    SINGAPORE_AI_BUILDER_AVATARS.find((avatar) => avatar.id === id) ??
+    SINGAPORE_AI_BUILDER_AVATARS[fnv1a32(id) % FACE_COUNT]!
+  );
 }

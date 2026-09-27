@@ -9,9 +9,9 @@
  * and its reply told the thread the tile "currently shows 68%", four minutes
  * after REVOPS-7 had saved 74%.
  */
-import type { AppliedAction } from '../../../src/surfaces/types';
-import type { MockAction } from '../../../src/work/types';
-import { slackClosing, slackClosingReply, slackPhaseOne } from '../../fixtures/browser-phase-split-2026-09-16';
+import type { AppliedAction } from '../../src/surfaces/types';
+import type { MockAction } from '../../src/work/types';
+import { slackClosing, slackClosingReply, slackPhaseOne } from './browser-phase-split-2026-09-16';
 
 /** The first attempt's run id, the claim event the export names. */
 export const FIRST_RUN_2026_09_17 = 'k57bve1hwbp8wyz0d23hcc98gs8egr5c';
