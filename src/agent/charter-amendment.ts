@@ -136,7 +136,10 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
   switch (change.kind) {
     case 'edit-function':
       return {
-        charter: { ...charter, proposedFunction: requireText(change.text, 'the proposed function') },
+        charter: {
+          ...charter,
+          proposedFunction: requireText(change.text, 'the proposed function'),
+        },
         systemsAdded: added,
         systemsRemoved: removed,
       };
@@ -231,7 +234,9 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       if (!SYSTEM_CLASSES.includes(change.system.class)) {
         throw new Error(`no system class named ${String(change.system.class)}`);
       }
-      if ((charter.namedSystems ?? []).some((s: NamedSystem): boolean => sameSystem(s.name, name))) {
+      if (
+        (charter.namedSystems ?? []).some((s: NamedSystem): boolean => sameSystem(s.name, name))
+      ) {
         throw new Error(`${name} is already a named system`);
       }
       const system: NamedSystem = {
@@ -255,7 +260,9 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       return {
         charter: {
           ...charter,
-          namedSystems: (charter.namedSystems ?? []).filter((s: NamedSystem): boolean => s !== target),
+          namedSystems: (charter.namedSystems ?? []).filter(
+            (s: NamedSystem): boolean => s !== target,
+          ),
         },
         systemsAdded: added,
         systemsRemoved: removed,
@@ -281,15 +288,16 @@ function reconcileConstraints(charter: Charter): Charter {
   const clauses = clauseTexts(charter);
   return {
     ...charter,
-    constraints: charter.constraints.map((constraint: CharterConstraint): CharterConstraint =>
-      constraint.struck
-        ? constraint
-        : {
-            ...constraint,
-            wording: constraint.wording.filter((phrase: string): boolean =>
-              wordingPresent(phrase, clauses),
-            ),
-          },
+    constraints: charter.constraints.map(
+      (constraint: CharterConstraint): CharterConstraint =>
+        constraint.struck
+          ? constraint
+          : {
+              ...constraint,
+              wording: constraint.wording.filter((phrase: string): boolean =>
+                wordingPresent(phrase, clauses),
+              ),
+            },
     ),
   };
 }

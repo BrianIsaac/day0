@@ -9,7 +9,11 @@ import { redactText } from '../redaction/redact';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
-import { appliedCorrectionIds, plannerCorrectionLines, type PlannerCorrection } from './corrections';
+import {
+  appliedCorrectionIds,
+  plannerCorrectionLines,
+  type PlannerCorrection,
+} from './corrections';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
 import {
@@ -104,7 +108,12 @@ export function planSystemPrompt(
   return [
     ...SYSTEM_PROMPT_HEAD,
     ...(surfaceMode === 'real'
-      ? [...SCOPE_NOT_GATE_PLANNER, ...DECLARED_OBLIGATIONS_PLANNER, ...SIGNED_TICKET_PLANNER, ...OWN_ITEM_READS_PLANNER]
+      ? [
+          ...SCOPE_NOT_GATE_PLANNER,
+          ...DECLARED_OBLIGATIONS_PLANNER,
+          ...SIGNED_TICKET_PLANNER,
+          ...OWN_ITEM_READS_PLANNER,
+        ]
       : []),
     '',
     actionModeInstruction(autonomousActions, surfaceMode),
@@ -119,26 +128,180 @@ const PREMODIFIER_WORD = /^[a-z]+(?:-[a-z]+)*$/;
 const PREMODIFIER_CONNECTOR = new Set(['and', 'or', 'plus']);
 /** Where a run of candidate premodifiers ends: determiners, prepositions and the verbs a charter clause opens with. */
 const PREMODIFIER_STOP = new Set([
-  'a', 'an', 'the', 'every', 'each', 'all', 'any', 'some', 'no', 'this', 'that', 'these', 'those',
-  'its', 'their', 'our', 'your', 'my', 'his', 'her', 'such', 'other', 'more', 'most', 'few', 'many',
-  'from', 'with', 'for', 'in', 'on', 'of', 'to', 'at', 'by', 'into', 'over', 'about', 'after', 'before',
-  'when', 'where', 'which', 'while', 'than', 'as', 'via', 'through', 'per', 'under', 'within', 'without',
-  'handle', 'handles', 'handling', 'process', 'processes', 'processing', 'manage', 'manages', 'managing',
-  'take', 'takes', 'taking', 'keep', 'keeps', 'keeping', 'move', 'moves', 'moving', 'own', 'owns', 'owning',
-  'work', 'works', 'working', 'answer', 'answers', 'answering', 'refresh', 'refreshes', 'refreshing',
-  'read', 'reads', 'reading', 'draft', 'drafts', 'drafting', 'post', 'posts', 'posting', 'add', 'adds',
-  'adding', 'close', 'closes', 'closing', 'hold', 'holds', 'holding', 'review', 'reviews', 'reviewing',
-  'triage', 'triages', 'triaging', 'pick', 'picks', 'picking', 'pull', 'pulls', 'pulling', 'watch',
-  'watches', 'watching', 'monitor', 'monitors', 'monitoring', 'resolve', 'resolves', 'resolving',
-  'route', 'routes', 'routing', 'clear', 'clears', 'clearing', 'act', 'acts', 'acting', 'respond',
-  'responds', 'responding', 'reply', 'replies', 'replying', 'is', 'are', 'was', 'were', 'be', 'being',
-  'been', 'has', 'have', 'had', 'will', 'would', 'can', 'could', 'may', 'might', 'must', 'should',
-  'only', 'also', 'not', 'never', 'always', 'then', 'there', 'here', 'it', 'they', 'we', 'you',
+  'a',
+  'an',
+  'the',
+  'every',
+  'each',
+  'all',
+  'any',
+  'some',
+  'no',
+  'this',
+  'that',
+  'these',
+  'those',
+  'its',
+  'their',
+  'our',
+  'your',
+  'my',
+  'his',
+  'her',
+  'such',
+  'other',
+  'more',
+  'most',
+  'few',
+  'many',
+  'from',
+  'with',
+  'for',
+  'in',
+  'on',
+  'of',
+  'to',
+  'at',
+  'by',
+  'into',
+  'over',
+  'about',
+  'after',
+  'before',
+  'when',
+  'where',
+  'which',
+  'while',
+  'than',
+  'as',
+  'via',
+  'through',
+  'per',
+  'under',
+  'within',
+  'without',
+  'handle',
+  'handles',
+  'handling',
+  'process',
+  'processes',
+  'processing',
+  'manage',
+  'manages',
+  'managing',
+  'take',
+  'takes',
+  'taking',
+  'keep',
+  'keeps',
+  'keeping',
+  'move',
+  'moves',
+  'moving',
+  'own',
+  'owns',
+  'owning',
+  'work',
+  'works',
+  'working',
+  'answer',
+  'answers',
+  'answering',
+  'refresh',
+  'refreshes',
+  'refreshing',
+  'read',
+  'reads',
+  'reading',
+  'draft',
+  'drafts',
+  'drafting',
+  'post',
+  'posts',
+  'posting',
+  'add',
+  'adds',
+  'adding',
+  'close',
+  'closes',
+  'closing',
+  'hold',
+  'holds',
+  'holding',
+  'review',
+  'reviews',
+  'reviewing',
+  'triage',
+  'triages',
+  'triaging',
+  'pick',
+  'picks',
+  'picking',
+  'pull',
+  'pulls',
+  'pulling',
+  'watch',
+  'watches',
+  'watching',
+  'monitor',
+  'monitors',
+  'monitoring',
+  'resolve',
+  'resolves',
+  'resolving',
+  'route',
+  'routes',
+  'routing',
+  'clear',
+  'clears',
+  'clearing',
+  'act',
+  'acts',
+  'acting',
+  'respond',
+  'responds',
+  'responding',
+  'reply',
+  'replies',
+  'replying',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'being',
+  'been',
+  'has',
+  'have',
+  'had',
+  'will',
+  'would',
+  'can',
+  'could',
+  'may',
+  'might',
+  'must',
+  'should',
+  'only',
+  'also',
+  'not',
+  'never',
+  'always',
+  'then',
+  'there',
+  'here',
+  'it',
+  'they',
+  'we',
+  'you',
 ]);
 
 function systemWords(charter: Charter, sourceSystem: string | undefined): Set<string> {
   const words = new Set<string>();
-  for (const name of [...(charter.namedSystems ?? []).map((system) => system.name), sourceSystem ?? '']) {
+  for (const name of [
+    ...(charter.namedSystems ?? []).map((system) => system.name),
+    sourceSystem ?? '',
+  ]) {
     for (const word of name.toLowerCase().split(/[^a-z0-9]+/)) if (word) words.add(word);
   }
   return words;
@@ -170,7 +333,8 @@ function candidateProperties(
           const token = tokens[position]!.replace(/[,:]+$/, '').toLowerCase();
           if (PREMODIFIER_CONNECTOR.has(token)) continue;
           if (!PREMODIFIER_WORD.test(token) || PREMODIFIER_STOP.has(token)) break;
-          if (systems.has(token) || CANDIDATE_PROPERTIES.some(({ words }) => words.test(token))) continue;
+          if (systems.has(token) || CANDIDATE_PROPERTIES.some(({ words }) => words.test(token)))
+            continue;
           vocabulary.add(token);
         }
       }
@@ -196,7 +360,10 @@ function affirmedVerifications(clause: string): RegExpMatchArray[] {
 }
 
 /** A verification clause: the verb and, within the same clause, the property. */
-function verificationOf(step: string, properties: readonly CandidateProperty[]): string | undefined {
+function verificationOf(
+  step: string,
+  properties: readonly CandidateProperty[],
+): string | undefined {
   for (const clause of step.split(/[.;\n]/)) {
     for (const verb of affirmedVerifications(clause)) {
       const tail = clause.slice(verb.index);
@@ -247,7 +414,8 @@ export interface PlanPreconditionAudit {
  */
 export function planPreconditionAudit(
   plan: Pick<ExecutionPlan, 'steps'>,
-  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'> & Partial<Pick<WorkCandidate, 'sourceSystem'>>,
+  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'> &
+    Partial<Pick<WorkCandidate, 'sourceSystem'>>,
   procedures: PlanDocuments | undefined,
   charter?: Charter,
 ): PlanPreconditionAudit {
@@ -471,7 +639,9 @@ export function renderCandidateRecord(record: CandidateRecord): string[] {
 
 /** Clip a record to what the planner may see. */
 export function boundCandidateRecordText(text: string): string {
-  return text.length > CANDIDATE_RECORD_LENGTH ? `${text.slice(0, CANDIDATE_RECORD_LENGTH)}…` : text;
+  return text.length > CANDIDATE_RECORD_LENGTH
+    ? `${text.slice(0, CANDIDATE_RECORD_LENGTH)}…`
+    : text;
 }
 
 /**
@@ -696,21 +866,37 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
         schema: realPlanSchema,
       });
       const repaired = materialisePlan(repairedRaw);
-      const remaining = planPreconditionAudit(repaired, args.candidate, args.documents, args.charter);
+      const remaining = planPreconditionAudit(
+        repaired,
+        args.candidate,
+        args.documents,
+        args.charter,
+      );
       reply = repairedRaw;
-      drafted = remaining.flagged.length === 0 ? repaired : { ...repaired, advisorySteps: remaining.flagged };
+      drafted =
+        remaining.flagged.length === 0
+          ? repaired
+          : { ...repaired, advisorySteps: remaining.flagged };
     } catch {
       drafted = { ...plan, advisorySteps: audit.flagged };
     }
   }
-  return withCorrections(await withObligations(drafted, reply, args, onObligationEvent), reply, args);
+  return withCorrections(
+    await withObligations(drafted, reply, args, onObligationEvent),
+    reply,
+    args,
+  );
 }
 
 /**
  * The plan with the corrections it applied: only ids the prompt offered,
  * and the scrub's degradation when the planner saw any.
  */
-function withCorrections(plan: ExecutionPlan, reply: RealPlanReply, args: DraftPlanArgs): ExecutionPlan {
+function withCorrections(
+  plan: ExecutionPlan,
+  reply: RealPlanReply,
+  args: DraftPlanArgs,
+): ExecutionPlan {
   const offered = args.corrections ?? [];
   const applied = appliedCorrectionIds(reply.appliedCorrections, offered);
   return {

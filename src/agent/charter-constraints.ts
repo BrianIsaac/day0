@@ -16,7 +16,11 @@ import { CANDIDATE_PROPERTIES } from '../work/candidate-properties';
  * No model dependency: this module is imported by Convex mutations.
  */
 
-export const CONSTRAINT_KINDS = ['candidate-property', 'system-boundary', 'reporting-line'] as const;
+export const CONSTRAINT_KINDS = [
+  'candidate-property',
+  'system-boundary',
+  'reporting-line',
+] as const;
 
 export type ConstraintKind = (typeof CONSTRAINT_KINDS)[number];
 
@@ -42,7 +46,12 @@ export interface RawConstraint {
 }
 
 /** The clauses a constraint may be encoded in. */
-export const CLAUSE_FIELDS = ['proposedFunction', 'willDo', 'willNotDo', 'escalationTriggers'] as const;
+export const CLAUSE_FIELDS = [
+  'proposedFunction',
+  'willDo',
+  'willNotDo',
+  'escalationTriggers',
+] as const;
 
 export type ClauseField = (typeof CLAUSE_FIELDS)[number];
 
@@ -224,7 +233,12 @@ function covered(word: string, constraints: readonly CharterConstraint[]): boole
 function managerSentences(answers: Partial<Record<DayOneTopic, string>>): string[] {
   return Object.values(answers)
     .flatMap((answer: string | undefined): string[] => (answer ?? '').split(/(?<=[.!?;])\s+|\n+/))
-    .map((sentence: string): string => sentence.trim().replace(/[.;]+$/, '').trim())
+    .map((sentence: string): string =>
+      sentence
+        .trim()
+        .replace(/[.;]+$/, '')
+        .trim(),
+    )
     .filter((sentence: string): boolean => sentence.length > 0);
 }
 
@@ -268,7 +282,12 @@ export function deriveConstraints(
           if (!existing.wording.includes(word)) existing.wording.push(word);
           continue;
         }
-        byQuote.set(quote, { kind: 'candidate-property', quote, wording: [word], origin: 'derived' });
+        byQuote.set(quote, {
+          kind: 'candidate-property',
+          quote,
+          wording: [word],
+          origin: 'derived',
+        });
       }
     }
   }
@@ -357,7 +376,8 @@ function assertBoundariesKept(
   for (const clause of dropped) {
     for (const system of charter.namedSystems ?? []) {
       if (!wordingPresent(system.name, [clause])) continue;
-      if (remaining.some((other: string): boolean => wordingPresent(system.name, [other]))) continue;
+      if (remaining.some((other: string): boolean => wordingPresent(system.name, [other])))
+        continue;
       throw new Error(
         `strike refused: \u201c${clause}\u201d is the only clause that bounds ${system.name}`,
       );
@@ -429,7 +449,10 @@ export function withoutConstraints<T extends ClauseCharter>(
  * the function and the will-do clauses keep their sentences minus the words,
  * a will-do emptied by that going with them.
  */
-function withoutClauses<T extends ClauseCharter>(charter: T, struck: readonly CharterConstraint[]): T {
+function withoutClauses<T extends ClauseCharter>(
+  charter: T,
+  struck: readonly CharterConstraint[],
+): T {
   if (struck.length === 0) return charter;
   const phrases = struck.flatMap((constraint: CharterConstraint): string[] => constraint.wording);
   const carries = (clause: string): boolean =>
@@ -594,7 +617,9 @@ export function withoutClauseWording<T extends ClauseCharter>(
     if (!phrases.some((phrase) => wordingPresent(phrase, [clause]))) continue;
     const remaining = withoutPhrases(clause, phrases);
     if (remaining !== clause && /[A-Za-z0-9]/.test(remaining)) {
-      throw new Error('strike or edit the whole will-not-do clause; removing only part could change its boundary');
+      throw new Error(
+        'strike or edit the whole will-not-do clause; removing only part could change its boundary',
+      );
     }
   }
   const list = (clauses: readonly string[]): string[] =>

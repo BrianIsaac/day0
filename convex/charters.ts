@@ -160,7 +160,11 @@ export async function renderWorkspaceFromCharter(
   agentId: Id<'agents'>,
   charter: Charter,
 ): Promise<void> {
-  await writeFileImpl(ctx, { agentId, fileName: 'IDENTITY.md', content: identityFromCharter(charter) });
+  await writeFileImpl(ctx, {
+    agentId,
+    fileName: 'IDENTITY.md',
+    content: identityFromCharter(charter),
+  });
   await writeFileImpl(ctx, { agentId, fileName: 'TOOLS.md', content: toolsFromCharter(charter) });
 }
 
@@ -252,7 +256,11 @@ export const approve = mutation({
         charterId: args.charterId,
         version: charter.version,
         ...(struck.length > 0
-          ? { struckConstraints: struck.map((constraint: CharterConstraint): string => constraint.quote) }
+          ? {
+              struckConstraints: struck.map(
+                (constraint: CharterConstraint): string => constraint.quote,
+              ),
+            }
           : {}),
       },
       createdAt: Date.now(),
@@ -302,7 +310,6 @@ export const charterChangeValidator = v.union(
 
 /** Who sent an amendment. */
 export type AmendmentVia = 'dashboard' | 'plan-approval' | 'channel';
-
 
 /**
  * Amend the agent's approved charter: one new version, one event, the
@@ -443,7 +450,8 @@ export const requestChanges = mutation({
   handler: async (ctx, args) => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
     const agentId = charter.agentId;
-    if (charter.approved) throw new Error('An approved charter cannot be sent back; amend it instead.');
+    if (charter.approved)
+      throw new Error('An approved charter cannot be sent back; amend it instead.');
     const latest = await ctx.db
       .query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
