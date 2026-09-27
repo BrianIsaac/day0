@@ -4,6 +4,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { AppliedAction } from '../src/surfaces/types';
+import { appendEvent } from './eventLog';
 
 const trialKind = v.union(
   v.literal('queued-read'),
@@ -176,7 +177,7 @@ export const installSurfaceCards = internalMutation({
       }));
     if (existingTile) await ctx.db.patch(existingTile._id, tileFields);
     for (const surfaceId of [slack, tile]) {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: args.agentId,
         type: 'surface.proposed',
         payload: { surfaceId, source: 'revocation-evaluation-folder-fixture' },
@@ -283,7 +284,7 @@ export const seedTrial = mutation({
       observedAt: now,
       createdAt: now,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'work.discovered',
       payload: {
@@ -296,7 +297,7 @@ export const seedTrial = mutation({
     });
     if (args.kind === 'queued-read') return { workItemId };
 
-    const runId = await ctx.db.insert('events', {
+    const runId = await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'work.execution-claimed',
       payload: {
@@ -333,7 +334,7 @@ export const seedTrial = mutation({
             applyPhase: 'auto',
           }),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: held ? 'work.actions-pending' : 'work.actions-auto-applying',
       payload: {
@@ -406,7 +407,7 @@ export const markTransportReady = internalMutation({
     const agent = await ctx.db.get(row.agentId);
     if (!agent) throw new Error('agent not found');
     requireEvaluationAgent(agent);
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'evaluation.transport-ready',
       payload: { workItemId: row._id, checkpoint: args.checkpoint, scope: args.scope },
@@ -462,7 +463,7 @@ export const recordOutcome = internalMutation({
       approvedIndexes: undefined,
       applyPhase: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: failure ? 'work.failed' : 'work.completed',
       payload: {
