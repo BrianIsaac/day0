@@ -77,7 +77,7 @@ export function devNoAuthProvider(): {
   applicationID: string;
   issuer: string;
   jwks: string;
-  algorithm: string;
+  algorithm: typeof DEV_NO_AUTH_ALGORITHM;
 } {
   // Possession already holds without this check; it exists so a flag that
   // reaches a hosted deployment fails the push loudly instead of quietly
