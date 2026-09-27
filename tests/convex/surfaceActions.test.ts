@@ -1785,6 +1785,8 @@ describe('probing the browser floor', (): void => {
    */
   function signInDriver(options: {
     password: string;
+    /** A tool the driver answers with an error. */
+    refuse?: string;
     /** The dashboard's element lines; the documented marker unless a test redesigns it. */
     dashboard?: string;
     /** Serve the login over two pages, the account first and the password after Next. */
@@ -1822,6 +1824,7 @@ describe('probing the browser floor', (): void => {
         errors: {} as Record<string, string>,
       }),
       callTool: async (name: string, args: Record<string, unknown>) => {
+        if (name === options.refuse) return { isError: true, text: 'Error: element is detached' };
         if (name === 'browser_fill_form') filled.push(args);
         if (name === 'browser_click') {
           clicked.push(String(args.element));
@@ -1926,6 +1929,45 @@ describe('probing the browser floor', (): void => {
       },
     ]);
     expect(clicked).toEqual(['Next', 'Sign in']);
+  });
+
+  it('reads a driver that refused a sign-in step as Day0 not checking the credential, not a dead system', async (): Promise<void> => {
+    const { harness, surfaceId } = await tileHarness();
+    await harness.run(async (ctx): Promise<void> => {
+      const page = await ctx.db.query('docPages').first();
+      await ctx.db.patch(page!._id, {
+        markdown: `# Looker pipeline tile\n\n- Probe marker: after sign-in, element \`${MARKER}\`.\n- Login: \`<redacted>\` (username \`revops\`)`,
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Login',
+        ciphertext: 'not-read-by-this-contract',
+        iv: 'not-read-by-this-contract',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.patch(surfaceId, { credentialId });
+    });
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', DRIVER);
+    const refusing = signInDriver({ password: 'pipeline-tile-local', refuse: 'browser_fill_form' });
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: harness.mutation.bind(harness),
+        runQuery: harness.query.bind(harness),
+        runAction: fakeRunAction('pipeline-tile-local'),
+      } as unknown as ActionCtx,
+      surfaceId,
+      {
+        probeBrowser: async (probe: BrowserProbeRequest) =>
+          await probeBrowserSurface(probe, () => refusing.client),
+        probeMcp: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+      },
+    );
+    expect(outcome.verdict).toBe('ungranted');
+    expect(outcome.reason).toContain('refused browser_fill_form while Day0 was signing in');
   });
 
   it('asks for the user name when the page has an account field the documentation does not fill', async (): Promise<void> => {

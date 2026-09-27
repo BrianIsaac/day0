@@ -554,8 +554,10 @@ function argumentNamesOf(discovery: McpDiscovery, tool: string): string[] | unde
 
 /**
  * Call one driver tool for the probe, refusing a tool the floor does not
- * have or a call the driver refuses. The driver's text is never quoted: after
- * a credential is typed it can echo the page.
+ * have or a call the driver refuses. The page answered before any of these
+ * calls, so a refusal here is Day0 not completing the sign-in, never the
+ * system being down. The driver's text is never quoted: after a credential is
+ * typed it can echo the page.
  */
 async function probeCall(
   client: BrowserProbeClient,
@@ -569,7 +571,11 @@ async function probeCall(
     );
   }
   const result = await client.callTool(tool, args);
-  if (result.isError) throw new Error(`${tool} failed while Day0 was signing in.`);
+  if (result.isError) {
+    throw new Day0ProbeLimitation(
+      `The browser driver refused ${tool} while Day0 was signing in, so the credential was not checked. This is not evidence that the system is unavailable.`,
+    );
+  }
   return result.text;
 }
 
@@ -581,7 +587,12 @@ async function probeSnapshot(
 ): Promise<string> {
   const text = await probeCall(client, discovery, 'browser_snapshot', {});
   const page = browserPageUrl(text);
-  if (!page || !withinDocumentedSurface(page, endpoint)) {
+  if (!page) {
+    throw new Day0ProbeLimitation(
+      'The browser driver reported no page address while Day0 was signing in, so the credential was not checked.',
+    );
+  }
+  if (!withinDocumentedSurface(page, endpoint)) {
     throw new Day0ProbeLimitation(
       `The sign-in left the approved surface (${endpoint}); Day0 signs in only on the documented page.`,
     );
