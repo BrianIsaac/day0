@@ -326,7 +326,12 @@ async function rememberExternalAlias(
   externalAlias: string | undefined,
   externalClaimAlias: string | undefined,
 ): Promise<void> {
-  if (externalAlias === undefined || !externalClaimAlias || existing.externalClaimAlias !== undefined) return;
+  if (
+    externalAlias === undefined ||
+    !externalClaimAlias ||
+    existing.externalClaimAlias !== undefined
+  )
+    return;
   if (existing.externalClaimKey === externalClaimAlias) return;
   await ctx.db.patch(existing._id, { externalAlias, externalClaimAlias });
   const held = await ctx.db
@@ -462,7 +467,9 @@ export async function seedItemInTransaction(
   if (SURFACE_MODE === 'real') {
     const surface = await ctx.db
       .query('surfaces')
-      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.sourceSystem))
+      .withIndex('by_agent_slug', (q) =>
+        q.eq('agentId', args.agentId).eq('slug', args.sourceSystem),
+      )
       .first();
     if (surface) {
       externalClaimKey = providerItemKey(surface, args, SURFACE_MODE);
@@ -483,7 +490,9 @@ export async function seedItemInTransaction(
   const id = await ctx.db.insert('workItems', {
     ...seed,
     ...(externalClaimKey ? { externalClaimKey } : {}),
-    ...(externalAlias !== undefined && externalClaimAlias ? { externalAlias, externalClaimAlias } : {}),
+    ...(externalAlias !== undefined && externalClaimAlias
+      ? { externalAlias, externalClaimAlias }
+      : {}),
     state: 'discovered',
     observedAt: Date.now(),
     createdAt: Date.now(),
@@ -507,8 +516,7 @@ export async function seedItemInTransaction(
 /** Seed one listed item or bring its row up to the listing. Internal; called by intake. */
 export const seedItem = internalMutation({
   args: { agentId: v.id('agents'), ...workItemSeedFields },
-  handler: async (ctx, args): Promise<Id<'workItems'>> =>
-    await seedItemInTransaction(ctx, args),
+  handler: async (ctx, args): Promise<Id<'workItems'>> => await seedItemInTransaction(ctx, args),
 });
 
 /**
