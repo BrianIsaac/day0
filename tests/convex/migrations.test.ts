@@ -5,9 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES } from '../../convex/migrations';
+import { RETIRED_DECLARATIONS } from '../../scripts/releases';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { insertMinimalRow } from './schema-fixtures';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -50,50 +50,6 @@ async function runAll(harness: Harness): Promise<void> {
 }
 
 describe('the upgrade migrations', (): void => {
-  it('moves daytonaSandboxId onto sandboxId across several pages, and a second run changes nothing', async (): Promise<void> => {
-    const harness = limitedHarness();
-    const agentId = await agent(harness, { userId: 'owner' });
-    await harness.run(async (ctx) => {
-      for (let index = 0; index < 230; index += 1) {
-        await ctx.db.insert('skills', {
-          agentId,
-          name: `skill-${index}`,
-          description: 'A skill.',
-          body: '',
-          sourceType: 'agent-authored',
-          state: 'registered',
-          createdAt: 1,
-          ...(index % 2 === 0 ? { daytonaSandboxId: `sandbox-${index}` } : {}),
-          ...(index === 4 ? { sandboxId: 'local:kept' } : {}),
-        });
-      }
-    });
-
-    await runAll(harness);
-
-    const skills = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
-    expect(skills.filter((skill) => skill.daytonaSandboxId !== undefined)).toEqual([]);
-    expect(skills.find((skill) => skill.name === 'skill-2')?.sandboxId).toBe('sandbox-2');
-    expect(skills.find((skill) => skill.name === 'skill-4')?.sandboxId).toBe('local:kept');
-    const status = await harness.query(internal.migrations.status, {});
-    expect(status.migrations.find((row) => row.name === 'skills-sandbox-id')).toMatchObject({
-      read: 230,
-      changed: 115,
-    });
-
-    // A finished migration reads nothing again, even over a row put back under the old name.
-    await harness.run(async (ctx) => {
-      const skill = skills.find((row) => row.name === 'skill-6')!;
-      await ctx.db.patch(skill._id, { daytonaSandboxId: 'written-after' });
-    });
-    await runAll(harness);
-    expect(
-      (await harness.query(internal.migrations.status, {})).migrations.find(
-        (row) => row.name === 'skills-sandbox-id',
-      ),
-    ).toMatchObject({ read: 230, changed: 115 });
-  });
-
   it('clears a revokedAt the sync stamped when it superseded a credential, and keeps a person’s earlier revoke', async (): Promise<void> => {
     const harness = limitedHarness();
     const sourceId = await source(harness, 'owner');
@@ -148,36 +104,6 @@ describe('the upgrade migrations', (): void => {
     expect(third?.revokedAt).toBe(1_758_900_000_000);
   });
 
-  it('turns a legacy inclusion list into exclusions, so a source linked later is inherited and the rest read as before', async (): Promise<void> => {
-    const harness = limitedHarness();
-    const included = await source(harness, 'owner');
-    const left = await source(harness, 'owner');
-    const listed = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
-          name: 'Priya',
-          userId: 'owner',
-          state: 'active',
-          createdAt: 1,
-          docSourceIds: [included],
-        }),
-    );
-
-    await runAll(harness);
-    const later = await source(harness, 'owner');
-
-    const row = await harness.run(async (ctx) => await ctx.db.get(listed));
-    expect(row?.docSourceIds).toBeUndefined();
-    expect(row?.excludedDocSourceIds).toEqual([left]);
-    const { agentReadsSource } = await import('../../convex/docSources');
-    expect([included, left, later].map((id) => agentReadsSource(row!, id))).toEqual([
-      true,
-      false,
-      true,
-    ]);
-  });
-
   it('gives an ownerless agent to the one owner, and leaves it when the deployment has two', async (): Promise<void> => {
     const single = limitedHarness();
     await agent(single, { userId: 'dev-no-auth|local-boss' });
@@ -200,30 +126,6 @@ describe('the upgrade migrations', (): void => {
     ).toMatchObject({ read: 1, changed: 0 });
   });
 
-  it('clears the inclusion list of an agent it could not give an owner, since it reads no source either way', async (): Promise<void> => {
-    const harness = limitedHarness();
-    await agent(harness, { userId: 'owner-a' });
-    await agent(harness, { userId: 'owner-b' });
-    const sourceId = await source(harness, 'owner-a');
-    const orphan = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
-          name: 'Priya',
-          state: 'active',
-          createdAt: 1,
-          docSourceIds: [sourceId],
-        }),
-    );
-
-    await runAll(harness);
-
-    const row = await harness.run(async (ctx) => await ctx.db.get(orphan));
-    expect(row?.userId).toBeUndefined();
-    expect(row?.docSourceIds).toBeUndefined();
-    expect(row?.excludedDocSourceIds).toBeUndefined();
-  });
-
   it('reports only the migrations a call ran, not those an earlier call finished', async (): Promise<void> => {
     const harness = limitedHarness();
     const first = await harness.action(internal.migrations.runPending, {});
@@ -232,50 +134,6 @@ describe('the upgrade migrations', (): void => {
       migrations: [],
       pending: [],
     });
-  });
-
-  it('clears the retired posture, supervised-run and credentialRef fields', async (): Promise<void> => {
-    const harness = limitedHarness();
-    const agentId = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
-          name: 'Priya',
-          userId: 'owner',
-          state: 'active',
-          createdAt: 1,
-          posture: 'supervised',
-        }),
-    );
-    const { skillId, surfaceId } = await harness.run(async (ctx) => {
-      const surfaceId = (await insertMinimalRow(
-        ctx as never,
-        'surfaces',
-        agentId,
-      )) as Id<'surfaces'>;
-      await ctx.db.patch(surfaceId, { credentialRef: 'linear' });
-      const skillId = await ctx.db.insert('skills', {
-        agentId,
-        name: 'kanban-comment',
-        description: 'A skill.',
-        body: '',
-        sourceType: 'agent-authored',
-        state: 'registered',
-        createdAt: 1,
-        supervisedRunsCompleted: 3,
-      });
-      return { skillId, surfaceId };
-    });
-
-    await runAll(harness);
-
-    const [agentRow, skill, surface] = await harness.run(
-      async (ctx) =>
-        await Promise.all([ctx.db.get(agentId), ctx.db.get(skillId), ctx.db.get(surfaceId)]),
-    );
-    expect(agentRow?.posture).toBeUndefined();
-    expect(skill?.supervisedRunsCompleted).toBeUndefined();
-    expect(surface?.credentialRef).toBeUndefined();
   });
 
   it('copies listings kept as work.listed events into ticketListings once, where the re-read finds them', async (): Promise<void> => {
@@ -552,6 +410,19 @@ describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {
       changed: 3,
       completedAt: expect.any(Number),
     });
+  });
+});
+
+describe('the declarations the schema step retired (N10)', (): void => {
+  it('runs no migration of a retired declaration and declares none of them any more', (): void => {
+    for (const { declaration, migration } of RETIRED_DECLARATIONS) {
+      expect(MIGRATION_NAMES as readonly string[]).not.toContain(migration);
+      const [table, field] = declaration.split('.') as [keyof typeof schema.tables, string];
+      const fields = (
+        schema.tables[table].validator as unknown as { fields: Record<string, unknown> }
+      ).fields;
+      expect(fields, declaration).not.toHaveProperty(field);
+    }
   });
 });
 

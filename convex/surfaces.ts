@@ -544,7 +544,6 @@ export const propose = internalMutation({
       credentialId: args.credentialId,
       credentialKind: args.credentialId ? args.credentialKind : undefined,
       credentialLocation: args.credentialLocation,
-      credentialRef: undefined,
       expiresAt: undefined,
       accessSetBy: undefined,
       reason: undefined,
@@ -739,7 +738,6 @@ export const attachCredential = internalMutation({
       credentialId: args.credentialId,
       credentialKind: args.credentialKind,
       credentialLocation: args.credentialLocation,
-      credentialRef: undefined,
       credentialLanded: false,
       verdict:
         approved && (surface.verdict === 'ungranted' || surface.verdict === 'listed-dead')
@@ -902,7 +900,6 @@ export const recordInstalledApp = internalMutation({
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       credentialKind: 'oauth',
-      credentialRef: undefined,
       credentialLanded: false,
       reason: undefined,
       verdict:
@@ -1924,7 +1921,6 @@ export const reject = mutation({
       fallbackPath: undefined,
       pathCandidates: undefined,
       probeAttempts: undefined,
-      credentialRef: undefined,
       credentialId: undefined,
       credentialKind: undefined,
       credentialLocation: undefined,

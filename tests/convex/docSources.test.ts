@@ -159,7 +159,7 @@ describe('documentation source validation', (): void => {
     ).not.toThrow();
   });
 
-  it('reads every owner source except the excluded ones, honouring legacy inclusion lists', async (): Promise<void> => {
+  it('reads every owner source except the excluded ones', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
       const first = await ctx.db.insert('docSources', {
@@ -193,18 +193,12 @@ describe('documentation source validation', (): void => {
         all: agentReadsSource(base, second),
         excludedSecond: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, second),
         keptFirst: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, first),
-        legacySelectedFirst: agentReadsSource({ ...base, docSourceIds: [first] }, first),
-        legacyRejectedSecond: agentReadsSource({ ...base, docSourceIds: [first] }, second),
-        legacyEmptyMeansAll: agentReadsSource({ ...base, docSourceIds: [] }, second),
       };
     });
     expect(result).toEqual({
       all: true,
       excludedSecond: false,
       keptFirst: true,
-      legacySelectedFirst: true,
-      legacyRejectedSecond: false,
-      legacyEmptyMeansAll: true,
     });
   });
 });

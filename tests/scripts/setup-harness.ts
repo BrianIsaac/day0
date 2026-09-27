@@ -16,6 +16,7 @@ import {
   type SetupIo,
   type SetupOptions,
 } from '../../scripts/setup';
+import { MIGRATIONS_TABLE, RETIRED_DECLARATIONS } from '../../scripts/releases';
 
 export const NODE_IMAGE = `node:22-alpine@sha256:${'c'.repeat(64)}`;
 export const CPU_REQUIREMENTS = 'torch==2.9.0+cpu\ngliner==0.2.22\n';
@@ -157,6 +158,12 @@ export interface HarnessOptions {
   releaseStamp?: string;
   /** Tables the deployment lists besides the stamp's; none means nothing was ever pushed. */
   deploymentTables?: string[];
+  /**
+   * The clearing migrations of the retired declarations the deployment has
+   * not finished; absent means every one finished, as on any deployment the
+   * release that shipped them upgraded.
+   */
+  unfinishedMigrations?: string[];
   /** What each `migrations:runPending` call answers, in order, the last repeated. */
   migrationReports?: string[];
   /** What `npx convex env list` prints when the admin key is accepted. */
@@ -322,11 +329,32 @@ export function harness(options: HarnessOptions = {}): Harness {
       };
     }
     if (joined === 'npx convex data') {
-      const tables = [
+      const listed = [
         ...(options.deploymentTables ?? []),
         ...(options.releaseStamp === undefined ? [] : ['agents', 'deploymentVersions']),
       ];
+      // A deployment with rows has run the migrations of every release since 0.4.0.
+      const tables = listed.length > 0 ? [...listed, MIGRATIONS_TABLE] : listed;
       return { status: 0, stdout: tables.map((table) => `${table}\n`).join(''), stderr: '' };
+    }
+    if (joined.startsWith(`npx convex data ${MIGRATIONS_TABLE}`)) {
+      const unfinished = new Set(options.unfinishedMigrations ?? []);
+      return {
+        status: 0,
+        stdout: RETIRED_DECLARATIONS.map(({ migration }) =>
+          JSON.stringify({
+            name: migration,
+            release: '0.4.0',
+            read: 0,
+            changed: 0,
+            startedAt: 1,
+            ...(unfinished.has(migration) ? {} : { completedAt: 2 }),
+          }),
+        )
+          .map((line) => `${line}\n`)
+          .join(''),
+        stderr: '',
+      };
     }
     if (joined.startsWith('npx convex data deploymentVersions')) {
       return {

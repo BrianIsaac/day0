@@ -29,10 +29,6 @@ export default defineSchema({
     bossEmail: v.string(),
     name: v.string(),
     avatarId: v.optional(v.string()),
-    /** Legacy explicit inclusion list; new deploys store exclusions instead.
-     * The `agents-inclusion-list` migration turns each into the exclusions it
-     * implies; the field and its read come out in the next release. */
-    docSourceIds: v.optional(v.array(v.id('docSources'))),
     /** Sources the owner unticked at deploy. Everything else the owner links,
      * before or after the deploy, is inherited. */
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
@@ -61,13 +57,6 @@ export default defineSchema({
      * a stop is never sent. `digest` keeps both for one hourly message.
      * Decision requests are sent at once in either mode. */
     managerNotifications: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
-    /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
-     * optional so rows the ladder wrote still validate at push; nothing reads
-     * or writes it. The `agents-posture` migration clears it, and the
-     * declaration comes out in the release after the one that ships it. */
-    posture: v.optional(
-      v.union(v.literal('cold-start'), v.literal('supervised'), v.literal('trusted')),
-    ),
     /** The IANA zone the agent's day is measured in (N12): set at deploy from
      * the manager's browser, editable on the card, read through
      * `src/lib/zone.ts` for every day boundary and every stamp. Absent reads
@@ -435,10 +424,6 @@ export default defineSchema({
      * stays clean while approvals silently stop arriving; this is the row's
      * own signal, cleared by the next poll that succeeds. */
     lastDecisionError: v.optional(v.string()),
-    /** Transitional validator for rows written before credentialId; nothing
-     * reads it. The `surfaces-credential-ref` migration clears it, and the
-     * declaration comes out in the release after the one that ships it. */
-    credentialRef: v.optional(v.string()),
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
@@ -1010,14 +995,6 @@ export default defineSchema({
     /** Names the run that checked this body: a Daytona sandbox id, or
      * `local:<run id>` from the bundled local sandbox. */
     sandboxId: v.optional(v.string()),
-    /** What that field was called while Daytona was the only backend. Nothing
-     * writes it and nothing reads it. It stays declared because Convex checks
-     * every existing document against this validator at push time and refuses
-     * one carrying a field the validator does not name - so dropping it here
-     * would refuse the push on any deployment that has authored a skill. The
-     * `skills-sandbox-id` migration (`convex/migrations.ts`) moves those rows;
-     * the declaration comes out in the release after the one that ships it. */
-    daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
     /** A validated smoke test awaiting a sandbox; Retry verifies this body without authoring again. */
     pendingSmokeTest: v.optional(v.string()),
@@ -1028,12 +1005,6 @@ export default defineSchema({
      * Cleared by every later exit that stores or verifies a body. */
     refusedBody: v.optional(v.string()),
     refusedSmokeTest: v.optional(v.string()),
-    /** REMOVED 26 Aug (late): the posture ladder's per-skill supervised-run
-     * counter, replaced by `agents.autonomousActions`. Kept optional so rows
-     * the ladder wrote still validate at push; nothing reads or writes it.
-     * The `skills-supervised-runs` migration clears it, and the declaration
-     * comes out in the release after the one that ships it. */
-    supervisedRunsCompleted: v.optional(v.number()),
     createdAt: v.number(),
     registeredAt: v.optional(v.number()),
   })

@@ -17,7 +17,6 @@ import {
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
-import { autonomousActionsOn } from '../../src/work/autonomy';
 import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
@@ -76,8 +75,6 @@ const pendingOutput = {
 interface SeedOptions {
   /** The agent's autonomous-actions switch; absent seeds a row without the field (off). */
   autonomousActions?: boolean;
-  /** Writes the fields the posture ladder used to write, to prove rows carrying them still load. */
-  legacyLadderFields?: boolean;
   /** A connected Slack surface beside Linear. */
   withSlack?: boolean;
 }
@@ -87,12 +84,7 @@ async function seed(
   state: Doc<'workItems'>['state'] = 'executing',
   grants: string[] = ['boss:message', 'linear:read', 'linear:write'],
   options: SeedOptions = {},
-): Promise<{
-  agentId: Id<'agents'>;
-  workItemId: Id<'workItems'>;
-  runId: Id<'events'>;
-  skillId?: Id<'skills'>;
-}> {
+): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -102,7 +94,6 @@ async function seed(
       ...(options.autonomousActions !== undefined
         ? { autonomousActions: options.autonomousActions }
         : {}),
-      ...(options.legacyLadderFields ? { posture: 'supervised' as const } : {}),
       createdAt: 1,
     });
     for (const scope of grants) {
@@ -151,20 +142,6 @@ async function seed(
         createdAt: 1,
       });
     }
-    let skillId: Id<'skills'> | undefined;
-    if (options.legacyLadderFields) {
-      skillId = await ctx.db.insert('skills', {
-        agentId,
-        name: 'update-linear-ticket',
-        description: 'Comment on and close a linear ticket.',
-        body: 'Comment, then close.',
-        sourceType: 'agent-authored',
-        state: 'registered',
-        supervisedRunsCompleted: 2,
-        createdAt: 1,
-        registeredAt: 1,
-      });
-    }
     const workItemId = await ctx.db.insert('workItems', {
       agentId,
       sourceCategory: 'ticket-queue',
@@ -175,7 +152,6 @@ async function seed(
       contentRefs: [],
       state,
       plan: { summary: 'Comment then close.', steps: ['comment', 'close'] },
-      ...(skillId ? { skillId } : {}),
       observedAt: 1,
       createdAt: 1,
     });
@@ -186,7 +162,7 @@ async function seed(
       createdAt: 1,
     });
     if (state === 'executing') await ctx.db.patch(workItemId, { executionRunId: runId });
-    return { agentId, workItemId, runId, skillId };
+    return { agentId, workItemId, runId };
   });
 }
 
@@ -3569,31 +3545,9 @@ describe('the exact-action gate', (): void => {
     });
   });
 
-  it('reads rows the posture ladder wrote as supervised and leaves the agent row alone on completion', async (): Promise<void> => {
+  it('leaves the agent row alone on completion', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const { agentId, workItemId, runId, skillId } = await seed(harness, 'executing', undefined, {
-      legacyLadderFields: true,
-    });
-    if (!skillId) throw new Error('skill missing');
-    // The removed fields validate and change nothing: a trusted skill under
-    // `supervised` posture used to apply the working comment on its own.
-    await harness.mutation(internal.work.setActionsPending, {
-      workItemId,
-      runId,
-      output: { draft: 'd', notes: '', actions: [readIssue, workingComment] },
-    });
-    expect((await readItem(harness, workItemId)).actionVerdicts).toEqual([
-      { disposition: 'auto' },
-      { disposition: 'held', reason: HELD_MUTATION },
-    ]);
-    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
-    expect(agent?.posture).toBe('supervised');
-    expect(autonomousActionsOn(agent ?? {})).toBe(false);
-    expect(
-      (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.supervisedRunsCompleted,
-    ).toBe(2);
-
     const done = await seed(harness, 'executing');
     await harness.mutation(internal.work.setCompleted, {
       workItemId: done.workItemId,
@@ -3602,7 +3556,6 @@ describe('the exact-action gate', (): void => {
     });
     const completedAgent = await harness.run(async (ctx) => await ctx.db.get(done.agentId));
     expect(completedAgent?.autonomousActions).toBeUndefined();
-    expect(completedAgent?.posture).toBeUndefined();
     expect(
       (await eventTypes(harness, done.agentId)).filter((type) => type.startsWith('agent.')),
     ).toEqual([]);

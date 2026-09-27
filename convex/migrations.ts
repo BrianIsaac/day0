@@ -20,7 +20,7 @@
  */
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Doc, Id } from './_generated/dataModel';
+import type { Doc } from './_generated/dataModel';
 import {
   internalAction,
   internalMutation,
@@ -28,7 +28,6 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
-import { migrateSandboxIdPage } from './skills';
 import { backfillAccessSetByPage, restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
@@ -45,11 +44,6 @@ import { deploymentZone } from '../src/lib/zone';
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
   'agents-owner',
-  'agents-inclusion-list',
-  'agents-posture',
-  'skills-sandbox-id',
-  'skills-supervised-runs',
-  'surfaces-credential-ref',
   'credentials-sync-revoke',
   'ticket-listings',
   'agents-zone',
@@ -84,31 +78,6 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'gives an agent with no owner to the deployment’s one owner, when it has exactly one',
     thenRemoves: 'nothing: agents.userId stays optional until the customer profile keys owners',
-  },
-  'agents-inclusion-list': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'turns a legacy docSourceIds inclusion list into the exclusions it implies, so a source linked later is inherited',
-    thenRemoves: 'agents.docSourceIds and its read in docSources.agentReadsSource',
-  },
-  'agents-posture': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'clears the retired posture ladder field',
-    thenRemoves: 'agents.posture',
-  },
-  'skills-sandbox-id': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'moves daytonaSandboxId onto sandboxId',
-    thenRemoves: 'skills.daytonaSandboxId',
-  },
-  'skills-supervised-runs': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'clears the retired per-skill supervised-run counter',
-    thenRemoves: 'skills.supervisedRunsCompleted',
-  },
-  'surfaces-credential-ref': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'clears the pre-credentialId reference nothing reads',
-    thenRemoves: 'surfaces.credentialRef',
   },
   'credentials-sync-revoke': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -163,9 +132,6 @@ const EVENT_PAGE = 10;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
-
-/** The most documentation sources one owner's inclusion list is converted against. */
-const OWNER_SOURCE_LIMIT = 1_000;
 
 /** One page of one migration. */
 interface MigrationPage {
@@ -227,99 +193,6 @@ async function adoptOwnerless(ctx: MutationCtx, cursor: string | null): Promise<
   return {
     read: page.page.length,
     changed: owner === undefined ? 0 : page.page.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
-/**
- * The exclusions a legacy inclusion list implies: every source the owner has
- * that the list leaves out, with any exclusions already stored.
- */
-async function impliedExclusions(
-  ctx: QueryCtx,
-  owner: string,
-  agent: Pick<Doc<'agents'>, '_id' | 'excludedDocSourceIds'>,
-  included: readonly Id<'docSources'>[],
-): Promise<Id<'docSources'>[]> {
-  const sources = await ctx.db
-    .query('docSources')
-    .withIndex('by_user', (q) => q.eq('userId', owner))
-    .take(OWNER_SOURCE_LIMIT + 1);
-  if (sources.length > OWNER_SOURCE_LIMIT) {
-    throw new Error(`the owner of agent ${agent._id} has more than ${OWNER_SOURCE_LIMIT} sources`);
-  }
-  const excluded = new Set(agent.excludedDocSourceIds ?? []);
-  for (const source of sources) if (!included.includes(source._id)) excluded.add(source._id);
-  return [...excluded];
-}
-
-/** Convert legacy inclusion lists into exclusions, keeping what each agent reads today. */
-async function convertInclusionLists(
-  ctx: MutationCtx,
-  cursor: string | null,
-): Promise<MigrationPage> {
-  const page = await ctx.db.query('agents').paginate({ cursor, numItems: MIGRATION_PAGE });
-  let changed = 0;
-  for (const agent of page.page) {
-    const included = agent.docSourceIds;
-    if (included === undefined) continue;
-    let excluded: Id<'docSources'>[];
-    // An empty list already reads every source.
-    if (included.length === 0) excluded = agent.excludedDocSourceIds ?? [];
-    // An agent with no owner reads no source, listed or not (sources are the
-    // owner's), so clearing its list changes nothing it reads today and
-    // leaves no row carrying the field the next release removes.
-    else if (agent.userId === undefined) excluded = agent.excludedDocSourceIds ?? [];
-    else excluded = await impliedExclusions(ctx, agent.userId, agent, included);
-    await ctx.db.patch(agent._id, {
-      docSourceIds: undefined,
-      excludedDocSourceIds: excluded.length > 0 ? excluded : undefined,
-    });
-    changed += 1;
-  }
-  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
-}
-
-/** Clear the retired posture ladder from every agent. */
-async function clearPosture(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('agents').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter((agent) => agent.posture !== undefined);
-  for (const agent of carrying) await ctx.db.patch(agent._id, { posture: undefined });
-  return {
-    read: page.page.length,
-    changed: carrying.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
-/** Clear the retired supervised-run counter from every skill. */
-async function clearSupervisedRuns(
-  ctx: MutationCtx,
-  cursor: string | null,
-): Promise<MigrationPage> {
-  const page = await ctx.db.query('skills').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter((skill) => skill.supervisedRunsCompleted !== undefined);
-  for (const skill of carrying) {
-    await ctx.db.patch(skill._id, { supervisedRunsCompleted: undefined });
-  }
-  return {
-    read: page.page.length,
-    changed: carrying.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
-/** Clear the pre-`credentialId` reference from every surface. */
-async function clearCredentialRef(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter((surface) => surface.credentialRef !== undefined);
-  for (const surface of carrying) await ctx.db.patch(surface._id, { credentialRef: undefined });
-  return {
-    read: page.page.length,
-    changed: carrying.length,
     cursor: page.continueCursor,
     isDone: page.isDone,
   };
@@ -491,14 +364,6 @@ const MIGRATION_PAGES: Readonly<
   Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
 > = {
   'agents-owner': adoptOwnerless,
-  'agents-inclusion-list': convertInclusionLists,
-  'agents-posture': clearPosture,
-  'skills-sandbox-id': async (ctx, cursor) => {
-    const page = await migrateSandboxIdPage(ctx, cursor);
-    return { ...page, changed: page.moved };
-  },
-  'skills-supervised-runs': clearSupervisedRuns,
-  'surfaces-credential-ref': clearCredentialRef,
   'credentials-sync-revoke': clearSyncRevokes,
   'ticket-listings': copyListings,
   'agents-zone': stampZoneAndMode,

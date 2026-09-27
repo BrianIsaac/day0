@@ -465,6 +465,25 @@ describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void =
     expect(lines).not.toContain('convex:restart');
   });
 
+  it('refuses to push over rows a clearing migration has not finished, since the checkout no longer declares what they may carry (N10)', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      releaseStamp: '0.3.0',
+      unfinishedMigrations: ['agents-posture'],
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'error: nothing was pushed, because rows may still carry agents.posture, which this checkout no longer declares',
+    );
+    expect(printed).toContain('(agents-posture) have not finished here');
+    expect(printed).toContain('The deployment keeps its functions, its env and its rows');
+    const lines = ran(h);
+    expect(lines).toContain('npx convex data migrations --limit 1000 --format jsonl');
+    expect(lines).not.toContain('convex dev --once');
+    expect(lines).not.toContain('sync:env');
+  });
+
   it('refuses to push older functions over rows a newer release migrated', async (): Promise<void> => {
     const h = configured({ services: ['backend'], releaseStamp: '0.4.0' });
     writeFileSync(
