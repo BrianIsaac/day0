@@ -1302,6 +1302,7 @@ export function AmendCharterPanel({
                 <button
                   className={AMEND_BUTTON}
                   onClick={() =>
+                    // onAmend never rejects: a refusal is shown on the panel.
                     void onAmend({
                       kind: 'edit-adjacent-role',
                       index,
@@ -3472,6 +3473,20 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
+  const [askError, setAskError] = useState<string | null>(null);
+  // Resend and Ask share one mutation; its refusal is the card's to show.
+  const askAgain = (): void => {
+    setAskError(null);
+    onResendDecision().catch((err: unknown) =>
+      setAskError(
+        err instanceof ConvexError
+          ? String(err.data)
+          : err instanceof Error
+            ? err.message
+            : 'The request was not sent.',
+      ),
+    );
+  };
   // A row that parked while no manager channel was connected was never asked;
   // once a channel is, the card can ask (the sweep also does, a lease later).
   const askableChannel =
@@ -3522,13 +3537,14 @@ export function WorkItemCard({
             {askableChannel.displayName} yet: they parked while no manager channel was connected.
           </span>
           <button
-            onClick={() => void onResendDecision()}
+            onClick={askAgain}
             className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
           >
             Ask on {askableChannel.displayName}
           </button>
         </p>
       ) : null}
+      {askError ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{askError}</p> : null}
 
       {undelivered && item.decision ? (
         <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-warn)]">
@@ -3537,7 +3553,7 @@ export function WorkItemCard({
             {undelivered === 'request not delivered' ? '' : ` (${undelivered})`}
           </span>
           <button
-            onClick={() => void onResendDecision()}
+            onClick={askAgain}
             className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
           >
             Resend
