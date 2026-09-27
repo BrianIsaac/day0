@@ -3866,6 +3866,54 @@ export const TEST_PROFILE_KEYS: readonly string[] = [
 ];
 
 /**
+ * The release a backup's stamp names, for its label only: a stamp that
+ * cannot be parsed labels nothing and never stops the backup.
+ *
+ * @param stdout - What the stamp read printed.
+ */
+function labelRelease(stdout: string): string | undefined {
+  try {
+    return parseReleaseStamp(stdout)?.release;
+  } catch {
+    // Not a stamp: the backup is taken all the same, unlabelled.
+    return undefined;
+  }
+}
+
+/**
+ * The manifest beside a backup, or undefined when it cannot be read: it only
+ * describes the backup, whose checksum is what a restore trusts.
+ *
+ * @param path - The manifest's path.
+ */
+function readManifest(path: string): Partial<BackupManifest> | undefined {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Partial<BackupManifest>;
+  } catch {
+    // An unreadable description: the restore goes on from the checksum alone.
+    return undefined;
+  }
+}
+
+/**
+ * Why an upgrade is refused before it backs up or installs, when the backend
+ * is already running and its release stamp says so; undefined otherwise. A
+ * stopped backend is checked by the resume, before anything is pushed.
+ *
+ * @param options - The command line.
+ * @param io - The setup environment.
+ */
+function upgradeRefusedEarly(options: SetupOptions, io: SetupIo): string | undefined {
+  const target = lifecycleTarget(io, options, 'upgrade');
+  if (typeof target === 'string') return target;
+  if (!(runningServices(io, target.project) ?? []).includes('backend')) return undefined;
+  const checkout = checkoutReleases(io.cwd);
+  if ('reason' in checkout) return `this checkout's release cannot be read: ${checkout.reason}.`;
+  const verdict = releaseCheck(io, target.environment, checkout);
+  return verdict.allowed ? undefined : verdict.reason;
+}
+
+/**
  * Copy the project's data volume out of the checkout, with a checksum and a
  * manifest beside it. The backend is stopped for the copy, because a tar of a
  * live database is not a backup, and started again after.
@@ -3925,7 +3973,15 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
       io.log(`error: ${directory} resolves into this checkout; name another with --to <dir>.`);
       return 1;
     }
-    const running = (runningServices(io, project) ?? []).includes('backend');
+    const services = runningServices(io, project);
+    if (services === undefined) {
+      io.log(
+        'error: Docker did not say whether the backend is running, and a tar of a live database ' +
+          'is not a backup; nothing was written. `docker ps` says why.',
+      );
+      return 1;
+    }
+    const running = services.includes('backend');
     let release: string | undefined;
     if (running) {
       const tables = io.run('npx', [...TABLE_LISTING_ARGUMENTS], {
@@ -3937,8 +3993,7 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
           env: environment,
           timeoutMs: 120_000,
         });
-        // The stamp only labels the backup, so a stamp that cannot be read is left out.
-        release = read.status === 0 ? parseReleaseStamp(read.stdout)?.release : undefined;
+        release = read.status === 0 ? labelRelease(read.stdout) : undefined;
       }
       const stopped = io.run('docker', composeArguments(['stop', 'backend']), {
         env: environment,
@@ -4057,9 +4112,8 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
       );
       return 1;
     }
-    const manifestPath = `${file}.json`;
-    if (existsSync(manifestPath)) {
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Partial<BackupManifest>;
+    const manifest = existsSync(`${file}.json`) ? readManifest(`${file}.json`) : undefined;
+    if (manifest !== undefined) {
       io.log(
         `Backup of ${manifest.project ?? 'an unnamed project'} taken ${manifest.createdAt ?? 'at an unrecorded time'}` +
           `${manifest.release ? `, rows at ${manifest.release}` : ''}` +
@@ -4161,6 +4215,11 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
  *   What the resume returns, or the backup's or the install's failure.
  */
 export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<number> {
+  const early = upgradeRefusedEarly(options, io);
+  if (early !== undefined) {
+    io.log(`error: nothing was backed up, installed or pushed, because ${early}`);
+    return 1;
+  }
   const backedUp = await runBackup({ ...options, command: 'backup' }, io);
   if (backedUp !== 0) {
     io.log('The upgrade stops here: nothing is installed or pushed without a backup.');

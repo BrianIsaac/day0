@@ -661,6 +661,51 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 
+  it('refuses a backup when Docker cannot say whether the backend runs, rather than tar a live database', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      environment: { HOME: homeDirectory },
+      failing: [{ match: 'com.docker.compose.service', status: 1, stderr: 'daemon busy' }],
+    });
+    expect(await runCommand(verb('backup'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('a tar of a live database is not a backup');
+    expect(ran(h)).not.toContain('tar czf');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses an upgrade that would skip a release before it backs up or installs anything', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      releaseStamp: '0.1.0',
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('nothing was backed up, installed or pushed');
+    expect(ran(h)).not.toContain('tar czf');
+    expect(ran(h)).not.toContain('pnpm install');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('takes a backup whose stamp cannot be parsed, unlabelled, and restores past a manifest it cannot read', async (): Promise<void> => {
+    const homeDirectory = home();
+    const taken = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentTables: ['deploymentVersions'],
+    });
+    expect(await runCommand(verb('backup'), taken.io)).toBe(0);
+    const directory = join(homeDirectory, 'day0-backups', PROJECT);
+    const file = join(directory, readdirSync(directory).find((name) => name.endsWith('.tar.gz'))!);
+    expect(JSON.parse(readFileSync(`${file}.json`, 'utf8')).release).toBeUndefined();
+
+    writeFileSync(`${file}.json`, '{ not json', 'utf8');
+    const h = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), h.io)).toBe(0);
+    expect(ran(h)).toContain('tar xzf');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
   it('reads backup, restore with its file, upgrade and --to from the command line', (): void => {
     expect(parseSetupArguments(['backup', '--to', '/srv/backups'])).toMatchObject({
       command: 'backup',
