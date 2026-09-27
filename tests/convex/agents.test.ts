@@ -718,7 +718,7 @@ describe('the agent’s zone and mode (N12)', (): void => {
       owner.mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
     ).resolves.toEqual({ zone: 'Asia/Singapore', changed: true });
     await expect(
-      owner.mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
+      owner.mutation(api.agents.setZone, { agentId, zone: 'asia/singapore' }),
     ).resolves.toEqual({ zone: 'Asia/Singapore', changed: false });
     const changes = (
       await harness.run(async (ctx) => await ctx.db.query('events').collect())

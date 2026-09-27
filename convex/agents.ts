@@ -25,7 +25,7 @@ import {
   NOTIFICATIONS_CHANGE_REASON,
   type ManagerNotificationMode,
 } from '../src/work/manager-notes';
-import { agentZone, deploymentZone, isTimeZone } from '../src/lib/zone';
+import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
 
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
 export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
@@ -451,7 +451,7 @@ export const deploy = mutation({
         throw new Error('Documentation source not found or owned by another user.');
       }
     }
-    const zone = args.zone !== undefined && isTimeZone(args.zone) ? args.zone : deploymentZone();
+    const zone = canonicalZone(args.zone) ?? deploymentZone();
     const agentId = await ctx.db.insert('agents', {
       bossEmail: args.bossEmail,
       name: args.name ?? 'Day0',
@@ -731,17 +731,18 @@ export const setZone = mutation({
   args: { agentId: v.id('agents'), zone: v.string() },
   handler: async (ctx, args): Promise<{ zone: string; changed: boolean }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    if (!isTimeZone(args.zone)) throw new ConvexError(`${args.zone} is not a time zone.`);
+    const zone = canonicalZone(args.zone);
+    if (zone === undefined) throw new ConvexError(`${args.zone} is not a time zone.`);
     const from = agentZone(agent);
-    if (agent.zone === args.zone) return { zone: args.zone, changed: false };
-    await ctx.db.patch(args.agentId, { zone: args.zone });
+    if (agent.zone === zone) return { zone, changed: false };
+    await ctx.db.patch(args.agentId, { zone });
     await ctx.db.insert('events', {
       agentId: args.agentId,
       type: 'agent.zone-changed',
-      payload: { from, to: args.zone },
+      payload: { from, to: zone },
       createdAt: Date.now(),
     });
-    return { zone: args.zone, changed: true };
+    return { zone, changed: true };
   },
 });
 

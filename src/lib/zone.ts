@@ -57,6 +57,16 @@ export function isTimeZone(value: unknown): boolean {
 }
 
 /**
+ * A zone's canonical name, as the runtime spells it (`asia/singapore` is
+ * `Asia/Singapore`), or undefined for a value that names no zone.
+ */
+export function canonicalZone(value: unknown): string | undefined {
+  if (!isTimeZone(value)) return undefined;
+  if (value === 'UTC') return 'UTC';
+  return partsFormatter(value as string).resolvedOptions().timeZone;
+}
+
+/**
  * The zone the process runs in: the deployment's own on the backend (UTC
  * unless `TZ` is set), the viewer's in the browser.
  */

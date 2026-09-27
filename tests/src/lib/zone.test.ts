@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addDays,
   agentZone,
+  canonicalZone,
   dayKey,
   dayStart,
   deploymentZone,
@@ -23,6 +24,12 @@ describe('the zone an agent’s day is measured in', (): void => {
     expect(isTimeZone('Mars/Olympus')).toBe(false);
     expect(isTimeZone('')).toBe(false);
     expect(isTimeZone(8)).toBe(false);
+  });
+
+  it('spells a zone as the runtime does, and names none for a stranger', (): void => {
+    expect(canonicalZone('asia/singapore')).toBe('Asia/Singapore');
+    expect(canonicalZone('UTC')).toBe('UTC');
+    expect(canonicalZone('Mars/Olympus')).toBeUndefined();
   });
 
   it('is the agent’s own zone when it names a valid one, and the deployment’s otherwise', (): void => {
