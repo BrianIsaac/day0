@@ -1,12 +1,13 @@
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import { AGENT_KEYED_TABLES } from '../../convex/reset';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**
  * Seed one owner with an agent and linked documentation.
@@ -263,5 +264,226 @@ describe('credential retention on reset', (): void => {
     expect(await harness.run(async (ctx) => await ctx.db.get(strangerId))).toMatchObject({
       ciphertext: 'sealed',
     });
+  });
+});
+
+describe('retire in real mode', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+  });
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /**
+   * Load the Convex modules the real-mode stub resolved and seed one owner's two employees.
+   *
+   * The first employee's surface binds a credential only it uses and a
+   * credential its sibling binds too; its Slack provisioning binds a client
+   * secret. A documentation source binds a fourth.
+   *
+   * Returns:
+   *   The harness, both employees and the credential ids.
+   */
+  async function seedRealOwner(): Promise<{
+    harness: TestConvex<typeof schema>;
+    retiring: Id<'agents'>;
+    sibling: Id<'agents'>;
+    only: Id<'credentials'>;
+    shared: Id<'credentials'>;
+    secret: Id<'credentials'>;
+    documentation: Id<'credentials'>;
+  }> {
+    const [{ default: realSchema }, { allConvexModules: realModules }] = await Promise.all([
+      import('../../convex/schema'),
+      import('./all-modules'),
+    ]);
+    const harness = convexTest(realSchema, realModules());
+    const seeded = await harness.run(async (ctx) => {
+      const credential = async (label: string): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'entered',
+          createdAt: 1,
+        });
+      const only = await credential('linear service token');
+      const shared = await credential('slack bot token');
+      const secret = await credential('slack client secret');
+      const documentation = await credential('notion token');
+      await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        credentialId: documentation,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employee = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          userId: 'owner',
+          state: 'deployed',
+          createdAt: 1,
+        });
+      const retiring = await employee('retiring');
+      const sibling = await employee('sibling');
+      const surface = {
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'mcp',
+        verdict: 'connected' as const,
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      };
+      await ctx.db.insert('surfaces', {
+        ...surface,
+        agentId: retiring,
+        slug: 'linear',
+        credentialId: only,
+      });
+      await ctx.db.insert('surfaces', {
+        ...surface,
+        agentId: retiring,
+        slug: 'slack',
+        class: 'chat',
+        credentialId: shared,
+        provisioning: {
+          appId: 'A0DAY0',
+          appName: 'Day0',
+          clientId: 'client',
+          clientSecretCredentialId: secret,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'https://day0.local/api/slack/oauth',
+          scopes: ['chat:write'],
+          createdAt: 1,
+        },
+      });
+      await ctx.db.insert('surfaces', {
+        ...surface,
+        agentId: sibling,
+        slug: 'slack',
+        class: 'chat',
+        credentialId: shared,
+      });
+      await ctx.db.insert('events', {
+        agentId: retiring,
+        type: 'work.discovered',
+        payload: {},
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: retiring,
+        type: 'work.evaluated',
+        payload: {},
+        createdAt: 2,
+      });
+      return { retiring, sibling, only, shared, secret, documentation };
+    });
+    return { harness, ...seeded };
+  }
+
+  it('deletes the working rows and leaves one tombstone keyed to the owner', async (): Promise<void> => {
+    const { harness, retiring } = await seedRealOwner();
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.reset.deleteMyData, { agentId: retiring });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', retiring))
+          .collect(),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'agent.retired',
+      payload: {
+        userId: 'owner',
+        agentId: retiring,
+        retiredAt: expect.any(Number),
+        rowCounts: { events: 2, surfaces: 2 },
+      },
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).toBeNull();
+    const surfaces = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (q) => q.eq('agentId', retiring))
+          .collect(),
+    );
+    expect(surfaces).toEqual([]);
+  });
+
+  it('revokes only the credentials no remaining employee or documentation binds', async (): Promise<void> => {
+    const { harness, retiring, sibling, only, shared, secret, documentation } =
+      await seedRealOwner();
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.reset.deleteMyData, { agentId: retiring });
+    const row = async (id: Id<'credentials'>) =>
+      await harness.run(async (ctx) => await ctx.db.get(id));
+    for (const id of [only, secret]) {
+      expect(await row(id)).toMatchObject({ revokedAt: expect.any(Number) });
+      expect(await row(id)).not.toHaveProperty('ciphertext');
+    }
+    for (const id of [shared, documentation]) {
+      expect(await row(id)).toMatchObject({ ciphertext: 'sealed' });
+      expect(await row(id)).not.toHaveProperty('revokedAt');
+    }
+    expect(await harness.run(async (ctx) => await ctx.db.get(sibling))).not.toBeNull();
+    const [tombstone] = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) => q.eq('agentId', retiring).eq('type', 'agent.retired'))
+          .collect(),
+    );
+    expect(tombstone?.payload).toMatchObject({ revokedCredentials: 2, keptCredentials: 1 });
+  });
+
+  it('retires every employee when none is named, revoking what only they bound', async (): Promise<void> => {
+    const { harness, retiring, sibling, only, shared, secret, documentation } =
+      await seedRealOwner();
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {}),
+    ).resolves.toEqual({ deleted: 2, unlinkedSources: 0 });
+    const tombstones = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter((event) => event.type === 'agent.retired'),
+    );
+    expect(tombstones.map((event) => event.agentId).sort()).toEqual([retiring, sibling].sort());
+    const row = async (id: Id<'credentials'>) =>
+      await harness.run(async (ctx) => await ctx.db.get(id));
+    for (const id of [only, shared, secret])
+      expect(await row(id)).toMatchObject({ revokedAt: expect.any(Number) });
+    expect(await row(documentation)).not.toHaveProperty('revokedAt');
+  });
+
+  it('refuses to retire an employee the caller does not own', async (): Promise<void> => {
+    const { harness, retiring } = await seedRealOwner();
+    await expect(
+      harness
+        .withIdentity({ subject: 'stranger' })
+        .mutation(api.reset.deleteMyData, { agentId: retiring }),
+    ).rejects.toThrow();
+    expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
+  });
+});
+
+describe('reset in mock mode', (): void => {
+  it('wipes the employee and writes no tombstone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness);
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
+    expect(await harness.run(async (ctx) => await ctx.db.query('events').collect())).toEqual([]);
   });
 });
