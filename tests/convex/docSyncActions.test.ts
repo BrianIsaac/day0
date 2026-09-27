@@ -21,7 +21,7 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
-import { decrypt as decryptSpy, encrypt } from '../../src/lib/credential-crypto';
+import { encrypt, openOwnedCredential as openSpy } from '../../src/lib/credential-crypto';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
@@ -39,7 +39,7 @@ afterAll(async (): Promise<void> => {
 
 vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/lib/credential-crypto')>();
-  return { ...original, decrypt: vi.fn(original.decrypt) };
+  return { ...original, openOwnedCredential: vi.fn(original.openOwnedCredential) };
 });
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -357,15 +357,15 @@ describe('documentation sync batching', (): void => {
       kind: 'folder',
       locator: 'few',
     });
-    vi.mocked(decryptSpy).mockClear();
+    vi.mocked(openSpy).mockClear();
     await expect(harness.action(internal.docSyncActions.syncSource, { sourceId })).resolves.toMatchObject({
       ok: true,
       pages: 3,
       complete: true,
     });
-    // One AES call per stored row for the whole batch: the list is resolved
+    // One open per stored row for the whole batch: the list is resolved
     // once and handed to every page.
-    expect(vi.mocked(decryptSpy)).toHaveBeenCalledTimes(stored.length);
+    expect(vi.mocked(openSpy)).toHaveBeenCalledTimes(stored.length);
     const pages = await harness.query(internal.docSources.pagesForSourceInternal, { sourceId });
     expect(pages).toHaveLength(3);
     for (const value of stored) expect(JSON.stringify(pages)).not.toContain(value);
