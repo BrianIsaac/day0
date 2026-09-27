@@ -4,7 +4,7 @@ Day0 is a small project with a large README. Most of what a contributor needs is
 
 ## Set up a working copy
 
-You need Node 22 or newer, pnpm 9 or newer, and Docker with Compose v2 for anything that touches the backend, the model service or the sandbox.
+You need Node 22 or newer, pnpm 9 or newer, bash 4 or newer (macOS ships 3.2: `brew install bash`), and Docker with the Compose v2 plugin, its daemon running and reachable by your user, for anything that touches the backend, the model service or the sandbox. `./setup.sh --dry-run` checks all of them, the daemon included, installs nothing and writes nothing.
 
 ```bash
 git clone https://github.com/BrianIsaac/day0.git
@@ -14,9 +14,45 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
+The clone can sit in a directory of any name. The setup names the Compose project after the directory, lower-cased and with anything Compose refuses turned into `-`, and a clone called `day0` gets a short suffix from its path, because `day0` is the name the maintainers' own stacks hold; the name is written to `.env.local`, so every later run agrees. After you move a checkout, `./setup.sh --adopt` re-adopts its installation, containers recreated and volumes kept.
+
 `./setup.sh --route featherless` and `./setup.sh --route local` are the two local ways to run it, Local, cloud model and Local, local model, both real mode. `pnpm setup:local --route local|key` is the same setup in mock mode, the seeded office the evaluation harness and the hosted demo run on, which is what to set up for the harness and the mock-office tests. What each does, step by step, is in the README under [Local dev](README.md#local-dev). `pnpm check:setup` reports which of them the machine you are on is set up for.
 
 The whole loop needs a model. It does not have to be a hosted one: `OPENAI_BASE_URL` points the model layer at any OpenAI-compatible endpoint, including the bundled local one, and `pnpm probe:model` tells you whether an endpoint can drive the loop before you wire it in.
+
+## Commands
+
+Every `pnpm` script, in the order a contributor meets them. The ones marked real mode act on the systems your documentation names; the rest touch only this machine.
+
+| Command | What it does |
+|---|---|
+| `./setup.sh` | Real mode, one command: checks the prerequisites and runs `pnpm setup:local --mode real`; `stop`, `resume`, `clear` and `--adopt` manage the installation |
+| `pnpm setup:local` | The same setup in mock mode, the seeded office the evaluation harness and the hosted demo run on |
+| `pnpm dev` | The app under `next dev`, with the unlock URL printed first |
+| `pnpm start` | `next start` on 3000 after a `pnpm build`; the hosted build's server, not the local way to run it |
+| `pnpm dev:no-auth-key` | Writes the no-auth keys, the credential key and the Notion component's token into `.env.local` once |
+| `pnpm check:setup` | Reports each setup, fails only on what is broken; `--report` prints the support bundle as JSON |
+| `pnpm sync:env` | Pushes the deployment's env from `.env.local` (needs bash 4) |
+| `pnpm convex:up`, `convex:down`, `convex:restart` | The self-hosted backend and any `--profile` components; `convex:down` keeps the data volume |
+| `pnpm convex:admin-key` | Prints a fresh admin key from the backend container |
+| `pnpm convex:dev` | The Convex CLI's own dev loop, for the Convex cloud route |
+| `pnpm model:up`, `model:down`, `model:pull <id>` | The bundled model service, on the GPU where there is one, and its weights |
+| `pnpm sandbox:up`, `sandbox:down` | The networkless skill sandbox |
+| `pnpm redactor:up`, `redactor:down` | The span model that redacts documentation and the ledger |
+| `pnpm redaction:record` | Records the span model's answers over the labelled corpus for the tests; it needs a redactor address this machine reaches, and says how to find one |
+| `pnpm probe:model` | Whether an OpenAI-compatible endpoint can drive the loop |
+| `pnpm probe:mcp <docSourceId>` | Real mode: lists a linked MCP documentation source's tools, from the backend |
+| `pnpm probe:docs-source <docSourceId>` | Real mode: syncs one documentation source and prints its page and redaction counts |
+| `pnpm probe:surface <surfaceId>` | Real mode: probes one surface card and prints the verdict |
+| `pnpm demo:bed <subcommand>` | The demo laptop's kit: snapshot, restore, up, preflight, offline-rung, down |
+| `pnpm bed:company <subcommand>` | The synthetic company bed: its pages, its check and its seed |
+| `pnpm bed:record-spans` | Records the span model's answers over the company bed's pages |
+| `pnpm rehearse:real` | The maintainers' internal rehearsal of the real path; not a way to run Day0 |
+| `pnpm eval:semifinal`, `eval:revocation`, `eval:gate` | The evaluation, below |
+| `pnpm metrics:recompute <export>` | Recomputes an owner's supervision figures from a snapshot export |
+| `pnpm lint`, `typecheck`, `test`, `build` | The gate, below |
+
+`PLAYWRIGHT_ALLOWED_ORIGINS` in `.env.local` is the list of origins the browser component (`--profile browser`) may open, separated by `;`; the default is the demo tile and the app on this host.
 
 ## The gate
 

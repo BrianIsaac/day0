@@ -4,6 +4,15 @@
  * a time.
  *
  *   pnpm check:setup
+ *   pnpm --silent check:setup --report > day0-setup-report.json
+ *
+ * `--report` prints one JSON document instead, the support bundle remote
+ * support works from (A12): tool versions, the pinned images and whether each
+ * runs, the digests of the redactor's locks and model manifest, every outbound
+ * host the configuration names, and each section's status. No key and no
+ * line a section explains itself with goes into it; the model, Daytona and
+ * Clerk addresses appear as hostnames only, since an egress list is made of
+ * them.
  *
  * It answers the question a reader actually has after following the README -
  * "did I set this up correctly?" - and the honest answer is not one boolean.
@@ -13,9 +22,12 @@
  * each is reported separately and only the states that are *wrong* fail the
  * command.
  *
- * Two things this does not do. It never calls a provider: no key here is spent
- * establishing that it exists. And it cannot see the ElevenLabs dashboard, so
- * the dynamic variables an agent must declare are printed to check by eye
+ * Two things this does not do. It never calls a provider with a key: no key
+ * here is spent establishing that it exists. The one address it dials is the
+ * model's, from inside the backend container and with no key, because an
+ * address this machine reaches may still be one the container cannot, and
+ * only the container can say so. And it cannot see the ElevenLabs dashboard,
+ * so the dynamic variables an agent must declare are printed to check by eye
  * rather than guessed at.
  *
  * It does ask Docker one question, because one of the five is not a variable.
@@ -32,16 +44,27 @@
  * configured while the running route answered 503 to every delivery.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
+import {
+  containerDialArguments,
+  readContainerDial,
+  unreachableFix,
+  type ModelDial,
+} from './model-reach';
 import { isLoopback, setupRoute } from './setup-route';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
 
-const ENV_FILE = process.argv[2] ?? '.env.local';
+/** The env file named on the command line, the first argument that is not a flag. */
+const ENV_FILE =
+  process.argv.slice(2).find((argument: string): boolean => !argument.startsWith('--')) ??
+  '.env.local';
 
 /** The compose service that verifies authored skills without an account. */
 const SANDBOX_SERVICE = 'sandbox';
@@ -98,6 +121,8 @@ const WATCHED = [
   'CONVEX_OPENAI_BASE_URL',
   'OPENAI_MODEL',
   'DAYTONA_API_KEY',
+  'DAYTONA_API_URL',
+  'EXA_API_KEY',
   'SKILL_SANDBOX_SOCKET',
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_AGENT_ID',
@@ -111,9 +136,11 @@ const WATCHED = [
   'COMPOSE_PROJECT_NAME',
 ] as const;
 
-type Status = 'ok' | 'warn' | 'gap';
+/** How a section reads: complete, worth saying out loud, or half-done. */
+export type Status = 'ok' | 'warn' | 'gap';
 
-interface Section {
+/** One decision the report makes, with the lines that explain it. */
+export interface Section {
   title: string;
   status: Status;
   lines: string[];
@@ -167,8 +194,17 @@ export function modeAndRouteLine(values: Values): string {
  * Returns:
  *   The process exit status: 1 when the file is missing or a section is a gap, else 0.
  */
-export function main(envFile: string = ENV_FILE): number {
+export function main(envFile: string = ENV_FILE, options: { report?: boolean } = {}): number {
   if (!existsSync(envFile)) {
+    if (options.report) {
+      console.log(
+        JSON.stringify(
+          { kind: 'day0-setup-report', version: 1, error: `${envFile} not found` },
+          null,
+          2,
+        ),
+      );
+    }
     console.error(`error: ${envFile} not found. Copy .env.example to ${envFile} first.`);
     process.exitCode = 1;
     return 1;
@@ -180,17 +216,46 @@ export function main(envFile: string = ENV_FILE): number {
   // Asked once and shared: every section that cares about a container reads the
   // same answer, and asking Docker is the slowest thing here.
   const services = composeRunningServices(projectName);
+  const backendUrl = v.CONVEX_OPENAI_BASE_URL || v.OPENAI_BASE_URL;
+  const modelDial =
+    selfHosted && backendUrl && !isLoopback(backendUrl) && services?.includes('backend')
+      ? dialFromBackend(projectName, backendUrl)
+      : undefined;
 
   const sections: Section[] = [
     backendSection(v),
     authSection(v),
     surfacesSection(v, services),
     componentsSection(v, projectName, services),
-    modelSection(v, selfHosted),
+    modelSection(v, selfHosted, modelDial),
     sandboxSection(v, projectName),
     voiceSection(v),
     finalisationSection(v),
   ];
+
+  if (options.report) {
+    console.log(
+      JSON.stringify(
+        setupReport({
+          values: v,
+          sections,
+          versions: toolVersions(),
+          images: composeImages(readFileSync('docker-compose.yml', 'utf8')).map((row) => ({
+            ...row,
+            running: services?.includes(row.service) ?? false,
+          })),
+          digests: fileDigests(REPORTED_FILES),
+          commit: checkoutCommit(),
+          generatedAt: new Date().toISOString(),
+        }),
+        null,
+        2,
+      ),
+    );
+    const failed = sections.some((section) => section.status === 'gap');
+    process.exitCode = failed ? 1 : 0;
+    return failed ? 1 : 0;
+  }
 
   console.log(`Day0 local setup, read from ${envFile}`);
   console.log('(process environment wins wherever it declares a variable, empty included)');
@@ -525,12 +590,15 @@ export function browserSetupConfiguration(configured: string | undefined): {
 /**
  * Report which optional components are running and which are merely configured.
  *
- * None of this can fail the command. An enterprise whose systems all have APIs
- * never starts the browser component, and an enterprise that keeps its
- * documentation in a folder never starts the Notion one; both are complete
- * installations. What is worth saying out loud is a half-state - a component
- * running that day0 was never told about, or one day0 was told about that is
- * not there - because that is the shape that looks finished and is not.
+ * One thing here fails the command: the redactor in real mode, missing or not
+ * running, because every documentation sync then refuses to persist and the
+ * installation reads nothing while it looks finished. The rest cannot fail it.
+ * An enterprise whose systems all have APIs never starts the browser
+ * component, and an enterprise that keeps its documentation in a folder never
+ * starts the Notion one; both are complete installations. What is worth
+ * saying out loud is a half-state - a component running that day0 was never
+ * told about, or one day0 was told about that is not there - because that is
+ * the shape that looks finished and is not.
  *
  * Args:
  *   values: Resolved deployment environment.
@@ -540,7 +608,7 @@ export function browserSetupConfiguration(configured: string | undefined): {
  * Returns:
  *   One informational section.
  */
-function componentsSection(
+export function componentsSection(
   values: Values,
   projectName: string,
   services: string[] | undefined,
@@ -599,7 +667,7 @@ function componentsSection(
   const redactorConfigured = Boolean(values.DAY0_REDACTOR_URL);
   const realMode = values.DAY0_SURFACE_MODE === 'real';
   if (redactorConfigured && !redactorRunning) {
-    status = 'warn';
+    status = realMode ? 'gap' : 'warn';
     lines.push(
       `DAY0_REDACTOR_URL names ${values.DAY0_REDACTOR_URL} and nothing is running there.`,
       'Every documentation sync will refuse to persist and every provider outcome will be',
@@ -613,7 +681,7 @@ function componentsSection(
       'or stop the component.',
     );
   } else if (!redactorConfigured && realMode) {
-    status = 'warn';
+    status = 'gap';
     lines.push(
       'No redaction component. Documentation sync refuses to persist a page without one, and',
       'provider outcomes record that only the exact-value and structural layers ran.',
@@ -630,7 +698,7 @@ function componentsSection(
     for (const row of kinds) lines.push(`  ${docSourceDependency(row)}`);
     const needsNotion = kinds.some((row): boolean => row.component === 'docs-notion-mcp');
     if (needsNotion && !services.includes('docs-notion-mcp')) {
-      status = 'warn';
+      if (status !== 'gap') status = 'warn';
       lines.push(
         'A Notion source is linked and docs-notion-mcp is not running, so its next sync will',
         'fail. Start it with `pnpm convex:up --profile docs-notion`.',
@@ -771,13 +839,28 @@ function authSection(v: Values): Section {
 }
 
 /**
+ * Report the model layer: which address each side calls, and whether the
+ * backend container can reach its own.
+ *
  * The model layer takes any OpenAI-compatible endpoint, so "no key" is a
  * complete setup rather than a missing one - but only if a base URL says so.
  * The self-hosted trap gets its own check: charter synthesis runs as a Convex
  * Node action, inside the backend container, where a loopback address is the
- * container itself and never the model server on your desk.
+ * container itself and never the model server on your desk, and where an
+ * address on another Docker bridge answers the host and not the container.
+ * The second is only visible by dialling from inside the container, so the
+ * caller does that and hands the answer in.
+ *
+ * Args:
+ *   v: Resolved values.
+ *   selfHosted: Whether the backend is the self-hosted container.
+ *   dial: What dialling the backend's address from inside it found; undefined
+ *     when the backend was not running, or Docker could not be asked.
+ *
+ * Returns:
+ *   The section.
  */
-function modelSection(v: Values, selfHosted: boolean): Section {
+export function modelSection(v: Values, selfHosted: boolean, dial?: ModelDial): Section {
   const backendUrl = v.CONVEX_OPENAI_BASE_URL || v.OPENAI_BASE_URL;
   const lines: string[] = [];
   let status: Status = 'ok';
@@ -813,10 +896,34 @@ function modelSection(v: Values, selfHosted: boolean): Section {
       'so it will fail while the browser-side chat works - the confusing half.',
       'Set CONVEX_OPENAI_BASE_URL to an address that resolves inside the container:',
       'http://model:11434/v1 for the bundled model service (`pnpm model:up`), or',
-      'http://host.docker.internal:11434/v1 for a server on this host.',
+      `${onDockerHost(backendUrl)} for a server on this host.`,
     );
-  } else if (selfHosted && v.CONVEX_OPENAI_BASE_URL) {
-    lines.push(`The backend container calls ${v.CONVEX_OPENAI_BASE_URL} for the same endpoint.`);
+  } else if (selfHosted && backendUrl) {
+    if (v.CONVEX_OPENAI_BASE_URL) {
+      lines.push(`The backend container calls ${v.CONVEX_OPENAI_BASE_URL} for the same endpoint.`);
+    }
+    if (dial === undefined) {
+      status = 'warn';
+      lines.push(
+        `${backendUrl} was not dialled from inside the backend container: it is not running, or Docker could not be asked.`,
+        'Run this again once it is up: an address this machine reaches may still be one the container cannot.',
+      );
+    } else if (dial.reach === 'reached') {
+      lines.push(`The backend container reached ${backendUrl} (${dial.detail}).`);
+    } else if (dial.reach === 'unreachable') {
+      status = 'gap';
+      lines.push(
+        `The backend container could not reach ${backendUrl}: ${dial.detail}.`,
+        'The 1:1 runs from this machine and the charter, synthesised inside the container, never arrives.',
+        ...unreachableFix(backendUrl, v.COMPOSE_PROJECT_NAME || 'day0'),
+        'Then re-run `pnpm sync:env` and `pnpm convex:restart`.',
+      );
+    } else {
+      status = 'warn';
+      lines.push(
+        `${backendUrl} could not be dialled from inside the backend container: ${dial.detail}.`,
+      );
+    }
   } else if (selfHosted && !backendUrl) {
     lines.push(
       'The backend container calls api.openai.com as well - one address that means',
@@ -825,6 +932,40 @@ function modelSection(v: Values, selfHosted: boolean): Section {
   }
 
   return { title: titleFor(status, 'Model'), status, lines };
+}
+
+/** The same port and path on the host, as a container reaches it. */
+function onDockerHost(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const port = parsed.port === '' ? '' : `:${parsed.port}`;
+    return `${parsed.protocol}//host.docker.internal${port}${parsed.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return 'http://host.docker.internal:<port>/v1';
+  }
+}
+
+/**
+ * Dial the backend's model address from inside the running backend container.
+ *
+ * Args:
+ *   projectName: Explicit Compose project name.
+ *   baseUrl: The address the backend calls.
+ *
+ * Returns:
+ *   What the dial found.
+ */
+function dialFromBackend(projectName: string, baseUrl: string): ModelDial {
+  const probe = spawnSync(
+    'docker',
+    ['compose', '-p', projectName, '--env-file', ENV_FILE, ...containerDialArguments(baseUrl)],
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  return readContainerDial({
+    status: probe.status,
+    stdout: probe.stdout ?? '',
+    stderr: probe.stderr ?? '',
+  });
 }
 
 /** What Docker says about the bundled sandbox service, or that it could not be asked. */
@@ -1014,6 +1155,219 @@ function marker(status: Status): string {
   return status === 'ok' ? 'ok  ' : status === 'warn' ? 'note' : 'GAP ';
 }
 
+/** The files whose digests say which redactor wheels and model a machine runs. */
+const REPORTED_FILES = [
+  'redactor/requirements.txt',
+  'redactor/requirements-cuda.txt',
+  'redactor/models.sha256',
+  'docker-compose.yml',
+] as const;
+
+/** One outbound host this installation may dial, and when. */
+export interface EgressHost {
+  host: string;
+  purpose: string;
+}
+
+/** A compose service and the image it runs, as the compose file pins it. */
+export interface ComposeImage {
+  service: string;
+  image: string;
+}
+
+/** The support bundle A12 describes: versions, digests, egress and health, no content. */
+export interface SetupReport {
+  kind: 'day0-setup-report';
+  version: 1;
+  generatedAt: string;
+  commit?: string;
+  mode: string;
+  route: string;
+  versions: Record<string, string | undefined>;
+  images: Array<ComposeImage & { running: boolean }>;
+  digests: Record<string, string>;
+  egress: EgressHost[];
+  sections: Array<{ title: string; status: Status }>;
+}
+
+/** The host of an address that leaves this machine, or undefined for one that stays. */
+function outboundHost(url: string | undefined): string | undefined {
+  if (!url?.trim() || isLoopback(url)) return undefined;
+  try {
+    const host = new URL(url).hostname;
+    // A bare name is a compose service, and host.docker.internal is this host.
+    if (!host.includes('.') || host === 'host.docker.internal') return undefined;
+    return host;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Every outbound host this configuration names, and when each is dialled.
+ *
+ * The model addresses are read from the file; the rest are the fixed hosts the
+ * code dials in real mode, the ones a component fetches on its first start,
+ * and the registries the images and models are pulled from. The systems an
+ * approved card reaches are the ones the documentation names, so they are
+ * said once, not listed.
+ *
+ * Args:
+ *   values: Resolved values.
+ *
+ * Returns:
+ *   One row per host, first seen first.
+ */
+export function egressHosts(values: Readonly<Record<string, string>>): EgressHost[] {
+  const rows: EgressHost[] = [];
+  const add = (host: string | undefined, purpose: string): void => {
+    if (host && !rows.some((row) => row.host === host)) rows.push({ host, purpose });
+  };
+  const appModel = values.OPENAI_BASE_URL?.trim()
+    ? values.OPENAI_BASE_URL
+    : values.OPENAI_API_KEY
+      ? 'https://api.openai.com/v1'
+      : undefined;
+  add(outboundHost(appModel), 'the model the app calls for the 1:1');
+  add(
+    outboundHost(values.CONVEX_OPENAI_BASE_URL?.trim() ? values.CONVEX_OPENAI_BASE_URL : appModel),
+    'the model the backend calls for the charter, plans and skills',
+  );
+  if (values.DAY0_SURFACE_MODE === 'real') {
+    add('registry.modelcontextprotocol.io', "orientation, looking up a system's MCP server");
+    add('mcp.linear.app', 'Linear intake and writes, once a Linear card is approved');
+    add('slack.com', 'Slack intake and posts, once a Slack card is approved');
+    add('github.com', 'a git documentation source on GitHub, when one is linked');
+    add('gitlab.com', 'a git documentation source on GitLab, when one is linked');
+    add('api.notion.com', 'the Notion documentation component, when a Notion source is linked');
+    add('huggingface.co', "the redactor's model snapshot, on its first start");
+    add('pypi.org', "the redactor's wheels, on its first start");
+    add('files.pythonhosted.org', "the redactor's wheels, on its first start");
+    add('download.pytorch.org', "the redactor's CPU build of torch, on its first start");
+    add('registry.npmjs.org', "the Notion component's pinned package, on its first start");
+  }
+  if (
+    outboundHost(values.OPENAI_BASE_URL) === undefined &&
+    values.CONVEX_OPENAI_BASE_URL?.includes('//model:')
+  ) {
+    add('registry.ollama.ai', 'model pulls for the bundled model service');
+  }
+  if (values.DAYTONA_API_KEY) {
+    add(
+      outboundHost(values.DAYTONA_API_URL || 'https://app.daytona.io/api'),
+      'Daytona, verifying authored skills',
+    );
+  }
+  if (values.EXA_API_KEY) add('api.exa.ai', 'Exa research during orientation');
+  if (values.ELEVENLABS_API_KEY) add('api.elevenlabs.io', 'the voice 1:1');
+  add(outboundHost(values.CLERK_JWT_ISSUER_DOMAIN), 'Clerk, signing users in');
+  add('registry-1.docker.io', 'image pulls at setup (ollama, python, node)');
+  add('ghcr.io', 'image pulls at setup (the Convex backend and dashboard)');
+  add('mcr.microsoft.com', 'image pulls at setup (the browser component)');
+  return rows;
+}
+
+/**
+ * The image each compose service runs, as the compose file pins it.
+ *
+ * Args:
+ *   compose: The compose file's text.
+ *
+ * Returns:
+ *   One row per service that names an image.
+ */
+export function composeImages(compose: string): ComposeImage[] {
+  const parsed: unknown = parseYaml(compose);
+  const services =
+    parsed && typeof parsed === 'object' ? (parsed as { services?: unknown }).services : undefined;
+  if (!services || typeof services !== 'object') return [];
+  return Object.entries(services as Record<string, unknown>).flatMap(
+    ([service, definition]): ComposeImage[] => {
+      const image =
+        definition && typeof definition === 'object'
+          ? (definition as { image?: unknown }).image
+          : undefined;
+      return typeof image === 'string' ? [{ service, image }] : [];
+    },
+  );
+}
+
+/**
+ * Assemble the support report from what the checks found. Each section keeps
+ * its title and status and drops its lines, which quote addresses and names
+ * from the env file; the only thing the file contributes is the hostnames in
+ * the egress list, never a key, a path or a whole address.
+ *
+ * Args:
+ *   inputs: The resolved values, the sections, and what the machine reported.
+ *
+ * Returns:
+ *   The report, ready to serialise.
+ */
+export function setupReport(inputs: {
+  values: Readonly<Record<string, string>>;
+  sections: readonly Section[];
+  versions: Record<string, string | undefined>;
+  images: ReadonlyArray<ComposeImage & { running: boolean }>;
+  digests: Record<string, string>;
+  commit?: string;
+  generatedAt: string;
+}): SetupReport {
+  return {
+    kind: 'day0-setup-report',
+    version: 1,
+    generatedAt: inputs.generatedAt,
+    ...(inputs.commit === undefined ? {} : { commit: inputs.commit }),
+    mode: inputs.values.DAY0_SURFACE_MODE || 'mock',
+    route: setupRoute(inputs.values).route,
+    versions: inputs.versions,
+    images: [...inputs.images],
+    digests: inputs.digests,
+    egress: egressHosts(inputs.values),
+    sections: inputs.sections.map(({ title, status }) => ({ title, status })),
+  };
+}
+
+/** The first line a command printed, or undefined when it failed. */
+function firstOutputLine(command: string, args: readonly string[]): string | undefined {
+  const probe = spawnSync(command, args, { encoding: 'utf8', timeout: 15_000 });
+  if (probe.status !== 0) return undefined;
+  return (probe.stdout ?? '').split('\n')[0]?.trim() || undefined;
+}
+
+/** The versions support asks for first. */
+function toolVersions(): Record<string, string | undefined> {
+  return {
+    node: process.version,
+    pnpm: firstOutputLine('pnpm', ['--version']),
+    docker: firstOutputLine('docker', ['info', '--format', '{{.ServerVersion}} {{.Architecture}}']),
+    compose: firstOutputLine('docker', ['compose', 'version', '--short']),
+  };
+}
+
+/** The sha256 of each file that exists, keyed by its path. */
+function fileDigests(paths: readonly string[]): Record<string, string> {
+  return Object.fromEntries(
+    paths
+      .filter((path: string): boolean => existsSync(path))
+      .map((path: string): [string, string] => [
+        path,
+        createHash('sha256').update(readFileSync(path)).digest('hex'),
+      ]),
+  );
+}
+
+/** The checkout's commit, marked when the tree has changes, or undefined outside git. */
+function checkoutCommit(): string | undefined {
+  const commit = firstOutputLine('git', ['rev-parse', '--short=12', 'HEAD']);
+  if (commit === undefined) return undefined;
+  const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=no'], {
+    encoding: 'utf8',
+    timeout: 15_000,
+  });
+  return status.status === 0 && (status.stdout ?? '').trim() !== '' ? `${commit}-dirty` : commit;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = main();
+  process.exitCode = main(ENV_FILE, { report: process.argv.includes('--report') });
 }

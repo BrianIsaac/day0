@@ -216,10 +216,7 @@ function runtimeHarness(
       }
       surface.lastDecisionError = undefined;
       if (record.polledAt !== undefined) {
-        surface.lastDecisionPolledAt = Math.max(
-          surface.lastDecisionPolledAt ?? 0,
-          record.polledAt,
-        );
+        surface.lastDecisionPolledAt = Math.max(surface.lastDecisionPolledAt ?? 0, record.polledAt);
       }
     },
     listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
@@ -308,7 +305,11 @@ describe('real surface intake', (): void => {
         messages: [{ ts: '1770000001.000100', user: 'UMANAGER', text: 'approve bq2wxy' }],
         response_metadata: { next_cursor: '' },
       });
-    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => Date.parse('2026-08-26T01:05:00.000Z'), fetcher });
+    await runDecisionSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => Date.parse('2026-08-26T01:05:00.000Z'),
+      fetcher,
+    });
     expect(harness.decisions).toEqual([
       {
         surfaceId: id<'surfaces'>('surface-slack'),
@@ -444,9 +445,10 @@ describe('real surface intake', (): void => {
     });
     const harness = runtimeHarness([surface], [], new Map());
 
-    await expect(
-      runDecisionSweep(harness.runtime, { mode: 'real' }),
-    ).resolves.toMatchObject({ polled: 0, skipped: 1 });
+    await expect(runDecisionSweep(harness.runtime, { mode: 'real' })).resolves.toMatchObject({
+      polled: 0,
+      skipped: 1,
+    });
     expect(harness.decisionPolls).toEqual([{ surfaceId: id<'surfaces'>('surface-slack') }]);
     expect(surface.lastDecisionError).toBeUndefined();
   });
@@ -790,8 +792,18 @@ describe('real surface intake', (): void => {
         return slackResponse({
           ok: true,
           messages: [
-            { ts: requestTs, user: 'UBOT', text: 'Priya needs your decision. Reply “approve ab3xyz”', reply_count: 1 },
-            { ts: '1787770801.000100', thread_ts: requestTs, user: 'UMANAGER', text: 'approve ab3xyz' },
+            {
+              ts: requestTs,
+              user: 'UBOT',
+              text: 'Priya needs your decision. Reply “approve ab3xyz”',
+              reply_count: 1,
+            },
+            {
+              ts: '1787770801.000100',
+              thread_ts: requestTs,
+              user: 'UMANAGER',
+              text: 'approve ab3xyz',
+            },
           ],
           response_metadata: { next_cursor: '' },
         });
@@ -846,7 +858,10 @@ describe('real surface intake', (): void => {
       if (url.pathname.endsWith('/conversations.list')) {
         return slackResponse({
           ok: true,
-          channels: [{ id: 'CASKS', name: 'revops-asks' }, { id: 'CREVOPS', name: 'revops' }],
+          channels: [
+            { id: 'CASKS', name: 'revops-asks' },
+            { id: 'CREVOPS', name: 'revops' },
+          ],
           response_metadata: { next_cursor: '' },
         });
       }
@@ -858,7 +873,11 @@ describe('real surface intake', (): void => {
     expect(methods).not.toContain('conversations.replies');
 
     // Allowlisted but nothing open: no thread call either.
-    surface.toolAllowlist = ['conversations.list', 'conversations.history', 'conversations.replies'];
+    surface.toolAllowlist = [
+      'conversations.list',
+      'conversations.history',
+      'conversations.replies',
+    ];
     harness.openRequests.set('surface-slack', []);
     methods.length = 0;
     await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => 2_000, fetcher });
@@ -906,7 +925,8 @@ describe('real surface intake', (): void => {
           calls.push(args);
           // The provider filters strictly after `oldest`; a reply stamped exactly on the
           // first poll's start is only visible when the second poll overlaps it.
-          const visible = typeof args.oldest === 'string' && Number(boundaryTs) > Number(args.oldest);
+          const visible =
+            typeof args.oldest === 'string' && Number(boundaryTs) > Number(args.oldest);
           return {
             messages: visible
               ? [{ ts: boundaryTs, user: 'manager-user', text: 'approve gh6npq' }]
@@ -918,10 +938,18 @@ describe('real surface intake', (): void => {
     });
 
     await expect(
-      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => firstPollAt, makeMcpClient }),
+      runDecisionSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => firstPollAt,
+        makeMcpClient,
+      }),
     ).resolves.toMatchObject({ polled: 1 });
     await expect(
-      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => secondPollAt, makeMcpClient }),
+      runDecisionSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => secondPollAt,
+        makeMcpClient,
+      }),
     ).resolves.toMatchObject({ polled: 1 });
     expect(calls[1]).toEqual({
       conversationId: 'manager-conversation',
@@ -1228,7 +1256,13 @@ describe('intake provider contracts', (): void => {
           properties: {
             project: {},
             limit: {},
-            fields: { type: 'array', items: { type: 'string', enum: ['id', 'title', 'project', 'updatedAt', 'triageIntel'] } },
+            fields: {
+              type: 'array',
+              items: {
+                type: 'string',
+                enum: ['id', 'title', 'project', 'updatedAt', 'triageIntel'],
+              },
+            },
           },
         },
         { project: 'Q3 close' },
@@ -1336,10 +1370,7 @@ describe('intake provider contracts', (): void => {
           lastPolledAt: Date.parse('2026-08-26T01:00:00.000Z'),
         }),
       ],
-      [
-        pageRow('onboarding.md', 'Onboarding', ONBOARDING),
-        pageRow('linear.md', 'Linear', LINEAR),
-      ],
+      [pageRow('onboarding.md', 'Onboarding', ONBOARDING), pageRow('linear.md', 'Linear', LINEAR)],
       new Map([[String(linearCredential), 'linear-test-value']]),
     );
     await expect(
@@ -1357,9 +1388,7 @@ describe('intake provider contracts', (): void => {
           }),
           toolFromDefinition: async () => ({
             execute: async (): Promise<unknown> => ({
-              issues: [
-                issue('provider-leak', { name: 'Q4 plan' }, '2026-08-26T02:00:00.000Z'),
-              ],
+              issues: [issue('provider-leak', { name: 'Q4 plan' }, '2026-08-26T02:00:00.000Z')],
             }),
           }),
           disconnect: async (): Promise<void> => undefined,
@@ -1367,7 +1396,6 @@ describe('intake provider contracts', (): void => {
       }),
     ).resolves.toMatchObject({ candidates: 0, polled: 1, skipped: 0 });
     expect(ignoredProviderFilter.seeds.size).toBe(0);
-
   });
 
   it('does not checkpoint or seed a Linear poll whose pagination is incomplete', async (): Promise<void> => {
@@ -1480,9 +1508,7 @@ describe('intake provider contracts', (): void => {
         const page = cursor ? Number(cursor.replace('page-', '')) + 1 : 1;
         return slackResponse({
           ok: true,
-          messages: [
-            { ts: `177000000${page}.000100`, user: 'UUSER', text: '<@UBOT> request' },
-          ],
+          messages: [{ ts: `177000000${page}.000100`, user: 'UUSER', text: '<@UBOT> request' }],
           response_metadata: { next_cursor: nextCursor(cursor) },
         });
       };
@@ -1493,8 +1519,7 @@ describe('intake provider contracts', (): void => {
         mode: 'real',
         now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
         fetcher: fetcher(
-          (cursor): string =>
-            `page-${cursor ? Number(cursor.replace('page-', '')) + 1 : 1}`,
+          (cursor): string => `page-${cursor ? Number(cursor.replace('page-', '')) + 1 : 1}`,
         ),
       }),
     ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
@@ -1669,7 +1694,7 @@ describe('intake provider contracts', (): void => {
     expect([...harness.seeds.keys()]).toEqual(['agent-intake:linear:boundary-issue']);
   });
 
-  it('maps the shapes Linear\'s live MCP server returns, not only GraphQL-style objects', (): void => {
+  it("maps the shapes Linear's live MCP server returns, not only GraphQL-style objects", (): void => {
     const surface = surfaceRow('linear', 'Linear', 'kanban', {
       credentialId: id<'credentials'>('credential-linear'),
       endpoint: 'https://mcp.linear.app/mcp',
@@ -1704,7 +1729,12 @@ describe('intake provider contracts', (): void => {
       requester: 'Brian',
     });
     const assigneeOnly = linearCandidate(
-      { id: 'REVOPS-6', title: 'Reconcile', url: 'https://linear.app/x', assignee: { email: 'a@day0.local' } },
+      {
+        id: 'REVOPS-6',
+        title: 'Reconcile',
+        url: 'https://linear.app/x',
+        assignee: { email: 'a@day0.local' },
+      },
       surface,
       observedAt,
     );
@@ -1715,7 +1745,13 @@ describe('intake provider contracts', (): void => {
       priority: undefined,
     });
     expect(assigneeOnly).not.toHaveProperty('requester');
-    expect(linearCandidate({ id: 'REVOPS-7', title: '  ', url: 'https://linear.app/x' }, surface, observedAt)).toBeUndefined();
+    expect(
+      linearCandidate(
+        { id: 'REVOPS-7', title: '  ', url: 'https://linear.app/x' },
+        surface,
+        observedAt,
+      ),
+    ).toBeUndefined();
   });
 
   it('carries the assignee as the owner and the creator as the requester, each only when the provider returns it', (): void => {
@@ -1748,7 +1784,7 @@ describe('intake provider contracts', (): void => {
     expect(neither?.requesterLabel).toBeUndefined();
   });
 
-  it('carries a ticket\'s other name: the UUID beside an MCP identifier, the identifier beside a GraphQL UUID', (): void => {
+  it("carries a ticket's other name: the UUID beside an MCP identifier, the identifier beside a GraphQL UUID", (): void => {
     const surface = surfaceRow('linear', 'Linear', 'kanban', {
       credentialId: id<'credentials'>('credential-linear'),
       endpoint: 'https://mcp.linear.app/mcp',
@@ -1756,16 +1792,23 @@ describe('intake provider contracts', (): void => {
     });
     const observedAt = Date.parse('2026-09-19T03:03:00.000Z');
     const uuid = ['3f2a9c1e', '7b4d', '4e8a', '9c1f', '0a1b2c3d4e5f'].join('-');
-    const issue = { title: 'Post the September close status note', url: 'https://linear.app/day00/issue/FIN-1' };
+    const issue = {
+      title: 'Post the September close status note',
+      url: 'https://linear.app/day00/issue/FIN-1',
+    };
     expect(linearCandidate({ ...issue, id: 'FIN-1', uuid }, surface, observedAt)).toMatchObject({
       externalId: 'FIN-1',
       externalAlias: uuid,
     });
-    expect(linearCandidate({ ...issue, id: uuid, identifier: 'FIN-1' }, surface, observedAt)).toMatchObject({
+    expect(
+      linearCandidate({ ...issue, id: uuid, identifier: 'FIN-1' }, surface, observedAt),
+    ).toMatchObject({
       externalId: uuid,
       externalAlias: 'FIN-1',
     });
-    expect(linearCandidate({ ...issue, id: 'FIN-1', identifier: 'FIN-1' }, surface, observedAt)).not.toHaveProperty('externalAlias');
+    expect(
+      linearCandidate({ ...issue, id: 'FIN-1', identifier: 'FIN-1' }, surface, observedAt),
+    ).not.toHaveProperty('externalAlias');
   });
 
   it('decodes structured and text MCP results and reads only policy channel rows', (): void => {
@@ -1784,6 +1827,29 @@ describe('intake provider contracts', (): void => {
         pageRow('other.md', 'Other', 'Mention #not-a-policy-channel in prose.'),
       ]),
     ).toEqual(['revops-asks', 'revops']);
+  });
+
+  it('reads a connection-shaped page and refuses a shape it cannot read rather than taking it as empty', (): void => {
+    expect(
+      mcpIssuePage({
+        data: {
+          issues: {
+            nodes: [{ id: 'four' }],
+            pageInfo: { hasNextPage: true, endCursor: 'five' },
+          },
+        },
+      }),
+    ).toEqual({ issues: [{ id: 'four' }], nextCursor: 'five' });
+    expect(mcpIssuePage({ issues: { nodes: [], pageInfo: { hasNextPage: false } } })).toEqual({
+      issues: [],
+    });
+    expect(mcpIssuePage({ issues: [] })).toEqual({ issues: [] });
+    expect(() => mcpIssuePage({ data: { results: [{ id: 'six' }] } })).toThrow(
+      'Linear list_issues returned a shape intake cannot read',
+    );
+    expect(() => mcpIssuePage({ issues: { edges: [] } })).toThrow(
+      'Linear list_issues returned a shape intake cannot read',
+    );
   });
 
   it('redacts exact and token-shaped credentials from bounded errors', (): void => {
@@ -1968,33 +2034,43 @@ describe('each employee reads its own approved queues', (): void => {
       [financeAgent],
     );
     const calls: string[] = [];
-    await expect(runIntakeSweep(harness.runtime, {
-      mode: 'real',
-      makeMcpClient: () => ({
-        listToolDefinitionsWithErrors: async () => ({
-          definitions: { surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } } },
-          errors: {},
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        makeMcpClient: () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              const project = String(args.project);
+              calls.push(project);
+              return {
+                issues: [
+                  {
+                    id: project === 'September close' ? 'FIN-1' : 'FIN-2',
+                    title: `Ticket in ${project}`,
+                    url: 'https://linear.app/kestrel/issue/fin',
+                    project: { name: project },
+                  },
+                ],
+              };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
         }),
-        toolFromDefinition: async () => ({
-          execute: async (args: Record<string, unknown>): Promise<unknown> => {
-            const project = String(args.project);
-            calls.push(project);
-            return { issues: [{
-              id: project === 'September close' ? 'FIN-1' : 'FIN-2',
-              title: `Ticket in ${project}`,
-              url: 'https://linear.app/kestrel/issue/fin',
-              project: { name: project },
-            }] };
-          },
-        }),
-        disconnect: async (): Promise<void> => undefined,
       }),
-    })).resolves.toMatchObject({ candidates: 2, polled: 1 });
+    ).resolves.toMatchObject({ candidates: 2, polled: 1 });
     expect(calls).toEqual(['September close', 'October close']);
-    expect([...harness.seeds.values()].map((seed) => [seed.sourceSystem, seed.externalId])).toEqual([
-      ['linear', 'FIN-1'],
-      ['linear', 'FIN-2'],
-    ]);
+    expect([...harness.seeds.values()].map((seed) => [seed.sourceSystem, seed.externalId])).toEqual(
+      [
+        ['linear', 'FIN-1'],
+        ['linear', 'FIN-2'],
+      ],
+    );
   });
 
   it('reads only the approved channels, so finance never reads #revops-asks', async (): Promise<void> => {
@@ -2074,34 +2150,49 @@ describe('each employee reads its own approved queues', (): void => {
 
   it('reads each of the three company roles from only its approved queues', async (): Promise<void> => {
     const logisticsAgent: Doc<'agents'> = {
-      ...agentRow(), _id: id<'agents'>('agent-logistics'), name: 'Aiko',
+      ...agentRow(),
+      _id: id<'agents'>('agent-logistics'),
+      name: 'Aiko',
     };
     const logisticsRef = 'logistics/handbook.md';
     const logisticsLinear = surfaceRow('linear', 'Linear', 'kanban', {
-      _id: id<'surfaces'>('surface-Aiko-linear'), agentId: logisticsAgent._id,
+      _id: id<'surfaces'>('surface-Aiko-linear'),
+      agentId: logisticsAgent._id,
       credentialId: id<'credentials'>('credential-Aiko-linear'),
-      endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['list_issues'],
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
       intakeScope: {
         team: scoped('LOG', logisticsRef, '- Team: `LOG`'),
         project: scoped('Shipment exceptions', logisticsRef, '- Project: `Shipment exceptions`'),
       },
     });
     const logisticsSlack = surfaceRow('slack', 'Slack', 'chat', {
-      _id: id<'surfaces'>('surface-Aiko-slack'), agentId: logisticsAgent._id,
+      _id: id<'surfaces'>('surface-Aiko-slack'),
+      agentId: logisticsAgent._id,
       credentialId: id<'credentials'>('credential-Aiko-slack'),
       endpoint: 'https://slack.com/api/',
       toolAllowlist: ['conversations.list', 'conversations.history'],
-      providerIdentityId: 'UBOT', providerBotId: 'BBOT', providerWorkspaceId: 'TKESTREL',
-      intakeScope: { channels: ['logistics-desk', 'ops-requests'].map((name) =>
-        scoped(name, logisticsRef, '- Channels: #logistics-desk, #ops-requests')) },
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      providerWorkspaceId: 'TKESTREL',
+      intakeScope: {
+        channels: ['logistics-desk', 'ops-requests'].map((name) =>
+          scoped(name, logisticsRef, '- Channels: #logistics-desk, #ops-requests'),
+        ),
+      },
     });
     const pageRows = [
-      REVOPS_PAGE, FINANCE_PAGE, companyPage(logisticsRef), LINEAR_PAGE, SLACK_PAGE,
+      REVOPS_PAGE,
+      FINANCE_PAGE,
+      companyPage(logisticsRef),
+      LINEAR_PAGE,
+      SLACK_PAGE,
     ].map((page): Doc<'docPages'> => pageRow(page.ref, page.title, page.markdown));
     const harness = runtimeHarness(
       [...companySurfaces(), logisticsLinear, logisticsSlack],
       pageRows,
-      new Map([...companyCredentials(),
+      new Map([
+        ...companyCredentials(),
         ['credential-Aiko-linear', 'Aiko-linear-value'],
         ['credential-Aiko-slack', 'Aiko-slack-value'],
       ]),
@@ -2110,39 +2201,56 @@ describe('each employee reads its own approved queues', (): void => {
     const linearCalls: Array<{ credential: string; team: unknown; project: unknown }> = [];
     const history: Array<{ credential: string; channel: string }> = [];
     const channels = [
-      'revops-asks', 'revops', 'finance-close', 'logistics-desk', 'ops-requests',
+      'revops-asks',
+      'revops',
+      'finance-close',
+      'logistics-desk',
+      'ops-requests',
     ].map((name) => ({ name, id: `C-${name}` }));
-    await expect(runIntakeSweep(harness.runtime, {
-      mode: 'real',
-      fetcher: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-        const url = new URL(String(input));
-        if (url.pathname.endsWith('/conversations.list')) {
-          return slackResponse({ ok: true, channels, response_metadata: { next_cursor: '' } });
-        }
-        history.push({
-          credential: String(new Headers(init?.headers).get('Authorization')).replace('Bearer ', ''),
-          channel: url.searchParams.get('channel') ?? '',
-        });
-        return slackResponse({ ok: true, messages: [] });
-      },
-      makeMcpClient: (_endpoint: URL, credential: string) => ({
-        listToolDefinitionsWithErrors: async () => ({
-          definitions: { surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } } },
-          errors: {},
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        fetcher: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) {
+            return slackResponse({ ok: true, channels, response_metadata: { next_cursor: '' } });
+          }
+          history.push({
+            credential: String(new Headers(init?.headers).get('Authorization')).replace(
+              'Bearer ',
+              '',
+            ),
+            channel: url.searchParams.get('channel') ?? '',
+          });
+          return slackResponse({ ok: true, messages: [] });
+        },
+        makeMcpClient: (_endpoint: URL, credential: string) => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              linearCalls.push({ credential, team: args.team, project: args.project });
+              return {
+                issues: [
+                  {
+                    id: `${args.team}-1`,
+                    title: `Ticket for ${args.team}`,
+                    url: `https://linear.app/kestrel/issue/${args.team}-1`,
+                    team: { key: args.team },
+                    project: { name: args.project },
+                  },
+                ],
+              };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
         }),
-        toolFromDefinition: async () => ({
-          execute: async (args: Record<string, unknown>): Promise<unknown> => {
-            linearCalls.push({ credential, team: args.team, project: args.project });
-            return { issues: [{
-              id: `${args.team}-1`, title: `Ticket for ${args.team}`,
-              url: `https://linear.app/kestrel/issue/${args.team}-1`,
-              team: { key: args.team }, project: { name: args.project },
-            }] };
-          },
-        }),
-        disconnect: async (): Promise<void> => undefined,
       }),
-    })).resolves.toMatchObject({ candidates: 3, polled: 6 });
+    ).resolves.toMatchObject({ candidates: 3, polled: 6 });
     expect(linearCalls).toEqual([
       { credential: 'Priya-linear-value', team: 'REVOPS', project: 'Q3 close' },
       { credential: 'Mateo-linear-value', team: 'FIN', project: 'September close' },
@@ -2156,7 +2264,9 @@ describe('each employee reads its own approved queues', (): void => {
       { credential: 'Aiko-slack-value', channel: 'C-logistics-desk' },
       { credential: 'Aiko-slack-value', channel: 'C-ops-requests' },
     ]);
-    expect([...harness.seeds.values()].map((seed) => [seed.agentId, seed.sourceSystem, seed.externalId])).toEqual([
+    expect(
+      [...harness.seeds.values()].map((seed) => [seed.agentId, seed.sourceSystem, seed.externalId]),
+    ).toEqual([
       [revopsAgent._id, 'linear', 'REVOPS-1'],
       [financeAgent._id, 'linear', 'FIN-1'],
       [logisticsAgent._id, 'linear', 'LOG-1'],
@@ -2269,7 +2379,8 @@ describe('each employee reads its own approved queues', (): void => {
       id: 'FIN-1',
       uuid: '8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1',
       title: 'Post the September close status note',
-      description: 'Post the close status note for the September close on this ticket.\n\nday0-demo-key: fin-status',
+      description:
+        'Post the close status note for the September close on this ticket.\n\nday0-demo-key: fin-status',
       priority: { value: 0, name: 'No priority' },
       url: 'https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note',
       gitBranchName: 'brian/fin-1-post-the-september-close-status-note',
@@ -2282,8 +2393,29 @@ describe('each employee reads its own approved queues', (): void => {
       project: 'September close',
       team: 'Finance close',
     };
-    const liveArguments = ['assignee', 'createdAt', 'cursor', 'cycle', 'delegate', 'fields', 'includeArchived', 'label', 'limit', 'orderBy', 'parentId', 'priority', 'project', 'query', 'release', 'state', 'team', 'updatedAt'];
-    const properties: Record<string, unknown> = Object.fromEntries(liveArguments.map((name) => [name, {}]));
+    const liveArguments = [
+      'assignee',
+      'createdAt',
+      'cursor',
+      'cycle',
+      'delegate',
+      'fields',
+      'includeArchived',
+      'label',
+      'limit',
+      'orderBy',
+      'parentId',
+      'priority',
+      'project',
+      'query',
+      'release',
+      'state',
+      'team',
+      'updatedAt',
+    ];
+    const properties: Record<string, unknown> = Object.fromEntries(
+      liveArguments.map((name) => [name, {}]),
+    );
     properties.fields = { type: 'array', items: { type: 'string', enum: Object.keys(fin1) } };
     const requested: unknown[] = [];
     const harness = runtimeHarness(
@@ -2304,7 +2436,9 @@ describe('each employee reads its own approved queues', (): void => {
           toolFromDefinition: async () => ({
             execute: async (args: Record<string, unknown>): Promise<unknown> => {
               requested.push(args.fields);
-              const fields = Array.isArray(args.fields) ? (args.fields as string[]) : Object.keys(fin1);
+              const fields = Array.isArray(args.fields)
+                ? (args.fields as string[])
+                : Object.keys(fin1);
               return { issues: [Object.fromEntries(fields.map((name) => [name, fin1[name]]))] };
             },
           }),
@@ -2317,6 +2451,168 @@ describe('each employee reads its own approved queues', (): void => {
     expect([...harness.seeds.values()]).toEqual([
       expect.objectContaining({ externalId: 'FIN-1', externalAlias: fin1.uuid }),
     ]);
+  });
+
+  describe('tickets owned by people', (): void => {
+    const KEY_OWNER = {
+      id: 'user-key',
+      name: 'Kestrel Ops',
+      displayName: 'ops',
+      email: 'ops@kestrel.test',
+    };
+
+    /** A finance-scoped issue with whatever ownership, labels and state a case needs. */
+    function ticket(
+      identifier: string,
+      patch: Record<string, unknown> = {},
+    ): Record<string, unknown> {
+      return {
+        id: identifier,
+        title: `Issue ${identifier}`,
+        url: `https://linear.app/kestrel/issue/${identifier}`,
+        project: 'September close',
+        team: 'Finance close',
+        statusType: 'unstarted',
+        ...patch,
+      };
+    }
+
+    /**
+     * A Linear client whose `list_issues` returns the rows and whose
+     * `get_user` answers `me` with the key owner, or is absent.
+     */
+    function linearClient(
+      rows: Record<string, unknown>[],
+      options: { owner?: Record<string, unknown>; userCalls?: unknown[] } = {},
+    ) {
+      return () => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: {
+            surface: {
+              list_issues: {
+                name: 'list_issues',
+                inputSchema: { properties: { project: {}, team: {}, limit: {} } },
+              },
+              ...(options.owner === undefined
+                ? {}
+                : { get_user: { name: 'get_user', inputSchema: { properties: { query: {} } } } }),
+            },
+          },
+          errors: {},
+        }),
+        toolFromDefinition: async ({ definition }: { definition: { name?: string } }) => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            if (definition.name === 'get_user') {
+              options.userCalls?.push(args);
+              return { content: [{ type: 'text', text: JSON.stringify(options.owner) }] };
+            }
+            return { issues: rows };
+          },
+        }),
+        disconnect: async (): Promise<void> => undefined,
+      });
+    }
+
+    const POLL_AT = Date.parse('2026-09-27T09:00:00.000Z');
+    /** What the last sweeps recorded on the surface, checkpoint included. */
+    const records: RecordedIntake[] = [];
+
+    async function seededFrom(
+      rows: Record<string, unknown>[],
+      options: {
+        owner?: Record<string, unknown>;
+        userCalls?: unknown[];
+        allowlist?: string[];
+      } = {},
+    ): Promise<string[]> {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: options.allowlist ?? ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient(rows, options),
+      });
+      records.push(...harness.records);
+      return [...harness.seeds.values()].map((seed) => seed.externalId);
+    }
+
+    it("skips a ticket assigned to a person other than the key's owner and keeps the owner's and the unassigned", async (): Promise<void> => {
+      const userCalls: unknown[] = [];
+      const seeded = await seededFrom(
+        [
+          ticket('FIN-1'),
+          ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' }),
+          ticket('FIN-3', { assignee: 'Kestrel Ops', assigneeId: 'user-key' }),
+          ticket('FIN-4', { assignee: { id: 'user-ana', name: 'Ana Lim' } }),
+          ticket('FIN-5', { assignee: { email: 'OPS@kestrel.test' } }),
+        ],
+        { owner: KEY_OWNER, userCalls },
+      );
+      expect(seeded).toEqual(['FIN-1', 'FIN-3', 'FIN-5']);
+      expect(userCalls).toEqual([{ query: 'me' }]);
+    });
+
+    it("skips every assigned ticket when the key's owner cannot be read, keeps the unassigned, and holds the checkpoint", async (): Promise<void> => {
+      records.length = 0;
+      const withoutTool = await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops', assigneeId: 'user-key' })],
+        { allowlist: ['list_issues'] },
+      );
+      expect(withoutTool).toEqual(['FIN-1']);
+      // The window is read again next poll, so FIN-3 is not lost if it is the owner's.
+      expect(records[0]?.polledAt).toBeUndefined();
+      expect(records[0]?.skipReason).toContain("the key's owner could not be read");
+
+      records.length = 0;
+      await seededFrom([ticket('FIN-1'), ticket('FIN-2', { assignee: 'Ana Lim' })], {
+        owner: KEY_OWNER,
+      });
+      expect(records[0]?.polledAt).toBe(POLL_AT);
+
+      const unanswered = await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops' })],
+        { owner: { error: 'not found' } },
+      );
+      expect(unanswered).toEqual(['FIN-1']);
+    });
+
+    it('honours a do-not-automate label in the shapes the provider returns it', async (): Promise<void> => {
+      const seeded = await seededFrom(
+        [
+          ticket('FIN-1', { labels: ['day0-demo'] }),
+          ticket('FIN-2', { labels: ['Do not automate'] }),
+          ticket('FIN-3', { labels: [{ name: 'do-not-automate' }] }),
+          ticket('FIN-4', { labels: { nodes: [{ name: 'DO_NOT_AUTOMATE' }] } }),
+        ],
+        { owner: KEY_OWNER },
+      );
+      expect(seeded).toEqual(['FIN-1']);
+    });
+
+    it('never seeds a completed or cancelled ticket', async (): Promise<void> => {
+      const seeded = await seededFrom(
+        [
+          ticket('FIN-1', { status: 'In Progress', statusType: 'started' }),
+          ticket('FIN-2', { status: 'Done', statusType: 'completed' }),
+          ticket('FIN-3', { status: 'Canceled', statusType: 'canceled' }),
+          ticket('FIN-4', {
+            statusType: undefined,
+            state: { name: 'Duplicate', type: 'canceled' },
+          }),
+          ticket('FIN-5', { statusType: undefined, status: { name: 'Todo', type: 'unstarted' } }),
+        ],
+        { owner: KEY_OWNER },
+      );
+      expect(seeded).toEqual(['FIN-1', 'FIN-5']);
+    });
   });
 });
 
@@ -2409,7 +2705,12 @@ describe("the app's own posts are never intake", (): void => {
 
   it("reads a human's ask that mentions the bot", async (): Promise<void> => {
     const { harness, seeded } = await sweep([
-      { type: 'message', user: 'UDANA', ts: '1789757900.000100', text: `<@${BOT_USER}> refresh the tile` },
+      {
+        type: 'message',
+        user: 'UDANA',
+        ts: '1789757900.000100',
+        text: `<@${BOT_USER}> refresh the tile`,
+      },
     ]);
     expect(seeded).toEqual(
       employees.map((agent) => [String(agent._id), `${SHARED.id}:1789757900.000100`]),
@@ -2500,7 +2801,11 @@ describe("the app's own posts are never intake", (): void => {
       surfaces,
     );
     expect([...harness.seeds.values()]).toEqual([]);
-    expect(harness.records.map((record) => record.skipReason)).toEqual([undefined, undefined, undefined]);
+    expect(harness.records.map((record) => record.skipReason)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
     expect(harness.botIdentities).toEqual(
       surfaces.map((surface) => ({ surfaceId: surface._id, generation: 4, providerBotId: BOT_ID })),
     );
@@ -2559,9 +2864,13 @@ describe('the bot identity a probe stores', (): void => {
     };
     const record = internal.intakeIdentity.recordBotIdentity;
 
-    expect(await harness.mutation(record, { surfaceId, generation: 1, providerBotId: 'BOLD' })).toBe(false);
+    expect(
+      await harness.mutation(record, { surfaceId, generation: 1, providerBotId: 'BOLD' }),
+    ).toBe(false);
     expect(await stored()).toBeUndefined();
-    expect(await harness.mutation(record, { surfaceId, generation: 2, providerBotId: 'BBOT' })).toBe(true);
+    expect(
+      await harness.mutation(record, { surfaceId, generation: 2, providerBotId: 'BBOT' }),
+    ).toBe(true);
     expect(await stored()).toBe('BBOT');
     expect(await harness.mutation(record, { surfaceId, generation: 2 })).toBe(true);
     expect(await stored()).toBeUndefined();
@@ -2590,7 +2899,10 @@ describe('poll on connect', (): void => {
         toolAllowlist: ['list_issues'],
       }),
     ];
-    const pages = [pageRow('onboarding.md', 'Onboarding', ONBOARDING), pageRow('linear.md', 'Linear', LINEAR)];
+    const pages = [
+      pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+      pageRow('linear.md', 'Linear', LINEAR),
+    ];
     const harness = runtimeHarness(
       surfaces,
       pages,

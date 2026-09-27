@@ -2,8 +2,13 @@
 /**
  * Record the span model's answers over the labelled corpus.
  *
- *   pnpm redaction:record                       # DAY0_REDACTOR_URL from .env.local
- *   DAY0_REDACTOR_URL=http://127.0.0.1:8765 pnpm redaction:record
+ *   DAY0_REDACTOR_URL=http://<address this machine reaches>:8000 pnpm redaction:record
+ *
+ * The redactor publishes no host port: the backend reaches it as
+ * `http://redactor:8000` on the Compose network, which is what `.env.local`
+ * holds and what this machine cannot resolve. So the address is given for the
+ * one run, and the refusal prints the command that finds the container's own
+ * address (reachable from a Linux host; Docker Desktop needs a published port).
  *
  * The corpus tests replay this recording through the guard, the structural
  * grammar and the entity policy, so the precision and recall they assert are
@@ -30,12 +35,52 @@ export interface SpanRecording {
   cases: Record<string, Array<{ start: number; end: number; label: string; score: number }>>;
 }
 
+/** Finds the redactor container's own address, which a Linux host can reach. */
+const CONTAINER_ADDRESS =
+  "DAY0_REDACTOR_URL=http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' " +
+  '$(docker compose --env-file .env.local ps -q redactor)):8000 pnpm redaction:record';
+
+/**
+ * The redactor address a recording dials, or why the configured one will not
+ * do from this machine: unset, or the backend container's own service name.
+ *
+ * Args:
+ *   environment: The process environment, with `.env.local` loaded under it.
+ *
+ * Returns:
+ *   The address, or the refusal with the command that finds a reachable one.
+ */
+export function recordingAddress(
+  environment: Readonly<Record<string, string | undefined>>,
+): { url: string } | { refusal: string } {
+  const url = environment.DAY0_REDACTOR_URL?.trim() ?? '';
+  const way =
+    'Start it with `pnpm redactor:up` if it is not running, then give this run an address this ' +
+    `machine reaches; on Linux the container's own:\n  ${CONTAINER_ADDRESS}`;
+  if (url === '') return { refusal: `DAY0_REDACTOR_URL is unset. ${way}` };
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return { refusal: `DAY0_REDACTOR_URL is ${url}, which is not a URL. ${way}` };
+  }
+  if (!host.includes('.') && !host.includes(':') && host !== 'localhost') {
+    return {
+      refusal:
+        `DAY0_REDACTOR_URL is ${url}, which is the address the backend container uses; this machine cannot ` +
+        `resolve ${host}, because the service publishes no host port. ${way}`,
+    };
+  }
+  return { url };
+}
+
 async function main(): Promise<number> {
-  const url = process.env.DAY0_REDACTOR_URL?.trim();
-  if (!url) {
-    console.error('DAY0_REDACTOR_URL is unset; start the component (`pnpm redactor:up`) and point at it.');
+  const address = recordingAddress(process.env);
+  if ('refusal' in address) {
+    console.error(address.refusal);
     return 1;
   }
+  const { url } = address;
   const model = new HttpSpanModel(url);
   const health = await fetch(new URL('/healthz', url.endsWith('/') ? url : `${url}/`));
   const body = (await health.json()) as { ok?: boolean; model?: string; device?: string };
@@ -53,9 +98,9 @@ async function main(): Promise<number> {
   const cases = loadRedactionCorpus();
   const started = Date.now();
   for (const entry of cases) {
-    recording.cases[entry.id] = (await model.spans(entry.text, REQUESTED_LABELS, MODEL_THRESHOLD)).map(
-      (span) => ({ ...span, score: Number(span.score.toFixed(4)) }),
-    );
+    recording.cases[entry.id] = (
+      await model.spans(entry.text, REQUESTED_LABELS, MODEL_THRESHOLD)
+    ).map((span) => ({ ...span, score: Number(span.score.toFixed(4)) }));
   }
   writeFileSync(RECORDING_PATH, `${JSON.stringify(recording, null, 1)}\n`, 'utf8');
   const spans = Object.values(recording.cases).reduce((sum, list): number => sum + list.length, 0);

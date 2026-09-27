@@ -180,10 +180,20 @@ describe('the values written per route and mode', (): void => {
   });
 
   it('writes an explicit GPU choice and leaves auto to the file', (): void => {
-    expect(setupEnvUpdates({ route: 'key', project: 'p', ports, existing: {}, gpu: 'off' }).MODEL_GPU).toBe('off');
-    expect(setupEnvUpdates({ route: 'key', project: 'p', ports, existing: {}, gpu: 'auto' }).MODEL_GPU).toBeUndefined();
     expect(
-      setupEnvUpdates({ route: 'key', project: 'p', ports, existing: { MODEL_GPU: 'off' }, gpu: 'auto' }).MODEL_GPU,
+      setupEnvUpdates({ route: 'key', project: 'p', ports, existing: {}, gpu: 'off' }).MODEL_GPU,
+    ).toBe('off');
+    expect(
+      setupEnvUpdates({ route: 'key', project: 'p', ports, existing: {}, gpu: 'auto' }).MODEL_GPU,
+    ).toBeUndefined();
+    expect(
+      setupEnvUpdates({
+        route: 'key',
+        project: 'p',
+        ports,
+        existing: { MODEL_GPU: 'off' },
+        gpu: 'auto',
+      }).MODEL_GPU,
     ).toBeUndefined();
   });
 
@@ -246,9 +256,23 @@ describe('where the Featherless key comes from', (): void => {
       source: 'environment',
       variable: 'FEATHERLESS_API_KEY',
     });
-    expect(featherlessKeySource({ OPENAI_API_KEY: 'b' }, {})).toMatchObject({
-      source: 'environment',
-      variable: 'OPENAI_API_KEY',
+    expect(
+      featherlessKeySource(
+        { OPENAI_API_KEY: 'b', OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL },
+        {},
+      ),
+    ).toMatchObject({ source: 'environment', variable: 'OPENAI_API_KEY' });
+    // A trailing slash names the same address.
+    expect(
+      featherlessKeySource(
+        { OPENAI_API_KEY: 'b', OPENAI_BASE_URL: `${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}/` },
+        {},
+      ),
+    ).toMatchObject({ source: 'environment', variable: 'OPENAI_API_KEY' });
+    // A shell OPENAI_API_KEY for another provider is not a Featherless key.
+    expect(featherlessKeySource({ OPENAI_API_KEY: 'b' }, {})).toEqual({
+      source: 'prompt',
+      ignored: 'OPENAI_API_KEY',
     });
     expect(
       featherlessKeySource(
@@ -268,7 +292,9 @@ describe('where the Featherless key comes from', (): void => {
 
 describe('the order the real-mode helpers run in', (): void => {
   it('adds the warm copy before the first up, the redactor after the sandbox, and reset first', (): void => {
-    expect(sequenceSteps('featherless', { mode: 'real', warm: true, sandbox: 'local', reset: true })).toEqual([
+    expect(
+      sequenceSteps('featherless', { mode: 'real', warm: true, sandbox: 'local', reset: true }),
+    ).toEqual([
       'reset',
       'dev:no-auth-key',
       'warm-redactor',
@@ -304,10 +330,29 @@ describe('the order the real-mode helpers run in', (): void => {
       profiles: REAL_MODE_PROFILES,
       project: 'p',
     });
-    expect(up.args).toEqual(['run', 'convex:up', '--profile', 'docs-notion', '--profile', 'browser', '--profile', 'demo']);
+    expect(up.args).toEqual([
+      'run',
+      'convex:up',
+      '--profile',
+      'docs-notion',
+      '--profile',
+      'browser',
+      '--profile',
+      'demo',
+    ]);
     const reset = resetArguments();
     expect(reset.slice(-3)).toEqual(['down', '-v', '--remove-orphans']);
-    for (const profile of ['real', 'sandbox', 'redactor', 'model', 'browser', 'demo', 'docs-notion', 'dev', 'test']) {
+    for (const profile of [
+      'real',
+      'sandbox',
+      'redactor',
+      'model',
+      'browser',
+      'demo',
+      'docs-notion',
+      'dev',
+      'test',
+    ]) {
       expect(reset).toContain(profile);
     }
   });
@@ -316,11 +361,21 @@ describe('the order the real-mode helpers run in', (): void => {
 describe('protected projects', (): void => {
   it('refuses day0 from anywhere but the primary checkout', (): void => {
     expect(() => assertLocalProject('day0')).toThrow('primary checkout');
-    expect(() => assertLocalProject('day0', { mainWorktree: false, fileProject: 'day0' })).toThrow('protected');
-    expect(() => assertLocalProject('day0', { mainWorktree: true, fileProject: '' })).toThrow('protected');
-    expect(() => assertLocalProject('day0-demo-7c65e7', { mainWorktree: true, fileProject: 'day0' })).toThrow('protected');
-    expect(() => assertLocalProject('day0', { mainWorktree: true, fileProject: 'day0' })).not.toThrow();
-    expect(() => assertLocalProject('day0-setup-test', { mainWorktree: false, fileProject: '' })).not.toThrow();
+    expect(() => assertLocalProject('day0', { mainWorktree: false, fileProject: 'day0' })).toThrow(
+      'protected',
+    );
+    expect(() => assertLocalProject('day0', { mainWorktree: true, fileProject: '' })).toThrow(
+      'protected',
+    );
+    expect(() =>
+      assertLocalProject('day0-demo-7c65e7', { mainWorktree: true, fileProject: 'day0' }),
+    ).toThrow('protected');
+    expect(() =>
+      assertLocalProject('day0', { mainWorktree: true, fileProject: 'day0' }),
+    ).not.toThrow();
+    expect(() =>
+      assertLocalProject('day0-setup-test', { mainWorktree: false, fileProject: '' }),
+    ).not.toThrow();
   });
 
   it('tells a main worktree from a linked one by its .git entry', (): void => {
@@ -353,13 +408,23 @@ describe('a whole real-mode run on the Featherless route', (): void => {
   it('takes the key from the environment, writes the real-mode values and runs the full sequence', async (): Promise<void> => {
     const h = harness({
       environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
-      services: ['backend', 'sandbox', 'redactor', 'playwright-mcp', 'looker-tile', 'docs-notion-mcp'],
+      services: [
+        'backend',
+        'sandbox',
+        'redactor',
+        'playwright-mcp',
+        'looker-tile',
+        'docs-notion-mcp',
+      ],
       volumes: ['day0-redactor-warm_redactor_venv', 'day0-redactor-warm_redactor_models'],
       stamps: { 'day0-redactor-warm_redactor_venv': CPU_STAMP },
       driver: true,
     });
     const status = await runSetup(
-      realRoute({ warmFrom: 'day0-redactor-warm', ports: { backend: 46210, site: 46211, dashboard: 46791, app: 45300 } }),
+      realRoute({
+        warmFrom: 'day0-redactor-warm',
+        ports: { backend: 46210, site: 46211, dashboard: 46791, app: 45300 },
+      }),
       h.io,
     );
     expect(status).toBe(0);
@@ -412,7 +477,9 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     const printed = h.output.join('\n');
     expect(printed).toContain('on the CPU: the venv was built for the CPU');
     expect(printed).toContain('http://localhost:45300/?day0_key=unlock-secret');
-    expect(printed.replace(/\s+/g, ' ')).toContain('Opening http://localhost:45300 directly answers 403');
+    expect(printed.replace(/\s+/g, ' ')).toContain(
+      'Opening http://localhost:45300 directly answers 403',
+    );
     expect(printed).not.toContain('localhost:3000');
     expect(printed).toContain('Link your documentation first');
     expect(printed).not.toContain('seeded and synthetic');
@@ -467,7 +534,9 @@ describe('a whole real-mode run on the Featherless route', (): void => {
       services: ['backend', 'sandbox', 'redactor'],
     });
     expect(await runSetup(realRoute({ bossEmail: undefined, assumeYes: false }), h.io)).toBe(0);
-    expect(readEnvValues(join(h.directory, '.env.local')).NEXT_PUBLIC_DEMO_BOSS_EMAIL).toBe('boss@example.com');
+    expect(readEnvValues(join(h.directory, '.env.local')).NEXT_PUBLIC_DEMO_BOSS_EMAIL).toBe(
+      'boss@example.com',
+    );
   });
 
   it('refuses --sandbox daytona without a key, and skips the bundled sandbox with one', async (): Promise<void> => {
@@ -482,7 +551,9 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     });
     expect(await runSetup(realRoute({ sandbox: 'daytona' }), kept.io)).toBe(0);
     expect(ran(kept)).not.toContain('sandbox:up');
-    expect(readEnvValues(join(kept.directory, '.env.local')).DAYTONA_API_KEY).toBe('daytona-key-present');
+    expect(readEnvValues(join(kept.directory, '.env.local')).DAYTONA_API_KEY).toBe(
+      'daytona-key-present',
+    );
   });
 });
 
@@ -497,8 +568,12 @@ describe('the redactor device check inside a run', (): void => {
     });
     expect(await runSetup(realRoute({ warmFrom: 'day0-redactor-warm', gpu: 'on' }), h.io)).toBe(0);
     const printed = h.output.join('\n');
-    expect(printed).toContain('on the GPU: --gpu on, and the venv was built for the CPU: the start script empties it');
-    expect(printed.indexOf('empties it')).toBeLessThan(printed.indexOf('run redactor:up') === -1 ? Infinity : printed.indexOf('run redactor:up'));
+    expect(printed).toContain(
+      'on the GPU: --gpu on, and the venv was built for the CPU: the start script empties it',
+    );
+    expect(printed.indexOf('empties it')).toBeLessThan(
+      printed.indexOf('run redactor:up') === -1 ? Infinity : printed.indexOf('run redactor:up'),
+    );
     const redactorUp = h.commands.find((call) => call.args.join(' ') === 'run redactor:up');
     expect(redactorUp?.env?.MODEL_GPU).toBe('on');
     expect(readEnvValues(join(h.directory, '.env.local')).MODEL_GPU).toBe('on');
@@ -509,7 +584,11 @@ describe('the redactor device check inside a run', (): void => {
       envLocal: 'COMPOSE_PROJECT_NAME=day0-setup-test\n',
       environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
       services: ['backend', 'sandbox', 'redactor'],
-      volumes: ['day0-setup-test_convex_data', 'day0-setup-test_redactor_venv', 'day0-setup-test_redactor_models'],
+      volumes: [
+        'day0-setup-test_convex_data',
+        'day0-setup-test_redactor_venv',
+        'day0-setup-test_redactor_models',
+      ],
       stamps: { 'day0-setup-test_redactor_venv': CUDA_STAMP },
       driver: false,
     });
@@ -529,7 +608,9 @@ describe('the redactor device check inside a run', (): void => {
     const printed = h.output.join('\n');
     expect(printed).toContain('waiting for the redactor to load its model');
     expect(printed).toContain('the redactor is healthy');
-    expect(printed.indexOf('the redactor is healthy')).toBeLessThan(printed.indexOf('[9/9] pnpm check:setup'));
+    expect(printed.indexOf('the redactor is healthy')).toBeLessThan(
+      printed.indexOf('[9/9] pnpm check:setup'),
+    );
   });
 
   it('gives up on a redactor that never turns healthy, without failing the setup', async (): Promise<void> => {
@@ -543,7 +624,9 @@ describe('the redactor device check inside a run', (): void => {
   });
 
   it('reads compose’s json listing for one service', (): void => {
-    expect(serviceHealth('{"Service":"redactor","State":"running","Health":"healthy"}\n')).toBe('healthy');
+    expect(serviceHealth('{"Service":"redactor","State":"running","Health":"healthy"}\n')).toBe(
+      'healthy',
+    );
     expect(serviceHealth('{"State":"running","Health":"starting"}')).toBe('starting');
     expect(serviceHealth('[{"State":"running","Health":"unhealthy"}]')).toBe('unhealthy');
     expect(serviceHealth('{"State":"exited","Health":""}')).toBe('exited');
@@ -574,7 +657,10 @@ describe('running it a second time', (): void => {
     const before = first.commands.length;
     expect(await runSetup(realRoute({ warmFrom: 'day0-redactor-warm' }), second)).toBe(0);
     expect(readFileSync(join(first.directory, '.env.local'), 'utf8')).toBe(afterFirst);
-    const rerun = first.commands.slice(before).map((entry) => [entry.command, ...entry.args].join(' ')).join('\n');
+    const rerun = first.commands
+      .slice(before)
+      .map((entry) => [entry.command, ...entry.args].join(' '))
+      .join('\n');
     expect(rerun).not.toContain('volume create');
     expect(rerun).not.toContain('generate_admin_key.sh');
     expect(first.output.join('\n')).toContain('already present in this project, so they are kept');
@@ -585,7 +671,12 @@ describe('running it a second time', (): void => {
 describe('--reset', (): void => {
   it('does not read the running stack’s own ports as taken', async (): Promise<void> => {
     const h = harness({
-      envLocal: ['COMPOSE_PROJECT_NAME=day0-setup-test', 'OPENAI_API_KEY=already-here', `OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`, ''].join('\n'),
+      envLocal: [
+        'COMPOSE_PROJECT_NAME=day0-setup-test',
+        'OPENAI_API_KEY=already-here',
+        `OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`,
+        '',
+      ].join('\n'),
       services: ['backend', 'sandbox', 'redactor'],
       volumes: ['day0-setup-test_convex_data'],
       busyPorts: [3210, 3211, 6791],
@@ -605,13 +696,19 @@ describe('--reset', (): void => {
         '',
       ].join('\n'),
       services: ['backend', 'sandbox', 'redactor'],
-      volumes: ['day0-setup-test_convex_data', 'day0-setup-test_redactor_venv', 'day0-setup-test_redactor_models'],
+      volumes: [
+        'day0-setup-test_convex_data',
+        'day0-setup-test_redactor_venv',
+        'day0-setup-test_redactor_models',
+      ],
       adminKeyAccepted: false,
     });
     writeEnvValues(join(h.directory, '.env.local'), { DAY0_SETUP_ROOT: h.directory });
     expect(await runSetup(realRoute({ reset: true }), h.io)).toBe(0);
     const lines = ran(h);
-    expect(lines.indexOf('down -v --remove-orphans')).toBeLessThan(lines.indexOf('dev:no-auth-key'));
+    expect(lines.indexOf('down -v --remove-orphans')).toBeLessThan(
+      lines.indexOf('dev:no-auth-key'),
+    );
     expect(h.volumes).not.toContain('day0-setup-test_convex_data');
     expect(readEnvValues(join(h.directory, '.env.local')).CONVEX_SELF_HOSTED_ADMIN_KEY).toBe(
       'convex-self-hosted|0123456789abcdef1',
@@ -628,7 +725,12 @@ describe('--dry-run', (): void => {
       stamps: { 'day0-redactor-warm_redactor_venv': CPU_STAMP },
       driver: true,
     });
-    expect(await runSetup(realRoute({ warmFrom: 'day0-redactor-warm', dryRun: true, reset: true }), h.io)).toBe(0);
+    expect(
+      await runSetup(
+        realRoute({ warmFrom: 'day0-redactor-warm', dryRun: true, reset: true }),
+        h.io,
+      ),
+    ).toBe(0);
     const printed = h.output.join('\n');
     expect(printed).toContain('Dry run: real mode on the featherless route');
     expect(printed).toContain('DAY0_SURFACE_MODE=real');
@@ -636,20 +738,26 @@ describe('--dry-run', (): void => {
     expect(printed).not.toContain(SYNTHETIC_KEY);
     expect(printed).toContain('1  docker compose --env-file .env.local');
     expect(printed).toContain('down -v --remove-orphans');
-    expect(printed).toContain('pnpm run convex:up --profile docs-notion --profile browser --profile demo');
+    expect(printed).toContain(
+      'pnpm run convex:up --profile docs-notion --profile browser --profile demo',
+    );
     expect(printed).toContain('MODEL_GPU=off pnpm run redactor:up');
     expect(printed).toContain('the venv was built for the CPU');
     expect(printed).toContain('Nothing was written and nothing was started.');
     expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
     expect(existsSync(join(h.directory, 'docs-local'))).toBe(false);
-    expect(h.commands.some((call) => call.command === 'pnpm' && call.args[0] === 'run')).toBe(false);
+    expect(h.commands.some((call) => call.command === 'pnpm' && call.args[0] === 'run')).toBe(
+      false,
+    );
     expect(h.commands.some((call) => call.args.includes('down'))).toBe(false);
     expect(h.commands.some((call) => call.args.includes('create'))).toBe(false);
   });
 
   it('names the prompts a live run would make instead of making them', async (): Promise<void> => {
     const h = harness();
-    expect(await runSetup(realRoute({ dryRun: true, bossEmail: undefined, assumeYes: false }), h.io)).toBe(0);
+    expect(
+      await runSetup(realRoute({ dryRun: true, bossEmail: undefined, assumeYes: false }), h.io),
+    ).toBe(0);
     const printed = h.output.join('\n');
     expect(printed).toContain('OPENAI_API_KEY=<asked in a hidden prompt');
     expect(printed).toContain('NEXT_PUBLIC_DEMO_BOSS_EMAIL=<asked>');
@@ -721,7 +829,14 @@ describe('--company', (): void => {
   function companyHarness(failing: { match: string; status: number; stderr: string }[] = []) {
     const h = harness({
       environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
-      services: ['backend', 'sandbox', 'redactor', 'playwright-mcp', 'looker-tile', 'docs-notion-mcp'],
+      services: [
+        'backend',
+        'sandbox',
+        'redactor',
+        'playwright-mcp',
+        'looker-tile',
+        'docs-notion-mcp',
+      ],
       failing,
     });
     cpSync(resolve('bed', 'company'), join(h.directory, 'bed', 'company'), { recursive: true });
@@ -754,14 +869,24 @@ describe('--company', (): void => {
     expect(flat).toContain(
       'the teams REVOPS (Revenue operations, project "Q3 close"), FIN (Finance close, project "September close"), LOG (Logistics desk, project "Shipment exceptions")',
     );
-    expect(flat).toContain('the public channels #revops-asks, #revops, #finance-close, #logistics-desk, #ops-requests');
-    expect(flat).toContain('DAY0_BED_LINEAR_API_KEY, DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN');
-    expect(printed.indexOf('hand steps')).toBeLessThan(printed.indexOf('[11/11] pnpm bed:company check'));
+    expect(flat).toContain(
+      'the public channels #revops-asks, #revops, #finance-close, #logistics-desk, #ops-requests',
+    );
+    expect(flat).toContain(
+      'DAY0_BED_LINEAR_API_KEY, DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN',
+    );
+    expect(printed.indexOf('hand steps')).toBeLessThan(
+      printed.indexOf('[11/11] pnpm bed:company check'),
+    );
   });
 
   it('stops when the pages cannot be copied, and runs no check', async (): Promise<void> => {
     const h = companyHarness([
-      { match: 'bed:company docs', status: 1, stderr: 'GAP onboarding.md is already there and was not written by bed:company' },
+      {
+        match: 'bed:company docs',
+        status: 1,
+        stderr: 'GAP onboarding.md is already there and was not written by bed:company',
+      },
     ]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(1);
     expect(ran(h)).not.toContain('bed:company check');
@@ -788,11 +913,13 @@ describe('--company', (): void => {
 
   it('fails setup and shows a missing team instead of calling it an owed hand step', async (): Promise<void> => {
     const gap = '  GAP  team FIN is missing from the Linear workspace';
-    const h = companyHarness([{
-      match: 'bed:company check',
-      status: 1,
-      stderr: `${gap}\n1 gap(s) above.`,
-    }]);
+    const h = companyHarness([
+      {
+        match: 'bed:company check',
+        status: 1,
+        stderr: `${gap}\n1 gap(s) above.`,
+      },
+    ]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(1);
     const printed = h.output.join('\n');
     expect(printed).toContain(gap);
@@ -801,11 +928,13 @@ describe('--company', (): void => {
 
   it('fails setup and shows a wrong token even when another token is still owed', async (): Promise<void> => {
     const wrong = '  GAP  DAY0_BED_LINEAR_API_KEY did not authenticate with Linear';
-    const h = companyHarness([{
-      match: 'bed:company check',
-      status: 1,
-      stderr: `${owedTokenGaps.split('\n').slice(1, 3).join('\n')}\n${wrong}\n3 gap(s) above.`,
-    }]);
+    const h = companyHarness([
+      {
+        match: 'bed:company check',
+        status: 1,
+        stderr: `${owedTokenGaps.split('\n').slice(1, 3).join('\n')}\n${wrong}\n3 gap(s) above.`,
+      },
+    ]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(1);
     const printed = h.output.join('\n');
     expect(printed).toContain(wrong);
@@ -815,7 +944,9 @@ describe('--company', (): void => {
   it('is refused in mock mode before anything is written', async (): Promise<void> => {
     const h = companyHarness();
     expect(await runSetup(realRoute({ mode: 'mock', route: 'key', company: true }), h.io)).toBe(1);
-    expect(h.output.join('\n')).toContain('error: --company sets up the company bed, which runs in real mode: `./setup.sh --company`.');
+    expect(h.output.join('\n')).toContain(
+      'error: --company sets up the company bed, which runs in real mode: `./setup.sh --company`.',
+    );
     expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
     expect(h.commands).toEqual([]);
   });

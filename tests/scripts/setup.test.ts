@@ -1,5 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,7 +19,9 @@ import {
   backendIdentityRefusal,
   buildEnvironmentRefusal,
   chooseLocalModel,
+  composeProjectRefusal,
   DEFAULT_PORTS,
+  defaultProjectName,
   localTargetRefusals,
   majorVersion,
   modelAddresses,
@@ -44,9 +56,11 @@ const directories: string[] = [];
  * Returns:
  *   The directory path.
  */
-function checkout(envLocal?: string): string {
-  const directory = mkdtempSync(join(tmpdir(), 'day0-setup-'));
-  directories.push(directory);
+function checkout(envLocal?: string, name?: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'day0-setup-'));
+  directories.push(root);
+  const directory = name === undefined ? root : join(root, name);
+  if (name !== undefined) mkdirSync(directory);
   mkdirSync(join(directory, 'scripts'));
   writeFileSync(join(directory, 'package.json'), '{"name":"day0"}\n', 'utf8');
   writeFileSync(join(directory, 'docker-compose.yml'), 'services:\n', 'utf8');
@@ -104,6 +118,8 @@ interface HarnessOptions {
   environment?: Record<string, string | undefined>;
   /** Whether the backend accepts the admin key the file already holds. */
   adminKeyAccepted?: boolean;
+  /** The checkout's directory name, as a clone would give it; a temporary name otherwise. */
+  name?: string;
 }
 
 /**
@@ -116,7 +132,7 @@ interface HarnessOptions {
  *   The injectable environment, the recorded commands and the printed lines.
  */
 function harness(options: HarnessOptions = {}): Harness {
-  const directory = checkout(options.envLocal);
+  const directory = checkout(options.envLocal, options.name);
   const commands: { command: string; args: string[] }[] = [];
   const output: string[] = [];
   const answers = [...(options.answers ?? [])];
@@ -301,7 +317,9 @@ describe('reading the command line', (): void => {
 
   it('refuses a route it does not have, rather than silently taking the default', (): void => {
     expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow('--route');
-    expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow('key, local, featherless, endpoint');
+    expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow(
+      'key, local, featherless, endpoint',
+    );
     expect(() => parseSetupArguments(['--port', 'three'])).toThrow('--port');
   });
 
@@ -363,6 +381,292 @@ describe('prerequisites', (): void => {
   });
 });
 
+describe('a Docker daemon this user cannot reach', (): void => {
+  const everything = {
+    node: 'v22.19.0',
+    pnpm: '9.15.0',
+    docker: 'Docker version 29.8.0',
+    compose: 'Docker Compose version v5.5.1',
+    ports: [],
+  };
+
+  it('asks the daemon, not only the client, and names the fix for each refusal', (): void => {
+    const stopped = prerequisiteReport({
+      ...everything,
+      daemon: {
+        ok: false,
+        detail:
+          'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?',
+      },
+    }).find((item) => item.name === 'Docker daemon');
+    expect(stopped).toMatchObject({ ok: false, blocking: true });
+    expect(stopped?.detail).toContain('Cannot connect to the Docker daemon');
+    expect(stopped?.fix).toContain('sudo systemctl start docker');
+    const outside = prerequisiteReport({
+      ...everything,
+      daemon: {
+        ok: false,
+        detail: 'permission denied while trying to connect to the Docker daemon socket',
+      },
+    }).find((item) => item.name === 'Docker daemon');
+    expect(outside?.fix).toContain('sudo usermod -aG docker "$USER"');
+    expect(
+      prerequisiteReport({
+        ...everything,
+        daemon: { ok: true, detail: '29.8.0', arch: 'x86_64' },
+      }).every((item) => item.ok),
+    ).toBe(true);
+  });
+
+  it('names the Compose plugin when `docker compose` did not answer', (): void => {
+    const compose = prerequisiteReport({
+      ...everything,
+      compose: undefined,
+      composeFailure: "docker: 'compose' is not a docker command.",
+    }).find((item) => item.name === 'Compose v2');
+    expect(compose?.detail).toBe(
+      "`docker compose version` did not answer: docker: 'compose' is not a docker command.",
+    );
+    expect(compose?.fix).toContain('docker-compose-plugin');
+  });
+
+  it('refuses real mode on an arm64 daemon, which the redactor wheel locks do not cover, and lets mock mode through', (): void => {
+    const arm = { ...everything, daemon: { ok: true, detail: '29.8.0', arch: 'aarch64' } };
+    const real = prerequisiteReport({ ...arm, mode: 'real' }).find(
+      (item) => item.name === 'Redactor wheels',
+    );
+    expect(real).toMatchObject({ ok: false, blocking: true });
+    expect(real?.detail).toContain('x86_64');
+    expect(prerequisiteReport({ ...arm, mode: 'mock' }).every((item) => item.ok)).toBe(true);
+  });
+
+  it('reports the daemon on a dry run, keeps its words, and exits non-zero after the plan', async (): Promise<void> => {
+    const h = harness({
+      answers: ['synthetic-key'],
+      failing: [
+        {
+          match: 'docker info',
+          status: 1,
+          stderr:
+            'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n',
+        },
+        {
+          match: 'docker volume ls',
+          status: 1,
+          stderr:
+            'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n',
+        },
+      ],
+    });
+    expect(await runSetup(keyRoute({ dryRun: true }), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'GAP   Docker daemon: Cannot connect to the Docker daemon at unix:///var/run/docker.sock.',
+    );
+    expect(printed).toContain('sudo systemctl start docker');
+    expect(printed).toContain('This dry run found 1 thing(s) to fix above');
+    expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
+  });
+
+  it("keeps Docker's own words when it cannot inventory volumes", async (): Promise<void> => {
+    const h = harness({
+      answers: ['synthetic-key'],
+      failing: [
+        {
+          match: 'docker volume ls',
+          status: 1,
+          stderr: 'permission denied while trying to connect\n',
+        },
+      ],
+    });
+    expect(await runSetup(keyRoute(), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      'error: Docker could not inventory volumes, so no installation can be safely selected: permission denied while trying to connect',
+    );
+  });
+});
+
+describe('a port setup never publishes', (): void => {
+  it('notes a busy dashboard port without refusing, since setup never starts the dashboard', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'], busyPorts: [6791] });
+    expect(await runSetup(keyRoute(), h.io)).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('note  CONVEX_DASHBOARD_PORT 6791: already in use on this machine');
+    expect(printed).toContain('pnpm convex:up --profile dev');
+    expect(printed).not.toContain('thing(s) to fix before Day0 can start here');
+  });
+});
+
+describe('the Featherless key', (): void => {
+  it('asks rather than storing a shell OPENAI_API_KEY that belongs to another provider, and says why', async (): Promise<void> => {
+    const h = harness({
+      answers: ['synthetic-featherless-key'],
+      services: ['backend'],
+      environment: { OPENAI_API_KEY: 'sk-an-openai-key' },
+    });
+    expect(await runSetup(keyRoute({ route: 'featherless' }), h.io)).toBe(0);
+    expect(readEnvValues(join(h.directory, '.env.local')).OPENAI_API_KEY).toBe(
+      'synthetic-featherless-key',
+    );
+    expect(h.output.join('\n')).toContain(
+      'OPENAI_API_KEY in the environment is not taken: OPENAI_BASE_URL there does not name Featherless',
+    );
+  });
+});
+
+describe('a mock setup over a real-mode installation', (): void => {
+  it('refuses before it writes anything, rather than keeping real mode and printing mock', async (): Promise<void> => {
+    const envLocal =
+      'COMPOSE_PROJECT_NAME=day0-setup-test\nDAY0_SURFACE_MODE=real\nOPENAI_API_KEY=synthetic\n';
+    const h = harness({ envLocal, services: ['backend'] });
+    expect(await runSetup(keyRoute(), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('is a real-mode installation');
+    expect(printed).toContain('./setup.sh');
+    expect(printed).not.toContain('Mock mode: the office is seeded');
+    expect(readFileSync(join(h.directory, '.env.local'), 'utf8')).toBe(envLocal);
+    expect(h.commands.some((call) => call.command === 'pnpm')).toBe(false);
+  });
+});
+
+describe('an --endpoint the backend container cannot reach', (): void => {
+  /** A harness whose backend container answers the dial with what curl would print. */
+  function dialling(answer: RunResult): Harness {
+    const h = harness({ services: ['backend'] });
+    const original = h.io.run;
+    h.io.run = (command, args, options) =>
+      args.includes('curl')
+        ? (h.commands.push({ command, args: [...args] }), answer)
+        : original(command, args, options);
+    return h;
+  }
+
+  it("refuses before anything is pushed, keeping curl's words and naming the fix", async (): Promise<void> => {
+    const h = dialling({
+      status: 28,
+      stdout: '000',
+      stderr: 'curl: (28) Connection timed out after 10002 milliseconds\n',
+    });
+    const status = await runSetup(
+      keyRoute({ route: 'endpoint', endpoint: 'http://172.18.0.5:11434/v1' }),
+      h.io,
+    );
+    expect(status).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'error: the backend container could not reach http://172.18.0.5:11434/v1: curl: (28) Connection timed out',
+    );
+    expect(printed).toContain('http://host.docker.internal:11434/v1');
+    const dial = h.commands.find((call) => call.args.includes('curl'));
+    expect(dial?.args).toContain('http://172.18.0.5:11434/v1/models');
+    expect(dial?.args.slice(0, 3)).toEqual(['compose', '--env-file', '.env.local']);
+    expect(h.commands.some((call) => call.args.includes('sync:env'))).toBe(false);
+  });
+
+  it('carries on once the container has an answer from the endpoint, any status at all', async (): Promise<void> => {
+    const h = dialling({ status: 0, stdout: '401', stderr: '' });
+    expect(
+      await runSetup(
+        keyRoute({ route: 'endpoint', endpoint: 'https://gateway.example.com/v1' }),
+        h.io,
+      ),
+    ).toBe(0);
+    expect(h.output.join('\n')).toContain(
+      'the backend container reached https://gateway.example.com/v1 (HTTP 401)',
+    );
+  });
+});
+
+describe('a checkout that moved', (): void => {
+  /** A checkout whose env file was written at another path, with that path's containers still there. */
+  function moved(oldRoot: string): Harness {
+    const h = harness({
+      envLocal: `COMPOSE_PROJECT_NAME=day0-setup-test\nOPENAI_API_KEY=synthetic\nDAY0_SETUP_ROOT=${oldRoot}\n`,
+      volumes: ['day0-setup-test_convex_data'],
+      services: ['backend'],
+    });
+    const original = h.io.run;
+    // The old containers until they are removed, none until `up` recreates
+    // them, then this checkout's, as Docker would report each.
+    let containers: 'old' | 'none' | 'new' = 'old';
+    h.io.run = (command, args, options) => {
+      if (args[0] === 'rm') containers = 'none';
+      if (args.includes('convex:up')) containers = 'new';
+      if (containers === 'none' && args[0] === 'ps') {
+        h.commands.push({ command, args: [...args] });
+        return { status: 0, stdout: '\n', stderr: '' };
+      }
+      return args[0] === 'inspect' && containers === 'old'
+        ? { status: 0, stdout: `${oldRoot}\n`, stderr: '' }
+        : original(command, args, options);
+    };
+    return h;
+  }
+
+  it('says the checkout looks moved and names --adopt, rather than asking for a fresh project', async (): Promise<void> => {
+    const h = moved('/home/someone/old-place/day0');
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'was set up at /home/someone/old-place/day0, which no longer holds it',
+    );
+    expect(printed).toContain('--adopt');
+    expect(printed).not.toContain('choose a fresh project');
+  });
+
+  it('re-adopts with --adopt: the old containers go, the volumes and the data stay, the new root is written', async (): Promise<void> => {
+    const h = moved('/home/someone/old-place/day0');
+    expect(await runSetup(keyRoute({ project: undefined, adopt: true }), h.io)).toBe(0);
+    const removal = h.commands.find((call) => call.args[0] === 'rm');
+    expect(removal?.args.slice(0, 2)).toEqual(['rm', '-f']);
+    expect(h.commands.some((call) => call.args.includes('down') && call.args.includes('-v'))).toBe(
+      false,
+    );
+    expect(h.commands.some((call) => call.args[0] === 'volume' && call.args[1] === 'rm')).toBe(
+      false,
+    );
+    expect(readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME).toBe(
+      'day0-setup-test',
+    );
+    expect(readEnvValues(join(h.directory, '.env.local')).DAY0_SETUP_ROOT).toBe(
+      realpathSync(h.directory),
+    );
+    expect(h.output.join('\n')).toContain('re-adopting day0-setup-test');
+  });
+
+  it('removes nothing when the run stops before its first step', async (): Promise<void> => {
+    const h = moved('/home/someone/old-place/day0');
+    // No key on file and none answered: the prompt is cancelled.
+    writeFileSync(
+      join(h.directory, '.env.local'),
+      'COMPOSE_PROJECT_NAME=day0-setup-test\nDAY0_SETUP_ROOT=/home/someone/old-place/day0\n',
+      'utf8',
+    );
+    h.io.ask = async (): Promise<string> => {
+      throw new SetupCancelled('the reader stopped at the prompt');
+    };
+    expect(await runSetup(keyRoute({ project: undefined, adopt: true }), h.io)).toBe(130);
+    expect(h.commands.some((call) => call.args[0] === 'rm')).toBe(false);
+  });
+
+  it('refuses --adopt while the old path still holds a checkout that claims the project', async (): Promise<void> => {
+    const other = mkdtempSync(join(tmpdir(), 'day0-setup-other-'));
+    directories.push(other);
+    writeFileSync(join(other, 'package.json'), '{"name":"day0"}\n', 'utf8');
+    writeFileSync(join(other, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-setup-test\n', 'utf8');
+    const h = moved(other);
+    expect(await runSetup(keyRoute({ project: undefined, adopt: true }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      `${other} still holds a checkout whose .env.local names day0-setup-test`,
+    );
+    expect(h.commands.some((call) => call.args[0] === 'rm')).toBe(false);
+  });
+
+  it('reads --adopt from the command line', (): void => {
+    expect(parseSetupArguments(['--adopt']).adopt).toBe(true);
+  });
+});
+
 describe('refusing anything that is not this machine', (): void => {
   it('refuses to run as part of a hosted build', (): void => {
     expect(buildEnvironmentRefusal({ VERCEL: '1' })).toContain('Vercel');
@@ -398,10 +702,60 @@ describe('refusing anything that is not this machine', (): void => {
   });
 });
 
+describe('the Compose project a clone sets up under', (): void => {
+  it('sets a fresh clone in a directory called day0 up under a project of its own', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'], name: 'day0' });
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(0);
+    const project = readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME;
+    expect(project).toMatch(/^day0-[0-9a-f]{6}$/);
+    expect(h.output.join('\n')).toContain(`Compose project ${project}.`);
+    // The name is written, so a second run takes the file's and asks nothing.
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(0);
+    expect(readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME).toBe(project);
+  });
+
+  it('turns a directory name with capitals, spaces and dots into one Compose takes', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'], name: 'My Day0.Clone' });
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(0);
+    expect(readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME).toBe(
+      'my-day0-clone',
+    );
+  });
+
+  it('refuses a --project Compose would refuse before it writes anything, and names one it takes', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'] });
+    expect(await runSetup(keyRoute({ project: 'Day0 Local' }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('--project day0-local');
+    expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
+    expect(h.commands.some((call) => call.command === 'pnpm')).toBe(false);
+  });
+
+  it('derives the default from the directory, adding a suffix from the path only where the name is taken', (): void => {
+    expect(defaultProjectName('/home/a/Day0 Work')).toBe('day0-work');
+    expect(defaultProjectName('/home/a/day0')).toMatch(/^day0-[0-9a-f]{6}$/);
+    expect(defaultProjectName('/home/a/day0')).toBe(defaultProjectName('/home/a/day0'));
+    expect(defaultProjectName('/home/a/day0')).not.toBe(defaultProjectName('/home/b/day0'));
+    expect(defaultProjectName('/home/a/day0-redactor-warm')).toMatch(
+      /^day0-redactor-warm-[0-9a-f]{6}$/,
+    );
+    expect(defaultProjectName('/home/a/...')).toMatch(/^day0-[0-9a-f]{6}$/);
+    expect(composeProjectRefusal('day0-setup-test')).toBeUndefined();
+    expect(composeProjectRefusal('day0_setup')).toBeUndefined();
+    expect(composeProjectRefusal('Day0')).toContain('--project day0');
+    expect(composeProjectRefusal('-day0')).toContain('--project day0');
+  });
+});
+
 describe('protected volumes and existing installations', (): void => {
   it('pins every child to this compose file and backend despite inherited overrides', async () => {
-    const h = harness({ answers: ['synthetic-key'], services: ['backend'],
-      environment: { COMPOSE_FILE: '/other/compose.yml', CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3999' } });
+    const h = harness({
+      answers: ['synthetic-key'],
+      services: ['backend'],
+      environment: {
+        COMPOSE_FILE: '/other/compose.yml',
+        CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3999',
+      },
+    });
     const original = h.io.run;
     const children: Record<string, string>[] = [];
     h.io.run = (command, args, options) => {
@@ -417,23 +771,30 @@ describe('protected volumes and existing installations', (): void => {
   });
 
   it('refuses a copied env file that names another checkout’s volume', async () => {
-    const h = harness({ envLocal: 'COMPOSE_PROJECT_NAME=day0-setup-test\nOPENAI_API_KEY=synthetic\n',
-      volumes: ['day0-setup-test_convex_data'], services: ['backend'] });
+    const h = harness({
+      envLocal: 'COMPOSE_PROJECT_NAME=day0-setup-test\nOPENAI_API_KEY=synthetic\n',
+      volumes: ['day0-setup-test_convex_data'],
+      services: ['backend'],
+    });
     const originalRun = h.io.run;
-    h.io.run = (command, args, options) => args.includes('inspect')
-      ? { status: 0, stdout: '/some/other/checkout\n', stderr: '' }
-      : originalRun(command, args, options);
+    h.io.run = (command, args, options) =>
+      args.includes('inspect')
+        ? { status: 0, stdout: '/some/other/checkout\n', stderr: '' }
+        : originalRun(command, args, options);
     const before = readFileSync(join(h.directory, '.env.local'), 'utf8');
     expect(await runSetup(keyRoute(), h.io)).toBe(1);
     expect(readFileSync(join(h.directory, '.env.local'), 'utf8')).toBe(before);
-    expect(h.commands.some(c => c.command === 'pnpm')).toBe(false);
+    expect(h.commands.some((c) => c.command === 'pnpm')).toBe(false);
   });
 
   it('fails closed when Docker cannot inventory existing volumes', async () => {
-    const h = harness({ answers: ['synthetic-key'], services: ['backend'],
-      failing: [{ match: 'docker volume ls', status: 1, stderr: 'daemon unavailable' }] });
+    const h = harness({
+      answers: ['synthetic-key'],
+      services: ['backend'],
+      failing: [{ match: 'docker volume ls', status: 1, stderr: 'daemon unavailable' }],
+    });
     expect(await runSetup(keyRoute(), h.io)).toBe(1);
-    expect(h.commands.some(c => c.command === 'pnpm')).toBe(false);
+    expect(h.commands.some((c) => c.command === 'pnpm')).toBe(false);
     expect(() => readFileSync(join(h.directory, '.env.local'))).toThrow();
   });
 
@@ -969,7 +1330,6 @@ describe('running it a second time', (): void => {
   });
 });
 
-
 describe('console input from a pipe', () => {
   it.each([false, true])('keeps queued answers after EOF (hidden: %s)', (hidden) => {
     const script = `
@@ -982,9 +1342,16 @@ describe('console input from a pipe', () => {
       try { await io.ask('third: '); process.exit(3); }
       catch (error) { if (!(error instanceof SetupCancelled)) throw error; }
     `;
-    const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
-      cwd: process.cwd(), input: '1\nsynthetic-secret\n', encoding: 'utf8', timeout: 5000,
-    });
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', '--input-type=module', '-e', script],
+      {
+        cwd: process.cwd(),
+        input: '1\nsynthetic-secret\n',
+        encoding: 'utf8',
+        timeout: 5000,
+      },
+    );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain('synthetic-secret');
   });

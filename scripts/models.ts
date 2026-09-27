@@ -15,6 +15,8 @@ export interface CuratedModel {
   id: string;
   /** What the pull downloads, as the menu prints it. */
   downloadLabel: string;
+  /** Memory it needs resident to run whole on one GPU, in MiB. */
+  residentMiB: number;
   /** Where this project ran the whole loop on it. */
   tested: string;
 }
@@ -24,6 +26,7 @@ export const CURATED_MODELS: readonly CuratedModel[] = [
   {
     id: 'qwen3:8b',
     downloadLabel: 'about 5.2 GB',
+    residentMiB: 6144,
     tested: 'the semi-final local bed, 2 September 2026',
   },
 ];
@@ -158,6 +161,8 @@ export interface ModelMenuEntry {
   mark: string;
   /** Where this project tested it, for a curated model. */
   tested?: string;
+  /** What a curated model needs resident, in MiB; unknown for any other. */
+  residentMiB?: number;
   /** Whether `.env.local` already names it for this route. */
   configured: boolean;
 }
@@ -203,6 +208,7 @@ export function modelMenu(present: readonly PresentModel[], configured?: string)
       present: false,
       mark: `will pull (${model.downloadLabel})`,
       tested: model.tested,
+      residentMiB: model.residentMiB,
       configured: model.id === configured,
     });
   }
@@ -213,21 +219,52 @@ export function modelMenu(present: readonly PresentModel[], configured?: string)
 }
 
 /**
+ * Why an entry is no default on this machine: it would be pulled, nobody chose
+ * it, and it does not fit the roomiest GPU whole, or there is no GPU. A model
+ * already present, or the one `.env.local` names, was a choice already made.
+ *
+ * Args:
+ *   entry: The entry the menu's order would default to.
+ *   freeVramMiB: Free VRAM on the roomiest card, or undefined for no GPU.
+ *
+ * Returns:
+ *   The reason, or undefined when the entry fits or was chosen already.
+ */
+export function unfitDefaultReason(
+  entry: ModelMenuEntry,
+  freeVramMiB: number | undefined,
+): string | undefined {
+  if (entry.present || entry.configured || entry.residentMiB === undefined) return undefined;
+  if (freeVramMiB !== undefined && freeVramMiB >= entry.residentMiB) return undefined;
+  const pull = CURATED_MODELS.find((model): boolean => model.id === entry.id)?.downloadLabel;
+  const size = `${pull ? `${pull} to pull, ` : ''}about ${Math.round(entry.residentMiB / 1024)} GB resident`;
+  return freeVramMiB === undefined
+    ? `No NVIDIA GPU answered, and ${entry.id} (${size}) would run on the CPU: the 1:1 answers, and the charter and every plan take many minutes.`
+    : `${freeVramMiB} MiB is free on the GPU, and ${entry.id} (${size}) would land partly on the CPU: the 1:1 answers, and the charter and every plan take many minutes.`;
+}
+
+/**
  * The entry `--yes` takes: the one the file already names, else the first
- * present, else the first curated.
+ * present, else the first curated, unless the hardware is given and that
+ * would be a pull the machine cannot run whole.
  *
  * Args:
  *   menu: The menu.
+ *   hardware: Free VRAM on the roomiest card; omitted, the order alone decides.
  *
  * Returns:
- *   The default entry, or undefined for an empty menu.
+ *   The default entry, or undefined for an empty menu or no fitting default.
  */
-export function defaultModel(menu: readonly ModelMenuEntry[]): ModelMenuEntry | undefined {
-  return (
+export function defaultModel(
+  menu: readonly ModelMenuEntry[],
+  hardware?: { freeVramMiB: number | undefined },
+): ModelMenuEntry | undefined {
+  const fallback =
     menu.find((entry): boolean => entry.configured) ??
     menu.find((entry): boolean => entry.present) ??
-    menu[0]
-  );
+    menu[0];
+  if (fallback === undefined || hardware === undefined) return fallback;
+  return unfitDefaultReason(fallback, hardware.freeVramMiB) === undefined ? fallback : undefined;
 }
 
 /**
