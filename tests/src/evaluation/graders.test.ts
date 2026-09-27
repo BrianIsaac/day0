@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GRADED_OFFICE,
   PROCEDURE_RUNBOOK_LINES,
   firstCorrectEffectAt,
   gradeEvaluationTask,
@@ -38,6 +39,28 @@ const day0FlatActionDefaults = {
   toolArgsJson: '',
   tweetSlug: '',
 };
+
+describe('the graded office', (): void => {
+  it('is a frozen copy with its commit and date, not the live mock seed', (): void => {
+    expect(GRADED_OFFICE.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(GRADED_OFFICE.frozenAt).toBe('2026-09-27');
+    expect(
+      GRADED_OFFICE.docs.filter((doc) => doc.category === 'how-to-guide').map((doc) => doc.slug),
+    ).toEqual([
+      'how-to-update-spreadsheet',
+      'how-to-post-slack',
+      'how-to-update-ticket',
+      'how-to-reply-tweet',
+    ]);
+  });
+
+  it('takes every procedure line from a frozen guide body', (): void => {
+    for (const { guideSlug, line } of Object.values(PROCEDURE_RUNBOOK_LINES)) {
+      const guide = GRADED_OFFICE.docs.find((doc) => doc.slug === guideSlug);
+      expect(guide?.body.split('\n').map((row) => row.trim())).toContain(line);
+    }
+  });
+});
 
 describe('semi-final task fixtures', (): void => {
   it('loads 15 unique tasks split evenly across the three categories', async (): Promise<void> => {

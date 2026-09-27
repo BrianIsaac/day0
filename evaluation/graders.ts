@@ -7,15 +7,45 @@ interface ProcedureRunbookLine {
   line: string;
 }
 
-function seededGuideBody(source: string, slug: ProcedureRunbookLine['guideSlug']): string {
-  const guideStart = source.indexOf(`slug: '${slug}'`);
-  const bodyMarker = 'body: `';
-  const bodyStart = source.indexOf(bodyMarker, guideStart) + bodyMarker.length;
-  const bodyEnd = source.indexOf('\n`,', bodyStart);
-  if (guideStart < 0 || bodyStart < bodyMarker.length || bodyEnd < 0) {
-    throw new Error(`seeded guide ${slug} was not found in convex/mockSeed.ts`);
-  }
-  return source.slice(bodyStart, bodyEnd).replaceAll('\\`', '`');
+const gradedOfficeSchema = z.object({
+  provenance: z.string().min(1),
+  commit: z.string().regex(/^[0-9a-f]{40}$/),
+  frozenAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  docs: z.array(
+    z.object({
+      slug: z.string().min(1),
+      title: z.string().min(1),
+      body: z.string().min(1),
+      category: z.enum(['team-doc', 'how-to-guide']),
+    }),
+  ),
+  spreadsheets: z.array(z.object({ slug: z.string().min(1), title: z.string().min(1) })),
+  slackChannels: z.array(z.object({ slug: z.string().min(1), displayName: z.string().min(1) })),
+  tweets: z.array(
+    z.object({ slug: z.string().min(1), handle: z.string().min(1), body: z.string().min(1) }),
+  ),
+  tickets: z.array(z.object({ slug: z.string().min(1), title: z.string().min(1) })),
+});
+
+/** The mock office the task set is graded against, as the frozen fixture records it. */
+export type GradedOffice = z.infer<typeof gradedOfficeSchema>;
+
+/**
+ * The frozen copy of the graded office (decision N5).
+ *
+ * The graders derive every procedure line and destination from this copy, so
+ * a change to the live mock seed cannot move a grade.
+ */
+export const GRADED_OFFICE: GradedOffice = gradedOfficeSchema.parse(
+  JSON.parse(readFileSync(new URL('./tasks/office.json', import.meta.url), 'utf8')),
+);
+
+function officeGuideBody(slug: ProcedureRunbookLine['guideSlug']): string {
+  const guide = GRADED_OFFICE.docs.find(
+    (doc) => doc.category === 'how-to-guide' && doc.slug === slug,
+  );
+  if (!guide) throw new Error(`guide ${slug} is not in the graded office fixture`);
+  return guide.body;
 }
 
 function guideLine(
@@ -27,19 +57,18 @@ function guideLine(
     .split('\n')
     .map((value) => value.trim())
     .find((value) => pattern.test(value));
-  if (!line) throw new Error(`seeded guide ${guideSlug} lacks ${pattern}`);
+  if (!line) throw new Error(`office guide ${guideSlug} lacks ${pattern}`);
   return line;
 }
 
 function capture(line: string, pattern: RegExp, label: string): string {
   const value = pattern.exec(line)?.[1];
-  if (!value) throw new Error(`could not derive ${label} from seeded guide line: ${line}`);
+  if (!value) throw new Error(`could not derive ${label} from office guide line: ${line}`);
   return value;
 }
 
-const SEEDED_GUIDE_SOURCE = readFileSync(new URL('../convex/mockSeed.ts', import.meta.url), 'utf8');
-const UPDATE_TICKET_GUIDE = seededGuideBody(SEEDED_GUIDE_SOURCE, 'how-to-update-ticket');
-const POST_SLACK_GUIDE = seededGuideBody(SEEDED_GUIDE_SOURCE, 'how-to-post-slack');
+const UPDATE_TICKET_GUIDE = officeGuideBody('how-to-update-ticket');
+const POST_SLACK_GUIDE = officeGuideBody('how-to-post-slack');
 
 /** Exact source lines used by the deterministic procedure-effect matcher. */
 export const PROCEDURE_RUNBOOK_LINES = {

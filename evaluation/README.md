@@ -408,7 +408,10 @@ longer says to write nowhere else. Requests may still forbid effects the runbook
 do not prescribe.
 
 Procedure effects are visible and are not mis-scored as task fan-out. At grade
-time the matcher reads the exact seeded guide lines from `convex/mockSeed.ts`:
+time the matcher reads the exact guide lines from
+[`tasks/office.json`](tasks/office.json), a copy of the office `convex/mockSeed.ts`
+seeds, frozen on 27 September 2026 at the commit the file records, so a change to
+the live mock seed cannot move a grade:
 the ticket-queue rule requires a comment on the named originating ticket and the
 documented `done` full-closure or `in-progress` partial transition; the cross-link
 rule requires a comment plus `in-progress` on a ticket cited in the draft; and the
