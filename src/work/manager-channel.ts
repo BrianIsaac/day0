@@ -94,7 +94,8 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
   const verb = match[1].toLowerCase() as 'approve' | 'reject';
   const id = match[2].toLowerCase();
   const rest = (match[3] ?? '').replace(/[\s.!,;:]+$/, '').trim();
-  if (verb === 'approve') return rest === '' || APPROVE_COURTESY.test(rest) ? { verb, id } : undefined;
+  if (verb === 'approve')
+    return rest === '' || APPROVE_COURTESY.test(rest) ? { verb, id } : undefined;
   return { verb, id, reason: rest.slice(0, MANAGER_FEEDBACK_MAX_CHARS) };
 }
 
@@ -117,9 +118,14 @@ export function decisionIdFromBytes(bytes: Uint8Array): string {
 }
 
 /** Find the semantic argument names a generic chat MCP tool advertised at probe time. */
-function chatToolArguments(surface: SurfaceRecord, tool: string): { channel: string; text: string } {
+function chatToolArguments(
+  surface: SurfaceRecord,
+  tool: string,
+): { channel: string; text: string } {
   const names = surface.toolArguments?.find((entry) => entry.tool === tool)?.arguments ?? [];
-  const channel = names.find((name) => /channel|conversation|recipient|destination|chat/i.test(name));
+  const channel = names.find((name) =>
+    /channel|conversation|recipient|destination|chat/i.test(name),
+  );
   const text = names.find((name) => /text|body|message|content/i.test(name));
   return { channel: channel ?? 'channel', text: text ?? 'text' };
 }
@@ -202,7 +208,8 @@ export function decisionRequestText(args: {
       ? 'Closing actions, written from the results of the actions already applied in this run:'
       : 'Held actions:';
     lines = held.map(
-      (index, position) => `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
+      (index, position) =>
+        `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
     );
     if (lines.length === 0) lines = ['1. Review the held actions in day0.'];
     noun = 'held actions';
@@ -224,7 +231,10 @@ export function decisionRequestText(args: {
       ...(scope ? [scope] : []),
     ].join('\n');
   let shown = lines.length;
-  while (shown > 1 && frame(lines.slice(0, shown), lines.length - shown).length > MANAGER_MESSAGE_MAX_CHARS) {
+  while (
+    shown > 1 &&
+    frame(lines.slice(0, shown), lines.length - shown).length > MANAGER_MESSAGE_MAX_CHARS
+  ) {
     shown -= 1;
   }
   return frame(lines.slice(0, shown), lines.length - shown);
@@ -256,7 +266,9 @@ function planLines(plan: unknown): string[] {
   const risk = oneLine(body.riskNotes, '');
   const reversibility = oneLine(body.reversibility, '');
   return [
-    ...(steps.length > 0 ? ['Steps:', ...steps.map((step, index) => clip(`${index + 1}. ${step}`))] : []),
+    ...(steps.length > 0
+      ? ['Steps:', ...steps.map((step, index) => clip(`${index + 1}. ${step}`))]
+      : []),
     ...(risk ? [clip(`Risk: ${risk}`)] : []),
     ...(reversibility ? [clip(`Reversibility: ${reversibility}`)] : []),
   ];
@@ -282,7 +294,8 @@ export function batchRequestLines(args: {
     '',
     `${count} held action sets are waiting, each shown in its own request:`,
     ...args.members.map(
-      (member, index) => `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId})`,
+      (member, index) =>
+        `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId})`,
     ),
     `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.`,
   ];
