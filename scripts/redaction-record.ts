@@ -33,7 +33,9 @@ export interface SpanRecording {
 async function main(): Promise<number> {
   const url = process.env.DAY0_REDACTOR_URL?.trim();
   if (!url) {
-    console.error('DAY0_REDACTOR_URL is unset; start the component (`pnpm redactor:up`) and point at it.');
+    console.error(
+      'DAY0_REDACTOR_URL is unset; start the component (`pnpm redactor:up`) and point at it.',
+    );
     return 1;
   }
   const model = new HttpSpanModel(url);
@@ -53,9 +55,9 @@ async function main(): Promise<number> {
   const cases = loadRedactionCorpus();
   const started = Date.now();
   for (const entry of cases) {
-    recording.cases[entry.id] = (await model.spans(entry.text, REQUESTED_LABELS, MODEL_THRESHOLD)).map(
-      (span) => ({ ...span, score: Number(span.score.toFixed(4)) }),
-    );
+    recording.cases[entry.id] = (
+      await model.spans(entry.text, REQUESTED_LABELS, MODEL_THRESHOLD)
+    ).map((span) => ({ ...span, score: Number(span.score.toFixed(4)) }));
   }
   writeFileSync(RECORDING_PATH, `${JSON.stringify(recording, null, 1)}\n`, 'utf8');
   const spans = Object.values(recording.cases).reduce((sum, list): number => sum + list.length, 0);

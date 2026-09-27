@@ -66,7 +66,12 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_DOCS_HOST_DIR } from '../src/docs/host-dir';
-import { FIRST_SUCCESS, MOCK_FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../src/setup/quickstart';
+import {
+  FIRST_SUCCESS,
+  MOCK_FIRST_SUCCESS,
+  SETUP_SCRIPT,
+  WAY_NAMES,
+} from '../src/setup/quickstart';
 import { composeArguments, PROFILES } from './compose';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
@@ -366,7 +371,12 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     } else if (argument === '--mode') {
       options.mode = oneOf('--mode', take(), ['mock', 'real'] as const);
     } else if (argument === '--route') {
-      options.route = oneOf('--route', take(), ['key', 'local', 'featherless', 'endpoint'] as const);
+      options.route = oneOf('--route', take(), [
+        'key',
+        'local',
+        'featherless',
+        'endpoint',
+      ] as const);
     } else if (argument === '--gpu') {
       options.gpu = oneOf('--gpu', take(), ['auto', 'on', 'off'] as const);
     } else if (argument === '--sandbox') {
@@ -980,7 +990,10 @@ export function profileArguments(profiles: readonly string[]): string[] {
  */
 export function resetArguments(envFile: string = ENV_FILE): string[] {
   const profiles = Object.keys(PROFILES).filter((name: string): boolean => name !== 'real');
-  return composeArguments([...profileArguments(profiles), 'down', '-v', '--remove-orphans'], envFile);
+  return composeArguments(
+    [...profileArguments(profiles), 'down', '-v', '--remove-orphans'],
+    envFile,
+  );
 }
 
 /**
@@ -1199,7 +1212,10 @@ export function wrapIndented(text: string, indent: string, width = 92): string[]
  * Returns:
  *   Lines to print.
  */
-export function firstSuccessLines(unlockUrl: string | undefined, mode: SetupMode = 'mock'): string[] {
+export function firstSuccessLines(
+  unlockUrl: string | undefined,
+  mode: SetupMode = 'mock',
+): string[] {
   const lines = ['What a first success looks like:'];
   const origin = unlockUrl === undefined ? undefined : new URL(unlockUrl).origin;
   const steps = mode === 'real' ? FIRST_SUCCESS : MOCK_FIRST_SUCCESS;
@@ -1334,7 +1350,9 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
       );
     }
     case 'convex:up':
-      return [{ command: 'pnpm', args: ['run', 'convex:up', ...profileArguments(context.profiles)] }];
+      return [
+        { command: 'pnpm', args: ['run', 'convex:up', ...profileArguments(context.profiles)] },
+      ];
     case 'model:up':
       return [{ command: 'pnpm', args: ['run', 'model:up'] }];
     case 'model:pull':
@@ -1406,19 +1424,23 @@ export function planLines(input: PlanInput): string[] {
       `backend ${input.ports.backend}, site ${input.ports.site}, dashboard ${input.ports.dashboard}, app ${input.ports.app}.`,
   );
   lines.push('');
-  lines.push(`Would write to ${ENV_FILE}${input.createsEnv ? ` (created from ${ENV_EXAMPLE} first)` : ''}:`);
+  lines.push(
+    `Would write to ${ENV_FILE}${input.createsEnv ? ` (created from ${ENV_EXAMPLE} first)` : ''}:`,
+  );
   const names = Object.keys(input.updates);
   if (names.length === 0) lines.push('  nothing; the file already says all of this');
   for (const name of names) lines.push(`  ${printableUpdate(name, input.updates[name])}`);
-  if (input.asksKey) lines.push('  OPENAI_API_KEY=<asked in a hidden prompt, or taken from the environment>');
+  if (input.asksKey)
+    lines.push('  OPENAI_API_KEY=<asked in a hidden prompt, or taken from the environment>');
   if (input.asksBossEmail) lines.push('  NEXT_PUBLIC_DEMO_BOSS_EMAIL=<asked>');
   lines.push('');
   lines.push('Would run, in this order:');
   input.steps.forEach((step: string, index: number): void => {
     const commands = stepCommands(step, input.context);
-    const prefix = step === 'redactor:up' && input.redactor && input.redactor.mode !== 'auto'
-      ? `MODEL_GPU=${input.redactor.mode} `
-      : '';
+    const prefix =
+      step === 'redactor:up' && input.redactor && input.redactor.mode !== 'auto'
+        ? `MODEL_GPU=${input.redactor.mode} `
+        : '';
     if (commands.length === 0) {
       lines.push(`  ${index + 1}  ${step}: nothing to run`);
       return;
@@ -1508,7 +1530,8 @@ export function resolvePorts(
   return {
     backend: named.backend ?? numberFrom(existing.CONVEX_PORT, DEFAULT_PORTS.backend),
     site: named.site ?? numberFrom(existing.CONVEX_SITE_PROXY_PORT, DEFAULT_PORTS.site),
-    dashboard: named.dashboard ?? numberFrom(existing.CONVEX_DASHBOARD_PORT, DEFAULT_PORTS.dashboard),
+    dashboard:
+      named.dashboard ?? numberFrom(existing.CONVEX_DASHBOARD_PORT, DEFAULT_PORTS.dashboard),
     model: named.model ?? numberFrom(existing.MODEL_PORT, DEFAULT_PORTS.model),
     app: named.app ?? numberFrom(existing.DAY0_APP_PORT, DEFAULT_PORTS.app),
   };
@@ -1598,7 +1621,8 @@ function childEnvironment(project: string, ports: SetupPorts, cwd: string): Reco
     COMPOSE_FILE: join(cwd, 'docker-compose.yml'),
     COMPOSE_PROFILES: '',
     CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${ports.backend}`,
-    CONVEX_SELF_HOSTED_ADMIN_KEY: readEnvValues(join(cwd, ENV_FILE)).CONVEX_SELF_HOSTED_ADMIN_KEY ?? '',
+    CONVEX_SELF_HOSTED_ADMIN_KEY:
+      readEnvValues(join(cwd, ENV_FILE)).CONVEX_SELF_HOSTED_ADMIN_KEY ?? '',
     CONVEX_DEPLOYMENT: '',
     CONVEX_DEPLOY_KEY: '',
     CONVEX_ADMIN_KEY: '',
@@ -1654,16 +1678,32 @@ function projectContainers(
   project: string,
   checkoutRoot: string,
 ): { ids: string[]; refusal?: string } {
-  const containers = io.run('docker', ['ps', '-a', '--filter',
-    `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
+  const containers = io.run('docker', [
+    'ps',
+    '-a',
+    '--filter',
+    `label=com.docker.compose.project=${project}`,
+    '--format',
+    '{{.ID}}',
+  ]);
   if (containers.status !== 0) {
     return { ids: [], refusal: 'Docker could not identify this project’s existing containers.' };
   }
   const ids = containers.stdout.trim().split(/\s+/).filter(Boolean);
   if (ids.length === 0) return { ids };
-  const owners = io.run('docker', ['inspect', '--format',
-    '{{index .Config.Labels "com.docker.compose.project.working_dir"}}', ...ids]);
-  if (owners.status !== 0 || owners.stdout.trim().split('\n').some(root => root !== checkoutRoot)) {
+  const owners = io.run('docker', [
+    'inspect',
+    '--format',
+    '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
+    ...ids,
+  ]);
+  if (
+    owners.status !== 0 ||
+    owners.stdout
+      .trim()
+      .split('\n')
+      .some((root) => root !== checkoutRoot)
+  ) {
     return {
       ids,
       refusal: 'existing project containers belong to another checkout or have unknown ownership.',
@@ -1715,15 +1755,23 @@ function clearProject(
   project: string,
   environment: Record<string, string>,
 ): { swept: string[]; failure?: { what: string; result: RunResult } } {
-  const down = io.run('docker', resetArguments(), { env: environment, inherit: true, timeoutMs: 600_000 });
-  if (down.status !== 0) return { swept: [], failure: { what: 'docker compose down -v', result: down } };
+  const down = io.run('docker', resetArguments(), {
+    env: environment,
+    inherit: true,
+    timeoutMs: 600_000,
+  });
+  if (down.status !== 0)
+    return { swept: [], failure: { what: 'docker compose down -v', result: down } };
   const leftovers = labelledVolumes(io, project).filter((name: string): boolean =>
     removableVolume(name, project),
   );
   if (leftovers.length === 0) return { swept: [] };
   const removed = io.run('docker', ['volume', 'rm', ...leftovers], { timeoutMs: 120_000 });
   if (removed.status !== 0) {
-    return { swept: [], failure: { what: `docker volume rm ${leftovers.join(' ')}`, result: removed } };
+    return {
+      swept: [],
+      failure: { what: `docker volume rm ${leftovers.join(' ')}`, result: removed },
+    };
   }
   return { swept: leftovers };
 }
@@ -1807,9 +1855,13 @@ async function chooseRealLocalModel(
   if (inventory.source === 'service') {
     io.log('  (present: what `ollama list` reports in the running service)');
   } else if (inventory.source === 'volume') {
-    io.log(`  (present: read from the ${args.project}_model_data volume; the service is not running)`);
+    io.log(
+      `  (present: read from the ${args.project}_model_data volume; the service is not running)`,
+    );
   } else if (inventory.source === 'unreadable') {
-    io.log(`  (note: the ${args.project}_model_data volume could not be read, so nothing is listed as present)`);
+    io.log(
+      `  (note: the ${args.project}_model_data volume could not be read, so nothing is listed as present)`,
+    );
   } else {
     io.log('  (nothing is present yet: this project has no model volume)');
   }
@@ -1823,7 +1875,9 @@ async function chooseRealLocalModel(
       mark: 'will pull',
       configured: false,
     };
-    io.log(`  ${named.id}: ${named.present ? 'present, so nothing is pulled' : 'not present, so it is pulled first'}.`);
+    io.log(
+      `  ${named.id}: ${named.present ? 'present, so nothing is pulled' : 'not present, so it is pulled first'}.`,
+    );
     return named;
   }
   const fallback = defaultModel(menu);
@@ -1837,14 +1891,19 @@ async function chooseRealLocalModel(
     return fallback;
   }
   if (io.interactive === false) {
-    io.log(`  stdin is not a terminal, so ${fallback.id} is taken (${fallback.mark}); --model <id> chooses another.`);
+    io.log(
+      `  stdin is not a terminal, so ${fallback.id} is taken (${fallback.mark}); --model <id> chooses another.`,
+    );
     return fallback;
   }
   const position = menu.indexOf(fallback) + 1;
   const answer = await io.ask(`  Choose 1-${menu.length} [${position}]: `);
   const chosen = pickModel(menu, answer, fallback);
-  if (chosen === undefined) throw new SetupCancelled(`"${answer.trim()}" is not one of the ${menu.length}`);
-  io.log(`  ${chosen.id}: ${chosen.present ? 'present, so nothing is pulled' : 'not present, so it is pulled first'}.`);
+  if (chosen === undefined)
+    throw new SetupCancelled(`"${answer.trim()}" is not one of the ${menu.length}`);
+  io.log(
+    `  ${chosen.id}: ${chosen.present ? 'present, so nothing is pulled' : 'not present, so it is pulled first'}.`,
+  );
   return chosen;
 }
 
@@ -1878,14 +1937,23 @@ function onlyOwedCompanyTokenGaps(output: string): boolean {
   const gaps = [...output.matchAll(/^\s*GAP\s+(.+)$/gm)].map((match) => match[1]!);
   const summary = /^(\d+) gap\(s\) above\.$/m.exec(output);
   if (gaps.length === 0 || Number(summary?.[1]) !== gaps.length) return false;
-  const names = gaps.map((gap) =>
-    /^DAY0_BED_(LINEAR_API_KEY|SLACK_BOT_TOKEN|NOTION_TOKEN) is not set in \.env\.local:/.exec(gap)?.[1],
+  const names = gaps.map(
+    (gap) =>
+      /^DAY0_BED_(LINEAR_API_KEY|SLACK_BOT_TOKEN|NOTION_TOKEN) is not set in \.env\.local:/.exec(
+        gap,
+      )?.[1],
   );
   return names.every((name) => name !== undefined) && new Set(names).size === names.length;
 }
 
 /** One failed step, printed with the state it leaves behind and how to resume. */
-function reportFailure(io: SetupIo, what: string, result: RunResult, project: string, mode: SetupMode): void {
+function reportFailure(
+  io: SetupIo,
+  what: string,
+  result: RunResult,
+  project: string,
+  mode: SetupMode,
+): void {
   io.log('');
   io.log(`error: ${what} failed (status ${result.status}).`);
   const detail = `${result.stdout}${result.stderr}`.trim();
@@ -1992,7 +2060,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     const checkoutRoot = realpathSync(io.cwd);
     if (existing.DAY0_SETUP_ROOT && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
-      io.log('error: this env file belongs to another checkout; choose a fresh project and env file.');
+      io.log(
+        'error: this env file belongs to another checkout; choose a fresh project and env file.',
+      );
       return 1;
     }
     const containers = projectContainers(io, resolvedProject, checkoutRoot);
@@ -2000,8 +2070,14 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`error: ${containers.refusal}`);
       return 1;
     }
-    if (containers.ids.length === 0 && decision === 'rerun' && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
-      io.log('error: existing volumes have no verifiable checkout ownership; choose a fresh project.');
+    if (
+      containers.ids.length === 0 &&
+      decision === 'rerun' &&
+      existing.DAY0_SETUP_ROOT !== checkoutRoot
+    ) {
+      io.log(
+        'error: existing volumes have no verifiable checkout ownership; choose a fresh project.',
+      );
       return 1;
     }
 
@@ -2090,7 +2166,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       );
       if (source.source === 'environment') {
         apiKey = source.key;
-        io.log(`  The key is taken from ${source.variable} in the environment and stored as OPENAI_API_KEY.`);
+        io.log(
+          `  The key is taken from ${source.variable} in the environment and stored as OPENAI_API_KEY.`,
+        );
       } else if (source.source === 'file') {
         apiKey = source.key;
         io.log(
@@ -2108,7 +2186,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         apiKey = (await io.ask('Featherless API key (hidden): ', { hidden: true })).trim();
         if (apiKey === '') {
           io.log('');
-          io.log('error: the Featherless key is empty, and every step of the loop is a model call.');
+          io.log(
+            'error: the Featherless key is empty, and every step of the loop is a model call.',
+          );
           io.log(
             '       Run this again and paste one (https://featherless.ai/account/api-keys), set ' +
               `FEATHERLESS_API_KEY in the environment, or take ${WAY_NAMES.local}: \`--route local\`.`,
@@ -2163,7 +2243,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         }
       }
     } else {
-      endpoint = endpoint ?? (options.dryRun ? '' : (await io.ask('OpenAI-compatible endpoint URL: ')).trim());
+      endpoint =
+        endpoint ??
+        (options.dryRun ? '' : (await io.ask('OpenAI-compatible endpoint URL: ')).trim());
       if (endpoint === '') {
         io.log('error: the advanced route needs an endpoint. Pass `--endpoint <url>`.');
         return 1;
@@ -2183,12 +2265,18 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     let asksBossEmail = false;
     if (real) {
       io.log('');
-      io.log(`Real mode: day0 reads the documentation in ${docsHostDir} and, once you approve a card,`);
-      io.log('  acts on the systems those pages record. Nothing is read until you link the folder.');
+      io.log(
+        `Real mode: day0 reads the documentation in ${docsHostDir} and, once you approve a card,`,
+      );
+      io.log(
+        '  acts on the systems those pages record. Nothing is read until you link the folder.',
+      );
       if (options.sandbox === 'daytona' && (existing.DAYTONA_API_KEY ?? '').trim() === '') {
         io.log('');
         io.log(`error: --sandbox daytona needs DAYTONA_API_KEY in ${ENV_FILE}, and it is empty.`);
-        io.log('       Put the key there, or take the bundled sandbox: `--sandbox local` (the default).');
+        io.log(
+          '       Put the key there, or take the bundled sandbox: `--sandbox local` (the default).',
+        );
         return 1;
       }
       if (bossEmail === '') {
@@ -2202,16 +2290,24 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
           );
         } else {
           io.log('');
-          io.log('Real mode resolves your Slack DM from your address at deploy, so it is asked now.');
+          io.log(
+            'Real mode resolves your Slack DM from your address at deploy, so it is asked now.',
+          );
           bossEmail = (await io.ask('Your email address (NEXT_PUBLIC_DEMO_BOSS_EMAIL): ')).trim();
         }
       }
     } else {
       io.log('');
-      io.log('Mock mode: the office is seeded and synthetic, on a backend that runs here. Nothing of');
-      io.log('  yours is read. It is what the evaluation harness and the hosted demo run on, not one');
+      io.log(
+        'Mock mode: the office is seeded and synthetic, on a backend that runs here. Nothing of',
+      );
+      io.log(
+        '  yours is read. It is what the evaluation harness and the hosted demo run on, not one',
+      );
       io.log('  of the two ways to run Day0 on your own documentation and systems. Those are real');
-      io.log(`  mode, one command: \`${SETUP_SCRIPT} --route featherless\` (${WAY_NAMES.cloud}) or`);
+      io.log(
+        `  mode, one command: \`${SETUP_SCRIPT} --route featherless\` (${WAY_NAMES.cloud}) or`,
+      );
       io.log(`  \`${SETUP_SCRIPT} --route local\` (${WAY_NAMES.local}); README.md, "Local dev".`);
       io.log(
         '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk".',
@@ -2261,7 +2357,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       model,
       warmFrom: options.warmFrom,
       project: resolvedProject,
-      image: warm ? pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8')) : undefined,
+      image: warm
+        ? pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'))
+        : undefined,
     };
     const venvVolume = `${resolvedProject}_${REDACTOR_VOLUME_SUFFIXES[0]}`;
     // The clone module refuses a protected project on either side; better
@@ -2313,12 +2411,16 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       const named = Object.keys(updates).filter(
         (name: string): boolean => !SECRET_NAMES.includes(name),
       );
-      const secrets = Object.keys(updates).filter((name: string): boolean => SECRET_NAMES.includes(name));
+      const secrets = Object.keys(updates).filter((name: string): boolean =>
+        SECRET_NAMES.includes(name),
+      );
       io.log(
         `Wrote ${named.join(', ')}${secrets.length > 0 ? ` and ${secrets.map((name) => printableUpdate(name, updates[name])).join(', ')}` : ''}.`,
       );
       if (real && options.sandbox === 'local' && (existing.DAYTONA_API_KEY ?? '') !== '') {
-        io.log('    DAYTONA_API_KEY was emptied so the bundled sandbox verifies skills; `--sandbox daytona` keeps it.');
+        io.log(
+          '    DAYTONA_API_KEY was emptied so the bundled sandbox verifies skills; `--sandbox daytona` keeps it.',
+        );
       }
     } else {
       io.log('');
@@ -2332,7 +2434,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     io.log('');
     started = true;
 
-    const runStep = (name: string, label: string, extra: RunOptions = {}): RunResult | undefined => {
+    const runStep = (
+      name: string,
+      label: string,
+      extra: RunOptions = {},
+    ): RunResult | undefined => {
       let last: RunResult | undefined;
       for (const planned of stepCommands(name, context)) {
         last = step(io, steps, name, label, planned.command, planned.args, {
@@ -2349,21 +2455,38 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     };
 
     if (options.reset) {
-      io.log(`[${steps.indexOf('reset') + 1}/${steps.length}] docker compose down -v, removing ${resolvedProject} and its volumes`);
-      const cleared = clearProject(io, resolvedProject, { ...environment, DAY0_DOCS_HOST_DIR: docsHostDir });
+      io.log(
+        `[${steps.indexOf('reset') + 1}/${steps.length}] docker compose down -v, removing ${resolvedProject} and its volumes`,
+      );
+      const cleared = clearProject(io, resolvedProject, {
+        ...environment,
+        DAY0_DOCS_HOST_DIR: docsHostDir,
+      });
       if (cleared.failure) {
-        reportFailure(io, cleared.failure.what, cleared.failure.result, resolvedProject, options.mode);
+        reportFailure(
+          io,
+          cleared.failure.what,
+          cleared.failure.result,
+          resolvedProject,
+          options.mode,
+        );
         return 1;
       }
       if (cleared.swept.length > 0) {
-        io.log(`    removed ${cleared.swept.join(', ')} as well: labelled ${resolvedProject}'s, left behind by compose`);
+        io.log(
+          `    removed ${cleared.swept.join(', ')} as well: labelled ${resolvedProject}'s, left behind by compose`,
+        );
       }
       const after = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
-      existingVolumes = after.status === 0 ? after.stdout.split('\n').map((name) => name.trim()) : [];
+      existingVolumes =
+        after.status === 0 ? after.stdout.split('\n').map((name) => name.trim()) : [];
       decision = 'fresh';
     }
 
-    const keys = runStep('dev:no-auth-key', 'pnpm dev:no-auth-key', { inherit: false, timeoutMs: 120_000 });
+    const keys = runStep('dev:no-auth-key', 'pnpm dev:no-auth-key', {
+      inherit: false,
+      timeoutMs: 120_000,
+    });
     if (!keys) return 1;
     for (const line of keys.stdout.split('\n')) {
       if (line.startsWith('Wrote') || line.includes('already carries'))
@@ -2371,7 +2494,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     if (warm) {
-      io.log(`[${steps.indexOf('warm-redactor') + 1}/${steps.length}] redactor volumes from ${options.warmFrom}`);
+      io.log(
+        `[${steps.indexOf('warm-redactor') + 1}/${steps.length}] redactor volumes from ${options.warmFrom}`,
+      );
       const present = REDACTOR_VOLUME_SUFFIXES.filter((suffix: string): boolean =>
         existingVolumes.includes(`${resolvedProject}_${suffix}`),
       );
@@ -2379,22 +2504,39 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         io.log('    already present in this project, so they are kept as they are');
       } else {
         for (const planned of stepCommands('warm-redactor', context)) {
-          const result = io.run(planned.command, planned.args, { env: environment, timeoutMs: 900_000 });
+          const result = io.run(planned.command, planned.args, {
+            env: environment,
+            timeoutMs: 900_000,
+          });
           if (result.status !== 0) {
-            reportFailure(io, `copying ${options.warmFrom}'s redactor volumes`, result, resolvedProject, options.mode);
+            reportFailure(
+              io,
+              `copying ${options.warmFrom}'s redactor volumes`,
+              result,
+              resolvedProject,
+              options.mode,
+            );
             return 1;
           }
         }
-        io.log('    copied the installed wheels and the verified model; the redactor will not download');
+        io.log(
+          '    copied the installed wheels and the verified model; the redactor will not download',
+        );
       }
     }
 
-    if (!runStep('convex:up', `pnpm convex:up${profiles.length > 0 ? ` ${profileArguments(profiles).join(' ')}` : ''}`)) {
+    if (
+      !runStep(
+        'convex:up',
+        `pnpm convex:up${profiles.length > 0 ? ` ${profileArguments(profiles).join(' ')}` : ''}`,
+      )
+    ) {
       return 1;
     }
 
     if (route === 'local') {
-      const modelGpu: Record<string, string> = options.gpu === 'auto' ? {} : { MODEL_GPU: options.gpu };
+      const modelGpu: Record<string, string> =
+        options.gpu === 'auto' ? {} : { MODEL_GPU: options.gpu };
       if (!runStep('model:up', 'pnpm model:up', { env: modelGpu })) return 1;
       if (steps.includes('model:pull')) {
         if (!runStep('model:pull', `pnpm model:pull ${model}`, { timeoutMs: 3_600_000 })) return 1;
@@ -2408,8 +2550,13 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     let redactor: RedactorGpuDecision | undefined;
     if (real) {
       const inventory = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
-      const nowVolumes = inventory.status === 0 ? inventory.stdout.split('\n').map((name) => name.trim()) : existingVolumes;
-      const venv = nowVolumes.includes(venvVolume) ? readVenvDevice(io, venvVolume, context.image) : 'none';
+      const nowVolumes =
+        inventory.status === 0
+          ? inventory.stdout.split('\n').map((name) => name.trim())
+          : existingVolumes;
+      const venv = nowVolumes.includes(venvVolume)
+        ? readVenvDevice(io, venvVolume, context.image)
+        : 'none';
       redactor = redactorGpuDecision({ gpu: options.gpu, driver: hasNvidiaDriver(io), venv });
       const [redactorCommand] = stepCommands('redactor:up', context);
       io.log(`[${steps.indexOf('redactor:up') + 1}/${steps.length}] pnpm redactor:up`);
@@ -2448,7 +2595,10 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     let adminKey: string | undefined = heldKey;
     if (shouldCaptureAdminKey(heldKey, heldKeyWorks)) {
       const [generator] = stepCommands('admin-key', context);
-      const generated = io.run(generator.command, generator.args, { env: environment, timeoutMs: 60_000 });
+      const generated = io.run(generator.command, generator.args, {
+        env: environment,
+        timeoutMs: 60_000,
+      });
       adminKey = generated.status === 0 ? parseAdminKey(generated.stdout) : undefined;
       if (adminKey === undefined) {
         reportFailure(io, 'generate_admin_key.sh', generated, resolvedProject, options.mode);
@@ -2502,7 +2652,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     await io.waitForBackend(ports.backend, 180_000);
 
     if (real && redactor) {
-      const health = await waitForRedactor(io, environment, redactor.rebuilds ? 1_800_000 : 300_000);
+      const health = await waitForRedactor(
+        io,
+        environment,
+        redactor.rebuilds ? 1_800_000 : 300_000,
+      );
       if (health === 'healthy') {
         io.log('    the redactor is healthy: the model is loaded and verified');
       } else {
@@ -2528,7 +2682,15 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     if (real && options.company) {
       io.log('');
       const [docsCommand] = stepCommands('bed:company docs', context);
-      const docs = step(io, steps, 'bed:company docs', 'pnpm bed:company docs', docsCommand.command, docsCommand.args, streamed);
+      const docs = step(
+        io,
+        steps,
+        'bed:company docs',
+        'pnpm bed:company docs',
+        docsCommand.command,
+        docsCommand.args,
+        streamed,
+      );
       if (docs.status !== 0) {
         reportFailure(io, 'pnpm bed:company docs', docs, resolvedProject, options.mode);
         return 1;
@@ -2647,8 +2809,15 @@ interface LifecycleTarget {
  * Raises:
  *   Error: If the project is protected or read-only.
  */
-function lifecycleTarget(io: SetupIo, options: SetupOptions, verb: SetupCommand): LifecycleTarget | string {
-  if (!existsSync(join(io.cwd, 'package.json')) || !existsSync(join(io.cwd, 'docker-compose.yml'))) {
+function lifecycleTarget(
+  io: SetupIo,
+  options: SetupOptions,
+  verb: SetupCommand,
+): LifecycleTarget | string {
+  if (
+    !existsSync(join(io.cwd, 'package.json')) ||
+    !existsSync(join(io.cwd, 'docker-compose.yml'))
+  ) {
     return `run this from the repository root; ${io.cwd} is not a Day0 checkout.`;
   }
   const envPath = join(io.cwd, ENV_FILE);
@@ -2708,7 +2877,9 @@ export async function runStop(options: SetupOptions, io: SetupIo): Promise<numbe
     const { project, environment, ports } = target;
     io.log(`Stopping ${project}: containers down, every volume kept.`);
     if ((runningServices(io, project) ?? []).length === 0) {
-      io.log('  nothing of it is running; stopped containers and the network are removed all the same.');
+      io.log(
+        '  nothing of it is running; stopped containers and the network are removed all the same.',
+      );
     }
     if (!(await io.portFree(ports.app))) {
       io.log(
@@ -2724,10 +2895,16 @@ export async function runStop(options: SetupOptions, io: SetupIo): Promise<numbe
       io.log('Nothing was stopped.');
       return 0;
     }
-    const down = io.run('docker', stopArguments(), { env: environment, inherit: true, timeoutMs: 600_000 });
+    const down = io.run('docker', stopArguments(), {
+      env: environment,
+      inherit: true,
+      timeoutMs: 600_000,
+    });
     if (down.status !== 0) {
       io.log('');
-      io.log(`error: docker compose down failed (status ${down.status}); its output is above. Nothing was removed.`);
+      io.log(
+        `error: docker compose down failed (status ${down.status}); its output is above. Nothing was removed.`,
+      );
       return 1;
     }
     const kept = labelledVolumes(io, project);
@@ -2762,7 +2939,9 @@ export async function runStop(options: SetupOptions, io: SetupIo): Promise<numbe
 export async function runResume(options: SetupOptions, io: SetupIo): Promise<number> {
   try {
     if (options.reset) {
-      io.log('error: `resume` keeps the volumes; `--reset` belongs to the setup itself, and `clear` removes them.');
+      io.log(
+        'error: `resume` keeps the volumes; `--reset` belongs to the setup itself, and `clear` removes them.',
+      );
       return 1;
     }
     const target = lifecycleTarget(io, options, 'resume');
@@ -2773,7 +2952,9 @@ export async function runResume(options: SetupOptions, io: SetupIo): Promise<num
     const { project, existing } = target;
     const report = setupRoute(existing);
     if (report.route === 'none') {
-      io.log(`error: ${ENV_FILE} names no model route (${report.detail}); run the setup with --route first.`);
+      io.log(
+        `error: ${ENV_FILE} names no model route (${report.detail}); run the setup with --route first.`,
+      );
       return 1;
     }
     if (options.route !== undefined && options.route !== report.route) {
@@ -2784,7 +2965,9 @@ export async function runResume(options: SetupOptions, io: SetupIo): Promise<num
       return 1;
     }
     const mode: SetupMode = existing.DAY0_SURFACE_MODE?.trim() === 'real' ? 'real' : 'mock';
-    io.log(`Resuming ${project} from ${ENV_FILE}: ${mode} mode on the ${report.route} route (${report.detail}).`);
+    io.log(
+      `Resuming ${project} from ${ENV_FILE}: ${mode} mode on the ${report.route} route (${report.detail}).`,
+    );
     io.log('');
     return await runSetup(
       {
@@ -2794,9 +2977,11 @@ export async function runResume(options: SetupOptions, io: SetupIo): Promise<num
         route: report.route,
         project: undefined,
         model:
-          options.model ?? (report.route === 'local' ? existing.OPENAI_MODEL?.trim() || undefined : undefined),
+          options.model ??
+          (report.route === 'local' ? existing.OPENAI_MODEL?.trim() || undefined : undefined),
         endpoint:
-          options.endpoint ?? (report.route === 'endpoint' ? existing.OPENAI_BASE_URL?.trim() : undefined),
+          options.endpoint ??
+          (report.route === 'endpoint' ? existing.OPENAI_BASE_URL?.trim() : undefined),
       },
       io,
     );
@@ -2853,19 +3038,27 @@ export async function runClear(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`error: ${cleared.failure.what} failed (status ${cleared.failure.result.status}).`);
       const detail = `${cleared.failure.result.stdout}${cleared.failure.result.stderr}`.trim();
       for (const line of detail.split('\n').slice(-12)) if (line.trim() !== '') io.log(`  ${line}`);
-      io.log(`  Whatever compose removed before that is gone; run \`${verbCommand('clear', options.mode)}\` again for the rest.`);
+      io.log(
+        `  Whatever compose removed before that is gone; run \`${verbCommand('clear', options.mode)}\` again for the rest.`,
+      );
       return 1;
     }
     const volumesAfter = labelledVolumes(io, project);
-    const removedVolumes = volumesBefore.filter((name: string): boolean => !volumesAfter.includes(name));
+    const removedVolumes = volumesBefore.filter(
+      (name: string): boolean => !volumesAfter.includes(name),
+    );
     io.log('');
-    io.log(`Removed: ${containers.length} container(s), ${removedVolumes.length > 0 ? removedVolumes.join(', ') : 'no volumes'}, the network.`);
+    io.log(
+      `Removed: ${containers.length} container(s), ${removedVolumes.length > 0 ? removedVolumes.join(', ') : 'no volumes'}, the network.`,
+    );
     if (volumesAfter.length > 0) {
       io.log(`  still present, so not this helper's to remove: ${volumesAfter.join(', ')}`);
     }
     if (options.purgeEnv) {
       unlinkSync(join(io.cwd, ENV_FILE));
-      io.log(`Removed ${ENV_FILE} as well (--purge-env): the keys and the model settings go with it.`);
+      io.log(
+        `Removed ${ENV_FILE} as well (--purge-env): the keys and the model settings go with it.`,
+      );
     } else {
       io.log(`${ENV_FILE} is kept, keys and settings included; \`--purge-env\` removes it too.`);
     }
@@ -2954,7 +3147,8 @@ function hasNvidiaDriver(io: SetupIo): boolean {
  *   The device, `unknown` when the volume could not be read.
  */
 function readVenvDevice(io: SetupIo, volume: string, image: string | undefined): VenvDevice {
-  const nodeImage = image ?? pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
+  const nodeImage =
+    image ?? pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
   const stamp = io.run('docker', venvStampCommand(volume, nodeImage), { timeoutMs: 120_000 });
   if (stamp.status !== 0) return 'unknown';
   return venvDevice(stamp.stdout, requirementsDigests(io.cwd));
@@ -2978,7 +3172,8 @@ async function waitForRedactor(
 ): Promise<ServiceHealth> {
   const sleep =
     io.sleep ??
-    ((ms: number): Promise<void> => new Promise((resolvePromise) => setTimeout(resolvePromise, ms)));
+    ((ms: number): Promise<void> =>
+      new Promise((resolvePromise) => setTimeout(resolvePromise, ms)));
   const now = io.now ?? Date.now;
   const deadline = now() + timeoutMs;
   let health: ServiceHealth = 'absent';
@@ -2993,7 +3188,9 @@ async function waitForRedactor(
     if (health === 'healthy' || health === 'exited' || health === 'absent') return health;
     if (now() >= deadline) return health;
     if (!announced) {
-      io.log('    waiting for the redactor to load its model (seconds on a warm volume, minutes on a first start)');
+      io.log(
+        '    waiting for the redactor to load its model (seconds on a warm volume, minutes on a first start)',
+      );
       announced = true;
     }
     await sleep(5_000);
@@ -3061,7 +3258,9 @@ async function chooseRoute(options: SetupOptions, io: SetupIo): Promise<SetupRou
   if (options.route) return options.route;
   if (options.assumeYes) return 'key';
   io.log('Where does the model run? Every step of the loop is a model call.');
-  io.log(`  1  ${WAY_NAMES.cloud}, with a key you already have, for OpenAI or any OpenAI-compatible provider.`);
+  io.log(
+    `  1  ${WAY_NAMES.cloud}, with a key you already have, for OpenAI or any OpenAI-compatible provider.`,
+  );
   io.log('     Nothing to download, and no GPU question. You pay per token.');
   io.log(`  2  ${WAY_NAMES.local}: the bundled model runs here, in Docker, with no account.`);
   io.log('     One pull, and a hardware question this asks before it starts.');

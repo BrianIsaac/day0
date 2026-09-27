@@ -35,7 +35,10 @@ function manifestLine(path: string, layerSizes: readonly number[]): string {
   return `${path}\t${JSON.stringify({ schemaVersion: 2, config: { size: 487 }, layers })}`;
 }
 
-const QWEN3_8B_MANIFEST = manifestLine('registry.ollama.ai/library/qwen3/8b', [5225374496, 1723, 11346]);
+const QWEN3_8B_MANIFEST = manifestLine(
+  'registry.ollama.ai/library/qwen3/8b',
+  [5225374496, 1723, 11346],
+);
 
 describe('the curated list', (): void => {
   it('names qwen3:8b as tested on the semi-final local bed, in one place', (): void => {
@@ -58,7 +61,9 @@ describe('reading what the volume holds', (): void => {
 
   it('turns a manifest path into the id `ollama list` would print', (): void => {
     expect(modelIdFromManifestPath('registry.ollama.ai/library/qwen3/8b')).toBe('qwen3:8b');
-    expect(modelIdFromManifestPath('registry.ollama.ai/someone/model/latest')).toBe('someone/model:latest');
+    expect(modelIdFromManifestPath('registry.ollama.ai/someone/model/latest')).toBe(
+      'someone/model:latest',
+    );
     expect(modelIdFromManifestPath('hf.co/user/model/Q4_K_M')).toBe('hf.co/user/model:Q4_K_M');
     expect(modelIdFromManifestPath('registry.ollama.ai/library')).toBeUndefined();
   });
@@ -74,7 +79,13 @@ describe('reading what the volume holds', (): void => {
 
   it('mounts the volume read-only and reads it through the pinned image', (): void => {
     const command = manifestListingCommand('p_model_data', 'node:22-alpine@sha256:abc');
-    expect(command.slice(0, 5)).toEqual(['run', '--rm', '-v', 'p_model_data:/ollama:ro', 'node:22-alpine@sha256:abc']);
+    expect(command.slice(0, 5)).toEqual([
+      'run',
+      '--rm',
+      '-v',
+      'p_model_data:/ollama:ro',
+      'node:22-alpine@sha256:abc',
+    ]);
     expect(command.join(' ')).toContain('/ollama/models/manifests');
   });
 });
@@ -161,10 +172,16 @@ describe('the picker inside a real-mode run on the local route', (): void => {
     expect(await runSetup(localRoute(), h.io)).toBe(0);
     const printed = h.output.join('\n');
     const at = (text: string): number => printed.indexOf(text);
-    expect(at('Models for the bundled service, Compose project day0-setup-test:')).toBeGreaterThan(-1);
+    expect(at('Models for the bundled service, Compose project day0-setup-test:')).toBeGreaterThan(
+      -1,
+    );
     expect(printed).toContain('what `ollama list` reports in the running service');
-    expect(at('1  llama3.2:3b  present, 2.0 GB')).toBeLessThan(at('2  qwen3:4b     present, 2.6 GB'));
-    expect(at('2  qwen3:4b     present, 2.6 GB')).toBeLessThan(at('3  qwen3:8b     will pull (about 5.2 GB)  (tested: '));
+    expect(at('1  llama3.2:3b  present, 2.0 GB')).toBeLessThan(
+      at('2  qwen3:4b     present, 2.6 GB'),
+    );
+    expect(at('2  qwen3:4b     present, 2.6 GB')).toBeLessThan(
+      at('3  qwen3:8b     will pull (about 5.2 GB)  (tested: '),
+    );
     expect(at('Models for the bundled service')).toBeLessThan(at('Starting. Steps:'));
     expect(printed).toContain('Choose 1-3 [1]: ');
     expect(ran(h)).toContain('exec -T model ollama list');
@@ -182,12 +199,17 @@ describe('the picker inside a real-mode run on the local route', (): void => {
     expect(printed).toContain('read from the day0-setup-test_model_data volume');
     expect(printed).toContain('1  qwen3:8b  present, 5.2 GB  (tested: ');
     expect(ran(h)).not.toContain('ollama list');
-    const read = h.commands.find((call) => call.args.join(' ').includes('/ollama/models/manifests'));
+    const read = h.commands.find((call) =>
+      call.args.join(' ').includes('/ollama/models/manifests'),
+    );
     expect(read?.args).toContain('day0-setup-test_model_data:/ollama:ro');
   });
 
   it('--model skips the picker and pulls a model that is not present', async (): Promise<void> => {
-    const h = harness({ services: ['backend', 'model', 'sandbox', 'redactor'], ollamaList: OLLAMA_LIST });
+    const h = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      ollamaList: OLLAMA_LIST,
+    });
     expect(await runSetup(localRoute({ model: 'qwen3:8b' }), h.io)).toBe(0);
     const printed = h.output.join('\n');
     expect(printed).not.toContain('Choose 1-');
@@ -197,10 +219,15 @@ describe('the picker inside a real-mode run on the local route', (): void => {
   });
 
   it('--yes takes the first present model without pulling, else the first curated one and pulls it', async (): Promise<void> => {
-    const present = harness({ services: ['backend', 'model', 'sandbox', 'redactor'], ollamaList: OLLAMA_LIST });
+    const present = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      ollamaList: OLLAMA_LIST,
+    });
     expect(await runSetup(localRoute({ assumeYes: true }), present.io)).toBe(0);
     expect(present.output.join('\n')).toContain('--yes: llama3.2:3b (present, 2.0 GB).');
-    expect(present.output.join('\n')).toContain('llama3.2:3b is already in the model volume, so nothing is pulled');
+    expect(present.output.join('\n')).toContain(
+      'llama3.2:3b is already in the model volume, so nothing is pulled',
+    );
     expect(ran(present)).not.toContain('model:pull');
     expect(readEnvValues(join(present.directory, '.env.local')).OPENAI_MODEL).toBe('llama3.2:3b');
 
@@ -216,7 +243,12 @@ describe('the picker inside a real-mode run on the local route', (): void => {
 
   it('keeps the model the file already names under --yes, even beside a tested one', async (): Promise<void> => {
     const h = harness({
-      envLocal: ['COMPOSE_PROJECT_NAME=day0-setup-test', 'OPENAI_BASE_URL=http://127.0.0.1:11434/v1', 'OPENAI_MODEL=qwen3:4b', ''].join('\n'),
+      envLocal: [
+        'COMPOSE_PROJECT_NAME=day0-setup-test',
+        'OPENAI_BASE_URL=http://127.0.0.1:11434/v1',
+        'OPENAI_MODEL=qwen3:4b',
+        '',
+      ].join('\n'),
       services: ['backend', 'model', 'sandbox', 'redactor'],
       ollamaList: `${OLLAMA_LIST}qwen3:8b                   500a1f067a9f    5.2 GB    6 weeks ago    \n`,
     });
@@ -228,16 +260,31 @@ describe('the picker inside a real-mode run on the local route', (): void => {
   });
 
   it('asks on a terminal, takes a number or the default, and cancels on anything else', async (): Promise<void> => {
-    const picked = harness({ services: ['backend', 'model', 'sandbox', 'redactor'], ollamaList: OLLAMA_LIST, interactive: true, answers: ['3'] });
+    const picked = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      ollamaList: OLLAMA_LIST,
+      interactive: true,
+      answers: ['3'],
+    });
     expect(await runSetup(localRoute(), picked.io)).toBe(0);
     expect(picked.output.join('\n')).toContain('qwen3:8b: not present, so it is pulled first.');
     expect(ran(picked)).toContain('run model:pull qwen3:8b');
 
-    const defaulted = harness({ services: ['backend', 'model', 'sandbox', 'redactor'], ollamaList: OLLAMA_LIST, interactive: true, answers: [''] });
+    const defaulted = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      ollamaList: OLLAMA_LIST,
+      interactive: true,
+      answers: [''],
+    });
     expect(await runSetup(localRoute(), defaulted.io)).toBe(0);
     expect(readEnvValues(join(defaulted.directory, '.env.local')).OPENAI_MODEL).toBe('llama3.2:3b');
 
-    const declined = harness({ services: ['backend', 'model', 'sandbox', 'redactor'], ollamaList: OLLAMA_LIST, interactive: true, answers: ['y'] });
+    const declined = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      ollamaList: OLLAMA_LIST,
+      interactive: true,
+      answers: ['y'],
+    });
     expect(await runSetup(localRoute(), declined.io)).toBe(130);
     expect(declined.output.join('\n')).toContain('Nothing was written and nothing was started');
     expect(existsSync(join(declined.directory, '.env.local'))).toBe(false);
@@ -245,12 +292,18 @@ describe('the picker inside a real-mode run on the local route', (): void => {
   });
 
   it('takes the default without asking when stdin is not a terminal, and says so', async (): Promise<void> => {
-    const h = harness({ services: ['backend', 'model', 'sandbox', 'redactor'], ollamaList: OLLAMA_LIST, interactive: false });
+    const h = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      ollamaList: OLLAMA_LIST,
+      interactive: false,
+    });
     h.io.ask = async (): Promise<string> => {
       throw new Error('the picker must not ask off a terminal');
     };
     expect(await runSetup(localRoute(), h.io)).toBe(0);
-    expect(h.output.join('\n')).toContain('stdin is not a terminal, so llama3.2:3b is taken (present, 2.0 GB); --model <id> chooses another.');
+    expect(h.output.join('\n')).toContain(
+      'stdin is not a terminal, so llama3.2:3b is taken (present, 2.0 GB); --model <id> chooses another.',
+    );
   });
 
   it('prints the list and the choice on --dry-run, with the pull step only for an absent model', async (): Promise<void> => {
@@ -258,13 +311,17 @@ describe('the picker inside a real-mode run on the local route', (): void => {
     expect(await runSetup(localRoute({ dryRun: true }), present.io)).toBe(0);
     const printed = present.output.join('\n');
     expect(printed).toContain('1  llama3.2:3b  present, 2.0 GB');
-    expect(printed).toContain('Would choose llama3.2:3b (present, 2.0 GB); --model <id> chooses another.');
+    expect(printed).toContain(
+      'Would choose llama3.2:3b (present, 2.0 GB); --model <id> chooses another.',
+    );
     expect(printed).toContain('Dry run: real mode on the local route');
     expect(printed).toContain('OPENAI_MODEL=llama3.2:3b');
     expect(printed).not.toContain('model:pull');
     expect(printed).toContain('Nothing was written and nothing was started.');
     expect(existsSync(join(present.directory, '.env.local'))).toBe(false);
-    expect(present.commands.some((call) => call.command === 'pnpm' && call.args[0] === 'run')).toBe(false);
+    expect(present.commands.some((call) => call.command === 'pnpm' && call.args[0] === 'run')).toBe(
+      false,
+    );
 
     const absent = harness();
     expect(await runSetup(localRoute({ dryRun: true }), absent.io)).toBe(0);
@@ -274,7 +331,12 @@ describe('the picker inside a real-mode run on the local route', (): void => {
 
   it('leaves the mock local route on the hardware question, with no menu', async (): Promise<void> => {
     const h = harness({ services: ['backend', 'sandbox', 'model'], answers: ['y'] });
-    expect(await runSetup(realRoute({ mode: 'mock', route: 'local', bossEmail: undefined, assumeYes: false }), h.io)).toBe(0);
+    expect(
+      await runSetup(
+        realRoute({ mode: 'mock', route: 'local', bossEmail: undefined, assumeYes: false }),
+        h.io,
+      ),
+    ).toBe(0);
     const printed = h.output.join('\n');
     expect(printed).not.toContain('Models for the bundled service');
     expect(printed).toContain('Pull it now? [Y/n] ');

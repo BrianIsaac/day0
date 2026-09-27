@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -301,7 +309,9 @@ describe('reading the command line', (): void => {
 
   it('refuses a route it does not have, rather than silently taking the default', (): void => {
     expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow('--route');
-    expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow('key, local, featherless, endpoint');
+    expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow(
+      'key, local, featherless, endpoint',
+    );
     expect(() => parseSetupArguments(['--port', 'three'])).toThrow('--port');
   });
 
@@ -400,8 +410,14 @@ describe('refusing anything that is not this machine', (): void => {
 
 describe('protected volumes and existing installations', (): void => {
   it('pins every child to this compose file and backend despite inherited overrides', async () => {
-    const h = harness({ answers: ['synthetic-key'], services: ['backend'],
-      environment: { COMPOSE_FILE: '/other/compose.yml', CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3999' } });
+    const h = harness({
+      answers: ['synthetic-key'],
+      services: ['backend'],
+      environment: {
+        COMPOSE_FILE: '/other/compose.yml',
+        CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3999',
+      },
+    });
     const original = h.io.run;
     const children: Record<string, string>[] = [];
     h.io.run = (command, args, options) => {
@@ -417,23 +433,30 @@ describe('protected volumes and existing installations', (): void => {
   });
 
   it('refuses a copied env file that names another checkout’s volume', async () => {
-    const h = harness({ envLocal: 'COMPOSE_PROJECT_NAME=day0-setup-test\nOPENAI_API_KEY=synthetic\n',
-      volumes: ['day0-setup-test_convex_data'], services: ['backend'] });
+    const h = harness({
+      envLocal: 'COMPOSE_PROJECT_NAME=day0-setup-test\nOPENAI_API_KEY=synthetic\n',
+      volumes: ['day0-setup-test_convex_data'],
+      services: ['backend'],
+    });
     const originalRun = h.io.run;
-    h.io.run = (command, args, options) => args.includes('inspect')
-      ? { status: 0, stdout: '/some/other/checkout\n', stderr: '' }
-      : originalRun(command, args, options);
+    h.io.run = (command, args, options) =>
+      args.includes('inspect')
+        ? { status: 0, stdout: '/some/other/checkout\n', stderr: '' }
+        : originalRun(command, args, options);
     const before = readFileSync(join(h.directory, '.env.local'), 'utf8');
     expect(await runSetup(keyRoute(), h.io)).toBe(1);
     expect(readFileSync(join(h.directory, '.env.local'), 'utf8')).toBe(before);
-    expect(h.commands.some(c => c.command === 'pnpm')).toBe(false);
+    expect(h.commands.some((c) => c.command === 'pnpm')).toBe(false);
   });
 
   it('fails closed when Docker cannot inventory existing volumes', async () => {
-    const h = harness({ answers: ['synthetic-key'], services: ['backend'],
-      failing: [{ match: 'docker volume ls', status: 1, stderr: 'daemon unavailable' }] });
+    const h = harness({
+      answers: ['synthetic-key'],
+      services: ['backend'],
+      failing: [{ match: 'docker volume ls', status: 1, stderr: 'daemon unavailable' }],
+    });
     expect(await runSetup(keyRoute(), h.io)).toBe(1);
-    expect(h.commands.some(c => c.command === 'pnpm')).toBe(false);
+    expect(h.commands.some((c) => c.command === 'pnpm')).toBe(false);
     expect(() => readFileSync(join(h.directory, '.env.local'))).toThrow();
   });
 
@@ -969,7 +992,6 @@ describe('running it a second time', (): void => {
   });
 });
 
-
 describe('console input from a pipe', () => {
   it.each([false, true])('keeps queued answers after EOF (hidden: %s)', (hidden) => {
     const script = `
@@ -982,9 +1004,16 @@ describe('console input from a pipe', () => {
       try { await io.ask('third: '); process.exit(3); }
       catch (error) { if (!(error instanceof SetupCancelled)) throw error; }
     `;
-    const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
-      cwd: process.cwd(), input: '1\nsynthetic-secret\n', encoding: 'utf8', timeout: 5000,
-    });
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', '--input-type=module', '-e', script],
+      {
+        cwd: process.cwd(),
+        input: '1\nsynthetic-secret\n',
+        encoding: 'utf8',
+        timeout: 5000,
+      },
+    );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain('synthetic-secret');
   });

@@ -18,7 +18,10 @@ describe('the mode and route line', (): void => {
         OPENAI_API_KEY: 'synthetic',
         OPENAI_MODEL: 'zai-org/GLM-5.3-Flash',
       }),
-    ).toEqual({ route: 'featherless', detail: 'GLM through Featherless, model zai-org/GLM-5.3-Flash' });
+    ).toEqual({
+      route: 'featherless',
+      detail: 'GLM through Featherless, model zai-org/GLM-5.3-Flash',
+    });
     expect(
       setupRoute({
         OPENAI_BASE_URL: 'http://127.0.0.1:11434/v1',
@@ -45,7 +48,9 @@ describe('the mode and route line', (): void => {
         CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
         OPENAI_MODEL: 'qwen3:8b',
       }),
-    ).toBe('Mode real, route local (the bundled model service, model qwen3:8b): Local, local model.');
+    ).toBe(
+      'Mode real, route local (the bundled model service, model qwen3:8b): Local, local model.',
+    );
     expect(modeAndRouteLine({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' })).toContain(
       ': Local, cloud model.',
     );
