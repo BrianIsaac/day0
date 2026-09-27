@@ -3443,3 +3443,21 @@ describe('the read grant (Q7, N2)', (): void => {
     );
   });
 });
+
+describe('the Linear list order (P9-1)', (): void => {
+  it('asks for creation order when the schema offers it, so a ticket updated mid-walk keeps its page', (): void => {
+    const request = (orderBy: Record<string, unknown> | undefined): Record<string, unknown> =>
+      linearListArguments(
+        { properties: { project: {}, ...(orderBy === undefined ? {} : { orderBy }) } },
+        { project: 'Q3 close' },
+      ).args;
+
+    expect(request({ type: 'string', enum: ['createdAt', 'updatedAt'] })).toEqual({
+      project: 'Q3 close',
+      orderBy: 'createdAt',
+    });
+    expect(request({ type: 'string' })).toEqual({ project: 'Q3 close', orderBy: 'createdAt' });
+    expect(request({ type: 'string', enum: ['updatedAt'] })).toEqual({ project: 'Q3 close' });
+    expect(request(undefined)).toEqual({ project: 'Q3 close' });
+  });
+});

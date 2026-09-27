@@ -285,6 +285,21 @@ function discoveredArgument(
   return Object.keys(properties).find((name: string): boolean => wanted.has(normalise(name)));
 }
 
+/**
+ * Whether a discovered argument's schema accepts one string value.
+ *
+ * Args:
+ *   schema: The argument's advertised schema.
+ *   value: The value intake would send.
+ *
+ * Returns:
+ *   True when the schema lists the value, or lists no values at all.
+ */
+function schemaAccepts(schema: unknown, value: string): boolean {
+  const options = asRecord(schema)?.enum;
+  return !Array.isArray(options) || options.includes(value);
+}
+
 /** A Linear list request and which of its bounds the provider itself enforces. */
 export interface LinearListRequest {
   args: Record<string, unknown>;
@@ -402,6 +417,14 @@ export function linearListArguments(
 
   const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
   if (limitName) args[limitName] = PAGE_SIZE;
+
+  // Creation order keeps a ticket on its page while the walk pages: under the
+  // default update order, a ticket edited mid-walk moves pages and can be
+  // skipped or read twice (P9-1).
+  const orderName = discoveredArgument(properties, ['orderBy']);
+  if (orderName && schemaAccepts(properties[orderName], 'createdAt')) {
+    args[orderName] = 'createdAt';
+  }
 
   const selectable = selectableFields(properties);
   if (selectable) {
