@@ -43,7 +43,7 @@ function start(
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync('sh', [START, ...args], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:${process.env.PATH ?? ''}`, ...env },
+    env: { NODE_ENV: 'test', PATH: `${bin}:${process.env.PATH ?? ''}`, ...env },
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
