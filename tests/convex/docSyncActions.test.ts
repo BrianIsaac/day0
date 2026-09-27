@@ -36,7 +36,6 @@ afterAll(async (): Promise<void> => {
   await redactorDouble?.close();
 });
 
-
 vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/lib/credential-crypto')>();
   return { ...original, openOwnedCredential: vi.fn(original.openOwnedCredential) };
@@ -104,9 +103,11 @@ describe('documentation sync action helpers', (): void => {
   it('redacts explicit and recognisable credential values from errors', (): void => {
     expect(safeSyncError(new Error('failed token-value'), 'token-value')).toBe('failed <redacted>');
     expect(safeSyncError(new Error(`failed xox${'b'}-contract-value`))).toBe('failed <redacted>');
-    expect(safeSyncError(new Error(`failed ${token(['secret'], '_', 'contract-value-0123456789abcdefghijklmnop')}`))).toBe(
-      'failed <redacted>',
-    );
+    expect(
+      safeSyncError(
+        new Error(`failed ${token(['secret'], '_', 'contract-value-0123456789abcdefghijklmnop')}`),
+      ),
+    ).toBe('failed <redacted>');
   });
 
   it('stores raw values only in credential actions and persists markers everywhere else', async (): Promise<void> => {
@@ -147,7 +148,10 @@ describe('documentation sync action helpers', (): void => {
     const actionCalls: unknown[] = [];
     const mutationCalls: unknown[] = [];
     const ctx = {
-      runAction: async (reference: unknown, args: unknown): Promise<Id<'credentials'> | string[]> => {
+      runAction: async (
+        reference: unknown,
+        args: unknown,
+      ): Promise<Id<'credentials'> | string[]> => {
         // The boundary asks for the owner's stored values first; this owner has none.
         if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return [];
         actionCalls.push(args);
@@ -361,7 +365,9 @@ describe('documentation sync batching', (): void => {
       locator: 'few',
     });
     vi.mocked(openSpy).mockClear();
-    await expect(harness.action(internal.docSyncActions.syncSource, { sourceId })).resolves.toMatchObject({
+    await expect(
+      harness.action(internal.docSyncActions.syncSource, { sourceId }),
+    ).resolves.toMatchObject({
       ok: true,
       pages: 3,
       complete: true,

@@ -54,7 +54,11 @@ export function categoryForPage(
  * Returns:
  *   Bounded error text without credential material.
  */
-export function safeSyncError(error: unknown, secret?: string, known: readonly string[] = []): string {
+export function safeSyncError(
+  error: unknown,
+  secret?: string,
+  known: readonly string[] = [],
+): string {
   const message = error instanceof Error ? error.message : String(error);
   return redactSecret(message, secret ?? '', known).slice(0, 500);
 }
@@ -231,7 +235,14 @@ export const syncBatch = internalAction({
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
       });
-      const persisted = await persistPageBatch(ctx, source, batch.pages, agents, spanModelFromEnv(), known);
+      const persisted = await persistPageBatch(
+        ctx,
+        source,
+        batch.pages,
+        agents,
+        spanModelFromEnv(),
+        known,
+      );
       if (batch.nextCursor) {
         if (batch.nextCursor === args.cursor) {
           throw new Error('Documentation reader repeated its continuation cursor.');
