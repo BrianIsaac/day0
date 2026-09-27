@@ -813,8 +813,8 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
       setPosting(false);
       return;
     }
-    // Kick off good-habits research right after approval — the AGENTS.md
-    // section then lights up the workspace panel live.
+    // Seed the work the approved charter implies: orientation in real mode,
+    // the generated work items in mock mode.
     postApproval({ agentId: charter.agentId, charterId: charter._id }).catch(() => {});
   }
 

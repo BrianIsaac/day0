@@ -38,7 +38,8 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
  *     will come back for. Internal, and scheduled by the database rather
  *     than called by anybody.
  *   - `postCharterApproval` - runs after the boss clicks Approve. Seeds the
- *     work the approved charter implies; makes no web call.
+ *     work the approved charter implies; makes no web-research call and
+ *     needs no search key.
  *
  * All wrapped in Convex Node actions because they call external APIs.
  */
@@ -570,8 +571,9 @@ export const recoverFinalisation = internalAction({
  * Seed the work an approved charter implies. Public; the caller must own the
  * agent (`assertOwnsAgentAction`). In real mode it declares the charter's named
  * systems as surfaces and runs orientation; in mock mode it seeds the
- * generated work items and logs `work.charter-derived`. It makes no web call,
- * so approval completes on a machine with no search key (decision N19).
+ * generated work items and logs `work.charter-derived`. It makes no
+ * web-research call and needs no search key, so approval completes on a
+ * machine without one (decision N19).
  */
 export const postCharterApproval = action({
   args: { agentId: v.id('agents'), charterId: v.id('charters') },

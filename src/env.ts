@@ -6,8 +6,8 @@ import { DEFAULT_MODEL } from './lib/model-name';
  * Lazy env validation. All fields are `.optional()` or have defaults so
  * module loading never throws — Convex bundles and loads the modules
  * before the deployment env vars are wired, so a strict t3-env contract
- * would refuse to bundle. Each downstream client (`openai()`, `searchRole()`,
- * `daytona()`) validates the keys it actually needs at first call.
+ * would refuse to bundle. Each downstream client (`openai()`, `daytona()`)
+ * validates the keys it actually needs at first call.
  */
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
