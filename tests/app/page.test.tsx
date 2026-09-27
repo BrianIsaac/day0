@@ -83,6 +83,8 @@ const oneEmployeeMetrics = {
   },
   actions: {
     autoApplied: 25,
+    // The 17 September recording: 12 reads, 1 manager message, 12 writes.
+    automatic: { reads: 12, managerMessages: 1, writes: 12 },
     sessionRestores: 0,
     held: 1,
     approved: 1,
@@ -95,6 +97,19 @@ const oneEmployeeMetrics = {
   skills: { approved: 3, rejected: 0 },
   autonomyChanges: 1,
   auditTrail: { complete: 26, total: 26, fraction: 1 },
+  pilot: {
+    skillReuse: { runs: 0, reused: 0, rate: null },
+    cycleTime: {
+      ended: 0,
+      medianToEndMs: null,
+      completed: 0,
+      medianToCompletionMs: null,
+      p90ToCompletionMs: null,
+    },
+    reorientation: { answered: 0, amended: 0, rate: null },
+    hoursSaved: { estimatedItems: 0, hours: null },
+    retrieval: { tokens: null, recall: null },
+  },
 };
 
 vi.mock('convex/react', () => ({
@@ -137,6 +152,7 @@ vi.mock('convex/react', () => ({
           skills: oneEmployeeMetrics.skills,
           autonomyChanges: 1,
           auditTrail: oneEmployeeMetrics.auditTrail,
+          pilot: oneEmployeeMetrics.pilot,
         },
         excludedAgents: 0,
         omittedEmployees: 0,

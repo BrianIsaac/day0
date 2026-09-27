@@ -116,6 +116,7 @@ import {
 } from '../../../src/work/manager-notes';
 import type { AgentMetrics } from '../../../convex/metrics';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
+import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -4797,14 +4798,39 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
         ))}
       </dl>
       {metrics ? (
-        <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
-          {metrics.decisions.requested} asked on a chat surface -{' '}
-          {metrics.decisions.partiallyApproved} partial - {metrics.actions.autoApplied} actions
-          automatic - {metrics.actions.held} held - {metrics.actions.refused} refused
-          {metrics.actions.sessionRestores > 0
-            ? ` - ${metrics.actions.sessionRestores} browser ${metrics.actions.sessionRestores === 1 ? 'call' : 'calls'} replayed to sign in again`
-            : null}
-        </p>
+        <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
+          <p>
+            {metrics.decisions.requested} asked on a chat surface -{' '}
+            {metrics.decisions.partiallyApproved} partial - {metrics.actions.automatic.writes}{' '}
+            automatic {metrics.actions.automatic.writes === 1 ? 'change' : 'changes'} -{' '}
+            {metrics.actions.held} held - {metrics.actions.refused} refused
+            {metrics.actions.sessionRestores > 0
+              ? ` - ${metrics.actions.sessionRestores} browser ${metrics.actions.sessionRestores === 1 ? 'call' : 'calls'} replayed to sign in again`
+              : null}
+          </p>
+          <p>Also applied on their own: {readsAndMessages(metrics.actions.automatic)}.</p>
+        </div>
+      ) : null}
+      {metrics ? (
+        <dl className="mt-3 pt-2 border-t border-[var(--color-border)] space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+            Pilot figures
+          </div>
+          {PILOT_FIGURES.map((figure) => (
+            <div
+              key={figure.label}
+              title={figure.definition}
+              className="flex items-start justify-between gap-3 text-xs"
+            >
+              <dt className="text-[var(--color-muted)] leading-tight">
+                {figure.label.toLowerCase()} ({figure.unit})
+              </dt>
+              <dd className="font-mono text-[var(--color-fg)] text-right shrink-0">
+                {figure.value(metrics.pilot)}
+              </dd>
+            </div>
+          ))}
+        </dl>
       ) : null}
     </Card>
   );

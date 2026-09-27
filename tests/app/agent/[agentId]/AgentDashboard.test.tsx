@@ -9,6 +9,7 @@ vi.mock('convex/react', () => ({
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
+import type { AgentMetrics } from '../../../../convex/metrics';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
@@ -2119,8 +2120,8 @@ describe('what an outage leaves on the card (P7-18)', (): void => {
 });
 
 describe('dashboard decisions on the supervision card (P6-9)', (): void => {
-  it('counts decisions made on the dashboard when nothing was asked on a chat surface', (): void => {
-    const metrics = {
+  const metrics = (): AgentMetrics =>
+    ({
       charter: {
         timeToFirstDraftedMs: 1,
         timeToFirstApprovedMs: 2,
@@ -2142,6 +2143,7 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
       },
       actions: {
         autoApplied: 0,
+        automatic: { reads: 0, managerMessages: 0, writes: 0 },
         sessionRestores: 0,
         held: 3,
         approved: 2,
@@ -2154,13 +2156,54 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
       skills: { approved: 0, rejected: 0 },
       autonomyChanges: 0,
       auditTrail: { complete: 3, total: 3, fraction: 1 },
-    } as unknown as Parameters<typeof MetricsCard>[0]['metrics'];
-    const markup = renderToStaticMarkup(<MetricsCard metrics={metrics} />);
+      pilot: {
+        skillReuse: { runs: 3, reused: 1, rate: 1 / 3 },
+        cycleTime: {
+          ended: 3,
+          medianToEndMs: 60_000,
+          completed: 2,
+          medianToCompletionMs: 120_000,
+          p90ToCompletionMs: 180_000,
+        },
+        reorientation: { answered: 1, amended: 1, rate: 1 },
+        hoursSaved: { estimatedItems: 0, hours: null },
+        retrieval: { tokens: null, recall: null },
+      },
+    }) as unknown as AgentMetrics;
+
+  it('counts decisions made on the dashboard when nothing was asked on a chat surface', (): void => {
+    const markup = renderToStaticMarkup(<MetricsCard metrics={metrics()} />);
     expect(markup).toContain('2 / 1');
     expect(markup).toContain('3 / 0');
     expect(markup).toContain('0 asked on a chat surface');
     // Only the revocation row has no evidence yet.
     expect(markup.match(/not yet/g)).toHaveLength(1);
+  });
+
+  it('counts writes as automatic changes, with the reads and the manager message on their own line, and shows the pilot figures (U12 D4, N11)', (): void => {
+    const recorded = {
+      ...metrics(),
+      actions: {
+        ...metrics().actions,
+        autoApplied: 25,
+        automatic: { reads: 12, managerMessages: 1, writes: 12 },
+      },
+      pilot: {
+        ...metrics().pilot,
+        hoursSaved: { estimatedItems: 2, hours: 1.25 },
+      },
+    } as AgentMetrics;
+    const markup = renderToStaticMarkup(<MetricsCard metrics={recorded} />).replace(/\s+/g, ' ');
+    expect(markup).toContain('12 automatic changes');
+    expect(markup).not.toContain('25 actions automatic');
+    expect(markup).toContain('Also applied on their own: 12 reads, 1 manager message.');
+    expect(markup).toContain('Pilot figures');
+    expect(markup).toContain('1 of 3 (33%)');
+    expect(markup).toContain('2 min / 3 min (2 done)');
+    expect(markup).toContain('1 of 1 answer');
+    expect(markup).toContain('hours saved (your estimates, internal gauge)');
+    expect(markup).toContain('1.3 h over 2 items');
+    expect(markup).toContain('not measured yet');
   });
 });
 

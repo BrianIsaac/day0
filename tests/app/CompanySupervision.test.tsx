@@ -18,13 +18,16 @@ function agentMetrics(overrides: {
   approvedAfterMs: number | null;
   decisions: [approved: number, rejected: number];
   waits: [median: number | null, p90: number | null];
-  actions: [autoApplied: number, approved: number, held: number];
+  actions: [automaticChanges: number, approved: number, held: number];
+  /** The reads and manager messages that also applied on their own. */
+  alsoAutomatic?: [reads: number, managerMessages: number];
   audit: [complete: number, total: number];
   sessionRestores?: number;
 }): AgentMetrics {
   const [approved, rejected] = overrides.decisions;
   const [medianLatencyMs, p90LatencyMs] = overrides.waits;
-  const [autoApplied, approvedActions, held] = overrides.actions;
+  const [writes, approvedActions, held] = overrides.actions;
+  const [reads, managerMessages] = overrides.alsoAutomatic ?? [0, 0];
   const [complete, total] = overrides.audit;
   return {
     charter: {
@@ -47,8 +50,8 @@ function agentMetrics(overrides: {
       },
     },
     actions: {
-      autoApplied,
-      automatic: { reads: 0, managerMessages: 0, writes: autoApplied },
+      autoApplied: writes + reads + managerMessages,
+      automatic: { reads, managerMessages, writes },
       sessionRestores: overrides.sessionRestores ?? 0,
       held,
       approved: approvedActions,
@@ -81,7 +84,9 @@ const priya = agentMetrics({
   approvedAfterMs: 67_000,
   decisions: [2, 0],
   waits: [48_000, 49_000],
-  actions: [25, 1, 1],
+  // The 17 September recording: 25 automatic rows, of them 12 writes.
+  actions: [12, 1, 1],
+  alsoAutomatic: [12, 1],
   audit: [26, 26],
 });
 const mateo = agentMetrics({
@@ -122,7 +127,14 @@ const FIGURES: OwnerMetrics = {
       medianLatencyMs: 30_000,
       p90LatencyMs: 70_000,
     },
-    actions: { ...priya.actions, autoApplied: 33, approved: 3, held: 1, sessionRestores: 3 },
+    actions: {
+      ...priya.actions,
+      autoApplied: 33,
+      automatic: { reads: 12, managerMessages: 1, writes: 20 },
+      approved: 3,
+      held: 1,
+      sessionRestores: 3,
+    },
     surfaces: { approved: 0, rejected: 0, absent: 0 },
     skills: { approved: 0, rejected: 0 },
     autonomyChanges: 0,
@@ -159,7 +171,8 @@ describe('the company supervision card', (): void => {
     const company = rowOf(html, 'Company');
     expect(company).toContain('4 / 1');
     expect(company).toContain('30 s / 1 min 10 s');
-    expect(company).toContain('33 · 3 · 1');
+    expect(company).toContain('20 · 3 · 1');
+    expect(company).toContain('+ 12 reads, 1 manager message');
     expect(company).toContain('95% (36/38)');
     expect(html.indexOf('>Company</th>')).toBeGreaterThan(html.indexOf('>Aiko</th>'));
   });
@@ -185,10 +198,10 @@ describe('the company supervision card', (): void => {
     };
     const html = renderToStaticMarkup(<CompanySupervisionCard figures={figures} />);
 
-    expect(rowOf(html, 'Priya')).toContain('25 · 1 · 1 · 2 · 0');
+    expect(rowOf(html, 'Priya')).toContain('12 · 1 · 1 · 2 · 0');
     expect(rowOf(html, 'Mateo')).toContain('8 · 2 · 0 · 0 · 1');
-    expect(rowOf(html, 'Company')).toContain('33 · 3 · 1 · 2 · 1');
-    expect(html).toContain('automatic · approved · held · rejected · refused');
+    expect(rowOf(html, 'Company')).toContain('20 · 3 · 1 · 2 · 1');
+    expect(html).toContain('automatic changes · approved · held · rejected · refused');
   });
 
   it('quotes each employee’s time to an approved charter and their median, never a sum', (): void => {
@@ -255,5 +268,55 @@ describe('the company supervision card', (): void => {
     }
     query.result = FIGURES;
     expect(renderToStaticMarkup(<CompanySupervision />)).toContain('Company supervision');
+  });
+
+  it("prints A9's five pilot figures for each employee and the company, hours saved as an internal gauge", (): void => {
+    const figures: OwnerMetrics = {
+      ...FIGURES,
+      employees: FIGURES.employees.map((employee, index) =>
+        index === 0
+          ? {
+              ...employee,
+              metrics: {
+                ...employee.metrics,
+                pilot: {
+                  skillReuse: { runs: 4, reused: 1, rate: 0.25 },
+                  cycleTime: {
+                    ended: 3,
+                    medianToEndMs: 60_000,
+                    completed: 2,
+                    medianToCompletionMs: 67_000,
+                    p90ToCompletionMs: 300_000,
+                  },
+                  reorientation: { answered: 2, amended: 1, rate: 0.5 },
+                  hoursSaved: { estimatedItems: 2, hours: 1.5 },
+                  retrieval: { tokens: null, recall: null },
+                },
+              },
+            }
+          : employee,
+      ),
+    };
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={figures} />);
+    const pilot = html.slice(html.indexOf('Pilot figures'));
+    for (const label of [
+      'Skill reuse',
+      'Cycle time',
+      'Reorientation',
+      'Hours saved',
+      'Retrieval',
+    ]) {
+      expect(pilot).toContain(label);
+    }
+    expect(pilot).toContain('your estimates, internal gauge');
+    const priyaRow = rowOf(pilot, 'Priya');
+    expect(priyaRow).toContain('1 of 4 (25%)');
+    expect(priyaRow).toContain('1 min 7 s / 5 min (2 done)');
+    expect(priyaRow).toContain('1 of 2 answers');
+    expect(priyaRow).toContain('1.5 h over 2 items');
+    expect(priyaRow).toContain('not measured yet');
+    const companyRow = rowOf(pilot, 'Company');
+    expect(companyRow).toContain('not yet');
+    expect(companyRow).toContain('no estimates yet');
   });
 });

@@ -35,6 +35,7 @@ const EMPLOYEE_METRICS = {
   },
   actions: {
     autoApplied: 0,
+    automatic: { reads: 0, managerMessages: 0, writes: 0 },
     sessionRestores: 0,
     held: 0,
     approved: 0,
@@ -47,6 +48,19 @@ const EMPLOYEE_METRICS = {
   skills: { approved: 0, rejected: 0 },
   autonomyChanges: 0,
   auditTrail: { complete: 0, total: 0, fraction: null },
+  pilot: {
+    skillReuse: { runs: 0, reused: 0, rate: null },
+    cycleTime: {
+      ended: 0,
+      medianToEndMs: null,
+      completed: 0,
+      medianToCompletionMs: null,
+      p90ToCompletionMs: null,
+    },
+    reorientation: { answered: 0, amended: 0, rate: null },
+    hoursSaved: { estimatedItems: 0, hours: null },
+    retrieval: { tokens: null, recall: null },
+  },
 };
 
 vi.mock('convex/react', () => ({
@@ -80,6 +94,7 @@ vi.mock('convex/react', () => ({
           skills: EMPLOYEE_METRICS.skills,
           autonomyChanges: 0,
           auditTrail: EMPLOYEE_METRICS.auditTrail,
+          pilot: EMPLOYEE_METRICS.pilot,
         },
         excludedAgents: 0,
         omittedEmployees: 0,
