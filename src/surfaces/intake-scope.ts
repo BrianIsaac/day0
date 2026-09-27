@@ -652,7 +652,7 @@ export interface RestatedScope<V extends ScopeValue = ScopeValue> {
  * A value stands while its own page still states it for the same field,
  * through the same grammar orientation read it by (a "do not use" line
  * states nothing), or, when its page is gone, while a page of the same team
- * (or one stating the whole scope) does. So renaming or moving the page,
+ * (or one stating the whole of a scope of two or more values) does. So renaming or moving the page,
  * reflowing the line, fixing a typo beside the value or adding a channel to
  * the line changes nothing intake reads, and the value is re-pointed at the
  * line that states it now; a value its page stopped stating has drifted,
@@ -695,6 +695,11 @@ export function restatedScope<V extends ScopeValue>(
       statedOn.set(ref, (statedOn.get(ref) ?? 0) + 1);
     }
   }
+  // A page naming every value of a one-value scope is any page naming that
+  // value, which says nothing about whose scope it is (review M15): only a
+  // scope of two or more values can be recognised whole on another page.
+  const statesWholeScope = (ref: string): boolean =>
+    entries.length > 1 && statedOn.get(ref) === entries.length;
   const drift: V[] = [];
   const restate = (value: V): V => {
     if (sourceId !== undefined && value.sourceId !== sourceId) return value;
@@ -716,8 +721,7 @@ export function restatedScope<V extends ScopeValue>(
       : [...lines]
           .filter(
             (candidate): boolean =>
-              scopeRoot(candidate.ref) === scopeRoot(value.ref) ||
-              statedOn.get(candidate.ref) === entries.length,
+              scopeRoot(candidate.ref) === scopeRoot(value.ref) || statesWholeScope(candidate.ref),
           )
           .sort(
             (left, right): number => (statedOn.get(right.ref) ?? 0) - (statedOn.get(left.ref) ?? 0),

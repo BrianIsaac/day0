@@ -13,6 +13,7 @@ import {
   scopeDrift,
   scopeFieldsFor,
   sentenceScopePicks,
+  type IntakeScope,
   type ScopeCandidate,
   type ScopeField,
   type ScopePage,
@@ -833,6 +834,38 @@ describe('the scope an approved card reads', (): void => {
           : page,
     );
     expect(restatedScope(finance, movedAway).drift).toEqual([finance.channels![1]]);
+  });
+
+  it('keeps a one-value scope off another team’s page that names the value (review M15)', (): void => {
+    const revopsHandbook = 'revops/handbook.md';
+    const chat: IntakeScope = {
+      channels: [
+        {
+          value: 'ops-requests',
+          sourceId: 'source-1',
+          ref: revopsHandbook,
+          quote: '- Channels: #ops-requests',
+        },
+      ],
+    };
+    const financeHandbook: ScopePage = {
+      sourceId: 'source-1',
+      ref: 'finance/handbook.md',
+      markdown: ['# Finance close handbook', '- Channels: #finance-close, #ops-requests'].join(
+        '\n',
+      ),
+    };
+    // The revops handbook is gone; the finance handbook names the channel.
+    const restated = restatedScope(chat, [financeHandbook]);
+    expect(restated.drift).toEqual([chat.channels![0]]);
+    expect(restated.scope.channels?.[0]?.ref).toBe(revopsHandbook);
+    // A page of the same team still carries it when the handbook moves.
+    const moved = restatedScope(chat, [
+      financeHandbook,
+      { sourceId: 'source-1', ref: 'revops/queues.md', markdown: '- Channels: #ops-requests' },
+    ]);
+    expect(moved.drift).toEqual([]);
+    expect(moved.scope.channels?.[0]?.ref).toBe('revops/queues.md');
   });
 
   it('says which changed values intake still reads, and how to take the page as it is now', (): void => {

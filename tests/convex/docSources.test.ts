@@ -809,12 +809,14 @@ describe('documentation sources in real mode', (): void => {
           itApprovedAt: 3,
           probeGeneration: 4,
           managerDmChannelId: 'D1',
+          // The team's handbook is renamed within the team's directory; a
+          // one-value scope follows a gone page only there (review M15).
           intakeScope: {
             channels: [
               {
                 value: 'finance-close',
                 sourceId,
-                ref: 'page.md',
+                ref: 'finance/handbook.md',
                 quote: '- Channels: #finance-close',
               },
             ],
