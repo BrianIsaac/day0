@@ -18,6 +18,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
+import { collectLedgerObservations } from '../../convex/metrics';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -2928,6 +2929,22 @@ describe('the exact-action gate', (): void => {
       { tool: 'mcp.call', ok: true, held: true, reason: 'rejected by the manager: not now', idempotencyKey: 'k1' },
     ]);
     await expect(harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId })).rejects.toThrow('reconcile the provider first');
+  });
+
+  it('carries phase one’s ledger on the dependent-authoring event, so the trail keeps it whatever the closing set becomes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    const landed = { tool: 'mcp.call', ok: true, authority: 'standing', effect: 'Refreshed the tile', idempotencyKey: `${workItemId}:${runId}:0` };
+    await harness.mutation(internal.work.prepareDependentPhase, {
+      workItemId,
+      runId,
+      output: { ...pendingOutput, needsDependentPhase: true, phase: 'dependent-authoring', applied: [landed] },
+    });
+    const [event] = await eventsOfType(harness, agentId, 'work.dependent-authoring');
+    expect(event?.payload).toMatchObject({ workItemId, runId, output: { applied: [landed] } });
+    const ledger = collectLedgerObservations([event!], []);
+    expect(ledger.map((observation) => observation.entry)).toEqual([landed]);
   });
 
   it('claims the dependent authoring turn once and never prepares a second phase', async (): Promise<void> => {

@@ -3678,6 +3678,9 @@ export const prepareDependentPhase = internalMutation({
         workItemId: args.workItemId,
         runId: args.runId,
         prerequisiteActionCount: output.actions.length,
+        // Phase one's ledger rides on the event, so the trail keeps what
+        // landed however the closing set that follows ends (P9-9).
+        output: args.output,
       },
       createdAt: Date.now(),
     });
