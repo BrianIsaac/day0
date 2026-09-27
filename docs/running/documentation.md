@@ -76,6 +76,49 @@ No approved API or MCP server is recorded for Northstar CRM.
 Probe marker: page title `Pipeline coverage`
 ```
 
+## A documented API that is not Slack
+
+When a system is reached through its own HTTP API rather than an MCP server or Slack, the page
+names the API's base address in a sentence that names the system, the operations the employee may
+call, and the header the key goes in. day0 checks the key with one documented read before the
+connection is used, and the operations you list are the only ones the employee may call.
+
+<!-- example: api-operations -->
+
+```markdown
+# Tracker API
+
+The Tracker API base is https://tracker.example.com/api/v2/.
+
+- `GET /issues` lists the open issues.
+- `POST /comments` adds a comment to an issue.
+- `GET /issues/{id}` reads one issue.
+- Send the key as `X-Api-Key: {{secret}}`.
+```
+
+- An operation is a verb (`GET`, `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE`) and a path in
+  backticks, written from the base (`GET /issues`) or as a full address under it
+  (`GET https://tracker.example.com/api/v2/projects`). A query string is ignored.
+- Paths are matched exactly. An operation whose path has a placeholder segment (`{id}`, `:id` or
+  `<id>`) is left out, because no real request would ever match it: `GET /issues/{id}` in the
+  example above is not callable. Until placeholders are supported, document a per-record read
+  with the id in the query (`GET /issues?id=`) if the API offers one.
+- The key's header is the first header in backticks that carries `{{secret}}`
+  (`X-Api-Key: {{secret}}`, `Authorization: Token {{secret}}`), or an `Authorization` header
+  with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token.
+- day0 checks the key with the first documented `GET` that only reads, never one that changes
+  anything, and does not follow a redirect. A page with no operation, or no read among them,
+  leaves the system unconnected with a card that says so; that is day0's limitation, not
+  evidence that the system is unavailable.
+- The base address follows the same rule as an MCP endpoint: public `https`, or a host the
+  operator lists in `DAY0_PRIVATE_HOSTS`.
+- Only the system's own pages are read for its operations. An operation written on another
+  system's page is not admitted for this one.
+- A chat system is the exception. day0 reads chat over a documented API only through Slack's Web
+  API, so a chat system other than Slack (Microsoft Teams, Feishu) is not connected on this path,
+  however well its page documents the API. Its card says so. Document it anyway: the page is what
+  a chat reader for it will read.
+
 ## Writing a credential on a page
 
 A credential written on a page is removed from every copy day0 keeps and stored encrypted; the

@@ -11,6 +11,7 @@ import {
 import { structuralSystemCandidates } from '../../../src/docs/system-discovery';
 import { structuralSpans } from '../../../src/redaction/structural';
 import { browserTitleMarker } from '../../../src/surfaces/browser';
+import * as http from '../../../src/surfaces/http';
 import { scopeCandidates } from '../../../src/surfaces/intake-scope';
 import { extractManifestTemplate } from '../../../src/surfaces/slack-manifest';
 
@@ -28,12 +29,21 @@ const GUIDE = readFileSync(
 
 /** The fenced block that follows `<!-- example: name -->` on the guide. */
 function example(name: string): string {
-  const found = new RegExp(`<!-- example: ${name} -->\\s*\`\`\`[a-z]*\\n([\\s\\S]*?)\\n\`\`\``).exec(
-    GUIDE,
-  );
+  const found = new RegExp(
+    `<!-- example: ${name} -->\\s*\`\`\`[a-z]*\\n([\\s\\S]*?)\\n\`\`\``,
+  ).exec(GUIDE);
   if (!found) throw new Error(`the guide has no example "${name}"`);
   return found[1]!;
 }
+
+/** The documented-API grammar's readers, present once the HTTP rung reads a page. */
+const apiGrammar = http as unknown as {
+  documentedApiOperations?: (
+    documentation: string,
+    endpoint: string,
+  ) => Array<{ method: string; operation: string }>;
+  documentedCredentialHeader?: (documentation: string) => { name: string; scheme?: string };
+};
 
 /** One synced page, as orientation reads it. */
 function page(ref: string, markdown: string): Doc<'docPages'> {
@@ -120,6 +130,28 @@ describe('the documentation author guide', (): void => {
       'team-doc',
     );
   });
+
+  it('attributes a documented API base to its system', (): void => {
+    const text = example('api-operations');
+    expect(documentedEndpoints(attributedUrls(text, 'Tracker', 'tracker')).api).toBe(
+      'https://tracker.example.com/api/v2/',
+    );
+  });
+
+  const grammarUnmerged = apiGrammar.documentedApiOperations === undefined; // skip reason: the documented-API probe (wave 3 U6) has not landed its grammar
+  it.skipIf(grammarUnmerged)(
+    'admits the documented operations, leaves the placeholder path out and finds the key header',
+    (): void => {
+      const text = example('api-operations');
+      expect(
+        apiGrammar.documentedApiOperations!(text, 'https://tracker.example.com/api/v2/'),
+      ).toEqual([
+        { method: 'GET', operation: 'issues' },
+        { method: 'POST', operation: 'comments' },
+      ]);
+      expect(apiGrammar.documentedCredentialHeader!(text)).toEqual({ name: 'X-Api-Key' });
+    },
+  );
 
   it('finds the manifest block', (): void => {
     const manifest = example('manifest');
