@@ -100,7 +100,9 @@ export async function retryOnce<T>(
       const reason =
         second instanceof LinearRequestError && second.transient
           ? second.reason
-          : (second as Error).message;
+          : second instanceof Error
+            ? second.message
+            : String(second);
       throw new LinearRequestError(
         `${what} failed twice: ${error.reason}, then ${reason}`,
         reason,

@@ -170,6 +170,7 @@ export class PlaywrightDashboard implements Dashboard {
     await composer
       .and(this.page.locator(':disabled'))
       .waitFor({ state: 'attached', timeout: 10_000 })
+      // A reply fast enough to re-enable the composer first is never seen disabled; the next wait reads the turn.
       .catch(() => undefined);
   }
 
@@ -210,6 +211,7 @@ export class PlaywrightDashboard implements Dashboard {
     await card
       .getByText('IT approved')
       .waitFor({ timeout: 10_000 })
+      // The badge is copy, not state: the orientation wait that follows reads the approval from the backend.
       .catch(() => undefined);
   }
 

@@ -9,7 +9,7 @@ export interface RehearsalOptions {
   secrets?: string;
   /** Env file the application values are copied from, read-only. */
   envFrom?: string;
-  /** The primary checkout: its `docs-local` is linked and its docs tree takes the output. */
+  /** The primary checkout: its `docs-local` is linked and its `.demo-bed/rehearsals/` takes the output. */
   primary?: string;
   /** Compose project the bed runs as. */
   project?: string;

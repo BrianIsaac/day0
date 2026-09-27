@@ -100,7 +100,9 @@ export async function retrySlackOnce<T>(
       const reason =
         second instanceof SlackRequestError && second.transient
           ? second.reason
-          : (second as Error).message;
+          : second instanceof Error
+            ? second.message
+            : String(second);
       throw new SlackRequestError(
         `${what} failed twice: ${error.reason}, then ${reason}`,
         reason,

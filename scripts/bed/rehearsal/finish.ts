@@ -20,9 +20,10 @@ export class CeilingPassed extends Error {
 /**
  * A sleep that ends the run at its first wait past the ceiling.
  *
- * Every wait in the phases goes through the context's sleep, so the phase
- * that is running when the ceiling passes fails there and the clean-up runs
- * after it, once, rather than beside a phase that is still writing.
+ * The phases' waits for provider and backend state go through the context's
+ * sleep, so the phase that is running when the ceiling passes fails there and
+ * the clean-up runs after it, once, rather than beside a phase that is still
+ * writing. The bring-up and chat waits have bounds of their own.
  *
  * @param sleep - The real sleep.
  * @param now - The clock.
