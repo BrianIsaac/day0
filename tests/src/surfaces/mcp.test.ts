@@ -1684,12 +1684,14 @@ describe('a write is sent once (P5-5)', (): void => {
   const toolCall = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: {} });
   const toolList = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
 
-  it('lets one tool call through a fenced send and refuses the client\'s silent second', async (): Promise<void> => {
+  it("lets one tool call through a fenced send and refuses the client's silent second", async (): Promise<void> => {
     const sent: string[] = [];
-    const fence = sendOnceFence(async (_input: string | URL, init?: RequestInit): Promise<Response> => {
-      sent.push(String(init?.body));
-      return new Response('{}');
-    });
+    const fence = sendOnceFence(
+      async (_input: string | URL, init?: RequestInit): Promise<Response> => {
+        sent.push(String(init?.body));
+        return new Response('{}');
+      },
+    );
     await expect(
       fence.sendOnce(async () => {
         await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolList });
@@ -1708,13 +1710,14 @@ describe('a write is sent once (P5-5)', (): void => {
     for (let send = 0; send < 2; send += 1) {
       await expect(
         fence.sendOnce(
-          async () => await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall }),
+          async () =>
+            await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall }),
         ),
       ).resolves.toBeInstanceOf(Response);
     }
   });
 
-  it('sends a write through the client\'s fence, and a refused re-send leaves its outcome unknown', async (): Promise<void> => {
+  it("sends a write through the client's fence, and a refused re-send leaves its outcome unknown", async (): Promise<void> => {
     const fenced: string[] = [];
     const client: FakeClient = fakeClient({
       linear_save_comment: async (): Promise<unknown> => {
@@ -1797,8 +1800,20 @@ describe('the origin after a click (P6-16)', (): void => {
 
   it('refuses a first-run click that left the approved surface, its outcome unknown', async (): Promise<void> => {
     const adapter = clickLandingOn('http://unexpected.internal/sso');
-    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
-    const clicked = await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
+    await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k0',
+    );
+    const clicked = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Save' }),
+      1,
+      'k1',
+    );
     expect(clicked).toMatchObject({
       ok: false,
       outcomeUnknown: true,
@@ -1808,7 +1823,13 @@ describe('the origin after a click (P6-16)', (): void => {
 
   it('lands a first-run click that stayed on the surface', async (): Promise<void> => {
     const adapter = clickLandingOn('http://looker-tile:8080/saved');
-    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
+    await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k0',
+    );
     await expect(
       adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1'),
     ).resolves.toMatchObject({ ok: true });
