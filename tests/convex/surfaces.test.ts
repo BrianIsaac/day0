@@ -2547,6 +2547,52 @@ describe('access expiry (Q5)', (): void => {
     ).resolves.toMatchObject({ generation: expect.any(Number) });
   });
 
+  it.each(['connects', 'fails'] as const)(
+    'refuses a probe begun before the end date that %s after it (wave 2 review M20)',
+    async (outcome): Promise<void> => {
+      useSurfaceMode('real');
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      vi.setSystemTime(PROPOSED_AT);
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await approvedSurface(harness);
+      const endsAt = APPROVED_AT + 30 * DAY;
+      vi.setSystemTime(endsAt - 2_000);
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      vi.setSystemTime(endsAt + 3_000);
+      const written =
+        outcome === 'connects'
+          ? await harness.mutation(internal.surfaces.recordConnected, {
+              surfaceId,
+              generation: probe.generation,
+              toolAllowlist: ['list_issues'],
+              toolArguments: [],
+              verifiedAt: endsAt + 3_000,
+            })
+          : await harness.mutation(internal.surfaces.recordProbeFailure, {
+              surfaceId,
+              generation: probe.generation,
+              verdict: 'listed-dead',
+              reason: 'the server did not answer',
+            });
+      expect(written).toBe(false);
+      expect(await readSurface(harness, surfaceId)).toMatchObject({
+        verdict: 'approved',
+        reason: 'expired',
+      });
+      expect(await payloads(harness, 'surface.expired')).toHaveLength(1);
+      expect(await payloads(harness, 'surface.connected')).toEqual([]);
+      const grants = await harness.run(
+        async (ctx) => await ctx.db.query('permissionGrants').collect(),
+      );
+      expect(grants.map((grant) => grant.scope)).not.toContain('linear:read');
+      const scheduled = await harness.run(
+        async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+      );
+      expect(scheduled.map((job) => job.name)).not.toContain('intakeActions:pollSurface');
+    },
+  );
+
   it('lets the manager set the length, which restarts the clock and renews an ended access', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);

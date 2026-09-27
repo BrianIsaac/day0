@@ -983,6 +983,9 @@ export const recordProbeFailure = internalMutation({
     if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
       return false;
     }
+    // A probe that began before the end date and failed after it leaves the
+    // access ended, not dead: the renewal reads `expired` (wave 2 review M20).
+    if (await endedBeforeProbeLanded(ctx, surface)) return false;
     // The last resolved manager stays: a failed lookup is the usual way a
     // manager leaves, and the connecting probe after it can only say the
     // manager changed (Q6) by comparing with who the row resolved before.
@@ -1346,6 +1349,9 @@ export const recordConnected = internalMutation({
     if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
       return false;
     }
+    // A probe in flight across the end date never reconnects the access, and
+    // never re-grants its read scope (wave 2 review D4 (a), M20).
+    if (await endedBeforeProbeLanded(ctx, surface)) return false;
     const transitioned = surface.verdict !== 'connected';
     const previousManager = surface.managerUserId;
     const managerChange =
@@ -1497,6 +1503,30 @@ async function endAccessInTransaction(
     payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
     createdAt: now,
   });
+}
+
+/**
+ * Refuse a probe result that lands on or after the access end date.
+ *
+ * `beginProbe` refuses a probe that starts after the date; one reserved
+ * before it can land after it. The access is ended here if the sweep has not
+ * ended it yet, so the refusal leaves the row as the sweep would.
+ *
+ * Args:
+ *   ctx: Mutation context of the probe's result.
+ *   surface: The surface the probe reserved.
+ *
+ * Returns:
+ *   True when the end date has passed and the result must not be written.
+ */
+async function endedBeforeProbeLanded(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<boolean> {
+  const now = Date.now();
+  if (!accessEndDatePassed(surface, now)) return false;
+  if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
+  return true;
 }
 
 /**
