@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getFunctionName } from 'convex/server';
+import { ConvexError } from 'convex/values';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -14,6 +15,7 @@ import {
   MAX_MCP_TOOLS,
   mcpAllowlist,
   PROBE_RETRY_WAIT_MS,
+  credentialLandingRefusal,
   probeBrowserSurface,
   probeMcpSurface,
   managerDisplayName,
@@ -1300,8 +1302,20 @@ describe('the hourly re-probe sweep', (): void => {
 });
 
 describe('credential landing from the card', (): void => {
+  // A landing schedules the probe with `runAfter(0)`; on real timers
+  // convex-test would run it and dial the provider. The job is asserted
+  // instead, never run.
+  beforeEach((): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
   /**
-   * Seed an owned, half-approved surface whose connect request names a method.
+   * Seed an owned surface whose connect request names a method, approved
+   * unless a test says otherwise.
    *
    * Args:
    *   harness: Convex test harness.
@@ -1313,6 +1327,7 @@ describe('credential landing from the card', (): void => {
   async function seedLandingSurface(
     harness: TestConvex<typeof schema>,
     method: 'oauth' | 'api-key',
+    approved = true,
   ): Promise<Id<'surfaces'>> {
     return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
@@ -1327,8 +1342,11 @@ describe('credential landing from the card', (): void => {
         slug: method === 'oauth' ? 'slack' : 'linear',
         displayName: method === 'oauth' ? 'Slack' : 'Linear',
         class: method === 'oauth' ? 'chat' : 'kanban',
-        verdict: 'proposed',
+        verdict: approved ? 'approved' : 'proposed',
         whereFound: [],
+        path: method === 'oauth' ? 'documented-api' : 'mcp',
+        endpoint: method === 'oauth' ? 'https://slack.com/api/' : 'https://mcp.linear.app/mcp',
+        ...(approved ? { managerApprovedAt: 2, itApprovedAt: 2 } : {}),
         request: {
           credential: {
             found: 'none',
@@ -1357,7 +1375,7 @@ describe('credential landing from the card', (): void => {
         label: 'xoxb-shared-token-value',
         plaintext: 'xoxb-shared-token-value',
       }),
-    ).resolves.toEqual({ landed: true, probeScheduled: false });
+    ).resolves.toEqual({ landed: true, probeScheduled: true });
     const stored = await harness.run(async (ctx) => {
       const surface = await ctx.db.get(surfaceId);
       const credentials = await ctx.db.query('credentials').collect();
@@ -1377,6 +1395,12 @@ describe('credential landing from the card', (): void => {
       credentialLanded: false,
       credentialLocation: 'OAuth install flow documented in the policy',
     });
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(jobs.map((job) => [job.name, job.args[0]])).toEqual([
+      ['surfaceActions:probeInternal', { surfaceId }],
+    ]);
   });
 
   it('stores a documented-location landing as kind location', async (): Promise<void> => {
@@ -1405,6 +1429,109 @@ describe('credential landing from the card', (): void => {
         .action(liveApi.surfaceActions.landCredential, { surfaceId, label: 'x', plaintext: 'y' }),
     ).rejects.toThrow('forbidden');
   });
+});
+
+describe('what the card may not store', (): void => {
+  const approved = { managerApprovedAt: 2, itApprovedAt: 2 };
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('stores nothing before the card is approved', (): void => {
+    for (const stamps of [{}, { managerApprovedAt: 2 }, { itApprovedAt: 2 }]) {
+      expect(
+        credentialLandingRefusal(
+          { ...stamps, endpoint: 'https://mcp.linear.app/mcp' },
+          'lin_api_x',
+        ),
+      ).toBe('Approve the card before landing its credential; nothing was stored.');
+    }
+    expect(
+      credentialLandingRefusal(
+        { ...approved, endpoint: 'https://mcp.linear.app/mcp' },
+        'lin_api_x',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('takes only a bot token on Slack, and never echoes what was pasted', (): void => {
+    const slack = { ...approved, endpoint: 'https://slack.com/api/' };
+    for (const pasted of ['xoxp-1-user-token', 'xapp-1-A1-app-level', 'xoxc-browser', 'hunter2']) {
+      const refusal = credentialLandingRefusal(slack, pasted);
+      expect(refusal).toContain('begins xoxb-');
+      expect(refusal).not.toContain(pasted);
+    }
+    expect(credentialLandingRefusal(slack, 'xoxb-1234-5678-abcdef')).toBeUndefined();
+    // Another system's key has no Slack shape to meet.
+    expect(
+      credentialLandingRefusal(
+        { ...approved, endpoint: 'https://tracker.example.com/api/' },
+        'k-1',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('refuses through the card with a readable error and stores nothing', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const pending = await seedCard(harness, false);
+    await expect(
+      owner.action(liveApi.surfaceActions.landCredential, {
+        surfaceId: pending,
+        label: '',
+        plaintext: 'xoxb-1234-5678-abcdef',
+      }),
+    ).rejects.toThrow(ConvexError);
+    const slack = await seedCard(harness, true);
+    await expect(
+      owner.action(liveApi.surfaceActions.landCredential, {
+        surfaceId: slack,
+        label: '',
+        plaintext: 'xoxp-1234-5678-user',
+      }),
+    ).rejects.toThrow('begins xoxb-');
+    const stored = await harness.run(async (ctx) => ({
+      credentials: await ctx.db.query('credentials').collect(),
+      surfaces: await ctx.db.query('surfaces').collect(),
+    }));
+    expect(stored.credentials).toEqual([]);
+    expect(stored.surfaces.every((surface) => surface.credentialId === undefined)).toBe(true);
+  });
+
+  /** One owned Slack card, approved or still proposed. */
+  async function seedCard(
+    harness: TestConvex<typeof schema>,
+    isApproved: boolean,
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'landing refusal',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: isApproved ? 'approved' : 'proposed',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        ...(isApproved ? approved : {}),
+        request: { credential: { found: 'none', label: 'Slack bot token', method: 'oauth' } },
+        credentialLanded: false,
+        createdAt: 1,
+      });
+    });
+  }
 });
 
 describe('a dedicated app that has not been invited to its channels', (): void => {

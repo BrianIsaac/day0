@@ -1,7 +1,7 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import type { GenericId } from 'convex/values';
 import type { FunctionReference } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -1522,6 +1522,43 @@ export const probeInternal = internalAction({
  * The plaintext is passed directly to Lane A's encrypted store action and is
  * never returned or persisted on the surface.
  */
+/** A Slack bot token: the only token the Slack rung posts with as the employee's app. */
+const SLACK_BOT_TOKEN = /^xoxb-[A-Za-z0-9-]+$/;
+
+/**
+ * Why a credential typed into the card may not be stored, or undefined when
+ * it may.
+ *
+ * Nothing is stored before the card is approved: a credential for a system
+ * nobody has agreed the employee may reach is a secret held for no purpose.
+ * On Slack only a bot token is taken; a user token passes Slack's own check
+ * and then posts as that person, and an app-level token posts nothing.
+ *
+ * @param surface - The surface the card lands the credential on.
+ * @param plaintext - The trimmed value typed into the card; never echoed.
+ */
+export function credentialLandingRefusal(
+  surface: Pick<Doc<'surfaces'>, 'managerApprovedAt' | 'itApprovedAt' | 'endpoint'>,
+  plaintext: string,
+): string | undefined {
+  if (surface.managerApprovedAt === undefined || surface.itApprovedAt === undefined) {
+    return 'Approve the card before landing its credential; nothing was stored.';
+  }
+  if (isSlackApiEndpoint(surface.endpoint) && !SLACK_BOT_TOKEN.test(plaintext)) {
+    return "Slack takes the app's bot token here, the one that begins xoxb-; a user token would post as that person. Nothing was stored.";
+  }
+  return undefined;
+}
+
+/**
+ * Store a credential typed into an approved card, attach it to the surface
+ * and probe it at once.
+ *
+ * Public, owner-guarded (`assertOwnsAgentAction`), real mode only. Writes one
+ * `credentials` row (encrypted) and the surface's credential fields; refuses
+ * with a `ConvexError`, storing nothing, before the card is approved or when
+ * Slack is given anything but a bot token (`credentialLandingRefusal`).
+ */
 export const landCredential = action({
   args: { surfaceId: v.id('surfaces'), label: v.string(), plaintext: v.string() },
   handler: async (ctx, args): Promise<{ landed: true; probeScheduled: boolean }> => {
@@ -1534,6 +1571,8 @@ export const landCredential = action({
     if (!context.agent.userId) throw new Error('Agent has no owner.');
     const plaintext = args.plaintext.trim();
     if (!plaintext) throw new Error('Credential value is required.');
+    const refusal = credentialLandingRefusal(context.surface, plaintext);
+    if (refusal) throw new ConvexError(refusal);
     // A value typed into the card is never the product of an OAuth install:
     // on an `oauth` surface it is the shared bot token landed as the fallback,
     // a shared credential like any other, so writes through it carry
@@ -1561,14 +1600,11 @@ export const landCredential = action({
       credentialKind: kind,
       credentialLocation: context.surface.credentialLocation,
     });
-    const probeScheduled =
-      context.surface.managerApprovedAt !== undefined && context.surface.itApprovedAt !== undefined;
-    if (probeScheduled) {
-      await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
-        surfaceId: context.surface._id,
-      });
-    }
-    return { landed: true, probeScheduled };
+    // The card is approved (the refusal above), so the credential is probed at once.
+    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+      surfaceId: context.surface._id,
+    });
+    return { landed: true, probeScheduled: true };
   },
 });
 
