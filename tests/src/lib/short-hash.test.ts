@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fnv1a32, shortHash } from '../../../src/lib/short-hash';
+import { droppedScriptSuffix, fnv1a32, shortHash } from '../../../src/lib/short-hash';
 
 describe('fnv1a32', () => {
   it('matches the published FNV-1a test vectors', () => {
@@ -22,5 +22,22 @@ describe('shortHash', () => {
 
   it('is stable across calls', () => {
     expect(shortHash('规则.md')).toBe(shortHash('规则.md'));
+  });
+});
+
+describe('droppedScriptSuffix', () => {
+  it('is empty for a name the ASCII slug keeps whole', () => {
+    expect(droppedScriptSuffix('Linear / REVOPS')).toBe('');
+    expect(droppedScriptSuffix('how-to-refresh-the-tile.md')).toBe('');
+  });
+
+  it('is a digest for a name with letters the ASCII slug drops', () => {
+    expect(droppedScriptSuffix('飞书')).toMatch(/^-[0-9a-z]{7}$/);
+    expect(droppedScriptSuffix('Café')).toMatch(/^-[0-9a-z]{7}$/);
+    expect(droppedScriptSuffix('Ｌｉｎｅａｒ')).toMatch(/^-[0-9a-z]{7}$/);
+  });
+
+  it('ignores punctuation, so full-width punctuation alone adds nothing', () => {
+    expect(droppedScriptSuffix('Linear，Slack。')).toBe('');
   });
 });

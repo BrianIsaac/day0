@@ -27,3 +27,19 @@ export function fnv1a32(text: string): number {
 export function shortHash(text: string): string {
   return fnv1a32(text).toString(36).padStart(7, '0');
 }
+
+/**
+ * The suffix that keeps an ASCII slug distinct for a name written in another script.
+ *
+ * An ASCII slug keeps only `[a-z0-9]`, so `飞书` and `钉钉`, or `运维/刷新看板.md`
+ * and `规则.md`, reduce to the same slug. When the name has a letter or digit
+ * the slug dropped, the suffix is a short digest of the whole name (NFKC,
+ * lower case, whitespace collapsed), so two such names never share a key. A
+ * name the ASCII slug keeps whole gets no suffix, so its key is unchanged.
+ *
+ * @returns `''`, or `-` and the digest.
+ */
+export function droppedScriptSuffix(name: string): string {
+  if (!/[\p{L}\p{N}]/u.test(name.toLowerCase().replace(/[a-z0-9]/g, ''))) return '';
+  return `-${shortHash(name.normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' '))}`;
+}
