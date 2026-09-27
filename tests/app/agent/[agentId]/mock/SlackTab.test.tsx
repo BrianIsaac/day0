@@ -48,6 +48,7 @@ vi.mock('convex/react', () => ({
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import { SlackTab } from '../../../../../app/agent/[agentId]/mock/SlackTab';
+import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 
 const agentId = 'agent-1' as Id<'agents'>;
 const EMPTY_CONVERSATION = 'no messages in this channel yet';
@@ -99,5 +100,18 @@ describe('the conversation the mock office opens on', (): void => {
     } finally {
       state.channelsOnly = false;
     }
+  });
+});
+
+describe("the office's message stamps (N12)", (): void => {
+  it("print each message in the agent's day", (): void => {
+    const html = renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Kolkata">
+        <SlackTab agentId={agentId} />
+      </AgentZoneContext>,
+    );
+    // 1_757_000_000_000 is 4 Sep 2025, 15:33:20 UTC.
+    expect(html).toContain('4 Sep 2025, 21:03');
+    expect(html).not.toContain('4 Sep 2025, 15:33');
   });
 });

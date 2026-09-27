@@ -84,8 +84,16 @@ import {
   planObligations,
   transitionWithheld,
 } from '../../../src/work/obligations';
-import { clockTime, clockTimeWithSeconds, relativeTime, useNow } from './time';
+import {
+  AgentZoneContext,
+  clockTime,
+  clockTimeWithSeconds,
+  relativeTime,
+  useAgentZone,
+  useNow,
+} from './time';
 import { eventLabel } from './event-labels';
+import { agentZone } from '../../../src/lib/zone';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
 import {
@@ -230,89 +238,91 @@ export function AgentDashboard({ agentId }: Props) {
     !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
 
   return (
-    <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
-      <DashboardHeader
-        agent={agent}
-        charter={charter ?? null}
-        managerLookupFailure={
-          (surfaceRows ?? []).find(
-            (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
-          )?.reason
-        }
-      />
+    <AgentZoneContext value={agentZone(agent)}>
+      <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
+        <DashboardHeader
+          agent={agent}
+          charter={charter ?? null}
+          managerLookupFailure={
+            (surfaceRows ?? []).find(
+              (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
+            )?.reason
+          }
+        />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <div className="lg:col-span-2 space-y-4">
-          {showOnboarding ? (
-            mode === 'pick' ? (
-              <ModePicker onPick={(m) => setMode(m)} />
-            ) : mode === 'voice' ? (
-              <VoiceRoom
-                agentId={agentId}
-                bossLabel={agent.bossEmail}
-                onSwitchMode={() => setMode('chat')}
-              />
-            ) : (
-              <ChatRoom
-                agentId={agentId}
-                bossLabel={agent.bossEmail}
-                onSwitchMode={() => setMode('voice')}
-              />
-            )
-          ) : null}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+          <div className="lg:col-span-2 space-y-4">
+            {showOnboarding ? (
+              mode === 'pick' ? (
+                <ModePicker onPick={(m) => setMode(m)} />
+              ) : mode === 'voice' ? (
+                <VoiceRoom
+                  agentId={agentId}
+                  bossLabel={agent.bossEmail}
+                  onSwitchMode={() => setMode('chat')}
+                />
+              ) : (
+                <ChatRoom
+                  agentId={agentId}
+                  bossLabel={agent.bossEmail}
+                  onSwitchMode={() => setMode('voice')}
+                />
+              )
+            ) : null}
 
-          {charter ? <CharterCard charter={charter} /> : null}
+            {charter ? <CharterCard charter={charter} /> : null}
 
-          <ProposedSkillsPanel
-            agentId={agentId}
-            skills={proposedSkills ?? []}
-            surfaces={surfaces}
-            onAuthoringAttempt={setLastAttempt}
-          />
+            <ProposedSkillsPanel
+              agentId={agentId}
+              skills={proposedSkills ?? []}
+              surfaces={surfaces}
+              onAuthoringAttempt={setLastAttempt}
+            />
 
-          <WorkQueue
-            agentId={agentId}
-            workItems={workItems ?? []}
-            openQuestions={openQuestions ?? []}
-            surfaces={surfaces}
-            registeredSkillCount={(registeredSkills ?? []).length}
-            charterApproved={!!charter?.approved}
-            autonomousActions={agent ? autonomousActionsOn(agent) : false}
-            surfaceMode={surfaceConfig?.mode}
-            corrections={corrections}
-            autonomyChanges={autonomyChanges ?? []}
-          />
+            <WorkQueue
+              agentId={agentId}
+              workItems={workItems ?? []}
+              openQuestions={openQuestions ?? []}
+              surfaces={surfaces}
+              registeredSkillCount={(registeredSkills ?? []).length}
+              charterApproved={!!charter?.approved}
+              autonomousActions={agent ? autonomousActionsOn(agent) : false}
+              surfaceMode={surfaceConfig?.mode}
+              corrections={corrections}
+              autonomyChanges={autonomyChanges ?? []}
+            />
+          </div>
+
+          <div className="space-y-4">
+            <WorkspacePanel workspace={workspace ?? {}} />
+            <RegisteredSkillsPanel
+              skills={registeredSkills ?? []}
+              unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
+              authoringFailure={authoringFailure}
+              onAuthoringAttempt={setLastAttempt}
+              surfaceMode={surfaceConfig?.mode}
+            />
+            {surfaceConfig?.mode === 'real' ? (
+              <Card title={keptCorrectionsTitle(corrections)}>
+                <KeptCorrectionsPanel
+                  corrections={corrections}
+                  titles={itemTitles}
+                  onRetire={(correctionId) => retireCorrection({ correctionId })}
+                />
+              </Card>
+            ) : null}
+            {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
+            <MetricsCard metrics={metrics} />
+            <EventTicker events={events ?? []} />
+          </div>
         </div>
 
-        <div className="space-y-4">
-          <WorkspacePanel workspace={workspace ?? {}} />
-          <RegisteredSkillsPanel
-            skills={registeredSkills ?? []}
-            unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
-            authoringFailure={authoringFailure}
-            onAuthoringAttempt={setLastAttempt}
-            surfaceMode={surfaceConfig?.mode}
-          />
-          {surfaceConfig?.mode === 'real' ? (
-            <Card title={keptCorrectionsTitle(corrections)}>
-              <KeptCorrectionsPanel
-                corrections={corrections}
-                titles={itemTitles}
-                onRetire={(correctionId) => retireCorrection({ correctionId })}
-              />
-            </Card>
-          ) : null}
-          {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
-          <MetricsCard metrics={metrics} />
-          <EventTicker events={events ?? []} />
-        </div>
-      </div>
-
-      {/* Full width, and not half of two thirds of the page. Five work
+        {/* Full width, and not half of two thirds of the page. Five work
           surfaces, a channel list and a conversation do not fit in 400px, and
           this panel is the whole of what the agent's work is done against. */}
-      <MockEnvironment agentId={agentId} />
-    </main>
+        <MockEnvironment agentId={agentId} />
+      </main>
+    </AgentZoneContext>
   );
 }
 
@@ -662,8 +672,8 @@ export function DashboardHeader({
   const s = stateLabel[displayState];
   return (
     <header className="mb-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1">Day0</p>
           <ManagerLine
             bossEmail={agent.bossEmail}
@@ -671,7 +681,7 @@ export function DashboardHeader({
             onChange={(bossEmail) => setBossEmail({ agentId: agent._id, bossEmail })}
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
             {surfaceConfig?.label || 'loading'}
           </span>
@@ -1203,6 +1213,7 @@ export function AmendCharterPanel({
 }) {
   const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
   const now = useNow();
+  const zone = useAgentZone();
   const [rule, setRule] = useState<{
     quote: string;
     kind: CharterConstraint['kind'];
@@ -1449,7 +1460,7 @@ export function AmendCharterPanel({
                   {row._id === charter._id ? ' · current' : ''}
                   {row.supersedes ? ' · amendment' : ' · from the 1:1'}
                   {' · '}
-                  <span title={clockTimeWithSeconds(row.createdAt)}>
+                  <span title={clockTimeWithSeconds(row.createdAt, zone)}>
                     {relativeTime(row.createdAt, now)}
                   </span>
                 </li>
@@ -2449,21 +2460,22 @@ export function DraftDetails({ output }: { output: RunOutput }) {
  * completed with it.
  */
 export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback }) {
+  const zone = useAgentZone();
   return (
     <div className="mt-2 p-2 rounded-md bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/30 text-xs">
       <p className="text-[var(--color-accent)] font-medium mb-0.5">
         {managerFeedbackLabel(feedback)}
         <span
           className="ml-1 font-normal text-[10px] text-[var(--color-muted)]"
-          title={clockTimeWithSeconds(feedback.at)}
+          title={clockTimeWithSeconds(feedback.at, zone)}
         >
-          {clockTimeWithSeconds(feedback.at)}
+          {clockTimeWithSeconds(feedback.at, zone)}
         </span>
       </p>
       <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">{feedback.reason}</p>
       {feedback.addressedAt !== undefined ? (
         <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
-          addressed by the run that completed {clockTimeWithSeconds(feedback.addressedAt)}
+          addressed by the run that completed {clockTimeWithSeconds(feedback.addressedAt, zone)}
         </p>
       ) : null}
     </div>
@@ -3519,6 +3531,7 @@ export function WorkItemCard({
   onResendDecision: () => Promise<unknown>;
 }) {
   const now = useNow();
+  const zone = useAgentZone();
   const verdict = item.verdict as
     | {
         decision: string;
@@ -3779,10 +3792,10 @@ export function WorkItemCard({
             <p className="mt-2 text-[var(--color-ok)]">
               <time
                 dateTime={new Date(autonomyTurnedOnAt).toISOString()}
-                title={clockTimeWithSeconds(autonomyTurnedOnAt)}
+                title={clockTimeWithSeconds(autonomyTurnedOnAt, zone)}
               >
                 {autonomyTurnedOnAfterDraftNote(
-                  clockTime(autonomyTurnedOnAt),
+                  clockTime(autonomyTurnedOnAt, zone),
                   landedAutonomously,
                   landedActions.length,
                 )}
@@ -4087,6 +4100,7 @@ export function ProviderReconciliationControl({
   reconciliation?: { actor: string; confirmedAt: number };
   onConfirm: (confirmed: boolean) => Promise<unknown>;
 }) {
+  const zone = useAgentZone();
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -4140,8 +4154,11 @@ export function ProviderReconciliationControl({
       {reconciliation ? (
         <p className="mt-1 text-[var(--color-muted)]">
           Verified by <span className="font-mono">{reconciliation.actor}</span> at{' '}
-          <time dateTime={new Date(reconciliation.confirmedAt).toISOString()}>
-            {new Date(reconciliation.confirmedAt).toISOString()}
+          <time
+            dateTime={new Date(reconciliation.confirmedAt).toISOString()}
+            title={clockTimeWithSeconds(reconciliation.confirmedAt, zone)}
+          >
+            {clockTime(reconciliation.confirmedAt, zone)}
           </time>
           . Retry is enabled.
         </p>
@@ -4398,6 +4415,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
 
 function EventTicker({ events }: { events: Doc<'events'>[] }) {
   const now = useNow();
+  const zone = useAgentZone();
   return (
     <Card title="Live event feed">
       <ul className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto">
@@ -4405,7 +4423,7 @@ function EventTicker({ events }: { events: Doc<'events'>[] }) {
           <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
             {/* Was a UTC clock beside the Slack panel's local one — the same
                 event stamped eight hours apart on one page. */}
-            <span className="shrink-0 tabular-nums" title={clockTimeWithSeconds(e.createdAt)}>
+            <span className="shrink-0 tabular-nums" title={clockTimeWithSeconds(e.createdAt, zone)}>
               {relativeTime(e.createdAt, now)}
             </span>
             <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>

@@ -16,6 +16,8 @@ import {
   CharterCard,
   ConstraintList,
   DashboardHeader,
+  ManagerFeedbackNote,
+  ProviderReconciliationControl,
   DraftDetails,
   ManagerLine,
   MetricsCard,
@@ -36,6 +38,7 @@ import {
   sortedForQueue,
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
+import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
 import {
   HELD_BEFORE_AUTONOMY_NOTE,
@@ -1007,6 +1010,44 @@ describe('header state pill', (): void => {
     expect(markup).toContain('Active · Supervised');
     expect(markup).not.toContain('cold-start');
     expect(markup).not.toContain('posture');
+  });
+});
+
+describe("the employee's day on the page (N12, review M8)", (): void => {
+  const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
+  const agent = {
+    _id: 'agent-1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Day0',
+    state: 'active',
+    zone: 'Asia/Singapore',
+    createdAt: 1,
+  } as unknown as Doc<'agents'>;
+
+  it('prints the confirmed reconciliation in the agent\u2019s zone, not as a UTC ISO string', (): void => {
+    const markup = renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Singapore">
+        <ProviderReconciliationControl
+          entries={[]}
+          reconciliation={{ actor: 'boss@day0.local', confirmedAt: AT }}
+          onConfirm={async () => undefined}
+        />
+      </AgentZoneContext>,
+    );
+    expect(markup).toContain('>28 Sep 2026, 00:05</time>');
+    expect(markup).toContain('dateTime="2026-09-27T16:05:09.000Z"');
+    expect(markup).not.toContain('>2026-09-27T16:05:09.000Z<');
+  });
+
+  it("stamps the manager's note and the feed's tooltip in the agent's zone", (): void => {
+    const markup = renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Singapore">
+        <ManagerFeedbackNote feedback={{ reason: 'Use template B.', at: AT, kind: 'retry-note' }} />
+      </AgentZoneContext>,
+    );
+    expect(markup).toContain('28 Sep 2026, 00:05:09');
+    expect(markup).not.toContain('27 Sep 2026, 16:05:09');
   });
 });
 

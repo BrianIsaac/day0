@@ -14,6 +14,7 @@ import {
   keptCorrectionsTitle,
   type KeptCorrection,
 } from '../../../../app/agent/[agentId]/corrections-panel';
+import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
 import {
   cancelPlanRequest,
   ManagerFeedbackNote,
@@ -300,5 +301,29 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
       />,
     );
     expect(markup).toContain('Plan rejection reason');
+  });
+});
+
+describe("the corrections' stamps (N12)", (): void => {
+  it("print the agent's day on the kept list and on the plan line", (): void => {
+    const at = Date.UTC(2026, 8, 27, 16, 5, 9);
+    const correction: KeptCorrection = { ...kept, createdAt: at };
+    const panel = renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Singapore">
+        <KeptCorrectionsPanel corrections={[correction]} titles={new Map()} onRetire={resolved} />
+      </AgentZoneContext>,
+    );
+    expect(panel).toContain('28 Sep 2026, 00:05');
+    const line = renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Singapore">
+        <AppliedCorrectionsLine
+          ids={[correction._id]}
+          corrections={[correction]}
+          workItemId={'w2' as Id<'workItems'>}
+        />
+      </AgentZoneContext>,
+    );
+    expect(line).toContain('28 Sep 2026, 00:05');
+    expect(line).not.toContain('27 Sep 2026, 16:05');
   });
 });

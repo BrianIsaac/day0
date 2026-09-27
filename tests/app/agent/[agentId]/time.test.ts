@@ -1,8 +1,12 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  AgentZoneContext,
   clockTime,
   clockTimeWithSeconds,
   relativeTime,
+  useAgentZone,
 } from '../../../../app/agent/[agentId]/time';
 
 const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
@@ -25,5 +29,17 @@ describe('the page clock', (): void => {
     expect(relativeTime(AT, AT + 3 * 3_600_000)).toBe('3h ago');
     expect(relativeTime(AT, AT + 2 * 86_400_000)).toBe('2d ago');
     expect(relativeTime(AT + 1_000, AT)).toBe('just now');
+  });
+
+  it('hands every stamp on an agent\u2019s page the zone the page provides, and none elsewhere', (): void => {
+    function Stamp(): string {
+      return clockTime(AT, useAgentZone());
+    }
+    expect(
+      renderToStaticMarkup(
+        createElement(AgentZoneContext, { value: 'Asia/Kolkata' }, createElement(Stamp)),
+      ),
+    ).toBe('27 Sep 2026, 21:35');
+    expect(renderToStaticMarkup(createElement(Stamp))).toBe('27 Sep 2026, 16:05');
   });
 });

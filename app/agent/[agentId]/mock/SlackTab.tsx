@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
-import { clockTime, clockTimeWithSeconds } from '../time';
+import { clockTime, clockTimeWithSeconds, useAgentZone } from '../time';
 
 /** What an empty channel list means. The tab is mock-only: real mode does not
  * render it, so it has no real-mode copy to show. */
@@ -115,6 +115,7 @@ function ChannelGroup({
 }
 
 function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
+  const zone = useAgentZone();
   const isAgent = m.senderKind === 'agent-draft' || m.senderKind === 'agent-posted';
   const tone =
     m.senderKind === 'agent-draft'
@@ -158,9 +159,9 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
         ) : null}
         <span
           className="text-[9px] text-[var(--color-muted)] ml-auto shrink-0"
-          title={clockTimeWithSeconds(m.timestamp)}
+          title={clockTimeWithSeconds(m.timestamp, zone)}
         >
-          {clockTime(m.timestamp)}
+          {clockTime(m.timestamp, zone)}
         </span>
       </div>
       <p className="text-xs text-[var(--color-fg)] whitespace-pre-wrap leading-relaxed">{m.body}</p>
