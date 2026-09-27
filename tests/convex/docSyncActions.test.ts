@@ -52,6 +52,16 @@ vi.mock('../../src/lib/mastra', () => ({
   agentJson: schemaChecked(() => ({ systems: [] })),
 }));
 
+/**
+ * Run the scheduled continuations due now, without firing the timeouts of
+ * the redaction calls in flight: `vi.runAllTimers` would fire every
+ * `AbortSignal.timeout` at once and cut the in-process redactor off, which
+ * the whole file's order hid.
+ */
+function drainScheduled(): void {
+  vi.advanceTimersByTime(0);
+}
+
 /** Build a token-shaped value at runtime so no fixture stores one verbatim. */
 function token(parts: string[], separator: string, suffix: string): string {
   return `${parts.join(separator)}${separator}${suffix}`;
@@ -296,7 +306,7 @@ describe('documentation sync batching', (): void => {
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
     ).resolves.toMatchObject({ status: 'linking', running: true, pageCount: 25 });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
     ).resolves.toMatchObject({
@@ -340,7 +350,7 @@ describe('documentation sync batching', (): void => {
     const stale = (await scheduled(harness))[0].args as Array<{ runId: Id<'docSyncRuns'> }>;
     const second = await harness.action(internal.docSyncActions.syncSource, { sourceId });
     expect(second).toMatchObject({ ok: true, pages: 25, complete: false });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     const runs = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
     expect(runs.map((run) => run.state).sort()).toEqual(['completed', 'superseded']);
     expect(runs.find((run) => run._id === stale[0].runId)?.state).toBe('superseded');
@@ -362,7 +372,7 @@ describe('documentation sync batching', (): void => {
     });
     await harness.action(internal.docSyncActions.syncSource, { sourceId });
     await rm(join(root, 'many'), { recursive: true, force: true });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
     ).resolves.toMatchObject({ status: 'error', running: false, pageCount: 25 });
@@ -387,7 +397,7 @@ describe('documentation sync batching', (): void => {
         cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
       }),
     );
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     const source = await harness.query(internal.docSources.getInternal, { sourceId });
     expect(source?.lastError).toBe(
       'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again.',
