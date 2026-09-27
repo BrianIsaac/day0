@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('public redaction setup contract', () => {
-  it('describes the reviewed guards and cleanup without claiming a live pass', () => {
+  it('describes the reviewed guards and cleanup', () => {
     const components = readFileSync('docs/running/components.md', 'utf8');
     const readme = readFileSync('README.md', 'utf8');
     expect(components).not.toContain('the guard does not yet exempt');
