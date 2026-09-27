@@ -340,12 +340,14 @@ export const pageRowsForStore = internalQuery({
  * `updateMetadata`; a person's revoke stays.
  *
  * @returns False, and nothing written, when the row is not the owner's page
- *   row on this source or another row already holds the ref.
+ *   row on this source, has moved from the ref `store` read it at, or another
+ *   row already holds the new ref.
  */
 export const moveToRef = internalMutation({
   args: {
     credentialId: v.id('credentials'),
     userId: v.string(),
+    fromRef: v.string(),
     source: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
     kind: credentialKind,
     label: v.string(),
@@ -358,7 +360,8 @@ export const moveToRef = internalMutation({
       !row ||
       row.userId !== args.userId ||
       typeof row.source === 'string' ||
-      row.source.sourceId !== args.source.sourceId
+      row.source.sourceId !== args.source.sourceId ||
+      row.source.ref !== args.fromRef
     ) {
       return false;
     }
@@ -472,9 +475,11 @@ export const store = internalAction({
       });
       for (const row of pageRows) {
         if ((await storedValue(ctx, row)) !== plaintext) continue;
+        if (typeof row.source === 'string') continue;
         const moved = await ctx.runMutation(internal.credentials.moveToRef, {
           credentialId: row._id,
           userId: args.userId,
+          fromRef: row.source.ref,
           source: sourced,
           ...metadata,
         });

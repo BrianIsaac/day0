@@ -337,6 +337,32 @@ describe('a page whose count of values changes (P10-1)', (): void => {
     await expect(store('another-page.md', SECRET)).resolves.not.toBe(first);
   });
 
+  it('moves a row only from the ref it was read at, so a concurrent store cannot move it twice', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'linear service token',
+      plaintext: SECRET,
+      source: { sourceId, ref: pageRef },
+    });
+    const move = async (fromRef: string, ref: string): Promise<boolean> =>
+      await harness.mutation(internal.credentials.moveToRef, {
+        credentialId,
+        userId: 'owner',
+        fromRef,
+        source: { sourceId, ref },
+        kind: 'value',
+        label: 'linear service token',
+      });
+    await expect(move(pageRef, qualified(1, 'linear service token'))).resolves.toBe(true);
+    await expect(move(pageRef, qualified(2, 'linear service token'))).resolves.toBe(false);
+    expect(await rows(harness)).toEqual([
+      expect.objectContaining({ source: { sourceId, ref: qualified(1, 'linear service token') } }),
+    ]);
+  });
+
   it("keeps a person's revoke on a value it carries to a new ref", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'owner');
