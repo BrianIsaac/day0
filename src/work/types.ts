@@ -144,7 +144,12 @@ export interface PlanObligations {
 export interface ExecutionPlan {
   summary: string;
   steps: string[];
-  expectedOutputType: 'message' | 'doc-update' | 'spreadsheet-update' | 'ticket-update' | 'draft-document';
+  expectedOutputType:
+    | 'message'
+    | 'doc-update'
+    | 'spreadsheet-update'
+    | 'ticket-update'
+    | 'draft-document';
   riskNotes: string;
   reversibility: string;
   estimatedMinutes: number;
@@ -237,7 +242,13 @@ export interface MockProcedureTrailAttestation {
 export type RealProcedureTrailAttestation =
   | { trailId: string; state: 'mapped'; actionIndex: number }
   | { trailId: string; state: 'inapplicable'; reason: string }
-  | { trailId: string; state: 'deferred'; reason: string; dependsOnActionIndex?: number | null; dependsOnField?: string | null };
+  | {
+      trailId: string;
+      state: 'deferred';
+      reason: string;
+      dependsOnActionIndex?: number | null;
+      dependsOnField?: string | null;
+    };
 
 export type ProcedureTrailAttestation =
   | MockProcedureTrailAttestation
