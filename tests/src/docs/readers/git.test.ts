@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   archiveUrlFor,
   cloneArguments,
+  cloneEnvironment,
   cloneFailure,
   gitPinsResolve,
   GitReader,
@@ -184,6 +185,16 @@ describe('the clone of a listed git host', (): void => {
         throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
       }),
     ).rejects.toThrow('The git host docs.corp.internal did not resolve.');
+  });
+
+  it('clones a listed host with no proxy and no LFS download, and GitHub as before', (): void => {
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.corp.internal:3128');
+    vi.stubEnv('all_proxy', 'socks5://proxy.corp.internal:1080');
+    const listedHost = cloneEnvironment(false);
+    expect(listedHost.HTTPS_PROXY).toBeUndefined();
+    expect(listedHost.all_proxy).toBeUndefined();
+    expect(listedHost).toMatchObject({ GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1' });
+    expect(cloneEnvironment(true).HTTPS_PROXY).toBe('http://proxy.corp.internal:3128');
   });
 
   it('pins only with a git that honours the pinned address', (): void => {

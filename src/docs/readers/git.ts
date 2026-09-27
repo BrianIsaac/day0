@@ -115,7 +115,7 @@ async function downloadArchive(url: URL): Promise<Buffer> {
 }
 
 /** The first git release that honours `http.curloptResolve`; an older one ignores it without a word. */
-const PINNING_GIT = { major: 2, minor: 37 } as const;
+const pinningGit = { major: 2, minor: 37 } as const;
 
 /**
  * Whether the git that printed this `git --version` line pins the address it
@@ -127,7 +127,7 @@ export function gitPinsResolve(version: string): boolean {
   const match = /git version (\d+)\.(\d+)/.exec(version);
   if (!match) return false;
   const [major, minor] = [Number(match[1]), Number(match[2])];
-  return major > PINNING_GIT.major || (major === PINNING_GIT.major && minor >= PINNING_GIT.minor);
+  return major > pinningGit.major || (major === pinningGit.major && minor >= pinningGit.minor);
 }
 
 /**
@@ -187,6 +187,30 @@ export async function cloneArguments(
     ...(isIP(host) === 0 ? ['-c', `http.curloptResolve=${host}:${port}:${pinned}`] : []),
     ...clone,
   ];
+}
+
+/** The proxy variables curl reads, which would dial a listed host by name past the pin. */
+const PROXY_VARIABLES = [
+  'HTTPS_PROXY',
+  'https_proxy',
+  'HTTP_PROXY',
+  'http_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+] as const;
+
+/**
+ * The environment a clone runs in. A listed host is dialled at the pinned
+ * address only: no proxy (which would resolve the name itself) and no LFS
+ * download (whose server `.lfsconfig` may name). Markdown needs neither.
+ *
+ * @param archived - Whether the host is GitHub or GitLab, cloned as before.
+ */
+export function cloneEnvironment(archived: boolean): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  if (archived) return environment;
+  for (const name of PROXY_VARIABLES) delete environment[name];
+  return { ...environment, GIT_LFS_SKIP_SMUDGE: '1' };
 }
 
 /**
@@ -298,7 +322,7 @@ export class GitReader implements DocSourceReader {
         'git',
         await cloneArguments(locator, checkout, this.resolve),
         // A repository that wants credentials fails at once rather than waiting on a prompt.
-        { encoding: 'utf8', timeout: 30_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } },
+        { encoding: 'utf8', timeout: 30_000, env: cloneEnvironment(archived) },
       );
       if (cloned.status !== 0) {
         if (!archived) {
