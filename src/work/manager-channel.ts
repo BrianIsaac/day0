@@ -73,6 +73,76 @@ export function askedFor(
   );
 }
 
+/** A decision request intake reads replies against: sent, or on its way. */
+export interface OpenDecisionRequest {
+  readonly decisionId: string;
+  /** The request message's provider ts; absent while the send is in flight. */
+  readonly ts?: string;
+}
+
+/** A batch code whose members include open requests, with those members' codes. */
+export interface OpenDecisionBatch {
+  readonly batchId: string;
+  readonly decisionIds: readonly string[];
+}
+
+/**
+ * What a manager chat channel has open, which decides whether the decision
+ * poll reads its DM at all (Q13's back-off when nothing is open).
+ */
+export interface OpenDecisions {
+  readonly requests: readonly OpenDecisionRequest[];
+  readonly batches: readonly OpenDecisionBatch[];
+  /**
+   * A decision on the channel is recent enough that a late reply to it, or a
+   * mistyped code, should still be answered (`DECISION_NOTICE_WINDOW_MS`).
+   */
+  readonly noticeOwed: boolean;
+}
+
+/** Nothing open and no notice owed: the decision poll leaves the DM unread. */
+export const NOTHING_OPEN: OpenDecisions = { requests: [], batches: [], noticeOwed: false };
+
+/**
+ * How long after a decision is made on a channel its DM is still read, so a
+ * reply sent late, to a code already decided, is told so.
+ */
+export const DECISION_NOTICE_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Whether the decision poll reads the manager DM.
+ *
+ * @param open - What the channel has open.
+ * @returns True when a request or a batch is open or a notice may be owed.
+ */
+export function readsManagerDm(open: OpenDecisions): boolean {
+  return open.requests.length > 0 || open.batches.length > 0 || open.noticeOwed;
+}
+
+/**
+ * The codes whose replies wait for the next poll because a read they depend
+ * on failed: each request whose thread could not be read, and every batch
+ * that decides one of them. An answer in the unread thread may have come
+ * first and said otherwise, so no reply to those codes is taken until the
+ * thread has been read (Q13, per-message resolution).
+ *
+ * @param open - What the channel has open.
+ * @param unreadThreads - The codes of the requests whose thread read failed.
+ * @returns The codes held.
+ */
+export function heldReplyCodes(
+  open: OpenDecisions,
+  unreadThreads: readonly string[],
+): ReadonlySet<string> {
+  const unread = new Set(unreadThreads);
+  return new Set([
+    ...unread,
+    ...open.batches
+      .filter((batch) => batch.decisionIds.some((id) => unread.has(id)))
+      .map((batch) => batch.batchId),
+  ]);
+}
+
 export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string };

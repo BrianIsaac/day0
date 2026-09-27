@@ -481,6 +481,7 @@ describe('the cron targets, run by the names they are scheduled under', (): void
     await expect(runCron(harness, 'poll manager decision replies')).resolves.toEqual({
       mode: 'real',
       polled: 0,
+      idle: 0,
       skipped: 0,
       surfaces: 0,
     });

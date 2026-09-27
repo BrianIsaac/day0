@@ -15,6 +15,8 @@ import {
   NOTHING_TO_DECIDE_REASON,
   PLAN_CANCELLED_REASON,
   REEVALUATION_BATCH,
+  THREAD_NOT_FOUND_REASON,
+  UNREADABLE_REPLY_REASON,
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
@@ -1223,13 +1225,9 @@ describe('manager channel request claims', (): void => {
     ]);
   });
 
-  it('lists the sent, undecided requests intake must read threads under', async (): Promise<void> => {
-    useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules());
-    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
-      withSlack: true,
-    });
-    const surfaceId = await harness.run(async (ctx) => {
+  /** The Slack surface `seed` adds, by id. */
+  async function slackSurfaceId(harness: Harness, agentId: Id<'agents'>): Promise<Id<'surfaces'>> {
+    return await harness.run(async (ctx) => {
       const row = await ctx.db
         .query('surfaces')
         .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
@@ -1237,26 +1235,257 @@ describe('manager channel request claims', (): void => {
       if (!row) throw new Error('chat surface missing');
       return row._id;
     });
-    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+  }
+
+  it('lists the requests open on the DM from their claim to their decision, and owes a notice for an hour after', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(Date.UTC(2026, 8, 28, 9, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
+      requests: [],
+      batches: [],
+      noticeOwed: false,
+    });
 
     await harness.mutation(internal.work.prepareDecisionRequest, {
       workItemId,
       kind: 'plan',
       decisionId: 'ab3xyz',
     });
-    // Claimed but not yet landed: there is no thread to read.
-    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+    // Claimed, not landed: open, with no thread to read yet.
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      requests: [{ decisionId: 'ab3xyz' }],
+    });
     await harness.mutation(internal.work.recordDecisionRequest, {
       workItemId,
       decisionId: 'ab3xyz',
       ts: '1787770700.000100',
     });
-    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([
-      { workItemId, ts: '1787770700.000100' },
-    ]);
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
+      requests: [{ decisionId: 'ab3xyz', ts: '1787770700.000100' }],
+      batches: [],
+      noticeOwed: false,
+    });
 
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
-    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
+      requests: [],
+      batches: [],
+      noticeOwed: true,
+    });
+    vi.setSystemTime(Date.UTC(2026, 8, 28, 10, 1));
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      noticeOwed: false,
+    });
+    vi.useRealTimers();
+  });
+
+  it('leaves out a delivered request marked failed and one delivered to another DM (wave 3 review M7)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const other = await pendAnother(harness, agentId);
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const delivered = (id: string, channel: string, failed: boolean) => ({
+      id,
+      kind: 'plan' as const,
+      requestedAt: 1,
+      channel,
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      ts: '1787770700.000100',
+      ...(failed ? { requestFailedAt: 2, requestFailure: MANAGER_CHANGED_RESEND_REASON } : {}),
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { decision: delivered('ab3xyz', 'D0MANAGER', true) });
+      await ctx.db.patch(other.workItemId, {
+        decision: { ...delivered('cd4uvw', 'D0PREVIOUS', false), kind: 'actions' },
+      });
+    });
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toEqual({
+      requests: [],
+      batches: [],
+      noticeOwed: false,
+    });
+  });
+
+  it('lists a batch while a member is open, with its open members', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'actions-pending', undefined, {
+      withSlack: true,
+    });
+    const other = await pendAnother(harness, agentId);
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const asked = (id: string) => ({
+      id,
+      kind: 'actions' as const,
+      requestedAt: 1,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      ts: `17877707${id === 'ab3xyz' ? '00' : '01'}.000100`,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { pendingRunId: runId, decision: asked('ab3xyz') });
+      await ctx.db.patch(other.workItemId, { decision: asked('cd4uvw') });
+    });
+    await harness.mutation(internal.work.prepareDecisionBatch, {
+      agentId,
+      batchId: 'ef5rst',
+      surfaceSlug: 'slack',
+      channel: 'D0MANAGER',
+      members: [
+        { workItemId, decisionId: 'ab3xyz', pendingRunId: runId },
+        { workItemId: other.workItemId, decisionId: 'cd4uvw', pendingRunId: other.runId },
+      ],
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(other.workItemId, { decision: { ...asked('cd4uvw'), decidedAt: 5 } });
+    });
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      requests: [{ decisionId: 'ab3xyz' }],
+      batches: [{ batchId: 'ef5rst', decisionIds: ['ab3xyz'] }],
+    });
+  });
+
+  it('re-sends a delivered request marked failed whose replacement was never claimed, once the manager is resolved (M7)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0PREVIOUS',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1787770700.000100',
+          requestFailedAt: 2,
+          requestFailure: MANAGER_CHANGED_RESEND_REASON,
+        },
+      });
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+      verifiedAt: Date.now(),
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: MANAGER_CHANGED_RESEND_REASON },
+    ]);
+    expect(await scheduledFunctionNames(harness)).toContain(
+      'managerChannelActions:requestDecision',
+    );
+  });
+
+  it('closes a delivered request whose thread is gone and sends it again, once (M7)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787770700.000100',
+    });
+
+    await expect(
+      harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: 'ab3xyz' }),
+    ).resolves.toBe(true);
+    await expect(
+      harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: 'ab3xyz' }),
+    ).resolves.toBe(false);
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      requestFailure: THREAD_NOT_FOUND_REASON,
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: THREAD_NOT_FOUND_REASON },
+    ]);
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      requests: [],
+    });
+  });
+
+  it('tells the manager once that a reply after an open request could not be read, and nobody else', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    const requestedAt = (await readItem(harness, workItemId)).decision?.requestedAt ?? 0;
+    const after = (1 + requestedAt / 1_000).toFixed(6);
+    const before = (requestedAt / 1_000 - 60).toFixed(6);
+    const notice = async (userId: string, messageTs: string): Promise<boolean> =>
+      await harness.mutation(internal.work.noticeUnreadableReply, { surfaceId, userId, messageTs });
+
+    await expect(notice('UMANAGER', before)).resolves.toBe(false);
+    await expect(notice('UOTHER', after)).resolves.toBe(false);
+    await expect(notice('UMANAGER', after)).resolves.toBe(true);
+    await expect(notice('UMANAGER', after)).resolves.toBe(false);
+    const notices = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(
+      notices.map(({ decisionId, messageTs, kind, text }) => ({
+        decisionId,
+        messageTs,
+        kind,
+        text,
+      })),
+    ).toEqual([
+      {
+        decisionId: 'ab3xyz',
+        messageTs: after,
+        kind: 'unknown',
+        text: 'I couldn’t read that as a decision. Reply “approve ab3xyz” or “reject ab3xyz <reason>”, with the code from the request.',
+      },
+    ]);
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-ignored')).map((event) => event.payload),
+    ).toEqual([
+      { surfaceId, messageTs: after, userId: 'UMANAGER', reason: UNREADABLE_REPLY_REASON },
+    ]);
   });
 
   it('keeps the decision poll checkpoint independent and monotonic', async (): Promise<void> => {

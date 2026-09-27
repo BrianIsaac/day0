@@ -74,9 +74,14 @@ import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   askedFor,
   batchDecisionNoticeText,
+  DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
   MANAGER_FEEDBACK_MAX_CHARS,
+  NOTHING_OPEN,
+  type OpenDecisionBatch,
+  type OpenDecisionRequest,
+  type OpenDecisions,
   undeliveredDecisionReason,
 } from '../src/work/manager-channel';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
@@ -2964,7 +2969,9 @@ export const MANAGER_CHANGED_RESEND_REASON =
  * holds a code nobody here will answer: the old manager is refused and the
  * new one never saw it. That is so whether the previous manager is still on
  * the row or a failed lookup wiped them first. Each such request is marked
- * failed and re-sent on the new DM with a fresh code, like an undelivered one.
+ * failed and re-sent on the new DM with a fresh code, like an undelivered one;
+ * so is a delivered request already marked failed whose re-send never claimed
+ * its replacement.
  *
  * @param currentChannel - The DM channel the probe just resolved.
  * @returns How many requests were re-sent.
@@ -2984,15 +2991,15 @@ export async function resendDecisionsAfterManagerChange(
           .collect(),
     ),
   );
+  // A delivered request marked failed and never replaced (its re-send died
+  // before it claimed a new code) is stranded the same way (wave 3 review M7).
   const stale = parked.flat().flatMap((row) => {
     const decision = row.decision;
     const open =
       !!decision?.ts &&
-      !decision.decidedAt &&
-      !decision.requestFailedAt &&
+      askedFor(decision, row.state) &&
       decision.surfaceSlug === surface.slug &&
-      decision.channel !== currentChannel &&
-      row.state === (decision.kind === 'plan' ? 'plan-pending' : 'actions-pending');
+      (decision.requestFailedAt !== undefined || decision.channel !== currentChannel);
     return open && decision ? [{ row, decision }] : [];
   });
   for (const { row, decision } of stale) {
@@ -3025,35 +3032,109 @@ export const recoverUndeliveredDecisionRequest = internalMutation({
   },
 });
 
+/** A parked row and the open request it carries. */
+interface OpenRequest {
+  readonly row: Doc<'workItems'>;
+  readonly decision: NonNullable<Doc<'workItems'>['decision']>;
+}
+
 /**
- * The decision requests intake must still read replies under.
+ * The requests open on a manager chat channel: claimed or delivered on its
+ * current DM, undecided, not marked failed, for the state the row is parked in.
  *
- * A request is open once it landed (it has a provider ts, so there is a
- * message to have a thread) and until the decision is made or the row
- * leaves its parked state. Scoped to one chat surface so a reply in
- * another manager channel is never read against it.
+ * @param surface - The chat surface.
+ * @returns The rows and their requests.
  */
-export const openDecisionRequests = internalQuery({
+async function openRequestsOn(ctx: QueryCtx, surface: Doc<'surfaces'>): Promise<OpenRequest[]> {
+  const channel = surface.managerDmChannelId;
+  if (surface.class !== 'chat' || channel === undefined) return [];
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  return parked.flat().flatMap((row): OpenRequest[] => {
+    const decision = row.decision;
+    if (
+      !decision ||
+      !askedFor(decision, row.state) ||
+      decision.requestFailedAt !== undefined ||
+      decision.surfaceSlug !== surface.slug ||
+      decision.channel !== channel
+    ) {
+      return [];
+    }
+    return [{ row, decision }];
+  });
+}
+
+/** Newest rows asked on one channel read for a recent decision there. */
+const NOTICE_WINDOW_SCAN = 50;
+
+/** Undecided batches of one agent read for the ones with open members. */
+const OPEN_BATCH_SCAN = 200;
+
+/**
+ * What one manager chat channel has open, for the decision poll (Q13).
+ *
+ * Internal; intake's. A request is open from its claim until it is decided,
+ * marked failed, or the row leaves the parked state it asks about, and only
+ * on the DM it was sent to: a request delivered to a previous manager's DM,
+ * or marked failed and not replaced yet, is not read on this one (wave 3
+ * review M7). A batch is open while one of its members is. A notice is owed
+ * for `DECISION_NOTICE_WINDOW_MS` after a decision on the channel. With
+ * nothing open and no notice owed, the poll leaves the DM unread.
+ */
+export const openDecisions = internalQuery({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<Array<{ workItemId: Id<'workItems'>; ts: string }>> => {
+  handler: async (ctx, args): Promise<OpenDecisions> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface || surface.class !== 'chat') return [];
-    const parked = await Promise.all(
-      (['plan-pending', 'actions-pending'] as const).map(
-        async (state) =>
-          await ctx.db
-            .query('workItems')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
-            .collect(),
-      ),
+    const channel = surface?.managerDmChannelId;
+    if (!surface || surface.class !== 'chat' || channel === undefined) return NOTHING_OPEN;
+    const requests = (await openRequestsOn(ctx, surface)).map(
+      ({ decision }): OpenDecisionRequest => ({
+        decisionId: decision.id,
+        ...(decision.ts ? { ts: decision.ts } : {}),
+      }),
     );
-    return parked.flat().flatMap((row) => {
-      const decision = row.decision;
-      if (!decision?.ts || decision.decidedAt || decision.surfaceSlug !== surface.slug) return [];
-      const expectedState = decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
-      if (row.state !== expectedState) return [];
-      return [{ workItemId: row._id, ts: decision.ts }];
+    const openIds = new Set(requests.map((request) => request.decisionId));
+    const batches = (
+      await ctx.db
+        .query('decisionBatches')
+        .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field('decidedAt'), undefined),
+            q.eq(q.field('surfaceSlug'), surface.slug),
+            q.eq(q.field('channel'), channel),
+          ),
+        )
+        .take(OPEN_BATCH_SCAN)
+    ).flatMap((batch): OpenDecisionBatch[] => {
+      const decisionIds = batch.members
+        .map((member) => member.decisionId)
+        .filter((id) => openIds.has(id));
+      return decisionIds.length > 0 ? [{ batchId: batch.id, decisionIds }] : [];
     });
+    const since = Date.now() - DECISION_NOTICE_WINDOW_MS;
+    const recent = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision_surface_channel', (q) =>
+        q
+          .eq('agentId', surface.agentId)
+          .eq('decision.surfaceSlug', surface.slug)
+          .eq('decision.channel', channel),
+      )
+      .order('desc')
+      .take(NOTICE_WINDOW_SCAN);
+    const noticeOwed = recent.some(
+      (row) => row.decision?.decidedAt !== undefined && row.decision.decidedAt >= since,
+    );
+    return { requests, batches, noticeOwed };
   },
 });
 
@@ -5543,6 +5624,96 @@ export const resolveChannelDecision = internalMutation({
       text,
     });
     return { status: 'decided' as const, outcome: args.reply.verb };
+  },
+});
+
+/** Why a request whose message the DM no longer holds is sent again. */
+export const THREAD_NOT_FOUND_REASON =
+  'the request message is no longer in the manager DM (thread_not_found)';
+
+/**
+ * Close a delivered request whose thread the provider says does not exist,
+ * and send it again with a fresh code.
+ *
+ * Internal; intake's, when reading the request's thread answers
+ * `thread_not_found` (wave 3 review M7). The request is marked failed and
+ * re-sent (`work.decision-request-resent`), so the next poll reads the new
+ * request and not a thread that is gone.
+ *
+ * @returns Whether the request was closed; false when it is no longer open on this DM.
+ */
+export const closeDecisionThread = internalMutation({
+  args: { surfaceId: v.id('surfaces'), decisionId: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) return false;
+    const open = (await openRequestsOn(ctx, surface)).find(
+      ({ decision }) => decision.id === args.decisionId && decision.ts !== undefined,
+    );
+    if (!open) return false;
+    await supersedeDecisionRequest(ctx, open.row, open.decision, THREAD_NOT_FOUND_REASON);
+    return true;
+  },
+});
+
+/** Why a manager reply got the unreadable-reply notice, on its ignored event. */
+export const UNREADABLE_REPLY_REASON = 'reply not readable as a decision';
+
+/** The most open codes the unreadable-reply notice names. */
+const UNREADABLE_NOTICE_CODES = 5;
+
+/**
+ * Tell the manager, once, that a reply could not be read as a decision.
+ *
+ * Internal; intake's, for a manager message in the DM, or in an open
+ * request's thread, that the parser does not read as approve or reject. Only
+ * a message sent after an open request on this DM is a reply to one; nothing
+ * is said while no request is open. Once per message: the notice is keyed by
+ * the message's provider ts, so a re-read of the same window says nothing
+ * again. Writes `work.decision-ignored` with the reason when it notices.
+ *
+ * @returns Whether a notice was queued.
+ */
+export const noticeUnreadableReply = internalMutation({
+  args: { surfaceId: v.id('surfaces'), userId: v.string(), messageTs: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface?.managerUserId || args.userId !== surface.managerUserId) return false;
+    const messageAt = providerTsToMs(args.messageTs);
+    if (messageAt === null) return false;
+    const answered = (await openRequestsOn(ctx, surface))
+      .filter(({ decision }) => decision.requestedAt <= messageAt)
+      .sort((left, right) => right.decision.requestedAt - left.decision.requestedAt);
+    const anchor = answered[0];
+    if (!anchor) return false;
+    const codes = answered.slice(0, UNREADABLE_NOTICE_CODES).map(({ decision }) => decision.id);
+    const example = codes[0];
+    const text = [
+      `I couldn’t read that as a decision. Reply “approve ${example}” or “reject ${example} <reason>”, with the code from the request.`,
+      ...(codes.length > 1 ? [`Open decisions: ${codes.join(', ')}.`] : []),
+    ].join(' ');
+    const queued = await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: anchor.row._id,
+      decisionId: anchor.decision.id,
+      messageTs: args.messageTs,
+      kind: 'unknown',
+      text,
+    });
+    if (queued) {
+      await appendEvent(ctx, {
+        agentId: surface.agentId,
+        type: 'work.decision-ignored',
+        payload: {
+          surfaceId: surface._id,
+          messageTs: args.messageTs,
+          userId: args.userId,
+          reason: UNREADABLE_REPLY_REASON,
+        },
+        createdAt: Date.now(),
+      });
+    }
+    return queued;
   },
 });
 

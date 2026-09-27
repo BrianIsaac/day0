@@ -42,7 +42,14 @@ import {
   type PersonIdentity,
   type TicketSnapshot,
 } from '../src/work/ticket-ownership';
-import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
+import {
+  heldReplyCodes,
+  NOTHING_OPEN,
+  parseDecisionReply,
+  readsManagerDm,
+  type DecisionReply,
+  type OpenDecisions,
+} from '../src/work/manager-channel';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { agentZone } from '../src/lib/zone';
 
@@ -150,8 +157,16 @@ export interface IntakeRuntime {
   /** Bring the row of a ticket intake refused up to the listing, and withdraw it if it waits. */
   withdraw(candidate: IntakeSeed & { leftQueue: string }): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
-  /** Decision requests that landed on this surface and are still undecided. */
-  listOpenDecisionRequests(surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>>;
+  /** What the surface's manager DM has open; nothing open leaves it unread (Q13). */
+  openDecisions(surfaceId: Id<'surfaces'>): Promise<OpenDecisions>;
+  /** Close a delivered request whose thread the provider says is gone, and send it again. */
+  closeDecisionThread(record: { surfaceId: Id<'surfaces'>; decisionId: string }): Promise<void>;
+  /** Tell the manager, once, that a reply could not be read as a decision. */
+  noticeUnreadableReply(record: {
+    surfaceId: Id<'surfaces'>;
+    userId: string;
+    messageTs: string;
+  }): Promise<void>;
   /** Keep the bot id intake read for a row connected before the probe stored one. */
   recordBotIdentity(record: {
     surfaceId: Id<'surfaces'>;
@@ -184,7 +199,11 @@ export interface IntakeSweepResult {
   surfaces: number;
 }
 
-export type DecisionSweepResult = Omit<IntakeSweepResult, 'candidates'>;
+/** What one decision poll did, per chat surface. */
+export interface DecisionSweepResult extends Omit<IntakeSweepResult, 'candidates'> {
+  /** Surfaces whose DM was left unread because nothing was open (Q13's back-off). */
+  idle: number;
+}
 
 /** The Linear bounds intake reads: the approved scope, or the page scan's for older rows. */
 interface LinearScope {
@@ -216,7 +235,12 @@ interface SlackMessage {
 
 interface ChatPollResult {
   candidates: WorkCandidate[];
+  /** The replies read as a decision whose every read succeeded, to resolve now. */
   decisionReplies: Array<Omit<IntakeDecisionReply, 'surfaceId'>>;
+  /** The manager's messages after an open request that read as no decision. */
+  unreadableReplies: Array<{ userId: string; messageTs: string }>;
+  /** Open requests whose thread the provider says does not exist, by code. */
+  missingThreads: string[];
   /** Reads that failed after their retries, by what was read; the checkpoint holds while any did. */
   unread: Array<{ what: string; error: unknown }>;
 }
@@ -1333,13 +1357,57 @@ function mcpMessagePage(value: unknown): { messages: SlackMessage[]; nextCursor?
   };
 }
 
+/** Slack's answer for a thread whose parent message is not in the channel. */
+const SLACK_THREAD_NOT_FOUND = 'thread_not_found';
+
+/** What reads of the manager DM found, keyed by message ts so a message read twice counts once. */
+interface ManagerMessages {
+  /** The messages read as approve or reject. */
+  readonly replies: Map<string, ChatPollResult['decisionReplies'][number]>;
+  /** The manager's own messages read as neither. */
+  readonly unreadable: Map<string, ChatPollResult['unreadableReplies'][number]>;
+}
+
+/** An empty read of the manager DM. */
+function managerMessages(): ManagerMessages {
+  return { replies: new Map(), unreadable: new Map() };
+}
+
+/**
+ * Sort the messages of one DM read into replies read as a decision and the
+ * manager's messages read as none. Day0's own posts are neither.
+ *
+ * @param found - The reads so far, added to.
+ * @param surface - The chat surface, for the bot's and the manager's ids.
+ * @param messages - The messages this read returned.
+ * @param skipTs - A thread's parent, which is Day0's request, not a reply.
+ */
+function collectManagerMessages(
+  found: ManagerMessages,
+  surface: Doc<'surfaces'>,
+  messages: readonly SlackMessage[],
+  skipTs?: string,
+): void {
+  for (const message of messages) {
+    if (message.ts === skipTs) continue;
+    if (!message.user || message.user === surface.providerIdentityId) continue;
+    const reply = parseDecisionReply(message.text);
+    if (reply) {
+      found.replies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
+    } else if (message.user === surface.managerUserId) {
+      found.unreadable.set(message.ts, { userId: message.user, messageTs: message.ts });
+    }
+  }
+}
+
 /** Read the manager DM through a generic chat MCP connection's discovered history tool. */
 async function pollMcpManagerReplies(
   surface: Doc<'surfaces'>,
   credential: string,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
-): Promise<ChatPollResult['decisionReplies']> {
-  if (!surface.managerDmChannelId || !surface.managerUserId) return [];
+): Promise<ManagerMessages> {
+  const found = managerMessages();
+  if (!surface.managerDmChannelId || !surface.managerUserId) return found;
   const historyTool = surface.toolAllowlist?.find((tool) =>
     /(?:^|[._-])(?:conversations?[._-])?history$/i.test(tool),
   );
@@ -1365,7 +1433,6 @@ async function pollMcpManagerReplies(
     if (!channelName) throw new Error('Chat history tool has no channel argument.');
     const tool = await client.toolFromDefinition({ serverName: 'surface', definition });
     if (!tool.execute) throw new Error('Chat history tool is not executable.');
-    const replies: ChatPollResult['decisionReplies'] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
@@ -1387,11 +1454,7 @@ async function pollMcpManagerReplies(
       const page = mcpMessagePage(
         await tool.execute(args, { abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }),
       );
-      for (const message of page.messages) {
-        if (!message.user || message.user === surface.providerIdentityId) continue;
-        const reply = parseDecisionReply(message.text);
-        if (reply) replies.push({ userId: message.user, messageTs: message.ts, reply });
-      }
+      collectManagerMessages(found, surface, page.messages);
       if (!page.nextCursor) break;
       if (seenCursors.has(page.nextCursor)) {
         throw new Error('Chat history repeated a cursor before pagination completed.');
@@ -1402,7 +1465,7 @@ async function pollMcpManagerReplies(
       seenCursors.add(page.nextCursor);
       cursor = page.nextCursor;
     }
-    return replies;
+    return found;
   } finally {
     await client.disconnect();
   }
@@ -1517,7 +1580,8 @@ async function connectedBotId(
 
 /** What one chat poll reads: the manager's decision replies, the channels' asks, or both. */
 interface ChatPollScope {
-  readonly decisions: boolean;
+  /** What the manager DM has open, when this poll reads decisions; absent, it reads none. */
+  readonly decisions?: OpenDecisions;
   readonly work: boolean;
   /**
    * When the agent was deployed, in epoch milliseconds. A mention written
@@ -1548,7 +1612,6 @@ async function pollSlack(
   credential: string,
   observedAt: number,
   fetcher: IntakeFetcher,
-  listOpenRequests: () => Promise<Array<{ ts: string }>>,
   include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
@@ -1605,36 +1668,52 @@ async function pollSlack(
       }
     }
   }
-  const decisionReplies = new Map<string, ChatPollResult['decisionReplies'][number]>();
-  const collect = (messages: SlackMessage[], skipTs?: string): void => {
-    for (const message of messages) {
-      if (message.ts === skipTs) continue;
-      if (!message.user || message.user === surface.providerIdentityId) continue;
-      const reply = parseDecisionReply(message.text);
-      if (reply)
-        decisionReplies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
-    }
-  };
-  if (include.decisions && surface.managerDmChannelId && surface.managerUserId) {
+  const found = managerMessages();
+  const missingThreads: string[] = [];
+  const unreadThreads: string[] = [];
+  const open = include.decisions;
+  if (open && surface.managerDmChannelId && surface.managerUserId) {
     const dm = surface.managerDmChannelId;
-    // Replies stay all or nothing: a DM answer taken while an earlier answer in
-    // its thread went unread could decide the request the wrong way. The DM is
-    // read even when nothing is open, because the resolver answers a late or
-    // unknown code with a notice.
-    collect(await slackHistory(fetcher, credential, dm, surface.lastPolledAt));
+    // The top-level read is the poll: when it fails nothing is resolved and
+    // the checkpoint holds.
+    collectManagerMessages(
+      found,
+      surface,
+      await slackHistory(fetcher, credential, dm, surface.lastPolledAt),
+    );
     // `conversations.history` lists only top-level messages. A manager who answers in
     // the thread under the request is answering all the same, so each open request's
-    // thread is read too, when the probe allowlisted the replies method.
+    // thread is read too, when the probe allowlisted the replies method. A thread
+    // that cannot be read holds only the replies to its own request (Q13).
     if (surface.toolAllowlist?.includes('conversations.replies')) {
-      for (const request of await listOpenRequests()) {
-        collect(
-          await slackHistory(fetcher, credential, dm, surface.lastPolledAt, { ts: request.ts }),
-          request.ts,
-        );
+      for (const request of open.requests) {
+        if (request.ts === undefined) continue;
+        try {
+          collectManagerMessages(
+            found,
+            surface,
+            await slackHistory(fetcher, credential, dm, surface.lastPolledAt, { ts: request.ts }),
+            request.ts,
+          );
+        } catch (error) {
+          if (error instanceof Error && error.message === SLACK_THREAD_NOT_FOUND) {
+            missingThreads.push(request.decisionId);
+            continue;
+          }
+          unreadThreads.push(request.decisionId);
+          unread.push({ what: `the thread of decision ${request.decisionId}`, error });
+        }
       }
     }
   }
-  return { candidates, decisionReplies: [...decisionReplies.values()], unread };
+  const held = heldReplyCodes(open ?? NOTHING_OPEN, unreadThreads);
+  return {
+    candidates,
+    decisionReplies: [...found.replies.values()].filter((reply) => !held.has(reply.reply.id)),
+    unreadableReplies: open && open.requests.length > 0 ? [...found.unreadable.values()] : [],
+    missingThreads,
+    unread,
+  };
 }
 
 /**
@@ -1661,7 +1740,6 @@ async function pollChat(
   observedAt: number,
   fetcher: IntakeFetcher,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
-  listOpenRequests: () => Promise<Array<{ ts: string }>>,
   include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
@@ -1673,17 +1751,22 @@ async function pollChat(
         credential,
         observedAt,
         fetcher,
-        listOpenRequests,
         include,
         rememberBotId,
       );
     }
     if (surface.path === 'mcp') {
+      const found = include.decisions
+        ? await pollMcpManagerReplies(surface, credential, makeClient)
+        : managerMessages();
       return {
         candidates: [],
-        decisionReplies: include.decisions
-          ? await pollMcpManagerReplies(surface, credential, makeClient)
-          : [],
+        decisionReplies: [...found.replies.values()],
+        unreadableReplies:
+          include.decisions && include.decisions.requests.length > 0
+            ? [...found.unreadable.values()]
+            : [],
+        missingThreads: [],
         unread: [],
       };
     }
@@ -2035,8 +2118,7 @@ export async function runIntakeSweep(
                 pollStartedAt,
                 fetcher,
                 makeMcpClient,
-                () => runtime.listOpenDecisionRequests(surface._id),
-                { decisions: false, work: true, mentionsSince: agent.createdAt },
+                { work: true, mentionsSince: agent.createdAt },
                 rememberBotId(runtime, surface._id),
               )
             : undefined;
@@ -2128,12 +2210,13 @@ export async function runDecisionSweep(
   dependencies: IntakeDependencies = {},
 ): Promise<DecisionSweepResult> {
   const mode = dependencies.mode ?? SURFACE_MODE;
-  if (mode !== 'real') return { mode, polled: 0, skipped: 0, surfaces: 0 };
+  if (mode !== 'real') return { mode, polled: 0, idle: 0, skipped: 0, surfaces: 0 };
   const now = dependencies.now ?? Date.now;
   const fetcher = providerFetcher(dependencies, now);
   const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const surfaces = await runtime.listChatSurfaces();
   let polled = 0;
+  let idle = 0;
   let skipped = 0;
   for (const surface of surfaces) {
     if (
@@ -2154,6 +2237,15 @@ export async function runDecisionSweep(
     const pollStartedAt = now();
     let credential = '';
     try {
+      const open = await runtime.openDecisions(surface._id);
+      if (!readsManagerDm(open)) {
+        // Nothing asked, nothing just decided: the DM is not read and no
+        // credential is touched (Q13). The checkpoint moves on, because a
+        // message in this window can answer nothing.
+        await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
+        idle += 1;
+        continue;
+      }
       credential = await runtime.decrypt(surface.credentialId);
       const checkpointed = {
         ...surface,
@@ -2166,15 +2258,34 @@ export async function runDecisionSweep(
         pollStartedAt,
         fetcher,
         makeMcpClient,
-        () => runtime.listOpenDecisionRequests(surface._id),
-        { decisions: true, work: false },
+        { decisions: open, work: false },
         rememberBotId(runtime, surface._id),
       );
+      // One message at a time, each tied to its request by its code; a reply
+      // to a request whose thread could not be read waits for the next poll.
       for (const reply of chat.decisionReplies) {
         await runtime.resolveDecision({ surfaceId: surface._id, ...reply });
       }
-      await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
-      polled += 1;
+      for (const decisionId of chat.missingThreads) {
+        await runtime.closeDecisionThread({ surfaceId: surface._id, decisionId });
+      }
+      for (const message of chat.unreadableReplies) {
+        await runtime.noticeUnreadableReply({ surfaceId: surface._id, ...message });
+      }
+      if (chat.unread.length > 0) {
+        // The checkpoint holds, so the unread thread is read again next time;
+        // the replies resolved now are recognised by their ts when re-read.
+        await runtime.recordDecisionPoll({
+          surfaceId: surface._id,
+          failure: `decision poll read in part; read again next time: ${chat.unread
+            .map(({ what, error }) => `${what} (${safeIntakeError(error, credential)})`)
+            .join('; ')}`,
+        });
+        skipped += 1;
+      } else {
+        await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
+        polled += 1;
+      }
     } catch (error) {
       // The checkpoint stays where it was, so the window this run could not
       // read is re-read by the next one, and the reason lands on the surface
@@ -2187,7 +2298,7 @@ export async function runDecisionSweep(
       credential = '';
     }
   }
-  return { mode, polled, skipped, surfaces: surfaces.length };
+  return { mode, polled, idle, skipped, surfaces: surfaces.length };
 }
 
 /** Create the Convex runtime boundary used by the scheduled action. */
@@ -2236,8 +2347,14 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     resolveDecision: async (reply: IntakeDecisionReply): Promise<void> => {
       await ctx.runMutation(internal.work.resolveChannelDecision, reply);
     },
-    listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
-      await ctx.runQuery(internal.work.openDecisionRequests, { surfaceId }),
+    openDecisions: async (surfaceId: Id<'surfaces'>): Promise<OpenDecisions> =>
+      await ctx.runQuery(internal.work.openDecisions, { surfaceId }),
+    closeDecisionThread: async (record): Promise<void> => {
+      await ctx.runMutation(internal.work.closeDecisionThread, record);
+    },
+    noticeUnreadableReply: async (record): Promise<void> => {
+      await ctx.runMutation(internal.work.noticeUnreadableReply, record);
+    },
     recordBotIdentity: async (record): Promise<void> => {
       await ctx.runMutation(internal.intakeIdentity.recordBotIdentity, record);
     },
