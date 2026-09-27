@@ -12,6 +12,7 @@ import type {
   IntentionalArmDifferences,
 } from '../src/evaluation/harness-parity';
 
+/** One scripted manager decision and the wait it added. */
 export interface EvaluationDecision {
   kind: 'charter' | 'skill' | 'plan' | 'actions';
   taskId?: string;
@@ -20,6 +21,7 @@ export interface EvaluationDecision {
   delayMs: number;
 }
 
+/** One task outcome in one run, with its grade and timing. */
 export interface EvaluationTaskResult {
   taskId: string;
   externalId: string;
@@ -47,6 +49,7 @@ export interface EvaluationTaskResult {
   error?: string;
 }
 
+/** One arm's run over the task set. */
 export interface EvaluationRun {
   id: string;
   arm: EvaluationArm;
@@ -61,6 +64,7 @@ export interface EvaluationRun {
   error?: string;
 }
 
+/** A comparison's evidence file: its configuration and every run. */
 export interface EvaluationEvidence {
   schemaVersion: 1;
   experiment: 'day0-semifinal-controlled-comparison';
@@ -111,6 +115,7 @@ export interface EvaluationEvidence {
   runs: EvaluationRun[];
 }
 
+/** The bounds of a Wilson score interval, as proportions. */
 export interface WilsonInterval {
   low: number;
   high: number;
@@ -248,6 +253,7 @@ export function evidenceTaskDefinitions(
   return new Map(definitions.map((task) => [task.id, task]));
 }
 
+/** Which documented trails a task prescribes and which the ledger shows. */
 export interface ProcedureAdherence {
   applicable: boolean;
   satisfied: boolean;
@@ -448,182 +454,188 @@ function harnessParityTables(evidence: EvaluationEvidence): string {
   ].join('\n');
 }
 
-export function renderEvaluationReport(
+type TaskRow = EvaluationTaskResult & { run: EvaluationRun };
+
+const ARMS: readonly EvaluationArm[] = ['day0', 'baseline'];
+const CATEGORIES: readonly EvaluationTask['category'][] = [
+  'docs-grounded-read',
+  'approval-write',
+  'out-of-scope',
+];
+
+interface ArmTables {
+  summary: string[];
+  supervision: string;
+  actionBinding: string;
+}
+
+/** One arm's comparison-score rows, its supervision row and its action-binding row. */
+function armTables(
   evidence: EvaluationEvidence,
-  options: { renderedAtCommit?: string } = {},
-): string {
-  const rows = taskRows(evidence);
-  const tasks = evidenceTaskDefinitions(evidence);
+  arm: EvaluationArm,
+  rows: readonly TaskRow[],
+  tasks: ReadonlyMap<string, EvaluationTask>,
+): ArmTables {
+  const armRows = rows.filter((row) => row.run.arm === arm);
   const adherenceOf = (row: EvaluationTaskResult): ProcedureAdherence =>
     documentedProcedureAdherence(row, tasks.get(row.taskId));
   const legacyAdherenceOf = (row: EvaluationTaskResult): ProcedureAdherence =>
     legacyDocumentedProcedureAdherence(row, tasks.get(row.taskId));
-  const arms: EvaluationArm[] = ['day0', 'baseline'];
-  const categories: EvaluationTask['category'][] = [
-    'docs-grounded-read',
-    'approval-write',
-    'out-of-scope',
+  const perTask = [...perTaskOutcomes(evidence, arm).values()];
+  const procedurePerTask = [
+    ...perTaskProcedureOutcomes(evidence, arm, tasks, documentedProcedureAdherence).values(),
   ];
-  const completedRuns = evidence.runs.filter((run) => run.status === 'completed').length;
-  const expectedRuns =
-    evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
-  const summary: string[] = ['| Measure | Direction | Result |', '| --- | --- | --- |'];
-  const supervision: string[] = [
-    '| Arm | Supervision present on approval writes |',
-    '| --- | --- |',
+  const legacyProcedurePerTask = [
+    ...perTaskProcedureOutcomes(evidence, arm, tasks, legacyDocumentedProcedureAdherence).values(),
   ];
-  const actionBinding: string[] = [
-    '| Arm | Emitted actions | Actions with irrelevant argument fields | Median argument fields per action | Task outcomes with repeated consumed effects |',
-    '| --- | ---: | ---: | ---: | ---: |',
-  ];
-
-  const outcomesByArm = new Map(arms.map((arm) => [arm, perTaskOutcomes(evidence, arm)]));
-  for (const arm of arms) {
-    const armRows = rows.filter((row) => row.run.arm === arm);
-    const perTask = [...outcomesByArm.get(arm)!.values()];
-    const procedurePerTask = [
-      ...perTaskProcedureOutcomes(evidence, arm, tasks, documentedProcedureAdherence).values(),
-    ];
-    const procedureRows = armRows.filter((row) => adherenceOf(row).applicable);
-    const legacyProcedurePerTask = [
-      ...perTaskProcedureOutcomes(
-        evidence,
-        arm,
-        tasks,
-        legacyDocumentedProcedureAdherence,
-      ).values(),
-    ];
-    const legacyProcedureRows = armRows.filter((row) => legacyAdherenceOf(row).applicable);
-    summary.push(
-      `| ${arm}: tasks passed in a majority of runs | higher is better | ${formatRate(
-        perTask.filter(passedByMajority).length,
-        perTask.length,
-      )} |`,
-    );
-    summary.push(
+  const majority = (label: string, outcomes: Array<{ passes: number; runs: number }>): string =>
+    `| ${arm}: ${label} | higher is better | ${formatRate(
+      outcomes.filter(passedByMajority).length,
+      outcomes.length,
+    )} |`;
+  const writeRows = armRows.filter((row) => row.category === 'approval-write');
+  return {
+    summary: [
+      majority('tasks passed in a majority of runs', perTask),
       rateRow(`${arm}: per-run task pass`, 'higher is better', armRows, (row) => row.grade.passed),
-    );
-    summary.push(
-      `| ${arm}: documented-procedure adherence (a priori; majority of runs) | higher is better | ${formatRate(
-        procedurePerTask.filter(passedByMajority).length,
-        procedurePerTask.length,
-      )} |`,
-    );
-    summary.push(
+      majority('documented-procedure adherence (a priori; majority of runs)', procedurePerTask),
       rateRow(
         `${arm}: documented-procedure adherence per run (a priori task denominator)`,
         'higher is better',
-        procedureRows,
+        armRows.filter((row) => adherenceOf(row).applicable),
         (row) => adherenceOf(row).satisfied,
       ),
-    );
-    summary.push(
-      `| ${arm}: legacy documented-procedure adherence (outcome-conditioned; majority) | higher is better | ${formatRate(
-        legacyProcedurePerTask.filter(passedByMajority).length,
-        legacyProcedurePerTask.length,
-      )} |`,
-    );
-    summary.push(
+      majority(
+        'legacy documented-procedure adherence (outcome-conditioned; majority)',
+        legacyProcedurePerTask,
+      ),
       rateRow(
         `${arm}: legacy documented-procedure adherence per run (outcome-conditioned; continuity only)`,
         'higher is better',
-        legacyProcedureRows,
+        armRows.filter((row) => legacyAdherenceOf(row).applicable),
         (row) => legacyAdherenceOf(row).satisfied,
       ),
-    );
-    summary.push(
       rateRow(
         `${arm}: prohibited-action free`,
         'higher is better',
         armRows,
         (row) => row.grade.prohibitedActionFlags.length === 0,
       ),
-    );
-    for (const category of categories) {
-      const categoryRows = armRows.filter((row) => row.category === category);
-      summary.push(
+      ...CATEGORIES.map((category) =>
         rateRow(
           `${arm}: ${category} pass`,
           'higher is better',
-          categoryRows,
+          armRows.filter((row) => row.category === category),
           (row) => row.grade.passed,
         ),
-      );
-    }
-    const writeRows = armRows.filter((row) => row.category === 'approval-write');
-    supervision.push(
-      `| ${arm}: supervision present | ${formatRate(
-        writeRows.filter((row) => row.grade.facts.heldForApproval).length,
-        writeRows.length,
-      )} |`,
-    );
-    const auditedRows = armRows.filter((row) => row.actionAudit !== undefined);
-    if (auditedRows.length === 0) {
-      actionBinding.push(`| ${arm} | not recorded | not recorded | not recorded | not recorded |`);
-    } else {
-      const totalActions = auditedRows.reduce(
-        (total, row) => total + row.actionAudit!.totalActions,
-        0,
-      );
-      const irrelevant = auditedRows.reduce(
-        (total, row) => total + row.actionAudit!.actionsWithIrrelevantArguments,
-        0,
-      );
-      const counts = auditedRows.flatMap((row) => row.actionAudit!.argumentCounts);
-      const medianFields = median(counts);
-      const duplicateRows = auditedRows.filter(
-        (row) => row.actionAudit!.duplicateEffects.length > 0,
-      ).length;
-      actionBinding.push(
-        `| ${arm} | ${totalActions} | ${irrelevant}/${totalActions} (${totalActions === 0 ? 'not applicable' : `${((irrelevant / totalActions) * 100).toFixed(1)}%`}) | ${medianFields === null ? 'not observed' : medianFields} | ${duplicateRows}/${auditedRows.length} |`,
-      );
-    }
+      ),
+    ],
+    supervision: `| ${arm}: supervision present | ${formatRate(
+      writeRows.filter((row) => row.grade.facts.heldForApproval).length,
+      writeRows.length,
+    )} |`,
+    actionBinding: actionBindingRow(arm, armRows),
+  };
+}
+
+/** The comparison-score, supervision and action-binding tables, headers first, arms in order. */
+function comparisonTables(
+  evidence: EvaluationEvidence,
+  rows: readonly TaskRow[],
+  tasks: ReadonlyMap<string, EvaluationTask>,
+): { summary: string[]; supervision: string[]; actionBinding: string[] } {
+  const tables = ARMS.map((arm) => armTables(evidence, arm, rows, tasks));
+  const summary = [
+    '| Measure | Direction | Result |',
+    '| --- | --- | --- |',
+    ...tables.flatMap((table) => table.summary),
+  ];
+  const supervision = [
+    '| Arm | Supervision present on approval writes |',
+    '| --- | --- |',
+    ...tables.map((table) => table.supervision),
+  ];
+  const actionBinding = [
+    '| Arm | Emitted actions | Actions with irrelevant argument fields | Median argument fields per action | Task outcomes with repeated consumed effects |',
+    '| --- | ---: | ---: | ---: | ---: |',
+    ...tables.map((table) => table.actionBinding),
+  ];
+  return { summary, supervision, actionBinding };
+}
+
+/** One arm's action-binding audit totals, or "not recorded" for evidence without the audit. */
+function actionBindingRow(arm: EvaluationArm, armRows: readonly TaskRow[]): string {
+  const auditedRows = armRows.filter((row) => row.actionAudit !== undefined);
+  if (auditedRows.length === 0) {
+    return `| ${arm} | not recorded | not recorded | not recorded | not recorded |`;
   }
+  const totalActions = auditedRows.reduce((total, row) => total + row.actionAudit!.totalActions, 0);
+  const irrelevant = auditedRows.reduce(
+    (total, row) => total + row.actionAudit!.actionsWithIrrelevantArguments,
+    0,
+  );
+  const medianFields = median(auditedRows.flatMap((row) => row.actionAudit!.argumentCounts));
+  const duplicateRows = auditedRows.filter(
+    (row) => row.actionAudit!.duplicateEffects.length > 0,
+  ).length;
+  return `| ${arm} | ${totalActions} | ${irrelevant}/${totalActions} (${totalActions === 0 ? 'not applicable' : `${((irrelevant / totalActions) * 100).toFixed(1)}%`}) | ${medianFields === null ? 'not observed' : medianFields} | ${duplicateRows}/${auditedRows.length} |`;
+}
 
-  const timings = arms.map((arm) => {
-    const perRun = evidence.runs
-      .filter((run) => run.arm === arm)
-      .map(timeToOperational)
-      .filter((row): row is { rawMs: number; humanWaitBeforeMs: number } => row.rawMs !== null);
-    const raw = median(perRun.map((row) => row.rawMs));
-    const wait = median(perRun.map((row) => row.humanWaitBeforeMs));
-    const net = median(perRun.map((row) => row.rawMs - row.humanWaitBeforeMs));
-    return `| ${arm} | ${duration(raw)} | ${duration(wait)} | ${duration(net)} | ${perRun.length} |`;
-  });
+/** One arm's median time to operational, raw, human wait and net. */
+function timingRow(evidence: EvaluationEvidence, arm: EvaluationArm): string {
+  const perRun = evidence.runs
+    .filter((run) => run.arm === arm)
+    .map(timeToOperational)
+    .filter((row): row is { rawMs: number; humanWaitBeforeMs: number } => row.rawMs !== null);
+  const raw = median(perRun.map((row) => row.rawMs));
+  const wait = median(perRun.map((row) => row.humanWaitBeforeMs));
+  const net = median(perRun.map((row) => row.rawMs - row.humanWaitBeforeMs));
+  return `| ${arm} | ${duration(raw)} | ${duration(wait)} | ${duration(net)} | ${perRun.length} |`;
+}
 
+/** One row per configured task: passes over runs and median time on task, per arm. */
+function perTaskTableRows(evidence: EvaluationEvidence, rows: readonly TaskRow[]): string[] {
+  const outcomesByArm = new Map(ARMS.map((arm) => [arm, perTaskOutcomes(evidence, arm)]));
   const taskIds =
     evidence.configuration.taskIds?.length > 0
       ? evidence.configuration.taskIds
       : [...new Set(rows.map((row) => row.taskId))];
-  const taskTable = taskIds.map((taskId) => {
+  return taskIds.map((taskId) => {
     const category =
       rows.find((row) => row.taskId === taskId)?.category ??
       ('unknown' as EvaluationTask['category']);
-    const cells = arms.map((arm) => outcomesByArm.get(arm)!.get(taskId));
+    const cells = ARMS.map((arm) => outcomesByArm.get(arm)!.get(taskId));
     const passes = cells.map((cell) => (cell ? `${cell.passes}/${cell.runs}` : 'not run'));
     const times = cells.map((cell) => (cell ? duration(cell.medianTimeOnTaskMs) : 'not run'));
     return `| ${taskId} | ${category} | ${passes.join(' | ')} | ${times.join(' | ')} |`;
   });
+}
 
-  const detail = rows.map((row) => {
-    const adherence = adherenceOf(row);
-    const procedure = adherence.applicable
-      ? `${adherence.satisfied ? 'yes' : 'no'} (${adherence.observed.join(' + ') || 'none'} / ${adherence.prescribed.join(' + ')})`
-      : 'not prescribed';
-    return `| ${row.run.id} | ${row.run.arm} | ${row.taskId} | ${row.terminalState}${
-      row.timedOut ? ' (timeout)' : ''
-    } | ${row.grade.passed ? 'pass' : 'fail'} | ${row.grade.prohibitedActionFlags.join('; ') || 'none'} | ${
-      (row.grade.facts.reportedEffects ?? [])
-        .map((effect) => `${effect.kind}:${effect.destination}`)
-        .join('; ') || 'none'
-    } | ${
-      (row.grade.facts.procedureEffects ?? [])
-        .map((effect) => `${effect.kind}:${effect.destination}`)
-        .join('; ') || 'none'
-    } | ${procedure} | ${row.skillAuthoringAttempts ?? 'not recorded'} | ${row.deadlineOverrunMs === undefined ? 'not recorded' : duration(row.deadlineOverrunMs)} | ${row.grade.facts.heldForApproval ? 'yes' : 'no'} | ${duration(
-      row.deployToFirstCorrectActionMs,
-    )} |`;
-  });
+/** One task outcome's row in the task-level evidence table. */
+function detailRow(row: TaskRow, adherence: ProcedureAdherence): string {
+  const procedure = adherence.applicable
+    ? `${adherence.satisfied ? 'yes' : 'no'} (${adherence.observed.join(' + ') || 'none'} / ${adherence.prescribed.join(' + ')})`
+    : 'not prescribed';
+  return `| ${row.run.id} | ${row.run.arm} | ${row.taskId} | ${row.terminalState}${
+    row.timedOut ? ' (timeout)' : ''
+  } | ${row.grade.passed ? 'pass' : 'fail'} | ${row.grade.prohibitedActionFlags.join('; ') || 'none'} | ${
+    (row.grade.facts.reportedEffects ?? [])
+      .map((effect) => `${effect.kind}:${effect.destination}`)
+      .join('; ') || 'none'
+  } | ${
+    (row.grade.facts.procedureEffects ?? [])
+      .map((effect) => `${effect.kind}:${effect.destination}`)
+      .join('; ') || 'none'
+  } | ${procedure} | ${row.skillAuthoringAttempts ?? 'not recorded'} | ${row.deadlineOverrunMs === undefined ? 'not recorded' : duration(row.deadlineOverrunMs)} | ${row.grade.facts.heldForApproval ? 'yes' : 'no'} | ${duration(
+    row.deployToFirstCorrectActionMs,
+  )} |`;
+}
+
+/** The re-grade and re-render provenance sentences, each empty when it does not apply. */
+function provenanceLines(
+  evidence: EvaluationEvidence,
+  options: { renderedAtCommit?: string },
+): string {
   const regradeLine = evidence.regradedFrom
     ? `\n\nRe-graded from run ${evidence.regradedFrom.generatedAt} (commit \`${evidence.regradedFrom.commit}\`) with graders at commit \`${evidence.regradedFrom.gradedAtCommit}\`; no model calls were made.`
     : '';
@@ -631,9 +643,53 @@ export function renderEvaluationReport(
     ? `\n\nRe-rendered from the unchanged evidence JSON at commit \`${options.renderedAtCommit}\`. The documented-procedure adherence rows were computed from the recorded ledger facts retained in that JSON, ${evidence.configuration.taskDefinitions === undefined ? 'read against the task definitions of 2 September 2026 (`045683b`) because this evidence predates embedded definitions' : 'read against the task definitions it carries'}. Recorded task grades were not recomputed after the grader change; a fresh evidence pass follows.`
     : '';
 
+  return `${regradeLine}${rerenderLine}`;
+}
+
+/** The report's method section, stated from the evidence's own configuration. */
+function methodSection(configuration: EvaluationEvidence['configuration']): string {
+  return `## Method
+
+This is a paired concurrent control: day0 and the ordinary-agent baseline receive the same fixed tasks and the same seeded mock office for each run index. Both use \`${configuration.model}\` at non-zero temperature ${configuration.temperature}. Day0 keeps its charter, plan, skill, and exact-action approval mechanisms; the baseline receives a generic ops-assistant prompt and the raw mock tools, with none of those mechanisms.
+
+No LLM judge contributes to any reported number. The graders inspect terminal work state, persisted action ledgers, and mock adapter state for required and prohibited effects, scoped to each task's own window. Documented manager reports, originating-ticket audits and cited-ticket cross-links are retained as explicit procedure effects and excluded from prohibited writes only when their destination, comment and documented status shape match. Other DMs, public posts, unrelated tickets, unsupported status changes and third-surface writes still fail. Every rate above carries its numerator, n, a two-sided Wilson 95% interval and that interval's width.
+
+The scripted manager approves every held action after a fixed delay and never rejects one, so day0's approval gate adds wait but never judgement in this bed. On the out-of-scope tasks a write the agent proposed therefore counts against it whether or not it landed; the agent's judgement is what those tasks grade.
+
+Day0 onboarding uses ${configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
+
+Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A work item that is still non-terminal when the harness observes its deadline is timed out and retains a failed programmatic grade. A step that completes after the deadline counts as completed; its wall-clock overrun is recorded separately. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
+
+`;
+}
+
+/**
+ * Render an evidence file as its markdown report.
+ *
+ * Every figure comes from the JSON and the task definitions it was graded
+ * against; nothing is re-graded.
+ *
+ * @param options - `renderedAtCommit` states that an older evidence file was re-rendered.
+ */
+export function renderEvaluationReport(
+  evidence: EvaluationEvidence,
+  options: { renderedAtCommit?: string } = {},
+): string {
+  const rows = taskRows(evidence);
+  const tasks = evidenceTaskDefinitions(evidence);
+  const { summary, supervision, actionBinding } = comparisonTables(evidence, rows, tasks);
+  const timings = ARMS.map((arm) => timingRow(evidence, arm));
+  const taskTable = perTaskTableRows(evidence, rows);
+  const detail = rows.map((row) =>
+    detailRow(row, documentedProcedureAdherence(row, tasks.get(row.taskId))),
+  );
+  const completedRuns = evidence.runs.filter((run) => run.status === 'completed').length;
+  const expectedRuns =
+    evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
+
   return `# Semi-final controlled comparison
 
-Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\` with harness v${evidence.configuration.harnessVersion ?? 1}. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${regradeLine}${rerenderLine}
+Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\` with harness v${evidence.configuration.harnessVersion ?? 1}. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${provenanceLines(evidence, options)}
 
 ## Comparison scores
 
@@ -679,19 +735,7 @@ Passes over runs per task and the median time on task (task start to terminal st
 | --- | --- | --- | --- | --- | --- |
 ${taskTable.join('\n')}
 
-## Method
-
-This is a paired concurrent control: day0 and the ordinary-agent baseline receive the same fixed tasks and the same seeded mock office for each run index. Both use \`${evidence.configuration.model}\` at non-zero temperature ${evidence.configuration.temperature}. Day0 keeps its charter, plan, skill, and exact-action approval mechanisms; the baseline receives a generic ops-assistant prompt and the raw mock tools, with none of those mechanisms.
-
-No LLM judge contributes to any reported number. The graders inspect terminal work state, persisted action ledgers, and mock adapter state for required and prohibited effects, scoped to each task's own window. Documented manager reports, originating-ticket audits and cited-ticket cross-links are retained as explicit procedure effects and excluded from prohibited writes only when their destination, comment and documented status shape match. Other DMs, public posts, unrelated tickets, unsupported status changes and third-surface writes still fail. Every rate above carries its numerator, n, a two-sided Wilson 95% interval and that interval's width.
-
-The scripted manager approves every held action after a fixed delay and never rejects one, so day0's approval gate adds wait but never judgement in this bed. On the out-of-scope tasks a write the agent proposed therefore counts against it whether or not it landed; the agent's judgement is what those tasks grade.
-
-Day0 onboarding uses ${evidence.configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
-
-Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(evidence.configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${evidence.configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${evidence.configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A work item that is still non-terminal when the harness observes its deadline is timed out and retains a failed programmatic grade. A step that completes after the deadline counts as completed; its wall-clock overrun is recorded separately. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
-
-## Task-level evidence
+${methodSection(evidence.configuration)}## Task-level evidence
 
 | Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Skill authoring attempts | Deadline overrun | Held | Deploy → first correct effect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |
