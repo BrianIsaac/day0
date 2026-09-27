@@ -43,6 +43,7 @@
           "tools": [
             "spreadsheet.appendRow",
             "twitter.reply",
+            "slack.postMessage",
             "ticket.update"
           ]
         }
@@ -94,6 +95,7 @@
           "tools": [
             "spreadsheet.appendRow",
             "twitter.reply",
+            "slack.postMessage",
             "ticket.update"
           ]
         }
@@ -146,6 +148,7 @@
           "tools": [
             "spreadsheet.appendRow",
             "twitter.reply",
+            "slack.postMessage",
             "ticket.update"
           ]
         }
@@ -482,6 +485,7 @@
           "tools": [
             "spreadsheet.appendRow",
             "twitter.reply",
+            "slack.postMessage",
             "ticket.update"
           ]
         }
@@ -526,6 +530,7 @@
           "tools": [
             "spreadsheet.appendRow",
             "twitter.reply",
+            "slack.postMessage",
             "ticket.update"
           ]
         }

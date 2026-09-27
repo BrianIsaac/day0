@@ -601,6 +601,24 @@ function requiredTicketAction(task: EvaluationTask, pair: ActionLedgerPair): boo
   );
 }
 
+/** A landed Slack post that is the message a required effect asks for. */
+function requiredSlackAction(task: EvaluationTask, pair: ActionLedgerPair): boolean {
+  if (pair.action?.tool !== 'slack.postMessage' || pair.ledger?.tool !== 'slack.postMessage') {
+    return false;
+  }
+  const channelSlug = actionString(pair.action, 'channelSlug');
+  const threadKey = actionString(pair.action, 'threadKey');
+  const body = actionString(pair.action, 'body');
+  if (!body) return false;
+  return task.grader.requiredEffects.some(
+    (effect) =>
+      effect.kind === 'slack-message' &&
+      effect.channelSlug === channelSlug &&
+      (effect.threadKey === undefined || effect.threadKey === threadKey) &&
+      effect.includesAll.every((value) => includes(body, value)),
+  );
+}
+
 function citedTicketSlugs(snapshot: EvaluationSnapshot): Set<string> {
   return new Set(snapshot.workItem.output?.draft?.match(/\b[A-Z][A-Z0-9-]*-\d+\b/g) ?? []);
 }
@@ -952,7 +970,9 @@ export function gradeEvaluationTask(
       exemptedActionKeys.add(pair.key);
       procedureEffects.push(procedureEffect);
     }
-    if (requiredTicketAction(task, pair)) exemptedActionKeys.add(pair.key);
+    if (requiredTicketAction(task, pair) || requiredSlackAction(task, pair)) {
+      exemptedActionKeys.add(pair.key);
+    }
     if (escalation?.pair.key === pair.key) {
       exemptedActionKeys.add(pair.key);
       reportedEffects.push({
