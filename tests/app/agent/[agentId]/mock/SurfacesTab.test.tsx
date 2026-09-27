@@ -68,9 +68,12 @@ import {
   ProvisioningRow,
   SurfaceLadder,
   SurfacesTab,
+  ToolsRow,
+  withheldToolsBySurface,
   type AccessSurface,
   type CredentialRowProps,
   type ProvisioningRowProps,
+  type ToolsSurface,
 } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
 import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 import { companyPage } from '../../../../fixtures/company-bed';
@@ -853,5 +856,83 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
   it('is absent before the card is approved, when access has not started', (): void => {
     expect(renderAccess(surface({ verdict: 'proposed', expiresAt: undefined }), AT)).toBe('');
     expect(renderAccess(surface({ verdict: 'declared' }), AT)).toBe('');
+  });
+});
+
+describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b) and D3)', (): void => {
+  const agentId = 'agent-1' as Id<'agents'>;
+  const tools = (patch: Partial<ToolsSurface>): ToolsSurface => ({
+    _id: 'surface-linear' as Id<'surfaces'>,
+    displayName: 'Linear',
+    verdict: 'connected',
+    toolAllowlist: ['list_issues', 'save_comment'],
+    approvedToolAllowlist: ['list_issues', 'save_comment', 'delete_issue'],
+    ...patch,
+  });
+
+  it('prints the tools the card calls, the approved ones the provider no longer offers and those withheld', (): void => {
+    const markup = renderToStaticMarkup(
+      <ToolsRow surface={tools({})} withheld={['get_user']} onApprove={async () => undefined} />,
+    );
+    expect(markup).toContain('Scopes: </span>list_issues, save_comment</p>');
+    expect(markup).toContain(
+      'Approved, not offered by the provider at the last check: delete_issue',
+    );
+    expect(markup).toContain('Withheld, outside your approval: get_user.');
+    expect(markup).toMatch(
+      /<button[^>]*aria-expanded="false"[^>]*>Change approved tools<\/button>/,
+    );
+    expect(markup).toContain('role="status"');
+  });
+
+  it('says nothing is withheld only when the page knows, and nothing for a card not connected', (): void => {
+    const unknown = renderToStaticMarkup(
+      <ToolsRow surface={tools({})} onApprove={async () => undefined} />,
+    );
+    expect(unknown).not.toContain('Withheld');
+    expect(
+      renderToStaticMarkup(
+        <ToolsRow surface={tools({ verdict: 'proposed' })} onApprove={async () => undefined} />,
+      ),
+    ).toBe('');
+  });
+
+  it("reads each surface's withheld tools from its newest connection only", (): void => {
+    const found = withheldToolsBySurface([
+      { type: 'surface.connected', payload: { surfaceId: 's1' } },
+      { type: 'work.completed', payload: { workItemId: 'w1' } },
+      { type: 'surface.connected', payload: { surfaceId: 's1', withheldTools: ['old_tool'] } },
+      { type: 'surface.connected', payload: { surfaceId: 's2', withheldTools: ['get_user'] } },
+    ]);
+    expect(found.get('s1')).toEqual([]);
+    expect(found.get('s2')).toEqual(['get_user']);
+    expect(found.has('s3')).toBe(false);
+  });
+
+  it('labels the scopes a proposal asks for as requested, and the access as starting at approval', (): void => {
+    state.surfaces = [
+      {
+        _id: 'surface-linear',
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'proposed',
+        path: 'mcp',
+        whereFound: [],
+        credentialLanded: false,
+        request: { scopeRequested: ['read:issues'], costBand: 'free', expiresInDays: 30 },
+      },
+    ];
+    try {
+      const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+      expect(markup).toContain('Scopes requested</dt><dd>read:issues</dd>');
+      expect(markup).toContain('Cost</dt><dd>free</dd>');
+      expect(markup).toContain('starts when you approve; the end date shows on this card');
+      expect(markup).not.toContain('Cost / expiry');
+      expect(markup).not.toContain('30 days');
+    } finally {
+      state.surfaces = undefined;
+    }
   });
 });

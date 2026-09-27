@@ -31,6 +31,7 @@ import {
   type ScopeValue,
 } from '@/surfaces/intake-scope';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
+import { isEventOf } from '@/events/contract';
 import { clockTime, useAgentZone, useNow } from '../time';
 import { LiveStatus, refusalText, type ChangeOutcome } from '../live-status';
 
@@ -691,6 +692,242 @@ export function AccessRow({
   );
 }
 
+/** A surface as the tools row reads it. */
+export type ToolsSurface = Pick<
+  Doc<'surfaces'>,
+  '_id' | 'displayName' | 'verdict' | 'toolAllowlist' | 'approvedToolAllowlist'
+>;
+
+/**
+ * The tools a connected card calls, and the manager's control to change the
+ * tools it may call (U10 D2 (b), the re-approval of a narrowed card).
+ *
+ * The first connection after an approval freezes the approved list; a later
+ * probe that finds more tools keeps them back (`surface.connected` names them
+ * as withheld) until the manager approves them here, and nothing else widens
+ * the list (`surfaces.approveTools`). Taking a tool off stops it at once;
+ * one added is called once the next probe finds the provider offers it.
+ *
+ * Args:
+ *   props: The surface, the tools its latest connection withheld when known,
+ *     and the approval callback.
+ *
+ * Returns:
+ *   The row, or nothing for a card that is not connected.
+ */
+export function ToolsRow({
+  surface,
+  withheld,
+  onApprove,
+}: {
+  surface: ToolsSurface;
+  /** The latest `surface.connected` event's withheld tools, when the page has read it. */
+  withheld?: readonly string[];
+  onApprove: (tools: string[]) => Promise<unknown>;
+}): React.ReactNode {
+  const [editing, setEditing] = useState(false);
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
+  const [added, setAdded] = useState<readonly string[]>([]);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  if (surface.verdict !== 'connected') return null;
+  const calls = surface.toolAllowlist ?? [];
+  const approved = surface.approvedToolAllowlist ?? calls;
+  const notOffered = approved.filter((tool) => !calls.includes(tool));
+  const keptBack = (withheld ?? []).filter((tool) => !approved.includes(tool));
+  const options = [...new Set([...approved, ...keptBack, ...added])];
+  const formId = `tools-${surface._id}`;
+  const open = (): void => {
+    setChosen(new Set(approved));
+    setAdded([]);
+    setTyped('');
+    setOutcome(null);
+    setEditing(true);
+  };
+  const close = (): void => {
+    setEditing(false);
+    toggle.current?.focus();
+  };
+  const addTyped = (): void => {
+    const tool = typed.trim();
+    if (tool === '') return;
+    if (!options.includes(tool)) setAdded([...added, tool]);
+    setChosen(new Set([...chosen, tool]));
+    setTyped('');
+  };
+  const save = (): void => {
+    const tools = options.filter((tool) => chosen.has(tool));
+    setBusy(true);
+    setOutcome(null);
+    onApprove(tools)
+      .then(() => {
+        const gained = tools.filter((tool) => !approved.includes(tool));
+        const dropped = approved.filter((tool) => !tools.includes(tool));
+        const changes = [
+          gained.length > 0 ? `added ${gained.join(', ')}` : '',
+          dropped.length > 0 ? `removed ${dropped.join(', ')}` : '',
+        ].filter(Boolean);
+        setOutcome({
+          tone: 'done',
+          text: `Approved tools saved${changes.length > 0 ? `: ${changes.join('; ')}` : ''}. Day0 checks the connection now; an added tool is called once the provider offers it.`,
+        });
+        close();
+      })
+      .catch((err: unknown) =>
+        setOutcome({
+          tone: 'refused',
+          text: refusalText(err, 'The approved tools were not saved.'),
+        }),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
+      <p>
+        <span className="text-[var(--color-muted)]">Scopes: </span>
+        {calls.length > 0 ? calls.join(', ') : 'no tool the provider offers is approved'}
+      </p>
+      {notOffered.length > 0 ? (
+        <p className="mt-1 text-[var(--color-muted)]">
+          Approved, not offered by the provider at the last check: {notOffered.join(', ')}
+        </p>
+      ) : null}
+      {keptBack.length > 0 ? (
+        <p className="mt-1 text-[var(--color-warn)]">
+          Withheld, outside your approval: {keptBack.join(', ')}. Approve them here to let the
+          employee call them.
+        </p>
+      ) : null}
+      <button
+        ref={toggle}
+        type="button"
+        aria-expanded={editing}
+        aria-controls={formId}
+        onClick={() => (editing ? close() : open())}
+        className="mt-2 min-h-11 rounded border px-3 text-xs"
+      >
+        Change approved tools
+      </button>
+      {editing ? (
+        <form
+          id={formId}
+          className="mt-2 space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              close();
+            }
+          }}
+        >
+          <fieldset>
+            <legend className="text-[var(--color-muted)]">
+              Tools {surface.displayName} may call
+            </legend>
+            <ul className="mt-1 space-y-1">
+              {options.map((tool) => (
+                <li key={tool}>
+                  <label className="inline-flex min-h-11 items-center gap-2 font-mono">
+                    <input
+                      type="checkbox"
+                      checked={chosen.has(tool)}
+                      disabled={busy}
+                      onChange={(event) => {
+                        const next = new Set(chosen);
+                        if (event.target.checked) next.add(tool);
+                        else next.delete(tool);
+                        setChosen(next);
+                      }}
+                    />
+                    {tool}
+                    {keptBack.includes(tool) ? (
+                      <span className="font-sans text-[var(--color-warn)]">withheld</span>
+                    ) : null}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </fieldset>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={`${formId}-add`}>Another tool, by its name</label>
+            <input
+              id={`${formId}-add`}
+              value={typed}
+              disabled={busy}
+              onChange={(event) => setTyped(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  addTyped();
+                }
+              }}
+              className="min-h-11 min-w-0 flex-1 rounded border bg-transparent px-2 font-mono"
+            />
+            <button
+              type="button"
+              disabled={busy || typed.trim() === ''}
+              onClick={addTyped}
+              className="min-h-11 rounded border px-3 disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              disabled={busy || chosen.size === 0}
+              className="min-h-11 rounded border px-3 disabled:opacity-50"
+            >
+              {busy ? 'Saving…' : 'Save approved tools'}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={close}
+              className="min-h-11 rounded border px-3 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+      <LiveStatus outcome={outcome} />
+    </div>
+  );
+}
+
+/**
+ * The tools the newest `surface.connected` event of each surface withheld,
+ * from the events the page has read. A surface whose newest connection is not
+ * among them is left out: the page does not know, and says nothing.
+ *
+ * Args:
+ *   events: Recent events, newest first.
+ *
+ * Returns:
+ *   Each surface's withheld tools, by surface id.
+ */
+export function withheldToolsBySurface(
+  events: ReadonlyArray<Pick<Doc<'events'>, 'type' | 'payload'>>,
+): ReadonlyMap<string, readonly string[]> {
+  const found = new Map<string, readonly string[]>();
+  for (const event of events) {
+    if (!isEventOf(event, 'surface.connected')) continue;
+    const payload = event.payload as Partial<typeof event.payload>;
+    if (typeof payload.surfaceId !== 'string' || found.has(payload.surfaceId)) continue;
+    const tools = Array.isArray(payload.withheldTools)
+      ? payload.withheldTools.filter((tool): tool is string => typeof tool === 'string')
+      : [];
+    found.set(payload.surfaceId, tools);
+  }
+  return found;
+}
+
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
@@ -790,7 +1027,13 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   const approve = useMutation(api.surfaces.approve);
   const reject = useMutation(api.surfaces.reject);
   const setAccessDays = useMutation(api.surfaces.setAccessDays);
+  const approveTools = useMutation(api.surfaces.approveTools);
   const now = useNow();
+  // The withheld tools are on the latest `surface.connected` event only, so
+  // the card reads them from the recent events; a connection older than the
+  // window is not claimed to have withheld nothing, it is not described.
+  const events = useQuery(api.events.recent, { agentId, limit: 100 });
+  const withheldTools = useMemo(() => withheldToolsBySurface(events ?? []), [events]);
   const reorient = useAction(api.surfaces.reorient);
   const requestProposal = useMutation(api.surfaces.requestProposal);
   const probe = useAction(api.surfaceActions.probe);
@@ -996,8 +1239,12 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                       ? 'not stated'
                       : `${Math.round(request.target.confidence * 100)}%`}
                   </dd>
-                  <dt className="text-[var(--color-muted)]">Scopes</dt>
-                  <dd>{request.scopeRequested?.join(', ') || 'none requested'}</dd>
+                  {surface.verdict === 'connected' ? null : (
+                    <>
+                      <dt className="text-[var(--color-muted)]">Scopes requested</dt>
+                      <dd>{request.scopeRequested?.join(', ') || 'none requested'}</dd>
+                    </>
+                  )}
                   {request.registrySuggestion?.endpoint ? (
                     <>
                       <dt className="text-[var(--color-muted)]">Registry suggestion</dt>
@@ -1031,6 +1278,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                 surface={surface}
                 now={now}
                 onSetDays={(days) => setAccessDays({ surfaceId: surface._id, days })}
+              />
+              <ToolsRow
+                surface={surface}
+                withheld={withheldTools.get(surface._id)}
+                onApprove={(tools) => approveTools({ surfaceId: surface._id, tools })}
               />
               {surface.intakeScope && scopeFieldsFor(surface.class).length > 0 ? (
                 <IntakeScopeRow
