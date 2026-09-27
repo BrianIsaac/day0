@@ -90,7 +90,8 @@ export { resolveRequestUrl };
  */
 function moveReadBodyIntoQuery(request: ParsedHttpRequest, url: URL): boolean {
   const method = documentedRpcRead(request);
-  if (method === undefined || request.body === undefined || request.body.trim() === '') return false;
+  if (method === undefined || request.body === undefined || request.body.trim() === '')
+    return false;
   const given: Array<[string, unknown]> = request.bodyJson
     ? Object.entries(request.bodyJson)
     : [...new URLSearchParams(request.body.trim())];
@@ -233,12 +234,18 @@ export class HttpAdapter implements SurfaceAdapter {
     void run;
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok || parsed.action.kind !== 'http.request') {
-      return { tool: action.tool, ok: false, reason: parsed.ok ? 'not an http.request' : parsed.reason, idempotencyKey };
+      return {
+        tool: action.tool,
+        ok: false,
+        reason: parsed.ok ? 'not an http.request' : parsed.reason,
+        idempotencyKey,
+      };
     }
     const request: ParsedHttpRequest = parsed.action;
     const surface = this.surfaces.find((row) => row.slug === request.surface);
     const refusal = surfaceRefusal(surface, this.deps.now());
-    if (!surface || refusal) return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
+    if (!surface || refusal)
+      return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
     if (surface.path !== 'documented-api') {
       return {
         tool: action.tool,
@@ -289,7 +296,10 @@ export class HttpAdapter implements SurfaceAdapter {
         headers[key] = injectSecret(value, secret, surface.slug);
       }
       const body =
-        bodyMoved || request.body === undefined || request.method === 'GET' || request.method === 'HEAD'
+        bodyMoved ||
+        request.body === undefined ||
+        request.method === 'GET' ||
+        request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
       const authorityRefusal = transportAuthority
@@ -332,9 +342,15 @@ export class HttpAdapter implements SurfaceAdapter {
       const effectLength = writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH;
       const summary = clipEffect(text, effectLength);
       if (!ok) {
-        const errorResult = typeof envelope?.error === 'string'
-          ? await redactOutcome(envelope.error, secret, this.deps.spanModel, this.deps.knownValues)
-          : undefined;
+        const errorResult =
+          typeof envelope?.error === 'string'
+            ? await redactOutcome(
+                envelope.error,
+                secret,
+                this.deps.spanModel,
+                this.deps.knownValues,
+              )
+            : undefined;
         const providerError = errorResult ? ` · ${errorResult.text}` : '';
         return {
           tool: action.tool,
@@ -346,7 +362,9 @@ export class HttpAdapter implements SurfaceAdapter {
         };
       }
       const rawId = providerIdFrom(payload);
-      const identifier = rawId ? await redactOutcome(rawId, secret, this.deps.spanModel, this.deps.knownValues) : undefined;
+      const identifier = rawId
+        ? await redactOutcome(rawId, secret, this.deps.spanModel, this.deps.knownValues)
+        : undefined;
       return {
         tool: action.tool,
         ok: true,
@@ -365,7 +383,12 @@ export class HttpAdapter implements SurfaceAdapter {
             : error instanceof Error
               ? error.message
               : String(error);
-      const redacted = await redactOutcome(message, secret, this.deps.spanModel, this.deps.knownValues);
+      const redacted = await redactOutcome(
+        message,
+        secret,
+        this.deps.spanModel,
+        this.deps.knownValues,
+      );
       return {
         tool: action.tool,
         ok: false,
