@@ -523,6 +523,9 @@ export function mcpIssuePage(value: unknown): McpPage {
   return { issues, nextCursor: typeof cursor === 'string' && cursor ? cursor : undefined };
 }
 
+/** Why an assigned ticket is left alone when the key's owner could not be read. */
+const OWNER_UNREAD = "the ticket is assigned and the key's owner could not be read";
+
 /** The label a person puts on a ticket to keep every Day0 employee off it (Q11). */
 export const DO_NOT_AUTOMATE_LABEL = 'do-not-automate';
 
@@ -627,7 +630,7 @@ export function linearIntakeRefusal(
   }
   const assignee = issueAssignee(issue);
   if (assignee.length === 0) return undefined;
-  if (owner === undefined) return "the ticket is assigned and the key's owner could not be read";
+  if (owner === undefined) return OWNER_UNREAD;
   return assignee.some((name: string): boolean => owner.has(name))
     ? undefined
     : 'the ticket is assigned to someone else';
@@ -852,7 +855,10 @@ export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
  *   makeClient: Injectable MCP client factory.
  *
  * Returns:
- *   Normalised candidates newer than the previous checkpoint.
+ *   Normalised candidates newer than the previous checkpoint, and why the
+ *   checkpoint must stay where it is when an assigned ticket was left alone
+ *   only because the key's owner could not be read: it may be the owner's,
+ *   and the next poll reads the same window again.
  */
 async function pollLinear(
   surface: Doc<'surfaces'>,
@@ -860,7 +866,7 @@ async function pollLinear(
   credential: string,
   observedAt: number,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
-): Promise<WorkCandidate[]> {
+): Promise<{ candidates: WorkCandidate[]; holdCheckpoint?: string }> {
   if (!surface.toolAllowlist?.includes('list_issues')) {
     throw new Error('Connected Linear surface does not allow list_issues.');
   }
@@ -978,7 +984,15 @@ async function pollLinear(
         reasons: Object.fromEntries(leftAlone),
       });
     }
-    return candidates;
+    const unread = leftAlone.get(OWNER_UNREAD) ?? 0;
+    return unread === 0
+      ? { candidates }
+      : {
+          candidates,
+          holdCheckpoint:
+            `${unread} assigned ticket(s) left alone because the key's owner could not be read; ` +
+            'the checkpoint is held so the next poll reads them again.',
+        };
   } finally {
     await client.disconnect();
   }
@@ -1682,14 +1696,17 @@ export async function runIntakeSweep(
                 rememberBotId(runtime, surface._id),
               )
             : undefined;
-        const mapped = chat
-          ? chat.candidates
+        const polledPage = chat
+          ? { candidates: chat.candidates }
           : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
+        const mapped = polledPage.candidates;
         for (const candidate of mapped) await seedCandidate(runtime, agentId, candidate);
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
-          polledAt: pollStartedAt,
+          ...(polledPage.holdCheckpoint === undefined
+            ? { polledAt: pollStartedAt }
+            : { skipReason: polledPage.holdCheckpoint }),
         });
         candidates += mapped.length;
         polled += 1;

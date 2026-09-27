@@ -2513,6 +2513,10 @@ describe('each employee reads its own approved queues', (): void => {
       });
     }
 
+    const POLL_AT = Date.parse('2026-09-27T09:00:00.000Z');
+    /** What the last sweeps recorded on the surface, checkpoint included. */
+    const records: RecordedIntake[] = [];
+
     async function seededFrom(
       rows: Record<string, unknown>[],
       options: {
@@ -2533,8 +2537,10 @@ describe('each employee reads its own approved queues', (): void => {
       );
       await runIntakeSweep(harness.runtime, {
         mode: 'real',
+        now: (): number => POLL_AT,
         makeMcpClient: linearClient(rows, options),
       });
+      records.push(...harness.records);
       return [...harness.seeds.values()].map((seed) => seed.externalId);
     }
 
@@ -2554,12 +2560,22 @@ describe('each employee reads its own approved queues', (): void => {
       expect(userCalls).toEqual([{ query: 'me' }]);
     });
 
-    it("skips every assigned ticket when the key's owner cannot be read, and keeps the unassigned", async (): Promise<void> => {
+    it("skips every assigned ticket when the key's owner cannot be read, keeps the unassigned, and holds the checkpoint", async (): Promise<void> => {
+      records.length = 0;
       const withoutTool = await seededFrom(
         [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops', assigneeId: 'user-key' })],
         { allowlist: ['list_issues'] },
       );
       expect(withoutTool).toEqual(['FIN-1']);
+      // The window is read again next poll, so FIN-3 is not lost if it is the owner's.
+      expect(records[0]?.polledAt).toBeUndefined();
+      expect(records[0]?.skipReason).toContain("the key's owner could not be read");
+
+      records.length = 0;
+      await seededFrom([ticket('FIN-1'), ticket('FIN-2', { assignee: 'Ana Lim' })], {
+        owner: KEY_OWNER,
+      });
+      expect(records[0]?.polledAt).toBe(POLL_AT);
 
       const unanswered = await seededFrom(
         [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops' })],
