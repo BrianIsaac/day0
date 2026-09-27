@@ -337,6 +337,18 @@ function buildLookups(args: {
 type ModelCallStage = 'evaluation' | 'draft' | 'execution' | 'closing';
 
 /**
+ * Which authoring of the closing set a closing-stage call belongs to. One run
+ * can author the set up to four times (P8-10), and each re-sends the whole
+ * prompt, so the ledger says which one each call was.
+ */
+type ClosingAuthoring =
+  | 'first'
+  | 'post-apply-round'
+  | 'after-carried-reads'
+  | 'holder-changed'
+  | 'hold-repair';
+
+/**
  * Run one loop step with each of its model calls recorded on the item's
  * events as `work.model-call`, in real mode.
  *
@@ -356,7 +368,12 @@ type ModelCallStage = 'evaluation' | 'draft' | 'execution' | 'closing';
  */
 async function recordingModelCalls<T>(
   ctx: ActionCtx,
-  step: { agentId: Id<'agents'>; workItemId: Id<'workItems'>; stage: ModelCallStage },
+  step: {
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    stage: ModelCallStage;
+    closingAuthoring?: ClosingAuthoring;
+  },
   fn: () => Promise<T>,
 ): Promise<T> {
   if (SURFACE_MODE !== 'real') return await fn();
@@ -364,7 +381,12 @@ async function recordingModelCalls<T>(
     await ctx.runMutation(internal.events.log, {
       agentId: step.agentId,
       type: 'work.model-call',
-      payload: { workItemId: step.workItemId, stage: step.stage, ...report },
+      payload: {
+        workItemId: step.workItemId,
+        stage: step.stage,
+        ...(step.closingAuthoring ? { closingAuthoring: step.closingAuthoring } : {}),
+        ...report,
+      },
     });
   }, fn);
 }
@@ -2267,11 +2289,14 @@ export const authorDependentActions = internalAction({
       // given is the one the set keeps: the finish uses the holders the set
       // was authored under, whatever becomes of them while it waits.
       let heldElsewhere: HeldExternalItem[] = [];
-      const authorClosingSet = async (): Promise<DependentExecutionOutput> => {
+      const authorClosingSet = async (authoring: ClosingAuthoring): Promise<DependentExecutionOutput> => {
         heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
-        return await authorUnder(heldElsewhere);
+        return await authorUnder(heldElsewhere, authoring);
       };
-      const authorUnder = (held: HeldExternalItem[]): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, step, () => runDependentSkill({
+      const authorUnder = (
+        held: HeldExternalItem[],
+        authoring: ClosingAuthoring,
+      ): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, { ...step, closingAuthoring: authoring }, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
         candidate: rowToCandidate(item),
@@ -2299,7 +2324,7 @@ export const authorDependentActions = internalAction({
           });
         },
       }));
-      let output = await authorClosingSet();
+      let output = await authorClosingSet(initial.closingRound ? 'post-apply-round' : 'first');
       const cap = dependentActionCap(initial);
       // A set over the cap is refused below as it stands: nothing in it is applied first.
       const carriedReads = output.actions.length > cap ? [] : carriedBy(output);
@@ -2310,7 +2335,7 @@ export const authorDependentActions = internalAction({
           workItemId: args.workItemId, runId: args.runId, agent, surfaces, knownValues, initial, reads: carriedReads,
         });
         prerequisites = initial;
-        output = await authorClosingSet();
+        output = await authorClosingSet('after-carried-reads');
       }
       // The held items were read before the model call, and a sibling can
       // take a claim while it is in flight. Read again now: a set that writes
@@ -2331,7 +2356,7 @@ export const authorDependentActions = internalAction({
           });
           heldElsewhere = heldNow;
           droppedWritesTo = taken;
-          output = await authorUnder(heldNow);
+          output = await authorUnder(heldNow, 'holder-changed');
         }
       }
       authored = output;
@@ -2344,7 +2369,7 @@ export const authorDependentActions = internalAction({
       // the set that came back.
       const gate = closingGate(output);
       if (gate.length > 0) throw new ClosingGateRefusal(gate, output);
-      const repaired = await recordingModelCalls(ctx, step, () => repairedForHold(output, {
+      const repaired = await recordingModelCalls(ctx, { ...step, closingAuthoring: 'hold-repair' }, () => repairedForHold(output, {
         surfaces,
         skill: { name: skill.name },
         candidate: rowToCandidate(item),
