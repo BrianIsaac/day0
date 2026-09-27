@@ -825,7 +825,8 @@ async function takeExternalClaim(
  * A retry resumes a cancelled row that has a plan past evaluation, so no
  * verdict takes the claim on the way; a colleague may have taken the item
  * since the cancel released it. A failed or completed row still holds its
- * claim and takes nothing new.
+ * claim and takes nothing new, except a row whose held actions were rejected,
+ * which released it.
  *
  * Args:
  *   ctx: Mutation context of the retry.
@@ -1290,7 +1291,8 @@ async function releaseClaim(ctx: MutationCtx, claim: Doc<'externalClaims'>, now:
  * Release the claim a work item holds, with what it refused.
  *
  * A row that holds no live claim releases nothing. Called where a holder is
- * cancelled; completed and failed rows keep their claim.
+ * cancelled; completed and failed rows keep their claim, except a row whose
+ * held actions the manager rejected (`releaseItemClaim`).
  *
  * Args:
  *   ctx: Mutation context of the transition.
@@ -2870,10 +2872,11 @@ async function cancelPlanInTransaction(
   const skipReason = planCancelledReason(reason);
   const feedback = managerText(reason);
   if (feedback) await keepCorrectionInTransaction(ctx, row, 'plan-rejection', feedback);
+  const now = Date.now();
   await ctx.db.patch(row._id, {
     state: 'cancelled',
     skipReason,
-    ...(SURFACE_MODE === 'real' ? { planRejectedAt: Date.now() } : {}),
+    ...(SURFACE_MODE === 'real' ? { planRejectedAt: now, rejectedAt: row.rejectedAt ?? now } : {}),
     // Kept in full, as a rejection reason is, for the plan Retry drafts next.
     ...(feedback
       ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'plan-rejection' as const } }
@@ -4013,7 +4016,11 @@ async function approveActionsInTransaction(
  * Refuse the held actions. The row fails with the manager's reason and the
  * draft is kept. Rows the auto phase already applied stay in the ledger, so
  * Retry is fenced by them; a run nothing landed for resumes from
- * `plan-approved` and runs the skill again.
+ * `plan-approved` and runs the skill again. In real mode the rejection is
+ * stamped (`rejectedAt`) and the claim on the provider item is released, as
+ * a plan rejection releases it: another employee may take the item, and its
+ * plan then waits for the manager with this reason (N3). A claim on a page
+ * field the run wrote is settled, not released. Retry takes the claim again.
  */
 export const rejectActions = mutation({
   args: { workItemId: v.id('workItems'), pendingRunId: v.id('events'), reason: v.string() },
@@ -4022,6 +4029,30 @@ export const rejectActions = mutation({
     return await rejectActionsInTransaction(ctx, row, args, 'dashboard');
   },
 });
+
+/**
+ * Release the claim a work item holds on the provider item it was discovered
+ * from, with what it refused, leaving any claim on a page field it wrote.
+ *
+ * Args:
+ *   ctx: Mutation context of the rejection.
+ *   workItemId: The rejected work item.
+ *   now: The release time.
+ */
+async function releaseItemClaim(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  now: number,
+): Promise<void> {
+  const held = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of held) {
+    if (claim.writeTarget === undefined) await releaseClaim(ctx, claim, now);
+  }
+}
 
 async function rejectActionsInTransaction(
   ctx: MutationCtx,
@@ -4055,10 +4086,12 @@ async function rejectActionsInTransaction(
           ),
         }
       : undefined;
-  await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
+  const now = Date.now();
+  await settleWriteTargetClaims(ctx, args.workItemId, now);
   await ctx.db.patch(args.workItemId, {
     state: 'failed',
     skipReason,
+    ...(SURFACE_MODE === 'real' ? { rejectedAt: row.rejectedAt ?? now } : {}),
     ...(output !== undefined ? { output } : {}),
     ...(feedback
       ? {
@@ -4080,6 +4113,7 @@ async function rejectActionsInTransaction(
     ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
   });
   if (feedback) await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
+  await releaseItemClaim(ctx, args.workItemId, now);
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.actions-rejected',
