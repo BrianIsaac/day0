@@ -13,6 +13,7 @@ import {
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
   STATUS_WITHOUT_COMMENT,
   TRAILER_REFUSED,
+  WITHHELD_AFTER_FAILED_BROWSER_WRITE,
 } from '../../../src/surfaces/policy';
 import {
   applySurfaceActions,
@@ -1301,6 +1302,47 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(driver.tile.value).toBe('74%');
   });
 
+  it('withholds every later write on the page once a write on it did not land, and still reads', async (): Promise<void> => {
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    const misnamedFill: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'looker',
+        tool: 'browser_fill_form',
+        toolArgsJson: JSON.stringify({ fields: [{ name: 'Pipeline forecast', value: '74%' }] }),
+      },
+    };
+    const [, clickSave, snapshot] = closingTile;
+    const closing = await applySurfaceActions(
+      ctx,
+      'real',
+      [looker],
+      run,
+      [misnamedFill, clickSave!, clickSave!, snapshot!],
+      {
+        ...auto,
+        deps: tileDeps(driver),
+        grants: tileGrants,
+        approvedIndexes: new Set([0, 1, 2, 3]),
+        prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+        idempotencyIndexOffset: 4,
+      },
+    );
+    expect(closing.map((row) => [row.ok, row.held === true])).toEqual([
+      [false, false],
+      [true, true],
+      [true, true],
+      [true, false],
+    ]);
+    expect(closing[1]!.reason).toBe(WITHHELD_AFTER_FAILED_BROWSER_WRITE);
+    expect(closing[2]!.reason).toBe(WITHHELD_AFTER_FAILED_BROWSER_WRITE);
+    // The Save that would have committed the old figure with a fresh audit line was never clicked.
+    expect(sentIn(driver, 2).filter((tool) => tool === 'browser_click')).toEqual(['browser_click']);
+    expect(driver.tile.value).toBe('68%');
+    expect(closing[3]!.effect).toContain('visible figure 68%');
+  });
+
   it("does not replay a previous run's sign-in into a retry with no browser rows of its own", async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);
@@ -1617,7 +1659,16 @@ describe('a browser session across the apply invocations of one run', (): void =
           idempotencyIndexOffset: 4,
         },
       );
-      expect(closing.slice(0, 2).map((row) => row.ok)).toEqual([false, false]);
+      expect(closing[0]!.ok).toBe(false);
+      // The Save after the failed fill is not sent at all: the page is not as the run left it.
+      expect(closing[1]).toMatchObject({
+        ok: true,
+        held: true,
+        reason: WITHHELD_AFTER_FAILED_BROWSER_WRITE,
+      });
+      expect(
+        driver.calls.filter((call) => call.context === 2 && call.args.element === 'Save'),
+      ).toEqual([]);
       // The read-back is a read: it still goes, and records the unchanged tile.
       expect(closing[2]).toMatchObject({ ok: true });
       expect(closing[2]!.effect).toContain('visible figure 68%');

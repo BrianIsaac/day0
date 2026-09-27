@@ -44,6 +44,13 @@ export const AWAITING_APPROVAL = "awaiting the manager's approval";
  */
 export const WITHHELD_AFTER_FAILED_WRITE =
   'withheld: an earlier write in this set did not land, so this message could report it wrongly';
+/**
+ * Why a browser write is not sent after an earlier write on the same page did
+ * not land: the page is not as the run left it, and a Save would commit
+ * whatever the page holds, such as the value a failed fill left in place.
+ */
+export const WITHHELD_AFTER_FAILED_BROWSER_WRITE =
+  'withheld: an earlier write on this page did not land, so this one would act on a page that is not as the run left it';
 export const NOT_AUTOMATIC = 'not an automatic action';
 export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';

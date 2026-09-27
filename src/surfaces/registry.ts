@@ -35,6 +35,7 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
   UNKNOWN_TOOL,
+  WITHHELD_AFTER_FAILED_BROWSER_WRITE,
   WITHHELD_AFTER_FAILED_WRITE,
   type ParsedSurfaceAction,
 } from './policy';
@@ -275,6 +276,26 @@ function writeDidNotLand(
     const action = parsed[index];
     return (
       (action ? actionIntent(action) === 'write' : isSurfaceTool(actions[index]?.tool ?? '')) &&
+      (row.outcomeUnknown === true || (!row.ok && row.held !== true))
+    );
+  });
+}
+
+/**
+ * Whether a write on one browser-driven surface earlier in the set did not
+ * land: refused, failed, or with its outcome unknown. A held row is not one.
+ */
+function browserWriteDidNotLand(
+  slug: string,
+  applied: readonly AppliedAction[],
+  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+): boolean {
+  return applied.some((row, index) => {
+    const action = parsed[index];
+    return (
+      action?.kind === 'mcp.call' &&
+      action.surface === slug &&
+      actionIntent(action) === 'write' &&
       (row.outcomeUnknown === true || (!row.ok && row.held !== true))
     );
   });
@@ -663,6 +684,15 @@ export async function applySurfaceActions(
         const session = browserSessions.get(surface.slug);
         if (session?.failure) {
           applied.push(refused(action.tool, session.failure, idempotencyKey));
+          continue;
+        }
+        // A browser page carries state between calls, so once a write on it
+        // has not landed every later write on it is withheld, as a message is.
+        if (
+          actionIntent(parsed.action) === 'write' &&
+          browserWriteDidNotLand(surface.slug, applied, parsedByIndex)
+        ) {
+          applied.push(heldRow(action, WITHHELD_AFTER_FAILED_BROWSER_WRITE, idempotencyKey));
           continue;
         }
         if (!session) {
