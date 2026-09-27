@@ -20,7 +20,7 @@
  * every rule that judged a value by how random it looked.
  */
 
-import { guardReason } from './guard';
+import { guardReason, sampleValueReason } from './guard';
 
 export type StructuralLabel =
   | 'connection password'
@@ -216,7 +216,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
     });
   }
   for (const match of text.matchAll(PROVIDER_PREFIX)) {
-    if (match.index === undefined) continue;
+    if (match.index === undefined || sampleValueReason(match[0])) continue;
     const group = match.slice(1).findIndex((value): boolean => value !== undefined);
     const label = PROVIDER_SHAPES[Math.max(group, 0)].label;
     spans.push({ start: match.index, end: match.index + match[0].length, label, kind: 'secret' });

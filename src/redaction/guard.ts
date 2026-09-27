@@ -95,6 +95,42 @@ function shapeRejects(shape: NeverASecret, value: string, assigned: boolean): bo
   return shape.pattern.test(value);
 }
 
+/**
+ * The prefixes of `PROVIDER_SHAPES` in `structural.ts`, which imports this
+ * module; a test holds the two lists together.
+ */
+const PROVIDER_PREFIX =
+  /^(?:lin_api_|xoxe\.xox[abps]-|xox[abpes]-|ntn_|secret_|AKIA|ghp_|github_pat_|sk_live_|whsec_|AIza|sk-ant-|sk-(?:proj-|svcacct-)?)/;
+/** The provider prefix a token-shaped value starts with, or undefined. */
+export function providerPrefix(value: string): string | undefined {
+  return PROVIDER_PREFIX.exec(value)?.[0];
+}
+
+/** A tail that is one short unit written again and again: `XXXX`, `0123abcd0123abcd`. */
+const REPEATED_UNIT = /^(.{1,8})\1+$/;
+
+/**
+ * Name why a provider-format value is a sample written for a reader rather
+ * than an issued secret, or return undefined.
+ *
+ * A runbook that explains a rotation writes `lin_api_XXXXXXXXXXXX`; stored,
+ * it becomes the system's bindable credential. The test is on the tail after
+ * the provider prefix: one short unit written again and again. An issued
+ * token never has that shape, so the check
+ * is narrow enough to run over the provider grammar, which the full guard is
+ * not (`xoxb-1234567890-abcdefghij` reads as a branch name to it). A value
+ * with no provider prefix is not judged here: a password may be anything.
+ *
+ * @param value - A candidate value, prefix included.
+ */
+export function sampleValueReason(value: string): string | undefined {
+  const prefix = providerPrefix(value);
+  if (prefix === undefined) return undefined;
+  const tail = value.slice(prefix.length).replace(/[_-]/g, '');
+  if (tail.length < 4) return undefined;
+  return REPEATED_UNIT.test(tail) ? 'sample value' : undefined;
+}
+
 /** A stored row's label that records an explicit password assignment on the page. */
 const PASSWORD_CLASS_LABEL = /\b(?:password|passwd|pwd|passcode|passphrase|pin|login)\b/i;
 
@@ -367,7 +403,7 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     }
     return shapeRejects(shape, value, assignedValue);
   });
-  return rejected ? undefined : { start, end };
+  return rejected || sampleValueReason(value) ? undefined : { start, end };
 }
 
 /** Preserve the explicit page context that a generated credential label cannot encode. */
@@ -500,6 +536,8 @@ export function guardReason(value: string, context: GuardContext = {}): string |
     shapeRejects(candidate, value, context.assigned === true),
   )?.name;
   if (shape) return shape;
+  const sample = sampleValueReason(value);
+  if (sample) return sample;
   if (!context.assigned && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value))
     return 'runbook word';
   return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSpans, replaceSpans, structuralSpans } from '../../../src/redaction/structural';
+import { providerPrefix } from '../../../src/redaction/guard';
+import {
+  mergeSpans,
+  PROVIDER_LABELS,
+  replaceSpans,
+  structuralSpans,
+} from '../../../src/redaction/structural';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 
 function found(text: string): Array<[string, string]> {
@@ -123,6 +129,44 @@ describe('the structural grammar', (): void => {
         (): string => '_',
       ),
     ).toBe('a_de_ghij');
+  });
+});
+
+describe('provider-format samples on a rotation runbook', (): void => {
+  it('stores no sample written in a provider format', (): void => {
+    for (const text of [
+      'Rotate the token: lin_api_XXXXXXXXXXXX',
+      'A bot token looks like xoxb-0123abcd0123abcd.',
+      `ghp_${'x'.repeat(36)}`,
+    ]) {
+      expect(structuralSpans(text), text).toEqual([]);
+    }
+  });
+
+  it('refuses a repeated-character sample in every provider format the grammar knows', (): void => {
+    for (const [slot, value] of Object.entries(CORPUS_SLOTS)) {
+      const spans = structuralSpans(value);
+      if (spans.length !== 1 || !PROVIDER_LABELS.has(spans[0]!.label)) continue;
+      const prefix = providerPrefix(value);
+      expect(prefix, slot).toBeDefined();
+      const sample = `${prefix}${'X'.repeat(value.length - (prefix?.length ?? 0))}`;
+      expect(structuralSpans(`token: ${sample}`), slot).toEqual([]);
+    }
+  });
+
+  it('still stores an issued token, whatever its tail looks like to a reader', (): void => {
+    for (const token of [
+      'xoxb-1234567890-abcdefghij',
+      'lin_api_Zq8rT2vLm4Xw9KpB7nHc',
+      'ntn_4h7Kq2Lp9Xw3Vb8Nm5Rt',
+      'xoxb-8844112233-5566778899-Qk3LmN8pZr2Tv',
+    ]) {
+      const text = `token: ${token}`;
+      expect(
+        structuralSpans(text).map((span) => text.slice(span.start, span.end)),
+        token,
+      ).toEqual([token]);
+    }
   });
 });
 

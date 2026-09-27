@@ -475,3 +475,16 @@ describe("the guard over Chinese text and an author's phrases", (): void => {
     expect(guardReason('开门芝麻', { assigned: true })).toBeUndefined();
   });
 });
+
+describe('provider-format samples a model marks', (): void => {
+  it('refuses a sample in a provider format and keeps an issued token', (): void => {
+    const text = 'Rotate it: lin_api_XXXXXXXXXXXX, then xoxb-0123abcd0123abcd.';
+    expect(guardSecretSpan(text, spanOf(text, 'lin_api_XXXXXXXXXXXX'), 'api-key')).toBeUndefined();
+    expect(guardSecretSpan(text, spanOf(text, 'xoxb-0123abcd0123abcd'), 'api-key')).toBeUndefined();
+    expect(guardReason('lin_api_XXXXXXXXXXXX', { assigned: true })).toBe('sample value');
+    const issued = 'token: lin_api_Zq8rT2vLm4Xw9KpB7nHc';
+    expect(
+      guardSecretSpan(issued, spanOf(issued, 'lin_api_Zq8rT2vLm4Xw9KpB7nHc'), 'api-key'),
+    ).toEqual(spanOf(issued, 'lin_api_Zq8rT2vLm4Xw9KpB7nHc'));
+  });
+});
