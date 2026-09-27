@@ -569,13 +569,28 @@ export const reject = mutation({
   },
 });
 
+/** Where a skill's source work may be for the skill to be revised: nothing has approved a plan that runs it. */
+const REVISABLE_SOURCE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'discovered',
+  'needs-skill',
+  'deferred',
+  'claimed',
+  'plan-pending',
+]);
+
 /**
  * Send an agent-authored skill back through authoring before its first use.
+ * Public; the caller must own the skill. Clears the body, re-queues the rows
+ * waiting for the skill and writes `skill.revision-requested`.
  *
  * Registration makes a skill callable, so revision is deliberately narrower
  * than rejection: the manager may reopen only the proposal's own skill while
- * its source work is still waiting and no execution has ever claimed it. Once
- * a work row names the skill under `skillId`, its body is part of a durable run
+ * no execution has ever claimed it and its source work has not reached an
+ * approved plan. The source work may be waiting for the skill, claimed or
+ * waiting on the manager's plan decision (the first moment there is a body to
+ * read, P5-15); it stays where it is and runs the revised body once that
+ * registers, since the execution claim refuses a skill under revision. Once a
+ * work row names the skill under `skillId`, its body is part of a durable run
  * and this transition is permanently closed.
  */
 export const requestRevision = mutation({
@@ -599,9 +614,7 @@ export const requestRevision = mutation({
     if (
       !sourceWork ||
       sourceWork.agentId !== row.agentId ||
-      !(['discovered', 'needs-skill'] as const).includes(
-        sourceWork.state as 'discovered' | 'needs-skill',
-      )
+      !REVISABLE_SOURCE_STATES.has(sourceWork.state)
     ) {
       throw new Error('cannot revise while the source work has moved on');
     }
