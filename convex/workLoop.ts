@@ -95,7 +95,7 @@ export async function claimLoopStepInTransaction(
   const ready = step === 'evaluation' ? 'discovered' : 'claimed';
   if (row.state !== ready) return { claimed: false, reason: `state=${row.state}` };
   if (holdsLiveStepClaim(row, step, now)) return { claimed: false, reason: 'claimed' };
-  if (step === 'evaluation' && (await freeSlots(ctx, row.agentId, now, row._id)) === 0) {
+  if (step === 'evaluation' && (await queueState(ctx, row.agentId, now, row._id)).free === 0) {
     return { claimed: false, reason: 'queued' };
   }
   await ctx.db.patch(workItemId, { [CLAIM_FIELD[step]]: now });
@@ -238,12 +238,19 @@ async function queueWindow(
   return rows;
 }
 
+/** The employee's free slots, and the waiting rows read to count them. */
+interface QueueState {
+  readonly free: number;
+  readonly waiting: readonly Doc<'workItems'>[];
+}
+
 /**
  * How many more evaluations the employee may start now.
  *
  * The cap less the rows holding a slot, less the evaluations already in
  * flight: an evaluation that ends in a claim takes a slot, so it holds one
- * from the moment it is claimed.
+ * from the moment it is claimed. The waiting rows are read only when the cap
+ * leaves room.
  *
  * Args:
  *   ctx: Mutation context.
@@ -252,23 +259,24 @@ async function queueWindow(
  *   except: A row whose own claim is being decided, not counted as in flight.
  *
  * Returns:
- *   The free slots, never below zero.
+ *   The free slots, never below zero, and the waiting rows read.
  */
-async function freeSlots(
+async function queueState(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   now: number,
   except?: Id<'workItems'>,
-): Promise<number> {
+): Promise<QueueState> {
   const agent = await ctx.db.get(agentId);
-  if (!agent) return 0;
+  if (!agent) return { free: 0, waiting: [] };
   const cap = autonomousActionsOn(agent) ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT;
   const open = await openSlotCount(ctx, agentId, cap);
-  if (open >= cap) return 0;
-  const inFlight = (await queueWindow(ctx, agentId)).filter(
+  if (open >= cap) return { free: 0, waiting: [] };
+  const waiting = await queueWindow(ctx, agentId);
+  const inFlight = waiting.filter(
     (row) => row._id !== except && holdsLiveStepClaim(row, 'evaluation', now),
   ).length;
-  return Math.max(0, cap - open - inFlight);
+  return { free: Math.max(0, cap - open - inFlight), waiting };
 }
 
 /**
@@ -294,9 +302,10 @@ export async function nextRowForFreeSlot(
   agentId: Id<'agents'>,
   now: number,
 ): Promise<Id<'workItems'> | undefined> {
-  if ((await freeSlots(ctx, agentId, now)) === 0) return undefined;
+  const { free, waiting } = await queueState(ctx, agentId, now);
+  if (free === 0) return undefined;
   let next: Doc<'workItems'> | undefined;
-  for (const row of await queueWindow(ctx, agentId)) {
+  for (const row of waiting) {
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
     if (next === undefined || queueRank(row.priority) < queueRank(next.priority)) next = row;
   }
