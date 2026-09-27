@@ -3,11 +3,13 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES } from '../../convex/migrations';
+import { RETIRED_DECLARATIONS } from '../../scripts/releases';
+import { avatarById } from '../../src/agent/avatar-pets';
+import { mirroredDocSlug } from '../../src/docs/types';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { insertMinimalRow } from './schema-fixtures';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -50,50 +52,6 @@ async function runAll(harness: Harness): Promise<void> {
 }
 
 describe('the upgrade migrations', (): void => {
-  it('moves daytonaSandboxId onto sandboxId across several pages, and a second run changes nothing', async (): Promise<void> => {
-    const harness = limitedHarness();
-    const agentId = await agent(harness, { userId: 'owner' });
-    await harness.run(async (ctx) => {
-      for (let index = 0; index < 230; index += 1) {
-        await ctx.db.insert('skills', {
-          agentId,
-          name: `skill-${index}`,
-          description: 'A skill.',
-          body: '',
-          sourceType: 'agent-authored',
-          state: 'registered',
-          createdAt: 1,
-          ...(index % 2 === 0 ? { daytonaSandboxId: `sandbox-${index}` } : {}),
-          ...(index === 4 ? { sandboxId: 'local:kept' } : {}),
-        });
-      }
-    });
-
-    await runAll(harness);
-
-    const skills = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
-    expect(skills.filter((skill) => skill.daytonaSandboxId !== undefined)).toEqual([]);
-    expect(skills.find((skill) => skill.name === 'skill-2')?.sandboxId).toBe('sandbox-2');
-    expect(skills.find((skill) => skill.name === 'skill-4')?.sandboxId).toBe('local:kept');
-    const status = await harness.query(internal.migrations.status, {});
-    expect(status.migrations.find((row) => row.name === 'skills-sandbox-id')).toMatchObject({
-      read: 230,
-      changed: 115,
-    });
-
-    // A finished migration reads nothing again, even over a row put back under the old name.
-    await harness.run(async (ctx) => {
-      const skill = skills.find((row) => row.name === 'skill-6')!;
-      await ctx.db.patch(skill._id, { daytonaSandboxId: 'written-after' });
-    });
-    await runAll(harness);
-    expect(
-      (await harness.query(internal.migrations.status, {})).migrations.find(
-        (row) => row.name === 'skills-sandbox-id',
-      ),
-    ).toMatchObject({ read: 230, changed: 115 });
-  });
-
   it('clears a revokedAt the sync stamped when it superseded a credential, and keeps a person’s earlier revoke', async (): Promise<void> => {
     const harness = limitedHarness();
     const sourceId = await source(harness, 'owner');
@@ -148,36 +106,6 @@ describe('the upgrade migrations', (): void => {
     expect(third?.revokedAt).toBe(1_758_900_000_000);
   });
 
-  it('turns a legacy inclusion list into exclusions, so a source linked later is inherited and the rest read as before', async (): Promise<void> => {
-    const harness = limitedHarness();
-    const included = await source(harness, 'owner');
-    const left = await source(harness, 'owner');
-    const listed = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
-          name: 'Priya',
-          userId: 'owner',
-          state: 'active',
-          createdAt: 1,
-          docSourceIds: [included],
-        }),
-    );
-
-    await runAll(harness);
-    const later = await source(harness, 'owner');
-
-    const row = await harness.run(async (ctx) => await ctx.db.get(listed));
-    expect(row?.docSourceIds).toBeUndefined();
-    expect(row?.excludedDocSourceIds).toEqual([left]);
-    const { agentReadsSource } = await import('../../convex/docSources');
-    expect([included, left, later].map((id) => agentReadsSource(row!, id))).toEqual([
-      true,
-      false,
-      true,
-    ]);
-  });
-
   it('gives an ownerless agent to the one owner, and leaves it when the deployment has two', async (): Promise<void> => {
     const single = limitedHarness();
     await agent(single, { userId: 'dev-no-auth|local-boss' });
@@ -200,30 +128,6 @@ describe('the upgrade migrations', (): void => {
     ).toMatchObject({ read: 1, changed: 0 });
   });
 
-  it('clears the inclusion list of an agent it could not give an owner, since it reads no source either way', async (): Promise<void> => {
-    const harness = limitedHarness();
-    await agent(harness, { userId: 'owner-a' });
-    await agent(harness, { userId: 'owner-b' });
-    const sourceId = await source(harness, 'owner-a');
-    const orphan = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
-          name: 'Priya',
-          state: 'active',
-          createdAt: 1,
-          docSourceIds: [sourceId],
-        }),
-    );
-
-    await runAll(harness);
-
-    const row = await harness.run(async (ctx) => await ctx.db.get(orphan));
-    expect(row?.userId).toBeUndefined();
-    expect(row?.docSourceIds).toBeUndefined();
-    expect(row?.excludedDocSourceIds).toBeUndefined();
-  });
-
   it('reports only the migrations a call ran, not those an earlier call finished', async (): Promise<void> => {
     const harness = limitedHarness();
     const first = await harness.action(internal.migrations.runPending, {});
@@ -232,50 +136,6 @@ describe('the upgrade migrations', (): void => {
       migrations: [],
       pending: [],
     });
-  });
-
-  it('clears the retired posture, supervised-run and credentialRef fields', async (): Promise<void> => {
-    const harness = limitedHarness();
-    const agentId = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
-          name: 'Priya',
-          userId: 'owner',
-          state: 'active',
-          createdAt: 1,
-          posture: 'supervised',
-        }),
-    );
-    const { skillId, surfaceId } = await harness.run(async (ctx) => {
-      const surfaceId = (await insertMinimalRow(
-        ctx as never,
-        'surfaces',
-        agentId,
-      )) as Id<'surfaces'>;
-      await ctx.db.patch(surfaceId, { credentialRef: 'linear' });
-      const skillId = await ctx.db.insert('skills', {
-        agentId,
-        name: 'kanban-comment',
-        description: 'A skill.',
-        body: '',
-        sourceType: 'agent-authored',
-        state: 'registered',
-        createdAt: 1,
-        supervisedRunsCompleted: 3,
-      });
-      return { skillId, surfaceId };
-    });
-
-    await runAll(harness);
-
-    const [agentRow, skill, surface] = await harness.run(
-      async (ctx) =>
-        await Promise.all([ctx.db.get(agentId), ctx.db.get(skillId), ctx.db.get(surfaceId)]),
-    );
-    expect(agentRow?.posture).toBeUndefined();
-    expect(skill?.supervisedRunsCompleted).toBeUndefined();
-    expect(surface?.credentialRef).toBeUndefined();
   });
 
   it('copies listings kept as work.listed events into ticketListings once, where the re-read finds them', async (): Promise<void> => {
@@ -362,6 +222,295 @@ describe('the agents-zone migration (N12, the M2 backfill)', (): void => {
       read: 2,
       changed: 1,
       note: 'agents with no zone given the deployment’s zone, UTC; with no mode, mock',
+    });
+  });
+});
+
+describe('the retirements migration (Q15, N1)', (): void => {
+  it('copies each older retire tombstone into the owner’s retirements once, and leaves a tombstone that already names its row', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const gone = await agent(harness, { userId: 'owner' });
+    const named = await agent(harness, { userId: 'owner' });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId: gone,
+        type: 'agent.retired',
+        payload: {
+          userId: 'owner',
+          agentId: gone,
+          retiredAt: 7,
+          rowCounts: { events: 3, surfaces: 1 },
+          revokedCredentials: 1,
+          keptCredentials: 2,
+        },
+        createdAt: 7,
+      });
+      const retirementId = await ctx.db.insert('retirements', {
+        userId: 'owner',
+        agentId: named,
+        agentName: 'Mateo',
+        retiredAt: 9,
+        rowCounts: {},
+        revokedCredentials: 0,
+        keptCredentials: 0,
+        claims: [],
+        rejections: [],
+      });
+      await ctx.db.insert('events', {
+        agentId: named,
+        type: 'agent.retired',
+        payload: { retirementId, agentId: named, retiredAt: 9 },
+        createdAt: 9,
+      });
+      await ctx.db.insert('events', {
+        agentId: gone,
+        type: 'work.completed',
+        payload: {},
+        createdAt: 8,
+      });
+      await ctx.db.delete(gone);
+      await ctx.db.delete(named);
+    });
+
+    await runAll(harness);
+    await runAll(harness);
+
+    const rows = await harness.run(
+      async (ctx) => await ctx.db.query('retirements').order('asc').collect(),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.agentId === gone)).toMatchObject({
+      userId: 'owner',
+      retiredAt: 7,
+      rowCounts: { events: 3, surfaces: 1 },
+      revokedCredentials: 1,
+      keptCredentials: 2,
+      claims: [],
+      rejections: [],
+    });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((row) => row.name === 'retirements-from-tombstones'),
+    ).toMatchObject({ release: '0.6.0', read: 2, changed: 1, completedAt: expect.any(Number) });
+  });
+});
+
+describe('the approved tool list backfill (U10 D2 (b))', (): void => {
+  it('copies the stored tool list of every card that has one into its approved list, and leaves one the manager approved', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [connected, expired, approvedByManager, bare] = await harness.run(async (ctx) => {
+      const card = async (
+        slug: string,
+        fields: Partial<Doc<'surfaces'>>,
+      ): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          createdAt: 1,
+          ...fields,
+        });
+      return await Promise.all([
+        card('linear', { toolAllowlist: ['list_issues', 'save_comment'], lastVerifiedAt: 5 }),
+        card('jira', { verdict: 'approved', reason: 'expired', toolAllowlist: ['search'] }),
+        card('asana', {
+          toolAllowlist: ['list_tasks'],
+          approvedToolAllowlist: ['list_tasks', 'create_task'],
+          toolAllowlistApprovedAt: 9,
+        }),
+        card('notion', { verdict: 'proposed', credentialLanded: false }),
+      ]);
+    });
+
+    await runAll(harness);
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [connected, expired, approvedByManager, bare].map((id) => ctx.db.get(id)),
+        ),
+    );
+    expect(rows.map((row) => [row?.approvedToolAllowlist, row?.toolAllowlistApprovedAt])).toEqual([
+      [['list_issues', 'save_comment'], 5],
+      [['search'], 1],
+      [['list_tasks', 'create_task'], 9],
+      [undefined, undefined],
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-approved-tools')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {
+  it('records who set each end date from its newest access-set event, and the upgrade where none says', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [byManager, byUpgrade, unrecorded, noClock] = await harness.run(async (ctx) => {
+      const card = async (
+        slug: string,
+        verdict: Doc<'surfaces'>['verdict'],
+        expiresAt?: number,
+      ): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict,
+          whereFound: [],
+          credentialLanded: verdict === 'connected',
+          createdAt: 1,
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
+        });
+      // The proposal-started clock of the code before 0.4.0 is on a proposed
+      // card with no event; the access-clock migration leaves it alone.
+      const ids = await Promise.all([
+        card('linear', 'connected', 100),
+        card('jira', 'connected', 200),
+        card('asana', 'proposed', 300),
+        card('notion', 'declared'),
+      ]);
+      const set = async (surfaceId: Id<'surfaces'>, by: string, at: number): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'surface.access-set',
+          payload: { surfaceId, by, days: 90, expiresAt: at },
+          createdAt: at,
+        });
+      };
+      await set(ids[0], 'approval', 10);
+      await set(ids[0], 'manager', 20);
+      await set(ids[1], 'upgrade', 30);
+      return ids;
+    });
+
+    await runAll(harness);
+
+    const setters = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [byManager, byUpgrade, unrecorded, noClock].map(
+            async (id) => (await ctx.db.get(id))?.accessSetBy ?? null,
+          ),
+        ),
+    );
+    expect(setters).toEqual(['manager', 'upgrade', 'upgrade', null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-access-set-by')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 3,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the declarations the schema step retired (N10)', (): void => {
+  it('runs no migration of a retired declaration and declares none of them any more', (): void => {
+    for (const { declaration, migration } of RETIRED_DECLARATIONS) {
+      expect(MIGRATION_NAMES as readonly string[]).not.toContain(migration);
+      const [table, field] = declaration.split('.') as [keyof typeof schema.tables, string];
+      const fields = (
+        schema.tables[table].validator as unknown as { fields: Record<string, unknown> }
+      ).fields;
+      expect(fields, declaration).not.toHaveProperty(field);
+    }
+  });
+});
+
+describe('the avatar id rewrite (U15 D1 (a), N6)', (): void => {
+  it('gives an agent stored under a handle-keyed avatar id the face the dashboard shows for it, and leaves a listed one', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const [handle, listed, none] = await Promise.all(
+      [{ avatarId: 'tw-someone' }, { avatarId: 'face-07' }, {}].map(
+        async (fields) =>
+          await harness.run(
+            async (ctx) =>
+              await ctx.db.insert('agents', {
+                bossEmail: 'boss@day0.local',
+                name: 'Priya',
+                state: 'active',
+                createdAt: 1,
+                ...fields,
+              }),
+          ),
+      ),
+    );
+
+    await runAll(harness);
+
+    const ids = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [handle, listed, none].map(async (id) => (await ctx.db.get(id))?.avatarId ?? null),
+        ),
+    );
+    expect(ids).toEqual([avatarById('tw-someone').id, 'face-07', null]);
+    expect(ids[0]).toMatch(/^face-\d{2}$/);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'agents-avatar-digest')).toMatchObject({
+      release: '0.6.0',
+      read: 3,
+      changed: 1,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the mirror re-key (review M20)', (): void => {
+  it('deletes a mirror an earlier slug rule keyed where a sync wrote the page again, and moves one no sync has reached', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const sourceId = await source(harness, 'owner');
+    const legacySlug = (ref: string): string =>
+      `source-${String(sourceId).slice(-10).toLowerCase()}-${ref === 'Café.md' ? 'caf-md' : 'md'}`;
+    await harness.run(async (ctx) => {
+      const mirror = async (slug: string, sourceRef: string): Promise<void> => {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug,
+          title: sourceRef,
+          body: `# ${sourceRef}`,
+          category: 'team-doc',
+          sourceId,
+          sourceRef,
+          updatedAt: 1,
+        });
+      };
+      await mirror(legacySlug('Café.md'), 'Café.md');
+      await mirror(mirroredDocSlug(sourceId, 'Café.md'), 'Café.md');
+      await mirror(legacySlug('运营手册.md'), '运营手册.md');
+      await mirror(mirroredDocSlug(sourceId, 'handbook.md'), 'handbook.md');
+    });
+
+    await runAll(harness);
+
+    const slugs = await harness.run(async (ctx) =>
+      (await ctx.db.query('mockDocs').collect()).map((row) => row.slug).sort(),
+    );
+    expect(slugs).toEqual(
+      [
+        mirroredDocSlug(sourceId, 'Café.md'),
+        mirroredDocSlug(sourceId, '运营手册.md'),
+        mirroredDocSlug(sourceId, 'handbook.md'),
+      ].sort(),
+    );
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'mirrors-rekey')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
     });
   });
 });

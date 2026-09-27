@@ -29,10 +29,6 @@ export default defineSchema({
     bossEmail: v.string(),
     name: v.string(),
     avatarId: v.optional(v.string()),
-    /** Legacy explicit inclusion list; new deploys store exclusions instead.
-     * The `agents-inclusion-list` migration turns each into the exclusions it
-     * implies; the field and its read come out in the next release. */
-    docSourceIds: v.optional(v.array(v.id('docSources'))),
     /** Sources the owner unticked at deploy. Everything else the owner links,
      * before or after the deploy, is inherited. */
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
@@ -61,13 +57,6 @@ export default defineSchema({
      * a stop is never sent. `digest` keeps both for one hourly message.
      * Decision requests are sent at once in either mode. */
     managerNotifications: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
-    /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
-     * optional so rows the ladder wrote still validate at push; nothing reads
-     * or writes it. The `agents-posture` migration clears it, and the
-     * declaration comes out in the release after the one that ships it. */
-    posture: v.optional(
-      v.union(v.literal('cold-start'), v.literal('supervised'), v.literal('trusted')),
-    ),
     /** The IANA zone the agent's day is measured in (N12): set at deploy from
      * the manager's browser, editable on the card, read through
      * `src/lib/zone.ts` for every day boundary and every stamp. Absent reads
@@ -116,6 +105,12 @@ export default defineSchema({
     iv: v.optional(v.string()),
     /** True only when documentation explicitly assigned this value as a credential. */
     explicitlyAssigned: v.optional(v.boolean()),
+    /**
+     * True when the page gave the value between an author's quote pair, so the
+     * re-checks read a quoted phrase as the author's value, as the floor did
+     * when it found it, and the owner-wide exact layer carries it.
+     */
+    quoted: v.optional(v.boolean()),
     /** Where the value came from: a documentation page, a field the approver
      * typed into, or - Phase 3 - the provider's own OAuth install redirect. */
     source: v.union(
@@ -185,6 +180,18 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
+    /** Why the run ended without completing: the failure it recorded, or the newer run that superseded it. */
+    reason: v.optional(v.string()),
+    /** What a completed run changed, as the final batch counted it. */
+    summary: v.optional(
+      v.object({
+        pagesKept: v.number(),
+        pagesRemoved: v.number(),
+        mirrorsRemoved: v.number(),
+        credentialsSuperseded: v.number(),
+        surfacesToReapprove: v.number(),
+      }),
+    ),
   })
     .index('by_source', ['sourceId'])
     /** The run that finished at a given moment, for the migration that tells
@@ -308,6 +315,17 @@ export default defineSchema({
     // The manager's Slack display name from the probe's `users.lookupByEmail`.
     managerName: v.optional(v.string()),
     toolAllowlist: v.optional(v.array(v.string())),
+    /**
+     * The tools the approval covers: the list the first connection after an
+     * approval found, or the list the manager approved since (`approveTools`).
+     * Every later probe keeps only these (`frozenTools`); a failed probe, an
+     * expiry and a renewal leave it, and only a rejection or a demotion to
+     * another route clears it. The `surfaces-approved-tools` migration fills it
+     * on rows connected before it.
+     */
+    approvedToolAllowlist: v.optional(v.array(v.string())),
+    /** When `approvedToolAllowlist` was set, by a connection or by the manager. */
+    toolAllowlistApprovedAt: v.optional(v.number()),
     toolArguments: v.optional(
       v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),
     ),
@@ -406,13 +424,18 @@ export default defineSchema({
      * stays clean while approvals silently stop arriving; this is the row's
      * own signal, cleared by the next poll that succeeds. */
     lastDecisionError: v.optional(v.string()),
-    /** Transitional validator for rows written before credentialId; nothing
-     * reads it. The `surfaces-credential-ref` migration clears it, and the
-     * declaration comes out in the release after the one that ships it. */
-    credentialRef: v.optional(v.string()),
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
+    /**
+     * Who set `expiresAt` (Q5): the approval that started the clock, the
+     * manager, or the upgrade that restarted a clock the proposal had started.
+     * Cleared with the date; the `surface.access-set` event stays the record.
+     * The `surfaces-access-set-by` migration fills it from that event.
+     */
+    accessSetBy: v.optional(
+      v.union(v.literal('approval'), v.literal('manager'), v.literal('upgrade')),
+    ),
     reason: v.optional(v.string()),
     createdAt: v.number(),
   })
@@ -422,7 +445,9 @@ export default defineSchema({
      * rows, not its whole surface set - which now grows with the documented
      * estate rather than with the systems a manager happened to name. */
     .index('by_class', ['class'])
-    .index('by_credentialId', ['credentialId']),
+    .index('by_credentialId', ['credentialId'])
+    /** The deployment's cards in one verdict: the hourly re-probe reads the connected and the dead. */
+    .index('by_verdict', ['verdict']),
 
   voiceSessions: defineTable({
     agentId: v.id('agents'),
@@ -621,6 +646,16 @@ export default defineSchema({
      * leaves it to lapse after `STEP_LEASE_MS` for the stalled-step sweep.
      */
     evaluationClaimedAt: v.optional(v.number()),
+    /**
+     * Real mode: how many evaluations of this row began since it last had a
+     * verdict. A row whose evaluation keeps dying ranks behind unattempted
+     * rows and is parked after `MAX_EVALUATION_ATTEMPTS` (`convex/workLoop.ts`),
+     * so it cannot hold the queue at a cap of one. Cleared by a verdict and by
+     * every re-admission.
+     */
+    evaluationAttempts: v.optional(v.number()),
+    /** When an evaluation of this row last found the scope judgement unreachable (E-70). */
+    evaluationUnavailableAt: v.optional(v.number()),
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),
@@ -741,7 +776,8 @@ export default defineSchema({
       'decision.channel',
     ])
     .index('by_skill', ['skillId'])
-    .index('by_extId', ['sourceSystem', 'externalId'])
+    /** One employee's row for a provider item: intake's idempotency key. */
+    .index('by_agent_extId', ['agentId', 'sourceSystem', 'externalId'])
     /** Every work item discovered from one provider item, across employees, by either of its names. */
     .index('by_claim_key', ['externalClaimKey'])
     .index('by_claim_alias', ['externalClaimAlias'])
@@ -915,7 +951,10 @@ export default defineSchema({
     claimedAt: v.optional(v.number()),
     providerTs: v.optional(v.string()),
     failure: v.optional(v.string()),
-  }).index('by_surface_message', ['surfaceId', 'messageTs']),
+  })
+    .index('by_surface_message', ['surfaceId', 'messageTs'])
+    /** One agent's acknowledgements in creation order, for the export's delivery records. */
+    .index('by_agent', ['agentId']),
 
   skills: defineTable({
     agentId: v.id('agents'),
@@ -956,14 +995,6 @@ export default defineSchema({
     /** Names the run that checked this body: a Daytona sandbox id, or
      * `local:<run id>` from the bundled local sandbox. */
     sandboxId: v.optional(v.string()),
-    /** What that field was called while Daytona was the only backend. Nothing
-     * writes it and nothing reads it. It stays declared because Convex checks
-     * every existing document against this validator at push time and refuses
-     * one carrying a field the validator does not name - so dropping it here
-     * would refuse the push on any deployment that has authored a skill. The
-     * `skills-sandbox-id` migration (`convex/migrations.ts`) moves those rows;
-     * the declaration comes out in the release after the one that ships it. */
-    daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
     /** A validated smoke test awaiting a sandbox; Retry verifies this body without authoring again. */
     pendingSmokeTest: v.optional(v.string()),
@@ -974,12 +1005,6 @@ export default defineSchema({
      * Cleared by every later exit that stores or verifies a body. */
     refusedBody: v.optional(v.string()),
     refusedSmokeTest: v.optional(v.string()),
-    /** REMOVED 26 Aug (late): the posture ladder's per-skill supervised-run
-     * counter, replaced by `agents.autonomousActions`. Kept optional so rows
-     * the ladder wrote still validate at push; nothing reads or writes it.
-     * The `skills-supervised-runs` migration clears it, and the declaration
-     * comes out in the release after the one that ships it. */
-    supervisedRunsCompleted: v.optional(v.number()),
     createdAt: v.number(),
     registeredAt: v.optional(v.number()),
   })
@@ -1018,6 +1043,50 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_agent_scope', ['agentId', 'scope']),
 
+  /**
+   * One row per employee a real-mode retire deleted, keyed by its owner
+   * (decisions Q15 and N1): the owner-keyed tombstone, what the retire
+   * deleted and revoked, and the two boundaries a colleague's work reads that
+   * must outlive the employee. `claims` are the provider items the retired
+   * employee may already have written, which a colleague still may not take;
+   * `rejections` are the items the manager rejected its plan or actions for,
+   * whose sibling plans still wait for the manager (N3). A whole-owner retire
+   * empties both, as it deletes the live claims. No reset deletes a row.
+   */
+  retirements: defineTable({
+    userId: v.string(),
+    /** The retired employee's id; its row is gone. */
+    agentId: v.id('agents'),
+    /** Absent on a row the upgrade copied from an older tombstone event. */
+    agentName: v.optional(v.string()),
+    retiredAt: v.number(),
+    rowCounts: v.record(v.string(), v.number()),
+    revokedCredentials: v.number(),
+    keptCredentials: v.number(),
+    claims: v.array(
+      v.object({
+        claimId: v.id('externalClaims'),
+        key: v.string(),
+        aliases: v.optional(v.array(v.string())),
+        workItemId: v.id('workItems'),
+        title: v.string(),
+        /** The holding item's state when its employee was retired. */
+        state: v.string(),
+        writeTarget: v.optional(v.object({ surface: v.string(), field: v.string() })),
+        settledAt: v.optional(v.number()),
+        claimedAt: v.number(),
+      }),
+    ),
+    rejections: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        /** The item's claim key and alias, as the sibling check matches them. */
+        keys: v.array(v.string()),
+        rejectedAt: v.number(),
+      }),
+    ),
+  }).index('by_user', ['userId', 'retiredAt']),
+
   events: defineTable({
     agentId: v.id('agents'),
     type: v.string(),
@@ -1026,7 +1095,7 @@ export default defineSchema({
   })
     .index('by_agent', ['agentId'])
     .index('by_agent_type', ['agentId', 'type'])
-    /** Events of one type across agents: the export's owner section reads the retire tombstones here. */
+    /** Events of one type across agents: the `retirements` migration reads the older retire tombstones here. */
     .index('by_type', ['type']),
 
   /**

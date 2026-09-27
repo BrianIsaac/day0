@@ -174,6 +174,96 @@ export function upgradeVerdict(input: {
   };
 }
 
+/** The table the upgrade's migrations keep their progress in. */
+export const MIGRATIONS_TABLE = 'migrations';
+
+/**
+ * The declarations this checkout's schema no longer carries, each with the
+ * migration that cleared it from every row (decision N10: a
+ * widen-migrate-narrow cycle ships as two releases). Convex checks every
+ * stored row against the schema at a push, so a row still carrying one of
+ * these would refuse the push halfway; the upgrade refuses before anything is
+ * pushed instead, until the release that shipped the migration has run it.
+ */
+export const RETIRED_DECLARATIONS: ReadonlyArray<{
+  readonly declaration: string;
+  readonly migration: string;
+  readonly release: string;
+}> = [
+  { declaration: 'agents.docSourceIds', migration: 'agents-inclusion-list', release: '0.4.0' },
+  { declaration: 'agents.posture', migration: 'agents-posture', release: '0.4.0' },
+  { declaration: 'skills.daytonaSandboxId', migration: 'skills-sandbox-id', release: '0.4.0' },
+  {
+    declaration: 'skills.supervisedRunsCompleted',
+    migration: 'skills-supervised-runs',
+    release: '0.4.0',
+  },
+  { declaration: 'surfaces.credentialRef', migration: 'surfaces-credential-ref', release: '0.4.0' },
+];
+
+/** The most migration rows the check reads; one per migration any release shipped. */
+const MIGRATION_ROWS_READ = 1_000;
+
+/** The Convex CLI arguments that print every migration's row as JSON lines. */
+export const MIGRATION_ROWS_ARGUMENTS: readonly string[] = [
+  'convex',
+  'data',
+  MIGRATIONS_TABLE,
+  '--limit',
+  String(MIGRATION_ROWS_READ),
+  '--format',
+  'jsonl',
+];
+
+/**
+ * The retired declarations whose clearing migration the deployment has not
+ * finished, from the migration rows the CLI printed.
+ *
+ * @param stdout - The rows as JSON lines, or nothing when the table is absent.
+ * @param candidates - The declarations to check, all of them by default.
+ * @returns The declarations a row may still carry.
+ * @throws Error when a line is not a migration row.
+ */
+export function unclearedDeclarations(
+  stdout: string,
+  candidates: typeof RETIRED_DECLARATIONS = RETIRED_DECLARATIONS,
+): typeof RETIRED_DECLARATIONS {
+  const finished = new Set<string>();
+  for (const line of stdout.split('\n')) {
+    if (line.trim() === '') continue;
+    let row: { name?: unknown; completedAt?: unknown };
+    try {
+      row = JSON.parse(line) as { name?: unknown; completedAt?: unknown };
+    } catch {
+      throw new Error(`a migrations row is not JSON: ${line.trim().slice(0, 80)}`);
+    }
+    if (typeof row.name === 'string' && typeof row.completedAt === 'number') finished.add(row.name);
+  }
+  return candidates.filter((retired) => !finished.has(retired.migration));
+}
+
+/**
+ * The retired declarations a deployment's rows may still carry by their
+ * stamp: those whose clearing release is after the stamp, or unknown to this
+ * checkout, or every one on a volume with no stamp. A stamp at or after the
+ * clearing release means the release check of that release saw its
+ * migrations finish, or the volume was created then and never held the field.
+ *
+ * @param stored - The stamped release, or undefined when there is none.
+ * @param releases - Every release, oldest first.
+ */
+function declarationsToCheck(
+  stored: string | undefined,
+  releases: readonly string[],
+): typeof RETIRED_DECLARATIONS {
+  if (stored === undefined) return RETIRED_DECLARATIONS;
+  const at = releases.indexOf(stored);
+  return RETIRED_DECLARATIONS.filter((retired) => {
+    const cleared = releases.indexOf(retired.release);
+    return at < 0 || cleared < 0 || at < cleared;
+  });
+}
+
 /** The Convex CLI arguments that run every migration still pending (`convex/migrations.ts`). */
 export const MIGRATIONS_ARGUMENTS: readonly string[] = ['convex', 'run', 'migrations:runPending'];
 
@@ -279,12 +369,41 @@ export function readReleaseVerdict(
       return { allowed: false, reason: error instanceof Error ? error.message : String(error) };
     }
   }
-  return upgradeVerdict({
+  const verdict = upgradeVerdict({
     stored,
     fresh,
     checkout: checkout.release,
     releases: checkout.releases,
   });
+  if (!verdict.allowed || fresh) return verdict;
+  const candidates = declarationsToCheck(stored, checkout.releases);
+  if (candidates.length === 0) return verdict;
+  // A volume with rows but no migrations table never ran a migration.
+  let rows = '';
+  if (tables.stdout.split('\n').some((line) => line.trim() === MIGRATIONS_TABLE)) {
+    const read = npx(MIGRATION_ROWS_ARGUMENTS);
+    if (read.status !== 0) return refused("the deployment's migrations could not be read", read);
+    rows = read.stdout;
+  }
+  let uncleared: typeof RETIRED_DECLARATIONS;
+  try {
+    uncleared = unclearedDeclarations(rows, candidates);
+  } catch (error) {
+    return {
+      allowed: false,
+      reason: `the deployment's migrations could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (uncleared.length === 0) return verdict;
+  return {
+    allowed: false,
+    reason:
+      `rows may still carry ${uncleared.map((retired) => retired.declaration).join(', ')}, which ` +
+      `this checkout no longer declares: the migrations that clear them ` +
+      `(${uncleared.map((retired) => retired.migration).join(', ')}) have not finished here. ` +
+      `Check out v${uncleared[0].release} or a later release that still declares them, run the ` +
+      'upgrade to its end, then come back to this checkout.',
+  };
 }
 
 /** The first non-empty line of some output. */

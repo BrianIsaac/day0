@@ -20,6 +20,7 @@ import type { Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { assertOwnsAgentAction } from './ownership';
 import type { WorkspaceFile } from './charters';
+import { logEvent } from './eventLog';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
@@ -297,7 +298,7 @@ async function reportRejectedEvidence(
   rejected: string[],
 ): Promise<void> {
   if (rejected.length === 0) return;
-  await ctx.runMutation(internal.events.log, {
+  await logEvent(ctx, {
     agentId,
     type: 'charter.evidence-rejected',
     payload: { count: rejected.length, texts: rejected.slice(0, 3) },
@@ -598,7 +599,7 @@ export const postCharterApproval = internalAction({
     } catch (err: unknown) {
       const reason = (err instanceof Error ? err.message : String(err)).slice(0, 240);
       const retrying = attempt < CHARTER_SEEDING_ATTEMPTS;
-      await ctx.runMutation(internal.events.log, {
+      await logEvent(ctx, {
         agentId: args.agentId,
         type: 'charter.seeding-failed',
         payload: { charterId: args.charterId, attempt, reason, retrying },
@@ -668,7 +669,7 @@ async function seedApprovedCharter(
     });
     workItemsGenerated += 1;
   }
-  await ctx.runMutation(internal.events.log, {
+  await logEvent(ctx, {
     agentId,
     type: 'work.charter-derived',
     payload: { count: workItemsGenerated, role },

@@ -27,6 +27,7 @@ import {
   type ManagerNotificationMode,
 } from '../src/work/manager-notes';
 import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
+import { appendEvent } from './eventLog';
 
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
 export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
@@ -467,7 +468,7 @@ export const deploy = mutation({
       mode: SURFACE_MODE,
       createdAt: Date.now(),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId,
       type: 'agent.deployed',
       payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0', zone, mode: SURFACE_MODE },
@@ -492,7 +493,7 @@ export const deploy = mutation({
         source: 'deploy',
         createdAt,
       });
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId,
         type: 'permission.granted',
         payload: { scope, source: 'deploy' },
@@ -565,7 +566,7 @@ export const setBossEmail = mutation({
     }
     const now = Date.now();
     await ctx.db.patch(agent._id, { bossEmail });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: agent._id,
       type: 'manager.changed',
       payload: { via: 'dashboard', bossEmail },
@@ -623,7 +624,7 @@ export const revokeScope = mutation({
     const revokedAt = Date.now();
     for (const grant of active) await ctx.db.patch(grant._id, { revokedAt });
     const reason = args.reason?.replace(/\s+/g, ' ').trim().slice(0, 200);
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'permission.revoked',
       payload: {
@@ -756,7 +757,7 @@ export async function grantScopeInTransaction(
   if (existing) return { added: false };
   const createdAt = Date.now();
   await ctx.db.insert('permissionGrants', { agentId, scope, source, createdAt });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId,
     type: 'permission.granted',
     payload: { scope, source },
@@ -789,7 +790,7 @@ export const setManagerNotifications = mutation({
     const from = managerNotificationMode(agent);
     if (from === args.mode) return { ok: true, managerNotifications: from, changed: false };
     await ctx.db.patch(args.agentId, { managerNotifications: args.mode });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agent.notifications-changed',
       payload: { from, to: args.mode, reason: NOTIFICATIONS_CHANGE_REASON },
@@ -823,7 +824,7 @@ export const setZone = mutation({
     const from = agentZone(agent);
     if (agent.zone === zone) return { zone, changed: false };
     await ctx.db.patch(args.agentId, { zone });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agent.zone-changed',
       payload: { from, to: zone },
@@ -854,7 +855,7 @@ export const setAutonomousActions = mutation({
     const from = autonomousActionsOn(agent);
     if (from === args.on) return { ok: true, autonomousActions: from, changed: false };
     await ctx.db.patch(args.agentId, { autonomousActions: args.on });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agent.autonomy-changed',
       payload: { from, to: args.on, reason: AUTONOMY_CHANGE_REASON },

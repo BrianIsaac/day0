@@ -7,6 +7,7 @@ import {
   type SkillShape,
   type WorkCandidate,
   type WorkVerdict,
+  SCOPE_JUDGEMENT_UNAVAILABLE,
 } from './types';
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
@@ -114,10 +115,7 @@ export interface EvalContext extends AgentContext {
   scopeHeld?: boolean;
 }
 
-export { QUALITY_FIT_SKIP_PREFIX } from './types';
-
-/** The defer reason of an item whose scope call gave no judgement. */
-export const SCOPE_JUDGEMENT_UNAVAILABLE = 'scope-judgement-unavailable';
+export { QUALITY_FIT_SKIP_PREFIX, SCOPE_JUDGEMENT_UNAVAILABLE } from './types';
 
 /** The verdict of a candidate whose scope call gave no judgement. */
 export interface ScopeUnavailableVerdict {

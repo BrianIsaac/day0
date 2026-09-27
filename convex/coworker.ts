@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { internalMutation } from './_generated/server';
+import { appendEvent } from './eventLog';
 
 /**
  * A colleague's acknowledgement of a message Day0 posted in the mock office.
@@ -96,7 +97,7 @@ export const replyToAgentMessage = internalMutation({
       body: reply.body,
       timestamp: now,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'coworker.replied',
       payload: { channelSlug: args.channelSlug, responder: reply.responder },

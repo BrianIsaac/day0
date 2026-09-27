@@ -26,6 +26,7 @@ import {
 import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { appendEvent } from './eventLog';
 
 /**
  * Charter CRUD + binary-plus-edit approval mutation. Every public
@@ -73,7 +74,7 @@ export async function commitCharterAndWorkspace(
       content: file.content,
     });
   }
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: args.agentId,
     type: 'charter.drafted',
     payload: { charterId, version: args.version },
@@ -258,7 +259,7 @@ export const approve = mutation({
       });
     }
     await ctx.db.patch(charter.agentId, { state: 'active' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: charter.agentId,
       type: 'charter.approved',
       payload: {
@@ -399,7 +400,7 @@ export async function amendCharterInTransaction(
     createdAt: now,
   });
   await renderWorkspaceFromCharter(ctx, args.agentId, after);
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: args.agentId,
     type: 'charter.amended',
     payload: {
@@ -513,7 +514,7 @@ export const requestChanges = mutation({
     }
     await ctx.db.delete(args.charterId);
     await ctx.db.patch(agentId, { state: approvedCharterRemains ? 'active' : 'deployed' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId,
       type: 'charter.request_changes',
       payload: { charterId: args.charterId, notes: args.notes ?? '' },

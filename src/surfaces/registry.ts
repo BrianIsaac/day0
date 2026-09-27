@@ -9,6 +9,7 @@ import { McpAdapter, type CreateMcpClient } from './mcp';
 import { MOCK_TOOLS, mockAdapter } from './mock';
 import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
 import {
+  actionClass,
   applyProvenance,
   actionIntent,
   AWAITING_APPROVAL,
@@ -69,7 +70,10 @@ export interface RealAdapterDeps {
 }
 
 /** The reason a write is withheld for another work item's claim on its target, or undefined. */
-export type ClaimHold = (action: ParsedSurfaceAction, surface: SurfaceRecord) => Promise<string | undefined>;
+export type ClaimHold = (
+  action: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+) => Promise<string | undefined>;
 
 export interface ApplyOptions {
   /** Real-mode adapter dependencies; required whenever `mode` is `real`. */
@@ -235,7 +239,14 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
 
 /** A row that is accounted for and was not sent, with why. */
 function heldRow(action: MockAction, reason: string, idempotencyKey: string): AppliedAction {
-  return { tool: action.tool, ok: true, held: true, reason, effect: describeAction(action), idempotencyKey };
+  return {
+    tool: action.tool,
+    ok: true,
+    held: true,
+    reason,
+    effect: describeAction(action),
+    idempotencyKey,
+  };
 }
 
 /** Why another work item's claim withholds a surface write, if it does. */
@@ -269,12 +280,33 @@ function writeDidNotLand(
   });
 }
 
-const RESULT_WORDS = /\b(?:done|ready|landed|applied|saved|sent|posted|recorded|updated|entered|clicked|refreshed|complete|completed|finished|closed|moved|verified|confirmed|changed|created|deleted|succeeded|successful|correct|current|processed|shows?|reads?|readback|figure|percent(?:age)?)\b/i;
+const RESULT_WORDS =
+  /\b(?:done|ready|landed|applied|saved|sent|posted|recorded|updated|entered|clicked|refreshed|complete|completed|finished|closed|moved|verified|confirmed|changed|created|deleted|succeeded|successful|correct|current|processed|shows?|reads?|readback|figure|percent(?:age)?)\b/i;
 const AMBIGUOUS_REFERENCE = /\b(?:it|this|that|these|those|they|all|everything)\b/i;
-const ACTION_WORDS = new Set(['surface', 'tool', 'args', 'json', 'body', 'text', 'value', 'fields', 'name', 'method', 'path', 'request', 'http', 'call', 'secret']);
+const ACTION_WORDS = new Set([
+  'surface',
+  'tool',
+  'args',
+  'json',
+  'body',
+  'text',
+  'value',
+  'fields',
+  'name',
+  'method',
+  'path',
+  'request',
+  'http',
+  'call',
+  'secret',
+]);
 
 function substantiveWords(value: string): Set<string> {
-  return new Set((value.toLowerCase().match(/[a-z][a-z0-9]{3,}/g) ?? []).filter((word) => !ACTION_WORDS.has(word)));
+  return new Set(
+    (value.toLowerCase().match(/[a-z][a-z0-9]{3,}/g) ?? []).filter(
+      (word) => !ACTION_WORDS.has(word),
+    ),
+  );
 }
 
 /** A narrow exception for messages with no shared subject or result language. */
@@ -288,12 +320,15 @@ function independentMessage(
   const text = ['text', 'body', 'message', 'content']
     .map((key) => record?.[key])
     .find((value): value is string => typeof value === 'string');
-  if (!text || RESULT_WORDS.test(text) || AMBIGUOUS_REFERENCE.test(text) || /\d/.test(text)) return false;
+  if (!text || RESULT_WORDS.test(text) || AMBIGUOUS_REFERENCE.test(text) || /\d/.test(text))
+    return false;
   const words = substantiveWords(text);
   if (words.size === 0) return false;
   for (const [index, row] of applied.entries()) {
     const action = parsed[index];
-    const possibleWrite = action ? actionIntent(action) === 'write' : isSurfaceTool(actions[index]?.tool ?? '');
+    const possibleWrite = action
+      ? actionIntent(action) === 'write'
+      : isSurfaceTool(actions[index]?.tool ?? '');
     if (!possibleWrite || (row.ok && !row.outcomeUnknown) || row.held) continue;
     const failedWords = substantiveWords(JSON.stringify(actions[index]?.args ?? {}));
     if ([...words].some((word) => failedWords.has(word))) return false;
@@ -331,7 +366,13 @@ async function restoreBrowserSession(
   if (!adapter.restoreSession) return undefined;
   let recipe: SessionRecipeStep[];
   try {
-    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId, live.resumedRunIds).map(
+    recipe = sessionRecipe(
+      surface.slug,
+      earlier,
+      surface.endpoint,
+      run.runId,
+      live.resumedRunIds,
+    ).map(
       (step: SessionRecipeStep): SessionRecipeStep => ({
         ...step,
         authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
@@ -339,7 +380,11 @@ async function restoreBrowserSession(
     );
   } catch (error) {
     if (!(error instanceof IncompleteSignInError)) throw error;
-    return { ok: false, steps: [], reason: `browser session could not be re-established: ${error.message}` };
+    return {
+      ok: false,
+      steps: [],
+      reason: `browser session could not be re-established: ${error.message}`,
+    };
   }
   if (recipe.length === 0) return undefined;
   if (live.signInOnly && !recipe.some((step) => signsIn(step.action, surface.slug))) {
@@ -427,7 +472,7 @@ export async function applySurfaceActions(
   const applied: AppliedAction[] = [];
   const parsedByIndex: Array<ParsedSurfaceAction | undefined> = [];
   const prerequisites = options.prerequisiteLedger;
-  const earlierActions = (prerequisites?.actions ?? []).map(action => {
+  const earlierActions = (prerequisites?.actions ?? []).map((action) => {
     const parsed = parseSurfaceAction(action);
     return parsed.ok ? parsed.action : undefined;
   });
@@ -453,7 +498,10 @@ export async function applySurfaceActions(
         const deferred = options.deferredIndexes?.has(index) === true;
         // A write another work item's claim withholds is not left for the
         // manager to decide: approving it could not send it.
-        const claimed = deferred && options.claimHold ? await claimHoldFor(action, surfaces, options.claimHold) : undefined;
+        const claimed =
+          deferred && options.claimHold
+            ? await claimHoldFor(action, surfaces, options.claimHold)
+            : undefined;
         if (claimed) {
           applied.push(heldRow(action, claimed, idempotencyKey));
           continue;
@@ -488,7 +536,9 @@ export async function applySurfaceActions(
           durableIndex,
           idempotencyKey,
         );
-        applied.push(authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome);
+        applied.push(
+          authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome,
+        );
         continue;
       }
       const parsed = parseSurfaceAction(action);
@@ -541,17 +591,21 @@ export async function applySurfaceActions(
       }
       // Before the comment-before-status rule: a status change whose comment
       // the same claim withheld is withheld with it, not refused for lacking it.
-      const claimed = options.claimHold ? await claimHoldFor(action, surfaces, options.claimHold) : undefined;
+      const claimed = options.claimHold
+        ? await claimHoldFor(action, surfaces, options.claimHold)
+        : undefined;
       if (claimed) {
         applied.push(heldRow(action, claimed, idempotencyKey));
         continue;
       }
-      if (statusChangeWithoutComment(
-        parsed.action,
-        earlierActions.length + index,
-        [...earlierActions, ...parsedByIndex],
-        [...(prerequisites?.applied ?? []), ...applied],
-      )) {
+      if (
+        statusChangeWithoutComment(
+          parsed.action,
+          earlierActions.length + index,
+          [...earlierActions, ...parsedByIndex],
+          [...(prerequisites?.applied ?? []), ...applied],
+        )
+      ) {
         applied.push(refused(action.tool, STATUS_WITHOUT_COMMENT, idempotencyKey));
         continue;
       }
@@ -668,7 +722,14 @@ export async function applySurfaceActions(
         idempotencyKey,
         options.authorityByIndex?.get(index),
       );
-      const stamped = rowAuthority && outcome.ok && !outcome.held ? { ...outcome, authority: rowAuthority } : outcome;
+      const landed = outcome.ok && !outcome.held;
+      const stamped = landed
+        ? {
+            ...outcome,
+            ...(rowAuthority ? { authority: rowAuthority } : {}),
+            actionClass: actionClass(parsed.action, surface),
+          }
+        : outcome;
       applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);
       // The page is open once a replay or a call has landed on it; until then
       // the next call on the surface is checked for a replay again.

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assembleTrace,
   isAgentTrace,
+  readAgentTrace,
   sectionAfter,
   TRACE_SECTIONS,
   type TraceHead,
@@ -24,6 +25,8 @@ describe('the trace sections', (): void => {
       'questions',
       'corrections',
       'surfaces',
+      'managerNotes',
+      'decisionNotices',
       'events',
       undefined,
     ]);
@@ -55,6 +58,30 @@ describe('assembling a trace from its pages', (): void => {
     expect(isAgentTrace(trace)).toBe(true);
     expect(isAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 1 } })).toBe(false);
     expect(isAgentTrace({ version: 1, agent: {}, events: [] })).toBe(false);
+  });
+
+  it('reads a version 2 trace with the delivery records it never carried as empty', async (): Promise<void> => {
+    const trace = await assembleTrace('a', {
+      head: async () => HEAD,
+      page: async ({ page }) =>
+        ({
+          section: page.section,
+          rows: [],
+          next: sectionAfter(page.section)
+            ? { section: sectionAfter(page.section), cursor: null }
+            : null,
+        }) as TracePage,
+    });
+    const { managerNotes, decisionNotices, ...older } = trace.sections;
+    const version2 = { ...trace, manifest: { ...trace.manifest, version: 2 }, sections: older };
+    expect([managerNotes, decisionNotices]).toEqual([[], []]);
+    expect(readAgentTrace(version2)?.sections).toMatchObject({
+      managerNotes: [],
+      decisionNotices: [],
+    });
+    expect(
+      readAgentTrace({ ...version2, manifest: { ...trace.manifest, version: 3 } }),
+    ).toBeUndefined();
   });
 
   it('keeps a row two pages both returned once', async (): Promise<void> => {

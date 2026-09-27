@@ -20,6 +20,8 @@ import { reconcileDocumentedSystems } from './surfaces';
 import { purgeCredential } from './credentials';
 import { restatedScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
+import { appendEvent } from './eventLog';
+import { mirroredDocSlug } from '../src/docs/types';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -120,9 +122,7 @@ export function validateLinkInput(input: LinkInput): LinkInput {
  * Check whether an agent inherits a source.
  *
  * An agent reads every source its owner links, before or after the deploy,
- * except the ones it excluded at deploy. Rows from before the exclusion list
- * existed carry an explicit inclusion list instead, which is honoured as
- * written; an empty inclusion list still means all.
+ * except the ones it excluded at deploy.
  *
  * Args:
  *   agent: Persisted agent row.
@@ -132,8 +132,7 @@ export function validateLinkInput(input: LinkInput): LinkInput {
  *   True when the source should be mirrored for the agent.
  */
 export function agentReadsSource(agent: Doc<'agents'>, sourceId: Id<'docSources'>): boolean {
-  if (agent.excludedDocSourceIds?.includes(sourceId)) return false;
-  return !agent.docSourceIds?.length || agent.docSourceIds.includes(sourceId);
+  return !agent.excludedDocSourceIds?.includes(sourceId);
 }
 
 /**
@@ -588,7 +587,11 @@ export const beginSync = internalMutation({
     if (source.activeSyncId) {
       const active = await ctx.db.get(source.activeSyncId);
       if (active?.state === 'running') {
-        await ctx.db.patch(active._id, { state: 'superseded', completedAt: Date.now() });
+        await ctx.db.patch(active._id, {
+          state: 'superseded',
+          completedAt: Date.now(),
+          reason: SUPERSEDED_RUN_REASON,
+        });
       }
     }
     const runId = await ctx.db.insert('docSyncRuns', {
@@ -609,6 +612,9 @@ export const beginSync = internalMutation({
     return runId;
   },
 });
+
+/** Why a run that a newer one replaced before it finished ended. */
+const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
 
 /** Read a generation and source for one Node-action batch. */
 export const syncContext = internalQuery({
@@ -699,12 +705,28 @@ export const finishSync = internalMutation({
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', source._id))
       .collect();
+    let pagesRemoved = 0;
     for (const page of pages) {
-      if (!current.has(page.ref)) await ctx.db.delete(page._id);
+      if (current.has(page.ref)) continue;
+      await ctx.db.delete(page._id);
+      pagesRemoved += 1;
     }
+    let mirrorsRemoved = 0;
     for (const mirror of mirrors) {
-      if (!mirror.sourceRef || !current.has(mirror.sourceRef)) await ctx.db.delete(mirror._id);
+      // A mirror an earlier slug rule keyed (a non-ASCII reference before
+      // v0.5.0) is a second copy beside the one this sync wrote (review M20).
+      if (
+        mirror.sourceRef &&
+        current.has(mirror.sourceRef) &&
+        mirror.slug === mirroredDocSlug(source._id, mirror.sourceRef)
+      ) {
+        continue;
+      }
+      await ctx.db.delete(mirror._id);
+      mirrorsRemoved += 1;
     }
+    let surfacesToReapprove = 0;
+    let credentialsSuperseded = 0;
     if (SURFACE_MODE === 'real') {
       const currentScopePages = pages
         .filter((page) => current.has(page.ref))
@@ -752,6 +774,8 @@ export const finishSync = internalMutation({
             itApprovedAt: undefined,
             probeGeneration: (surface.probeGeneration ?? 0) + 1,
             toolAllowlist: undefined,
+            approvedToolAllowlist: undefined,
+            toolAllowlistApprovedAt: undefined,
             toolArguments: undefined,
             lastVerifiedAt: undefined,
             providerIdentityId: undefined,
@@ -762,7 +786,8 @@ export const finishSync = internalMutation({
             channelsNotJoined: undefined,
             lastPolledAt: undefined,
           });
-          await ctx.db.insert('events', {
+          surfacesToReapprove += 1;
+          await appendEvent(ctx, {
             agentId: surface.agentId,
             type: 'surface.scope-reapproval-required',
             payload: { surfaceId: surface._id, sourceId: source._id },
@@ -789,6 +814,7 @@ export const finishSync = internalMutation({
         status: 'superseded',
         statusReason: 'No longer detected in synced documentation.',
       });
+      credentialsSuperseded += 1;
       const surfaces = await ctx.db
         .query('surfaces')
         .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
@@ -802,7 +828,6 @@ export const finishSync = internalMutation({
         await ctx.db.patch(surface._id, {
           credentialId: undefined,
           credentialKind: undefined,
-          credentialRef: undefined,
           credentialLocation: location,
           credentialLanded: false,
           request: request
@@ -846,6 +871,13 @@ export const finishSync = internalMutation({
       redactionCount,
       state: 'completed',
       completedAt: now,
+      summary: {
+        pagesKept: pages.length - pagesRemoved,
+        pagesRemoved,
+        mirrorsRemoved,
+        credentialsSuperseded,
+        surfacesToReapprove,
+      },
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
@@ -871,7 +903,7 @@ export const failSync = internalMutation({
     const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
     if (!source || !run || source.activeSyncId !== run._id || run.state !== 'running') return false;
     const now = Date.now();
-    await ctx.db.patch(run._id, { state: 'error', completedAt: now });
+    await ctx.db.patch(run._id, { state: 'error', completedAt: now, reason: args.reason });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
       status: args.status,

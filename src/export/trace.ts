@@ -10,12 +10,19 @@
  * `TRACE_PAGE_ROWS` rows, with the cursor of the next.
  */
 import type { Doc } from '../../convex/_generated/dataModel';
+import type { EventType } from '../events/contract';
 
 /** The format name every trace carries, so a file says what it is. */
 export const TRACE_FORMAT = 'day0-trace';
 
-/** The trace format's version: 2 is the paged trace with a manifest. */
-export const TRACE_VERSION = 2;
+/**
+ * The trace format's version: 2 is the paged trace with a manifest; 3 adds
+ * the delivery records of Day0's own messages and the event contract's types.
+ */
+export const TRACE_VERSION = 3;
+
+/** The earlier version this release still reads: a version 2 trace has no delivery records. */
+const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, TRACE_VERSION]);
 
 /** The most rows one page returns, far inside the backend's 8,192-element bound. */
 export const TRACE_PAGE_ROWS = 100;
@@ -28,8 +35,13 @@ export const TRACE_SECTIONS = [
   'questions',
   'corrections',
   'surfaces',
+  'managerNotes',
+  'decisionNotices',
   'events',
 ] as const;
+
+/** The sections a version 2 trace did not carry, read from one as empty. */
+const ADDED_IN_VERSION_3: readonly TraceSection[] = ['managerNotes', 'decisionNotices'];
 
 /** One section of a trace. */
 export type TraceSection = (typeof TRACE_SECTIONS)[number];
@@ -42,6 +54,14 @@ export interface TraceRows {
   questions: Doc<'managerQuestions'>[];
   corrections: Doc<'corrections'>[];
   surfaces: Doc<'surfaces'>[];
+  /**
+   * What the gate told the manager about each finished run, sent one per run
+   * or in a digest: the delivery record, with the provider's timestamp when it
+   * landed and the failure when it did not (Q14).
+   */
+  managerNotes: Doc<'managerNotes'>[];
+  /** Each acknowledgement Day0 posted of a reply the manager gave a decision request. */
+  decisionNotices: Doc<'managerDecisionNotices'>[];
   events: Doc<'events'>[];
 }
 
@@ -72,12 +92,18 @@ export interface TraceAgent {
   readonly creationTime: number;
 }
 
-/** One retired employee of the owner, as its tombstone event records it. */
-export interface TraceRetirement {
+/** One retired employee of the owner, as a version 2 trace carried it: its tombstone event's payload. */
+export interface TombstoneRetirement {
   readonly agentId: string;
   readonly retiredAt: number;
   readonly payload: Record<string, unknown>;
 }
+
+/**
+ * One retired employee of the owner: its `retirements` row, redacted as the
+ * export redacts, or in a version 2 trace its tombstone event.
+ */
+export type TraceRetirement = Doc<'retirements'> | TombstoneRetirement;
 
 /**
  * Who and what the trace is of, and where it came from: the release and
@@ -86,7 +112,8 @@ export interface TraceRetirement {
  */
 export interface TraceManifest {
   readonly format: typeof TRACE_FORMAT;
-  readonly version: typeof TRACE_VERSION;
+  /** This release's version, or the earlier one a file read from an older export keeps. */
+  readonly version: 2 | typeof TRACE_VERSION;
   readonly exportedAt: number;
   /** The export's date, `YYYY-MM-DD`, in the agent's zone. */
   readonly exportedOn: string;
@@ -95,6 +122,12 @@ export interface TraceManifest {
   readonly release: string | null;
   readonly commit: string | null;
   readonly pageRows: number;
+  /**
+   * The event types the exporting release writes, from the event contract, so
+   * a reader of the events section knows the vocabulary it was written in.
+   * Absent from a version 2 trace.
+   */
+  readonly eventTypes?: readonly EventType[];
 }
 
 /** The first call's answer: everything but the paged sections, and where they start. */
@@ -156,15 +189,9 @@ export async function assembleTrace(
   },
 ): Promise<AgentTrace> {
   const head = await call.head({ agentId });
-  const sections: Record<TraceSection, unknown[]> = {
-    charters: [],
-    workItems: [],
-    skills: [],
-    questions: [],
-    corrections: [],
-    surfaces: [],
-    events: [],
-  };
+  const sections = Object.fromEntries(
+    TRACE_SECTIONS.map((section): [TraceSection, unknown[]] => [section, []]),
+  ) as Record<TraceSection, unknown[]>;
   const seen = new Set<string>();
   let next: TraceCursor | null = head.next;
   while (next !== null) {
@@ -194,22 +221,47 @@ export async function assembleTrace(
 }
 
 /**
- * Whether a parsed file is an assembled trace of this version.
+ * A parsed file as an assembled trace of this version, or undefined when it is
+ * not a day0 trace this release reads. A version 2 trace is read with the
+ * sections it did not carry as empty.
  *
- * @returns True when the value carries this format's manifest and sections.
+ * @param value - The parsed file.
+ * @returns The trace, its manifest's version the one it was written with.
+ */
+export function readAgentTrace(value: unknown): AgentTrace | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const { manifest, agent, sections } = value as Record<string, unknown>;
+  if (
+    manifest === null ||
+    typeof manifest !== 'object' ||
+    (manifest as Record<string, unknown>).format !== TRACE_FORMAT ||
+    !READABLE_VERSIONS.has((manifest as Record<string, unknown>).version) ||
+    agent === null ||
+    typeof agent !== 'object' ||
+    sections === null ||
+    typeof sections !== 'object'
+  ) {
+    return undefined;
+  }
+  const version = (manifest as Record<string, unknown>).version;
+  const carried = sections as Record<string, unknown>;
+  const complete = TRACE_SECTIONS.every(
+    (section) =>
+      Array.isArray(carried[section]) ||
+      (version === 2 && ADDED_IN_VERSION_3.includes(section) && carried[section] === undefined),
+  );
+  if (!complete) return undefined;
+  const filled = Object.fromEntries(
+    TRACE_SECTIONS.map((section) => [section, carried[section] ?? []]),
+  ) as unknown as TraceRows;
+  return { ...(value as AgentTrace), sections: filled };
+}
+
+/**
+ * Whether a parsed file is an assembled trace this release reads.
+ *
+ * @returns True when `readAgentTrace` reads it.
  */
 export function isAgentTrace(value: unknown): value is AgentTrace {
-  if (value === null || typeof value !== 'object') return false;
-  const { manifest, agent, sections } = value as Record<string, unknown>;
-  return (
-    manifest !== null &&
-    typeof manifest === 'object' &&
-    (manifest as Record<string, unknown>).format === TRACE_FORMAT &&
-    (manifest as Record<string, unknown>).version === TRACE_VERSION &&
-    agent !== null &&
-    typeof agent === 'object' &&
-    sections !== null &&
-    typeof sections === 'object' &&
-    TRACE_SECTIONS.every((section) => Array.isArray((sections as Record<string, unknown>)[section]))
-  );
+  return readAgentTrace(value) !== undefined;
 }

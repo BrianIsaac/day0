@@ -84,7 +84,6 @@ describe('agent documentation selection', (): void => {
     });
     const row = await owner.query(api.agents.get, { agentId: inheriting });
     expect(row?.excludedDocSourceIds).toBeUndefined();
-    expect(row?.docSourceIds).toBeUndefined();
   });
 
   it('inherits a source linked after deploy unless it was excluded', async (): Promise<void> => {
@@ -261,7 +260,6 @@ describe('agent surface grants', (): void => {
     // Autonomous actions are off from deployment: the field is absent, which reads as off.
     const realRow = await realHarness.run(async (ctx) => await ctx.db.get(realAgent));
     expect(realRow?.autonomousActions).toBeUndefined();
-    expect(realRow?.posture).toBeUndefined();
     expect(autonomousActionsOn(realRow ?? {})).toBe(false);
   });
 

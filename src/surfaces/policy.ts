@@ -1,6 +1,12 @@
 import type { MockAction, ReplyTarget } from '../work/types';
 import { MOCK_TOOLS } from './mock';
-import type { ActionAuthority, AppliedAction, CredentialKind, SurfaceRecord } from './types';
+import type {
+  ActionAuthority,
+  ActionClass,
+  AppliedAction,
+  CredentialKind,
+  SurfaceRecord,
+} from './types';
 import { verdictFor } from './verdict';
 
 /**
@@ -101,7 +107,8 @@ export function isGateRefusal(reason: string | undefined): boolean {
 export const SHARED_IDENTITY_ICON = ':briefcase:';
 
 const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
-const READ_TOOL_PREFIX = /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
+const READ_TOOL_PREFIX =
+  /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
 /**
  * Browser tools that observe the page without changing anything on it.
  *
@@ -214,7 +221,16 @@ const DOCUMENTED_RPC_READS = new Set([
   'conversations.replies',
 ]);
 /** Verbs an undocumented RPC method must lead its operation with to be read as a read. */
-const RPC_READ_VERBS = new Set(['get', 'history', 'info', 'list', 'lookup', 'replies', 'search', 'test']);
+const RPC_READ_VERBS = new Set([
+  'get',
+  'history',
+  'info',
+  'list',
+  'lookup',
+  'replies',
+  'search',
+  'test',
+]);
 /** One dotted method and nothing else: `family.operation`, with no further path segment. */
 const RPC_METHOD_PATH = /^\/*([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)\/*$/;
 /**
@@ -231,7 +247,15 @@ const RPC_METHOD_PATH = /^\/*([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)\/
  */
 const COMPOUND_TOOL_WORDS = new Set(['and', 'or', 'then']);
 const STATUS_TOOL = /^(?:save|update|set|change|transition|move)[_-]|status|state/i;
-const STATUS_KEYS = ['status', 'state', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'];
+const STATUS_KEYS = [
+  'status',
+  'state',
+  'stateId',
+  'state_id',
+  'statusId',
+  'status_id',
+  'workflowState',
+];
 const COMMENT_TOOL = /comment|message|post|reply|note/i;
 const MESSAGE_KEYS = ['text', 'body', 'message', 'content'];
 const MCP_CHAT_POST_TOOLS = new Set([
@@ -281,9 +305,7 @@ export interface ParsedHttpRequest {
 
 export type ParsedSurfaceAction = ParsedMcpCall | ParsedHttpRequest;
 
-export type ParseResult =
-  | { ok: true; action: ParsedSurfaceAction }
-  | { ok: false; reason: string };
+export type ParseResult = { ok: true; action: ParsedSurfaceAction } | { ok: false; reason: string };
 
 function operationTokens(value: string): string[] {
   let decoded = value;
@@ -371,7 +393,11 @@ export function serialiseSurfaceAction(parsed: ParsedSurfaceAction): MockAction 
   if (parsed.kind === 'mcp.call') {
     return {
       tool: 'mcp.call',
-      args: { surface: parsed.surface, tool: parsed.tool, toolArgsJson: JSON.stringify(parsed.toolArgs) },
+      args: {
+        surface: parsed.surface,
+        tool: parsed.tool,
+        toolArgsJson: JSON.stringify(parsed.toolArgs),
+      },
     };
   }
   return {
@@ -408,7 +434,8 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
   }
   if (action.tool === 'http.request') {
     const method = (args.method ?? 'GET').trim().toUpperCase();
-    if (!HTTP_METHODS.includes(method as HttpMethod)) return malformed(`unsupported method ${method}`);
+    if (!HTTP_METHODS.includes(method as HttpMethod))
+      return malformed(`unsupported method ${method}`);
     const path = typeof args.path === 'string' ? args.path.trim() : '';
     if (!path) return malformed('missing path');
     const headersParsed = parseJsonObject(args.headersJson, 'headersJson');
@@ -433,7 +460,15 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
     }
     return {
       ok: true,
-      action: { kind: 'http.request', surface, method: method as HttpMethod, path, headers, body, bodyJson },
+      action: {
+        kind: 'http.request',
+        surface,
+        method: method as HttpMethod,
+        path,
+        headers,
+        body,
+        bodyJson,
+      },
     };
   }
   return malformed(`unknown surface verb ${action.tool}`);
@@ -512,15 +547,19 @@ export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
   if (parsed.kind === 'http.request') {
     // RPC APIs can accept mutations over GET. Treat an operation carrying an
     // explicit mutation verb as a write even when its transport method lies.
-    if (operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
-    if (parsed.method !== 'GET' && parsed.method !== 'HEAD' && parsed.method !== 'POST') return 'write';
+    if (operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token)))
+      return 'write';
+    if (parsed.method !== 'GET' && parsed.method !== 'HEAD' && parsed.method !== 'POST')
+      return 'write';
     // And they can take POST, or a body, for a read: the operation decides. The
     // body's parameters may travel in the query, so they are read as a query is.
     // An escape hides a word from the raw text and not from the provider, so a
     // JSON body is read as it parses as well as as it was written.
     if (isRpcRead(parsed.path)) {
       const body = `${parsed.body ?? ''} ${parsed.bodyJson ? JSON.stringify(parsed.bodyJson) : ''}`;
-      return operationTokens(body).some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
+      return operationTokens(body).some((token) => HTTP_MUTATION_WORDS.has(token))
+        ? 'write'
+        : 'read';
     }
     if (parsed.method === 'POST') return 'write';
     return parsed.body !== undefined && parsed.body.trim() !== '' ? 'write' : 'read';
@@ -569,9 +608,7 @@ function isDestinationKey(key: string): boolean {
 function isThreadKey(key: string): boolean {
   const normalised = semanticKey(key);
   return (
-    normalised.includes('thread') ||
-    normalised.includes('reply') ||
-    normalised.includes('parent')
+    normalised.includes('thread') || normalised.includes('reply') || normalised.includes('parent')
   );
 }
 
@@ -609,7 +646,11 @@ export function messageTarget(parsed: ParsedSurfaceAction): string | undefined {
   if (!channel) return undefined;
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   const thread = Object.entries(record ?? {}).find(
-    ([key, value]) => isThreadKey(key) && semanticKey(key) !== 'replybroadcast' && typeof value === 'string' && value.trim() !== '',
+    ([key, value]) =>
+      isThreadKey(key) &&
+      semanticKey(key) !== 'replybroadcast' &&
+      typeof value === 'string' &&
+      value.trim() !== '',
   )?.[1];
   return typeof thread === 'string' ? `${channel.trim()}/${thread.trim()}` : channel.trim();
 }
@@ -630,7 +671,9 @@ function hasThreadTarget(parsed: ParsedSurfaceAction): boolean {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   if (!record) return false;
   return Object.entries(record).some(([key, value]) => {
-    return isThreadKey(key) && value !== undefined && value !== null && value !== '' && value !== false;
+    return (
+      isThreadKey(key) && value !== undefined && value !== null && value !== '' && value !== false
+    );
   });
 }
 
@@ -653,14 +696,14 @@ function isMcpChatPost(parsed: ParsedMcpCall): boolean {
  * Returns:
  *   The held reason, or undefined when the action may execute.
  */
-export function heldReason(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string | undefined {
+export function heldReason(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
   if (actionIntent(parsed) === 'read') return undefined;
   if (surface.class === 'social') return HELD_PUBLIC_POST;
   if (surface.class === 'chat') {
-    if (
-      !surface.managerDmChannelId ||
-      !targetsOnlyChannel(parsed, surface.managerDmChannelId)
-    ) {
+    if (!surface.managerDmChannelId || !targetsOnlyChannel(parsed, surface.managerDmChannelId)) {
       return HELD_PUBLIC_POST;
     }
   }
@@ -689,7 +732,8 @@ export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord)
   if (surface.class !== 'chat' || !surface.managerDmChannelId) return false;
   if (actionIntent(parsed) !== 'write') return false;
   if (hasThreadTarget(parsed)) return false;
-  const posts = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  const posts =
+    parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
   return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
 }
 
@@ -711,8 +755,12 @@ export function isMessage(parsed: ParsedSurfaceAction, surface: SurfaceRecord): 
   if (parsed.kind === 'mcp.call') return isMcpChatPost(parsed);
   if (isChatPost(parsed, surface)) return true;
   const path = parsed.path.split(/[?#]/, 1)[0]!.replace(/\/+$/, '');
-  return surface.class === 'kanban' && parsed.method === 'POST' && /(?:^|\/)comments?$/i.test(path) &&
-    parsed.body !== undefined;
+  return (
+    surface.class === 'kanban' &&
+    parsed.method === 'POST' &&
+    /(?:^|\/)comments?$/i.test(path) &&
+    parsed.body !== undefined
+  );
 }
 
 /** Why a public chat reply escapes the source channel or thread, if it does. */
@@ -722,7 +770,8 @@ export function replyTargetRefusal(
   target: ReplyTarget | undefined,
 ): string | undefined {
   if (!target || surface.class !== 'chat' || isManagerDm(parsed, surface)) return undefined;
-  const isReply = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  const isReply =
+    parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
   if (!isReply) return undefined;
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   if (!record || !targetsOnlyChannel(parsed, target.channel)) return REPLY_TARGET_REFUSED;
@@ -736,8 +785,8 @@ export function replyTargetRefusal(
     ([key]) => isThreadKey(key) && semanticKey(key) !== 'replybroadcast',
   );
   return threadTargets.length > 0 &&
-    threadTargets.every(([, value]) =>
-      typeof value === 'string' && value.trim() === target.threadTs,
+    threadTargets.every(
+      ([, value]) => typeof value === 'string' && value.trim() === target.threadTs,
     )
     ? undefined
     : REPLY_TARGET_REFUSED;
@@ -872,7 +921,10 @@ export function mockVerbRefusal(tool: string): string {
  * Returns:
  *   A refusal reason, or undefined when the verb matches the path.
  */
-export function pathRefusal(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string | undefined {
+export function pathRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
   const mismatch =
     parsed.kind === 'mcp.call'
       ? surface.path !== 'mcp' && surface.path !== 'browser-driven'
@@ -1012,13 +1064,13 @@ export function normaliseActionVerdict(row: {
 }): ActionVerdict {
   if (row.disposition === 'auto') return { disposition: 'auto' };
   if (row.disposition === 'held') return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
-  if (row.disposition === 'refused') return { disposition: 'refused', reason: row.reason ?? 'refused' };
+  if (row.disposition === 'refused')
+    return { disposition: 'refused', reason: row.reason ?? 'refused' };
   if (row.held === true) return { disposition: 'refused', reason: row.reason ?? 'refused' };
   return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
 }
 
-/** What kind of change an applicable action makes, which decides its disposition and its held reason. */
-export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
+export type { ActionClass } from './types';
 
 /**
  * Classify an applicable action by what it changes.
@@ -1082,7 +1134,9 @@ export function refusalFor(
   surfaces: readonly SurfaceRecord[],
   grants: ReadonlySet<string>,
   now: number,
-): { refused: true; reason: string } | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
+):
+  | { refused: true; reason: string }
+  | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
   if (!isSurfaceTool(action.tool)) {
     const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
     return { refused: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
@@ -1640,7 +1694,10 @@ export function applyProvenance(
  * Returns:
  *   A refusal reason, or undefined when the surface is connected.
  */
-export function surfaceRefusal(surface: SurfaceRecord | undefined, now: number): string | undefined {
+export function surfaceRefusal(
+  surface: SurfaceRecord | undefined,
+  now: number,
+): string | undefined {
   if (!surface) return UNKNOWN_SURFACE;
   const verdict = verdictFor(surface, now);
   if (verdict !== 'connected') return `${SURFACE_NOT_CONNECTED} (${verdict})`;
@@ -1754,7 +1811,9 @@ export function describeAction(action: MockAction): string {
   if (action.tool === 'http.request') {
     const parsed = parseSurfaceAction(action);
     const headers =
-      parsed.ok && parsed.action.kind === 'http.request' ? compact(parsed.action.headers) : compact(args.headersJson ?? '');
+      parsed.ok && parsed.action.kind === 'http.request'
+        ? compact(parsed.action.headers)
+        : compact(args.headersJson ?? '');
     const body = args.body === undefined ? '(no body)' : compact(args.body, 160);
     return `http.request ${args.surface ?? '?'} · ${(args.method ?? 'GET').toUpperCase()} ${args.path ?? '?'} · headers ${headers} · body ${body}`;
   }

@@ -505,7 +505,12 @@ describe('metrics under adversarial sequences', (): void => {
       await ctx.db.insert('events', {
         agentId: id,
         type: 'work.decision-request-resent',
-        payload: { workItemId, kind: 'plan', decisionId: 'd-first', reason: 'request not delivered' },
+        payload: {
+          workItemId,
+          kind: 'plan',
+          decisionId: 'd-first',
+          reason: 'request not delivered',
+        },
         createdAt: 5_000,
       });
       await ctx.db.insert('events', {
@@ -568,7 +573,8 @@ describe('a browser session re-established before an apply invocation', (): void
       {
         tool: 'mcp.call',
         ok: false,
-        reason: 'browser session could not be re-established: browser_fill_form no grant (looker:write)',
+        reason:
+          'browser session could not be re-established: browser_fill_form no grant (looker:write)',
         idempotencyKey: 'wi2:run2:4',
         sessionRestore: {
           steps: [
@@ -966,42 +972,39 @@ describe('the figures do not depend on the order the rows are read in', (): void
       createdAt,
     }) as unknown as Doc<'events'>;
 
-  it(
-    'pairs a decision with a request written in the same millisecond however the two are listed',
-    (): void => {
-      const request = event(
-        1,
+  it('pairs a decision with a request written in the same millisecond however the two are listed', (): void => {
+    const request = event(
+      1,
+      'work.decision-requesting',
+      { workItemId: 'wi', decisionId: 'd', kind: 'plan' },
+      5_000,
+    );
+    const approved = event(
+      2,
+      'work.plan-approved',
+      { workItemId: 'wi', decidedVia: 'channel' },
+      5_000,
+    );
+    const later = [
+      event(
+        3,
         'work.decision-requesting',
-        { workItemId: 'wi', decisionId: 'd', kind: 'plan' },
-        5_000,
-      );
-      const approved = event(
-        2,
-        'work.plan-approved',
-        { workItemId: 'wi', decidedVia: 'channel' },
-        5_000,
-      );
-      const later = [
-        event(
-          3,
-          'work.decision-requesting',
-          { workItemId: 'wi2', decisionId: 'd2', kind: 'plan' },
-          6_000,
-        ),
-        event(4, 'work.plan-approved', { workItemId: 'wi2', decidedVia: 'channel' }, 9_000),
-      ];
+        { workItemId: 'wi2', decisionId: 'd2', kind: 'plan' },
+        6_000,
+      ),
+      event(4, 'work.plan-approved', { workItemId: 'wi2', decidedVia: 'channel' }, 9_000),
+    ];
 
-      const indexOrder = computeAgentMetrics([request, approved, ...later], [], []);
-      const idOrder = computeAgentMetrics([approved, request, ...later], [], []);
+    const indexOrder = computeAgentMetrics([request, approved, ...later], [], []);
+    const idOrder = computeAgentMetrics([approved, request, ...later], [], []);
 
-      expect(indexOrder.decisions).toMatchObject({
-        requested: 2,
-        approved: 2,
-        medianLatencyMs: 1_500,
-      });
-      expect(idOrder).toEqual(indexOrder);
-    },
-  );
+    expect(indexOrder.decisions).toMatchObject({
+      requested: 2,
+      approved: 2,
+      medianLatencyMs: 1_500,
+    });
+    expect(idOrder).toEqual(indexOrder);
+  });
 
   it('uses backend write order for duplicate ledger observations in reversed and shuffled reads', (): void => {
     const row = (effect?: string): Record<string, unknown> => ({
@@ -1011,7 +1014,12 @@ describe('the figures do not depend on the order the rows are read in', (): void
       idempotencyKey: 'wi:run-1:0',
       ...(effect === undefined ? {} : { effect }),
     });
-    const first = event(1, 'work.failed', { workItemId: 'wi', output: { applied: [row()] } }, 5_000);
+    const first = event(
+      1,
+      'work.failed',
+      { workItemId: 'wi', output: { applied: [row()] } },
+      5_000,
+    );
     const second = event(
       2,
       'work.completed',
@@ -1031,7 +1039,11 @@ describe('the figures do not depend on the order the rows are read in', (): void
 
 describe('the ledger walk and the pilot figures (step 29)', (): void => {
   let created = 0;
-  const event = (type: string, payload: Record<string, unknown>, createdAt: number): Doc<'events'> =>
+  const event = (
+    type: string,
+    payload: Record<string, unknown>,
+    createdAt: number,
+  ): Doc<'events'> =>
     ({
       _id: `event-${(created += 1)}`,
       _creationTime: created,
@@ -1083,16 +1095,27 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       body: JSON.stringify({ channel, text: 'Done.' }),
     },
   });
-  const history = { tool: 'http.request', args: { surface: 'slack', method: 'GET', path: '/conversations.history' } };
+  const history = {
+    tool: 'http.request',
+    args: { surface: 'slack', method: 'GET', path: '/conversations.history' },
+  };
 
   it('keeps phase one’s landed rows in the figures while its closing set is held', (): void => {
     const pending = {
       phase: 'dependent',
-      initial: { phase: 'dependent-authoring', actions: [post('C0TEAM')], applied: [row('wi:run-1:0')] },
+      initial: {
+        phase: 'dependent-authoring',
+        actions: [post('C0TEAM')],
+        applied: [row('wi:run-1:0')],
+      },
       actions: [post('C0TEAM')],
       applied: [],
     };
-    const metrics = computeAgentMetrics([], [item('wi', { state: 'actions-pending', output: pending })], []);
+    const metrics = computeAgentMetrics(
+      [],
+      [item('wi', { state: 'actions-pending', output: pending })],
+      [],
+    );
     expect(metrics.auditTrail).toEqual({ complete: 1, total: 1, fraction: 1 });
   });
 
@@ -1106,37 +1129,127 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       {
         workItemId: 'wi',
         entries: [
-          { phase: 'single', actionIndex: 0, tool: 'http.request', outcome: 'landed', idempotencyKey: 'wi:run-1:0' },
-          { phase: 'single', actionIndex: 1, tool: 'http.request', outcome: 'landed', idempotencyKey: 'wi:run-1:1', effect: 'Moved REVOPS-5 to Done' },
-          { phase: 'single', actionIndex: 2, tool: 'http.request', outcome: 'outcome-unknown', idempotencyKey: 'wi:run-1:2' },
+          {
+            phase: 'single',
+            actionIndex: 0,
+            tool: 'http.request',
+            outcome: 'landed',
+            idempotencyKey: 'wi:run-1:0',
+          },
+          {
+            phase: 'single',
+            actionIndex: 1,
+            tool: 'http.request',
+            outcome: 'landed',
+            idempotencyKey: 'wi:run-1:1',
+            effect: 'Moved REVOPS-5 to Done',
+          },
+          {
+            phase: 'single',
+            actionIndex: 2,
+            tool: 'http.request',
+            outcome: 'outcome-unknown',
+            idempotencyKey: 'wi:run-1:2',
+          },
         ],
       },
       5_000,
     );
-    const metrics = computeAgentMetrics([reconciled], [item('wi', { state: 'failed', output: retried })], []);
+    const metrics = computeAgentMetrics(
+      [reconciled],
+      [item('wi', { state: 'failed', output: retried })],
+      [],
+    );
     // The carried write, and the one only the reconciliation records (it names no authority).
     expect(metrics.auditTrail).toEqual({ complete: 1, total: 2, fraction: 0.5 });
   });
 
   it('keys a closing set apart from phase one under the same run, even on its unflagged second pending event', (): void => {
     const events = [
-      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0], refusedIndexes: [] }, 1_000),
-      event('work.actions-approved', { workItemId: 'wi', runId: 'run-1', approvedIndexes: [0], rejectedIndexes: [], decidedVia: 'dashboard' }, 2_000),
-      event('work.dependent-authoring', { workItemId: 'wi', runId: 'run-1', prerequisiteActionCount: 1 }, 3_000),
-      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0], refusedIndexes: [], dependentPhase: true }, 4_000),
-      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0], refusedIndexes: [], autoApplied: true }, 4_001),
-      event('work.actions-approved', { workItemId: 'wi', runId: 'attempt-2', approvedIndexes: [0], rejectedIndexes: [], decidedVia: 'dashboard' }, 5_000),
+      event(
+        'work.actions-pending',
+        { workItemId: 'wi', runId: 'run-1', heldIndexes: [0], refusedIndexes: [] },
+        1_000,
+      ),
+      event(
+        'work.actions-approved',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          approvedIndexes: [0],
+          rejectedIndexes: [],
+          decidedVia: 'dashboard',
+        },
+        2_000,
+      ),
+      event(
+        'work.dependent-authoring',
+        { workItemId: 'wi', runId: 'run-1', prerequisiteActionCount: 1 },
+        3_000,
+      ),
+      event(
+        'work.actions-pending',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          heldIndexes: [0],
+          refusedIndexes: [],
+          dependentPhase: true,
+        },
+        4_000,
+      ),
+      event(
+        'work.actions-pending',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          heldIndexes: [0],
+          refusedIndexes: [],
+          autoApplied: true,
+        },
+        4_001,
+      ),
+      event(
+        'work.actions-approved',
+        {
+          workItemId: 'wi',
+          runId: 'attempt-2',
+          approvedIndexes: [0],
+          rejectedIndexes: [],
+          decidedVia: 'dashboard',
+        },
+        5_000,
+      ),
     ];
     expect(computeAgentMetrics(events, [], []).actions).toMatchObject({ held: 2, approved: 2 });
   });
 
   it('counts a closing refusal the hold and the ledger both saw once, by its durable index', (): void => {
     const events = [
-      event('work.dependent-authoring', { workItemId: 'wi', runId: 'run-1', prerequisiteActionCount: 2 }, 1_000),
-      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [], refusedIndexes: [0], dependentPhase: true, refusals: [{ index: 0, reason: 'no grant (linear:write)' }] }, 2_000),
+      event(
+        'work.dependent-authoring',
+        { workItemId: 'wi', runId: 'run-1', prerequisiteActionCount: 2 },
+        1_000,
+      ),
+      event(
+        'work.actions-pending',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          heldIndexes: [],
+          refusedIndexes: [0],
+          dependentPhase: true,
+          refusals: [{ index: 0, reason: 'no grant (linear:write)' }],
+        },
+        2_000,
+      ),
     ];
-    const output = { applied: [row('wi:run-1:2', { ok: false, reason: 'no grant (linear:write)' })] };
-    expect(computeAgentMetrics(events, [item('wi', { state: 'failed', output })], []).actions.refused).toBe(1);
+    const output = {
+      applied: [row('wi:run-1:2', { ok: false, reason: 'no grant (linear:write)' })],
+    };
+    expect(
+      computeAgentMetrics(events, [item('wi', { state: 'failed', output })], []).actions.refused,
+    ).toBe(1);
   });
 
   it('counts a skill as reused only on an item it was not made for, whichever item ran it first', (): void => {
@@ -1144,14 +1257,36 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       event('work.execution-claimed', { workItemId: 'a', skillId: 's1', proposedFor: 'b' }, 1_000),
       event('work.execution-claimed', { workItemId: 'b', skillId: 's1', proposedFor: 'b' }, 2_000),
     ];
-    expect(computeAgentMetrics(events, [], []).pilot.skillReuse).toEqual({ runs: 2, reused: 1, rate: 0.5 });
+    expect(computeAgentMetrics(events, [], []).pilot.skillReuse).toEqual({
+      runs: 2,
+      reused: 1,
+      rate: 0.5,
+    });
   });
 
   it('counts approving none of the held actions as a rejection of the decision and of each held action', (): void => {
     const events = [
-      event('work.decision-requesting', { workItemId: 'wi', decisionId: 'a1', kind: 'actions' }, 1_000),
-      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0, 1], refusedIndexes: [] }, 1_001),
-      event('work.actions-approved', { workItemId: 'wi', runId: 'run-1', approvedIndexes: [], rejectedIndexes: [], decidedVia: 'channel' }, 9_000),
+      event(
+        'work.decision-requesting',
+        { workItemId: 'wi', decisionId: 'a1', kind: 'actions' },
+        1_000,
+      ),
+      event(
+        'work.actions-pending',
+        { workItemId: 'wi', runId: 'run-1', heldIndexes: [0, 1], refusedIndexes: [] },
+        1_001,
+      ),
+      event(
+        'work.actions-approved',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          approvedIndexes: [],
+          rejectedIndexes: [],
+          decidedVia: 'channel',
+        },
+        9_000,
+      ),
     ];
     const metrics = computeAgentMetrics(events, [], []);
     expect(metrics.decisions).toMatchObject({ approved: 0, rejected: 1, partiallyApproved: 0 });
@@ -1172,6 +1307,24 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(metrics.actions.autoApplied).toBe(4);
     // The unparseable last row cannot be shown to be a read, so it counts as a write.
     expect(metrics.actions.automatic).toEqual({ reads: 1, managerMessages: 1, writes: 2 });
+  });
+
+  it('keeps a manager message the send recorded one after the manager DM moves, and a post it recorded a change (review M16)', (): void => {
+    const output = {
+      actions: [post('D0MANAGER'), post('C0TEAM')],
+      applied: [
+        row('wi:run-1:0', { authority: 'standing', actionClass: 'manager-dm' }),
+        row('wi:run-1:1', { authority: 'autonomous', actionClass: 'public-post' }),
+      ],
+    };
+    // The manager changed: the surface now names the team channel as the DM.
+    const moved = { ...slack, managerDmChannelId: 'C0TEAM' };
+    const metrics = computeAgentMetrics([], [item('wi', { output })], [], [moved]);
+    expect(metrics.actions.automatic).toEqual({ reads: 0, managerMessages: 1, writes: 1 });
+    const wiped = { ...slack, managerDmChannelId: undefined };
+    expect(
+      computeAgentMetrics([], [item('wi', { output })], [], [wiped]).actions.automatic,
+    ).toEqual({ reads: 0, managerMessages: 1, writes: 1 });
   });
 
   it('computes skill reuse, cycle time from the ask, reorientation acceptance and the hours-saved gauge', (): void => {

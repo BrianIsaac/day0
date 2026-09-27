@@ -6,8 +6,14 @@ import { assertOwnsAgent } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT } from '../src/work/types';
+import {
+  AUTONOMOUS_WIP_LIMIT,
+  COLD_START_WIP_LIMIT,
+  SCOPE_JUDGEMENT_UNAVAILABLE,
+} from '../src/work/types';
 import { normaliseActionVerdict } from '../src/surfaces/policy';
+
+import { appendEvent } from './eventLog';
 
 /**
  * The server-driven work loop, real mode only.
@@ -42,6 +48,25 @@ export const EXECUTION_STALL_MS = STEP_LEASE_MS + 2 * 60 * 1000;
  * stops for the manager's Retry instead.
  */
 export const MAX_DRAFT_RESUMES = 3;
+
+/**
+ * How many evaluations of one row may begin without a verdict. A row whose
+ * evaluation dies after its claim (an action killed at the time limit, a
+ * throw) keeps the claim until the lease passes, then ranks behind every
+ * unattempted row; after this many it is parked, so one dying evaluation at a
+ * cap of one never holds the queue (wave 2 review M23).
+ */
+export const MAX_EVALUATION_ATTEMPTS = 3;
+
+/**
+ * The deferral reason of a row parked after `MAX_EVALUATION_ATTEMPTS`
+ * evaluations died; the manager's Retry takes it back. A row whose last
+ * evaluation found the scope judgement unreachable is parked as
+ * `scope-judgement-unavailable` instead, which the charter trigger and Check
+ * for new work re-admit, because half an hour of provider outage is three
+ * attempts (E-70 D2).
+ */
+export const EVALUATION_ATTEMPTS_SPENT = 'evaluation-attempts-spent';
 
 /** The event each restart of a dead draft writes; the cap is counted from it. */
 const DRAFT_RESUMED = 'work.draft-resumed';
@@ -92,8 +117,8 @@ export function holdsLiveStepClaim(
   return claimedAt !== undefined && now - claimedAt < STEP_LEASE_MS;
 }
 
-/** Why a step was not claimed: the row moved on, or another run holds it. */
-export type StepClaim = { claimed: true } | { claimed: false; reason: string };
+/** Why a step was not claimed: the row moved on, or another run holds it; when claimed, the claim's time. */
+export type StepClaim = { claimed: true; claimedAt: number } | { claimed: false; reason: string };
 
 /**
  * Claim one step of one row, or report why not.
@@ -127,11 +152,18 @@ export async function claimLoopStepInTransaction(
   const ready = step === 'evaluation' ? 'discovered' : 'claimed';
   if (row.state !== ready) return { claimed: false, reason: `state=${row.state}` };
   if (holdsLiveStepClaim(row, step, now)) return { claimed: false, reason: 'claimed' };
-  if (step === 'evaluation' && (await queueState(ctx, row.agentId, now, row._id)).free === 0) {
-    return { claimed: false, reason: 'queued' };
+  if (step === 'evaluation') {
+    if ((await queueState(ctx, row.agentId, now, row._id)).free === 0) {
+      return { claimed: false, reason: 'queued' };
+    }
+    await ctx.db.patch(workItemId, {
+      evaluationClaimedAt: now,
+      evaluationAttempts: (row.evaluationAttempts ?? 0) + 1,
+    });
+    return { claimed: true, claimedAt: now };
   }
   await ctx.db.patch(workItemId, { [CLAIM_FIELD[step]]: now });
-  return { claimed: true };
+  return { claimed: true, claimedAt: now };
 }
 
 /** Whether an earlier verdict queued the row at the work-in-progress cap; it waits in `discovered` like any unevaluated row. */
@@ -210,16 +242,16 @@ export const seededItems = internalQuery({
   handler: async (ctx, args): Promise<string[]> => {
     const seeded: string[] = [];
     for (const externalId of new Set(args.externalIds)) {
-      for await (const row of ctx.db
+      const row = await ctx.db
         .query('workItems')
-        .withIndex('by_extId', (q) =>
-          q.eq('sourceSystem', args.sourceSystem).eq('externalId', externalId),
-        )) {
-        if (row.agentId === args.agentId) {
-          seeded.push(externalId);
-          break;
-        }
-      }
+        .withIndex('by_agent_extId', (q) =>
+          q
+            .eq('agentId', args.agentId)
+            .eq('sourceSystem', args.sourceSystem)
+            .eq('externalId', externalId),
+        )
+        .first();
+      if (row) seeded.push(externalId);
     }
     return seeded;
   },
@@ -343,36 +375,83 @@ async function queueState(
 }
 
 /**
- * The discovered row a free slot goes to: the most urgent one no evaluation
- * holds, the oldest first among equals.
+ * The waiting row a free slot goes to: a row no evaluation has begun before
+ * one whose evaluation died, then the most urgent, then the oldest.
  *
  * A row whose evaluation is running lands its own verdict and wakes the next
  * one itself, and a row whose evaluation died keeps its claim until the lease
- * passes, so neither blocks the rows behind it. Only `QUEUE_WINDOW` rows are
- * read, so an urgent row behind a longer queue waits its turn into the window.
+ * passes and then waits behind every unattempted row, so neither blocks the
+ * rows behind it. Only `QUEUE_WINDOW` rows are read, so an urgent row behind a
+ * longer queue waits its turn into the window.
  *
- * Args:
- *   ctx: Mutation context.
- *   agentId: The employee.
- *   now: The instant to judge claims against.
- *
- * Returns:
- *   The row to evaluate, or undefined when the employee is at its cap or
- *   nothing is waiting.
+ * @param waiting - The window of waiting rows, oldest first.
+ * @param now - The instant to judge claims against.
+ * @returns The row to evaluate, or undefined when every row is in flight.
  */
-export async function nextRowForFreeSlot(
-  ctx: MutationCtx,
-  agentId: Id<'agents'>,
+function nextWaitingRow(
+  waiting: readonly Doc<'workItems'>[],
   now: number,
-): Promise<Id<'workItems'> | undefined> {
-  const { free, waiting } = await queueState(ctx, agentId, now);
-  if (free === 0) return undefined;
+): Doc<'workItems'> | undefined {
+  const order = (row: Doc<'workItems'>): [number, number] => [
+    (row.evaluationAttempts ?? 0) > 0 ? 1 : 0,
+    queueRank(row.priority),
+  ];
   let next: Doc<'workItems'> | undefined;
   for (const row of waiting) {
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
-    if (next === undefined || queueRank(row.priority) < queueRank(next.priority)) next = row;
+    if (next === undefined) {
+      next = row;
+      continue;
+    }
+    const [attempted, rank] = order(row);
+    const [nextAttempted, nextRank] = order(next);
+    if (attempted < nextAttempted || (attempted === nextAttempted && rank < nextRank)) next = row;
   }
-  return next?._id;
+  return next;
+}
+
+/**
+ * Park each waiting row whose evaluation died `MAX_EVALUATION_ATTEMPTS`
+ * times, each with a `work.evaluation-parked` event.
+ *
+ * A row is parked only once its last claim has lapsed, so an evaluation still
+ * running is never cut short. The last attempt decides the reason: one that
+ * found the scope judgement unreachable parks as `scope-judgement-unavailable`,
+ * which the charter trigger and Check for new work re-admit; any other as
+ * `EVALUATION_ATTEMPTS_SPENT`, which waits for the manager's Retry.
+ *
+ * @param waiting - The window of waiting rows.
+ * @param now - The instant to judge claims against.
+ * @returns The rows parked.
+ */
+async function parkSpentEvaluations(
+  ctx: MutationCtx,
+  waiting: readonly Doc<'workItems'>[],
+  now: number,
+): Promise<Set<Id<'workItems'>>> {
+  const parked = new Set<Id<'workItems'>>();
+  for (const row of waiting) {
+    const attempts = row.evaluationAttempts ?? 0;
+    if (attempts < MAX_EVALUATION_ATTEMPTS || holdsLiveStepClaim(row, 'evaluation', now)) continue;
+    const unavailable =
+      row.evaluationUnavailableAt !== undefined &&
+      row.evaluationClaimedAt !== undefined &&
+      row.evaluationUnavailableAt >= row.evaluationClaimedAt;
+    const reason = unavailable ? SCOPE_JUDGEMENT_UNAVAILABLE : EVALUATION_ATTEMPTS_SPENT;
+    await ctx.db.patch(row._id, {
+      state: 'deferred',
+      verdict: { decision: 'defer', reason, attempts, missingPermissions: [] },
+      evaluationClaimedAt: undefined,
+    });
+    await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.evaluation-parked',
+      payload: { workItemId: row._id, attempts, reason },
+      createdAt: now,
+    });
+    parked.add(row._id);
+  }
+  return parked;
 }
 
 async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>): Promise<void> {
@@ -411,7 +490,11 @@ async function charterAwaitsApproval(ctx: MutationCtx, agentId: Id<'agents'>): P
  * Returns:
  *   How many rows were parked.
  */
-async function parkForCharter(ctx: MutationCtx, agentId: Id<'agents'>, now: number): Promise<number> {
+async function parkForCharter(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
   let parked = 0;
   for (const row of await queueWindow(ctx, agentId)) {
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
@@ -420,7 +503,7 @@ async function parkForCharter(ctx: MutationCtx, agentId: Id<'agents'>, now: numb
       verdict: { decision: 'defer', reason: AWAITING_CHARTER, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId,
       type: 'work.waiting-for-charter',
       payload: { workItemId: row._id },
@@ -432,17 +515,26 @@ async function parkForCharter(ctx: MutationCtx, agentId: Id<'agents'>, now: numb
 }
 
 /**
- * Evaluate the queue's next row, or park the queue while the charter waits.
+ * Evaluate the queue's next row when the employee has a free slot, or park
+ * the queue while the charter waits.
  *
  * Returns:
  *   How many steps were scheduled or rows parked.
  */
 async function evaluateNext(ctx: MutationCtx, agentId: Id<'agents'>, now: number): Promise<number> {
   if (await charterAwaitsApproval(ctx, agentId)) return await parkForCharter(ctx, agentId, now);
-  const next = await nextRowForFreeSlot(ctx, agentId, now);
-  if (!next) return 0;
-  await scheduleEvaluation(ctx, next);
-  return 1;
+  const { free, waiting } = await queueState(ctx, agentId, now);
+  if (free === 0) return 0;
+  // A row whose evaluation died too often is parked on the way, so it never
+  // takes the slot it would otherwise be given again.
+  const parked = await parkSpentEvaluations(ctx, waiting, now);
+  const next = nextWaitingRow(
+    waiting.filter((row) => !parked.has(row._id)),
+    now,
+  );
+  if (!next) return parked.size;
+  await scheduleEvaluation(ctx, next._id);
+  return parked.size + 1;
 }
 
 /**
@@ -558,7 +650,7 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
       });
       return true;
     }
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: DRAFT_RESUMED,
       payload: { workItemId: row._id, attempt: resumed + 1 },
@@ -612,8 +704,10 @@ export async function resumeStalledStepsInTransaction(
       }
       return rows;
     };
-    for (const row of await ready('claimed', (row) =>
-      row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now))) {
+    for (const row of await ready(
+      'claimed',
+      (row) => row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now),
+    )) {
       if (await resumeDraft(ctx, row, now)) rescheduled += 1;
     }
     for (const row of await ready('plan-approved', () => true)) {
@@ -622,9 +716,12 @@ export async function resumeStalledStepsInTransaction(
       });
       rescheduled += 1;
     }
-    for (const row of await ready('plan-pending', (row) =>
-      !row.decision &&
-      (row.planPendingAt === undefined || now - row.planPendingAt >= STEP_LEASE_MS))) {
+    for (const row of await ready(
+      'plan-pending',
+      (row) =>
+        !row.decision &&
+        (row.planPendingAt === undefined || now - row.planPendingAt >= STEP_LEASE_MS),
+    )) {
       await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
         workItemId: row._id,
         recovery: true,
@@ -632,15 +729,24 @@ export async function resumeStalledStepsInTransaction(
       rescheduled += 1;
     }
     for (const row of await ready('executing', async (row) => {
-      if (!row.executionRunId || row.pendingRunId || row.applyAttemptId ||
-          row.applyClaimedAt || row.applyPhase) return false;
+      if (
+        !row.executionRunId ||
+        row.pendingRunId ||
+        row.applyAttemptId ||
+        row.applyClaimedAt ||
+        row.applyPhase
+      )
+        return false;
       const claim = await ctx.db.get(row.executionRunId);
       return !!claim && now - claim.createdAt >= EXECUTION_STALL_MS;
     })) {
       // A closing phase whose authoring never claimed the run keeps its
       // landed prerequisites: it is failed so Retry resumes it, not as a stop.
       const runId = row.executionRunId;
-      if (runId && (row.output as { phase?: unknown } | undefined)?.phase === 'dependent-authoring') {
+      if (
+        runId &&
+        (row.output as { phase?: unknown } | undefined)?.phase === 'dependent-authoring'
+      ) {
         await ctx.scheduler.runAfter(0, internal.work.recoverDependentAuthoring, {
           workItemId: row._id,
           runId,
@@ -742,16 +848,20 @@ export const checkForNewWork = mutation({
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .collect()
-    ).filter((surface) => surface.verdict === 'connected' && WORK_SURFACE_CLASSES.has(surface.class));
+    ).filter(
+      (surface) => surface.verdict === 'connected' && WORK_SURFACE_CLASSES.has(surface.class),
+    );
     for (const surface of surfaces) {
-      await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, { surfaceId: surface._id });
+      await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, {
+        surfaceId: surface._id,
+      });
     }
     // The work already here is checked too: a row parked on a connection, a
     // grant or a skill that has since landed goes back to be evaluated.
     await ctx.scheduler.runAfter(0, internal.work.readmitSatisfiedDeferrals, {
       agentId: args.agentId,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: CHECK_REQUESTED,
       payload: { surfaceIds: surfaces.map((surface) => surface._id) },

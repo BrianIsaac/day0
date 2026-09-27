@@ -98,6 +98,7 @@ export const persistEncrypted = internalMutation({
     ciphertext: v.string(),
     iv: v.string(),
     explicitlyAssigned: v.optional(v.boolean()),
+    quoted: v.optional(v.boolean()),
     source: credentialSource,
     appId: v.optional(v.string()),
     rotated: v.boolean(),
@@ -133,6 +134,7 @@ export const persistEncrypted = internalMutation({
         ciphertext: args.ciphertext,
         iv: args.iv,
         explicitlyAssigned: args.explicitlyAssigned,
+        quoted: args.quoted,
         source: args.source,
         appId: args.appId,
         createdAt: Date.now(),
@@ -144,6 +146,7 @@ export const persistEncrypted = internalMutation({
       ciphertext: args.ciphertext,
       iv: args.iv,
       explicitlyAssigned: args.explicitlyAssigned,
+      quoted: args.quoted,
       appId: args.appId,
       lastUsedAt: args.rotated ? undefined : existing.lastUsedAt,
       status: undefined,
@@ -165,6 +168,7 @@ export const updateMetadata = internalMutation({
     label: v.string(),
     appId: v.optional(v.string()),
     explicitlyAssigned: v.optional(v.boolean()),
+    quoted: v.optional(v.boolean()),
     syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<void> => {
@@ -176,6 +180,7 @@ export const updateMetadata = internalMutation({
       label: args.label,
       appId: args.appId,
       explicitlyAssigned: args.explicitlyAssigned,
+      quoted: args.quoted,
       status: undefined,
       statusReason: row?.revokedAt && !row.status ? row.statusReason : undefined,
     });
@@ -241,6 +246,7 @@ export const activeValuesForOwner = internalQuery({
       label: string;
       pageDerived: boolean;
       explicitlyAssigned?: boolean;
+      quoted?: boolean;
     }>;
   }> => {
     const scanned = await ctx.db
@@ -258,6 +264,7 @@ export const activeValuesForOwner = internalQuery({
         label: row.label,
         pageDerived: typeof row.source !== 'string',
         explicitlyAssigned: row.explicitlyAssigned,
+        quoted: row.quoted,
       })),
     };
   },
@@ -382,6 +389,7 @@ export const moveToRef = internalMutation({
     label: v.string(),
     appId: v.optional(v.string()),
     explicitlyAssigned: v.optional(v.boolean()),
+    quoted: v.optional(v.boolean()),
     syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -412,6 +420,7 @@ export const moveToRef = internalMutation({
       label: args.label,
       appId: args.appId,
       explicitlyAssigned: args.explicitlyAssigned,
+      quoted: args.quoted,
       status: undefined,
       statusReason: undefined,
     });
@@ -464,6 +473,7 @@ export const store = internalAction({
     label: v.string(),
     plaintext: v.optional(v.string()),
     explicitlyAssigned: v.optional(v.boolean()),
+    quoted: v.optional(v.boolean()),
     source: credentialSource,
     appId: v.optional(v.string()),
     /** The sync generation that found the value; every write it makes is fenced by it. */
@@ -485,6 +495,7 @@ export const store = internalAction({
       label: args.label,
       appId: args.appId,
       explicitlyAssigned: args.explicitlyAssigned,
+      quoted: args.quoted,
     };
     const existing = !sourced
       ? null

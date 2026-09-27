@@ -5,6 +5,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { assembleTrace, type AgentTrace, type TracePage } from '../../src/export/trace';
+import { EVENT_TYPES } from '../../src/events/contract';
 
 /** The whole trace of one agent, assembled from the paged export as the command line assembles it. */
 async function exportedTrace(
@@ -120,7 +121,11 @@ describe('the paged trace export', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedTracedAgent(harness);
     await harness.run(async (ctx) => {
-      await ctx.db.insert('deploymentVersions', { release: '0.4.0', commit: 'd71b1cf8', recordedAt: 1 });
+      await ctx.db.insert('deploymentVersions', {
+        release: '0.4.0',
+        commit: 'd71b1cf8',
+        recordedAt: 1,
+      });
     });
     const { api } = await import('../../convex/_generated/api');
     const head = await harness
@@ -128,13 +133,14 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      version: 2,
+      version: 3,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
       release: '0.4.0',
       commit: 'd71b1cf8',
       pageRows: 100,
+      eventTypes: [...EVENT_TYPES],
     });
     expect(head.agent).toMatchObject({
       id: agentId,
@@ -169,12 +175,66 @@ describe('the paged trace export', (): void => {
       questions: 0,
       corrections: 0,
       surfaces: 1,
+      managerNotes: 0,
+      decisionNotices: 0,
       events: 2,
     });
     const serialised = JSON.stringify(trace);
     expect(serialised).not.toContain('TOP-SECRET-CIPHERTEXT');
     expect(serialised).not.toContain('TOP-SECRET-IV');
     expect(serialised).not.toContain('boss@day0.local');
+  });
+
+  it('carries the delivery record of every message Day0 sent the manager, with the provider’s timestamp (Q14)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const item = await ctx.db.query('workItems').first();
+      const surface = await ctx.db.query('surfaces').first();
+      if (!item || !surface) throw new Error('the seed made a work item and a surface');
+      await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId: item._id,
+        kind: 'landed',
+        text: 'REVOPS-1 is done: the comment is on the ticket.',
+        createdAt: 4,
+        claimedAt: 5,
+        providerTs: '1789000000.000100',
+        keptFor: 'per-run',
+      });
+      await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId: item._id,
+        kind: 'stopped',
+        text: 'REVOPS-1 stopped.',
+        createdAt: 6,
+        claimedAt: 7,
+        failure: 'channel_not_found',
+      });
+      await ctx.db.insert('managerDecisionNotices', {
+        agentId,
+        surfaceId: surface._id,
+        workItemId: item._id,
+        decisionId: 'D-7Q2',
+        messageTs: '1789000000.000200',
+        kind: 'received',
+        text: 'Got it: approved.',
+        createdAt: 8,
+        claimedAt: 9,
+        providerTs: '1789000000.000300',
+      });
+    });
+    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    expect(
+      trace.sections.managerNotes.map((note) => [note.kind, note.providerTs, note.failure]),
+    ).toEqual([
+      ['landed', '1789000000.000100', undefined],
+      ['stopped', undefined, 'channel_not_found'],
+    ]);
+    expect(
+      trace.sections.decisionNotices.map((notice) => [notice.decisionId, notice.providerTs]),
+    ).toEqual([['D-7Q2', '1789000000.000300']]);
+    expect(trace.manifest.counts).toMatchObject({ managerNotes: 2, decisionNotices: 1 });
   });
 
   it('carries no live install claim and no manager identity on a surface', async (): Promise<void> => {
@@ -223,31 +283,70 @@ describe('the paged trace export', (): void => {
     const agentId = await seedTracedAgent(harness);
     await harness.run(async (ctx) => {
       for (let index = 0; index < 250; index += 1) {
-        await ctx.db.insert('events', { agentId, type: 'work.model-call', payload: { index }, createdAt: 10 + index });
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.model-call',
+          payload: { index },
+          createdAt: 10 + index,
+        });
       }
     });
     const pages: TracePage[] = [];
     const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId, pages);
     expect(Math.max(...pages.map((page) => page.rows.length))).toBe(100);
-    expect(pages.filter((page) => page.section === 'events').map((page) => page.rows.length)).toEqual([100, 100, 52]);
+    expect(
+      pages.filter((page) => page.section === 'events').map((page) => page.rows.length),
+    ).toEqual([100, 100, 52]);
     expect(trace.sections.events).toHaveLength(252);
     expect(trace.sections.events.at(-1)?.payload).toEqual({ index: 249 });
   });
 
-  it('names the owner’s retired employees from their tombstones, and no other owner’s', async (): Promise<void> => {
+  it('lists the owner’s retirements in its owner section, and no other owner’s', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedTracedAgent(harness);
     await harness.run(async (ctx) => {
-      const gone = await ctx.db.insert('agents', { bossEmail: 'boss@day0.local', name: 'Mateo', userId: 'owner', state: 'active', createdAt: 1 });
-      const elsewhere = await ctx.db.insert('agents', { bossEmail: 'x@day0.local', name: 'Other', userId: 'someone-else', state: 'active', createdAt: 1 });
-      await ctx.db.insert('events', { agentId: gone, type: 'agent.retired', payload: { userId: 'owner', agentId: gone, retiredAt: 7, rowCounts: { events: 3 } }, createdAt: 7 });
-      await ctx.db.insert('events', { agentId: elsewhere, type: 'agent.retired', payload: { userId: 'someone-else', agentId: elsewhere, retiredAt: 8, rowCounts: {} }, createdAt: 8 });
+      const retirement = (userId: string, agentName: string, retiredAt: number) => ({
+        userId,
+        agentName,
+        retiredAt,
+        rowCounts: { events: 3 },
+        revokedCredentials: 1,
+        keptCredentials: 0,
+        claims: [],
+        rejections: [],
+      });
+      const gone = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const elsewhere = await ctx.db.insert('agents', {
+        bossEmail: 'x@day0.local',
+        name: 'Other',
+        userId: 'someone-else',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('retirements', { ...retirement('owner', 'Mateo', 7), agentId: gone });
+      await ctx.db.insert('retirements', {
+        ...retirement('someone-else', 'Other', 8),
+        agentId: elsewhere,
+      });
       await ctx.db.delete(gone);
       await ctx.db.delete(elsewhere);
     });
     const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
     expect(trace.owner.retired).toEqual([
-      expect.objectContaining({ retiredAt: 7, payload: expect.objectContaining({ rowCounts: { events: 3 } }) }),
+      expect.objectContaining({
+        agentName: 'Mateo',
+        retiredAt: 7,
+        rowCounts: { events: 3 },
+        revokedCredentials: 1,
+        claims: [],
+        rejections: [],
+      }),
     ]);
   });
 
@@ -322,7 +421,7 @@ describe('event trace export on a deployed agent', (): void => {
 });
 
 describe('the flips of the autonomous-actions switch', (): void => {
-  it('returns the employee\'s own flips oldest first, past any feed window, to the owner only', async (): Promise<void> => {
+  it("returns the employee's own flips oldest first, past any feed window, to the owner only", async (): Promise<void> => {
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const [priya, mateo] = await harness.run(async (ctx): Promise<Array<Id<'agents'>>> => {
@@ -340,12 +439,32 @@ describe('the flips of the autonomous-actions switch', (): void => {
       }
       const flip = { reason: 'set by the manager' };
       // The rehearsal's two flips (19 Sep 2026), then enough feed to roll past them.
-      await ctx.db.insert('events', { agentId: ids[0]!, type: 'agent.autonomy-changed', payload: { from: false, to: true, ...flip }, createdAt: 1789788458102 });
-      await ctx.db.insert('events', { agentId: ids[1]!, type: 'agent.autonomy-changed', payload: { from: false, to: true, ...flip }, createdAt: 1789788477973 });
+      await ctx.db.insert('events', {
+        agentId: ids[0]!,
+        type: 'agent.autonomy-changed',
+        payload: { from: false, to: true, ...flip },
+        createdAt: 1789788458102,
+      });
+      await ctx.db.insert('events', {
+        agentId: ids[1]!,
+        type: 'agent.autonomy-changed',
+        payload: { from: false, to: true, ...flip },
+        createdAt: 1789788477973,
+      });
       for (let index = 0; index < 40; index += 1) {
-        await ctx.db.insert('events', { agentId: ids[0]!, type: 'work.model-call', payload: {}, createdAt: 1789788460000 + index });
+        await ctx.db.insert('events', {
+          agentId: ids[0]!,
+          type: 'work.model-call',
+          payload: {},
+          createdAt: 1789788460000 + index,
+        });
       }
-      await ctx.db.insert('events', { agentId: ids[0]!, type: 'agent.autonomy-changed', payload: { from: true, to: false, ...flip }, createdAt: 1789788500000 });
+      await ctx.db.insert('events', {
+        agentId: ids[0]!,
+        type: 'agent.autonomy-changed',
+        payload: { from: true, to: false, ...flip },
+        createdAt: 1789788500000,
+      });
       return ids;
     });
 
@@ -354,9 +473,13 @@ describe('the flips of the autonomous-actions switch', (): void => {
       { at: 1789788458102, on: true },
       { at: 1789788500000, on: false },
     ]);
-    expect(await owner.query(api.events.autonomyChanges, { agentId: mateo! })).toEqual([{ at: 1789788477973, on: true }]);
+    expect(await owner.query(api.events.autonomyChanges, { agentId: mateo! })).toEqual([
+      { at: 1789788477973, on: true },
+    ]);
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).query(api.events.autonomyChanges, { agentId: priya! }),
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .query(api.events.autonomyChanges, { agentId: priya! }),
     ).rejects.toThrow('forbidden');
   });
 });
@@ -373,10 +496,25 @@ describe('the dashboard ticker', (): void => {
         state: 'active',
         createdAt: 1,
       });
-      await ctx.db.insert('events', { agentId: id, type: 'work.discovered', payload: {}, createdAt: 1 });
-      await ctx.db.insert('events', { agentId: id, type: 'work.completed', payload: {}, createdAt: 2 });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.discovered',
+        payload: {},
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.completed',
+        payload: {},
+        createdAt: 2,
+      });
       for (let index = 0; index < 12; index += 1) {
-        await ctx.db.insert('events', { agentId: id, type: 'work.listed', payload: {}, createdAt: 3 + index });
+        await ctx.db.insert('events', {
+          agentId: id,
+          type: 'work.listed',
+          payload: {},
+          createdAt: 3 + index,
+        });
       }
       return id;
     });

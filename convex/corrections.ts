@@ -18,6 +18,8 @@ import {
 } from '../src/work/corrections';
 import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
+import { appendEvent } from './eventLog';
+import { firstRetiredRejection } from './retirements';
 
 /**
  * The manager's corrections, kept per employee and fed back into its later
@@ -111,7 +113,9 @@ async function rejectedRowsNamed(
  * existed) matches nothing. Only rejected rows are read, through indexes
  * ordered by the rejection time; another owner's rows are skipped after the
  * read, so the read can miss this owner's rejection only behind more than
- * `TICKET_ROWS_READ` other owners' rejections of the same item.
+ * `TICKET_ROWS_READ` other owners' rejections of the same item. A rejection
+ * of an employee since retired is read from its `retirements` row, without
+ * the manager's words, which went with its rows.
  *
  * Args:
  *   ctx: Query or mutation context.
@@ -136,6 +140,7 @@ export async function firstTicketRejection(
     .filter((other, at) => read.findIndex((seen) => seen._id === other._id) === at)
     .sort((a, b) => (rejectionTime(a) ?? 0) - (rejectionTime(b) ?? 0));
   const owners = new Map<Id<'agents'>, string | undefined>();
+  let live: TicketRejection | undefined;
   for (const other of candidates) {
     const rejectedAt = rejectionTime(other);
     if (other._id === row._id || rejectedAt === undefined || isRevocationTrialRow(other)) continue;
@@ -143,14 +148,25 @@ export async function firstTicketRejection(
       owners.set(other.agentId, (await ctx.db.get(other.agentId))?.userId);
     if (owners.get(other.agentId) !== owner) continue;
     const correction = await firstRejectionCorrection(ctx, other);
-    return {
+    live = {
       workItemId: other._id,
       agentId: other.agentId,
       rejectedAt,
       ...(correction ? { correction } : {}),
     };
+    break;
   }
-  return undefined;
+  // A retired employee's rejection still binds (review M14); its words went
+  // with its rows, so it holds the plan without a reason to show.
+  const retired = await firstRetiredRejection(ctx, owner, names);
+  if (retired && (live === undefined || retired.rejection.rejectedAt < live.rejectedAt)) {
+    return {
+      workItemId: retired.rejection.workItemId,
+      agentId: retired.retirement.agentId,
+      rejectedAt: retired.rejection.rejectedAt,
+    };
+  }
+  return live;
 }
 
 /** The manager's first kept words rejecting a plan or held actions on one work item, while not retired. */
@@ -359,7 +375,7 @@ export const retire = mutation({
     await assertOwnsAgent(ctx, correction.agentId);
     if (correction.retiredAt !== undefined) return { ok: true };
     await ctx.db.patch(args.correctionId, { retiredAt: Date.now() });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: correction.agentId,
       type: 'work.correction-retired',
       payload: { correctionId: args.correctionId, workItemId: correction.workItemId },

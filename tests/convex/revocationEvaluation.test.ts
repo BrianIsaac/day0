@@ -156,5 +156,12 @@ describe('the live revocation evaluation fixture', (): void => {
         scope: 'slack:write',
       }),
     ).resolves.toBe(true);
+    await expect(
+      owner.mutation(api.revocationEvaluation.seedTrial, {
+        agentId,
+        trialId: 'rev-scope-01',
+        kind: 'auto-read',
+      }),
+    ).rejects.toThrow('trial rev-scope-01 already exists');
   });
 });

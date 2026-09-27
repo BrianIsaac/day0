@@ -148,6 +148,49 @@ describe('the owner known-value source', (): void => {
     ).resolves.toEqual([]);
   });
 
+  it('carries a quoted phrase a page assigned into the exact layer, and leaves the same phrase unquoted out (pre-tag D2 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const pageRow = async (label: string, plaintext: string, quoted: boolean): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Handbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          explicitlyAssigned: true,
+          ...(quoted ? { quoted: true } : {}),
+          source: { sourceId, ref: `${label}.md` },
+          createdAt: 1,
+          ...encrypt(plaintext, KEY),
+        });
+      });
+    };
+    await pageRow('warehouse password', 'Open Sesame', true);
+    await pageRow('ops note', 'Close The Quarter', false);
+
+    const values = await harness.action(internal.credentialCryptoActions.ownerValues, {
+      userId: 'owner',
+    });
+
+    expect(values).toEqual(['Open Sesame']);
+    expect(
+      cryptoActions.storedCredentialGuardReason({
+        ...encrypt('Open Sesame', KEY),
+        label: 'warehouse password',
+        explicitlyAssigned: true,
+        quoted: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it('fails closed with a named reason above the cap, before decrypting anything', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await harness.run(async (ctx) => {
@@ -178,7 +221,9 @@ describe('the owner known-value source', (): void => {
 
 describe('the public API surface and decryption', (): void => {
   it('has no public query in a module that can reach a decrypted value', (): void => {
-    const modules = readdirSync(join(ROOT, 'convex')).filter((name: string): boolean => name.endsWith('.ts'));
+    const modules = readdirSync(join(ROOT, 'convex')).filter((name: string): boolean =>
+      name.endsWith('.ts'),
+    );
     const reaches =
       /credential-crypto|credentialCryptoActions|ownerKnownValues|ownerValuesRef|credentials\.decrypt|DAY0_CREDENTIAL_KEY|ciphertext/;
     // Each exported definition is one chunk; a public query's chunk is its handler.

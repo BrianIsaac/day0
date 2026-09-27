@@ -90,6 +90,7 @@ export const ownerValues = internalAction({
         label: string;
         pageDerived: boolean;
         explicitlyAssigned?: boolean;
+        quoted?: boolean;
       }>;
     } = await ctx.runQuery(internal.credentials.activeValuesForOwner, { userId: args.userId });
     if (overflow) {
@@ -124,6 +125,7 @@ export const ownerValues = internalAction({
           row.pageDerived &&
           guardReason(plaintext, {
             assigned: row.explicitlyAssigned === true || assignedByLabel(row.label),
+            quoted: row.quoted === true,
           })
         )
       ) {
@@ -154,6 +156,7 @@ export function storedCredentialGuardReason(row: {
   userId?: string;
   label: string;
   explicitlyAssigned?: boolean;
+  quoted?: boolean;
 }): string | undefined {
   if (row.ciphertext === undefined || row.iv === undefined)
     return 'credential material unavailable';
@@ -165,6 +168,7 @@ export function storedCredentialGuardReason(row: {
         : openOwnedCredential(sealed, requireCredentialKey(), row.userId);
     return guardReason(value, {
       assigned: row.explicitlyAssigned === true || assignedByLabel(row.label),
+      quoted: row.quoted === true,
     });
   } catch {
     return 'credential material unreadable';

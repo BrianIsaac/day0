@@ -5,6 +5,7 @@ import { seedItemInTransaction, workItemSeedFields } from './work';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { isTerminalWorkState } from '../src/evaluation/states';
 import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
+import { appendEvent } from './eventLog';
 
 /**
  * Refuse a harness call outside mock mode or on a deployment that names no bed.
@@ -100,7 +101,7 @@ export const timeoutTask = mutation({
       approvedIndexes: undefined,
       applyPhase: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.failed',
       payload: { workItemId: args.workItemId, reason, source: 'evaluation-harness' },
@@ -132,7 +133,7 @@ export const failSkillAuthoringAttempts = mutation({
       approvedIndexes: undefined,
       applyPhase: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.failed',
       payload: { workItemId: args.workItemId, reason, source: 'evaluation-harness' },

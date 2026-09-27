@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { backfillCharterProvenance, surfaceSlug } from '../../convex/surfaces';
+import { backfillCharterProvenance, retireCharterSystem, surfaceSlug } from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -157,29 +157,51 @@ describe('surface persistence', (): void => {
     expect(rows.map((row): string => row.slug)).not.toContain('system');
   });
 
-  it('accepts and clears a legacy credentialRef row when orientation touches it', async (): Promise<void> => {
-    useSurfaceMode('real');
+  it('finds a Chinese-named row an earlier build keyed as system when the charter names it again, and retires it (review m50)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
-    const surfaceId = await harness.run(
+    const legacy = await harness.run(
       async (ctx): Promise<Id<'surfaces'>> =>
         await ctx.db.insert('surfaces', {
           agentId,
-          slug: 'linear',
-          displayName: 'Linear',
-          class: 'kanban',
+          slug: 'system',
+          displayName: '飞书',
+          class: 'chat',
           verdict: 'declared',
           whereFound: [],
-          credentialRef: 'LINEAR_API_KEY',
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'charter:namedSystems',
+              quote: '团队在飞书上沟通。',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
           credentialLanded: false,
           createdAt: 1,
-        } as never),
+        }),
     );
+    const system = { name: '飞书', class: 'chat', whereMentioned: '团队在飞书上沟通。' };
+    await harness.mutation(internal.surfaces.seedFromCharter, { agentId, namedSystems: [system] });
+    const rows = await harness.run(
+      async (ctx): Promise<Doc<'surfaces'>[]> =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows.map((row) => row._id)).toEqual([legacy]);
 
-    await propose(harness, surfaceId);
-    expect((await readSurface(harness, surfaceId)) as Record<string, unknown>).not.toHaveProperty(
-      'credentialRef',
+    const retired = await harness.run(
+      async (ctx) => await retireCharterSystem(ctx, { agentId, system, now: 5 }),
     );
+    expect(retired).toBe(1);
+    expect((await readSurface(harness, legacy)).discoveryEvidence?.[0]).toMatchObject({
+      current: false,
+      lastSeenAt: 5,
+    });
   });
 
   it('seeds once and exposes rows only to the owner', async (): Promise<void> => {
@@ -327,9 +349,9 @@ describe('surface persistence', (): void => {
         current: true,
       }),
     ]);
-    await expect(harness.run(async (ctx) => await ctx.db.get(deferredItemId))).resolves.toMatchObject(
-      { state: 'discovered' },
-    );
+    await expect(
+      harness.run(async (ctx) => await ctx.db.get(deferredItemId)),
+    ).resolves.toMatchObject({ state: 'discovered' });
   });
 
   it('mints a qualified charter mention beside the bare documented product', async (): Promise<void> => {
@@ -442,7 +464,11 @@ describe('surface persistence', (): void => {
     const { tileId, aliasId, workItemId } = await harness.run(
       async (
         ctx,
-      ): Promise<{ tileId: Id<'surfaces'>; aliasId: Id<'surfaces'>; workItemId: Id<'workItems'> }> => {
+      ): Promise<{
+        tileId: Id<'surfaces'>;
+        aliasId: Id<'surfaces'>;
+        workItemId: Id<'workItems'>;
+      }> => {
         const tileId = await ctx.db.insert('surfaces', {
           agentId,
           slug: 'looker-pipeline-tile',
@@ -456,7 +482,8 @@ describe('surface persistence', (): void => {
             {
               kind: 'documentation',
               ref: 'systems/looker-pipeline-tile.md',
-              quote: '- The Looker pipeline tile is reached through its web UI only, at `http://looker-tile:8080/`.',
+              quote:
+                '- The Looker pipeline tile is reached through its web UI only, at `http://looker-tile:8080/`.',
               current: true,
               firstSeenAt: 1,
               lastSeenAt: 1,
@@ -530,7 +557,10 @@ describe('surface persistence', (): void => {
       'documentation',
       'charter',
     ]);
-    expect(result.alias).toMatchObject({ verdict: 'declared', reason: 'Rejected by the operator.' });
+    expect(result.alias).toMatchObject({
+      verdict: 'declared',
+      reason: 'Rejected by the operator.',
+    });
     expect(result.alias?.discoveryEvidence).toHaveLength(1);
     expect(result.item).toMatchObject({ state: 'discovered' });
     const types = await eventTypes(harness);
@@ -608,9 +638,9 @@ describe('surface persistence', (): void => {
           .collect(),
     );
     expect(rows).toHaveLength(2);
-    expect(rows.find((row) => row._id === tileId)?.discoveryEvidence?.map((item) => item.kind)).toEqual(
-      ['documentation', 'charter'],
-    );
+    expect(
+      rows.find((row) => row._id === tileId)?.discoveryEvidence?.map((item) => item.kind),
+    ).toEqual(['documentation', 'charter']);
     expect(await eventTypes(harness)).not.toContain('surface.charter-match-ambiguous');
   });
 
@@ -1254,7 +1284,10 @@ describe('surface probe generations', (): void => {
           observedAt: 1,
           createdAt: 1,
           state: 'skipped',
-          verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+          verdict: {
+            decision: 'skip',
+            reason: 'out-of-scope: no charter or current documented-system overlap',
+          },
           skipReason: 'out-of-scope: no charter or current documented-system overlap',
         }),
     );
@@ -1273,8 +1306,8 @@ describe('surface probe generations', (): void => {
       reevaluation: { trigger: 'surface', key: `surface:${surfaceId}:100`, at: 100 },
     });
     expect(row?.skipReason).toBeUndefined();
-    const requeued = await harness.run(
-      async (ctx) => (await ctx.db.query('events').collect()).filter((event) => event.type === 'work.requeued'),
+    const requeued = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter((event) => event.type === 'work.requeued'),
     );
     expect(requeued.map((event) => event.payload)).toEqual([
       {
@@ -1511,9 +1544,7 @@ describe('surface probe generations', (): void => {
           class: 'analytics',
           verdict: 'approved',
           endpoint: 'http://looker-tile:8080/',
-          whereFound: [
-            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
-          ],
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
           discoveryEvidence: [
             {
               kind: 'documentation',
@@ -1939,9 +1970,7 @@ describe('surface approval state machine', (): void => {
           class: 'analytics',
           verdict: 'connected',
           endpoint: 'http://looker-tile:8080/',
-          whereFound: [
-            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
-          ],
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
           discoveryEvidence: [
             {
               kind: 'documentation',
@@ -2447,7 +2476,10 @@ describe('access expiry (Q5)', (): void => {
     expect((await readSurface(harness, surfaceId)).expiresAt).toBeUndefined();
 
     const approved = await approvedSurface(harness);
-    expect((await readSurface(harness, approved)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
+    expect(await readSurface(harness, approved)).toMatchObject({
+      expiresAt: APPROVED_AT + 30 * DAY,
+      accessSetBy: 'approval',
+    });
   });
 
   it("uses Q5's 90-day default when the proposal names no length", async (): Promise<void> => {
@@ -2537,7 +2569,11 @@ describe('access expiry (Q5)', (): void => {
       .mutation(api.surfaces.setAccessDays, { surfaceId, days: 60 });
 
     const surface = await readSurface(harness, surfaceId);
-    expect(surface).toMatchObject({ verdict: 'approved', expiresAt: renewedAt + 60 * DAY });
+    expect(surface).toMatchObject({
+      verdict: 'approved',
+      expiresAt: renewedAt + 60 * DAY,
+      accessSetBy: 'manager',
+    });
     expect(surface.reason).toBeUndefined();
     expect(await payloads(harness, 'surface.access-set')).toEqual([
       { surfaceId, by: 'approval', days: 30, expiresAt: APPROVED_AT + 30 * DAY },
@@ -2765,8 +2801,11 @@ describe('access expiry (Q5)', (): void => {
     expect(probed).not.toContain(ended);
     expect((await readSurface(harness, ended)).reason).toBe('expired');
 
-    for (const surfaceId of [connected, approved, ungranted]) {
-      expect((await readSurface(harness, surfaceId)).expiresAt).toBe(upgradedAt + 90 * DAY);
+    for (const surfaceId of [connected, approved, ungranted, swept]) {
+      expect(await readSurface(harness, surfaceId)).toMatchObject({
+        expiresAt: upgradedAt + 90 * DAY,
+        accessSetBy: 'upgrade',
+      });
     }
     expect((await readSurface(harness, ended)).expiresAt).toBe(PROPOSED_AT + 30 * DAY);
     expect((await readSurface(harness, declared)).expiresAt).toBeUndefined();
@@ -3030,5 +3069,200 @@ describe('a replaceable manager on the surface row', (): void => {
         createdAt: 300,
       },
     ]);
+  });
+});
+
+describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /**
+   * An approved Linear card and a way to probe it.
+   *
+   * Returns:
+   *   The harness, the surface and a probe that stores what it found.
+   */
+  async function approvedCard(): Promise<{
+    harness: TestConvex<typeof schema>;
+    surfaceId: Id<'surfaces'>;
+    probe: (tools: string[], verifiedAt: number) => Promise<void>;
+  }> {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'approved',
+        managerApprovedAt: 10,
+        itApprovedAt: 11,
+      });
+    });
+    const probe = async (tools: string[], verifiedAt: number): Promise<void> => {
+      const reserved = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!reserved) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: reserved.generation,
+        toolAllowlist: tools,
+        toolArguments: tools.map((tool) => ({ tool, arguments: [] })),
+        verifiedAt,
+      });
+    };
+    return { harness, surfaceId, probe };
+  }
+
+  it('sets the approved list at the first connection and keeps it through a re-probe after the policy page gains a method', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues', 'save_comment'],
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+      toolAllowlistApprovedAt: 100,
+    });
+  });
+
+  it('keeps the approved list through a failed probe, so the success after it is frozen still', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!failing) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: failing.generation,
+      verdict: 'listed-dead',
+      reason: 'the server did not answer',
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'listed-dead',
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+    });
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 300);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      toolAllowlist: ['list_issues', 'save_comment'],
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+    });
+  });
+
+  it('brings back an approved tool a narrower probe dropped, and nothing it never approved', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    await probe(['list_issues'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({ toolAllowlist: ['list_issues'] });
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 300);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues', 'save_comment'],
+    });
+  });
+
+  it('widens only by the manager’s approval, which the probe it schedules then applies', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.surfaces.approveTools, {
+        surfaceId,
+        tools: ['list_issues', 'save_comment', 'delete_issue'],
+      }),
+    ).resolves.toEqual({ approved: ['list_issues', 'save_comment', 'delete_issue'] });
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('surfaceActions:probeInternal');
+    await probe(['list_issues', 'save_comment', 'delete_issue', 'archive_issue'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues', 'save_comment', 'delete_issue'],
+      approvedToolAllowlist: ['list_issues', 'save_comment', 'delete_issue'],
+    });
+    const approvals = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event) => event.type === 'surface.tools-approved')
+        .map((event) => event.payload),
+    );
+    expect(approvals).toEqual([
+      {
+        surfaceId,
+        tools: ['list_issues', 'save_comment', 'delete_issue'],
+        added: ['delete_issue'],
+        removed: [],
+      },
+    ]);
+  });
+
+  it('refuses to approve tools on a card that is not connected, a repeated tool, or another owner’s card', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] }),
+    ).rejects.toThrow('Tools are approved on a connected card; this one is approved.');
+    await probe(['list_issues'], 100);
+    await expect(
+      owner.mutation(api.surfaces.approveTools, {
+        surfaceId,
+        tools: ['list_issues', 'list_issues'],
+      }),
+    ).rejects.toThrow('Name each tool once.');
+    await expect(
+      harness
+        .withIdentity({ subject: 'stranger' })
+        .mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] }),
+    ).rejects.toThrow('forbidden');
+  });
+
+  it('takes a tool the manager removes off the stored list at once, before any probe', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues'],
+      toolArguments: [{ tool: 'list_issues', arguments: [] }],
+      approvedToolAllowlist: ['list_issues'],
+    });
+  });
+
+  it('clears the approved list on a demotion to another route and on a rejection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        fallbackPath: 'browser-driven',
+        pathCandidates: [
+          { path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' },
+          { path: 'browser-driven', endpoint: 'https://linear.app' },
+        ],
+      });
+    });
+    await probe(['list_issues'], 100);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { verdict: 'listed-dead' });
+    });
+    const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!failing) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+      surfaceId,
+      generation: failing.generation,
+      reason: 'the MCP server refused the token',
+      attemptedAt: 200,
+    });
+    const demoted = await readSurface(harness, surfaceId);
+    expect(demoted).toMatchObject({ verdict: 'approved', path: 'browser-driven' });
+    expect(demoted).not.toHaveProperty('approvedToolAllowlist');
+
+    await probe(['browser_navigate'], 300);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { verdict: 'approved' });
+    });
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId, reason: 'not this route' });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('approvedToolAllowlist');
   });
 });

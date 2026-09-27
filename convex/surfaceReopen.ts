@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { internalMutation } from './_generated/server';
 import { scheduleOrientationFor } from './surfaces';
+import { appendEvent } from './eventLog';
 
 /**
  * Put an `absent` system back to `declared` and orient it again.
@@ -20,7 +21,7 @@ export const reopenAbsent = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface || surface.verdict !== 'absent') return false;
     await ctx.db.patch(surface._id, { verdict: 'declared', reason: args.reason });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.reopened',
       payload: { surfaceId: surface._id, reason: args.reason },

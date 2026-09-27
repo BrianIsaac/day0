@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import { STALE_SYNC_MS, agentReadsSource, validateLinkInput } from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
 import { allConvexModules } from './all-modules';
+import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
@@ -159,7 +160,7 @@ describe('documentation source validation', (): void => {
     ).not.toThrow();
   });
 
-  it('reads every owner source except the excluded ones, honouring legacy inclusion lists', async (): Promise<void> => {
+  it('reads every owner source except the excluded ones', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
       const first = await ctx.db.insert('docSources', {
@@ -193,18 +194,12 @@ describe('documentation source validation', (): void => {
         all: agentReadsSource(base, second),
         excludedSecond: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, second),
         keptFirst: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, first),
-        legacySelectedFirst: agentReadsSource({ ...base, docSourceIds: [first] }, first),
-        legacyRejectedSecond: agentReadsSource({ ...base, docSourceIds: [first] }, second),
-        legacyEmptyMeansAll: agentReadsSource({ ...base, docSourceIds: [] }, second),
       };
     });
     expect(result).toEqual({
       all: true,
       excludedSecond: false,
       keptFirst: true,
-      legacySelectedFirst: true,
-      legacyRejectedSecond: false,
-      legacyEmptyMeansAll: true,
     });
   });
 });
@@ -622,6 +617,105 @@ describe('documentation sources in real mode', (): void => {
     const credential = await harness.run(async (ctx) => await ctx.db.get(credentialId));
     expect(credential?.status).toBe('superseded');
     expect(credential?.revokedAt).toBeUndefined();
+  });
+
+  it('records on each run why it ended short, and what a completed one changed (U8 D1 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const superseded = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const failed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.failSync, {
+      sourceId,
+      runId: failed,
+      status: 'error',
+      reason: 'The documentation read was interrupted (timeout).',
+    });
+    const completed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: completed,
+      ref: 'fresh.md',
+      title: 'Fresh',
+      markdown: '# Fresh',
+      updatedAt: 2,
+    });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId: completed,
+      refs: ['fresh.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    const runs = await harness.run(
+      async (ctx) => await Promise.all([superseded, failed, completed].map((id) => ctx.db.get(id))),
+    );
+    expect(runs.map((run) => [run?.state, run?.reason ?? null])).toEqual([
+      ['superseded', 'a newer sync of the source started before this one finished'],
+      ['error', 'The documentation read was interrupted (timeout).'],
+      ['completed', null],
+    ]);
+    expect(runs[2]?.summary).toEqual({
+      pagesKept: 1,
+      pagesRemoved: 1,
+      mirrorsRemoved: 1,
+      credentialsSuperseded: 0,
+      surfacesToReapprove: 0,
+    });
+  });
+
+  it('deletes a mirror an earlier slug rule keyed, once the sync has mirrored the page under its own (review M20)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: `source-${String(sourceId).slice(-10).toLowerCase()}-caf-md`,
+        title: 'Café, as v0.4.0 keyed it',
+        body: '# Café',
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'Café.md',
+        updatedAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'Café.md',
+      title: 'Café',
+      markdown: '# Café',
+      updatedAt: 2,
+    });
+    await harness.mutation(internal.mock.upsertDoc, {
+      syncRunId: runId,
+      agentId,
+      slug: mirroredDocSlug(sourceId, 'Café.md'),
+      title: 'Café',
+      body: '# Café',
+      category: 'team-doc',
+      sourceId,
+      sourceRef: 'Café.md',
+    });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId,
+      refs: ['Café.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    const mirrors = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(mirrors.map((mirror) => mirror.slug)).toEqual([mirroredDocSlug(sourceId, 'Café.md')]);
   });
 
   it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {

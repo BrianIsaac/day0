@@ -592,7 +592,7 @@ These are the real-mode forms. A mock deployment, the seeded office `pnpm setup:
 2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. A volume nothing was ever pushed to (a first run that stopped before its push) has no tables, and takes the env first as a new one does, since the auth config is read from the deployment's env at the push. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
 3. **The env, then the restart.** `pnpm sync:env`, then `pnpm convex:restart` once everything before it succeeded.
 
-A schema change existing rows do not fit ships as two releases: the first declares both shapes and migrates, the second removes the old declaration. The migrations in `convex/migrations.ts` say what the release after theirs may remove: `agents.posture`, `agents.docSourceIds` and its read, `skills.daytonaSandboxId`, `skills.supervisedRunsCompleted` and `surfaces.credentialRef`. `npx convex run skills:requeueStranded` is an earlier one-off that no migration runs; the sandbox-id move it sat beside is now the `skills-sandbox-id` migration.
+A schema change existing rows do not fit ships as two releases: the first declares both shapes and migrates, the second removes the old declaration. The migrations in `convex/migrations.ts` say what the release after theirs may remove. v0.6.0 removed `agents.posture`, `agents.docSourceIds` and its read, `skills.daytonaSandboxId`, `skills.supervisedRunsCompleted` and `surfaces.credentialRef`, whose migrations shipped in v0.4.0; the upgrade refuses to push while any of those migrations is unfinished on the deployment, before anything changes. `npx convex run skills:requeueStranded` is an earlier one-off that no migration runs.
 
 The demo bed and the hosted deployment take the same upgrade. `pnpm demo:bed up` checks the release of the restored snapshot before it changes anything, then pushes the functions, runs the migrations and stamps the release before it pushes the env, and a snapshot records the commit, the release and the backend image beside its checksum. On Convex cloud: read the stamp (`npx convex data deploymentVersions --prod --limit 1`), `npx convex deploy`, `npx convex run migrations:runPending --prod` until nothing is pending, `npx convex run migrations:recordRelease --prod '{"release":"<version>"}'`, then deploy the app.
 
@@ -874,7 +874,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 32 tables: 24 carry per-agent or agent-owned runtime state, five hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
+The schema contains 33 tables: 24 carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired, five hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
 | Table | Purpose |
 |---|---|
@@ -891,6 +891,7 @@ The schema contains 32 tables: 24 carry per-agent or agent-owned runtime state, 
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |
 | `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp |
 | `externalClaims` | One live claim per provider item across employees, released on cancellation and retaken before a retry resumes |
+| `retirements` | One row per employee a real-mode retire deleted, under its owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
 | `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
 | `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
 | `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
@@ -1635,7 +1636,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。从未推送过任何内容的数据卷（首次运行在推送前停止）没有任何表，会像新数据卷一样先推送 env，因为 auth config 在推送时读取 deployment 的 env。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
 3. **env，然后重启。** `pnpm sync:env`，此前各步都成功后 `pnpm convex:restart`。
 
-现有数据不符合的 schema 变更分两个版本发布：第一个同时声明新旧两种结构并迁移，第二个删除旧声明。`convex/migrations.ts` 中的迁移注明了下一版本可以删除的内容：`agents.posture`、`agents.docSourceIds` 及其读取、`skills.daytonaSandboxId`、`skills.supervisedRunsCompleted` 和 `surfaces.credentialRef`。`npx convex run skills:requeueStranded` 是更早的一次性命令，不由任何迁移运行；与它并列的 sandbox id 迁移现在是 `skills-sandbox-id` 迁移。
+现有数据不符合的 schema 变更分两个版本发布：第一个同时声明新旧两种结构并迁移，第二个删除旧声明。`convex/migrations.ts` 中的迁移注明了下一版本可以删除的内容。v0.6.0 删除了 `agents.posture`、`agents.docSourceIds` 及其读取、`skills.daytonaSandboxId`、`skills.supervisedRunsCompleted` 和 `surfaces.credentialRef`，它们的迁移随 v0.4.0 发布；只要部署上这些迁移中任何一个尚未完成，升级就会在做任何改动之前拒绝推送。`npx convex run skills:requeueStranded` 是更早的一次性命令，不由任何迁移运行。
 
 演示环境和托管 deployment 走同样的升级。`pnpm demo:bed up` 在改动任何内容之前检查恢复出的快照的版本，然后推送 functions、运行迁移并记录版本，最后才推送 env；快照在校验和旁边记录 commit、版本和 backend 镜像。在 Convex cloud 上：读取版本（`npx convex data deploymentVersions --prod --limit 1`），`npx convex deploy`，反复运行 `npx convex run migrations:runPending --prod` 直到没有待运行的迁移，`npx convex run migrations:recordRelease --prod '{"release":"<version>"}'`，然后部署应用。
 

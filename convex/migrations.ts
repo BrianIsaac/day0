@@ -20,7 +20,7 @@
  */
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Doc, Id } from './_generated/dataModel';
+import type { Doc } from './_generated/dataModel';
 import {
   internalAction,
   internalMutation,
@@ -28,11 +28,13 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
-import { migrateSandboxIdPage } from './skills';
-import { restartAccessClocksPage } from './surfaces';
+import { backfillAccessSetByPage, restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
+import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { avatarById } from '../src/agent/avatar-pets';
+import { mirroredDocSlug } from '../src/docs/types';
 import { deploymentZone } from '../src/lib/zone';
 
 /**
@@ -44,14 +46,14 @@ import { deploymentZone } from '../src/lib/zone';
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
   'agents-owner',
-  'agents-inclusion-list',
-  'agents-posture',
-  'skills-sandbox-id',
-  'skills-supervised-runs',
-  'surfaces-credential-ref',
   'credentials-sync-revoke',
   'ticket-listings',
   'agents-zone',
+  'retirements-from-tombstones',
+  'surfaces-approved-tools',
+  'surfaces-access-set-by',
+  'agents-avatar-digest',
+  'mirrors-rekey',
 ] as const;
 
 /** One migration's name. */
@@ -71,37 +73,15 @@ const FIRST_MIGRATIONS_RELEASE = '0.4.0';
 /** The release after it, which gives every agent a zone and a mode (N12, the M2 backfill). */
 const ZONE_RELEASE = '0.5.0';
 
+/** The schema step after that: retirements, the freeze's approved list, the attempt count. */
+const SCHEMA_STEP_RELEASE = '0.6.0';
+
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
   'agents-owner': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'gives an agent with no owner to the deployment’s one owner, when it has exactly one',
     thenRemoves: 'nothing: agents.userId stays optional until the customer profile keys owners',
-  },
-  'agents-inclusion-list': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'turns a legacy docSourceIds inclusion list into the exclusions it implies, so a source linked later is inherited',
-    thenRemoves: 'agents.docSourceIds and its read in docSources.agentReadsSource',
-  },
-  'agents-posture': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'clears the retired posture ladder field',
-    thenRemoves: 'agents.posture',
-  },
-  'skills-sandbox-id': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'moves daytonaSandboxId onto sandboxId',
-    thenRemoves: 'skills.daytonaSandboxId',
-  },
-  'skills-supervised-runs': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'clears the retired per-skill supervised-run counter',
-    thenRemoves: 'skills.supervisedRunsCompleted',
-  },
-  'surfaces-credential-ref': {
-    release: FIRST_MIGRATIONS_RELEASE,
-    does: 'clears the pre-credentialId reference nothing reads',
-    thenRemoves: 'surfaces.credentialRef',
   },
   'credentials-sync-revoke': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -117,6 +97,31 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: ZONE_RELEASE,
     does: 'gives an agent with no zone the deployment’s current zone, and one with no mode the deployment’s mode; the status note names the zone',
     thenRemoves: 'nothing: an absent zone still reads as the deployment’s',
+  },
+  'retirements-from-tombstones': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies each retire tombstone an older release wrote as an agent.retired payload into the owner’s retirements table, where the export’s owner section now reads it',
+    thenRemoves: 'nothing: the agent.retired events stay as the ledger’s record',
+  },
+  'surfaces-approved-tools': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies the tool list of each card that stores one into its approved list, which every later probe is frozen against and only the manager widens',
+    thenRemoves: 'the fallback to toolAllowlist in surfaces.frozenTools',
+  },
+  'surfaces-access-set-by': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'records on each card with an access end date who set it, from its newest surface.access-set event, or the upgrade when it has none',
+    thenRemoves: 'nothing: accessSetBy is written wherever the clock is set from here on',
+  },
+  'agents-avatar-digest': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'rewrites an avatar id the gallery no longer lists, the handle-keyed ids of earlier builds, to the face the dashboard already shows for it',
+    thenRemoves: 'nothing: avatarById keeps its digest fallback for an id a client sends',
+  },
+  'mirrors-rekey': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'moves each documentation mirror an earlier slug rule keyed onto its own slug, and deletes it where a sync already wrote the page there',
+    thenRemoves: 'nothing: finishSync keeps every mirror on its own slug from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -141,9 +146,6 @@ const EVENT_PAGE = 10;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
-
-/** The most documentation sources one owner's inclusion list is converted against. */
-const OWNER_SOURCE_LIMIT = 1_000;
 
 /** One page of one migration. */
 interface MigrationPage {
@@ -205,99 +207,6 @@ async function adoptOwnerless(ctx: MutationCtx, cursor: string | null): Promise<
   return {
     read: page.page.length,
     changed: owner === undefined ? 0 : page.page.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
-/**
- * The exclusions a legacy inclusion list implies: every source the owner has
- * that the list leaves out, with any exclusions already stored.
- */
-async function impliedExclusions(
-  ctx: QueryCtx,
-  owner: string,
-  agent: Pick<Doc<'agents'>, '_id' | 'excludedDocSourceIds'>,
-  included: readonly Id<'docSources'>[],
-): Promise<Id<'docSources'>[]> {
-  const sources = await ctx.db
-    .query('docSources')
-    .withIndex('by_user', (q) => q.eq('userId', owner))
-    .take(OWNER_SOURCE_LIMIT + 1);
-  if (sources.length > OWNER_SOURCE_LIMIT) {
-    throw new Error(`the owner of agent ${agent._id} has more than ${OWNER_SOURCE_LIMIT} sources`);
-  }
-  const excluded = new Set(agent.excludedDocSourceIds ?? []);
-  for (const source of sources) if (!included.includes(source._id)) excluded.add(source._id);
-  return [...excluded];
-}
-
-/** Convert legacy inclusion lists into exclusions, keeping what each agent reads today. */
-async function convertInclusionLists(
-  ctx: MutationCtx,
-  cursor: string | null,
-): Promise<MigrationPage> {
-  const page = await ctx.db.query('agents').paginate({ cursor, numItems: MIGRATION_PAGE });
-  let changed = 0;
-  for (const agent of page.page) {
-    const included = agent.docSourceIds;
-    if (included === undefined) continue;
-    let excluded: Id<'docSources'>[];
-    // An empty list already reads every source.
-    if (included.length === 0) excluded = agent.excludedDocSourceIds ?? [];
-    // An agent with no owner reads no source, listed or not (sources are the
-    // owner's), so clearing its list changes nothing it reads today and
-    // leaves no row carrying the field the next release removes.
-    else if (agent.userId === undefined) excluded = agent.excludedDocSourceIds ?? [];
-    else excluded = await impliedExclusions(ctx, agent.userId, agent, included);
-    await ctx.db.patch(agent._id, {
-      docSourceIds: undefined,
-      excludedDocSourceIds: excluded.length > 0 ? excluded : undefined,
-    });
-    changed += 1;
-  }
-  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
-}
-
-/** Clear the retired posture ladder from every agent. */
-async function clearPosture(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('agents').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter((agent) => agent.posture !== undefined);
-  for (const agent of carrying) await ctx.db.patch(agent._id, { posture: undefined });
-  return {
-    read: page.page.length,
-    changed: carrying.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
-/** Clear the retired supervised-run counter from every skill. */
-async function clearSupervisedRuns(
-  ctx: MutationCtx,
-  cursor: string | null,
-): Promise<MigrationPage> {
-  const page = await ctx.db.query('skills').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter((skill) => skill.supervisedRunsCompleted !== undefined);
-  for (const skill of carrying) {
-    await ctx.db.patch(skill._id, { supervisedRunsCompleted: undefined });
-  }
-  return {
-    read: page.page.length,
-    changed: carrying.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
-}
-
-/** Clear the pre-`credentialId` reference from every surface. */
-async function clearCredentialRef(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter((surface) => surface.credentialRef !== undefined);
-  for (const surface of carrying) await ctx.db.patch(surface._id, { credentialRef: undefined });
-  return {
-    read: page.page.length,
-    changed: carrying.length,
     cursor: page.continueCursor,
     isDone: page.isDone,
   };
@@ -401,22 +310,125 @@ async function stampZoneAndMode(ctx: MutationCtx, cursor: string | null): Promis
   };
 }
 
+/**
+ * Copy the retire tombstones older releases kept on `agent.retired` events
+ * into `retirements`. A tombstone this release wrote names its row already
+ * and is passed over; so is one without an owner, which no owner section
+ * could list.
+ */
+async function copyRetirements(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db
+    .query('events')
+    .withIndex('by_type', (q) => q.eq('type', AGENT_RETIRED_EVENT))
+    .paginate({ cursor, numItems: EVENT_PAGE });
+  let changed = 0;
+  for (const event of page.page) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    if (payload.retirementId !== undefined || typeof payload.userId !== 'string') continue;
+    const count = (value: unknown): number => (typeof value === 'number' ? value : 0);
+    const rowCounts = Object.fromEntries(
+      Object.entries(
+        typeof payload.rowCounts === 'object' && payload.rowCounts !== null
+          ? (payload.rowCounts as Record<string, unknown>)
+          : {},
+      ).flatMap(([table, rows]) => (typeof rows === 'number' ? [[table, rows]] : [])),
+    );
+    await ctx.db.insert('retirements', {
+      userId: payload.userId,
+      agentId: event.agentId,
+      retiredAt: typeof payload.retiredAt === 'number' ? payload.retiredAt : event.createdAt,
+      rowCounts,
+      revokedCredentials: count(payload.revokedCredentials),
+      keptCredentials: count(payload.keptCredentials),
+      claims: [],
+      rejections: [],
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Give each card that stores a tool list an approved list of the same tools,
+ * stamped at its last verification, so the freeze reads the approved list
+ * whatever became of the stored one. A card with an approved list already is
+ * left alone.
+ */
+async function copyApprovedTools(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
+  const carrying = page.page.filter(
+    (surface) => surface.toolAllowlist !== undefined && surface.approvedToolAllowlist === undefined,
+  );
+  for (const surface of carrying) {
+    await ctx.db.patch(surface._id, {
+      approvedToolAllowlist: surface.toolAllowlist,
+      toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+    });
+  }
+  return {
+    read: page.page.length,
+    changed: carrying.length,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/**
+ * Rewrite every stored avatar id the gallery does not list to the listed face
+ * `avatarById` already shows for it (U15 D1 (a)): an earlier build keyed faces
+ * by a person's handle (`tw-<handle>`), which an export would otherwise carry.
+ */
+async function rewriteAvatarIds(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('agents').paginate({ cursor, numItems: MIGRATION_PAGE });
+  let changed = 0;
+  for (const agent of page.page) {
+    if (agent.avatarId === undefined) continue;
+    const listed = avatarById(agent.avatarId).id;
+    if (listed === agent.avatarId) continue;
+    await ctx.db.patch(agent._id, { avatarId: listed });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Put every documentation mirror on the slug `mirroredDocSlug` gives its page
+ * (review M20). Before v0.5.0 a non-ASCII reference collapsed to its ASCII
+ * part, so a sync under v0.5.0 wrote a second row beside the old one; the old
+ * row is deleted where the new one exists, and moved onto the new slug where
+ * no sync has written it yet, so the employee never loses the page.
+ */
+async function rekeyMirrors(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('mockDocs').paginate({ cursor, numItems: MIGRATION_PAGE });
+  let changed = 0;
+  for (const mirror of page.page) {
+    if (mirror.sourceId === undefined || mirror.sourceRef === undefined) continue;
+    const slug = mirroredDocSlug(mirror.sourceId, mirror.sourceRef);
+    if (mirror.slug === slug) continue;
+    const current = await ctx.db
+      .query('mockDocs')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', mirror.agentId).eq('slug', slug))
+      .first();
+    if (current) await ctx.db.delete(mirror._id);
+    else await ctx.db.patch(mirror._id, { slug });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
 /** Each migration's page, keyed by name, so a name with no page fails the typecheck. */
 const MIGRATION_PAGES: Readonly<
   Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
 > = {
   'agents-owner': adoptOwnerless,
-  'agents-inclusion-list': convertInclusionLists,
-  'agents-posture': clearPosture,
-  'skills-sandbox-id': async (ctx, cursor) => {
-    const page = await migrateSandboxIdPage(ctx, cursor);
-    return { ...page, changed: page.moved };
-  },
-  'skills-supervised-runs': clearSupervisedRuns,
-  'surfaces-credential-ref': clearCredentialRef,
   'credentials-sync-revoke': clearSyncRevokes,
   'ticket-listings': copyListings,
   'agents-zone': stampZoneAndMode,
+  'retirements-from-tombstones': copyRetirements,
+  'surfaces-approved-tools': copyApprovedTools,
+  'surfaces-access-set-by': async (ctx, cursor) => await backfillAccessSetByPage(ctx, cursor),
+  'agents-avatar-digest': rewriteAvatarIds,
+  'mirrors-rekey': rekeyMirrors,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
 };

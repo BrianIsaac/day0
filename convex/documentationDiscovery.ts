@@ -16,6 +16,7 @@ import {
   stableSlug,
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
+import { appendEvent } from './eventLog';
 
 const discoveryEvidenceValidator = v.object({
   displayName: v.string(),
@@ -365,7 +366,7 @@ export const apply = internalMutation({
       totals.updated += result.updated;
       totals.retired += result.retired;
       totals.scheduled += result.scheduled;
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: agent._id,
         type: 'documentation.systems-discovered',
         payload: { sourceId: source._id, systems: systems.length, ...result },

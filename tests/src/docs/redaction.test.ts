@@ -153,6 +153,20 @@ describe('documentation credential redaction', (): void => {
     ]);
   });
 
+  it('marks a value its author quoted, and takes a quoted phrase as an assigned value (pre-tag D2 (a))', async (): Promise<void> => {
+    const phrase = await redactCredentials('# Warehouse\n\nPassword: “Open Sesame”', 'Warehouse', {
+      model: new ScriptedSpanModel(() => []),
+    });
+    expect(phrase.credentials).toEqual([
+      {
+        label: 'warehouse password',
+        plaintext: 'Open Sesame',
+        explicitlyAssigned: true,
+        quoted: true,
+      },
+    ]);
+  });
+
   it('leaves prose, names, counts, dates, placeholders and locations alone', async (): Promise<void> => {
     const body = [
       'Notion tokens start with ntn_ and the ntn_prefix convention is documented.',
