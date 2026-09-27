@@ -152,6 +152,9 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
 
 const migrationName = v.union(...MIGRATION_NAMES.map((name) => v.literal(name)));
 
+/** The validator of an action migration's name. */
+const actionMigrationName = v.literal(CREDENTIAL_RESEAL_MIGRATION);
+
 /** Rows one page of a migration reads. */
 const MIGRATION_PAGE = 100;
 
@@ -564,7 +567,7 @@ export const runMigrationPage = internalMutation({
 
 /** Where a migration's next page starts, for an action migration's page. Internal. */
 export const migrationStart = internalQuery({
-  args: { name: migrationName },
+  args: { name: actionMigrationName },
   handler: async (
     ctx,
     args,
@@ -588,7 +591,7 @@ export const migrationStart = internalQuery({
  */
 export const recordActionPage = internalMutation({
   args: {
-    name: migrationName,
+    name: actionMigrationName,
     fromCursor: v.union(v.string(), v.null()),
     page: v.object({
       read: v.number(),
