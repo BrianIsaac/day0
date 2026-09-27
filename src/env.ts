@@ -32,8 +32,6 @@ const schema = z.object({
   GOOGLE_API_KEY: z.string().optional(),
   GEMINI_LIVE_MODEL: z.string().default('gemini-flash-3.1-live'),
 
-  EXA_API_KEY: z.string().optional(),
-
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_API_URL: z.string().default('https://app.daytona.io/api'),
 
@@ -99,7 +97,6 @@ const OPTIONAL_STRINGS = [
   'ELEVENLABS_WEBHOOK_SECRET',
   'GOOGLE_API_KEY',
   'GEMINI_LIVE_MODEL',
-  'EXA_API_KEY',
   'DAYTONA_API_KEY',
   'DAYTONA_API_URL',
   'SKILL_SANDBOX_SOCKET',
@@ -159,7 +156,6 @@ export const env = schema.parse(
     ELEVENLABS_WEBHOOK_SECRET: process.env.ELEVENLABS_WEBHOOK_SECRET,
     GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
     GEMINI_LIVE_MODEL: process.env.GEMINI_LIVE_MODEL,
-    EXA_API_KEY: process.env.EXA_API_KEY,
     DAYTONA_API_KEY: process.env.DAYTONA_API_KEY,
     DAYTONA_API_URL: process.env.DAYTONA_API_URL,
     SKILL_SANDBOX_SOCKET: process.env.SKILL_SANDBOX_SOCKET,
