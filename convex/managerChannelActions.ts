@@ -30,31 +30,34 @@ import {
 import type { MockAction } from '../src/work/types';
 
 function sameAuthority(left: SurfaceRecord, right: SurfaceRecord): boolean {
-  return JSON.stringify({
-    slug: left.slug,
-    verdict: left.verdict,
-    credentialLanded: left.credentialLanded,
-    lastVerifiedAt: left.lastVerifiedAt,
-    path: left.path,
-    endpoint: left.endpoint,
-    toolAllowlist: left.toolAllowlist,
-    toolArguments: left.toolArguments,
-    credentialId: left.credentialId,
-    managerDmChannelId: left.managerDmChannelId,
-    managerUserId: left.managerUserId,
-  }) === JSON.stringify({
-    slug: right.slug,
-    verdict: right.verdict,
-    credentialLanded: right.credentialLanded,
-    lastVerifiedAt: right.lastVerifiedAt,
-    path: right.path,
-    endpoint: right.endpoint,
-    toolAllowlist: right.toolAllowlist,
-    toolArguments: right.toolArguments,
-    credentialId: right.credentialId,
-    managerDmChannelId: right.managerDmChannelId,
-    managerUserId: right.managerUserId,
-  });
+  return (
+    JSON.stringify({
+      slug: left.slug,
+      verdict: left.verdict,
+      credentialLanded: left.credentialLanded,
+      lastVerifiedAt: left.lastVerifiedAt,
+      path: left.path,
+      endpoint: left.endpoint,
+      toolAllowlist: left.toolAllowlist,
+      toolArguments: left.toolArguments,
+      credentialId: left.credentialId,
+      managerDmChannelId: left.managerDmChannelId,
+      managerUserId: left.managerUserId,
+    }) ===
+    JSON.stringify({
+      slug: right.slug,
+      verdict: right.verdict,
+      credentialLanded: right.credentialLanded,
+      lastVerifiedAt: right.lastVerifiedAt,
+      path: right.path,
+      endpoint: right.endpoint,
+      toolAllowlist: right.toolAllowlist,
+      toolArguments: right.toolArguments,
+      credentialId: right.credentialId,
+      managerDmChannelId: right.managerDmChannelId,
+      managerUserId: right.managerUserId,
+    })
+  );
 }
 
 interface ManagerDelivery {
@@ -88,7 +91,7 @@ async function deliverManagerMessage(
       deps: {
         decrypt: decryptCredential,
         createMcpClient: createMastraMcpClient,
-    browserMcpUrl: process.env.DAY0_BROWSER_MCP_URL,
+        browserMcpUrl: process.env.DAY0_BROWSER_MCP_URL,
         fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
         beforeTransport: beforeManagerTransport(ctx, delivery.agentId, workItemId, decisionId),
       },
@@ -122,14 +125,20 @@ function beforeManagerTransport(
       const decision = item?.decision;
       const pendingState = decision?.kind === 'plan' ? 'plan-pending' : 'actions-pending';
       if (
-        !decision || decision.id !== decisionId || decision.decidedAt ||
-        decision.requestFailedAt || decision.ts || item?.state !== pendingState
-      ) return 'decision request is no longer current';
+        !decision ||
+        decision.id !== decisionId ||
+        decision.decidedAt ||
+        decision.requestFailedAt ||
+        decision.ts ||
+        item?.state !== pendingState
+      )
+        return 'decision request is no longer current';
     }
     if (!authority.agentExists) return 'agent not found';
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
-    if (!sameAuthority(surface, claimedSurface)) return 'surface authority changed before transport';
+    if (!sameAuthority(surface, claimedSurface))
+      return 'surface authority changed before transport';
     const refusal =
       surfaceRefusal(surface, Date.now()) ??
       pathRefusal(parsed.action, surface) ??
@@ -159,19 +168,23 @@ export const requestDecision = internalAction({
     if (!prepared.prepared) return { sent: false, reason: prepared.reason };
 
     let text = decisionRequestText({
-        agentName: prepared.agentName,
-        title: prepared.title,
-        id: prepared.decisionId,
-        kind: args.kind as DecisionKind,
-        plan: prepared.plan,
-        actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
-        heldIndexes: prepared.heldIndexes,
-        surfaces: prepared.surfaces,
-        closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
-      });
+      agentName: prepared.agentName,
+      title: prepared.title,
+      id: prepared.decisionId,
+      kind: args.kind as DecisionKind,
+      plan: prepared.plan,
+      actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
+      heldIndexes: prepared.heldIndexes,
+      surfaces: prepared.surfaces,
+      closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
+    });
     // Other held action sets are already waiting on this channel: offer one
     // code that decides them all, each named with its own.
-    if (args.kind === 'actions' && prepared.openActionDecisions.length > 0 && prepared.pendingRunId) {
+    if (
+      args.kind === 'actions' &&
+      prepared.openActionDecisions.length > 0 &&
+      prepared.pendingRunId
+    ) {
       const batchId = decisionIdFromBytes(randomBytes(32));
       const members = [
         {
@@ -198,7 +211,13 @@ export const requestDecision = internalAction({
       }
     }
     try {
-      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text, prepared.decisionId);
+      const result = await deliverManagerMessage(
+        ctx,
+        args.workItemId,
+        prepared,
+        text,
+        prepared.decisionId,
+      );
       await ctx.runMutation(internal.work.recordDecisionRequest, {
         workItemId: args.workItemId,
         decisionId: prepared.decisionId,
@@ -224,12 +243,7 @@ export const sendDecisionNotice = internalAction({
     const prepared = await ctx.runMutation(internal.work.prepareDecisionNotice, args);
     if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
     try {
-      const result = await deliverManagerMessage(
-        ctx,
-        args.workItemId,
-        prepared,
-        prepared.text,
-      );
+      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, prepared.text);
       await ctx.runMutation(internal.work.recordDecisionNotice, {
         ...args,
         ts: result.providerId,
@@ -250,12 +264,7 @@ export const sendManagerReplyNotice = internalAction({
     const prepared = await ctx.runMutation(internal.work.prepareManagerReplyNotice, args);
     if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
     try {
-      const result = await deliverManagerMessage(
-        ctx,
-        prepared.workItemId,
-        prepared,
-        prepared.text,
-      );
+      const result = await deliverManagerMessage(ctx, prepared.workItemId, prepared, prepared.text);
       await ctx.runMutation(internal.work.recordManagerReplyNotice, {
         ...args,
         providerTs: result.providerId,
@@ -298,7 +307,12 @@ export const sendManagerDigests = internalAction({
       const prepared = await ctx.runMutation(internal.work.prepareManagerDigest, { agentId });
       if (!prepared.prepared) continue;
       try {
-        const result = await deliverManagerMessage(ctx, prepared.workItemId, prepared, prepared.text);
+        const result = await deliverManagerMessage(
+          ctx,
+          prepared.workItemId,
+          prepared,
+          prepared.text,
+        );
         await ctx.runMutation(internal.work.recordManagerDigest, {
           agentId,
           noteIds: prepared.noteIds,
