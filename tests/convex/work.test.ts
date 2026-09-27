@@ -5417,6 +5417,91 @@ describe('the evaluation’s record (step 29)', (): void => {
   });
 });
 
+describe('the charter a verdict names (review M17, Q14)', (): void => {
+  /** An employee whose approved charter 1.0 has a newer row above it, and a waiting row. */
+  async function evaluatedUnder(
+    harness: Harness,
+    newer: { approved: boolean },
+  ): Promise<{
+    agentId: Id<'agents'>;
+    approved: Id<'charters'>;
+    newest: Id<'charters'>;
+    workItemId: Id<'workItems'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const approved = await ctx.db.insert('charters', {
+        agentId,
+        version: '1.0',
+        body: {},
+        approved: true,
+        createdAt: 1,
+      });
+      const newest = await ctx.db.insert('charters', {
+        agentId,
+        version: '1.1',
+        body: {},
+        approved: newer.approved,
+        createdAt: 2,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-12',
+        title: 'Northstar renewal',
+        contentSummary: 'Out of scope.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      return { agentId, approved, newest, workItemId };
+    });
+  }
+
+  async function evaluatedPayload(
+    harness: Harness,
+    agentId: Id<'agents'>,
+  ): Promise<Record<string, unknown> | undefined> {
+    const [evaluated] = await eventsOfType(harness, agentId, 'work.evaluated');
+    return evaluated?.payload as Record<string, unknown> | undefined;
+  }
+
+  it('never names a draft above the approved charter', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, approved, workItemId } = await evaluatedUnder(harness, { approved: false });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'skip', reason: 'outside the charter' },
+    });
+    expect(await evaluatedPayload(harness, agentId)).toMatchObject({
+      charterId: approved,
+      charterVersion: '1.0',
+    });
+  });
+
+  it('names the charter the evaluation read, not one approved during its model call', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, approved, workItemId } = await evaluatedUnder(harness, { approved: true });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'skip', reason: 'outside the charter' },
+      charterId: approved,
+    });
+    expect(await evaluatedPayload(harness, agentId)).toMatchObject({
+      charterId: approved,
+      charterVersion: '1.0',
+    });
+  });
+});
+
 describe('the manager’s estimate at plan approval (N11)', (): void => {
   it('keeps the optional minutes the manager says the work would have taken, and refuses a nonsense figure', async (): Promise<void> => {
     vi.useFakeTimers();

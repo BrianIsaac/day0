@@ -2233,6 +2233,32 @@ export const readmitSatisfiedDeferrals = internalMutation({
 });
 
 /**
+ * The charter a verdict names: the one the evaluation read, when it is this
+ * employee's, else the newest approved charter. A draft awaiting approval
+ * decides nothing, so no verdict names one.
+ *
+ * @param ctx - The verdict's mutation context.
+ * @param agentId - The employee.
+ * @param evaluatedCharterId - The charter the evaluation read, when it said.
+ * @returns The charter row, or undefined when the employee has no approved one.
+ */
+async function verdictCharter(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  evaluatedCharterId: Id<'charters'> | undefined,
+): Promise<Doc<'charters'> | undefined> {
+  const evaluated = evaluatedCharterId ? await ctx.db.get(evaluatedCharterId) : null;
+  if (evaluated?.agentId === agentId && evaluated.approved) return evaluated;
+  for await (const charter of ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')) {
+    if (charter.approved) return charter;
+  }
+  return undefined;
+}
+
+/**
  * Record an evaluation verdict and move the row to where it puts it.
  *
  * A plain helper rather than only a mutation, because `skills.completeRegistration`
@@ -2240,11 +2266,15 @@ export const readmitSatisfiedDeferrals = internalMutation({
  * transaction that registers the skill - a registered, callable skill with a
  * work item still parked at `needs-skill` behind it is a state nothing in the
  * product knows how to leave.
+ *
+ * The `work.evaluated` event names `evaluatedCharterId` when the caller read
+ * one (the evaluation stage), else the newest approved charter.
  */
 export async function applyVerdict(
   ctx: MutationCtx,
   workItemId: Id<'workItems'>,
   verdict: unknown,
+  evaluatedCharterId?: Id<'charters'>,
 ): Promise<{ decision: string; [key: string]: unknown }> {
   const row = await ctx.db.get(workItemId);
   if (!row) throw new Error('workItem not found');
@@ -2339,13 +2369,10 @@ export async function applyVerdict(
       ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
   });
-  // The newest charter row is the active one: the verdict names the version
-  // it was reached under, so the trail says which rules decided (Q14).
-  const charter = await ctx.db
-    .query('charters')
-    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
-    .order('desc')
-    .first();
+  // The verdict names the charter it was reached under, so the trail says
+  // which rules decided (Q14): the one the evaluation read, else the newest
+  // approved one, never a draft above it (review M17).
+  const charter = await verdictCharter(ctx, row.agentId, evaluatedCharterId);
   const evaluatedId = await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.evaluated',
@@ -2425,13 +2452,19 @@ export const recoverUnproposedSkill = internalMutation({
   },
 });
 
+/**
+ * Record an evaluation's verdict. Internal; the evaluation stage's, which
+ * passes the charter it read before its model call, so the verdict names
+ * that charter even when an amendment landed during the call (review M17).
+ */
 export const setVerdict = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     verdict: v.any(),
+    charterId: v.optional(v.id('charters')),
   },
   handler: async (ctx, args) => {
-    return await applyVerdict(ctx, args.workItemId, args.verdict);
+    return await applyVerdict(ctx, args.workItemId, args.verdict, args.charterId);
   },
 });
 

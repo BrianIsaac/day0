@@ -586,6 +586,7 @@ async function evaluateWorkItemHandler(
   const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {
     workItemId: args.workItemId,
     verdict,
+    charterId: charterRow._id,
   });
 
   // For needs-skill, propose a new skill row immediately.
