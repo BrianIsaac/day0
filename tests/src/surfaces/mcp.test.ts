@@ -1,3 +1,4 @@
+import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
 import { RedactorUnavailableError } from '../../../src/redaction/client';
 import { describe, expect, it, vi } from 'vitest';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
@@ -11,6 +12,8 @@ import {
   MCP_RESULT_TEXT_LIMIT,
   MCP_SECRET_ARGUMENT_REFUSAL,
   providerErrorMessage,
+  RESEND_REFUSAL,
+  sendOnceFence,
   type McpClientLike,
   type McpClientOptions,
 } from '../../../src/surfaces/mcp';
@@ -957,10 +960,12 @@ describe('the browser floor across one run', (): void => {
       'k',
     );
     expect(applied.ok).toBe(true);
+    // The snapshot after the click reads the page the click left the browser on (P6-16).
     expect(calls.map((c) => c.tool)).toEqual([
       'browser_navigate',
       'browser_snapshot',
       'browser_click',
+      'browser_snapshot',
     ]);
     expect(calls[2].args).toEqual({ element: 'Save', target: 'e23' });
   });
@@ -1030,12 +1035,16 @@ describe('the browser floor across one run', (): void => {
     await adapter.apply(ctx, run, open, 0, 'k-open');
     await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k0');
     await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 2, 'k1');
+    // Each click is resolved against its own snapshot and followed by one
+    // that reads where it left the page (P6-16).
     expect(calls.map((c) => c.tool)).toEqual([
       'browser_navigate',
       'browser_snapshot',
       'browser_click',
       'browser_snapshot',
+      'browser_snapshot',
       'browser_click',
+      'browser_snapshot',
     ]);
   });
 
@@ -1645,5 +1654,161 @@ describe('reading a large tool result', (): void => {
     expect(applied.ok).toBe(true);
     expect(Math.max(...seen)).toBeLessThanOrEqual(MCP_RESULT_TEXT_LIMIT);
     expect(JSON.stringify(applied)).not.toContain('lin-secret');
+  });
+});
+
+describe('a refusal is a refusal (P5-4)', (): void => {
+  it('records a refusal the client raised for the server as a definite failure', async (): Promise<void> => {
+    // The production client throws the server's own isError answer as this
+    // error (`onToolError: 'throw'`); the server answered, so nothing is unknown.
+    const client = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => {
+        throw new MastraError({
+          id: 'MCP_CLIENT_TOOL_EXECUTION_FAILED',
+          domain: ErrorDomain.MCP,
+          category: ErrorCategory.THIRD_PARTY,
+          text: 'Issue not found: lin-secret',
+        });
+      },
+    });
+    const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
+    expect(result).toMatchObject({ ok: false, reason: 'Issue not found: <redacted>' });
+    expect(result.outcomeUnknown).toBeUndefined();
+    expect(client.disconnected).toBe(1);
+  });
+});
+
+describe('a write is sent once (P5-5)', (): void => {
+  const toolCall = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: {} });
+  const toolList = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+
+  it('lets one tool call through a fenced send and refuses the client\'s silent second', async (): Promise<void> => {
+    const sent: string[] = [];
+    const fence = sendOnceFence(async (_input: string | URL, init?: RequestInit): Promise<Response> => {
+      sent.push(String(init?.body));
+      return new Response('{}');
+    });
+    await expect(
+      fence.sendOnce(async () => {
+        await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolList });
+        await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall });
+        await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolList });
+        return await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall });
+      }),
+    ).rejects.toThrow(RESEND_REFUSAL);
+    expect(sent).toEqual([toolList, toolCall, toolList]);
+  });
+
+  it('leaves calls outside a fenced send alone, and each fenced send gets its own one', async (): Promise<void> => {
+    const fence = sendOnceFence(async (): Promise<Response> => new Response('{}'));
+    await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall });
+    await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall });
+    for (let send = 0; send < 2; send += 1) {
+      await expect(
+        fence.sendOnce(
+          async () => await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall }),
+        ),
+      ).resolves.toBeInstanceOf(Response);
+    }
+  });
+
+  it('sends a write through the client\'s fence, and a refused re-send leaves its outcome unknown', async (): Promise<void> => {
+    const fenced: string[] = [];
+    const client: FakeClient = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => {
+        throw new Error(RESEND_REFUSAL);
+      },
+    });
+    const create = client.create;
+    client.create = (options) => ({
+      ...create(options),
+      sendOnce: async <T>(call: () => Promise<T>): Promise<T> => {
+        fenced.push('write');
+        return await call();
+      },
+    });
+    const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
+    expect(fenced).toEqual(['write']);
+    expect(result).toMatchObject({ ok: false, outcomeUnknown: true, reason: RESEND_REFUSAL });
+  });
+});
+
+describe('the origin after a click (P6-16)', (): void => {
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: [...BROWSER_TOOLS],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+
+  /** A driver whose Save click lands the browser on the given page. */
+  function clickLandingOn(afterClick: string): McpAdapter {
+    return new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => {
+        let url = 'about:blank';
+        const page = (): string =>
+          `### Page\n- Page URL: ${url}\n### Snapshot\n- button "Save" [ref=e23] [cursor=pointer]`;
+        const tools: Record<string, (args: unknown) => string> = {
+          browser_navigate: (args) => {
+            url = String((args as { url: string }).url);
+            return `- Page URL: ${url}`;
+          },
+          browser_snapshot: () => page(),
+          browser_click: () => {
+            url = afterClick;
+            return 'ok';
+          },
+        };
+        return {
+          listTools: async () =>
+            Object.fromEntries(
+              Object.entries(tools).map(([name, run]) => [
+                `looker-pipeline-tile_${name}`,
+                {
+                  execute: async (args: unknown): Promise<unknown> => ({
+                    content: [{ type: 'text', text: run(args) }],
+                  }),
+                },
+              ]),
+            ),
+          disconnect: async (): Promise<void> => undefined,
+        };
+      },
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+    });
+  }
+
+  const call = (tool: string, toolArgs: unknown): MockAction =>
+    ({
+      tool: 'mcp.call',
+      args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: JSON.stringify(toolArgs) },
+    }) as MockAction;
+
+  it('refuses a first-run click that left the approved surface, its outcome unknown', async (): Promise<void> => {
+    const adapter = clickLandingOn('http://unexpected.internal/sso');
+    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
+    const clicked = await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
+    expect(clicked).toMatchObject({
+      ok: false,
+      outcomeUnknown: true,
+      reason: expect.stringContaining('outside the approved surface'),
+    });
+  });
+
+  it('lands a first-run click that stayed on the surface', async (): Promise<void> => {
+    const adapter = clickLandingOn('http://looker-tile:8080/saved');
+    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
+    await expect(
+      adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1'),
+    ).resolves.toMatchObject({ ok: true });
   });
 });
