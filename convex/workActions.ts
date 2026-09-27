@@ -1251,12 +1251,18 @@ function actionName(action: MockAction): string {
 type QuestionableOutput = Parameters<typeof withholdActions>[0] & {
   argumentRepairs?: ArgumentRepairAttempt[];
   openQuestion?: ExecutionOutput['openQuestion'];
+  /** Where the executor asks when no chat surface can carry the manager DM. */
+  notes?: string;
+  /** The phase before a closing set, whose notes may have asked already. */
+  initial?: { notes?: string } | null;
 };
 
 /**
  * The set with the writes the approved plan left to the manager's answer
  * withheld, when the run asks the manager a question nobody has answered
- * (`openManagerQuestion`). The question and everything else in the set go on;
+ * (`openManagerQuestion`), in the manager DM or, with no chat surface to carry
+ * one, in the notes of this set or the phase before it. The question and
+ * everything else in the set go on;
  * the withheld writes stay on the output with their reason, and the open
  * question is recorded so the run stops with it once the rest has settled.
  *
@@ -1277,7 +1283,8 @@ export function withOpenQuestionHeld<T extends QuestionableOutput>(
     askedEarlier?: readonly MockAction[];
   },
 ): T {
-  const open = openManagerQuestion({ ...context, actions: output.actions });
+  const notes = [output.notes, output.initial?.notes].filter((text): text is string => typeof text === 'string');
+  const open = openManagerQuestion({ ...context, actions: output.actions, notes, now: Date.now() });
   if (!open) return output;
   const removed = new Set(open.withheld.map((row) => row.index));
   const withheld = withholdActions(
