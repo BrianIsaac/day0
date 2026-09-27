@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   GRADED_OFFICE,
+  MANAGER_REPORT_DESTINATION,
   PROCEDURE_RUNBOOK_LINES,
   firstCorrectEffectAt,
   gradeEvaluationTask,
@@ -59,6 +60,12 @@ describe('the graded office', (): void => {
       const guide = GRADED_OFFICE.docs.find((doc) => doc.slug === guideSlug);
       expect(guide?.body.split('\n').map((row) => row.trim())).toContain(line);
     }
+  });
+
+  it('reads the manager destination from the frozen Slack guide', (): void => {
+    const guide = GRADED_OFFICE.docs.find((doc) => doc.slug === 'how-to-post-slack');
+    expect(guide?.body).toContain(`draft to \`${MANAGER_REPORT_DESTINATION}\``);
+    expect(MANAGER_REPORT_DESTINATION).toBe('dm-manager');
   });
 });
 

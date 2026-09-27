@@ -1,5 +1,6 @@
 import {
   loadEvaluationTasksSync,
+  MANAGER_REPORT_DESTINATION,
   type EvaluationArm,
   type EvaluationGrade,
   type EvaluationTask,
@@ -263,16 +264,18 @@ function procedureAdherence(
   const observed: ProcedureAdherence['observed'] = [];
   const managerRequiredEffect =
     task?.grader.requiredEffects.some(
-      (effect) => effect.kind === 'slack-message' && effect.channelSlug === 'dm-manager',
+      (effect) =>
+        effect.kind === 'slack-message' && effect.channelSlug === MANAGER_REPORT_DESTINATION,
     ) === true && requiredCheckObserved(row, 'slack-message');
   if (
     procedureEffects.some(
-      (effect) => effect.kind === 'manager-report' && effect.destination === 'dm-manager',
+      (effect) =>
+        effect.kind === 'manager-report' && effect.destination === MANAGER_REPORT_DESTINATION,
     ) ||
     reportedEffects.some(
       (effect) =>
         (effect.kind === 'manager-report' || effect.kind === 'manager-escalation') &&
-        effect.destination === 'dm-manager',
+        effect.destination === MANAGER_REPORT_DESTINATION,
     ) ||
     managerRequiredEffect
   ) {
