@@ -169,6 +169,7 @@ describe('work.model-call on the item events', (): void => {
       retries: 0,
       durationMs: expect.any(Number),
       outcome: 'ok',
+      structuredMode: 'native',
     });
   });
 
