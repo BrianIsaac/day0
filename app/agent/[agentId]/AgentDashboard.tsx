@@ -80,6 +80,7 @@ import type {
   PlanObligations,
 } from '../../../src/work/types';
 import {
+  isOpenQuestionStop,
   isWithheldForAnswer,
   planObligations,
   transitionWithheld,
@@ -3036,6 +3037,9 @@ export function cancelPlanRequest(
   return { workItemId, ...(reason?.trim() ? { reason } : {}) };
 }
 
+/** How the reason of a run the re-read before its first write stopped begins (`withheldBeforeFirstWrite`). */
+export const TICKET_REREAD_STOP = 'withheld before the first write: ';
+
 /**
  * The row-level reason a failed item's card shows.
  *
@@ -3074,11 +3078,24 @@ export function failedItemReason(item: {
         ? `stopped at the closing gate; the prerequisites landed, so confirm them below and Retry resumes there: ${stopDetail(item.skipReason)}`
         : `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`;
     }
+    const detail = stopDetail(item.skipReason);
+    const questionOpen = Boolean(item.output?.openQuestion || item.output?.initial?.openQuestion);
     // The run asked its question and withheld the writes that wait on the answer.
-    if (item.output?.openQuestion || item.output?.initial?.openQuestion) {
+    if (questionOpen && isOpenQuestionStop(detail)) {
       return unconfirmed
-        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${stopDetail(item.skipReason)}`
-        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${stopDetail(item.skipReason)}`;
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${detail}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${detail}`;
+    }
+    // Stopped for something else while a question is open: a note on this
+    // Retry answers nothing (wave 1.5 review D2 (b)), and a stop at the
+    // re-read before the first write is read as the re-read (m1, O1).
+    if (questionOpen) {
+      const retry = detail.startsWith(TICKET_REREAD_STOP)
+        ? 'retry once the ticket is back, then answer the question when it is asked again'
+        : 'retry, then answer the question when it is asked again';
+      return unconfirmed
+        ? `stopped before its question could be answered, and a note does not answer it on this stop; confirm what landed below, then ${retry}: ${detail}`
+        : `stopped before its question could be answered, and a note does not answer it on this stop; ${retry}: ${detail}`;
     }
     if (unconfirmed) {
       return `stopped after a write landed or may have; confirm the provider below before Retry: ${stopDetail(item.skipReason)}`;

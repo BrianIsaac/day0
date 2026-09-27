@@ -37,7 +37,12 @@ import {
   WorkItemCard,
   sortedForQueue,
   phasedLedger,
+  TICKET_REREAD_STOP,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
+import {
+  ticketRereadStopReason,
+  withheldBeforeFirstWrite,
+} from '../../../../src/work/ticket-ownership';
 import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
 import {
@@ -2273,5 +2278,31 @@ describe('the charter card carries what step 4 stored (U18 carried members)', ()
       />,
     );
     expect(markup).toContain('waiting for you to approve the charter');
+  });
+});
+
+describe('a stop with a question open that is not the question stop (wave 1.5 m1, O1)', (): void => {
+  const open = { openQuestion: { question: 'Which template?', steps: [2] } };
+
+  it('reads the re-read before the first write as the re-read, and says a note does not answer the question', (): void => {
+    const stop = ticketRereadStopReason(
+      withheldBeforeFirstWrite('REVOPS-5', 'the assignee is now Ana'),
+      [],
+    );
+    expect(stop.startsWith(TICKET_REREAD_STOP)).toBe(true);
+    expect(failedItemReason({ skipReason: `stopped: ${stop}`, output: open })).toBe(
+      `stopped before its question could be answered, and a note does not answer it on this stop; retry once the ticket is back, then answer the question when it is asked again: ${stop}`,
+    );
+  });
+
+  it('says the same of any other stop, without the ticket', (): void => {
+    expect(
+      failedItemReason({
+        skipReason: 'stopped: the model call failed after 5 attempts',
+        output: { initial: open },
+      }),
+    ).toBe(
+      'stopped before its question could be answered, and a note does not answer it on this stop; retry, then answer the question when it is asked again: the model call failed after 5 attempts',
+    );
   });
 });
