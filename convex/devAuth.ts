@@ -4,7 +4,7 @@
  * When it is on, Clerk is not involved. The deployment accepts one locally
  * issued token instead, and every caller who presents it resolves to one fixed
  * synthetic subject. Nothing downstream changes: `assertOwnsAgent` and friends
- * still compare `agent.userId` against `identity.subject`, rows are still
+ * still compare `agent.userId` against the caller's owner key, rows are still
  * stamped with a `userId`, and the per-user data model is untouched. There is
  * simply only ever one user.
  *
@@ -45,6 +45,14 @@ export const DEV_NO_AUTH_ISSUER = 'https://dev-no-auth.day0.local';
 export const DEV_NO_AUTH_AUDIENCE = 'day0-dev-no-auth';
 
 export const DEV_NO_AUTH_KEY_ID = 'day0-dev-no-auth';
+
+/**
+ * The claim a local token carries its browser's session id in, so the one
+ * subject every browser shares can still be told apart per browser. `sid` is
+ * the name OIDC session management gives the same fact, so the owner's ledger
+ * reads one claim whichever issuer signed the caller in.
+ */
+export const DEV_NO_AUTH_SESSION_CLAIM = 'sid';
 
 export const DEV_NO_AUTH_ALGORITHM = 'ES256';
 
