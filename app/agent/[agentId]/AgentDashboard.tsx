@@ -64,6 +64,7 @@ import { SYSTEM_CLASSES, type SystemClass } from '../../../src/agent/system-clas
 import { managerOpenQuestions, synthesisNotes } from '../../../src/agent/manager-questions';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import {
+  OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
   type ReconciliationEntry,
@@ -1860,9 +1861,11 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 }
 
 // What needs the manager first: literal actions awaiting approval, then plans,
-// then skills. A failed or stopped run waits on the manager's Retry, so it sits
-// above the skipped rows, which wait on nobody.
-const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'failed', 'skipped', 'cancelled', 'deferred'];
+// then skills, then deferrals, which wait on a grant or a connection the manager
+// gives and which the roster counts as needing them. A failed or stopped run
+// waits on the manager's Retry, so it sits above the skipped rows, which wait
+// on nobody.
+const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'deferred', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'failed', 'skipped', 'cancelled'];
 
 /**
  * The work queue in the order the page lists it.
@@ -2674,10 +2677,25 @@ export function cancelPlanRequest(
   return { workItemId, ...(reason?.trim() ? { reason } : {}) };
 }
 
+/**
+ * The row-level reason a failed item's card shows.
+ *
+ * A stop's own wording ("nothing landed") counts the run's writes the way the
+ * stop decision does; the Retry gate counts every landed write, the manager's
+ * DM included. Where the two disagree the card follows the gate, because the
+ * gate is what the manager meets next.
+ */
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
-  output?: { refusedClosing?: unknown; openQuestion?: unknown; initial?: { openQuestion?: unknown } | null } | null;
+  output?: {
+    refusedClosing?: unknown;
+    openQuestion?: unknown;
+    actions?: unknown;
+    applied?: unknown;
+    initial?: { openQuestion?: unknown; actions?: unknown; applied?: unknown } | null;
+  } | null;
+  providerReconciliation?: { confirmedAt: number };
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
@@ -2688,14 +2706,26 @@ export function failedItemReason(item: {
     return `stopped at a step Day0's gate refused: ${stopDetail(item.skipReason).slice(GATE_REFUSAL_STOP.length)}`;
   }
   if (item.skipReason && isStopped(item.skipReason)) {
+    const landed = retryRequiresProviderReconciliation(item.output, item.skipReason);
+    const unconfirmed = landed && !item.providerReconciliation;
     // A stop at the closing gate keeps the landed prerequisites and the
     // refused set on the row; Retry resumes at the closing phase.
     if (item.output?.refusedClosing) {
-      return `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`;
+      return unconfirmed
+        ? `stopped at the closing gate; the prerequisites landed, so confirm them below and Retry resumes there: ${stopDetail(item.skipReason)}`
+        : `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`;
     }
     // The run asked its question and withheld the writes that wait on the answer.
-    return item.output?.openQuestion || item.output?.initial?.openQuestion
-      ? `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${stopDetail(item.skipReason)}`
+    if (item.output?.openQuestion || item.output?.initial?.openQuestion) {
+      return unconfirmed
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${stopDetail(item.skipReason)}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${stopDetail(item.skipReason)}`;
+    }
+    if (unconfirmed) {
+      return `stopped after a write landed or may have; confirm the provider below before Retry: ${stopDetail(item.skipReason)}`;
+    }
+    return landed
+      ? `stopped, a write landed before it stopped and nothing is left to decide: ${stopDetail(item.skipReason)}`
       : `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
@@ -3253,7 +3283,13 @@ export function WorkItemCard({
 }) {
   const now = useNow();
   const verdict = item.verdict as
-    | { decision: string; reason?: string; suggestedSkillName?: string; missingSurface?: string }
+    | {
+        decision: string;
+        reason?: string;
+        suggestedSkillName?: string;
+        missingSurface?: string;
+        missingPermissions?: string[];
+      }
     | undefined;
   const plan = item.plan as
     | {
@@ -3277,7 +3313,14 @@ export function WorkItemCard({
   // row the provider failed, whose outcome someone may have to check.
   const unlandedActions = appliedActions.filter((a) => !a.ok && !a.held);
   const refusedActions = unlandedActions.filter((a) => isSurfaceTool(a.tool) && isGateRefusal(a.reason));
-  const failedActions = unlandedActions.filter((a) => !refusedActions.includes(a));
+  // A row whose response was lost, or one an interrupted apply could not
+  // account for, may have landed: it is not listed as never reaching anything.
+  const unknownActions = unlandedActions.filter(
+    (a) => !refusedActions.includes(a) && (a.outcomeUnknown === true || a.reason === OUTCOME_UNKNOWN_REASON),
+  );
+  const failedActions = unlandedActions.filter(
+    (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
+  );
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(item.planPendingAt, landedAutonomously > 0, autonomyChanges);
@@ -3388,6 +3431,12 @@ export function WorkItemCard({
               <a href="#surfaces" className="text-[var(--color-accent)] underline">
                 Surfaces tab
               </a>
+            </span>
+          ) : verdict.decision === 'defer' &&
+            verdict.reason === 'awaiting-permission' &&
+            verdict.missingPermissions?.length ? (
+            <span className="text-[var(--color-fg)]">
+              defer - awaiting-permission: needs {verdict.missingPermissions.join(', ')}
             </span>
           ) : heldByColleague ? (
             <span className="text-[var(--color-fg)]">
@@ -3612,7 +3661,24 @@ export function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' || item.state === 'completed' || skipWaivable || cancelledPlan ? (
+      {unknownActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+          <p className="text-[var(--color-warn)] font-medium mb-1">
+            {unknownActions.length} {unknownActions.length === 1 ? 'action' : 'actions'} with an unknown
+            outcome · may have landed
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-warn)]">
+            {unknownActions.map((a, i) => (
+              <li key={i}>
+                {a.tool} - {a.reason ?? 'the response was lost'}
+                <PhaseLabel phase={a.phase} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {item.state === 'failed' || item.state === 'completed' || skipWaivable || item.state === 'cancelled' ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
@@ -3668,6 +3734,12 @@ export function WorkItemCard({
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry with a note sends this finished work back; the note reaches the agent as your
               direction, and its writes are held again unless autonomous actions are on.
+            </p>
+          ) : null}
+          {item.state === 'cancelled' && !cancelledPlan ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry evaluates this item again from the start; if it still needs a skill, a new
+              proposal comes to you.
             </p>
           ) : null}
           {cancelledPlan ? (

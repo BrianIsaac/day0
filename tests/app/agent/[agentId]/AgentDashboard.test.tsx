@@ -31,6 +31,7 @@ import {
   SessionRestoreNote,
   WorkItemCard,
   eventLabel,
+  sortedForQueue,
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
@@ -1523,5 +1524,154 @@ describe('what Retry does to an unregistered skill', (): void => {
       expect(markup).not.toContain('data-skill-log="multiline"');
       expect(markup).toMatch(/<div class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/);
     });
+  });
+});
+
+describe('the card agrees with the server (P6-6)', (): void => {
+  const dmAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      body: '{"channel":"D0MANAGER","text":"Started."}',
+    },
+  };
+
+  /**
+   * One work item as the card receives it.
+   *
+   * Args:
+   *   fields: The fields this case sets over a failed Linear item.
+   *
+   * Returns:
+   *   The row.
+   */
+  function row(fields: Record<string, unknown>): Doc<'workItems'> {
+    return {
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'failed',
+      title: 'Close REVOPS-5',
+      contentSummary: 'Add the audit note and close the ticket.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'REVOPS-5',
+      observedAt: 1,
+      contentRefs: [],
+      ...fields,
+    } as unknown as Doc<'workItems'>;
+  }
+
+  /** The card's markup for one row. */
+  function card(item: Doc<'workItems'>): string {
+    return renderToStaticMarkup(
+      <WorkItemCard
+        item={item}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={(): void => undefined}
+        onCancelPlan={(): void => undefined}
+        onRetryFailed={(): void => undefined}
+        onReconcileFailed={async (): Promise<void> => undefined}
+        onApproveActions={async (): Promise<void> => undefined}
+        onRejectActions={async (): Promise<void> => undefined}
+        onResendDecision={async (): Promise<void> => undefined}
+      />,
+    );
+  }
+
+  it('lists a deferred row with the rows that wait on the manager, as the roster counts it', (): void => {
+    const order = sortedForQueue([
+      { state: 'completed' },
+      { state: 'skipped' },
+      { state: 'discovered' },
+      { state: 'deferred' },
+      { state: 'needs-skill' },
+    ]).map((item) => item.state);
+    expect(order).toEqual(['needs-skill', 'deferred', 'discovered', 'completed', 'skipped']);
+  });
+
+  it('names the scope an awaiting-permission deferral is waiting for', (): void => {
+    const markup = card(
+      row({
+        state: 'deferred',
+        verdict: {
+          decision: 'defer',
+          reason: 'awaiting-permission',
+          missingPermissions: ['linear:write', 'slack:write'],
+        },
+      }),
+    );
+    expect(markup).toContain('awaiting-permission: needs linear:write, slack:write');
+  });
+
+  it('keeps a row whose outcome is unknown out of the did-not-reach list', (): void => {
+    const markup = card(
+      row({
+        output: {
+          draft: '',
+          notes: '',
+          applied: [
+            {
+              tool: 'mcp.call',
+              ok: false,
+              outcomeUnknown: true,
+              reason: 'the provider connection closed after the request was sent',
+            },
+          ],
+        },
+      }),
+    );
+    expect(markup).not.toContain('did not reach');
+    expect(markup).toContain('1 action with an unknown outcome');
+  });
+
+  it('never tells a stop that landed a write it landed nothing', (): void => {
+    const stopped = {
+      skipReason: 'stopped: the ticket was already closed',
+      output: {
+        draft: '',
+        notes: '',
+        actions: [dmAction],
+        applied: [{ tool: 'http.request', ok: true, effect: 'Sent the manager a DM' }],
+      },
+    };
+    const reason = failedItemReason(stopped);
+    expect(reason).not.toContain('nothing landed');
+    expect(reason).toContain('confirm the provider below before Retry');
+    expect(failedItemReason({ ...stopped, providerReconciliation: { confirmedAt: 1 } })).toContain(
+      'a write landed before it stopped',
+    );
+    expect(failedItemReason({ skipReason: 'stopped: the ticket was already closed' })).toContain(
+      'stopped, nothing landed and nothing to decide',
+    );
+  });
+
+  it('says a closing-gate stop waits for reconciliation before Retry resumes there', (): void => {
+    const reason = failedItemReason({
+      skipReason: 'stopped: the closing gate refused the close',
+      output: {
+        refusedClosing: { actions: [] },
+        initial: {
+          actions: [dmAction],
+          applied: [{ tool: 'http.request', ok: true, effect: 'Sent the manager a DM' }],
+        },
+      },
+    });
+    expect(reason).toContain('confirm them below and Retry resumes there');
+  });
+
+  it('offers Retry on an item cancelled before it had a plan, as the server accepts', (): void => {
+    const markup = card(
+      row({
+        state: 'cancelled',
+        verdict: { decision: 'needs-skill', suggestedSkillName: 'linear-close' },
+        skipReason: 'skill proposal "linear-close" rejected by the manager',
+      }),
+    );
+    expect(markup).toContain('>Retry</button>');
+    expect(markup).toContain('Retry evaluates this item again from the start');
   });
 });
