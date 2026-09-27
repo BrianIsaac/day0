@@ -9,6 +9,7 @@ import {
   parseSurfaceAction,
   surfaceRefusal,
   TOOL_NOT_ALLOWED,
+  type ActionIntent,
   type ParsedMcpCall,
 } from './policy';
 import { redactOutcome } from './redact';
@@ -44,6 +45,7 @@ import {
   type SnapshotElement,
 } from './browser';
 import type {
+  ActedElement,
   ActionAuthority,
   AdapterRun,
   AppliedAction,
@@ -59,6 +61,8 @@ export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['to
 
 export const MCP_TIMEOUT_MS = 30_000;
 export const EFFECT_LENGTH = 180;
+/** The most of one acted element's name the ledger keeps. */
+const ELEMENT_NAME_LENGTH = 120;
 
 /**
  * The most of one tool result the adapter redacts. The ledger keeps at most
@@ -522,6 +526,41 @@ export class McpAdapter implements SurfaceAdapter {
   }
 
   /**
+   * The elements a browser call is about to act on, as the ledger names them:
+   * each accessible name with the credential and the owner's stored values
+   * removed, since a name is page content and can quote anything on the page.
+   *
+   * @param refs - The elements resolution picked, in the action's order.
+   * @param bearer - The surface's credential, removed wherever it appears.
+   * @returns The elements, and the redaction flag when the span model was not consulted.
+   */
+  private async actedElements(
+    refs: readonly SnapshotElement[],
+    bearer: string,
+  ): Promise<{ elements?: ActedElement[]; redaction?: 'structural-only' }> {
+    if (refs.length === 0) return {};
+    // One redaction call for every name: a snapshot line never holds a line
+    // break, and a redacted span never adds one, so the names split back apart.
+    const redacted = await redactOutcome(
+      refs.map((element: SnapshotElement): string => element.name).join('\n'),
+      bearer,
+      this.deps.spanModel,
+      this.deps.knownValues,
+    );
+    const names = redacted.text.split('\n');
+    return {
+      elements: refs.map(
+        (element: SnapshotElement, index: number): ActedElement => ({
+          ref: element.ref,
+          name: clipEffect(names[index] ?? '', ELEMENT_NAME_LENGTH),
+          role: element.role,
+        }),
+      ),
+      ...(redacted.redaction ? { redaction: redacted.redaction } : {}),
+    };
+  }
+
+  /**
    * Turn the element descriptions in one action into refs the driver accepts.
    *
    * A fresh snapshot is taken for every such action rather than once per run,
@@ -534,6 +573,7 @@ export class McpAdapter implements SurfaceAdapter {
    *   toolName: The browser tool being called.
    *   toolArgs: Its arguments, placeholders not yet substituted.
    *   argumentNames: The driver's argument names for the tool, which name the ref field.
+   *   intent: Whether the call reads or writes; a write resolves only to a control.
    *   pageBound: When set, the documented address the current page must be within.
    *
    * Returns:
@@ -546,6 +586,7 @@ export class McpAdapter implements SurfaceAdapter {
     toolName: string,
     toolArgs: Record<string, unknown>,
     argumentNames: readonly string[] | undefined,
+    intent: ActionIntent,
     pageBound?: string,
   ): Promise<{ toolArgs: Record<string, unknown>; refs: SnapshotElement[] } | { reason: string }> {
     const descriptions = elementDescriptions(toolName, toolArgs);
@@ -567,7 +608,7 @@ export class McpAdapter implements SurfaceAdapter {
     }
     const refs: SnapshotElement[] = [];
     for (const description of descriptions) {
-      const found = resolveElementRef(snapshot.text, description);
+      const found = resolveElementRef(snapshot.text, description, intent);
       if (!found) {
         return {
           reason: `the page has no element called "${description}" (${
@@ -827,6 +868,9 @@ export class McpAdapter implements SurfaceAdapter {
         }
         writeAttempted = actionIntent(call) === 'write';
         let toolArgs = call.toolArgs;
+        // Set once the elements are resolved; every row for a call that was
+        // sent to them names them.
+        let actedOn: { elements?: ActedElement[]; redaction?: 'structural-only' } = {};
         if (browserDriven && needsElementRef(call.tool)) {
           const resolved = await this.resolveRefs(
             client,
@@ -836,6 +880,7 @@ export class McpAdapter implements SurfaceAdapter {
             surface.toolArguments?.find(
               (entry: { arguments: string[]; tool: string }): boolean => entry.tool === call.tool,
             )?.arguments,
+            actionIntent(call),
             // The page is checked before any action that carries the
             // credential, on every run: a click or a script can have moved
             // the browser since the last navigation was checked.
@@ -857,6 +902,7 @@ export class McpAdapter implements SurfaceAdapter {
             };
           }
           toolArgs = resolved.toolArgs;
+          actedOn = await this.actedElements(resolved.refs, bearer);
           if (carriesSecret) {
             const misplaced = secretPlacementRefusal(
               call.tool,
@@ -901,6 +947,7 @@ export class McpAdapter implements SurfaceAdapter {
             tool: action.tool,
             ok: false,
             reason: clipEffect(reason || 'the server reported an error', EFFECT_LENGTH),
+            ...actedOn,
             ...redaction,
             ...(errorResult.redaction ? { redaction: errorResult.redaction } : {}),
             idempotencyKey,
@@ -916,7 +963,10 @@ export class McpAdapter implements SurfaceAdapter {
           if (call.tool === 'browser_click') {
             // The click was sent: a page check that cannot run says nothing
             // about whether it landed, so a Retry must not click it again.
-            const unknownOutcome = writeAttempted ? { outcomeUnknown: true } : {};
+            const unknownOutcome = {
+              ...actedOn,
+              ...(writeAttempted ? { outcomeUnknown: true } : {}),
+            };
             let page = browserPageUrl(result.text);
             if (!page) {
               const snapshotTool = (await client.listTools())[`${surface.slug}_browser_snapshot`];
@@ -991,6 +1041,7 @@ export class McpAdapter implements SurfaceAdapter {
             writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH,
           ),
           providerId: identifier ? clipEffect(identifier.text, EFFECT_LENGTH) : undefined,
+          ...actedOn,
           ...redaction,
           ...(identifier?.redaction ? { redaction: identifier.redaction } : {}),
           idempotencyKey,

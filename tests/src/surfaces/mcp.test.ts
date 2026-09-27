@@ -796,11 +796,12 @@ describe('the browser floor across one run', (): void => {
    * browser context that starts blank, as the driver's `--isolated` mode does:
    * the page is only there once that client has navigated to it.
    */
-  function driver(snapshot = PAGE) {
+  function driver(snapshot = PAGE, tools: readonly string[] = BROWSER_TOOLS) {
     const calls: Array<{ args: unknown; tool: string }> = [];
     const disconnects = { count: 0 };
     const clientsBuilt = { count: 0 };
-    const adapter = new McpAdapter([tile], {
+    const surface = { ...tile, toolAllowlist: [...tools] };
+    const adapter = new McpAdapter([surface], {
       decrypt: async (): Promise<string> => 'pipeline-tile-local',
       createClient: (): McpClientLike => {
         clientsBuilt.count += 1;
@@ -829,7 +830,7 @@ describe('the browser floor across one run', (): void => {
         return {
           listTools: async () =>
             Object.fromEntries(
-              BROWSER_TOOLS.map((tool: string) => [`looker-pipeline-tile_${tool}`, make(tool)]),
+              tools.map((tool: string) => [`looker-pipeline-tile_${tool}`, make(tool)]),
             ),
           disconnect: async (): Promise<void> => {
             disconnects.count += 1;
@@ -968,6 +969,79 @@ describe('the browser floor across one run', (): void => {
       'browser_snapshot',
     ]);
     expect(calls[2].args).toEqual({ element: 'Save', target: 'e23' });
+  });
+
+  it('names the elements it acted on in the ledger row, as the page offered them', async (): Promise<void> => {
+    const { adapter } = driver(
+      ['- textbox "Username" [ref=e11]', '- textbox "Password" [ref=e14]', PAGE].join('\n'),
+    );
+    const opened = await adapter.apply(ctx, run, open, 0, 'k-open');
+    expect(opened).not.toHaveProperty('elements');
+    const clicked = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Save button' }),
+      1,
+      'k-save',
+    );
+    expect(clicked.elements).toEqual([{ ref: 'e23', name: 'Save', role: 'button' }]);
+    const filled = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', {
+        fields: [
+          { name: 'Username', value: 'revops' },
+          { name: 'Password', value: '{{secret}}' },
+        ],
+      }),
+      2,
+      'k-fill',
+    );
+    expect(filled.elements).toEqual([
+      { ref: 'e11', name: 'Username', role: 'textbox' },
+      { ref: 'e14', name: 'Password', role: 'textbox' },
+    ]);
+  });
+
+  it('removes the credential from an element name the page echoed', async (): Promise<void> => {
+    const { adapter } = driver('- button "Continue as pipeline-tile-local" [ref=e40]');
+    await adapter.apply(ctx, run, open, 0, 'k-open');
+    const clicked = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Continue as pipeline-tile-local' }),
+      1,
+      'k',
+    );
+    expect(JSON.stringify(clicked.elements)).not.toContain('pipeline-tile-local');
+    expect(clicked.elements?.[0]).toMatchObject({ ref: 'e40', role: 'button' });
+  });
+
+  it('lets a read name a lone element of any role, which a write may not', async (): Promise<void> => {
+    const heading = '- heading "Pipeline coverage" [level=1] [ref=e7]';
+    const { adapter, calls } = driver(heading, [...BROWSER_TOOLS, 'browser_hover']);
+    await adapter.apply(ctx, run, open, 0, 'k-open');
+    const hovered = await adapter.apply(
+      ctx,
+      run,
+      call('browser_hover', { element: 'Pipeline coverage' }),
+      1,
+      'k-hover',
+    );
+    expect(hovered.ok).toBe(true);
+    expect(calls.at(-1)).toEqual({
+      tool: 'browser_hover',
+      args: { element: 'Pipeline coverage', target: 'e7' },
+    });
+    const clicked = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Pipeline coverage' }),
+      2,
+      'k-click',
+    );
+    expect(clicked.ok).toBe(false);
+    expect(clicked.reason).toContain('the page has no element called "Pipeline coverage"');
   });
 
   it('resolves one ref per form field and injects the credential into the value', async (): Promise<void> => {
