@@ -138,8 +138,8 @@ describe('the documentation author guide', (): void => {
     );
   });
 
-  const grammarUnmerged = apiGrammar.documentedApiOperations === undefined; // skip reason: the documented-API probe (wave 3 U6) has not landed its grammar
-  it.skipIf(grammarUnmerged)(
+  // prettier-ignore
+  it.skipIf(apiGrammar.documentedApiOperations === undefined)( // skipped until the documented-API probe (wave 3 U6) lands its grammar
     'admits the documented operations, leaves the placeholder path out and finds the key header',
     (): void => {
       const text = example('api-operations');
