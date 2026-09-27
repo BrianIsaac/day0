@@ -1780,10 +1780,11 @@ export function blockedPlanReason(
  * A manager message that puts something to the manager: a question, or an
  * ask for a decision, in English or in Chinese. A note that only reports is
  * not a way to unblock the work, so a stop still withholds it. The Chinese
- * forms carry no word boundary: `\b` only sees Latin letters and digits.
+ * forms carry no word boundary: `\b` only sees Latin letters and digits, and
+ * 请 is an ask except where it opens 请求, the noun a report uses.
  */
 const MANAGER_ASK =
-  /[?？]|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b|请|能否|可否|是否|麻烦|告知|确认|批准|决定|需要/i;
+  /[?？]|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b|请(?!求)|能否|可否|是否|麻烦|告知|确认|批准|决定|需要/i;
 
 /** The text a manager message carries, whichever transport it takes. */
 function managerMessageText(parsed: ParsedSurfaceAction): string {

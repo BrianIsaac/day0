@@ -1217,6 +1217,7 @@ describe('stopping blocked work with only a manager message left', (): void => {
     expect(closingStopReason(run('REVOPS-7 没有负责人，应该指派给谁？'))).toBeUndefined();
     expect(closingStopReason(run('请为 REVOPS-7 指派负责人，之后我会继续处理。'))).toBeUndefined();
     expect(closingStopReason(run('REVOPS-7 没有负责人，因此没有做任何更改，我已停止。'))).toContain('blocked');
+    expect(closingStopReason(run('REVOPS-7 的请求已记录，但没有负责人，我已停止。'))).toContain('blocked');
   });
 });
 
