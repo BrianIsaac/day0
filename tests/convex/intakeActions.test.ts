@@ -1,13 +1,39 @@
 /** @vitest-environment node */
 
+import type { IncomingMessage } from 'node:http';
+import { PassThrough } from 'node:stream';
 import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { describe, expect, it, vi } from 'vitest';
+
+/** The configurations the production intake client built, when a test reaches it. */
+const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
+
+// Only the address tests reach the production client; every other test injects `makeMcpClient`.
+vi.mock('@mastra/mcp', () => ({
+  MCPClient: class {
+    constructor(config: unknown) {
+      mastra.configs.push(config);
+    }
+
+    __setLogger(): void {}
+
+    async listToolDefinitionsWithErrors(): Promise<{
+      definitions: Record<string, never>;
+      errors: Record<string, string>;
+    }> {
+      return { definitions: {}, errors: {} };
+    }
+
+    async disconnect(): Promise<void> {}
+  },
+}));
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   compareProviderTs,
+  createMcpClient,
   issueProject,
   issueTeamLabels,
   linearCandidate,
@@ -2977,5 +3003,67 @@ describe('poll on connect', (): void => {
 
     expect(result).toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 0, surfaces: 0 });
     expect(harness.records).toEqual([]);
+  });
+});
+
+describe('the Linear intake client reaches only the address it checked (M16)', (): void => {
+  const endpoint = new URL('https://mcp.linear.app/mcp');
+
+  it('refuses a Linear host that answers with a private address and builds no client', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const client = createMcpClient(endpoint, 'lin-secret', {
+      resolveHostname: async (): Promise<string[]> => ['10.0.0.7'],
+    });
+    await expect(client.listToolDefinitionsWithErrors()).rejects.toThrow(
+      'resolved to a private, loopback',
+    );
+    expect(mastra.configs).toEqual([]);
+    await expect(client.disconnect()).resolves.toBeUndefined();
+  });
+
+  it('connects to the address it checked, not to a later answer', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    let answers = ['93.184.216.34'];
+    const dialled: unknown[] = [];
+    const client = createMcpClient(endpoint, 'lin-secret', {
+      resolveHostname: async (): Promise<string[]> => answers,
+      request: (_url, options, callback) => ({
+        on: (): void => undefined,
+        end: (): void => {
+          const lookup = options.lookup as unknown as (
+            host: string,
+            opts: { all: boolean },
+            cb: (error: Error | null, addresses: unknown) => void,
+          ) => void;
+          lookup('mcp.linear.app', { all: true }, (_error, addresses): void => {
+            dialled.push(addresses);
+          });
+          const response = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+          callback(response as unknown as IncomingMessage);
+          response.end('{}');
+        },
+      }),
+    });
+    await client.listToolDefinitionsWithErrors();
+    answers = ['127.0.0.1'];
+    const config = mastra.configs[0] as {
+      servers: Record<
+        string,
+        {
+          allowedHosts: string[];
+          requestInit: unknown;
+          fetch: (url: string, init?: RequestInit) => Promise<Response>;
+        }
+      >;
+    };
+    expect(config.servers.surface).toMatchObject({
+      allowedHosts: ['mcp.linear.app'],
+      requestInit: { headers: { Authorization: 'Bearer lin-secret' } },
+    });
+    await config.servers.surface.fetch('https://mcp.linear.app/mcp', {
+      method: 'POST',
+      body: '{}',
+    });
+    expect(dialled).toEqual([[{ address: '93.184.216.34', family: 4 }]]);
   });
 });

@@ -11,6 +11,8 @@ import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
+import { checkMcpAddress, pinnedFetch, resolveHostname } from '../src/surfaces/mcp-address';
+import type { McpConnection } from '../src/surfaces/mcp';
 import { browserComponentRefusal } from '../src/surfaces/browser';
 import { documentedChannelNames } from '../src/surfaces/slack-policy';
 import {
@@ -776,27 +778,51 @@ export function linearCandidate(
 const LINEAR_MCP_ENDPOINT = 'https://mcp.linear.app/mcp';
 
 /**
- * Create the production Linear MCP client for one exact documented endpoint.
+ * Create the production MCP client intake polls one endpoint with.
  *
- * Args:
- *   endpoint: Validated Linear endpoint.
- *   credential: Decrypted bearer retained inside the Node action.
+ * The client resolves the endpoint's hostname once, before its first
+ * request, refuses it unless every answer is public, and then dials only
+ * those answers, as the surfaces layer's clients do: the bearer never
+ * reaches an address the check did not see.
  *
- * Returns:
- *   The bounded client contract used by intake.
+ * @param endpoint - The validated endpoint.
+ * @param credential - The decrypted bearer, kept inside the Node action.
+ * @param connection - The resolver and transport; a test supplies its own.
+ * @returns The bounded client contract intake uses, connected on first use.
  */
-function createMcpClient(endpoint: URL, credential: string): McpIntakeClient {
-  return createSecretMcpClient({
-    id: `day0-intake-${randomUUID()}`,
-    servers: {
-      surface: {
-        url: endpoint,
-        allowedHosts: [endpoint.host],
-        requestInit: { headers: { Authorization: `Bearer ${credential}` } },
+export function createMcpClient(
+  endpoint: URL,
+  credential: string,
+  connection: McpConnection = { resolveHostname },
+): McpIntakeClient {
+  let created: Promise<McpIntakeClient> | undefined;
+  const create = async (): Promise<McpIntakeClient> => {
+    const checked = await checkMcpAddress(endpoint, connection.resolveHostname);
+    return createSecretMcpClient({
+      id: `day0-intake-${randomUUID()}`,
+      servers: {
+        surface: {
+          url: checked.url,
+          allowedHosts: [checked.url.host],
+          fetch: pinnedFetch(checked, connection.request),
+          requestInit: { headers: { Authorization: `Bearer ${credential}` } },
+        },
       },
+      timeout: PROVIDER_TIMEOUT_MS,
+    }) as unknown as McpIntakeClient;
+  };
+  const client = (): Promise<McpIntakeClient> => (created ??= create());
+  return {
+    listToolDefinitionsWithErrors: async (options) =>
+      await (await client()).listToolDefinitionsWithErrors(options),
+    toolFromDefinition: async (args) => await (await client()).toolFromDefinition(args),
+    disconnect: async (): Promise<void> => {
+      if (!created) return;
+      // A client whose address check refused it never connected, so there is nothing to close.
+      const connected = await created.catch((): undefined => undefined);
+      await connected?.disconnect();
     },
-    timeout: PROVIDER_TIMEOUT_MS,
-  }) as unknown as McpIntakeClient;
+  };
 }
 
 /**
