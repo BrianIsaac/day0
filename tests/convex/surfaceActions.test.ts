@@ -1875,6 +1875,22 @@ describe('probing the browser floor', (): void => {
     expect(clicked).toEqual(['Sign in']);
   });
 
+  it('finds the element however many the signed-in page shows by that name', async (): Promise<void> => {
+    const { client } = signInDriver({
+      password: 'pipeline-tile-local',
+      dashboard: [
+        '- heading "Pipeline coverage" [level=2] [ref=e20]',
+        '- heading "Pipeline coverage" [level=3] [ref=e22]',
+      ].join('\n'),
+    });
+    await expect(
+      probeBrowserSurface(
+        signedInRequest({ credential: 'pipeline-tile-local', username: 'revops' }),
+        () => client,
+      ),
+    ).resolves.toMatchObject({ toolAllowlist: expect.arrayContaining(['browser_click']) });
+  });
+
   it('refuses a redesigned dashboard whose documented element is gone', async (): Promise<void> => {
     const { client } = signInDriver({
       password: 'pipeline-tile-local',

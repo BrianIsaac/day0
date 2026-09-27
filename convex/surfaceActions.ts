@@ -33,8 +33,8 @@ import {
   documentedUsername,
   loginForm,
   navigationResultRefusal,
+  pageShowsElement,
   refFieldFor,
-  resolveElementRef,
   withinDocumentedSurface,
   withResolvedRefs,
   type LoginForm,
@@ -742,7 +742,7 @@ export async function probeBrowserSurface(
     }
     if (signedIn && login) {
       const page = await signInForProbe(client, discovery, endpoint, login);
-      if (!resolveElementRef(page, signedIn, 'read')) {
+      if (!pageShowsElement(page, signedIn)) {
         throw new BrowserSignInRefused(
           `Day0 signed in with the stored credential, but the page did not show the documented element "${signedIn}": the credential may have been rotated or the sign-in page changed.`,
         );

@@ -877,6 +877,25 @@ export function documentedUsername(markdown: string): string | undefined {
   return match?.[1]?.trim() || undefined;
 }
 
+/**
+ * Whether a snapshot shows an element with this accessible name, whatever its
+ * role and however many share it: the probe asks whether the signed-in page
+ * is there, not which control to press.
+ *
+ * @param snapshot - The text a `browser_snapshot` call returned.
+ * @param name - The element the documentation names, compared ignoring case and spacing.
+ */
+export function pageShowsElement(snapshot: string, name: string): boolean {
+  const wanted = name.replace(/\s+/g, ' ').trim().toLowerCase();
+  return (
+    wanted !== '' &&
+    parseSnapshotRefs(snapshot).some(
+      (element: SnapshotElement): boolean =>
+        element.name.replace(/\s+/g, ' ').trim().toLowerCase() === wanted,
+    )
+  );
+}
+
 /** The controls of the login form one page shows, each only when the page offers exactly one. */
 export interface LoginForm {
   readonly account?: SnapshotElement;

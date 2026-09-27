@@ -12,6 +12,7 @@ import {
   browserTitleMarker,
   documentedUsername,
   loginForm,
+  pageShowsElement,
   carriesSecretPlaceholder,
   isCredentialField,
   isLoginNameField,
@@ -684,6 +685,18 @@ describe('where a browser action may carry the credential', (): void => {
         'tile',
       ),
     ).toEqual({ element: 'Password', text: 's' });
+  });
+});
+
+describe('whether a page shows an element', (): void => {
+  it('matches the accessible name whatever the role, case or spacing, and however many share it', (): void => {
+    const page = [
+      '- heading "Pipeline coverage" [level=2] [ref=e20]',
+      '- textbox "Pipeline  Coverage" [ref=e21]',
+    ].join('\n');
+    expect(pageShowsElement(page, 'pipeline coverage')).toBe(true);
+    expect(pageShowsElement(page, 'Pipeline')).toBe(false);
+    expect(pageShowsElement(page, '  ')).toBe(false);
   });
 });
 

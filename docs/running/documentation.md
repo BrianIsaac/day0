@@ -92,7 +92,9 @@ Probe marker: page title `Pipeline coverage`
 ```
 
 - The element is named as the page names it to a screen reader: a heading, a field or a button's
-  label. Any element with that name will do.
+  label. Any element with that name will do. It must be on the page the login lands on: day0
+  presses nothing after `Sign in`, so an element behind a "stay signed in" question or a menu is
+  not found.
 - day0 types the account name into the field labelled for it (`Username`, `User name`, `Email`)
   and the credential only into the field labelled for it (`Password`, `Passcode`, `Access code`,
   `API key`, `Token`), then presses the page's `Sign in` (or `Log in`) control. A login that asks
