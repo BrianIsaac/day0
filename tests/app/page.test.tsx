@@ -270,6 +270,25 @@ describe('signed-in landing', () => {
   });
 });
 
+describe('the avatar picker', (): void => {
+  it('names each face by its number and no title carries a person', (): void => {
+    authState.signedIn = true;
+    try {
+      const html = renderToStaticMarkup(<LandingPage />);
+      const faces = [...html.matchAll(/<button[^>]*aria-label="(Face \d+)"/g)].map(
+        (match) => match[1],
+      );
+      expect(faces).toHaveLength(29);
+      expect(faces[0]).toBe('Face 1');
+      const titles = [...html.matchAll(/title="([^"]*)"/g)].map((match) => match[1]);
+      expect(titles.filter((title) => title.includes('@'))).toEqual([]);
+      expect(html).not.toContain('singapore-ai-builders');
+    } finally {
+      authState.signedIn = false;
+    }
+  });
+});
+
 describe('the employee list', (): void => {
   /** The list as the manager reads it: the queue line is several unbreakable parts in the markup. */
   const readAs = (markup: string): string => markup.replace(/<[^>]+>/g, '');
