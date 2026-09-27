@@ -2610,3 +2610,126 @@ describe('access expiry (Q5)', (): void => {
     });
   });
 });
+
+describe('the read grant on reconnect (Q7)', (): void => {
+  /**
+   * Take one probe of a surface to `connected`.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   surfaceId: An approved or failed surface.
+   *   verifiedAt: When the probe succeeded.
+   */
+  async function connect(
+    harness: TestConvex<typeof schema>,
+    surfaceId: Id<'surfaces'>,
+    verifiedAt: number,
+  ): Promise<void> {
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['list_issues'],
+      toolArguments: [],
+      verifiedAt,
+    });
+  }
+
+  /**
+   * Fail one probe of a surface to `listed-dead`, as a provider blip does.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   surfaceId: A connected surface.
+   */
+  async function blip(
+    harness: TestConvex<typeof schema>,
+    surfaceId: Id<'surfaces'>,
+  ): Promise<void> {
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: probe.generation,
+      verdict: 'listed-dead',
+      reason: 'provider returned 502',
+    });
+  }
+
+  /**
+   * Whether the agent holds an active grant of one scope.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   agentId: The agent.
+   *   scope: The scope.
+   *
+   * Returns:
+   *   True while a grant of the scope is not revoked.
+   */
+  async function holds(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    scope: string,
+  ): Promise<boolean> {
+    return await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId).eq('scope', scope))
+          .collect()
+      ).some((grant): boolean => grant.revokedAt === undefined),
+    );
+  }
+
+  it('never restores a read scope the manager revoked after approval when a blip reconnects', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: 1, itApprovedAt: 1 });
+    });
+    await connect(harness, surfaceId, 100);
+    expect(await holds(harness, agentId, 'linear:read')).toBe(true);
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.agents.revokeScope, { agentId, scope: 'linear:read' });
+    await blip(harness, surfaceId);
+    await connect(harness, surfaceId, 200);
+
+    expect((await readSurface(harness, surfaceId)).verdict).toBe('connected');
+    expect(await holds(harness, agentId, 'linear:read')).toBe(false);
+    expect(
+      (await eventTypes(harness)).filter((type) => type === 'permission.granted'),
+    ).toHaveLength(1);
+  });
+
+  it('grants the read scope again when the card is approved after the revocation', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: 1, itApprovedAt: 1 });
+    });
+    await connect(harness, surfaceId, 100);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.agents.revokeScope, { agentId, scope: 'linear:read' });
+    const reapprovedAt = Date.now() + 1_000;
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'approved',
+        managerApprovedAt: reapprovedAt,
+        itApprovedAt: reapprovedAt,
+      });
+    });
+
+    await connect(harness, surfaceId, reapprovedAt + 1);
+
+    expect(await holds(harness, agentId, 'linear:read')).toBe(true);
+  });
+});

@@ -1263,7 +1263,9 @@ async function requeueWorkAfterRejection(
  * The first transition to `connected` also grants `<slug>:read` and re-admits
  * the work parked on this surface or skipped as out of scope, in the same
  * transaction, so a connected surface can never exist without its grant and
- * the hourly re-probe never grants again. Only parked rows are re-admitted
+ * the hourly re-probe never grants again. A reconnect after a failed probe
+ * never restores a read scope the manager revoked after the card's approval:
+ * only a new approval or the manager's own grant does (Q7). Only parked rows are re-admitted
  * here: a row still being evaluated from a read taken before this write is
  * caught where its verdict lands (`applyVerdict`), under this write's key.
  */
@@ -1317,7 +1319,10 @@ export const recordConnected = internalMutation({
       createdAt: args.verifiedAt,
     });
     if (transitioned) {
-      await grantScopeInTransaction(ctx, surface.agentId, `${surface.slug}:read`, 'surface');
+      const readScope = `${surface.slug}:read`;
+      if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {
+        await grantScopeInTransaction(ctx, surface.agentId, readScope, 'surface');
+      }
       await reevaluatePendingInTransaction(ctx, {
         agentId: surface.agentId,
         trigger: 'surface',
@@ -1468,6 +1473,34 @@ async function surfaceEventExists(
     }
   }
   return false;
+}
+
+/**
+ * Whether the manager revoked this read scope after the card was last approved.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   surface: The surface reconnecting.
+ *   readScope: Its `<slug>:read` scope.
+ *
+ * Returns:
+ *   True when no grant of the scope is active and one was revoked at or
+ *   after the later approval stamp.
+ */
+async function readRevokedSinceApproval(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  readScope: string,
+): Promise<boolean> {
+  const approvedAt = Math.max(surface.managerApprovedAt ?? 0, surface.itApprovedAt ?? 0);
+  const grants = await ctx.db
+    .query('permissionGrants')
+    .withIndex('by_agent_scope', (index) =>
+      index.eq('agentId', surface.agentId).eq('scope', readScope),
+    )
+    .collect();
+  if (grants.some((grant) => grant.revokedAt === undefined)) return false;
+  return grants.some((grant) => grant.revokedAt !== undefined && grant.revokedAt >= approvedAt);
 }
 
 /** Demote a surface whose access has ended until the manager renews it. */
