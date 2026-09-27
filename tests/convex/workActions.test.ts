@@ -6469,6 +6469,44 @@ describe('a question asked in the notes when no chat surface can carry the manag
     expect(ticketWrites()).toEqual([]);
   });
 
+  it("holds the closing set's comment and Done on the question phase one declared in its notes, and keeps it on the row for a retry", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const asked = 'Please confirm which template the notice should use.';
+    recorded.skillOutput = {
+      draft: 'Reading LOG-1 first.',
+      notes: asked,
+      declaredQuestion: asked,
+      needsDependentPhase: true,
+      actions: [read!],
+    };
+    recorded.dependentOutput = {
+      draft: 'The comment and Done wait on the template.',
+      notes: 'The comment and Done are left for the answer.',
+      declaredQuestion: null,
+      actions: [comment!, done!],
+      planStepOutcomes: [1, 2, 3].map((step) => ({
+        step,
+        status: 'satisfied' as const,
+        evidence: `Action for step ${step} emitted.`,
+      })),
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain(`is still open: ${asked}`);
+    expect(ticketWrites()).toEqual([]);
+    expect((stopped.output as { declaredQuestion?: string }).declaredQuestion).toBe(asked);
+    expect(recorded.questionJudgements).toEqual([]);
+  });
+
   it('does not take a kept correction on the plan as the answer to the question (review D4)', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = {

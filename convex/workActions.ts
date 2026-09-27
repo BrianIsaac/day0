@@ -1739,6 +1739,10 @@ function flattenedDependentOutput(
     ...(output.openQuestion ?? output.initial.openQuestion
       ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
       : {}),
+    // Kept on the finished row, so a retry that resumes at the closing phase
+    // still reads the question the run declared rather than judging its notes.
+    ...carriedDeclaration(output.declaredQuestion, output.initial.declaredQuestion),
+    ...carriedEarlierQuestion(output),
   };
 }
 
@@ -1815,8 +1819,6 @@ export function closingRoundPrerequisites(
     ...(output.withheldActions ?? []),
   ];
   const openQuestion = output.openQuestion ?? output.initial.openQuestion;
-  const earlierQuestion =
-    output.earlierQuestion !== undefined ? output.earlierQuestion : output.initial.earlierQuestion;
   const notes = [output.initial.notes, output.notes]
     .filter((text) => text.trim() !== '')
     .join('\n');
@@ -1831,10 +1833,28 @@ export function closingRoundPrerequisites(
     notes,
     ...carriedDeclaration(output.declaredQuestion, output.initial.declaredQuestion),
     ...(openQuestion ? { openQuestion } : {}),
-    ...(earlierQuestion !== undefined ? { earlierQuestion } : {}),
+    ...carriedEarlierQuestion(output),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
     closingRound: { reason: round, prerequisiteCount: flattened.prerequisiteCount },
   };
+}
+
+/**
+ * The earlier runs' question a closing set or the phase before it read, to
+ * ride on whatever is built from them, so it is not judged again.
+ *
+ * Args:
+ *   output: The closing set with the phase before it.
+ *
+ * Returns:
+ *   The field to spread, or nothing when neither read it.
+ */
+function carriedEarlierQuestion(
+  output: Pick<DependentPendingOutput, 'earlierQuestion' | 'initial'>,
+): { earlierQuestion?: string | null } {
+  const earlierQuestion =
+    output.earlierQuestion !== undefined ? output.earlierQuestion : output.initial.earlierQuestion;
+  return earlierQuestion !== undefined ? { earlierQuestion } : {};
 }
 
 /**
