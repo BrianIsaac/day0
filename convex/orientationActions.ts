@@ -291,11 +291,7 @@ export function evidenceQuote(
  * Returns:
  *   True when the first Markdown heading or the provider page title names the system.
  */
-export function isDedicatedSystemPage(
-  markdown: string,
-  system: string,
-  title?: string,
-): boolean {
+export function isDedicatedSystemPage(markdown: string, system: string, title?: string): boolean {
   const heading = /^#\s+(.+)$/m.exec(markdown)?.[1];
   return (
     (heading !== undefined && namesSystem(heading, system)) ||
@@ -481,11 +477,7 @@ export function extractCredentialFinding(
  * Returns:
  *   True only when relevant text explicitly denies an approved connection.
  */
-export function explicitlyDeniesSurface(
-  markdown: string,
-  system: string,
-  title?: string,
-): boolean {
+export function explicitlyDeniesSurface(markdown: string, system: string, title?: string): boolean {
   if (isDedicatedSystemPage(markdown, system, title)) return NO_SURFACE_PATTERN.test(markdown);
   const pattern = systemNamePattern(system);
   return markdown
@@ -1023,10 +1015,10 @@ async function orientIntakeScope(
   const fields = scopeFieldsFor(surface.class);
   if (fields.length === 0) return undefined;
   const scopePages = pages.map((page) => ({
-      sourceId: String(page.sourceId),
-      ref: page.ref,
-      markdown: page.markdown,
-    }));
+    sourceId: String(page.sourceId),
+    ref: page.ref,
+    markdown: page.markdown,
+  }));
   const candidates = scopeCandidates(scopePages, fields);
   if (candidates.length === 0) {
     const what = fields.includes('channel') ? 'a channel' : 'a team or project';
@@ -1037,7 +1029,9 @@ async function orientIntakeScope(
     .map((item): string => item.quote);
   const roleCandidates = roleScopeCandidates(scopePages, candidates, role, sentences);
   if (roleCandidates.length === 0) {
-    return { notes: [`No queue line could be tied to this role's handbook for ${surface.displayName}.`] };
+    return {
+      notes: [`No queue line could be tied to this role's handbook for ${surface.displayName}.`],
+    };
   }
   const drafted = await pick({
     system: surface.displayName,
@@ -1253,7 +1247,9 @@ async function resolveStoredCredential(
       const reason = row.kind === 'location' ? undefined : storedCredentialGuardReason(row);
       if (reason) {
         await ctx.runMutation(internal.credentials.markSuspect, {
-          credentialId: row._id, ciphertext: row.ciphertext, reason,
+          credentialId: row._id,
+          ciphertext: row.ciphertext,
+          reason,
         });
         continue;
       }
@@ -1435,12 +1431,7 @@ export async function orientSurface(
       : extractedCredential;
   const hasBrowserLogin = isBrowserLoginCredential(credential);
   const hasProbeMarker = browserTitleMarker(relevantText) !== undefined;
-  const pathCandidates = connectionLadder(
-    draft.path,
-    endpoints,
-    hasBrowserLogin,
-    hasProbeMarker,
-  );
+  const pathCandidates = connectionLadder(draft.path, endpoints, hasBrowserLogin, hasProbeMarker);
   const selected: { path: OrientationPath; endpoint?: string } = pathCandidates[0] ?? {
     path: 'escalate',
   };
@@ -1544,9 +1535,12 @@ export async function orientSurface(
     endpoint,
     credentialId: stored?.credentialId,
     credentialKind: stored?.kind,
-    credentialLocation: credential.found === 'value'
-      ? stored ? undefined : 'Ask the system administrator to land a valid credential; the stored marker could not be resolved.'
-      : credential.summary,
+    credentialLocation:
+      credential.found === 'value'
+        ? stored
+          ? undefined
+          : 'Ask the system administrator to land a valid credential; the stored marker could not be resolved.'
+        : credential.summary,
     expiresInDays: draft.expiresInDays,
     intakeScope,
   });

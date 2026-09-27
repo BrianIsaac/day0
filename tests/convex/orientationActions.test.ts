@@ -71,7 +71,6 @@ afterAll(async (): Promise<void> => {
   await redactorDouble?.close();
 });
 
-
 type DraftPath = 'mcp' | 'documented-api' | 'browser-driven' | 'escalate';
 
 /** Read one submitted Notion page as documentation sync mirrors it (token redacted to its marker). */
@@ -182,7 +181,8 @@ function stubRegistry(): ReturnType<typeof vi.fn> {
   const realFetch = globalThis.fetch;
   const fetchMock = vi.fn(async (input: URL | string, init?: RequestInit): Promise<Response> => {
     // The redaction component is reached over the same global; its calls are its own.
-    if (redactorDouble && String(input).startsWith(redactorDouble.url)) return realFetch(input, init);
+    if (redactorDouble && String(input).startsWith(redactorDouble.url))
+      return realFetch(input, init);
     const search = new URL(String(input)).searchParams.get('search')?.toLowerCase() ?? '';
     const servers = Object.values(REGISTRY_SERVERS).filter((entry): boolean =>
       `${entry.server.name} ${entry.server.title}`.toLowerCase().includes(search),
@@ -1050,25 +1050,46 @@ describe('orientation run', (): void => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
     model.pathFor = () => 'documented-api';
     const harness = convexTest(schema, allConvexModules());
-    const { agentId, sourceId } = await seedOrientation(harness, {
-      'slack.md': '# Slack automation policy\nSlack API: https://slack.com/api/\n<credential: slack credential, stored>\nThe installing administrator lands the bot token.',
-    }, [{ name: 'Slack', class: 'chat' }]);
-    const credentialId = await harness.run(async (ctx) => await ctx.db.insert('credentials', {
-      userId: 'owner', kind: 'value', label: 'slack credential',
-      source: { sourceId, ref: 'slack.md' }, createdAt: 1,
-      ...encrypt('channels:history', key),
-    }));
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      {
+        'slack.md':
+          '# Slack automation policy\nSlack API: https://slack.com/api/\n<credential: slack credential, stored>\nThe installing administrator lands the bot token.',
+      },
+      [{ name: 'Slack', class: 'chat' }],
+    );
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'slack credential',
+          source: { sourceId, ref: 'slack.md' },
+          createdAt: 1,
+          ...encrypt('channels:history', key),
+        }),
+    );
     await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
     const slack = (await surfacesBySlug(harness, agentId)).slack;
     expect(slack.credentialId).toBeUndefined();
     expect(await harness.query(internal.credentials.getInternal, { credentialId })).toMatchObject({
-      status: 'suspect', statusReason: 'permission scope',
+      status: 'suspect',
+      statusReason: 'permission scope',
     });
     const request = slack.request as { credential: { found: 'value'; method: 'bot-token' } };
-    expect(presentSurfaceCredential({ credential: request.credential, credentialLocation: slack.credentialLocation }).canLand).toBe(true);
+    expect(
+      presentSurfaceCredential({
+        credential: request.credential,
+        credentialLocation: slack.credentialLocation,
+      }).canLand,
+    ).toBe(true);
     expect(JSON.stringify(slack)).not.toContain('channels:history');
-    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow('unavailable');
-    expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual([]);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
+    expect(
+      await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' }),
+    ).toEqual([]);
   });
 
   it('builds credential findings from all four sanitised Notion fixtures', async (): Promise<void> => {
@@ -2071,16 +2092,20 @@ describe('each employee reads its own role', (): void => {
 
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id, role: 'manager',
+      surfaceId: after['looker-pipeline-tile']._id,
+      role: 'manager',
     });
     expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
-      verdict: 'proposed', managerApprovedAt: expect.any(Number),
+      verdict: 'proposed',
+      managerApprovedAt: expect.any(Number),
     });
     await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id, role: 'it',
+      surfaceId: after['looker-pipeline-tile']._id,
+      role: 'it',
     });
     expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
-      verdict: 'approved', itApprovedAt: expect.any(Number),
+      verdict: 'approved',
+      itApprovedAt: expect.any(Number),
     });
 
     // Rejected, the card goes back under the row, one click from a card again.
@@ -2282,7 +2307,8 @@ describe('each employee reads its own role', (): void => {
     // Another role's prose never reaches the question, and a kanban card has none.
     expect(slackFor('finance')).not.toMatch(/revops|logistics-desk/);
     expect(
-      model.scopePrompts.filter((prompt): boolean => prompt.includes('Fields to pick: team, project'))
+      model.scopePrompts
+        .filter((prompt): boolean => prompt.includes('Fields to pick: team, project'))
         .some((prompt): boolean => prompt.includes('What the same pages say')),
     ).toBe(false);
 
@@ -2292,7 +2318,9 @@ describe('each employee reads its own role', (): void => {
     expect(INTAKE_SCOPE_INSTRUCTIONS).toContain(
       'Leave out a channel only when the manager and the pages both describe it as nothing more than where the team talks among itself.',
     );
-    expect(INTAKE_SCOPE_INSTRUCTIONS).not.toContain('A channel the documentation says every team reads');
+    expect(INTAKE_SCOPE_INSTRUCTIONS).not.toContain(
+      'A channel the documentation says every team reads',
+    );
   });
 
   it("never reaches another role's queue, whatever numbers the model answers", async (): Promise<void> => {
