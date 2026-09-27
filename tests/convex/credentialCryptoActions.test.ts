@@ -185,8 +185,10 @@ describe('the public API surface and decryption', (): void => {
         .map((chunk: string): string => `${name}: ${chunk.split(' ', 1)[0]}`),
     );
     expect(offenders).toEqual([]);
-    expect(eventsModule.exportForAgent.isInternal).toBe(true);
+    expect(eventsModule.exportHead.isInternal).toBe(true);
+    expect(eventsModule.exportPage.isInternal).toBe(true);
     expect(exportActions.exportForAgent.isPublic).toBe(true);
+    expect(exportActions.exportPage.isPublic).toBe(true);
   });
 });
 

@@ -1017,7 +1017,9 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_agent', ['agentId'])
-    .index('by_agent_type', ['agentId', 'type']),
+    .index('by_agent_type', ['agentId', 'type'])
+    /** Events of one type across agents: the export's owner section reads the retire tombstones here. */
+    .index('by_type', ['type']),
 
   /**
    * Each intake listing of a ticket that changed it, one row per change, so

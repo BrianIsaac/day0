@@ -1,9 +1,24 @@
 import { v } from 'convex/values';
-import { internalMutation, internalQuery, query } from './_generated/server';
+import type { PaginationOptions, PaginationResult } from 'convex/server';
+import { internalMutation, internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
-import { collectLedgerObservations } from './metrics';
+import { isEvaluationAgent } from './metrics';
+import { AGENT_RETIRED_EVENT } from './reset';
 import { redactTokenShapes } from '../src/surfaces/redact';
+import { agentZone, dayKey } from '../src/lib/zone';
+import {
+  sectionAfter,
+  TRACE_FORMAT,
+  TRACE_PAGE_ROWS,
+  TRACE_SECTIONS,
+  TRACE_VERSION,
+  type TraceHead,
+  type TracePage,
+  type TraceRetirement,
+  type TraceRows,
+  type TraceSection,
+} from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
 
 /**
@@ -96,41 +111,52 @@ export function redactForExport(value: unknown): unknown {
   return value;
 }
 
-/** One agent's redacted trace, as the export action returns it. */
-export interface AgentTrace {
-  version: 1;
-  agent: { id: Id<'agents'>; name: string };
-  events: Doc<'events'>[];
-  ledger: ReturnType<typeof collectLedgerObservations>;
-  credentialNames: Array<{ label: string }>;
+/** The most retirement tombstones the owner section reads. */
+const RETIREMENT_LIMIT = 1_000;
+
+/** The owner's retired employees, from the tombstone events their retire left. */
+async function ownerRetirements(
+  ctx: QueryCtx,
+  owner: string | undefined,
+): Promise<TraceRetirement[]> {
+  if (owner === undefined) return [];
+  // U14 D1 (a): the next schema step's owner-keyed `retirements` table replaces this read.
+  const tombstones = await ctx.db
+    .query('events')
+    .withIndex('by_type', (q) => q.eq('type', AGENT_RETIRED_EVENT))
+    .take(RETIREMENT_LIMIT);
+  return tombstones.flatMap((event) => {
+    const payload = event.payload as Record<string, unknown> | undefined;
+    if (payload?.userId !== owner) return [];
+    return [
+      {
+        agentId: event.agentId,
+        retiredAt: typeof payload.retiredAt === 'number' ? payload.retiredAt : event.createdAt,
+        payload: redactForExport(payload) as Record<string, unknown>,
+      },
+    ];
+  });
 }
 
 /**
- * The complete trace with the synchronous floor applied, for the export
- * action only.
- *
- * A query cannot decrypt the owner's stored values, so this is internal:
- * `exportActions.exportForAgent` runs it under the caller's identity (the
- * ownership check below still runs) and removes every stored value before
- * anything leaves the deployment.
+ * The head of an agent's trace: the manifest, the agent, the owner section
+ * and the credential labels, and where the first page starts. Internal; the
+ * export action runs it under the caller's identity and the ownership check
+ * here runs again.
  */
-export const exportForAgent = internalQuery({
+export const exportHead = internalQuery({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<AgentTrace> => {
+  handler: async (ctx, args): Promise<TraceHead> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const [events, workItems, surfaces] = await Promise.all([
-      ctx.db
-        .query('events')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .collect(),
-      ctx.db
-        .query('workItems')
-        .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
-        .collect(),
+    const exportedAt = Date.now();
+    const zone = agentZone(agent);
+    const [stamp, surfaces, retired] = await Promise.all([
+      ctx.db.query('deploymentVersions').order('desc').first(),
       ctx.db
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .collect(),
+        .take(TRACE_PAGE_ROWS),
+      ownerRetirements(ctx, agent.userId),
     ]);
     const credentials = await Promise.all(
       [
@@ -140,16 +166,108 @@ export const exportForAgent = internalQuery({
       ].map(async (credentialId) => await ctx.db.get(credentialId)),
     );
     return {
-      version: 1,
-      agent: { id: agent._id, name: agent.name },
-      events: events.map((event) => ({ ...event, payload: redactForExport(event.payload) })),
-      ledger: collectLedgerObservations(events, workItems).map((observation) => ({
-        ...observation,
-        entry: redactForExport(observation.entry) as typeof observation.entry,
-      })),
+      manifest: {
+        format: TRACE_FORMAT,
+        version: TRACE_VERSION,
+        exportedAt,
+        exportedOn: dayKey(exportedAt, zone),
+        zone,
+        release: stamp?.release ?? null,
+        commit: stamp?.commit ?? null,
+        pageRows: TRACE_PAGE_ROWS,
+      },
+      agent: {
+        id: agent._id,
+        name: agent.name,
+        ...(agent.userId !== undefined ? { userId: agent.userId } : {}),
+        state: agent.state,
+        ...(agent.arm !== undefined ? { arm: agent.arm } : {}),
+        ...(agent.mode !== undefined ? { mode: agent.mode } : {}),
+        zone,
+        evaluation: isEvaluationAgent(agent),
+        createdAt: agent.createdAt,
+        creationTime: agent._creationTime,
+      },
+      owner: { retired },
       credentialNames: credentials.flatMap((credential) =>
         credential ? [{ label: credential.label }] : [],
       ),
+      next: { section: TRACE_SECTIONS[0], cursor: null },
+    };
+  },
+});
+
+type SectionPage = PaginationResult<Record<string, unknown>>;
+
+/** One page of each section, read through the agent's own index. */
+const SECTION_PAGES: Readonly<
+  Record<
+    TraceSection,
+    (ctx: QueryCtx, agentId: Id<'agents'>, options: PaginationOptions) => Promise<SectionPage>
+  >
+> = {
+  charters: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  workItems: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  skills: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('skills')
+      .withIndex('by_agent_name', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  questions: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('managerQuestions')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  corrections: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('corrections')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  surfaces: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  events: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('events')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+};
+
+const traceSection = v.union(...TRACE_SECTIONS.map((section) => v.literal(section)));
+
+/**
+ * One page of one section of an agent's trace, redacted, with where the next
+ * page starts. At most `TRACE_PAGE_ROWS` rows, so no call nears the
+ * backend's 8,192-element return bound. Internal; the export action runs it
+ * under the caller's identity and the ownership check here runs again.
+ */
+export const exportPage = internalQuery({
+  args: { agentId: v.id('agents'), section: traceSection, cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args): Promise<TracePage> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const page = await SECTION_PAGES[args.section](ctx, args.agentId, {
+      cursor: args.cursor,
+      numItems: TRACE_PAGE_ROWS,
+    });
+    const following = sectionAfter(args.section);
+    return {
+      section: args.section,
+      rows: page.page.map((row) => redactForExport(row)) as TraceRows[TraceSection],
+      next: !page.isDone
+        ? { section: args.section, cursor: page.continueCursor }
+        : following !== undefined
+          ? { section: following, cursor: null }
+          : null,
     };
   },
 });

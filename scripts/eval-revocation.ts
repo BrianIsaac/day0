@@ -17,6 +17,7 @@ import {
   type TrialCheckpoint,
 } from '../evaluation/revocation/report';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
+import { assembleTrace } from '../src/export/trace';
 import { REDACTOR_TIMEOUT_MS } from '../src/redaction/policy';
 import { MODEL } from '../src/lib/openai';
 import { BASE_PROFILE } from './compose';
@@ -881,7 +882,11 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     metricsReconciliation,
     traceFile,
   };
-  const trace = await client.action(api.exportActions.exportForAgent, { agentId });
+  const trace = await assembleTrace(agentId, {
+    head: async () => await client.action(api.exportActions.exportForAgent, { agentId }),
+    page: async ({ page }) =>
+      await client.action(api.exportActions.exportPage, { agentId, ...page }),
+  });
   const composePrefix = [
     `COMPOSE_PROJECT_NAME=${options.composeProject}`,
     `CONVEX_PORT=${process.env.CONVEX_PORT ?? '3210'}`,
