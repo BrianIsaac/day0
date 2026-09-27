@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { mutation, type MutationCtx, type QueryCtx } from './_generated/server';
+import { internalQuery, mutation, type MutationCtx, type QueryCtx } from './_generated/server';
 import { assertOwnsAgent } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
@@ -144,6 +144,23 @@ export const QUEUE_WINDOW = 50;
  * in the provider and are read once the queue drains.
  */
 export const WAITING_WORK_LIMIT = 50;
+
+/**
+ * How many rows wait to be evaluated for one employee, and the bound intake keeps.
+ *
+ * Internal; the intake sweep's. The count stops at the bound, so it reads at
+ * most `WAITING_WORK_LIMIT` rows.
+ */
+export const waitingWork = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<{ waiting: number; limit: number }> => {
+    const waiting = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'discovered'))
+      .take(WAITING_WORK_LIMIT);
+    return { waiting: waiting.length, limit: WAITING_WORK_LIMIT };
+  },
+});
 
 /**
  * Count the employee's rows holding a slot, stopping once the cap is reached.

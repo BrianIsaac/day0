@@ -52,6 +52,7 @@ import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { WAITING_WORK_LIMIT } from '../../convex/workLoop';
 
 type CredentialId = GenericId<'credentials'>;
 
@@ -83,6 +84,8 @@ interface RuntimeHarness {
   revoked: Set<string>;
   /** Credentials intake decrypted, in order. */
   decrypted: string[];
+  /** Rows waiting to be evaluated, per agent id; none unless a test sets it. */
+  waiting: Map<string, number>;
 }
 
 /**
@@ -207,6 +210,7 @@ function runtimeHarness(
   const withdrawn: RuntimeHarness['withdrawn'] = [];
   const revoked = new Set<string>();
   const decrypted: string[] = [];
+  const waiting = new Map<string, number>();
   const runtime: IntakeRuntime = {
     recordBotIdentity: async (record): Promise<void> => {
       botIdentities.push(record);
@@ -221,6 +225,10 @@ function runtimeHarness(
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       agents.find((agent: Doc<'agents'>): boolean => agent._id === agentId) ?? null,
     listPages: async (): Promise<Doc<'docPages'>[]> => pages,
+    waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> => ({
+      waiting: waiting.get(String(agentId)) ?? 0,
+      limit: WAITING_WORK_LIMIT,
+    }),
     grantedScopes: async (agentId: Id<'agents'>): Promise<string[]> =>
       surfaces
         .filter((surface: Doc<'surfaces'>): boolean => surface.agentId === agentId)
@@ -280,6 +288,7 @@ function runtimeHarness(
     withdrawn,
     revoked,
     decrypted,
+    waiting,
   };
 }
 
@@ -1176,6 +1185,7 @@ describe('real surface intake', (): void => {
       getAgent: vi.fn(),
       listPages: vi.fn(),
       grantedScopes: vi.fn(),
+      waitingWork: vi.fn(),
       decrypt: vi.fn(),
       recordIntake: vi.fn(),
       recordDecisionPoll: vi.fn(),
@@ -3459,5 +3469,130 @@ describe('the Linear list order (P9-1)', (): void => {
     expect(request({ type: 'string' })).toEqual({ project: 'Q3 close', orderBy: 'createdAt' });
     expect(request({ type: 'string', enum: ['updatedAt'] })).toEqual({ project: 'Q3 close' });
     expect(request(undefined)).toEqual({ project: 'Q3 close' });
+  });
+});
+
+describe('the bound on seeding (N7)', (): void => {
+  const LINEAR_LIST_SCHEMA = { properties: { project: {}, team: {}, limit: {} } };
+
+  /**
+   * A connected Linear surface whose list returns the given ticket ids.
+   *
+   * Args:
+   *   ids: The listed ticket identifiers, in list order.
+   *
+   * Returns:
+   *   The harness, the surface and its MCP client factory.
+   */
+  function listing(ids: readonly string[]): {
+    harness: RuntimeHarness;
+    linear: Doc<'surfaces'>;
+    makeMcpClient: NonNullable<IntakeDependencies['makeMcpClient']>;
+  } {
+    const credentialId = id<'credentials'>('credential-linear');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId,
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const harness = runtimeHarness(
+      [linear],
+      [pageRow('linear.md', 'Linear automation', LINEAR)],
+      new Map([[String(credentialId), 'linear-test-value']]),
+    );
+    const makeMcpClient = vi.fn(() => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: { surface: { list_issues: { inputSchema: LINEAR_LIST_SCHEMA } } },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (): Promise<unknown> => ({
+          issues: ids.map((identifier) => ({
+            id: identifier,
+            title: `Triage ${identifier}`,
+            url: `https://linear.app/day00/issue/${identifier}`,
+            project: 'Q3 close',
+            team: 'RevOps',
+          })),
+        }),
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    }));
+    return { harness, linear, makeMcpClient };
+  }
+
+  it('seeds only the room left in the waiting queue and holds the checkpoint for the rest', async (): Promise<void> => {
+    const { harness, linear, makeMcpClient } = listing(['REVOPS-1', 'REVOPS-2', 'REVOPS-3']);
+    harness.waiting.set(String(agentRow()._id), WAITING_WORK_LIMIT - 2);
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, makeMcpClient }),
+    ).resolves.toMatchObject({ candidates: 2, polled: 1 });
+
+    expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual([
+      'REVOPS-1',
+      'REVOPS-2',
+    ]);
+    expect(harness.records).toEqual([
+      {
+        surfaceId: linear._id,
+        waterfallPosition: 1,
+        skipReason: `${WAITING_WORK_LIMIT} items are waiting to be evaluated; intake reads 1 more once the queue drains`,
+      },
+    ]);
+    expect(linear.lastPolledAt).toBeUndefined();
+  });
+
+  it('reads nothing while the waiting queue is full', async (): Promise<void> => {
+    const { harness, linear, makeMcpClient } = listing(['REVOPS-1']);
+    harness.waiting.set(String(agentRow()._id), WAITING_WORK_LIMIT);
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, makeMcpClient }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+
+    expect(makeMcpClient).not.toHaveBeenCalled();
+    expect(harness.decrypted).toEqual([]);
+    expect(harness.records).toEqual([
+      {
+        surfaceId: linear._id,
+        waterfallPosition: 1,
+        skipReason: `${WAITING_WORK_LIMIT} items are waiting to be evaluated; intake reads more once the queue drains`,
+      },
+    ]);
+  });
+
+  it('counts the rows the database holds waiting', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'waiting count',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (const [index, state] of (
+        ['discovered', 'discovered', 'claimed', 'skipped'] as const
+      ).entries()) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${index}`,
+          title: 'Triage',
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          state,
+          createdAt: 1,
+        });
+      }
+      return agentId;
+    });
+
+    await expect(harness.query(internal.workLoop.waitingWork, { agentId })).resolves.toEqual({
+      waiting: 2,
+      limit: WAITING_WORK_LIMIT,
+    });
   });
 });

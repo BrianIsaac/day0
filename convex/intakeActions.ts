@@ -100,6 +100,8 @@ export interface IntakeRuntime {
   listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
   /** The scopes the employee holds now: granted and not revoked. */
   grantedScopes(agentId: Id<'agents'>): Promise<string[]>;
+  /** The rows waiting to be evaluated for the employee, and the bound intake keeps (N7). */
+  waitingWork(agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }>;
   decrypt(credentialId: CredentialId): Promise<string>;
   recordIntake(record: IntakeRecord): Promise<void>;
   recordDecisionPoll(record: {
@@ -1675,10 +1677,28 @@ function ungrantedReadReason(scope: string): string {
 }
 
 /**
+ * Why intake stopped short while the employee's waiting queue is at its bound.
+ *
+ * Args:
+ *   limit: The bound on waiting rows.
+ *   held: How many listed items were left for a later poll, when known.
+ *
+ * Returns:
+ *   The skip reason the card shows.
+ */
+function queueFullReason(limit: number, held?: number): string {
+  const rest = held === undefined ? 'more' : `${held} more`;
+  return `${limit} items are waiting to be evaluated; intake reads ${rest} once the queue drains`;
+}
+
+/**
  * Run one deployment-wide waterfall sweep.
  *
  * A connected surface is read only while its employee holds `<slug>:read`
  * (Q7): a revoked read scope stops intake before the credential is touched.
+ * Seeding is bounded (N7): while the employee's waiting queue is at its bound
+ * nothing is read, and a poll seeds only the room left, holding the checkpoint
+ * so the rest is read again once the queue drains.
  * The manager's decision poll (`runDecisionSweep`) runs under the manager
  * channel's own scope and is not stopped by it (N2).
  *
@@ -1719,11 +1739,13 @@ export async function runIntakeSweep(
     if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
-    const [pages, scopes] = await Promise.all([
+    const [pages, scopes, queue] = await Promise.all([
       runtime.listPages(agentId),
       runtime.grantedScopes(agentId),
+      runtime.waitingWork(agentId),
     ]);
     const granted = new Set(scopes);
+    let waiting = queue.waiting;
     const documentedNames = extractDocumentedSystemOrder(
       pages.map((page: Doc<'docPages'>): { title: string; content: string } => ({
         title: page.title,
@@ -1805,6 +1827,16 @@ export async function runIntakeSweep(
         continue;
       }
 
+      if (waiting >= queue.limit) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: queueFullReason(queue.limit),
+        });
+        skipped += 1;
+        continue;
+      }
+
       const pollStartedAt = now();
       let credential = '';
       try {
@@ -1826,22 +1858,26 @@ export async function runIntakeSweep(
         const polledPage: LinearPoll = chat
           ? { candidates: chat.candidates, withdrawn: [], trackers: new Map() }
           : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
-        const mapped = polledPage.candidates;
+        const mapped = polledPage.candidates.slice(0, queue.limit - waiting);
+        const held = polledPage.candidates.length - mapped.length;
         for (const candidate of mapped) {
           await seedCandidate(runtime, agentId, candidate, polledPage.trackers);
         }
+        waiting += mapped.length;
         for (const { candidate, leftQueue } of polledPage.withdrawn) {
           await runtime.withdraw({
             ...seedOf(agentId, candidate, polledPage.trackers),
             leftQueue,
           });
         }
+        const holdCheckpoint =
+          held > 0 ? queueFullReason(queue.limit, held) : polledPage.holdCheckpoint;
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
-          ...(polledPage.holdCheckpoint === undefined
+          ...(holdCheckpoint === undefined
             ? { polledAt: pollStartedAt }
-            : { skipReason: polledPage.holdCheckpoint }),
+            : { skipReason: holdCheckpoint }),
         });
         candidates += mapped.length;
         polled += 1;
@@ -1938,6 +1974,8 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       await ctx.runQuery(internal.agents.getInternal, { agentId }),
     listPages: async (agentId: Id<'agents'>): Promise<Doc<'docPages'>[]> =>
       await ctx.runQuery(internal.orientationData.pagesForAgent, { agentId }),
+    waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> =>
+      await ctx.runQuery(internal.workLoop.waitingWork, { agentId }),
     grantedScopes: async (agentId: Id<'agents'>): Promise<string[]> =>
       (await ctx.runQuery(internal.agents.grantedScopes, { agentId })).map(
         (grant: Doc<'permissionGrants'>): string => grant.scope,
