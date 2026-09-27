@@ -217,6 +217,11 @@ export function validateReaderSecret(input: LinkInput, secret: string | undefine
     throw new Error('A folder is read from the mounted directory and takes no secret.');
   }
   if (!secret) throw new Error('A secret, when given, cannot be empty.');
+  // A secret with a line break or a control character is cut apart by every
+  // record that words a failure, and no longer matches its own redaction.
+  if (/[\u0000-\u001f\u007f]/.test(secret)) {
+    throw new Error('A secret cannot contain a line break or a control character.');
+  }
   if (input.kind === 'urls') {
     const origins = new Set(
       input.locator

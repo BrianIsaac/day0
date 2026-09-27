@@ -596,9 +596,11 @@ describe('documentation sync batching', (): void => {
       vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         if (!String(input).startsWith('https://wiki.example/')) return await realFetch(input, init);
         seen.push(new Headers(init?.headers).get('authorization'));
-        return String(input).endsWith('/two')
-          ? new Response(`denied for ${secret}`, { status: 403 })
-          : new Response('# One', { headers: { 'content-type': 'text/markdown' } });
+        if (String(input).endsWith('/two')) {
+          // A failure that echoes the secret across where a 200-character cut once fell.
+          throw new Error(`${'refused by the wiki gateway; '.repeat(6)}token ${secret} rejected`);
+        }
+        return new Response('# One', { headers: { 'content-type': 'text/markdown' } });
       }),
     );
     try {
@@ -614,8 +616,10 @@ describe('documentation sync batching', (): void => {
       runs: await ctx.db.query('docSyncRuns').collect(),
     }));
     expect(stored.source).toMatchObject({ status: 'synced' });
-    expect(stored.source?.lastError).toContain('https://wiki.example/two returned HTTP 403.');
+    expect(stored.source?.lastError).toContain('https://wiki.example/two: refused by the wiki');
+    expect(stored.runs[0].reason).toContain('<redacted>');
     expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(JSON.stringify(stored)).not.toContain(secret.slice(0, 12));
   });
 
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {

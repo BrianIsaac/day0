@@ -71,4 +71,28 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     expect(endedShort('superseded', undefined)).toBe('superseded');
     expect(unreadRecordIn('The documentation read was interrupted (timeout).')).toBeUndefined();
   });
+
+  it('keeps each page to one bounded line, whatever lines its failure has', (): void => {
+    const record = withUnreadPages(undefined, [
+      {
+        ref: 'a.md',
+        reason: 'Uncaught Error: failed\n    at handler (docSources.ts:1)\n    at run',
+      },
+      { ref: 'b.md', reason: 'x'.repeat(400) },
+    ]);
+    const lines = record?.split('\n') ?? [];
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe('- a.md: Uncaught Error: failed at handler (docSources.ts:1) at run');
+    expect(lines[2]).toHaveLength(240);
+    expect(unreadPageCount(withUnreadPages(record, [{ ref: 'c.md', reason: 'gone' }]))).toBe(3);
+  });
+
+  it('reads no record out of a failure whose text holds a line like one', (): void => {
+    const ending = endedShort(
+      'Provider said:\n2 pages could not be read this sync and keep their last stored version',
+      undefined,
+    );
+    expect(ending.split('\n')).toHaveLength(1);
+    expect(unreadRecordIn(ending)).toBeUndefined();
+  });
 });

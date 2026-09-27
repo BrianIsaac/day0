@@ -13,6 +13,19 @@ import type { UnreadPage } from './readers/batch';
 /** The most unread pages a record names; the rest are counted. */
 export const MAX_UNREAD_LISTED = 10;
 
+/** The longest one page's line in a record may be. */
+const MAX_RECORD_LINE = 240;
+
+/**
+ * Text on one bounded line, so a failure's own line breaks never read as
+ * pages of the record (review, adversarial pass). Callers redact first: a
+ * secret cut across the bound would no longer match its redaction.
+ */
+export function recordLine(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > MAX_RECORD_LINE ? `${line.slice(0, MAX_RECORD_LINE - 3)}...` : line;
+}
+
 const HEADER = /^(\d+) pages? could not be read this sync/;
 const MORE = /^- and \d+ more$/;
 
@@ -58,7 +71,9 @@ export function unreadRecordIn(reason: string | undefined): string | undefined {
  */
 export function endedShort(ending: string, reason: string | undefined): string {
   const record = unreadRecordIn(reason);
-  return record === undefined ? ending : `${ending}\n${record}`;
+  // The ending is one line, so no line of a failure's text is read as the record.
+  const line = ending.replace(/\s+/g, ' ').trim();
+  return record === undefined ? line : `${line}\n${record}`;
 }
 
 /**
@@ -84,7 +99,7 @@ export function withUnreadPages(
           .filter((line: string): boolean => !MORE.test(line));
   for (const page of unread) {
     if (listed.length >= MAX_UNREAD_LISTED) break;
-    listed.push(`- ${page.ref}: ${page.reason}`);
+    listed.push(recordLine(`- ${page.ref}: ${page.reason}`));
   }
   const count = previous + unread.length;
   const more = count - listed.length;

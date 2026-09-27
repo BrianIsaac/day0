@@ -18,13 +18,14 @@ const page: DocPage = {
 };
 
 describe('one page a reader could not read (P5-11)', (): void => {
-  it('records a failure that is the page’s own, and keeps its reason on one bounded line', async (): Promise<void> => {
+  it('records a failure that is the page’s own as it was written, for the sync to redact whole', async (): Promise<void> => {
     await expect(
       readProviderPage('page-2', async (): Promise<DocPage> => {
         throw new Error('Notion page Markdown\nwas truncated.');
       }),
-    ).resolves.toEqual({ ref: 'page-2', reason: 'Notion page Markdown was truncated.' });
-    expect(unreadReason(new Error('x'.repeat(500)))).toHaveLength(200);
+    ).resolves.toEqual({ ref: 'page-2', reason: 'Notion page Markdown\nwas truncated.' });
+    // Not cut to a line here: a secret cut across the bound would escape its redaction.
+    expect(unreadReason(new Error(`${'x'.repeat(300)} secret-value`))).toContain('secret-value');
     expect(unreadReason('')).toBe('the page could not be read');
   });
 

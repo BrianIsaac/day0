@@ -467,6 +467,7 @@ describe('documentation sources in real mode', (): void => {
     expect(() => validateReaderSecret(oneSite, 'value')).not.toThrow();
     expect(() => validateReaderSecret(oneSite, undefined)).not.toThrow();
     expect(() => validateReaderSecret(oneSite, '')).toThrow('cannot be empty');
+    expect(() => validateReaderSecret(oneSite, 'first\nsecond')).toThrow('line break');
     const mcp = validateLinkInput({
       label: 'Notion',
       kind: 'mcp',

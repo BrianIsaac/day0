@@ -32,14 +32,18 @@ export interface DocumentationReader extends DocSourceReader {
   ): Promise<ReadPageBatch>;
 }
 
-/** The longest reason kept for one unread page. */
-const MAX_UNREAD_REASON = 200;
+/**
+ * The longest reason a reader hands back for one unread page: long enough
+ * that the sync redacts the whole of any secret in it before the record
+ * cuts it to one line (`withUnreadPages`).
+ */
+const MAX_UNREAD_REASON = 4_000;
 
 /**
- * Word a page's read failure for the record.
+ * Word a page's read failure for the sync, which redacts it and puts it on one line.
  *
  * @param error - What reading the page threw.
- * @returns The failure's message and, when it differs, its innermost cause's, on one bounded line.
+ * @returns The failure's message and, when it differs, its innermost cause's, as they were written.
  */
 export function unreadReason(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -55,8 +59,8 @@ export function unreadReason(error: unknown): string {
     cause instanceof Error && cause.message && cause.message !== message
       ? `${message} (${cause.message})`
       : message;
-  const line = full.replace(/\s+/g, ' ').trim() || 'the page could not be read';
-  return line.length > MAX_UNREAD_REASON ? `${line.slice(0, MAX_UNREAD_REASON - 3)}...` : line;
+  const reason = full.trim() === '' ? 'the page could not be read' : full;
+  return reason.slice(0, MAX_UNREAD_REASON);
 }
 
 /**
