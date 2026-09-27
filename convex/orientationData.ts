@@ -106,12 +106,21 @@ export function isReprobeCandidate(surface: Doc<'surfaces'>): boolean {
   );
 }
 
-/** Return the surfaces eligible for the hourly provider re-probe. */
+/**
+ * Return the surfaces eligible for the hourly provider re-probe. Internal;
+ * reads only the connected and listed-dead cards, by verdict, not every card
+ * the documented estate declares.
+ */
 export const reprobeCandidates = internalQuery({
   args: {},
   handler: async (ctx): Promise<Doc<'surfaces'>[]> => {
-    const surfaces = await ctx.db.query('surfaces').collect();
-    return surfaces.filter(isReprobeCandidate);
+    const inVerdict = async (verdict: 'connected' | 'listed-dead'): Promise<Doc<'surfaces'>[]> =>
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_verdict', (index) => index.eq('verdict', verdict))
+        .collect();
+    const [connected, dead] = await Promise.all([inVerdict('connected'), inVerdict('listed-dead')]);
+    return [...connected, ...dead].filter(isReprobeCandidate);
   },
 });
 

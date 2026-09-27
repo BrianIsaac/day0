@@ -454,7 +454,9 @@ export default defineSchema({
      * rows, not its whole surface set - which now grows with the documented
      * estate rather than with the systems a manager happened to name. */
     .index('by_class', ['class'])
-    .index('by_credentialId', ['credentialId']),
+    .index('by_credentialId', ['credentialId'])
+    /** The deployment's cards in one verdict: the hourly re-probe reads the connected and the dead. */
+    .index('by_verdict', ['verdict']),
 
   voiceSessions: defineTable({
     agentId: v.id('agents'),
