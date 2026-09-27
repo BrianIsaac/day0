@@ -81,15 +81,41 @@ async function currentDiscoveries(
     );
 }
 
-/** Read the authoritative completed generation for one discovery action. */
+/**
+ * The most bytes one window of the discovery read may take. A window stops
+ * early at this bound and the next one carries on from its cursor, so a
+ * corpus of any size is read without meeting a query's read limit.
+ */
+const DISCOVERY_WINDOW_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Read one window of the authoritative completed generation for a discovery
+ * action. Internal. Pages come in index order, so windows read one after
+ * another cover the generation once; the action walks them with the cursor
+ * rather than taking the corpus in one read, which refused any source past
+ * 500 pages.
+ *
+ * @param args - The source, the completed run discovery is for, where the
+ *   last window stopped (`null` for the first) and how many pages to take.
+ * @returns The source, the window's pages and where the next window starts,
+ *   or null once a newer generation, a running sync or an earlier discovery
+ *   of this run has made the read moot.
+ */
 export const context = internalQuery({
-  args: { sourceId: v.id('docSources'), runId: v.id('docSyncRuns') },
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
   handler: async (
     ctx,
     args,
   ): Promise<{
     source: Doc<'docSources'>;
     pages: Doc<'docPages'>[];
+    continueCursor: string;
+    isDone: boolean;
   } | null> => {
     const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
     if (
@@ -103,12 +129,20 @@ export const context = internalQuery({
     ) {
       return null;
     }
-    const pages = await ctx.db
+    const window = await ctx.db
       .query('docPages')
       .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .take(501);
-    if (pages.length > 500) throw new Error('Documentation discovery exceeds 500 pages.');
-    return { source, pages };
+      .paginate({
+        cursor: args.cursor,
+        numItems: args.numItems,
+        maximumBytesRead: DISCOVERY_WINDOW_BYTES,
+      });
+    return {
+      source,
+      pages: window.page,
+      continueCursor: window.continueCursor,
+      isDone: window.isDone,
+    };
   },
 });
 

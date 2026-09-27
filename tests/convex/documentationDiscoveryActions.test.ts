@@ -10,6 +10,7 @@ import { allConvexModules } from './all-modules';
 /** Controllable discovery classifier boundary. */
 const model = vi.hoisted(() => ({
   calls: 0,
+  onCall: undefined as (() => void) | undefined,
   error: undefined as Error | undefined,
   systems: [] as Array<{ name: string; class: 'chat'; pageRef: string }>,
 }));
@@ -18,6 +19,7 @@ vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: async (): Promise<{ systems: typeof model.systems }> => {
     model.calls += 1;
+    model.onCall?.();
     if (model.error) throw model.error;
     return { systems: model.systems };
   },
@@ -25,6 +27,7 @@ vi.mock('../../src/lib/mastra', () => ({
 
 beforeEach((): void => {
   model.calls = 0;
+  model.onCall = undefined;
   model.error = undefined;
   model.systems = [];
 });
@@ -164,23 +167,139 @@ describe('the documentation discovery action', (): void => {
     expect(discoveries).toEqual([]);
   });
 
-  it('records why an over-cap source was never read instead of failing silently', async (): Promise<void> => {
+  /** Put the one page that names a system at the end of a large generation. */
+  const namePipelineSystem = async (
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+  ): Promise<void> => {
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'pipeline.md',
+        title: 'Pipeline reporting',
+        markdown:
+          'The Looker dashboard is the pipeline system the revenue team reads every Monday.',
+        updatedAt: 1,
+      });
+    });
+    model.systems = [{ name: 'Looker', class: 'chat', pageRef: 'pipeline.md' }];
+  };
+  const currentDiscoveries = async (
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+  ): Promise<string[]> =>
+    (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('docSystemDiscoveries')
+            .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+            .collect(),
+      )
+    )
+      .filter((row) => row.current)
+      .map((row) => row.displayName);
+
+  it('pages a 501-page source instead of refusing it, and finds the system on its last page (P10-1)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const { sourceId, runId } = await seedGeneration(harness, 501);
+    const { sourceId, runId } = await seedGeneration(harness, 500);
+    await namePipelineSystem(harness, sourceId);
 
     await expect(
       harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
-    ).resolves.toMatchObject({
-      applied: false,
-      systems: 0,
-      reason: expect.stringContaining('exceeds 500 pages'),
+    ).resolves.toMatchObject({ applied: true, systems: 1 });
+    expect(await currentDiscoveries(harness, sourceId)).toEqual(['Looker']);
+    // Every page reached the classifier, twenty-five at a time.
+    expect(model.calls).toBe(Math.ceil(501 / 25));
+    const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(source?.lastDiscoverySyncId).toBe(runId);
+    expect(source?.lastDiscoveryError).toBeUndefined();
+  });
+
+  it('reads a generation larger than one read allows in byte-bounded windows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness, 0);
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 5; index += 1) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: `large-${index}.md`,
+          title: `Large ${index}`,
+          markdown: `# Large ${index}\n${'x'.repeat(1_500_000)}`,
+          updatedAt: 1,
+        });
+      }
     });
-    // The generation is not marked discovered, so the next completed sync
-    // retries rather than treating this one as done.
-    const failed = await harness.run(async (ctx) => await ctx.db.get(sourceId));
-    expect(failed?.lastDiscoveryError).toContain('exceeds 500 pages');
-    expect(failed?.lastDiscoverySyncId).toBeUndefined();
-    expect(model.calls).toBe(0);
+    await namePipelineSystem(harness, sourceId);
+
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: true, systems: 1 });
+    expect(await currentDiscoveries(harness, sourceId)).toEqual(['Looker']);
+    // Six pages in windows of at most four mebibytes: more than one read.
+    expect(model.calls).toBeGreaterThan(1);
+  });
+
+  it('hands the rest of a slow classification to a continuation that carries no page text', async (): Promise<void> => {
+    vi.useFakeTimers();
+    try {
+      const harness = convexTest(schema, allConvexModules());
+      const { sourceId, runId } = await seedGeneration(harness, 500);
+      await namePipelineSystem(harness, sourceId);
+      // Each classifier call takes a minute, so one invocation's budget covers four.
+      model.onCall = (): void => {
+        vi.advanceTimersByTime(60_000);
+      };
+
+      await expect(
+        harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+      ).resolves.toMatchObject({ applied: false, continued: true });
+      expect(model.calls).toBe(4);
+      const pending = await harness.run(
+        async (ctx) =>
+          await ctx.db.system
+            .query('_scheduled_functions')
+            .filter((q) => q.eq(q.field('state.kind'), 'pending'))
+            .collect(),
+      );
+      expect(pending.map((job) => job.name)).toEqual([
+        'documentationDiscoveryActions:discoverSource',
+      ]);
+      expect(JSON.stringify(pending)).not.toContain('# Page');
+
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await currentDiscoveries(harness, sourceId)).toEqual(['Looker']);
+      expect(model.calls).toBe(Math.ceil(501 / 25));
+      expect(
+        (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.lastDiscoverySyncId,
+      ).toBe(runId);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops a continuation whose generation a newer sync replaced, and records nothing', async (): Promise<void> => {
+    vi.useFakeTimers();
+    try {
+      const harness = convexTest(schema, allConvexModules());
+      const { sourceId, runId } = await seedGeneration(harness, 500);
+      model.onCall = (): void => {
+        vi.advanceTimersByTime(60_000);
+      };
+      await harness.action(internal.documentationDiscoveryActions.discoverSource, {
+        sourceId,
+        runId,
+      });
+      await harness.mutation(internal.docSources.beginSync, { sourceId });
+
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(model.calls).toBe(4);
+      const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+      expect(source?.lastDiscoverySyncId).toBeUndefined();
+      expect(source?.lastDiscoveryError).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('re-admits the out-of-scope skips of every reading agent once per changed generation', async (): Promise<void> => {
