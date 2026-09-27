@@ -107,6 +107,47 @@ describe('the Slack client', (): void => {
     expect(sleeps).toEqual([2_000]);
   });
 
+  it('retries once when the connection drops mid-answer, as every provider read does (C-29)', async (): Promise<void> => {
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      if (calls === 1) {
+        throw new TypeError('fetch failed', {
+          cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+        });
+      }
+      return new Response(
+        JSON.stringify({ ok: true, team: 'day0', user_id: 'UBOT', bot_id: 'BBOT' }),
+      );
+    }) as typeof globalThis.fetch;
+    const lines: string[] = [];
+    const client = new SlackClient('x', fetch, {
+      say: (line: string): void => {
+        lines.push(line);
+      },
+      sleep: async (): Promise<void> => undefined,
+    });
+
+    await expect(client.authTest()).resolves.toMatchObject({ team: 'day0' });
+    expect(calls).toBe(2);
+    expect(lines).toEqual(['retrying Slack auth.test after a dropped connection']);
+  });
+
+  it('never retries a request its caller stopped', async (): Promise<void> => {
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      throw new DOMException('The caller stopped the operation', 'AbortError');
+    }) as typeof globalThis.fetch;
+    const client = new SlackClient('x', fetch, {
+      say: (): void => undefined,
+      sleep: async (): Promise<void> => undefined,
+    });
+
+    await expect(client.authTest()).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls).toBe(1);
+  });
+
   it('retries one HTTP 5xx even when the response is not JSON', async (): Promise<void> => {
     let calls = 0;
     const fetch = (async (): Promise<Response> => {
