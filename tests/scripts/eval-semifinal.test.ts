@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { loadEvaluationTasks, type EvaluationTask } from '../../evaluation/graders';
 import type { EvaluationEvidence } from '../../evaluation/report';
 import {
@@ -152,7 +152,7 @@ describe('semi-final evaluation CLI', (): void => {
 });
 
 import { getFunctionName } from 'convex/server';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Doc } from '../../convex/_generated/dataModel';
@@ -166,6 +166,23 @@ import {
   type ActiveTask,
   type HarnessContext,
 } from '../../scripts/eval-semifinal';
+
+const temporaryDirectories: string[] = [];
+
+/** A fresh directory under the system temp root, removed after the test. */
+async function temporaryDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+afterEach(async (): Promise<void> => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 interface RecordedCall {
   kind: 'query' | 'mutation' | 'action';
@@ -182,7 +199,7 @@ async function stubContext(
     calls.push({ kind, name, args });
     return responses[name] ?? {};
   };
-  const dir = await mkdtemp(join(process.env.SCRATCHPAD_DIR ?? tmpdir(), 'eval-'));
+  const dir = await temporaryDirectory('eval-');
   const context = {
     client: { query: respond('query'), mutation: respond('mutation'), action: respond('action') },
     authenticatedAt: Date.now(),
@@ -554,7 +571,7 @@ function retainedSnapshot() {
 
 describe('read-only evidence re-grading', (): void => {
   it('writes a new grade from retained state with provenance and no model calls', async (): Promise<void> => {
-    const dir = await mkdtemp(join(process.env.SCRATCHPAD_DIR ?? tmpdir(), 'regrade-'));
+    const dir = await temporaryDirectory('regrade-');
     const sourcePath = join(dir, 'original.json');
     const outPath = join(dir, 'regraded', 'semifinal.json');
     await writeFile(sourcePath, `${JSON.stringify(regradeFixture(), null, 2)}\n`, 'utf8');
@@ -631,7 +648,7 @@ describe('read-only evidence re-grading', (): void => {
   });
 
   it('refuses when the backend no longer holds a recorded work item', async (): Promise<void> => {
-    const dir = await mkdtemp(join(process.env.SCRATCHPAD_DIR ?? tmpdir(), 'regrade-missing-'));
+    const dir = await temporaryDirectory('regrade-missing-');
     const sourcePath = join(dir, 'original.json');
     const outPath = join(dir, 'new', 'semifinal.json');
     await writeFile(sourcePath, JSON.stringify(regradeFixture()), 'utf8');
