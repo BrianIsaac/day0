@@ -1,7 +1,8 @@
 import type { IncomingMessage } from 'node:http';
 import type { RequestOptions } from 'node:https';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { privateHostAllowlist } from '../../../src/lib/private-hosts';
 import {
   approvedMcpEndpoint,
   checkMcpAddress,
@@ -37,6 +38,74 @@ describe('the approved MCP endpoint', (): void => {
         'approved MCP endpoint must use a public HTTPS hostname',
       );
     }
+  });
+});
+
+describe("an MCP server inside the operator's own network", (): void => {
+  const allowlist = privateHostAllowlist('mcp.corp.internal 10.20.0.5 .tools.corp');
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('is approved by name once the operator lists it', (): void => {
+    expect(approvedMcpEndpoint('https://mcp.corp.internal/mcp', allowlist).href).toBe(
+      'https://mcp.corp.internal/mcp',
+    );
+    expect(approvedMcpEndpoint('https://10.20.0.5:8443/mcp', allowlist).host).toBe(
+      '10.20.0.5:8443',
+    );
+    expect(approvedMcpEndpoint('https://jira.tools.corp/mcp', allowlist).hostname).toBe(
+      'jira.tools.corp',
+    );
+  });
+
+  it('still needs HTTPS and no credentials in the address', (): void => {
+    for (const endpoint of ['http://mcp.corp.internal/mcp', 'https://u:p@mcp.corp.internal/mcp']) {
+      expect(() => approvedMcpEndpoint(endpoint, allowlist), endpoint).toThrow(
+        'approved MCP endpoint must use a public HTTPS hostname',
+      );
+    }
+  });
+
+  it('may resolve to a private address, which the client then dials', async (): Promise<void> => {
+    const checked = await checkMcpAddress(
+      'https://mcp.corp.internal/mcp',
+      async () => ['10.20.0.9', 'fd00::9'],
+      allowlist,
+    );
+    expect(checked.addresses).toEqual(['10.20.0.9', 'fd00::9']);
+  });
+
+  it('never reaches loopback, link-local metadata or an unspecified address, listed or not', async (): Promise<void> => {
+    for (const answer of [
+      '127.0.0.1',
+      '169.254.169.254',
+      '0.0.0.0',
+      '::1',
+      'fe80::1',
+      '224.0.0.1',
+    ]) {
+      const refusal = await refusalOf(
+        checkMcpAddress('https://mcp.corp.internal/mcp', async () => [answer], allowlist),
+      );
+      expect(refusal.message, answer).toContain('loopback, link-local');
+    }
+  });
+
+  it('reads the list from DAY0_PRIVATE_HOSTS when the caller passes none', async (): Promise<void> => {
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'mcp.corp.internal');
+    const checked = await checkMcpAddress('https://mcp.corp.internal/mcp', async () => [
+      '10.1.2.3',
+    ]);
+    expect(checked.addresses).toEqual(['10.1.2.3']);
+  });
+
+  it('leaves an unlisted internal name refused', async (): Promise<void> => {
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'mcp.corp.internal');
+    expect(() => approvedMcpEndpoint('https://other.corp.internal/mcp')).toThrow(
+      'public HTTPS hostname',
+    );
   });
 });
 

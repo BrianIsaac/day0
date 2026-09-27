@@ -2,6 +2,11 @@ import { lookup } from 'node:dns/promises';
 import type { IncomingMessage } from 'node:http';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
+import {
+  configuredPrivateHosts,
+  isPrivateHostAllowed,
+  type PrivateHostAllowlist,
+} from '../lib/private-hosts';
 
 /**
  * Where a credential-bearing MCP client may connect, decided once per client.
@@ -12,6 +17,11 @@ import { BlockList, isIP, type LookupFunction } from 'node:net';
  * metadata address by the time a write connects (DNS rebinding). So the name
  * is resolved once, every answer is checked, and the client dials only the
  * answers it checked. TLS still verifies the certificate against the name.
+ *
+ * A server inside the operator's own network is reached only when its host is
+ * listed in `DAY0_PRIVATE_HOSTS` (see `src/lib/private-hosts.ts`); a listed
+ * host may resolve to a private address, never to loopback, link-local (where
+ * cloud metadata lives), multicast or an unspecified address.
  */
 
 /** Resolves a hostname to every address it currently answers with. */
@@ -97,17 +107,49 @@ for (const [network, prefix] of [
 const GLOBAL_UNICAST_V6 = new BlockList();
 GLOBAL_UNICAST_V6.addSubnet('2000::', 3, 'ipv6');
 
+/** Addresses a listed private host may still never resolve to. */
+const NEVER_DIALLED_V4 = new BlockList();
+for (const [network, prefix] of [
+  ['0.0.0.0', 8],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+] as const) {
+  NEVER_DIALLED_V4.addSubnet(network, prefix, 'ipv4');
+}
+
+/** IPv6 unique-local addresses, the private range a listed host may answer with. */
+const UNIQUE_LOCAL_V6 = new BlockList();
+UNIQUE_LOCAL_V6.addSubnet('fc00::', 7, 'ipv6');
+
+/**
+ * The operator's private-host list, read from the environment on every check,
+ * so a malformed value refuses the client the way any other boundary does.
+ */
+function privateHostsFromEnvironment(): PrivateHostAllowlist {
+  try {
+    return configuredPrivateHosts();
+  } catch (error) {
+    throw new McpAddressRefusal(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
 /**
  * Validate the exact evidence-backed MCP endpoint stored on the approved row.
  *
  * @param endpoint - Evidence-derived surface endpoint.
- * @returns The exact public HTTPS endpoint.
- * @throws McpAddressRefusal when the URL could address this deployment or another private network.
+ * @param privateHosts - Hosts inside the operator's network that may be named; the environment's by default.
+ * @returns The exact HTTPS endpoint, public or listed.
+ * @throws McpAddressRefusal when the URL could address this deployment or an unlisted private network.
  */
-export function approvedMcpEndpoint(endpoint: string | undefined): URL {
+export function approvedMcpEndpoint(
+  endpoint: string | undefined,
+  privateHosts: PrivateHostAllowlist = privateHostsFromEnvironment(),
+): URL {
   const refusal = (): never => {
     throw new McpAddressRefusal(
-      'The approved MCP endpoint must use a public HTTPS hostname. Day0 refused the address before creating a credential-bearing client.',
+      'The approved MCP endpoint must use a public HTTPS hostname. Day0 refused the address before creating a credential-bearing client. A server inside this network is admitted by naming its host in DAY0_PRIVATE_HOSTS.',
       true,
     );
   };
@@ -131,14 +173,14 @@ export function approvedMcpEndpoint(endpoint: string | undefined): URL {
     hostname.endsWith('.home') ||
     hostname.endsWith('.lan') ||
     !hostname.includes('.');
+  const listed = isPrivateHostAllowed(hostname, privateHosts);
   if (
     parsed.protocol !== 'https:' ||
     parsed.username !== '' ||
     parsed.password !== '' ||
     parsed.hash !== '' ||
     hostname === '' ||
-    isIP(hostname) !== 0 ||
-    privateName
+    ((isIP(hostname) !== 0 || privateName) && !listed)
   ) {
     return refusal();
   }
@@ -162,20 +204,31 @@ function isNonPublicAddress(address: string): boolean {
   return true;
 }
 
+/** Whether a listed private host may answer with this address: private or public, never loopback and the like. */
+function isDiallablePrivateAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return !NEVER_DIALLED_V4.check(address, 'ipv4');
+  if (family === 6) return UNIQUE_LOCAL_V6.check(address, 'ipv6') || !isNonPublicAddress(address);
+  return false;
+}
+
 /**
  * Approve an MCP endpoint, resolve its hostname once and check every answer.
  *
  * @param endpoint - The surface's endpoint as stored on the row.
  * @param resolve - The resolver; the system's by default.
- * @returns The endpoint and the public addresses a client must dial.
+ * @param privateHosts - Hosts inside the operator's network; the environment's by default.
+ * @returns The endpoint and the addresses a client must dial.
  * @throws McpAddressRefusal when the endpoint is not approved, the name does not resolve, the
- *   resolver does not answer, or any answer is not a public address.
+ *   resolver does not answer, or an answer is not public (for a listed host: is loopback,
+ *   link-local, multicast or unspecified).
  */
 export async function checkMcpAddress(
   endpoint: string | URL | undefined,
   resolve: HostResolver = resolveHostname,
+  privateHosts: PrivateHostAllowlist = privateHostsFromEnvironment(),
 ): Promise<CheckedMcpAddress> {
-  const url = approvedMcpEndpoint(endpoint instanceof URL ? endpoint.href : endpoint);
+  const url = approvedMcpEndpoint(endpoint instanceof URL ? endpoint.href : endpoint, privateHosts);
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   let addresses: string[];
   try {
@@ -194,6 +247,15 @@ export async function checkMcpAddress(
   }
   if (addresses.length === 0) {
     throw new McpAddressRefusal('The approved MCP endpoint hostname did not resolve.', false);
+  }
+  if (isPrivateHostAllowed(hostname, privateHosts)) {
+    if (!addresses.every(isDiallablePrivateAddress)) {
+      throw new McpAddressRefusal(
+        'The approved MCP hostname is listed in DAY0_PRIVATE_HOSTS but resolved to a loopback, link-local, multicast or unspecified address, which Day0 never dials. Day0 refused the address before creating a credential-bearing client.',
+        true,
+      );
+    }
+    return { url, addresses };
   }
   if (addresses.some(isNonPublicAddress)) {
     throw new McpAddressRefusal(
