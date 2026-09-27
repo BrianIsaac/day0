@@ -1639,9 +1639,11 @@ export const writeClaimHolder = internalQuery({
  * whose executor was told nothing of the comment (P8-2). Each landed ticket
  * write now leaves the writing work item holding the ticket, so the
  * colleague's evaluation meets the claim and its executor lists the item
- * with what landed. A ticket another work item holds is left to it, the
- * work item's own discovered item is never claimed twice, and a browser page
- * field is claimed before authoring (`takeWriteTargetClaims`), not here.
+ * with what landed. The ticket is taken under every spelling the apply's
+ * guard reads (`writeTargetIds`), since the listing may print either case. A
+ * ticket another work item holds is left to it, the work item's own
+ * discovered item is never claimed twice, and a browser page field is
+ * claimed before authoring (`takeWriteTargetClaims`), not here.
  *
  * @returns The keys taken.
  */
