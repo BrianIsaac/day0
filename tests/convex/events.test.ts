@@ -5,6 +5,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { assembleTrace, type AgentTrace, type TracePage } from '../../src/export/trace';
+import { EVENT_TYPES } from '../../src/events/contract';
 
 /** The whole trace of one agent, assembled from the paged export as the command line assembles it. */
 async function exportedTrace(
@@ -132,13 +133,14 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      version: 2,
+      version: 3,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
       release: '0.4.0',
       commit: 'd71b1cf8',
       pageRows: 100,
+      eventTypes: [...EVENT_TYPES],
     });
     expect(head.agent).toMatchObject({
       id: agentId,
@@ -173,12 +175,66 @@ describe('the paged trace export', (): void => {
       questions: 0,
       corrections: 0,
       surfaces: 1,
+      managerNotes: 0,
+      decisionNotices: 0,
       events: 2,
     });
     const serialised = JSON.stringify(trace);
     expect(serialised).not.toContain('TOP-SECRET-CIPHERTEXT');
     expect(serialised).not.toContain('TOP-SECRET-IV');
     expect(serialised).not.toContain('boss@day0.local');
+  });
+
+  it('carries the delivery record of every message Day0 sent the manager, with the provider’s timestamp (Q14)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const item = await ctx.db.query('workItems').first();
+      const surface = await ctx.db.query('surfaces').first();
+      if (!item || !surface) throw new Error('the seed made a work item and a surface');
+      await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId: item._id,
+        kind: 'landed',
+        text: 'REVOPS-1 is done: the comment is on the ticket.',
+        createdAt: 4,
+        claimedAt: 5,
+        providerTs: '1789000000.000100',
+        keptFor: 'per-run',
+      });
+      await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId: item._id,
+        kind: 'stopped',
+        text: 'REVOPS-1 stopped.',
+        createdAt: 6,
+        claimedAt: 7,
+        failure: 'channel_not_found',
+      });
+      await ctx.db.insert('managerDecisionNotices', {
+        agentId,
+        surfaceId: surface._id,
+        workItemId: item._id,
+        decisionId: 'D-7Q2',
+        messageTs: '1789000000.000200',
+        kind: 'received',
+        text: 'Got it: approved.',
+        createdAt: 8,
+        claimedAt: 9,
+        providerTs: '1789000000.000300',
+      });
+    });
+    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    expect(
+      trace.sections.managerNotes.map((note) => [note.kind, note.providerTs, note.failure]),
+    ).toEqual([
+      ['landed', '1789000000.000100', undefined],
+      ['stopped', undefined, 'channel_not_found'],
+    ]);
+    expect(
+      trace.sections.decisionNotices.map((notice) => [notice.decisionId, notice.providerTs]),
+    ).toEqual([['D-7Q2', '1789000000.000300']]);
+    expect(trace.manifest.counts).toMatchObject({ managerNotes: 2, decisionNotices: 1 });
   });
 
   it('carries no live install claim and no manager identity on a surface', async (): Promise<void> => {

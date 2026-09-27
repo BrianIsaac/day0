@@ -359,7 +359,7 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     writeFileSync(stray, JSON.stringify({ version: 1, events: [] }));
     const refused = capture();
     expect(runRecompute([stray], refused.io)).toBe(2);
-    expect(refused.err.join('\n')).toContain('is not a day0 trace (version 2)');
+    expect(refused.err.join('\n')).toContain('is not a day0 trace (version 2 or 3)');
     const mixed = capture();
     expect(runRecompute([stray, directory], mixed.io)).toBe(2);
     expect(mixed.err.join('\n')).toContain('not both');

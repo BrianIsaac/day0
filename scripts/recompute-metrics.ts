@@ -42,7 +42,7 @@ import {
   type OwnerMetrics,
 } from '../convex/metrics';
 import { exportEntries, exportRows } from './convex-export';
-import { isAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
+import { readAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
 import { isEventType, type EventType } from '../src/events/contract';
 
 const USAGE =
@@ -278,13 +278,13 @@ export function recompute(
   }
   return recomputeFromTraces(
     traces.map((path) => {
-      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-      if (!isAgentTrace(parsed)) {
+      const trace = readAgentTrace(JSON.parse(readFileSync(path, 'utf8')));
+      if (trace === undefined) {
         throw new Error(
-          `${path} is not a day0 trace (version 2); export it with scripts/export-trace.ts`,
+          `${path} is not a day0 trace (version 2 or 3); export it with scripts/export-trace.ts`,
         );
       }
-      return parsed;
+      return trace;
     }),
     options,
   );

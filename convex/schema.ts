@@ -915,7 +915,10 @@ export default defineSchema({
     claimedAt: v.optional(v.number()),
     providerTs: v.optional(v.string()),
     failure: v.optional(v.string()),
-  }).index('by_surface_message', ['surfaceId', 'messageTs']),
+  })
+    .index('by_surface_message', ['surfaceId', 'messageTs'])
+    /** One agent's acknowledgements in creation order, for the export's delivery records. */
+    .index('by_agent', ['agentId']),
 
   skills: defineTable({
     agentId: v.id('agents'),

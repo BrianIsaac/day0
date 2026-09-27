@@ -20,6 +20,7 @@ import {
   type TraceSection,
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
+import { EVENT_TYPES } from '../src/events/contract';
 
 /**
  * Events feed — append-only, drives the live UI ticker. The reading side
@@ -193,6 +194,7 @@ export const exportHead = internalQuery({
         release: stamp?.release ?? null,
         commit: stamp?.commit ?? null,
         pageRows: TRACE_PAGE_ROWS,
+        eventTypes: EVENT_TYPES,
       },
       agent: {
         id: agent._id,
@@ -254,6 +256,16 @@ const SECTION_PAGES: Readonly<
   surfaces: async (ctx, agentId, options) =>
     await ctx.db
       .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  managerNotes: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('managerNotes')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  decisionNotices: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('managerDecisionNotices')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .paginate(options),
   events: async (ctx, agentId, options) =>
