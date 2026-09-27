@@ -375,6 +375,12 @@ describe('the auth section', (): void => {
     expect(section.lines.join(' ')).toContain('under `next start`');
   });
 
+  it('names the sync script, which pushes the audience before the issuer, as the way onto the deployment', (): void => {
+    const lines = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' }).lines.join(' ');
+    expect(lines).toContain('`pnpm sync:env` puts them there, the audience before the issuer');
+    expect(lines).not.toContain('npx convex env set DAY0_OIDC_ISSUER');
+  });
+
   it('says the local key and the customer issuer are both accepted when both are on', (): void => {
     const section = authSection({
       ...ISSUER,

@@ -839,7 +839,7 @@ function customerIssuerSection(v: Values): Section | undefined {
         ? "The backend accepts this issuer's tokens and this machine's local key side by side."
         : "The backend accepts this issuer's tokens; Clerk keys, if any, are ignored beside it.",
       'Both values must be on the deployment as well, where the auth config reads them at',
-      'push: `npx convex env set DAY0_OIDC_ISSUER <url>`, and the same for the audience.',
+      'push: `pnpm sync:env` puts them there, the audience before the issuer.',
       customerLocal
         ? 'DAY0_PROFILE=customer-local: real mode runs for the people it signs in, under `next start`.'
         : 'DAY0_PROFILE is not customer-local, so real mode still needs the local key under `next dev`.',
