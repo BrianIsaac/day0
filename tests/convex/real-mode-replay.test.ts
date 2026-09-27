@@ -767,10 +767,13 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       'browser_fill_form',
       'browser_snapshot',
       'browser_click',
+      // Every click is followed by a snapshot that reads where it left the page (P6-16).
+      'browser_snapshot',
       'browser_snapshot',
       'browser_fill_form',
       'browser_snapshot',
       'browser_click',
+      'browser_snapshot',
       'browser_snapshot',
     ]);
     const snapshotRow = ledger(authoring)[6]!;

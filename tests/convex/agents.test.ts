@@ -1385,3 +1385,148 @@ describe('the employee roster', (): void => {
     expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
   });
 });
+
+describe('agents.setBossEmail', (): void => {
+  const LEFT_WORKSPACE =
+    'the manager email old@day0.local is not a member of this Slack workspace (users_not_found).';
+
+  /**
+   * Seed one surface for the agent with both approvals and a credential.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   agentId: Owning agent.
+   *   fields: The slug, class, verdict and reason the row carries.
+   *
+   * Returns:
+   *   The surface id.
+   */
+  async function seedApprovedSurface(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    fields: { slug: string; class: string; verdict: Doc<'surfaces'>['verdict']; reason?: string },
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: `${fields.slug} token`,
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: fields.slug,
+        displayName: fields.slug,
+        class: fields.class,
+        verdict: fields.verdict,
+        reason: fields.reason,
+        whereFound: [],
+        credentialId,
+        credentialLanded: fields.verdict === 'connected',
+        managerApprovedAt: 10,
+        itApprovedAt: 11,
+        createdAt: 1,
+      });
+    });
+  }
+
+  /** The surfaces a probe is scheduled for, in scheduling order. */
+  async function scheduledProbes(harness: TestConvex<typeof schema>): Promise<string[]> {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect())
+        .filter((job) => job.name === 'surfaceActions:probeInternal')
+        .map((job) => String((job.args[0] as { surfaceId: string }).surfaceId)),
+    );
+  }
+
+  it('changes the manager with an event and re-probes the chat surfaces the change can mend', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+    const { api: realApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(realApi.agents.deploy, { bossEmail: 'old@day0.local' });
+    const connected = await seedApprovedSurface(harness, agentId, {
+      slug: 'slack',
+      class: 'chat',
+      verdict: 'connected',
+    });
+    const lostManager = await seedApprovedSurface(harness, agentId, {
+      slug: 'slack-ops',
+      class: 'chat',
+      verdict: 'ungranted',
+      reason: LEFT_WORKSPACE,
+    });
+    await seedApprovedSurface(harness, agentId, {
+      slug: 'slack-refused',
+      class: 'chat',
+      verdict: 'ungranted',
+      reason: 'Slack auth.test failed: invalid_auth',
+    });
+    await seedApprovedSurface(harness, agentId, {
+      slug: 'linear',
+      class: 'kanban',
+      verdict: 'connected',
+    });
+
+    await expect(
+      owner.mutation(realApi.agents.setBossEmail, { agentId, bossEmail: '  new@day0.local ' }),
+    ).resolves.toEqual({ changed: true, reprobed: 2 });
+
+    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(agent?.bossEmail).toBe('new@day0.local');
+    const changes = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event) => event.type === 'manager.changed')
+        .map((event) => event.payload),
+    );
+    expect(changes).toEqual([{ via: 'dashboard', bossEmail: 'new@day0.local' }]);
+    expect((await scheduledProbes(harness)).sort()).toEqual(
+      [String(connected), String(lostManager)].sort(),
+    );
+  });
+
+  it('writes nothing for the address the agent already reports to', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
+    await expect(
+      owner.mutation(api.agents.setBossEmail, { agentId, bossEmail: 'Boss@Day0.local' }),
+    ).resolves.toEqual({ changed: false, reprobed: 0 });
+    const types = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).map((event) => event.type),
+    );
+    expect(types).not.toContain('manager.changed');
+  });
+
+  it('refuses another owner, a malformed address and an evaluation agent', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
+    await expect(
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .mutation(api.agents.setBossEmail, { agentId, bossEmail: 'intruder@day0.local' }),
+    ).rejects.toThrow();
+    await expect(
+      owner.mutation(api.agents.setBossEmail, { agentId, bossEmail: 'not an address' }),
+    ).rejects.toThrow('email address');
+    const evaluationId = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'eval-day0-r1-1234567890123@day0.local',
+      name: 'Day0 evaluation 1',
+    });
+    await expect(
+      owner.mutation(api.agents.setBossEmail, {
+        agentId: evaluationId,
+        bossEmail: 'someone@day0.local',
+      }),
+    ).rejects.toThrow('evaluation');
+    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(agent?.bossEmail).toBe('boss@day0.local');
+  });
+});

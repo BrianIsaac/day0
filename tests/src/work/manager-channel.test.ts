@@ -4,6 +4,8 @@ import {
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
   decisionRequestText,
+  MANAGER_FEEDBACK_MAX_CHARS,
+  MANAGER_MESSAGE_MAX_CHARS,
   managerMessageAction,
   parseDecisionReply,
 } from '../../../src/work/manager-channel';
@@ -58,6 +60,34 @@ describe('manager channel decision requests', (): void => {
     ).toBe(
       'ops worker needs your decision on “Close August”.\n\nPlan: Comment, then close the issue.\n\nReply “approve ab3xyz” or “reject ab3xyz <reason>”.',
     );
+    // A plan with steps, risk and reversibility sends them, so the decision can be made from the message (P5-8).
+    expect(
+      decisionRequestText({
+        agentName: 'ops worker',
+        title: 'Close August',
+        id: 'ab3xyz',
+        kind: 'plan',
+        plan: {
+          summary: 'Comment, then close the issue.',
+          steps: ['Add the audit comment to REVOPS-5.', 'Move REVOPS-5 to Done.'],
+          riskNotes: 'Closing hides the ticket from the triage view.',
+          reversibility: 'reversible',
+        },
+      }),
+    ).toBe(
+      [
+        'ops worker needs your decision on “Close August”.',
+        '',
+        'Plan: Comment, then close the issue.',
+        'Steps:',
+        '1. Add the audit comment to REVOPS-5.',
+        '2. Move REVOPS-5 to Done.',
+        'Risk: Closing hides the ticket from the triage view.',
+        'Reversibility: reversible',
+        '',
+        'Reply “approve ab3xyz” or “reject ab3xyz <reason>”.',
+      ].join('\n'),
+    );
 
     const held: MockAction = {
       tool: 'http.request',
@@ -81,6 +111,49 @@ describe('manager channel decision requests', (): void => {
     ).toContain(
       'Held actions:\n1. Post to Slack channel C0PUBLIC: "Close completed."\n\nReply “approve ab3xyz” or “reject ab3xyz <reason>”.',
     );
+  });
+
+  it('says an approval covers every held action listed, and where to approve some (P5-8)', (): void => {
+    const held: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"iss-1","state":"Done"}' },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [held, held],
+      heldIndexes: [0, 1],
+      surfaces: [slack],
+    });
+    expect(text).toContain(
+      '“approve ab3xyz” applies both actions listed; to approve only some, decide in day0.',
+    );
+  });
+
+  it('keeps a long request inside one chat message, saying how many it left out', (): void => {
+    const held: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'y'.repeat(400) }),
+      },
+    };
+    const actions = Array.from({ length: 40 }, () => held);
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions,
+      heldIndexes: actions.map((_, index) => index),
+      surfaces: [slack],
+    });
+    expect(text.length).toBeLessThanOrEqual(MANAGER_MESSAGE_MAX_CHARS);
+    expect(text).toMatch(/…and \d+ more held actions; the full list is in day0\./);
+    expect(text).toContain('Reply “approve ab3xyz” or “reject ab3xyz <reason>”.');
   });
 
   it('tells the manager a second request closes the run they already approved', (): void => {
@@ -150,11 +223,12 @@ describe('manager channel decision requests', (): void => {
       id: 'ab3xyz',
       reason: 'run the revised close checklist',
     });
-    const longReason = 'x'.repeat(250);
+    // The reason is kept as the card keeps one, not cut at 200 (P5-9).
+    const longReason = 'x'.repeat(1_200);
     expect(parseDecisionReply(`reject ab3xyz ${longReason}`)).toEqual({
       verb: 'reject',
       id: 'ab3xyz',
-      reason: 'x'.repeat(200),
+      reason: 'x'.repeat(MANAGER_FEEDBACK_MAX_CHARS),
     });
     expect(parseDecisionReply('please approve ab3xyz')).toBeUndefined();
     expect(parseDecisionReply('approve sequential-123')).toBeUndefined();
@@ -173,9 +247,30 @@ describe('manager channel decision requests', (): void => {
       id: 'ab3xyz',
       reason: 'not this week',
     });
-    // Still bounded: prose before the verb is not a command; prose after an approve
-    // never was one either (it is ignored, as before).
+    // Still bounded: prose before the verb is not a command. After an approve a
+    // courtesy is ignored, but a condition is not an approval of everything (P5-9).
     expect(parseDecisionReply('“please approve ab3xyz”')).toBeUndefined();
     expect(parseDecisionReply('approve ab3xyz thanks')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('approve ab3xyz, thank you!')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('approve ab3xyz but not the Done')).toBeUndefined();
+    expect(parseDecisionReply('approve ab3xyz except the close')).toBeUndefined();
+  });
+
+  it('reads the forms a manager actually types around the command (P5-9, P8-6)', (): void => {
+    const approved = { verb: 'approve', id: 'ab3xyz' };
+    expect(parseDecisionReply('Approved ab3xyz')).toEqual(approved);
+    expect(parseDecisionReply('approve: ab3xyz')).toEqual(approved);
+    expect(parseDecisionReply('approve ab3xyz,')).toEqual(approved);
+    expect(parseDecisionReply('*approve ab3xyz*')).toEqual(approved);
+    expect(parseDecisionReply('_approve ab3xyz_')).toEqual(approved);
+    expect(parseDecisionReply('> approve ab3xyz')).toEqual(approved);
+    expect(parseDecisionReply('&gt; approve ab3xyz')).toEqual(approved);
+    expect(parseDecisionReply('<@U0DAY0BOT> approve ab3xyz')).toEqual(approved);
+    expect(parseDecisionReply('Rejected ab3xyz: not this week')).toEqual({
+      verb: 'reject',
+      id: 'ab3xyz',
+      reason: 'not this week',
+    });
+    expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
   });
 });

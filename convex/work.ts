@@ -1,6 +1,6 @@
 import { closingResume } from '../src/work/closing-resume';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -20,12 +20,15 @@ import {
   markCorrectionsAppliedInTransaction,
 } from './corrections';
 import {
+  AWAITING_CHARTER,
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
+  isManagerChannel,
   OPEN_WORK_STATES,
   openSlotCount,
   resumeStalledStepsInTransaction,
   scheduleNextStep,
+  STEP_LEASE_MS,
   type StepClaim,
 } from './workLoop';
 import { actionIdempotencyKey } from '../src/work/idempotency';
@@ -69,6 +72,7 @@ import {
   batchDecisionNoticeText,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
+  MANAGER_FEEDBACK_MAX_CHARS,
   undeliveredDecisionReason,
 } from '../src/work/manager-channel';
 import {
@@ -94,34 +98,26 @@ import {
 } from '../src/work/manager-notes';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
+/**
+ * How long a closing phase's authoring may hold its claim before its switch
+ * fails the row. The backend kills a Node action after ten minutes; this is
+ * the execution stall bound, so a live authoring is never failed under it.
+ */
+export const DEPENDENT_AUTHORING_RECOVERY_MS = EXECUTION_STALL_MS;
+/** Why a closing phase whose authoring died is failed; Retry resumes it. */
+export const DEPENDENT_AUTHORING_INTERRUPTED_REASON =
+  'the closing phase was interrupted before its actions were written; the prerequisites stand and Retry resumes the closing phase';
+/** Why a phase-one run with nothing held for the manager stops instead of parking. */
+export const NOTHING_TO_DECIDE_REASON = 'the run held nothing for a decision';
 /** Parked rows examined per state in one re-evaluation call; the rest continue by schedule. */
 export const REEVALUATION_BATCH = 100;
-/** The longest rejection reason kept in full for the retry to read. */
-export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
+export { MANAGER_FEEDBACK_MAX_CHARS };
 
 /** The manager's words as kept: whitespace collapsed and capped at `MANAGER_FEEDBACK_MAX_CHARS`. */
 function managerText(text: string | undefined): string {
   return (text ?? '').replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
 }
 export { INTERRUPTED_APPLY_REASON };
-
-/**
- * A connected chat surface the manager can be asked through and answered from.
- *
- * The DM channel alone is not enough: intake reads replies only from a
- * surface whose probe also recorded the manager's provider user id, so a
- * request sent without it would ask for a reply nobody reads.
- */
-function isManagerChannel(surface: Doc<'surfaces'>): boolean {
-  return (
-    surface.class === 'chat' &&
-    surface.verdict === 'connected' &&
-    surface.credentialLanded &&
-    !!surface.credentialId &&
-    !!surface.managerDmChannelId &&
-    !!surface.managerUserId
-  );
-}
 
 /** Avoid scheduling an outbound action when no connected manager channel can claim it. */
 async function scheduleDecisionRequest(
@@ -977,6 +973,7 @@ function verdictReturnsOn(
     if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) return trigger === 'charter';
     return false;
   }
+  if (row.state === 'deferred' && reason === AWAITING_CHARTER) return trigger === 'charter';
   if (row.state !== 'deferred' || trigger !== 'surface' || !surface) return false;
   if (reason === 'awaiting-connection' && verdict.missingSurface !== undefined) {
     return missingSurfaceResolvedBy(verdict.missingSurface, surface.surface, surface.siblings);
@@ -2223,12 +2220,20 @@ export async function applyVerdict(
       ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
   });
-  await ctx.db.insert('events', {
+  const evaluatedId = await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.evaluated',
     payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  // The proposal is written by the evaluating action after this commit; if it
+  // throws, nothing else ever moves the row (P5-2).
+  if (nextState === 'needs-skill' && SURFACE_MODE === 'real') {
+    await ctx.scheduler.runAfter(STEP_LEASE_MS, internal.work.recoverUnproposedSkill, {
+      workItemId,
+      evaluatedId,
+    });
+  }
   if (readmission) {
     await logSatisfiedRequeue(
       ctx,
@@ -2243,6 +2248,40 @@ export async function applyVerdict(
   await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
+
+/**
+ * A `needs-skill` row's switch for the proposal its evaluation promised.
+ *
+ * Fires a lease after the verdict. A row still parked on that verdict (no
+ * later evaluation) with no proposal recorded had its proposal throw after the
+ * verdict committed, and would say "needs a skill" with nothing to approve and
+ * no control. It is stopped with the skill it needed named, so Retry
+ * evaluates it again. Internal.
+ */
+export const recoverUnproposedSkill = internalMutation({
+  args: { workItemId: v.id('workItems'), evaluatedId: v.id('events') },
+  handler: async (ctx, args): Promise<{ recovered: 'failed' | 'ignored' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row || row.state !== 'needs-skill' || row.proposedSkillId !== undefined) {
+      return { recovered: 'ignored' };
+    }
+    const latest = (
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', 'work.evaluated'))
+        .order('desc')
+        .take(REEVALUATION_BATCH)
+    ).find((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
+    if (latest?._id !== args.evaluatedId) return { recovered: 'ignored' };
+    const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
+    const skill = typeof name === 'string' && name ? `the skill "${name}"` : 'a skill';
+    await failInTransaction(ctx, row, {
+      reason: `evaluation found this item needs ${skill}, but its proposal was never recorded; Retry evaluates the item again`,
+      stopped: true,
+    });
+    return { recovered: 'failed' };
+  },
+});
 
 export const setVerdict = internalMutation({
   args: {
@@ -2404,7 +2443,10 @@ export const setPlan = internalMutation({
  * A plan for a provider item on which the manager rejected any employee's
  * plan waits for the manager whatever the switch says (decision N3), and the
  * first time it is held for that reason a `work.plan-held` event names the
- * first rejection. Internal; called by the drafting action and the stalled-step sweep.
+ * first rejection. So does the plan of an item the manager took anyway after
+ * the agent skipped it (`reason: 'skip-overruled'`): the card promised that
+ * plan comes back to them. Internal; called by the drafting action and the
+ * stalled-step sweep.
  */
 export const decidePlan = internalMutation({
   args: { workItemId: v.id('workItems'), recovery: v.optional(v.boolean()) },
@@ -2414,6 +2456,26 @@ export const decidePlan = internalMutation({
     if (row.state !== 'plan-pending') return { approved: false };
     const agent = await ctx.db.get(row.agentId);
     if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    // "Take it anyway" overruled the agent's own skip and promised the manager
+    // the plan comes back to them; the switch does not speak for that decision.
+    const waived =
+      row.scopeWaivedAt !== undefined
+        ? 'scope'
+        : row.qualityFitWaivedAt !== undefined
+          ? 'quality-fit'
+          : undefined;
+    if (waived) {
+      if (!args.recovery) {
+        await ctx.db.insert('events', {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: { workItemId: args.workItemId, reason: 'skip-overruled', waived },
+          createdAt: Date.now(),
+        });
+      }
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
     }
@@ -2468,7 +2530,10 @@ export const prepareDecisionRequest = internalMutation({
       return { prepared: false as const, reason: `work item is ${row.state}` };
     }
     const live = row.decision?.kind === args.kind && !row.decision.decidedAt ? row.decision : undefined;
-    if (live && (live.ts || live.id !== args.supersedes)) {
+    // A delivered code is replaced only once it was marked failed, which only
+    // a change of manager does to a delivered request: the old one went to a
+    // DM nobody reads for this agent any more.
+    if (live && (live.id !== args.supersedes || (live.ts && !live.requestFailedAt))) {
       return { prepared: false as const, reason: 'decision request already claimed' };
     }
     if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.decisionId)) {
@@ -2623,6 +2688,58 @@ async function supersedeDecisionRequest(
     kind: decision.kind,
     supersedes: decision.id,
   });
+}
+
+/** What the manager's note says ended a run whose apply was interrupted. */
+const INTERRUPTED_NOTE_REASON =
+  'the apply was interrupted, so what it sent is not known; check each change marked below';
+
+/** Why a request delivered to the previous manager is sent again. */
+export const MANAGER_CHANGED_RESEND_REASON = 'the manager changed; the request went to the previous one';
+
+/**
+ * Send the open decision requests delivered to a previous manager again.
+ *
+ * A probe that resolves the manager's DM finds the manager it has now. A
+ * request delivered on this surface to any other DM, the previous manager's,
+ * holds a code nobody here will answer: the old manager is refused and the
+ * new one never saw it. That is so whether the previous manager is still on
+ * the row or a failed lookup wiped them first. Each such request is marked
+ * failed and re-sent on the new DM with a fresh code, like an undelivered one.
+ *
+ * @param currentChannel - The DM channel the probe just resolved.
+ * @returns How many requests were re-sent.
+ */
+export async function resendDecisionsAfterManagerChange(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  currentChannel: string | undefined,
+): Promise<number> {
+  if (surface.class !== 'chat' || currentChannel === undefined) return 0;
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  const stale = parked.flat().flatMap((row) => {
+    const decision = row.decision;
+    const open =
+      !!decision?.ts &&
+      !decision.decidedAt &&
+      !decision.requestFailedAt &&
+      decision.surfaceSlug === surface.slug &&
+      decision.channel !== currentChannel &&
+      row.state === (decision.kind === 'plan' ? 'plan-pending' : 'actions-pending');
+    return open && decision ? [{ row, decision }] : [];
+  });
+  for (const { row, decision } of stale) {
+    await supersedeDecisionRequest(ctx, row, decision, MANAGER_CHANGED_RESEND_REASON);
+  }
+  return stale.length;
 }
 
 /**
@@ -3195,11 +3312,46 @@ export const approvePlan = mutation({
  * Refuses a request still in flight, so a slow send is not doubled, and a
  * delivered one, so the code the manager holds keeps working.
  */
+/**
+ * Ask the manager on the chat surface again, from the card.
+ *
+ * Public, owner-guarded. An undelivered request is superseded with a fresh
+ * code. A parked row that was never asked, because it parked while no manager
+ * channel was connected, is asked now once one is (P7-18). A delivered request
+ * is never replaced: the manager holds its code.
+ */
 export const resendDecisionRequest = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     const decision = row.decision;
+    const neverAsked =
+      !decision &&
+      (row.state === 'plan-pending' ||
+        (row.state === 'actions-pending' && row.approvedIndexes === undefined));
+    if (neverAsked) {
+      const surfaces = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect();
+      if (!surfaces.some(isManagerChannel)) {
+        throw new ConvexError(
+          'No manager chat channel is connected, so there is nowhere to ask; decide here instead.',
+        );
+      }
+      const kind: DecisionKind = row.state === 'plan-pending' ? 'plan' : 'actions';
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.decision-request-asked',
+        payload: { workItemId: row._id, kind },
+        createdAt: Date.now(),
+      });
+      await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
+        workItemId: row._id,
+        kind,
+      });
+      return { ok: true };
+    }
     const expectedState = decision?.kind === 'plan' ? 'plan-pending' : 'actions-pending';
     if (!decision || decision.decidedAt || row.state !== expectedState) {
       throw new Error('There is no open decision request to resend.');
@@ -3664,7 +3816,57 @@ export const claimDependentAuthoring = internalMutation({
       applyAttemptId: authoringAttemptId,
       applyClaimedAt: Date.now(),
     });
+    // The claim's dead-man's switch, in the same transaction as the claim
+    // (P5-1): nothing else recovers an `executing` row that holds one.
+    await ctx.scheduler.runAfter(
+      DEPENDENT_AUTHORING_RECOVERY_MS,
+      internal.work.recoverDependentAuthoring,
+      { workItemId: args.workItemId, runId: args.runId, authoringAttemptId },
+    );
     return { claimed: true, authoringAttemptId };
+  },
+});
+
+/**
+ * The closing phase's dead-man's switch.
+ *
+ * Armed when the authoring claims the run (with the attempt); the stalled-step
+ * sweep calls it without one for a phase whose authoring never claimed the
+ * run. A row still awaiting authoring for this run is failed with its landed
+ * prerequisites kept, so the card shows them and Retry resumes the closing
+ * phase: unclaimed, or holding this attempt's claim past the bound. Anything
+ * else has moved on. Internal.
+ */
+export const recoverDependentAuthoring = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    runId: v.id('events'),
+    authoringAttemptId: v.optional(v.id('events')),
+  },
+  handler: async (ctx, args): Promise<{ recovered: 'failed' | 'ignored' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (
+      !row ||
+      row.state !== 'executing' ||
+      row.executionRunId !== args.runId ||
+      (row.output as { phase?: unknown } | undefined)?.phase !== 'dependent-authoring'
+    ) {
+      return { recovered: 'ignored' };
+    }
+    if (args.authoringAttemptId === undefined) {
+      if (row.applyAttemptId !== undefined) return { recovered: 'ignored' };
+    } else if (
+      row.applyAttemptId !== args.authoringAttemptId ||
+      row.applyClaimedAt === undefined ||
+      Date.now() - row.applyClaimedAt < DEPENDENT_AUTHORING_RECOVERY_MS
+    ) {
+      return { recovered: 'ignored' };
+    }
+    await failInTransaction(ctx, row, {
+      reason: DEPENDENT_AUTHORING_INTERRUPTED_REASON,
+      output: row.output,
+    });
+    return { recovered: 'failed' };
   },
 });
 
@@ -3789,60 +3991,73 @@ export const setFailed = internalMutation({
     // record for a failure the winner already wrote.
     const terminal = ['completed', 'failed', 'cancelled', 'skipped'];
     if (terminal.includes(row.state)) return;
-    // A run that landed nothing and left nothing to decide stopped: the
-    // record says so, Retry stands, and nothing pages the manager for it.
-    const surfaces = (
-      await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
-        .collect()
-    ).map(toSurfaceRecord);
-    const landed = landedWork(args.output, surfaces);
-    const stopped = args.stopped ?? landed.length === 0;
-    const reason = stopped ? stoppedReason(args.reason) : args.reason;
-    await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
-    await ctx.db.patch(args.workItemId, {
-      state: 'failed',
-      skipReason: reason,
-      pendingRunId: undefined,
-      approvedIndexes: undefined,
-      actionVerdicts: undefined,
-      applyPhase: undefined,
-      executionRunId: undefined,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-      ...(args.output !== undefined ? { output: args.output } : {}),
-    });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.failed',
-      payload: {
-        workItemId: args.workItemId,
-        reason,
-        ...(stopped || isStopped(reason) ? { stopped: true } : {}),
-        ...(args.output !== undefined ? { output: args.output } : {}),
-      },
-      createdAt: Date.now(),
-    });
-    await scheduleNextStep(ctx, { ...row, state: 'failed' });
-    if (args.stopped === false) return;
-    if (stopped) {
-      await queueManagerNote(ctx, row, 'stopped', (agentName) =>
-        stoppedNoteText({ agentName, title: row.title, reason: stopDetail(reason) }),
-      );
-    } else {
-      await queueManagerNote(ctx, row, 'landed', (agentName) =>
-        landedNoteText({
-          agentName,
-          title: row.title,
-          rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
-          outcome: 'failed',
-          reason: stopDetail(reason),
-        }),
-      );
-    }
+    await failInTransaction(ctx, row, args);
   },
 });
+
+/**
+ * Fail one row that is not in an end state, in the caller's transaction.
+ *
+ * A run that landed nothing and left nothing to decide stopped: the record
+ * says so, Retry stands, and nothing pages the manager for it. `setFailed`
+ * and the recoveries that end a row whose step died share it.
+ */
+async function failInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  args: { reason: string; output?: unknown; stopped?: boolean },
+): Promise<void> {
+  const surfaces = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+      .collect()
+  ).map(toSurfaceRecord);
+  const landed = landedWork(args.output, surfaces);
+  const stopped = args.stopped ?? landed.length === 0;
+  const reason = stopped ? stoppedReason(args.reason) : args.reason;
+  await settleWriteTargetClaims(ctx, row._id, Date.now());
+  await ctx.db.patch(row._id, {
+    state: 'failed',
+    skipReason: reason,
+    pendingRunId: undefined,
+    approvedIndexes: undefined,
+    actionVerdicts: undefined,
+    applyPhase: undefined,
+    executionRunId: undefined,
+    applyAttemptId: undefined,
+    applyClaimedAt: undefined,
+    ...(args.output !== undefined ? { output: args.output } : {}),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.failed',
+    payload: {
+      workItemId: row._id,
+      reason,
+      ...(stopped || isStopped(reason) ? { stopped: true } : {}),
+      ...(args.output !== undefined ? { output: args.output } : {}),
+    },
+    createdAt: Date.now(),
+  });
+  await scheduleNextStep(ctx, { ...row, state: 'failed' });
+  if (args.stopped === false) return;
+  if (stopped) {
+    await queueManagerNote(ctx, row, 'stopped', (agentName) =>
+      stoppedNoteText({ agentName, title: row.title, reason: stopDetail(reason) }),
+    );
+  } else {
+    await queueManagerNote(ctx, row, 'landed', (agentName) =>
+      landedNoteText({
+        agentName,
+        title: row.title,
+        rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
+        outcome: 'failed',
+        reason: stopDetail(reason),
+      }),
+    );
+  }
+}
 
 /**
  * Keep a note for the manager about a finished run, and send it when the
@@ -3927,6 +4142,12 @@ export const prepareManagerNote = internalMutation({
       createdAt: Date.now(),
     });
     await ctx.db.patch(note._id, { claimedAt: Date.now() });
+    // The send's dead-man's switch, in the same transaction as the claim.
+    await ctx.scheduler.runAfter(
+      DECISION_REQUEST_RECOVERY_MS,
+      internal.work.recoverUnsentManagerNote,
+      { noteId: note._id },
+    );
     return {
       prepared: true as const,
       ...delivery,
@@ -3934,6 +4155,46 @@ export const prepareManagerNote = internalMutation({
       workItemId: note.workItemId,
       text: note.text,
     };
+  },
+});
+
+/** Why a claimed per-run note is recorded as not delivered. */
+export const UNSENT_NOTE_REASON = 'the send stopped before Slack answered; the note was not delivered';
+
+/**
+ * A per-run note's dead-man's switch, armed with its claim.
+ *
+ * A send that died between the claim and the record left the note claimed
+ * for good, and nothing said so (P7-18). It is recorded as not delivered,
+ * with the event the feed shows; it is not re-sent, because the message may
+ * have landed and a second one would be a duplicate the manager has to read.
+ */
+export const recoverUnsentManagerNote = internalMutation({
+  args: { noteId: v.id('managerNotes') },
+  handler: async (ctx, args): Promise<{ recovered: 'marked-undelivered' | 'ignored' }> => {
+    const note = await ctx.db.get(args.noteId);
+    if (
+      !note ||
+      note.claimedAt === undefined ||
+      note.providerTs !== undefined ||
+      note.failure !== undefined ||
+      note.digestId !== undefined
+    ) {
+      return { recovered: 'ignored' };
+    }
+    await ctx.db.patch(note._id, { failure: UNSENT_NOTE_REASON });
+    await ctx.db.insert('events', {
+      agentId: note.agentId,
+      type: 'work.manager-note-failed',
+      payload: {
+        workItemId: note.workItemId,
+        noteId: note._id,
+        kind: note.kind,
+        reason: UNSENT_NOTE_REASON,
+      },
+      createdAt: Date.now(),
+    });
+    return { recovered: 'marked-undelivered' };
   },
 });
 
@@ -4317,6 +4578,25 @@ export const setActionsPending = internalMutation({
       });
       await scheduleApply(ctx, args.workItemId, pendingId, 'auto');
       return { pending: true, phase: 'auto' };
+    }
+    // A phase-one run that holds nothing for the manager (no actions, or every
+    // one refused by the gate) has nothing to decide: parked, it would hold
+    // the slot with both approve controls disabled and no request sent (P5-3).
+    if (!dependent && heldIndexes.length === 0) {
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.actions-pending',
+        payload,
+        createdAt: Date.now(),
+      });
+      await failInTransaction(ctx, row, {
+        reason:
+          refusals.length > 0
+            ? `${NOTHING_TO_DECIDE_REASON}: Day0's gate refused every action (${refusals[0].reason}), so nothing was sent`
+            : `${NOTHING_TO_DECIDE_REASON}: it emitted no actions`,
+        output: args.output,
+      });
+      return { pending: false };
     }
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
@@ -5053,6 +5333,23 @@ export const recoverInterruptedApply = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleNextStep(ctx, { ...row, state: 'failed' });
+    // The manager approved these writes and would otherwise hear nothing; the
+    // note names every row whose outcome is now theirs to check.
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect()
+    ).map(toSurfaceRecord);
+    await queueManagerNote(ctx, row, 'landed', (agentName) =>
+      landedNoteText({
+        agentName,
+        title: row.title,
+        rows: landedNoteRows({ ...output, applied }, surfaces, replyTargetFor(row)),
+        outcome: 'failed',
+        reason: INTERRUPTED_NOTE_REASON,
+      }),
+    );
     return { recovered: 'outcome-unknown' };
   },
 });

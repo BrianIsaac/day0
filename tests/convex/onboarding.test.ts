@@ -2,10 +2,10 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { parseTranscript } from '../../convex/onboarding';
+import { CHARTER_SEEDING_ATTEMPTS, parseTranscript } from '../../convex/onboarding';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -144,9 +144,8 @@ describe('charter approval by surface mode', (): void => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedApprovedCharter(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
     await expect(
-      owner.action(api.onboarding.postCharterApproval, { agentId, charterId }),
+      harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }),
     ).resolves.toEqual({ workItemsGenerated: 3 });
     const result = await outcome(harness, agentId);
     expect(result.surfaces).toEqual([]);
@@ -160,9 +159,8 @@ describe('charter approval by surface mode', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedApprovedCharter(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
     await expect(
-      owner.action(api.onboarding.postCharterApproval, { agentId, charterId }),
+      harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }),
     ).resolves.toEqual({ workItemsGenerated: 0 });
     const declared = await outcome(harness, agentId);
     expect(declared.surfaces).toEqual(['linear:declared', 'slack:declared']);
@@ -188,7 +186,7 @@ describe('charter approval by surface mode', (): void => {
       const harness = convexTest(schema, allConvexModules());
       const { agentId, charterId } = await seedApprovedCharter(harness);
       const owner = harness.withIdentity({ subject: 'owner' });
-      await owner.action(api.onboarding.postCharterApproval, { agentId, charterId });
+      await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
       await harness.finishAllScheduledFunctions(vi.runAllTimers);
       const result = await outcome(harness, agentId);
       expect(webCall).not.toHaveBeenCalled();
@@ -200,4 +198,68 @@ describe('charter approval by surface mode', (): void => {
       expect(agentsMd).not.toMatch(/Good-habits memory/i);
     },
   );
+});
+
+describe('seeding an approved charter on the server (P5-6)', (): void => {
+  /** Make the named systems unreadable to the seeding mutation, so every attempt throws. */
+  async function breakNamedSystems(
+    harness: TestConvex<typeof schema>,
+    charterId: Id<'charters'>,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(charterId);
+      if (!row) throw new Error('charter missing');
+      await ctx.db.patch(charterId, {
+        body: { ...(row.body as object), namedSystems: [{ name: 7 }] },
+      });
+    });
+  }
+
+  /** The seeding-failed events' payloads, oldest first. */
+  async function seedingFailures(harness: TestConvex<typeof schema>): Promise<unknown[]> {
+    return (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+      .filter((event) => event.type === 'charter.seeding-failed')
+      .map((event) => event.payload);
+  }
+
+  it('records why a seeding failed and tries again, then stops saying so', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await breakNamedSystems(harness, charterId);
+
+    const first = await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    expect(first).toMatchObject({ failed: expect.any(String) });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const failures = await seedingFailures(harness);
+    expect(failures).toHaveLength(CHARTER_SEEDING_ATTEMPTS);
+    expect(failures.map((payload) => (payload as { attempt: number }).attempt)).toEqual([1, 2, 3]);
+    expect(failures.map((payload) => (payload as { retrying: boolean }).retrying)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(failures[0]).toMatchObject({ charterId, reason: expect.stringContaining('Validator error') });
+  });
+
+  it('seeds nothing for a charter that is no longer the approved latest', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: 'v2',
+        approved: false,
+        createdAt: 2,
+        body: {},
+      });
+    });
+    await expect(
+      harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }),
+    ).resolves.toEqual({ workItemsGenerated: 0 });
+    expect(await seedingFailures(harness)).toEqual([]);
+  });
 });

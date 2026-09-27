@@ -2895,3 +2895,118 @@ describe('the read grant on reconnect (Q7)', (): void => {
     expect(await holds(harness, agentId, 'linear:read')).toBe(true);
   });
 });
+
+describe('a replaceable manager on the surface row', (): void => {
+  const LEFT_WORKSPACE =
+    'the manager email left@day0.local is not a member of this Slack workspace (users_not_found).';
+
+  /**
+   * Seed an approved Slack surface whose ladder has a lower rung.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   verdict: The verdict the last probe left.
+   *
+   * Returns:
+   *   The surface id.
+   */
+  async function seedSlackWithLadder(
+    harness: TestConvex<typeof schema>,
+    verdict: 'ungranted' | 'listed-dead',
+  ): Promise<Id<'surfaces'>> {
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Slack', 'chat');
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId,
+      request: { target: { system: 'Slack' } },
+      whereFound: [],
+      path: 'documented-api',
+      fallbackPath: 'browser-driven',
+      pathCandidates: [
+        { path: 'documented-api', endpoint: 'https://slack.com/api' },
+        { path: 'browser-driven', endpoint: 'https://app.slack.com' },
+      ],
+      endpoint: 'https://slack.com/api',
+      expiresInDays: 30,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { verdict, managerApprovedAt: 10, itApprovedAt: 11 });
+    });
+    return surfaceId;
+  }
+
+  it('keeps the working route when the probe failed on the manager lookup', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedSlackWithLadder(harness, 'ungranted');
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: probe.generation,
+        reason: LEFT_WORKSPACE,
+        attemptedAt: 100,
+      }),
+    ).resolves.toBeNull();
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      path: 'documented-api',
+      endpoint: 'https://slack.com/api',
+    });
+  });
+
+  it('still descends the ladder for a failure of the route itself', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedSlackWithLadder(harness, 'listed-dead');
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: probe.generation,
+        reason: 'connect ETIMEDOUT',
+        attemptedAt: 100,
+      }),
+    ).resolves.toMatchObject({ surface: { path: 'browser-driven' } });
+  });
+
+  it('records manager.changed when a re-probe resolves a different Slack user, once', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Slack', 'chat');
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const connect = async (managerUserId: string, verifiedAt: number): Promise<void> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: probe.generation,
+        toolAllowlist: ['chat.postMessage'],
+        toolArguments: [],
+        managerDmChannelId: `D${managerUserId}`,
+        managerUserId,
+        managerName: managerUserId,
+        verifiedAt,
+      });
+    };
+    await connect('UFIRST', 100);
+    await connect('UFIRST', 200);
+    await connect('USECOND', 300);
+    await connect('USECOND', 400);
+    const changes = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type === 'manager.changed')
+        .map((event) => ({ payload: event.payload, createdAt: event.createdAt })),
+    );
+    expect(changes).toEqual([
+      {
+        payload: {
+          surfaceId,
+          via: 'probe',
+          previousManagerUserId: 'UFIRST',
+          managerUserId: 'USECOND',
+        },
+        createdAt: 300,
+      },
+    ]);
+  });
+});

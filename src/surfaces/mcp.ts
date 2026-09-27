@@ -19,6 +19,7 @@ import { createSecretMcpClient } from './mcp-client';
 import {
   checkMcpAddress,
   pinnedFetch,
+  type PinnedFetch,
   resolveHostname,
   type HostResolver,
   type HttpsRequest,
@@ -97,6 +98,75 @@ export interface McpToolLike {
 export interface McpClientLike {
   listTools(): Promise<Record<string, McpToolLike>>;
   disconnect(): Promise<void>;
+  /** Run one write so the client cannot send its tool call twice (`sendOnceFence`). */
+  sendOnce?<T>(call: () => Promise<T>): Promise<T>;
+}
+
+/** Why a second send of one write was refused; the first may have landed. */
+export const RESEND_REFUSAL =
+  'the connection dropped after the write was sent and Day0 refused to send it a second time; the first send may have landed';
+
+/** A fetch that lets one tool call through per fenced send, and the fence. */
+export interface SendOnceFence {
+  readonly fetch: PinnedFetch;
+  sendOnce<T>(call: () => Promise<T>): Promise<T>;
+}
+
+/** Whether a request body is a JSON-RPC `tools/call`, alone or in a batch. */
+function isToolCallBody(body: RequestInit['body']): boolean {
+  return typeof body === 'string' && /"method"\s*:\s*"tools\/call"/.test(body);
+}
+
+/**
+ * Fence a client's transport so a write is sent at most once.
+ *
+ * The Mastra MCP client reconnects after a transport error it deems
+ * recoverable ("fetch failed", "connection closed", an HTTP 4xx, a session
+ * error) and calls the tool again, returning only the second result (P5-5).
+ * For a comment or a Save whose response was cut after the request went out,
+ * that is a second write on a row marked landed. Inside `sendOnce` the second
+ * `tools/call` is refused before it leaves, so the client's retry fails and
+ * the row is recorded as outcome-unknown. Listing tools and reconnecting are
+ * unaffected, and a read is never fenced.
+ *
+ * @param base - The transport the client would otherwise use.
+ */
+export function sendOnceFence(base: PinnedFetch): SendOnceFence {
+  let fenced = false;
+  let sent = 0;
+  return {
+    fetch: async (input: string | URL, init?: RequestInit): Promise<Response> => {
+      if (fenced && isToolCallBody(init?.body)) {
+        sent += 1;
+        if (sent > 1) throw new Error(RESEND_REFUSAL);
+      }
+      return await base(input, init);
+    },
+    sendOnce: async <T>(call: () => Promise<T>): Promise<T> => {
+      fenced = true;
+      sent = 0;
+      try {
+        return await call();
+      } finally {
+        fenced = false;
+      }
+    },
+  };
+}
+
+/**
+ * Whether a thrown error is the server's own answer rather than a lost one.
+ *
+ * The client runs with `onToolError: 'throw'`, so a result the server marked
+ * `isError` arrives as this error, after the server answered: the call was
+ * refused, and nothing about its outcome is unknown (P5-4).
+ */
+function isServerToolError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { id?: unknown }).id === 'MCP_CLIENT_TOOL_EXECUTION_FAILED'
+  );
 }
 
 export interface McpClientOptions {
@@ -227,6 +297,7 @@ export function createMastraMcpClient(
   connection: McpConnection = { resolveHostname },
 ): McpClientLike {
   let created: Promise<MCPClient> | undefined;
+  let fence: SendOnceFence | undefined;
   const create = async (): Promise<MCPClient> => {
     const pinned = options.bearer
       ? pinnedFetch(
@@ -234,13 +305,18 @@ export function createMastraMcpClient(
           connection.request,
         )
       : undefined;
+    // The plain fetch is read at call time, not captured, so the global in
+    // force when the request is made is the one that makes it.
+    fence = sendOnceFence(
+      pinned ?? (async (input: string | URL, init?: RequestInit) => await fetch(input, init)),
+    );
     return createSecretMcpClient({
       id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
       servers: {
         [options.serverName]: {
           url: options.url,
           allowedHosts: [options.url.host],
-          ...(pinned ? { fetch: pinned } : {}),
+          fetch: fence.fetch,
           ...(options.bearer
             ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
             : {}),
@@ -266,6 +342,10 @@ export function createMastraMcpClient(
       // A client whose address check refused it never connected, so there is nothing to close.
       const connected = await created.catch((): undefined => undefined);
       await connected?.disconnect();
+    },
+    sendOnce: async <T>(call: () => Promise<T>): Promise<T> => {
+      await client();
+      return fence ? await fence.sendOnce(call) : await call();
     },
   };
 }
@@ -794,7 +874,10 @@ export class McpAdapter implements SurfaceAdapter {
         if (finalAuthorityRefusal) {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
-        const result = interpretToolResult(await tool.execute(toolArgs, {}));
+        const send = async (): Promise<unknown> => await tool.execute?.(toolArgs, {});
+        const result = interpretToolResult(
+          writeAttempted && client.sendOnce ? await client.sendOnce(send) : await send(),
+        );
         const removals = [bearer, ...(this.deps.knownValues ?? [])];
         const redacted = await redactOutcome(
           boundedResultText(result.text, removals),
@@ -828,7 +911,9 @@ export class McpAdapter implements SurfaceAdapter {
           if (landedOutside) {
             return { tool: action.tool, ok: false, reason: landedOutside, idempotencyKey };
           }
-          if (replay && call.tool === 'browser_click') {
+          // Every click is followed to the page it left the browser on, not
+          // only a replayed one: a first-run click can navigate too (P6-16).
+          if (call.tool === 'browser_click') {
             let page = browserPageUrl(result.text);
             if (!page) {
               const snapshotTool = (await client.listTools())[`${surface.slug}_browser_snapshot`];
@@ -864,6 +949,9 @@ export class McpAdapter implements SurfaceAdapter {
                 tool: action.tool,
                 ok: false,
                 reason: `the page is outside the approved surface (${surface.endpoint ?? 'no documented address'})`,
+                // The click was sent and did something; whether it landed a
+                // change before the page left is not known.
+                ...(writeAttempted ? { outcomeUnknown: true } : {}),
                 idempotencyKey,
               };
             }
@@ -917,7 +1005,7 @@ export class McpAdapter implements SurfaceAdapter {
         tool: action.tool,
         ok: false,
         reason,
-        ...(writeAttempted ? { outcomeUnknown: true } : {}),
+        ...(writeAttempted && !isServerToolError(error) ? { outcomeUnknown: true } : {}),
         ...(failure?.redaction ? { redaction: failure.redaction } : {}),
         idempotencyKey,
       };

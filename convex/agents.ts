@@ -1,4 +1,4 @@
-import { v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
 import {
   mutation,
   query,
@@ -20,6 +20,7 @@ import {
 } from '../src/work/reconciliation';
 import { agentReadsSource } from './docSources';
 import { isEvaluationAgent } from './metrics';
+import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -494,6 +495,92 @@ export const deploy = mutation({
     }
     await ctx.scheduler.runAfter(0, internal.docSyncActions.mirrorForAgent, { agentId });
     return agentId;
+  },
+});
+
+/** The longest address a mailbox can have (RFC 5321's path limit). */
+const MAX_EMAIL_LENGTH = 254;
+
+/** One `@`, a dotted domain and no spaces: enough to refuse a typo, not a validator. */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** The verdicts a surface keeps while its approvals and credential stand. */
+const MANAGER_REPROBE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
+  'connected',
+  'ungranted',
+  'listed-dead',
+];
+
+/**
+ * Whether changing the manager can change what a probe of this surface finds.
+ *
+ * Only a chat surface looks the manager up. A connected one is re-probed so
+ * the DM moves to the new manager at once; a failed one only when the manager
+ * lookup, not the credential, is what failed (Q6).
+ */
+function reprobedForManagerChange(surface: Doc<'surfaces'>): boolean {
+  return (
+    surface.class === 'chat' &&
+    surface.credentialId !== undefined &&
+    surface.managerApprovedAt !== undefined &&
+    surface.itApprovedAt !== undefined &&
+    MANAGER_REPROBE_VERDICTS.includes(surface.verdict) &&
+    (surface.verdict === 'connected' || isManagerLookupFailure(surface.reason))
+  );
+}
+
+/**
+ * Change who the agent reports to.
+ *
+ * Public, owner-guarded. Writes the agent's `bossEmail` and a `manager.changed`
+ * event (`via: 'dashboard'`), then, in real mode, schedules a probe of every
+ * chat surface the change can mend, so the manager DM moves to the new person
+ * and a surface that failed on the old person's lookup comes back (Q6). A
+ * probe that resolves a different Slack user writes its own
+ * `manager.changed` (`via: 'probe'`) and re-sends the open decision requests.
+ * An evaluation agent's address is its evaluation marker and is refused.
+ *
+ * @returns Whether the address changed, and how many surfaces were re-probed.
+ * @throws ConvexError for a malformed address or an evaluation agent.
+ */
+export const setBossEmail = mutation({
+  args: { agentId: v.id('agents'), bossEmail: v.string() },
+  handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const bossEmail = args.bossEmail.trim();
+    if (bossEmail.length > MAX_EMAIL_LENGTH || !EMAIL_SHAPE.test(bossEmail)) {
+      throw new ConvexError('The manager must be an email address, such as name@company.com.');
+    }
+    if (isEvaluationAgent(agent) || isEvaluationAgent({ ...agent, bossEmail })) {
+      throw new ConvexError("An evaluation agent's manager address is fixed by its run.");
+    }
+    if (bossEmail.toLowerCase() === agent.bossEmail.trim().toLowerCase()) {
+      return { changed: false, reprobed: 0 };
+    }
+    const now = Date.now();
+    await ctx.db.patch(agent._id, { bossEmail });
+    await ctx.db.insert('events', {
+      agentId: agent._id,
+      type: 'manager.changed',
+      payload: { via: 'dashboard', bossEmail },
+      createdAt: now,
+    });
+    if (SURFACE_MODE === 'mock') return { changed: true, reprobed: 0 };
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+        .collect()
+    ).filter(reprobedForManagerChange);
+    await Promise.all(
+      surfaces.map(
+        async (surface) =>
+          await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+            surfaceId: surface._id,
+          }),
+      ),
+    );
+    return { changed: true, reprobed: surfaces.length };
   },
 });
 

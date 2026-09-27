@@ -127,7 +127,16 @@ describe('Mastra MCP client safety configuration', (): void => {
     await expect(client.listTools()).rejects.toThrow('connection refused');
     const config = fake.configs[0] as { servers: Record<string, Record<string, unknown>> };
     expect(config.servers.playwright).not.toHaveProperty('requestInit');
-    expect(config.servers.playwright).not.toHaveProperty('fetch');
+    // The only transport is the send-once fence over the plain fetch: nothing
+    // pins it to a checked address and nothing adds a header.
+    const transport = config.servers.playwright.fetch as (
+      input: string,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    const plain = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    await transport('http://playwright:8931/mcp', { method: 'POST', body: '{}' });
+    expect(plain).toHaveBeenCalledWith('http://playwright:8931/mcp', { method: 'POST', body: '{}' });
+    plain.mockRestore();
   });
 
   it('overrides unsafe logging options for every configured server', (): void => {

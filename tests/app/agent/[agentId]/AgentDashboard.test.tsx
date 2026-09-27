@@ -9,6 +9,7 @@ vi.mock('convex/react', () => ({
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc } from '../../../../convex/_generated/dataModel';
+import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
   AmendCharterPanel,
@@ -16,6 +17,9 @@ import {
   ConstraintList,
   DashboardHeader,
   DraftDetails,
+  ManagerLine,
+  MetricsCard,
+  defaultRuleClause,
   PendingActions,
   PlanApprovalForm,
   PlanExecutionLedger,
@@ -30,6 +34,7 @@ import {
   SessionRestoreNote,
   WorkItemCard,
   eventLabel,
+  sortedForQueue,
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
@@ -797,6 +802,33 @@ describe('header state pill', (): void => {
   });
 });
 
+describe('the manager line', (): void => {
+  it('names the manager and offers the change on the header', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine bossEmail="boss@day0.local" onChange={async () => undefined} />,
+    );
+    expect(markup).toContain('Agent reporting to');
+    expect(markup).toContain('boss@day0.local');
+    expect(markup).toContain('Change manager');
+    expect(markup).not.toContain('could not find this manager');
+  });
+
+  it('says a failed manager lookup is the manager, not the credential', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine
+        bossEmail="left@day0.local"
+        lookupFailure="the manager email left@day0.local is not a member of this Slack workspace (users_not_found)."
+        onChange={async () => undefined}
+      />,
+    );
+    expect(markup).toContain(
+      'could not find this manager: the manager email left@day0.local is not a member of this Slack workspace (users_not_found). The',
+    );
+    expect(markup).toContain('credential still works; change the manager');
+    expect(markup).not.toContain('..');
+  });
+});
+
 describe('retrying a skipped item', (): void => {
   const skipped = (reason: string): Doc<'workItems'> =>
     ({
@@ -1495,5 +1527,374 @@ describe('what Retry does to an unregistered skill', (): void => {
       expect(markup).not.toContain('data-skill-log="multiline"');
       expect(markup).toMatch(/<div class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/);
     });
+  });
+});
+
+describe('the card agrees with the server (P6-6)', (): void => {
+  const dmAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      body: '{"channel":"D0MANAGER","text":"Started."}',
+    },
+  };
+
+  /**
+   * One work item as the card receives it.
+   *
+   * Args:
+   *   fields: The fields this case sets over a failed Linear item.
+   *
+   * Returns:
+   *   The row.
+   */
+  function row(fields: Record<string, unknown>): Doc<'workItems'> {
+    return {
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'failed',
+      title: 'Close REVOPS-5',
+      contentSummary: 'Add the audit note and close the ticket.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'REVOPS-5',
+      observedAt: 1,
+      contentRefs: [],
+      ...fields,
+    } as unknown as Doc<'workItems'>;
+  }
+
+  /** The card's markup for one row. */
+  function card(item: Doc<'workItems'>): string {
+    return renderToStaticMarkup(
+      <WorkItemCard
+        item={item}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={(): void => undefined}
+        onCancelPlan={(): void => undefined}
+        onRetryFailed={(): void => undefined}
+        onReconcileFailed={async (): Promise<void> => undefined}
+        onApproveActions={async (): Promise<void> => undefined}
+        onRejectActions={async (): Promise<void> => undefined}
+        onResendDecision={async (): Promise<void> => undefined}
+      />,
+    );
+  }
+
+  it('lists a deferred row with the rows that wait on the manager, as the roster counts it', (): void => {
+    const order = sortedForQueue([
+      { state: 'completed' },
+      { state: 'skipped' },
+      { state: 'discovered' },
+      { state: 'deferred' },
+      { state: 'needs-skill' },
+    ]).map((item) => item.state);
+    expect(order).toEqual(['needs-skill', 'deferred', 'discovered', 'completed', 'skipped']);
+  });
+
+  it('names the scope an awaiting-permission deferral is waiting for', (): void => {
+    const markup = card(
+      row({
+        state: 'deferred',
+        verdict: {
+          decision: 'defer',
+          reason: 'awaiting-permission',
+          missingPermissions: ['linear:write', 'slack:write'],
+        },
+      }),
+    );
+    expect(markup).toContain('awaiting-permission: needs linear:write, slack:write');
+  });
+
+  it('keeps a row whose outcome is unknown out of the did-not-reach list', (): void => {
+    const markup = card(
+      row({
+        output: {
+          draft: '',
+          notes: '',
+          applied: [
+            {
+              tool: 'mcp.call',
+              ok: false,
+              outcomeUnknown: true,
+              reason: 'the provider connection closed after the request was sent',
+            },
+          ],
+        },
+      }),
+    );
+    expect(markup).not.toContain('did not reach');
+    expect(markup).toContain('1 action with an unknown outcome');
+  });
+
+  it('never tells a stop that landed a write it landed nothing', (): void => {
+    const stopped = {
+      skipReason: 'stopped: the ticket was already closed',
+      output: {
+        draft: '',
+        notes: '',
+        actions: [dmAction],
+        applied: [{ tool: 'http.request', ok: true, effect: 'Sent the manager a DM' }],
+      },
+    };
+    const reason = failedItemReason(stopped);
+    expect(reason).not.toContain('nothing landed');
+    expect(reason).toContain('confirm the provider below before Retry');
+    expect(failedItemReason({ ...stopped, providerReconciliation: { confirmedAt: 1 } })).toContain(
+      'a write landed before it stopped',
+    );
+    expect(failedItemReason({ skipReason: 'stopped: the ticket was already closed' })).toContain(
+      'stopped, nothing landed and nothing to decide',
+    );
+  });
+
+  it('says a closing-gate stop waits for reconciliation before Retry resumes there', (): void => {
+    const reason = failedItemReason({
+      skipReason: 'stopped: the closing gate refused the close',
+      output: {
+        refusedClosing: { actions: [] },
+        initial: {
+          actions: [dmAction],
+          applied: [{ tool: 'http.request', ok: true, effect: 'Sent the manager a DM' }],
+        },
+      },
+    });
+    expect(reason).toContain('confirm them below and Retry resumes there');
+  });
+
+  it('offers Retry on an item cancelled before it had a plan, as the server accepts', (): void => {
+    const markup = card(
+      row({
+        state: 'cancelled',
+        verdict: { decision: 'needs-skill', suggestedSkillName: 'linear-close' },
+        skipReason: 'skill proposal "linear-close" rejected by the manager',
+      }),
+    );
+    expect(markup).toContain('>Retry</button>');
+    expect(markup).toContain('Retry evaluates this item again from the start');
+  });
+});
+
+describe('what an outage leaves on the card (P7-18)', (): void => {
+  it('labels the model-call and restart events in words', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.model-call',
+        payload: { stage: 'draft', outcome: 'failed', attempts: 5, statusCode: 503 },
+      }),
+    ).toBe('model call · draft · failed after 5 attempts (HTTP 503)');
+    expect(
+      eventLabel({ type: 'work.model-call', payload: { stage: 'evaluation', outcome: 'ok', attempts: 1 } }),
+    ).toBe('model call · evaluation · ok');
+    expect(eventLabel({ type: 'work.scope-judgement-unavailable', payload: { cause: 'timeout' } })).toBe(
+      'scope judgement unavailable (timeout) · the item waits and is judged again',
+    );
+    expect(eventLabel({ type: 'work.draft-resumed', payload: { attempt: 2 } })).toBe(
+      'plan draft restarted after it died (restart 2)',
+    );
+  });
+
+  it('offers to ask on the chat surface for a parked row that was never asked', (): void => {
+    const item = {
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'plan-pending',
+      title: 'Close REVOPS-5',
+      contentSummary: 'Add the audit note and close the ticket.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'REVOPS-5',
+      observedAt: 1,
+      contentRefs: [],
+    } as unknown as Doc<'workItems'>;
+    const slack = {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+    } as unknown as SurfaceRecord;
+    const render = (surfaces: SurfaceRecord[]): string =>
+      renderToStaticMarkup(
+        <WorkItemCard
+          item={item}
+          surfaces={surfaces}
+          autonomousActions={false}
+          onApprovePlan={(): void => undefined}
+          onCancelPlan={(): void => undefined}
+          onRetryFailed={(): void => undefined}
+          onReconcileFailed={async (): Promise<void> => undefined}
+          onApproveActions={async (): Promise<void> => undefined}
+          onRejectActions={async (): Promise<void> => undefined}
+          onResendDecision={async (): Promise<void> => undefined}
+        />,
+      );
+    expect(render([slack])).toContain('not asked on Slack yet');
+    expect(render([slack])).toContain('Ask on Slack');
+    expect(render([])).not.toContain('Ask on');
+  });
+});
+
+describe('dashboard decisions on the supervision card (P6-9)', (): void => {
+  it('counts decisions made on the dashboard when nothing was asked on a chat surface', (): void => {
+    const metrics = {
+      charter: { timeToFirstDraftedMs: 1, timeToFirstApprovedMs: 2, revisions: 0, requestChanges: 0 },
+      decisions: {
+        requested: 0,
+        approved: 2,
+        rejected: 1,
+        partiallyApproved: 0,
+        cancelled: 0,
+        medianLatencyMs: 60_000,
+        p90LatencyMs: 60_000,
+        byVia: {
+          dashboard: { decided: 3, medianLatencyMs: 60_000, p90LatencyMs: 60_000 },
+          channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+        },
+      },
+      actions: {
+        autoApplied: 0,
+        sessionRestores: 0,
+        held: 3,
+        approved: 2,
+        rejected: 1,
+        refused: 0,
+        blockedAfterRevocation: null,
+        firstBlockAfterRevocationMs: null,
+      },
+      surfaces: { approved: 0, rejected: 0, absent: 0 },
+      skills: { approved: 0, rejected: 0 },
+      autonomyChanges: 0,
+      auditTrail: { complete: 3, total: 3, fraction: 1 },
+    } as unknown as Parameters<typeof MetricsCard>[0]['metrics'];
+    const markup = renderToStaticMarkup(<MetricsCard metrics={metrics} />);
+    expect(markup).toContain('2 / 1');
+    expect(markup).toContain('3 / 0');
+    expect(markup).toContain('0 asked on a chat surface');
+    // Only the revocation row has no evidence yet.
+    expect(markup.match(/not yet/g)).toHaveLength(1);
+  });
+});
+
+describe('the charter card carries what step 4 stored (U18 carried members)', (): void => {
+  const baseBody = {
+    whyThisHire: 'Close week.',
+    proposedFunction: 'Own routine revenue operations work.',
+    shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+    proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+    namedCollaborators: [],
+    priorityReading: [],
+    openQuestions: [],
+  };
+
+  it('shows the adjacent roles the scope check reads, which the manager could not see', (): void => {
+    const charter = {
+      _id: 'charter-1',
+      _creationTime: 1,
+      agentId: 'agent-1',
+      version: '1.0',
+      approved: true,
+      createdAt: 1,
+      body: {
+        ...baseBody,
+        adjacentRoles: [{ who: 'Finance ops', staysOutOfTheirLaneBy: 'never touching invoices' }],
+      },
+    } as unknown as Doc<'charters'>;
+    const markup = renderToStaticMarkup(<CharterCard charter={charter} />);
+    expect(markup).toContain('Adjacent roles');
+    expect(markup).toContain('Finance ops - never touching invoices');
+  });
+
+  it('says a rule no clause carries is not verified, and marks derived wording as the charter\'s', (): void => {
+    const markup = renderToStaticMarkup(
+      <ConstraintList
+        approved={true}
+        constraints={[
+          { kind: 'candidate-property', quote: 'Only owned tickets.', wording: [], origin: 'synthesis' },
+          {
+            kind: 'system-boundary',
+            quote: 'Post to public Slack channels.',
+            wording: ['Post to public Slack channels.'],
+            origin: 'derived',
+          },
+        ]}
+      />,
+    );
+    expect(markup).toContain('not verified: no clause carries these words, so striking it changes nothing');
+    expect(markup).not.toContain('no clause carries it<');
+    expect(markup).toContain('the charter&#x27;s wording, not a sentence of yours');
+    expect(markup).not.toContain('&ldquo;Post to public Slack channels.&rdquo;');
+    expect(markup).not.toContain('\u201cPost to public Slack channels.\u201d');
+  });
+
+  it('names the charter clause a closing step was decided under', (): void => {
+    const markup = renderToStaticMarkup(
+      <PlanExecutionLedger
+        outcomes={[
+          {
+            step: 2,
+            status: 'blocked',
+            evidence: 'The close was withheld.',
+            charterClause: {
+              field: 'willNotDo',
+              text: 'Close a ticket without an audit comment.',
+              charterVersion: '1.2',
+            },
+          },
+        ]}
+      />,
+    );
+    expect(markup).toContain('under the charter clause');
+    expect(markup).toContain('Close a ticket without an audit comment.');
+    expect(markup).toContain('(will not do, charter v1.2)');
+  });
+
+  it('puts a prohibition under will-not-do by default, and anything else under will-do', (): void => {
+    expect(defaultRuleClause('')).toBe('willNotDo');
+    expect(defaultRuleClause('Never close a ticket on a Friday.')).toBe('willNotDo');
+    expect(defaultRuleClause("Don't post in #general.")).toBe('willNotDo');
+    expect(defaultRuleClause('No refunds over 500.')).toBe('willNotDo');
+    expect(defaultRuleClause('Only tickets with an owner.')).toBe('willDo');
+  });
+
+  it('says a row parked on the charter waits for its approval', (): void => {
+    const markup = renderToStaticMarkup(
+      <WorkItemCard
+        item={
+          {
+            _id: 'w1',
+            _creationTime: 1,
+            agentId: 'a1',
+            state: 'deferred',
+            title: 'Close REVOPS-5',
+            contentSummary: 'Close it.',
+            sourceSystem: 'linear',
+            sourceCategory: 'ticket-queue',
+            externalId: 'REVOPS-5',
+            observedAt: 1,
+            contentRefs: [],
+            verdict: { decision: 'defer', reason: 'awaiting-charter', missingPermissions: [] },
+          } as unknown as Doc<'workItems'>
+        }
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={(): void => undefined}
+        onCancelPlan={(): void => undefined}
+        onRetryFailed={(): void => undefined}
+        onReconcileFailed={async (): Promise<void> => undefined}
+        onApproveActions={async (): Promise<void> => undefined}
+        onRejectActions={async (): Promise<void> => undefined}
+        onResendDecision={async (): Promise<void> => undefined}
+      />,
+    );
+    expect(markup).toContain('waiting for you to approve the charter');
   });
 });
