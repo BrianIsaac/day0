@@ -125,8 +125,8 @@ function eventTag(event: Doc<'events'>): string {
  *
  * Args:
  *   path: The export ZIP or its extracted directory.
- *   options: `owner`, the subject whose company is recomputed; the no-auth
- *     subject when absent.
+ *   options: `owner`, the subject whose company is recomputed, the no-auth
+ *     subject when absent; `now`, the recompute's own time, the clock's when absent.
  *
  * Returns:
  *   The figures as `metrics:forOwner` returns them, and the timeline.
@@ -135,7 +135,10 @@ function eventTag(event: Doc<'events'>): string {
  *   Error: The path is not a readable Convex export, or lacks a table the
  *     figures are computed from.
  */
-export function recomputeFromExport(path: string, options: { owner?: string } = {}): Recomputed {
+export function recomputeFromExport(
+  path: string,
+  options: { owner?: string; now?: number } = {},
+): Recomputed {
   const owner = options.owner ?? DEV_NO_AUTH_SUBJECT;
   const entries = exportEntries(path, new Set([...METRIC_TABLES, ...TIMELINE_TABLES, 'surfaces']));
   const required = <Row>(table: (typeof METRIC_TABLES)[number]): Row[] => {
@@ -168,7 +171,7 @@ export function recomputeFromExport(path: string, options: { owner?: string } = 
     owner,
     figures,
     ...timelineOf(records, syncStarts),
-    recomputedAt: Date.now(),
+    recomputedAt: options.now ?? Date.now(),
     source: { kind: 'snapshot' },
   };
 }
@@ -207,8 +210,8 @@ function timelineOf(
  *
  * Args:
  *   traces: Each employee's assembled trace.
- *   options: `owner`, the subject whose company is recomputed; the traces'
- *     own owner when absent.
+ *   options: `owner`, the subject whose company is recomputed, the traces'
+ *     own owner when absent; `now`, the recompute's own time.
  *
  * Returns:
  *   The figures as `metrics:forOwner` returns them, the timeline and what was read.
@@ -218,7 +221,7 @@ function timelineOf(
  */
 export function recomputeFromTraces(
   traces: readonly AgentTrace[],
-  options: { owner?: string } = {},
+  options: { owner?: string; now?: number } = {},
 ): Recomputed {
   const owners = [...new Set(traces.flatMap((trace) => trace.agent.userId ?? []))];
   if (options.owner === undefined && owners.length > 1) {
@@ -246,7 +249,7 @@ export function recomputeFromTraces(
     owner,
     figures: computeCompanyMetrics(records, selection),
     ...timelineOf(records, []),
-    recomputedAt: Date.now(),
+    recomputedAt: options.now ?? Date.now(),
     source: {
       kind: 'traces',
       traces: traces.map(({ agent, manifest }) => ({
@@ -267,7 +270,10 @@ export function recomputeFromTraces(
  * Raises:
  *   Error: A JSON file is not a trace of this version, or traces and a snapshot are mixed.
  */
-export function recompute(paths: readonly string[], options: { owner?: string } = {}): Recomputed {
+export function recompute(
+  paths: readonly string[],
+  options: { owner?: string; now?: number } = {},
+): Recomputed {
   const traces = paths.filter((path) => statSync(path).isFile() && path.endsWith('.json'));
   if (traces.length === 0 && paths.length === 1) return recomputeFromExport(paths[0], options);
   if (traces.length !== paths.length) {

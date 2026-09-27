@@ -201,8 +201,8 @@ describe('recomputing the supervision figures from an export', (): void => {
     temporary.push(resolve(archive, '..'));
     execFileSync('zip', ['-q', '-r', archive, '.'], { cwd: directory });
 
-    expect(recomputeFromExport(archive, { owner: OWNER })).toEqual(
-      recomputeFromExport(directory, { owner: OWNER }),
+    expect(recomputeFromExport(archive, { owner: OWNER, now: 1 })).toEqual(
+      recomputeFromExport(directory, { owner: OWNER, now: 1 }),
     );
   });
 
