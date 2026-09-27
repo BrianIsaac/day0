@@ -142,15 +142,10 @@ export function sectionAfter(section: TraceSection): TraceSection | undefined {
 /**
  * Assemble a whole trace by calling the paged export until nothing is left.
  *
- * Args:
- *   agentId: The agent to export.
- *   call: One call of the export: the head for a request with no page, one
- *     page otherwise. The command line passes `npx convex run`; a test passes
- *     the harness.
- *
- * Returns:
- *   The trace with every section in full and the counts in the manifest.
- *
+ * @param agentId - The agent to export.
+ * @param call - One call of the export: the head for a request with no page, one
+ *   page otherwise. The command line passes `npx convex run`; a test passes the harness.
+ * @returns The trace with every section in full and the counts in the manifest.
  * @throws Error when a page answers for a section other than the one asked for.
  */
 export async function assembleTrace(

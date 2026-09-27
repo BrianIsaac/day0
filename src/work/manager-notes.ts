@@ -54,12 +54,10 @@ export function managerNotificationMode(agent: {
  * note, so a note it still holds was kept in digest mode before the switch,
  * and it goes at once rather than waiting for an hour that never comes.
  *
- * Args:
- *   agent: The agent row's notification mode and zone.
- *   now: The cron's time.
  *
- * Returns:
- *   True when the notes are due.
+ * @param agent - The agent row's notification mode and zone.
+ * @param now - The cron's time.
+ * @returns True when the notes are due.
  */
 export function digestDue(
   agent: { managerNotifications?: ManagerNotificationMode; zone?: string },
@@ -148,11 +146,9 @@ export function stoppedNoteText(args: {
  * One digest message from the notes kept since the last one, each stamped
  * with the date and time it was kept, in the agent's zone.
  *
- * Args:
- *   args: The agent, its zone and the notes in the order they were recorded.
  *
- * Returns:
- *   The digest text.
+ * @param args - The agent, its zone and the notes in the order they were recorded.
+ * @returns The digest text.
  */
 export function digestText(args: {
   agentName: string;

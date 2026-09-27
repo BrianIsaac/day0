@@ -104,13 +104,11 @@ function parseArguments(
 /**
  * Run the command line.
  *
- * Args:
- *   argv: The arguments after the script's own path.
- *   io: Where the summary (`log`) and refusals (`error`) go.
- *   run: How a deployed function is called; `npx convex run` unless a test passes another.
  *
- * Returns:
- *   The exit code: 0 written, 2 usage or a refused call.
+ * @param argv - The arguments after the script's own path.
+ * @param io - Where the summary (`log`) and refusals (`error`) go.
+ * @param run - How a deployed function is called; `npx convex run` unless a test passes another.
+ * @returns The exit code: 0 written, 2 usage or a refused call.
  */
 export async function runExportTrace(
   argv: readonly string[],

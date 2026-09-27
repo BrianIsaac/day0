@@ -208,16 +208,12 @@ function timelineOf(
 /**
  * Recompute the figures of one owner's company from the employees' traces.
  *
- * Args:
- *   traces: Each employee's assembled trace.
- *   options: `owner`, the subject whose company is recomputed, the traces'
- *     own owner when absent; `now`, the recompute's own time.
  *
- * Returns:
- *   The figures as `metrics:forOwner` returns them, the timeline and what was read.
- *
- * Raises:
- *   Error: The traces belong to more than one owner and none was named.
+ * @param traces - Each employee's assembled trace.
+ * @param options - `owner`, the subject whose company is recomputed, the traces'
+ *   own owner when absent; `now`, the recompute's own time.
+ * @returns The figures as `metrics:forOwner` returns them, the timeline and what was read.
+ * @throws Error when the traces belong to more than one owner and none was named.
  */
 export function recomputeFromTraces(
   traces: readonly AgentTrace[],
