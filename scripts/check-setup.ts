@@ -556,8 +556,8 @@ export function migrationsSection(
   }
   const converted =
     read.converted.length === 0
-      ? 'No legacy row needed converting.'
-      : `Legacy rows converted: ${read.converted.map((row) => `${row.name} ${row.changed}`).join(', ')}.`;
+      ? 'No migration needed to change a row.'
+      : `Rows each migration changed: ${read.converted.map((row) => `${row.name} ${row.changed}`).join(', ')}.`;
   if (read.pending.length > 0) {
     return {
       title: `Migrations: ${read.pending.length} pending`,
@@ -622,7 +622,7 @@ export function settingsSection(v: Values): Section | undefined {
   } catch (error) {
     lines.push(
       `${PRIVATE_HOSTS_VAR} is refused as it stands, and with it every credentialed MCP client`,
-      `and every repository on a listed host: ${error instanceof Error ? error.message : String(error)}`,
+      `and every git source, GitHub and GitLab included: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   return lines.length === 0
@@ -1021,7 +1021,7 @@ function customerIssuerSection(v: Values): Section | undefined {
       noAuth
         ? 'The local key runs only under `next dev`; `next start` refuses to start with it on.'
         : customerLocal
-          ? 'DAY0_PROFILE=customer-local: real mode runs for the people it signs in, under `next start`.'
+          ? 'DAY0_PROFILE=customer-local: real mode is for the people it signs in, under `next start`.'
           : 'DAY0_PROFILE is not customer-local, so real mode still needs the local key under `next dev`.',
       "The app's own sign-in does not use this issuer yet, so until it does nobody signs in",
       noAuth

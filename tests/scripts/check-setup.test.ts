@@ -463,7 +463,7 @@ describe('the migrations section', (): void => {
     expect(section?.status).toBe('ok');
     expect(section?.lines).toEqual([
       'The rows are at 0.4.0.',
-      'Legacy rows converted: agents-owner 2, surfaces-access-clock 3.',
+      'Rows each migration changed: agents-owner 2, surfaces-access-clock 3.',
     ]);
   });
 
@@ -506,5 +506,6 @@ describe('the settings worth a second look', (): void => {
     expect(lines).toContain("MODEL_BIND_ADDR=0.0.0.0 publishes the bundled model's API");
     expect(lines).toContain('DAY0_APP_HOST=0.0.0.0 publishes the app');
     expect(lines).toContain('DAY0_PRIVATE_HOSTS is refused as it stands');
+    expect(lines).toContain('every git source, GitHub and GitLab included');
   });
 });
