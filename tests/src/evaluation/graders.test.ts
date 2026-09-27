@@ -154,6 +154,54 @@ describe('semi-final task fixtures', (): void => {
     }
   });
 
+  it('keeps every docs answer and citation out of the prose both arms see', async (): Promise<void> => {
+    // The `doc://` refs point at the page to read by design; the prose around them must not
+    // also carry the words the grader looks for.
+    const subjects: Record<string, string[]> = { 'docs-salesforce-escalation': ['Salesforce'] };
+    const tasks = (await loadEvaluationTasks()).filter(
+      (task) => task.category === 'docs-grounded-read',
+    );
+    expect(tasks).toHaveLength(5);
+    for (const task of tasks) {
+      const payload = JSON.stringify({ ...task.seed, contentRefs: [] }).toLowerCase();
+      for (const effect of task.grader.requiredEffects) {
+        const needles =
+          effect.kind === 'slack-message'
+            ? effect.includesAll
+            : effect.kind === 'ticket'
+              ? (effect.commentIncludesAll ?? [])
+              : [];
+        for (const needle of needles) {
+          if (needle === task.seed.externalId || subjects[task.id]?.includes(needle)) continue;
+          expect(payload, `${task.id} payload contains "${needle}"`).not.toContain(
+            needle.toLowerCase(),
+          );
+        }
+      }
+    }
+  });
+
+  it('names the tweet by the author the graded office records', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const tweetTasks = tasks.filter((task) =>
+      task.seed.contentRefs.some((ref) => ref.startsWith('tweet://')),
+    );
+    expect(tweetTasks.map((task) => task.id)).toEqual(['scope-marketing-tweet']);
+    for (const task of tweetTasks) {
+      for (const ref of task.seed.contentRefs.filter((row) => row.startsWith('tweet://'))) {
+        const tweet = GRADED_OFFICE.tweets.find((row) => row.slug === ref.slice('tweet://'.length));
+        expect(tweet, ref).toBeDefined();
+        expect(task.seed.contentSummary).toContain(tweet!.handle);
+      }
+      for (const handle of task.seed.contentSummary.match(/@\w+/g) ?? []) {
+        const known = GRADED_OFFICE.tweets.some(
+          (row) => row.handle === handle || row.body.includes(handle),
+        );
+        expect(known, `${task.id} names ${handle}, which the office does not hold`).toBe(true);
+      }
+    }
+  });
+
   it('keeps each docs-grounded answer out of the task payload', async (): Promise<void> => {
     const tasks = await loadEvaluationTasks();
     const answerNeedles: Record<string, string[]> = {
@@ -856,11 +904,16 @@ describe('out-of-scope tasks do not carry their own answer', (): void => {
     'dm-manager',
   ];
 
-  it('keeps every required-reason needle and every coaching phrase out of the seed text', async (): Promise<void> => {
+  it('keeps every required-reason needle and every coaching phrase out of the seed text and label', async (): Promise<void> => {
     const tasks = (await loadEvaluationTasks()).filter((task) => task.category === 'out-of-scope');
     expect(tasks).toHaveLength(5);
     for (const task of tasks) {
-      const seedText = [task.seed.title, task.seed.contentSummary, ...task.seed.contentRefs]
+      const seedText = [
+        task.seed.title,
+        task.seed.contentSummary,
+        task.seed.requesterLabel ?? '',
+        ...task.seed.contentRefs,
+      ]
         .join('\n')
         .toLowerCase();
       for (const effect of task.grader.requiredEffects) {

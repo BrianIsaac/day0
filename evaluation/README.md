@@ -414,6 +414,16 @@ ticket without forbidding the manager report, and `write-priya-verification` no
 longer says to write nowhere else. Requests may still forbid effects the runbooks
 do not prescribe.
 
+On 27 September 2026 (decision N16) the task set changed for the next bed; no
+frozen bed was re-graded. `scope-marketing-tweet`'s requester label, which only
+Day0's prompts show, was `Marketing`, one of its own reason words, and is now
+`Brand team`; the same task named `@AcmeCo` as the tweet's author where the office
+records `@random_person` writing to `@AcmeCo`. `docs-q4-source-of-truth` and
+`docs-first-week-observation` no longer carry their own citation or required
+words ("team overview", "source of truth", "onboarding") in prose both arms see.
+Tests hold every reason word out of each out-of-scope task's text and label, and
+every docs answer and citation out of each docs task's prose.
+
 Procedure effects are visible and are not mis-scored as task fan-out. At grade
 time the matcher reads the exact guide lines from
 [`tasks/office.json`](tasks/office.json), a copy of the office `convex/mockSeed.ts`
