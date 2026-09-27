@@ -370,14 +370,14 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     ).resolves.toMatchObject({
       nextCursor: undefined,
     });
-    await expect(
-      confluence({ _links: { next: null }, nextCursor: null }).listPageBatch(
-        sourceOf('confluence'),
-        secret,
-        undefined,
-        10,
-      ),
-    ).resolves.toMatchObject({ nextCursor: undefined });
+    for (const search of [
+      { _links: { next: null }, nextCursor: null },
+      { _links: { next: '' }, nextCursor: '' },
+    ]) {
+      await expect(
+        confluence(search).listPageBatch(sourceOf('confluence'), secret, undefined, 10),
+      ).resolves.toMatchObject({ nextCursor: undefined });
+    }
   });
 
   it('fails a Confluence walk whose next page carries no cursor, instead of completing it', async (): Promise<void> => {
@@ -385,7 +385,6 @@ describe('MCP documentation continuations (P10-1)', (): void => {
       { _links: { next: '/wiki/rest/api/search?limit=10' } },
       { _links: { next: 42 } },
       { nextCursor: 7 },
-      { nextCursor: '' },
     ]) {
       await expect(
         confluence(search).listPageBatch(sourceOf('confluence'), secret, undefined, 10),
@@ -399,16 +398,12 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     ).resolves.toMatchObject({
       nextCursor: 'token-2',
     });
-    await expect(
-      drive({}).listPageBatch(sourceOf('drive'), secret, undefined, 25),
-    ).resolves.toMatchObject({
-      nextCursor: undefined,
-    });
-    for (const search of [
-      { nextPageToken: 12 },
-      { nextPageToken: '' },
-      { incompleteSearch: true },
-    ]) {
+    for (const search of [{}, { nextPageToken: '' }, { nextPageToken: null }]) {
+      await expect(
+        drive(search).listPageBatch(sourceOf('drive'), secret, undefined, 25),
+      ).resolves.toMatchObject({ nextCursor: undefined });
+    }
+    for (const search of [{ nextPageToken: 12 }, { incompleteSearch: true }]) {
       await expect(
         drive(search).listPageBatch(sourceOf('drive'), secret, undefined, 25),
       ).rejects.toThrow(TRUNCATED_CONTINUATION_REASON);
@@ -417,7 +412,7 @@ describe('MCP documentation continuations (P10-1)', (): void => {
 
   it('fails a Notion walk that has more pages and no cursor, and ends one that has none', async (): Promise<void> => {
     await expect(
-      notion({ has_more: true, next_cursor: null }).listPageBatch(
+      notion({ has_more: true, next_cursor: '' }).listPageBatch(
         sourceOf('notion'),
         secret,
         undefined,

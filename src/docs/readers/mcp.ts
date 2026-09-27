@@ -399,18 +399,15 @@ export const TRUNCATED_CONTINUATION_REASON =
  *   named in a shape that carries no cursor.
  */
 function atlassianCursor(payload: Record<string, unknown>): string | undefined {
-  if (typeof payload.nextCursor === 'string' && payload.nextCursor !== '')
-    return payload.nextCursor;
-  if (payload.nextCursor !== undefined && payload.nextCursor !== null) {
-    throw new Error(TRUNCATED_CONTINUATION_REASON);
-  }
+  const named = continuationCursor(payload.nextCursor);
+  if (named !== undefined) return named;
   const links = payload._links;
   const next =
     links && typeof links === 'object' && !Array.isArray(links)
       ? (links as Record<string, unknown>).next
       : undefined;
-  if (next === undefined || next === null) return undefined;
-  if (typeof next !== 'string' || next === '') throw new Error(TRUNCATED_CONTINUATION_REASON);
+  if (next === undefined || next === null || next === '') return undefined;
+  if (typeof next !== 'string') throw new Error(TRUNCATED_CONTINUATION_REASON);
   let cursor: string | null;
   try {
     cursor = new URL(next, 'https://mcp.atlassian.com').searchParams.get('cursor');
@@ -423,18 +420,20 @@ function atlassianCursor(payload: Record<string, unknown>): string | undefined {
 }
 
 /**
- * The continuation a provider names in one field, when it names one.
+ * The continuation a provider names in one field, when it names one. An
+ * absent, null or empty field is the end of the walk, the way the providers
+ * say so, unless the provider also says more pages follow.
  *
  * @param value - The provider's continuation field.
  * @param more - Whether the provider says more pages follow, where it says so
  *   apart from the field.
  * @returns The cursor, or undefined at the end of the walk.
- * @throws Error with `TRUNCATED_CONTINUATION_REASON` when the field is present
- *   but unusable, or more pages follow and the field is missing.
+ * @throws Error with `TRUNCATED_CONTINUATION_REASON` when the field holds
+ *   something other than a cursor, or more pages follow and it holds none.
  */
 function continuationCursor(value: unknown, more?: boolean): string | undefined {
   if (typeof value === 'string' && value !== '') return value;
-  if (more === true || (value !== undefined && value !== null)) {
+  if (more === true || (value !== undefined && value !== null && value !== '')) {
     throw new Error(TRUNCATED_CONTINUATION_REASON);
   }
   return undefined;
