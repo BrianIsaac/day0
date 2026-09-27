@@ -4,11 +4,17 @@ import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
+  connectCheckedApi,
+  DocumentedApiLimitation,
+  documentedApiOperations,
+  documentedCredentialHeader,
   EFFECT_LENGTH,
   HttpAdapter,
   HTTP_TIMEOUT_MS,
+  probeDocumentedApi,
   providerIdFrom,
   resolveRequestUrl,
+  type ApiConnector,
 } from '../../../src/surfaces/http';
 import { READ_EFFECT_LENGTH } from '../../../src/surfaces/mock';
 import type {
@@ -465,5 +471,247 @@ describe('request URL and provider id helpers', (): void => {
     expect(providerIdFrom({ message: { ts: '3.4' } })).toBe('3.4');
     expect(providerIdFrom({ ok: true })).toBeUndefined();
     expect(providerIdFrom('text')).toBeUndefined();
+  });
+});
+
+/** A tracker's own runbook page, the shape a documented REST API takes in a team's docs. */
+const TRACKER_PAGE = [
+  '# Tracker',
+  '',
+  'The team tracker has a REST API at `https://tracker.example.com/api/v2/`. Send the service',
+  'key as `X-Api-Key: {{secret}}` on every request.',
+  '',
+  '- `GET /issues` lists the open issues; add `?state=open` to filter.',
+  '- `GET https://tracker.example.com/api/v2/projects` lists the projects.',
+  '- `POST /comments` adds a comment to an issue.',
+  '- `GET /issues/{id}` reads one issue.',
+  '- `DELETE https://other.example.com/api/v2/issues` belongs to another system.',
+  '- `Content-Type: application/json` on every write.',
+].join('\n');
+
+const TRACKER = 'https://tracker.example.com/api/v2/';
+
+/** A connector that skips DNS and answers every request from `respond`. */
+function trackerConnector(respond: (url: URL, init: RequestInit) => Response): {
+  connect: ApiConnector;
+  calls: Array<{ url: string; init: RequestInit }>;
+} {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  return {
+    calls,
+    connect: async (endpoint: string) => ({
+      url: new URL(endpoint),
+      fetch: async (input: URL, init: RequestInit): Promise<Response> => {
+        calls.push({ url: input.href, init });
+        return respond(input, init);
+      },
+    }),
+  };
+}
+
+describe('the operations a documented API offers', (): void => {
+  it('reads each backticked verb and path under the documented base', (): void => {
+    expect(documentedApiOperations(TRACKER_PAGE, TRACKER)).toEqual([
+      { method: 'GET', operation: 'issues' },
+      { method: 'GET', operation: 'projects' },
+      { method: 'POST', operation: 'comments' },
+    ]);
+  });
+
+  // The HTTP rung and the gate compare a request's path with the allowlist
+  // exactly, so a templated path could never match a real request.
+  it('leaves out a path with a parameter segment, which no request matches exactly', (): void => {
+    const page = '`GET /issues/{id}` `GET /issues/:id/comments` `PATCH /issues/<id>`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  });
+
+  it('leaves out an address on another host or above the documented base', (): void => {
+    const page = [
+      '`GET https://other.example.com/api/v2/issues`',
+      '`GET https://tracker.example.com/admin/users`',
+      '`GET /../admin`',
+    ].join('\n');
+    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  });
+
+  it('ignores prose, headers and verbs the rung does not send', (): void => {
+    const page = 'GET /issues without backticks; `Authorization: Bearer`; `TRACE /issues`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  });
+
+  it('names each operation once whatever the page repeats', (): void => {
+    const page = '`GET /issues` and again `GET /issues?state=open`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([
+      { method: 'GET', operation: 'issues' },
+    ]);
+  });
+
+  it('finds nothing against an endpoint that is not a URL', (): void => {
+    expect(documentedApiOperations(TRACKER_PAGE, 'not a url')).toEqual([]);
+  });
+});
+
+describe('the header a documented API takes its credential in', (): void => {
+  it('reads a header the page shows carrying the placeholder', (): void => {
+    expect(documentedCredentialHeader(TRACKER_PAGE)).toEqual({ name: 'X-Api-Key' });
+    expect(documentedCredentialHeader('Send `Authorization: Token {{secret}}`.')).toEqual({
+      name: 'Authorization',
+      scheme: 'Token',
+    });
+  });
+
+  it('reads the scheme of an Authorization header named without the placeholder', (): void => {
+    expect(documentedCredentialHeader('a bot token in the `Authorization: Bearer` header')).toEqual(
+      { name: 'Authorization', scheme: 'Bearer' },
+    );
+  });
+
+  it('falls back to a bearer token when the page names no header', (): void => {
+    expect(documentedCredentialHeader('`Content-Type: application/json`')).toEqual({
+      name: 'Authorization',
+      scheme: 'Bearer',
+    });
+  });
+});
+
+describe('probing a documented API that is not Slack', (): void => {
+  it('checks the credential with the first documented read and admits every documented path', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
+    const discovery = await probeDocumentedApi(
+      TRACKER,
+      'tracker-key',
+      TRACKER_PAGE,
+      tracker.connect,
+    );
+    expect(discovery).toEqual({
+      toolAllowlist: ['issues', 'projects', 'comments'],
+      toolArguments: [],
+    });
+    expect(tracker.calls).toHaveLength(1);
+    expect(tracker.calls[0].url).toBe('https://tracker.example.com/api/v2/issues');
+    expect(tracker.calls[0].init.method).toBe('GET');
+    expect(new Headers(tracker.calls[0].init.headers).get('x-api-key')).toBe('tracker-key');
+    expect(new Headers(tracker.calls[0].init.headers).get('authorization')).toBeNull();
+    expect(tracker.calls[0].init.redirect).toBe('manual');
+  });
+
+  it('never sends a documented write to check a credential', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json({ ok: true }));
+    await expect(
+      probeDocumentedApi(
+        TRACKER,
+        'k',
+        '# Tracker\n`POST /comments` `DELETE /issues`',
+        tracker.connect,
+      ),
+    ).rejects.toThrow(DocumentedApiLimitation);
+    await expect(
+      probeDocumentedApi(TRACKER, 'k', '# Tracker\n`GET /issues.delete`', tracker.connect),
+    ).rejects.toThrow('names no read');
+    expect(tracker.calls).toEqual([]);
+  });
+
+  it('says a page that names no operation is a limitation, not a dead system', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json({}));
+    const failure = probeDocumentedApi(TRACKER, 'k', '# Tracker\nIt has an API.', tracker.connect);
+    await expect(failure).rejects.toThrow(DocumentedApiLimitation);
+    await expect(failure).rejects.toThrow('not evidence that the system is unavailable');
+    await expect(probeDocumentedApi(undefined, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      DocumentedApiLimitation,
+    );
+    expect(tracker.calls).toEqual([]);
+  });
+
+  it('reports a refused key with its status so the verdict reads it as access', async (): Promise<void> => {
+    const tracker = trackerConnector(() => new Response('{"error":"bad key"}', { status: 401 }));
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      'GET issues answered HTTP 401',
+    );
+  });
+
+  it('does not follow a redirect with the credential', async (): Promise<void> => {
+    const tracker = trackerConnector(
+      () => new Response(null, { status: 302, headers: { Location: 'https://sso.example/' } }),
+    );
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      'HTTP 302',
+    );
+    expect(tracker.calls).toHaveLength(1);
+  });
+
+  it('reads an ok: false envelope inside a 200 as a failure', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json({ ok: false, error: 'invalid_auth' }));
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      'invalid_auth',
+    );
+  });
+
+  it('names the operation that could not be reached', async (): Promise<void> => {
+    const connect: ApiConnector = async (endpoint: string) => ({
+      url: new URL(endpoint),
+      fetch: async (): Promise<Response> => {
+        throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
+      },
+    });
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, connect)).rejects.toThrow(
+      'GET issues could not be reached: fetch failed',
+    );
+  });
+
+  it('refuses a private address in the words of an API, not an MCP server', async (): Promise<void> => {
+    const failure = connectCheckedApi('https://tracker.internal/api/v2/');
+    await expect(failure).rejects.toThrow(DocumentedApiLimitation);
+    await expect(failure).rejects.toThrow(
+      'The approved API endpoint must use a public HTTPS hostname',
+    );
+    await expect(failure).rejects.not.toThrow(/\bMCP\b/);
+  });
+
+  it('lets the HTTP rung read the tracker the probe connected', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
+    const { toolAllowlist } = await probeDocumentedApi(
+      TRACKER,
+      'tracker-key',
+      TRACKER_PAGE,
+      tracker.connect,
+    );
+    const fake = fakeFetch(() => Response.json([{ id: 'TRK-1', title: 'Renewal call' }]));
+    const trackerAdapter = adapter(
+      fake,
+      [
+        {
+          slug: 'tracker',
+          displayName: 'Tracker',
+          class: 'kanban',
+          verdict: 'connected',
+          credentialLanded: true,
+          lastVerifiedAt: now,
+          endpoint: TRACKER,
+          path: 'documented-api',
+          toolAllowlist,
+          credentialId: 'cred-tracker',
+          credentialKind: 'value',
+        },
+      ],
+      'tracker-key',
+    );
+    const row = await trackerAdapter.apply(
+      ctx,
+      run,
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'tracker',
+          method: 'GET',
+          path: '/issues',
+          headersJson: JSON.stringify({ 'X-Api-Key': '{{secret}}' }),
+        },
+      },
+      0,
+      'key-read',
+    );
+    expect(row).toMatchObject({ ok: true, effect: expect.stringContaining('Renewal call') });
+    expect(fake.calls[0].url).toBe('https://tracker.example.com/api/v2/issues');
+    expect(new Headers(fake.calls[0].init.headers).get('x-api-key')).toBe('tracker-key');
   });
 });
