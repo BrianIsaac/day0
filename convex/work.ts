@@ -2845,9 +2845,14 @@ export const prepareDecisionRequest = internalMutation({
       .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId))
       .collect();
     const actions = actionsOf(row.output);
-    const heldIndexes =
+    const verdicts = verdictList(row.actionVerdicts, actions.length);
+    const heldIndexes = args.kind === 'actions' ? indexesWith(verdicts, 'held') : [];
+    const refused =
       args.kind === 'actions'
-        ? indexesWith(verdictList(row.actionVerdicts, actions.length), 'held')
+        ? refusedReasonEntries(row.actionVerdicts, actions.length).map(([index, reason]) => ({
+            index,
+            reason,
+          }))
         : [];
     if (args.kind === 'actions' && heldIndexes.length === 0) {
       return { prepared: false as const, reason: 'no held actions need a decision' };
@@ -2919,9 +2924,16 @@ export const prepareDecisionRequest = internalMutation({
       agentId: row.agentId,
       agentName: agent.name,
       title: row.title,
+      item: {
+        sourceCategory: row.sourceCategory,
+        externalId: row.externalId,
+        ...(row.contentRefs[0] ? { link: row.contentRefs[0] } : {}),
+        ...(row.replyTarget ? { replyTarget: row.replyTarget } : {}),
+      },
       plan: row.plan,
       output: row.output,
       heldIndexes,
+      refused,
       decisionId: args.decisionId,
       requestRunId,
       surface: toSurfaceRecord(chat),

@@ -299,3 +299,84 @@ describe('askedFor (wave 3 review M5)', (): void => {
     expect(askedFor({ kind: 'actions', decidedAt: 2 }, 'actions-pending')).toBe(false);
   });
 });
+
+describe('what a decision request says about its item (P8-6, U9 step 24)', (): void => {
+  const close: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-7","state":"Done"}',
+    },
+  };
+
+  it('names the ticket and its link under the heading', (): void => {
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Comment, then close the issue.' },
+      item: {
+        sourceCategory: 'ticket-queue',
+        externalId: 'REVOPS-7',
+        link: 'https://linear.app/day0/issue/REVOPS-7',
+      },
+    });
+    expect(text.split('\n').slice(0, 2)).toEqual([
+      'ops worker needs your decision on “Close August”.',
+      'Ticket: REVOPS-7 https://linear.app/day0/issue/REVOPS-7',
+    ]);
+  });
+
+  it('says where a chat ask was made and that its answer goes back to its thread', (): void => {
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Slack mention in #revops-asks',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Answer the ask.' },
+      item: {
+        sourceCategory: 'event-stream',
+        externalId: 'CASKS:1789757862.783069',
+        link: 'https://app.slack.com/client/T0/CASKS/thread/CASKS-1789757862783069',
+        replyTarget: { channel: 'CASKS', channelName: 'revops-asks' },
+      },
+    });
+    expect(text.split('\n').slice(1, 3)).toEqual([
+      'Asked in #revops-asks: https://app.slack.com/client/T0/CASKS/thread/CASKS-1789757862783069',
+      'The answer to the ask goes to its thread in #revops-asks.',
+    ]);
+  });
+
+  it('lists the rows the gate refused, with why, apart from the held ones', (): void => {
+    const post: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close completed.' }),
+      },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [close, post],
+      heldIndexes: [0],
+      refused: [{ index: 1, reason: 'reply outside the source channel' }],
+      surfaces: [slack],
+    });
+    expect(text).toContain(
+      [
+        'Refused by Day0’s gate, so not sent whatever you decide:',
+        '- Post to Slack channel C0PUBLIC: "Close completed." (reply outside the source channel)',
+        '',
+        'Reply “approve ab3xyz” or “reject ab3xyz <reason>”.',
+      ].join('\n'),
+    );
+    expect(text.indexOf('Held actions:')).toBeLessThan(text.indexOf('Refused by'));
+  });
+});

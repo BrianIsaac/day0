@@ -284,9 +284,18 @@ export function decisionRequestText(args: {
   surfaces?: SurfaceRecord[];
   /** The held actions are the run's closing phase, not its first set. */
   closingPhase?: boolean;
+  /** The work item the request is about: its ticket and link, or the ask and its thread. */
+  item?: DecisionRequestItem;
+  /** The set's rows the gate refused, which no decision sends. */
+  refused?: ReadonlyArray<{ readonly index: number; readonly reason: string }>;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
+  const about = args.item ? itemLines(args.item) : [];
   const reply = `Reply “approve ${args.id}” or “reject ${args.id} <reason>”.`;
+  const refused =
+    args.kind === 'actions'
+      ? refusedLines(args.refused ?? [], args.actions ?? [], args.surfaces ?? [])
+      : [];
   let listHeading: string;
   let lines: string[];
   let noun: string;
@@ -316,10 +325,12 @@ export function decisionRequestText(args: {
   const frame = (shown: readonly string[], omitted: number): string =>
     [
       heading,
+      ...about,
       '',
       listHeading,
       ...shown,
       ...(omitted > 0 ? [`…and ${omitted} more ${noun}; the full list is in day0.`] : []),
+      ...(refused.length > 0 ? ['', ...refused] : []),
       '',
       reply,
       ...(scope ? [scope] : []),
@@ -332,6 +343,65 @@ export function decisionRequestText(args: {
     shown -= 1;
   }
   return frame(lines.slice(0, shown), lines.length - shown);
+}
+
+/** What a decision request says about the work item it asks about. */
+export interface DecisionRequestItem {
+  readonly sourceCategory: string;
+  readonly externalId: string;
+  /** The provider's link to the item: the ticket, or the ask's message. */
+  readonly link?: string;
+  /** Where the answer to a chat ask goes: the ask's channel and thread. */
+  readonly replyTarget?: { readonly channel: string; readonly channelName?: string };
+}
+
+/**
+ * The lines under the heading that say which item this is: a ticket's id
+ * and link, or where a chat ask was made and that its answer goes back to
+ * that thread (P8-6), so two requests with the same title can be told apart
+ * and opened from a phone.
+ */
+function itemLines(item: DecisionRequestItem): string[] {
+  const link = item.link === undefined ? '' : oneLine(item.link, '');
+  if (item.replyTarget) {
+    const channel = `#${oneLine(item.replyTarget.channelName ?? item.replyTarget.channel, 'the channel')}`;
+    return [
+      `Asked in ${channel}${link ? `: ${link}` : ''}`,
+      `The answer to the ask goes to its thread in ${channel}.`,
+    ];
+  }
+  if (item.sourceCategory === 'ticket-queue') {
+    return [`Ticket: ${oneLine(item.externalId, 'unnamed')}${link ? ` ${link}` : ''}`];
+  }
+  return link ? [`Source: ${link}`] : [];
+}
+
+/** The most refused rows a request lists by name. */
+const REFUSED_LINES_SHOWN = 5;
+
+/**
+ * The rows of a held set the gate refused, each with its reason: no decision
+ * sends them, and a manager approving the set should know what it leaves out.
+ */
+function refusedLines(
+  refused: ReadonlyArray<{ readonly index: number; readonly reason: string }>,
+  actions: readonly MockAction[],
+  surfaces: readonly SurfaceRecord[],
+): string[] {
+  if (refused.length === 0) return [];
+  const clip = (line: string): string =>
+    line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
+  const shown = refused.slice(0, REFUSED_LINES_SHOWN).map(({ index, reason }) => {
+    const action = actions[index];
+    const what = action ? summariseAction(action, surfaces) : `action ${index + 1}`;
+    return clip(`- ${what} (${oneLine(reason, 'refused')})`);
+  });
+  const more = refused.length - shown.length;
+  return [
+    'Refused by Day0’s gate, so not sent whatever you decide:',
+    ...shown,
+    ...(more > 0 ? [`…and ${more} more refused; the full list is in day0.`] : []),
+  ];
 }
 
 /** The first line of a plan request: its summary, or where to read the plan. */

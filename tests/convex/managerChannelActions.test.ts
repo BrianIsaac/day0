@@ -95,6 +95,39 @@ async function seedParkedPlan(
 }
 
 describe('the outbound manager-channel action', (): void => {
+  it('sends the ticket and its link in the request, so the manager can open it from the DM', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: '1787768406.604379' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seedParkedPlan(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-7',
+        contentRefs: ['https://linear.app/day0/issue/REVOPS-7'],
+      });
+    });
+
+    await expect(
+      harness.action(internal.managerChannelActions.requestDecision, { workItemId, kind: 'plan' }),
+    ).resolves.toEqual({ sent: true });
+    expect(sent).toHaveLength(1);
+    const body = JSON.parse(sent[0]!.body) as { text: string };
+    expect(body.text.split('\n').slice(0, 2)).toEqual([
+      'ops worker needs your decision on “Verify the runbook”.',
+      'Ticket: REVOPS-7 https://linear.app/day0/issue/REVOPS-7',
+    ]);
+  });
+
   it('sends nothing through a chat surface whose access end date passed before the sweep ended it (M21)', async (): Promise<void> => {
     const fetchSpy = vi.fn(
       async (): Promise<Response> => new Response('{"ok":true}', { status: 200 }),

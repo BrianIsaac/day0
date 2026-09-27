@@ -176,6 +176,8 @@ export const requestDecision = internalAction({
       plan: prepared.plan,
       actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
       heldIndexes: prepared.heldIndexes,
+      refused: prepared.refused,
+      item: prepared.item,
       surfaces: prepared.surfaces,
       closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
     });
