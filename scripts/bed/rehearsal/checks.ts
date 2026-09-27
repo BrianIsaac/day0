@@ -152,7 +152,12 @@ export function checkBrowserBatchHeldWhole(item: WorkItemView, tileSlug: string)
   const rows = browserSequenceOf(item, tileSlug);
   const evidence = { rows, verdicts: item.actionVerdicts ?? [] };
   if (rows.length === 0) {
-    return { check, passed: false, detail: `phase one emitted no action on ${tileSlug}`, rows: evidence };
+    return {
+      check,
+      passed: false,
+      detail: `phase one emitted no action on ${tileSlug}`,
+      rows: evidence,
+    };
   }
   const notHeld = rows.filter((row: BrowserRow): boolean => row.disposition !== 'held');
   if (notHeld.length > 0) {
@@ -164,7 +169,9 @@ export function checkBrowserBatchHeldWhole(item: WorkItemView, tileSlug: string)
     };
   }
   const tools = rows.map((row: BrowserRow): string => row.tool);
-  const runbookOrder = BROWSER_ORDER.every((tool: string, index: number): boolean => tools[index] === tool);
+  const runbookOrder = BROWSER_ORDER.every(
+    (tool: string, index: number): boolean => tools[index] === tool,
+  );
   if (!runbookOrder) {
     return {
       check,
@@ -210,7 +217,12 @@ export function checkWrongKeyReadRepaired(item: WorkItemView): CheckResult {
     };
   }
   if (repaired.length > 1) {
-    return { check, passed: false, detail: `${repaired.length} reads carry a repair; one is the bound`, rows: reads };
+    return {
+      check,
+      passed: false,
+      detail: `${repaired.length} reads carry a repair; one is the bound`,
+      rows: reads,
+    };
   }
   if (repaired.length === 1) {
     const read = repaired[0]!;
@@ -251,7 +263,9 @@ export function readBackOf(item: WorkItemView): ReadBack | undefined {
     if (mcpTool(actions[index]) !== 'browser_snapshot') continue;
     const effect = applied[index]?.effect ?? '';
     const figure = /visible figure\s*([0-9]+(?:\.[0-9]+)?%)/i.exec(effect)?.[1];
-    const auditLine = /Last updated by [^\n]*?\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/.exec(effect)?.[0];
+    const auditLine = /Last updated by [^\n]*?\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/.exec(
+      effect,
+    )?.[0];
     if (figure && auditLine) return { figure, auditLine };
   }
   return undefined;
@@ -272,18 +286,30 @@ export function checkClosingCommentQuotesReadBack(item: WorkItemView): CheckResu
   const actions = item.output?.actions ?? [];
   const comments = actions.flatMap((action: ActionView, index: number) =>
     mcpTool(action) === 'save_comment'
-      ? [{ index, body: String(mcpArgs(action).body ?? ''), disposition: item.actionVerdicts?.[index]?.disposition }]
+      ? [
+          {
+            index,
+            body: String(mcpArgs(action).body ?? ''),
+            disposition: item.actionVerdicts?.[index]?.disposition,
+          },
+        ]
       : [],
   );
   const rows = { readBack, comments };
   if (!readBack) {
-    return { check, passed: false, detail: 'the phase-one snapshot row carries no visible figure and audit line', rows };
+    return {
+      check,
+      passed: false,
+      detail: 'the phase-one snapshot row carries no visible figure and audit line',
+      rows,
+    };
   }
   if (comments.length === 0) {
     return { check, passed: false, detail: 'the closing set holds no save_comment', rows };
   }
   const quoting = comments.find(
-    (comment) => comment.body.includes(readBack.figure) && comment.body.includes(readBack.auditLine),
+    (comment) =>
+      comment.body.includes(readBack.figure) && comment.body.includes(readBack.auditLine),
   );
   if (!quoting) {
     return {
@@ -332,7 +358,12 @@ export function checkCompletion(
   const blocked = outcomes.filter((row) => row.status === 'blocked').length;
   if (blocked > 0) return { check, passed: false, detail: `${blocked} plan step(s) blocked`, rows };
   if (linear.stateName !== 'Done') {
-    return { check, passed: false, detail: `REVOPS-7 is ${linear.stateName} in Linear, not Done`, rows };
+    return {
+      check,
+      passed: false,
+      detail: `REVOPS-7 is ${linear.stateName} in Linear, not Done`,
+      rows,
+    };
   }
   if (linear.newComments.length === 0) {
     return { check, passed: false, detail: 'REVOPS-7 carries no new comment in Linear', rows };

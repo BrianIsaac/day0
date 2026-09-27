@@ -113,7 +113,9 @@ export async function connectBackend(
     workItems: async (id) =>
       (await client.query(api.work.listForAgent, { agentId: agentId(id) })) as WorkItemRow[],
     workItem: async (id) =>
-      (await client.query(api.work.get, { workItemId: id as Id<'workItems'> })) as WorkItemRow | null,
+      (await client.query(api.work.get, {
+        workItemId: id as Id<'workItems'>,
+      })) as WorkItemRow | null,
     events: async (id, limit) =>
       (await client.query(api.events.recent, { agentId: agentId(id), limit })) as EventRow[],
   };
@@ -163,7 +165,9 @@ export function agentNamed(agents: readonly AgentRow[], name: string): AgentRow 
 export function allSourcesSynced(sources: readonly DocSourceRow[]): boolean {
   return (
     sources.length > 0 &&
-    sources.every((source: DocSourceRow): boolean => source.status === 'synced' && source.pageCount > 0)
+    sources.every(
+      (source: DocSourceRow): boolean => source.status === 'synced' && source.pageCount > 0,
+    )
   );
 }
 
@@ -181,7 +185,10 @@ export function failedSource(sources: readonly DocSourceRow[]): DocSourceRow | u
 }
 
 /** A surface by slug. */
-export function surfaceBySlug(surfaces: readonly SurfaceRow[], slug: string): SurfaceRow | undefined {
+export function surfaceBySlug(
+  surfaces: readonly SurfaceRow[],
+  slug: string,
+): SurfaceRow | undefined {
   return surfaces.find((surface: SurfaceRow): boolean => surface.slug === slug);
 }
 
@@ -226,10 +233,15 @@ export function surfaceSummary(surfaces: readonly SurfaceRow[]): string {
  * Returns:
  *   The item whose external id is the ticket, or undefined before intake.
  */
-export function ticketItem(items: readonly WorkItemRow[], identifier: string = TICKET): WorkItemRow | undefined {
+export function ticketItem(
+  items: readonly WorkItemRow[],
+  identifier: string = TICKET,
+): WorkItemRow | undefined {
   return items.find(
     (item: WorkItemRow): boolean =>
-      item.externalId === identifier || item.externalId.endsWith(`/${identifier}`) || item.title.startsWith(identifier),
+      item.externalId === identifier ||
+      item.externalId.endsWith(`/${identifier}`) ||
+      item.title.startsWith(identifier),
   );
 }
 
@@ -245,8 +257,16 @@ export function ticketItem(items: readonly WorkItemRow[], identifier: string = T
  *   The items in an open state that are not the ticket.
  */
 export function competingClaims(items: readonly WorkItemRow[], ticketId: string): WorkItemRow[] {
-  const open = new Set(['claimed', 'plan-pending', 'plan-approved', 'executing', 'actions-pending']);
-  return items.filter((item: WorkItemRow): boolean => item._id !== ticketId && open.has(item.state));
+  const open = new Set([
+    'claimed',
+    'plan-pending',
+    'plan-approved',
+    'executing',
+    'actions-pending',
+  ]);
+  return items.filter(
+    (item: WorkItemRow): boolean => item._id !== ticketId && open.has(item.state),
+  );
 }
 
 export type SkipKind = 'quality-fit' | 'out-of-scope' | 'other';
@@ -296,7 +316,10 @@ export function batchHeld(item: Pick<WorkItemRow, 'state' | 'actionVerdicts'>): 
  * Returns:
  *   True when the closing set is held.
  */
-export function closingHeld(item: WorkItemView & Pick<WorkItemRow, 'state'>, tileSlug: string = TILE_SLUG): boolean {
+export function closingHeld(
+  item: WorkItemView & Pick<WorkItemRow, 'state'>,
+  tileSlug: string = TILE_SLUG,
+): boolean {
   return batchHeld(item) && browserSequenceOf(item, tileSlug).length === 0;
 }
 

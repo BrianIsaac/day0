@@ -234,7 +234,10 @@ export function projectRefusal(input: ProjectRefusalInput): string | undefined {
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(project)) {
     return `"${project}" is not a compose project name: lowercase letters, digits, "-" and "_" only.`;
   }
-  if (PROTECTED_PROJECTS.includes(project) || PROTECTED_VOLUMES.includes(`${project}_convex_data`)) {
+  if (
+    PROTECTED_PROJECTS.includes(project) ||
+    PROTECTED_VOLUMES.includes(`${project}_convex_data`)
+  ) {
     return `"${project}" is protected: it holds a real run and this rehearsal never starts or removes it.`;
   }
   if (project === input.primaryProject.trim()) {

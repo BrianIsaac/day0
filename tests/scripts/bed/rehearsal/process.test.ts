@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { must, runCommand, startServer, waitUntil } from '../../../../scripts/bed/rehearsal/process';
+import {
+  must,
+  runCommand,
+  startServer,
+  waitUntil,
+} from '../../../../scripts/bed/rehearsal/process';
 
 describe('the process adapter', (): void => {
   it('runs a command to completion with both streams captured', (): void => {
@@ -39,7 +44,13 @@ describe('the process adapter', (): void => {
     expect(value).toBe('seen');
     expect(clock).toBe(2_000);
     await expect(
-      waitUntil(async () => false, { what: 'never', timeoutMs: 3_000, intervalMs: 1_000, sleep, now }),
+      waitUntil(async () => false, {
+        what: 'never',
+        timeoutMs: 3_000,
+        intervalMs: 1_000,
+        sleep,
+        now,
+      }),
     ).rejects.toThrow('timed out after 3 s waiting for never.');
   });
 });

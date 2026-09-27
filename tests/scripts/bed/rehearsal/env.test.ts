@@ -78,7 +78,9 @@ describe('the bed environment', (): void => {
 
 describe('the rehearsal secrets file', (): void => {
   it('reads the two provider tokens and ignores everything else', (): void => {
-    const secrets = parseSecrets('LINEAR_API_KEY=lin_api_abc\nSLACK_BOT_TOKEN="xoxb-1-2"\nOTHER=x\n');
+    const secrets = parseSecrets(
+      'LINEAR_API_KEY=lin_api_abc\nSLACK_BOT_TOKEN="xoxb-1-2"\nOTHER=x\n',
+    );
     expect(secrets).toEqual({ linearApiKey: 'lin_api_abc', slackBotToken: 'xoxb-1-2' });
     expect(parseSecrets('# nothing\n')).toEqual({});
   });

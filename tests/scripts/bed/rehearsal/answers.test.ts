@@ -18,7 +18,13 @@ describe("the Day-1 answers, in the tickets' own words", (): void => {
 
   it("uses the tickets' words the runbook card prescribes", (): void => {
     const text = DAY_ONE_ANSWERS.join(' ');
-    for (const words of ['Q3 close', 'audit', 'tickets in Linear', 'Looker pipeline tile', '#revops-asks']) {
+    for (const words of [
+      'Q3 close',
+      'audit',
+      'tickets in Linear',
+      'Looker pipeline tile',
+      '#revops-asks',
+    ]) {
       expect(text).toContain(words);
     }
   });

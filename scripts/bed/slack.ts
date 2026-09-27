@@ -91,7 +91,9 @@ async function slackGet(
   retry: SlackRetryIo = DEFAULT_SLACK_RETRY_IO,
   now: () => number = Date.now,
 ): Promise<SlackAnswer> {
-  return await retrySlackOnce(`Slack ${method}`, retry, () => requestSlack(fetchImpl, token, method, params, undefined, now));
+  return await retrySlackOnce(`Slack ${method}`, retry, () =>
+    requestSlack(fetchImpl, token, method, params, undefined, now),
+  );
 }
 
 function nextCursor(answer: SlackAnswer): string | undefined {
@@ -120,12 +122,19 @@ export async function listConversations(
   const channels: BedChannel[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const answer = await slackGet(fetchImpl, token, 'conversations.list', {
-      types,
-      exclude_archived: 'true',
-      limit: '200',
-      ...(cursor ? { cursor } : {}),
-    }, retry, now);
+    const answer = await slackGet(
+      fetchImpl,
+      token,
+      'conversations.list',
+      {
+        types,
+        exclude_archived: 'true',
+        limit: '200',
+        ...(cursor ? { cursor } : {}),
+      },
+      retry,
+      now,
+    );
     for (const raw of (answer.channels ?? []) as Array<Record<string, unknown>>) {
       if (typeof raw.id !== 'string') continue;
       channels.push({
@@ -181,18 +190,30 @@ export async function conversationMessages(
   const threads: string[] = [];
   let cursor: string | undefined;
   for (let page = 0; ; page += 1) {
-    if (page === MAX_PAGES) throw new Error(`Slack conversations.history on ${channel} did not finish.`);
-    const answer = await slackGet(fetchImpl, token, 'conversations.history', {
-      channel,
-      limit: '200',
-      ...(cursor ? { cursor } : {}),
-    }, retry, now);
+    if (page === MAX_PAGES)
+      throw new Error(`Slack conversations.history on ${channel} did not finish.`);
+    const answer = await slackGet(
+      fetchImpl,
+      token,
+      'conversations.history',
+      {
+        channel,
+        limit: '200',
+        ...(cursor ? { cursor } : {}),
+      },
+      retry,
+      now,
+    );
     for (const raw of (answer.messages ?? []) as Array<Record<string, unknown>>) {
       const message = asMessage(channel, raw);
       if (!message) continue;
       if (Number.parseFloat(message.ts) >= bound) messages.push(message);
       const latest = typeof raw.latest_reply === 'string' ? raw.latest_reply : message.ts;
-      if (typeof raw.reply_count === 'number' && raw.reply_count > 0 && Number.parseFloat(latest) >= bound) {
+      if (
+        typeof raw.reply_count === 'number' &&
+        raw.reply_count > 0 &&
+        Number.parseFloat(latest) >= bound
+      ) {
         threads.push(message.ts);
       }
     }
@@ -202,13 +223,21 @@ export async function conversationMessages(
   for (const thread of threads) {
     cursor = undefined;
     for (let page = 0; ; page += 1) {
-      if (page === MAX_PAGES) throw new Error(`Slack conversations.replies on ${channel} did not finish.`);
-      const answer = await slackGet(fetchImpl, token, 'conversations.replies', {
-        channel,
-        ts: thread,
-        limit: '200',
-        ...(cursor ? { cursor } : {}),
-      }, retry, now);
+      if (page === MAX_PAGES)
+        throw new Error(`Slack conversations.replies on ${channel} did not finish.`);
+      const answer = await slackGet(
+        fetchImpl,
+        token,
+        'conversations.replies',
+        {
+          channel,
+          ts: thread,
+          limit: '200',
+          ...(cursor ? { cursor } : {}),
+        },
+        retry,
+        now,
+      );
       for (const raw of (answer.messages ?? []) as Array<Record<string, unknown>>) {
         const message = asMessage(channel, raw);
         // The thread's parent comes back first in every replies page.
@@ -234,7 +263,11 @@ export async function conversationMessages(
  * Returns:
  *   The messages, in the order given.
  */
-export function bedMessages(messages: readonly BedMessage[], botId: string, epoch: string): BedMessage[] {
+export function bedMessages(
+  messages: readonly BedMessage[],
+  botId: string,
+  epoch: string,
+): BedMessage[] {
   const start = Number.parseFloat(epoch);
   return messages.filter(
     (message: BedMessage): boolean =>
@@ -272,7 +305,9 @@ export function asksFromFile(markdown: string): SlackAsk[] {
     const channel = /^`#([a-z0-9_-]+)`$/.exec(cells[2] ?? '')?.[1];
     const text = /^@bot\s+(.+)$/.exec(cells[3] ?? '')?.[1];
     if (!/^\d+$/.test(cells[1] ?? '') || !channel || !text) continue;
-    const sittings = [...(cells[5] ?? '').matchAll(/`([a-z0-9-]+)`/g)].map((match): string => match[1]!);
+    const sittings = [...(cells[5] ?? '').matchAll(/`([a-z0-9-]+)`/g)].map(
+      (match): string => match[1]!,
+    );
     asks.push({ channel, text, sets: sittings.filter((name: string): boolean => name !== 'full') });
   }
   if (asks.length === 0) throw new Error('bed/company/slack-asks.md lists no ask.');

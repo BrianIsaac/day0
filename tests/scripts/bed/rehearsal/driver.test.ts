@@ -28,14 +28,20 @@ describe('the dashboard driver', (): void => {
     // A failed turn opens the composer too, so waiting for the composer alone
     // would type the next scripted answer under an empty or half-said turn.
     expect(CHAT).toMatch(new RegExp(`>\\s*${ASK_AGAIN}\\s*</button>`));
-    const wait = DRIVER.slice(DRIVER.indexOf('async waitForAgentTurn'), DRIVER.indexOf('async sendReply'));
+    const wait = DRIVER.slice(
+      DRIVER.indexOf('async waitForAgentTurn'),
+      DRIVER.indexOf('async sendReply'),
+    );
     expect(wait).toContain('name: ASK_AGAIN');
     expect(wait.indexOf('name: ASK_AGAIN')).toBeLessThan(wait.indexOf('composer.isEnabled()'));
   });
 
   it('hands a skipped ticket back with the control a skipped card renders, not a Retry it no longer has', (): void => {
     expect(DASHBOARD).toContain(`export const TAKE_IT_ANYWAY = '${TAKE_IT_ANYWAY}';`);
-    const takeAnyway = DRIVER.slice(DRIVER.indexOf('async takeAnyway'), DRIVER.indexOf('async cancelPlan'));
+    const takeAnyway = DRIVER.slice(
+      DRIVER.indexOf('async takeAnyway'),
+      DRIVER.indexOf('async cancelPlan'),
+    );
     expect(takeAnyway).toContain('name: TAKE_IT_ANYWAY, exact: true');
     expect(DRIVER).not.toContain("name: 'Retry', exact: true");
   });

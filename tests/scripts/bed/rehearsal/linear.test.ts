@@ -31,10 +31,13 @@ function fakeFetch(
   return { fetch: impl, calls };
 }
 
-describe('the rehearsal\'s Linear calls', (): void => {
-  it('reads the key\'s own user', async (): Promise<void> => {
+describe("the rehearsal's Linear calls", (): void => {
+  it("reads the key's own user", async (): Promise<void> => {
     const { fetch, calls } = fakeFetch(() => ({ data: { viewer: { id: 'u1', name: 'Op' } } }));
-    await expect(readViewer(new LinearClient('k', fetch))).resolves.toEqual({ id: 'u1', name: 'Op' });
+    await expect(readViewer(new LinearClient('k', fetch))).resolves.toEqual({
+      id: 'u1',
+      name: 'Op',
+    });
     expect(calls[0]!.body.query).toContain('viewer');
   });
 
@@ -77,7 +80,9 @@ describe('the rehearsal\'s Linear calls', (): void => {
 
   it('refuses a mutation the provider answers success: false', async (): Promise<void> => {
     const { fetch } = fakeFetch(() => ({ data: { issueUpdate: { success: false } } }));
-    await expect(assignIssue(new LinearClient('k', fetch), 'i7', 'u1')).rejects.toThrow('issueUpdate');
+    await expect(assignIssue(new LinearClient('k', fetch), 'i7', 'u1')).rejects.toThrow(
+      'issueUpdate',
+    );
   });
 
   it('lists mutation names', async (): Promise<void> => {
@@ -93,10 +98,24 @@ describe('the rehearsal\'s Linear calls', (): void => {
 
 describe('who moved the issue', (): void => {
   it('reads the state history with the actor and both states of each change', async (): Promise<void> => {
-    const { fetch, calls } = fakeFetch(() => ({ data: { issue: { history: { nodes: [
-      { id: 'h1', createdAt: 't1', actor: { id: 'u1' }, fromState: { id: 's-backlog' }, toState: { id: 's-done' } },
-      { id: 'h2', createdAt: 't2', actor: null, fromState: null, toState: null },
-    ] } } } }));
+    const { fetch, calls } = fakeFetch(() => ({
+      data: {
+        issue: {
+          history: {
+            nodes: [
+              {
+                id: 'h1',
+                createdAt: 't1',
+                actor: { id: 'u1' },
+                fromState: { id: 's-backlog' },
+                toState: { id: 's-done' },
+              },
+              { id: 'h2', createdAt: 't2', actor: null, fromState: null, toState: null },
+            ],
+          },
+        },
+      },
+    }));
     await expect(readStateHistory(new LinearClient('k', fetch), 'i7')).resolves.toEqual([
       { actorId: 'u1', fromStateId: 's-backlog', toStateId: 's-done' },
       { actorId: null, fromStateId: null, toStateId: null },
@@ -127,19 +146,29 @@ describe('putting an issue back', (): void => {
   };
 
   it('leaves concurrent comments and changed assignments outside the recorded writes', () => {
-    expect(issueRestoreSteps(before, {
-      stateId: 's-in-progress', assigneeId: 'other-user', commentIds: ['c1', 'ours', 'human'],
-    }, { commentIds: ['ours'], stateId: 's-done', assigneeId: 'u1' })).toEqual([
-      { kind: 'delete-comment', commentId: 'ours' },
-    ]);
+    expect(
+      issueRestoreSteps(
+        before,
+        {
+          stateId: 's-in-progress',
+          assigneeId: 'other-user',
+          commentIds: ['c1', 'ours', 'human'],
+        },
+        { commentIds: ['ours'], stateId: 's-done', assigneeId: 'u1' },
+      ),
+    ).toEqual([{ kind: 'delete-comment', commentId: 'ours' }]);
   });
 
   it('undoes the state, the assignee and every comment the run added, and nothing else', (): void => {
-    const steps = issueRestoreSteps(before, {
-      stateId: 's-done',
-      assigneeId: 'u1',
-      commentIds: ['c1', 'c2', 'c3'],
-    }, { commentIds: ['c2', 'c3'], stateId: 's-done', assigneeId: 'u1' });
+    const steps = issueRestoreSteps(
+      before,
+      {
+        stateId: 's-done',
+        assigneeId: 'u1',
+        commentIds: ['c1', 'c2', 'c3'],
+      },
+      { commentIds: ['c2', 'c3'], stateId: 's-done', assigneeId: 'u1' },
+    );
     expect(steps).toEqual([
       { kind: 'delete-comment', commentId: 'c2' },
       { kind: 'delete-comment', commentId: 'c3' },
@@ -160,8 +189,14 @@ describe('the ticket at rest', (): void => {
   it('accepts an unassigned open ticket and refuses leftovers from an earlier run', (): void => {
     expect(ticketRestRefusal({ ...base, stateName: 'Backlog', assigneeId: null })).toBeUndefined();
     expect(ticketRestRefusal({ ...base, stateName: 'Todo', assigneeId: null })).toBeUndefined();
-    expect(ticketRestRefusal({ ...base, stateName: 'Backlog', assigneeId: 'u1' })).toContain('already assigned');
-    expect(ticketRestRefusal({ ...base, stateName: 'Done', assigneeId: null })).toContain('is Done');
-    expect(ticketRestRefusal({ ...base, stateName: 'In Progress', assigneeId: null })).toContain('In Progress');
+    expect(ticketRestRefusal({ ...base, stateName: 'Backlog', assigneeId: 'u1' })).toContain(
+      'already assigned',
+    );
+    expect(ticketRestRefusal({ ...base, stateName: 'Done', assigneeId: null })).toContain(
+      'is Done',
+    );
+    expect(ticketRestRefusal({ ...base, stateName: 'In Progress', assigneeId: null })).toContain(
+      'In Progress',
+    );
   });
 });

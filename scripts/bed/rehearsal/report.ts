@@ -74,7 +74,10 @@ export function renderSummary(record: RunRecord): string {
     '',
   ];
   if (record.dryRun) {
-    lines.push('Dry run: stopped before the first provider write. The writes below were not made.', '');
+    lines.push(
+      'Dry run: stopped before the first provider write. The writes below were not made.',
+      '',
+    );
   }
   lines.push('## The five checks', '', '| Check | Result | Detail |', '|---|---|---|');
   for (const check of record.checks) {
@@ -87,7 +90,11 @@ export function renderSummary(record: RunRecord): string {
       `| ${phase.name} | ${phase.status} | ${phase.seconds === undefined ? '' : `${phase.seconds.toFixed(1)} s`} | ${cell(phase.detail)} |`,
     );
   }
-  lines.push('', record.dryRun ? '## Provider writes the run would make' : '## Provider writes made', '');
+  lines.push(
+    '',
+    record.dryRun ? '## Provider writes the run would make' : '## Provider writes made',
+    '',
+  );
   for (const write of record.writes) lines.push(`- ${write}`);
   if (record.writes.length === 0) lines.push('- none');
   lines.push('', '## Cleanup', '', '| Step | Result | Error |', '|---|---|---|');

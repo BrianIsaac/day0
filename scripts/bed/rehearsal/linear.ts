@@ -96,7 +96,10 @@ export async function readIssueSnapshot(
  * Returns:
  *   Every history entry; one that changed no state carries null states.
  */
-export async function readStateHistory(client: LinearClient, issueId: string): Promise<IssueStateChange[]> {
+export async function readStateHistory(
+  client: LinearClient,
+  issueId: string,
+): Promise<IssueStateChange[]> {
   const data = await client.request<{
     issue: {
       history: {
@@ -109,11 +112,13 @@ export async function readStateHistory(client: LinearClient, issueId: string): P
     } | null;
   }>(ISSUE_STATE_HISTORY, { id: issueId });
   if (!data.issue) throw new Error(`Linear has no issue ${issueId}.`);
-  return data.issue.history.nodes.map((node): IssueStateChange => ({
-    actorId: node.actor?.id ?? null,
-    fromStateId: node.fromState?.id ?? null,
-    toStateId: node.toState?.id ?? null,
-  }));
+  return data.issue.history.nodes.map(
+    (node): IssueStateChange => ({
+      actorId: node.actor?.id ?? null,
+      fromStateId: node.fromState?.id ?? null,
+      toStateId: node.toState?.id ?? null,
+    }),
+  );
 }
 
 /**
@@ -138,13 +143,17 @@ export function stateMovedByActor(
 ): boolean {
   return history.some(
     (change: IssueStateChange): boolean =>
-      change.actorId === actorId && change.fromStateId === fromStateId && change.toStateId === toStateId,
+      change.actorId === actorId &&
+      change.fromStateId === fromStateId &&
+      change.toStateId === toStateId,
   );
 }
 
 /** The mutation names the schema exposes, so a cleanup step is checked before it is relied on. */
 export async function readMutationNames(client: LinearClient): Promise<string[]> {
-  const data = await client.request<{ __type: { fields: Array<{ name: string }> } }>(MUTATION_NAMES);
+  const data = await client.request<{ __type: { fields: Array<{ name: string }> } }>(
+    MUTATION_NAMES,
+  );
   return data.__type.fields.map((field) => field.name);
 }
 
@@ -157,7 +166,8 @@ async function issueUpdate(
     id: issueId,
     input,
   });
-  if (!data.issueUpdate.success) throw new Error(`Linear issueUpdate on ${issueId} did not succeed.`);
+  if (!data.issueUpdate.success)
+    throw new Error(`Linear issueUpdate on ${issueId} did not succeed.`);
 }
 
 /** Assign the issue, or unassign it with null. */
@@ -170,7 +180,11 @@ export async function assignIssue(
 }
 
 /** Move the issue to a workflow state by id. */
-export async function moveIssue(client: LinearClient, issueId: string, stateId: string): Promise<void> {
+export async function moveIssue(
+  client: LinearClient,
+  issueId: string,
+  stateId: string,
+): Promise<void> {
   await issueUpdate(client, issueId, { stateId });
 }
 
@@ -193,12 +207,17 @@ export type RestoreStep =
 export function issueRestoreSteps(
   before: IssueSnapshot,
   after: { stateId: string; assigneeId: string | null; commentIds: readonly string[] },
-  written: { commentIds: readonly string[]; stateId?: string; assigneeId?: string | null } = { commentIds: [] },
+  written: { commentIds: readonly string[]; stateId?: string; assigneeId?: string | null } = {
+    commentIds: [],
+  },
 ): RestoreStep[] {
   const steps: RestoreStep[] = after.commentIds
-    .filter((id: string): boolean => !before.commentIds.includes(id) && written.commentIds.includes(id))
+    .filter(
+      (id: string): boolean => !before.commentIds.includes(id) && written.commentIds.includes(id),
+    )
     .map((commentId: string): RestoreStep => ({ kind: 'delete-comment', commentId }));
-  if (after.stateId !== before.stateId && after.stateId === written.stateId) steps.push({ kind: 'move', stateId: before.stateId });
+  if (after.stateId !== before.stateId && after.stateId === written.stateId)
+    steps.push({ kind: 'move', stateId: before.stateId });
   if (after.assigneeId !== before.assigneeId && after.assigneeId === written.assigneeId) {
     steps.push({ kind: 'assign', assigneeId: before.assigneeId });
   }
@@ -206,7 +225,13 @@ export function issueRestoreSteps(
 }
 
 /** Workflow states in which the ticket is not at rest for a rehearsal. */
-const BUSY_STATES: readonly string[] = ['In Progress', 'Done', 'Canceled', 'Cancelled', 'Duplicate'];
+const BUSY_STATES: readonly string[] = [
+  'In Progress',
+  'Done',
+  'Canceled',
+  'Cancelled',
+  'Duplicate',
+];
 
 /**
  * Why the ticket cannot be rehearsed on as found, if it cannot: an earlier

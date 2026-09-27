@@ -145,7 +145,8 @@ export async function waitUntil<T>(
   },
 ): Promise<T> {
   const sleep =
-    options.sleep ?? ((ms: number) => new Promise<void>((resolvePromise) => setTimeout(resolvePromise, ms)));
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolvePromise) => setTimeout(resolvePromise, ms)));
   const now = options.now ?? Date.now;
   const deadline = now() + options.timeoutMs;
   const interval = options.intervalMs ?? 2_000;

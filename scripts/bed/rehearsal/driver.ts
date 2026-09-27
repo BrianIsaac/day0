@@ -149,7 +149,8 @@ export class PlaywrightDashboard implements Dashboard {
       // A failed turn opens the composer as well, so it is checked first: the
       // manager asks again, and does not answer a question that was never put.
       if (await askAgain.isVisible()) {
-        if (asked === MAX_ASK_AGAIN) throw new Error(`the 1:1 failed a turn ${MAX_ASK_AGAIN + 1} times running`);
+        if (asked === MAX_ASK_AGAIN)
+          throw new Error(`the 1:1 failed a turn ${MAX_ASK_AGAIN + 1} times running`);
         asked += 1;
         await askAgain.click();
         continue;
@@ -157,14 +158,19 @@ export class PlaywrightDashboard implements Dashboard {
       if ((await composer.count()) > 0 && (await composer.isEnabled())) return 'reply';
       await this.page.waitForTimeout(500);
     }
-    throw new Error(`the 1:1 neither opened the composer nor completed within ${timeoutMs / 1000} s`);
+    throw new Error(
+      `the 1:1 neither opened the composer nor completed within ${timeoutMs / 1000} s`,
+    );
   }
 
   async sendReply(text: string): Promise<void> {
     const composer = this.page.getByPlaceholder(REPLY_PLACEHOLDER);
     await composer.fill(text);
     await this.page.getByRole('button', { name: 'Send', exact: true }).click();
-    await composer.and(this.page.locator(':disabled')).waitFor({ state: 'attached', timeout: 10_000 }).catch(() => undefined);
+    await composer
+      .and(this.page.locator(':disabled'))
+      .waitFor({ state: 'attached', timeout: 10_000 })
+      .catch(() => undefined);
   }
 
   async lastAgentMessage(): Promise<string> {
@@ -178,7 +184,9 @@ export class PlaywrightDashboard implements Dashboard {
   }
 
   async openSurfaces(): Promise<void> {
-    await this.page.goto(`${this.origin}/agent/${this.requireAgent()}#surfaces`, { waitUntil: 'networkidle' });
+    await this.page.goto(`${this.origin}/agent/${this.requireAgent()}#surfaces`, {
+      waitUntil: 'networkidle',
+    });
     await this.page.locator('article[id^="surface-"]').first().waitFor();
   }
 
@@ -199,7 +207,10 @@ export class PlaywrightDashboard implements Dashboard {
     await card.getByRole('button', { name: 'Approve as manager' }).click();
     await card.getByText('Manager approved').waitFor();
     await card.getByRole('button', { name: 'Approve as IT' }).click();
-    await card.getByText('IT approved').waitFor({ timeout: 10_000 }).catch(() => undefined);
+    await card
+      .getByText('IT approved')
+      .waitFor({ timeout: 10_000 })
+      .catch(() => undefined);
   }
 
   private workCard(title: string): Locator {

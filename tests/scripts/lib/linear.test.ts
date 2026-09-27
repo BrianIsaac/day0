@@ -38,7 +38,9 @@ describe('the Linear client', (): void => {
 
   it('turns a GraphQL error list into a thrown error and never returns partial data', async (): Promise<void> => {
     const { fetch } = fakeFetch(() => ({ errors: [{ message: 'Query too complex' }] }));
-    await expect(readComments(new LinearClient('k', fetch), 'i7')).rejects.toThrow('Query too complex');
+    await expect(readComments(new LinearClient('k', fetch), 'i7')).rejects.toThrow(
+      'Query too complex',
+    );
   });
 
   it('lists comments and deletes one through the named documents with the ids as variables', async (): Promise<void> => {
@@ -48,24 +50,33 @@ describe('the Linear client', (): void => {
         : { data: { issue: { comments: { nodes: [{ id: 'c1', body: 'hi', createdAt: 't' }] } } } },
     );
     const client = new LinearClient('k', fetch);
-    await expect(readComments(client, 'i7')).resolves.toEqual([{ id: 'c1', body: 'hi', createdAt: 't' }]);
+    await expect(readComments(client, 'i7')).resolves.toEqual([
+      { id: 'c1', body: 'hi', createdAt: 't' },
+    ]);
     await deleteComment(client, 'c9');
     expect(calls.map((call) => call.body.variables)).toEqual([{ id: 'i7' }, { id: 'c9' }]);
   });
 
   it('refuses a delete the provider answers success: false', async (): Promise<void> => {
     const { fetch } = fakeFetch(() => ({ data: { commentDelete: { success: false } } }));
-    await expect(deleteComment(new LinearClient('k', fetch), 'c9')).rejects.toThrow('commentDelete');
+    await expect(deleteComment(new LinearClient('k', fetch), 'c9')).rejects.toThrow(
+      'commentDelete',
+    );
   });
 });
 
 describe('a failed Linear call, classified', (): void => {
   const NOW = 1_789_700_000_000;
-  const timedOut = (): DOMException => new DOMException('The operation was aborted due to timeout', 'TimeoutError');
-  const json = (value: unknown, init: ResponseInit): Response => new Response(JSON.stringify(value), init);
+  const timedOut = (): DOMException =>
+    new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  const json = (value: unknown, init: ResponseInit): Response =>
+    new Response(JSON.stringify(value), init);
 
   async function failure(answer: () => Promise<Response>): Promise<LinearRequestError> {
-    const error: unknown = await readComments(new LinearClient('k', answer as typeof fetch, () => NOW), 'i7').then(
+    const error: unknown = await readComments(
+      new LinearClient('k', answer as typeof fetch, () => NOW),
+      'i7',
+    ).then(
       () => undefined,
       (caught: unknown) => caught,
     );
@@ -74,25 +85,44 @@ describe('a failed Linear call, classified', (): void => {
   }
 
   it('calls a timeout, a dropped connection, a 5xx and a rate limit transient, with the wait Linear asked for', async (): Promise<void> => {
-    expect(await failure(async () => { throw timedOut(); })).toMatchObject({ transient: true, reason: 'a timeout' });
-    expect(await failure(async () => { throw new TypeError('fetch failed'); })).toMatchObject({
+    expect(
+      await failure(async () => {
+        throw timedOut();
+      }),
+    ).toMatchObject({ transient: true, reason: 'a timeout' });
+    expect(
+      await failure(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    ).toMatchObject({
       transient: true,
       reason: 'a network failure',
     });
-    expect(await failure(async () => new Response('<html>502 Bad Gateway</html>', { status: 502 }))).toMatchObject({
+    expect(
+      await failure(async () => new Response('<html>502 Bad Gateway</html>', { status: 502 })),
+    ).toMatchObject({
       transient: true,
       reason: 'HTTP 502',
       waitMs: undefined,
     });
-    expect(await failure(async () => json({}, { status: 429, headers: { 'Retry-After': '7' } }))).toMatchObject({
+    expect(
+      await failure(async () => json({}, { status: 429, headers: { 'Retry-After': '7' } })),
+    ).toMatchObject({
       transient: true,
       reason: 'HTTP 429',
       waitMs: 7_000,
     });
     // Linear's documented rate limit: HTTP 400, RATELIMITED, and the window's end in epoch milliseconds.
-    const limited = { errors: [{ message: 'Rate limit exceeded', extensions: { code: 'RATELIMITED' } }] };
+    const limited = {
+      errors: [{ message: 'Rate limit exceeded', extensions: { code: 'RATELIMITED' } }],
+    };
     expect(
-      await failure(async () => json(limited, { status: 400, headers: { 'X-RateLimit-Requests-Reset': String(NOW + 5_000) } })),
+      await failure(async () =>
+        json(limited, {
+          status: 400,
+          headers: { 'X-RateLimit-Requests-Reset': String(NOW + 5_000) },
+        }),
+      ),
     ).toMatchObject({ transient: true, reason: 'a Linear rate limit', waitMs: 5_000 });
     expect(await failure(async () => json(limited, { status: 400 }))).toMatchObject({
       transient: true,
@@ -115,7 +145,9 @@ describe('a failed Linear call, classified', (): void => {
   });
 
   it('never calls a request Linear refused as wrong transient', async (): Promise<void> => {
-    const invalid = { errors: [{ message: 'Argument Validation Error', extensions: { code: 'INVALID_INPUT' } }] };
+    const invalid = {
+      errors: [{ message: 'Argument Validation Error', extensions: { code: 'INVALID_INPUT' } }],
+    };
     const refused = await failure(async () => json(invalid, { status: 400 }));
     expect(refused).toMatchObject({ transient: false });
     expect(refused.message).toBe('Linear: Argument Validation Error');
@@ -123,14 +155,23 @@ describe('a failed Linear call, classified', (): void => {
       transient: false,
       reason: 'HTTP 401',
     });
-    expect(await failure(async () => json({ errors: [{ message: 'Query too complex' }] }, { status: 200 }))).toMatchObject({
+    expect(
+      await failure(async () =>
+        json({ errors: [{ message: 'Query too complex' }] }, { status: 200 }),
+      ),
+    ).toMatchObject({
       transient: false,
     });
   });
 });
 
 describe('one retry', (): void => {
-  function recorder(): { lines: string[]; sleeps: number[]; say: (line: string) => void; sleep: (ms: number) => Promise<void> } {
+  function recorder(): {
+    lines: string[];
+    sleeps: number[];
+    say: (line: string) => void;
+    sleep: (ms: number) => Promise<void>;
+  } {
     const lines: string[] = [];
     const sleeps: number[] = [];
     return {
@@ -149,9 +190,14 @@ describe('one retry', (): void => {
 
   it('names the retry, pauses, and runs the second attempt it is given', async (): Promise<void> => {
     const io = recorder();
-    const result = await retryOnce('label delete', io, async (): Promise<string> => {
-      throw timeout();
-    }, async (): Promise<string> => 'gone');
+    const result = await retryOnce(
+      'label delete',
+      io,
+      async (): Promise<string> => {
+        throw timeout();
+      },
+      async (): Promise<string> => 'gone',
+    );
     expect(result).toBe('gone');
     expect(io.lines).toEqual(['retrying label delete after a timeout']);
     expect(io.sleeps).toEqual([RETRY_PAUSE_MS]);
@@ -162,7 +208,8 @@ describe('one retry', (): void => {
     let calls = 0;
     await retryOnce('label delete', io, async (): Promise<void> => {
       calls += 1;
-      if (calls === 1) throw new LinearRequestError('Linear answered HTTP 429.', 'HTTP 429', true, 7_000);
+      if (calls === 1)
+        throw new LinearRequestError('Linear answered HTTP 429.', 'HTTP 429', true, 7_000);
     });
     expect(calls).toBe(2);
     expect(io.lines).toEqual(['retrying label delete after HTTP 429, in 7 s as Linear asked']);
@@ -172,11 +219,16 @@ describe('one retry', (): void => {
   it('fails with one line naming both failures when the retry fails too', async (): Promise<void> => {
     const io = recorder();
     await expect(
-      retryOnce('label delete', io, async (): Promise<void> => {
-        throw timeout();
-      }, async (): Promise<void> => {
-        throw new LinearRequestError('Linear answered HTTP 503.', 'HTTP 503', true);
-      }),
+      retryOnce(
+        'label delete',
+        io,
+        async (): Promise<void> => {
+          throw timeout();
+        },
+        async (): Promise<void> => {
+          throw new LinearRequestError('Linear answered HTTP 503.', 'HTTP 503', true);
+        },
+      ),
     ).rejects.toThrow('label delete failed twice: a timeout, then HTTP 503');
   });
 
@@ -185,18 +237,28 @@ describe('one retry', (): void => {
     let again = 0;
     const wrong = new LinearRequestError('Linear: Argument Validation Error', 'HTTP 400', false);
     await expect(
-      retryOnce('fin-status create', io, async (): Promise<void> => {
-        throw wrong;
-      }, async (): Promise<void> => {
-        again += 1;
-      }),
+      retryOnce(
+        'fin-status create',
+        io,
+        async (): Promise<void> => {
+          throw wrong;
+        },
+        async (): Promise<void> => {
+          again += 1;
+        },
+      ),
     ).rejects.toBe(wrong);
     await expect(
-      retryOnce('fin-status create', io, async (): Promise<void> => {
-        throw new Error('Linear issueCreate did not succeed.');
-      }, async (): Promise<void> => {
-        again += 1;
-      }),
+      retryOnce(
+        'fin-status create',
+        io,
+        async (): Promise<void> => {
+          throw new Error('Linear issueCreate did not succeed.');
+        },
+        async (): Promise<void> => {
+          again += 1;
+        },
+      ),
     ).rejects.toThrow('Linear issueCreate did not succeed.');
     expect(again).toBe(0);
     expect(io.lines).toEqual([]);
@@ -212,7 +274,9 @@ describe('one retry', (): void => {
     }) as typeof globalThis.fetch;
     const client = new LinearClient('k', fetch);
 
-    await expect(retryOnce('workspace read', io, () => readComments(client, 'i7'))).rejects.toMatchObject({
+    await expect(
+      retryOnce('workspace read', io, () => readComments(client, 'i7')),
+    ).rejects.toMatchObject({
       name: 'AbortError',
     });
     expect(calls).toBe(1);
@@ -224,11 +288,16 @@ describe('one retry', (): void => {
     const io = recorder();
     let again = 0;
     await expect(
-      retryOnce('label delete', io, async (): Promise<void> => {
-        throw new LinearRequestError('Linear answered HTTP 429.', 'HTTP 429', true, 1_800_000);
-      }, async (): Promise<void> => {
-        again += 1;
-      }),
+      retryOnce(
+        'label delete',
+        io,
+        async (): Promise<void> => {
+          throw new LinearRequestError('Linear answered HTTP 429.', 'HTTP 429', true, 1_800_000);
+        },
+        async (): Promise<void> => {
+          again += 1;
+        },
+      ),
     ).rejects.toThrow(
       `label delete failed: Linear asked to wait 1800 s after HTTP 429, longer than the ${MAX_RETRY_WAIT_MS / 1_000} s a retry waits`,
     );

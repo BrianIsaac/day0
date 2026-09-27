@@ -110,7 +110,11 @@ export interface RehearsalContext {
   slack?: SlackClient;
   ledger: UndoLedger;
   /** Docker's view, read fresh: compose projects, volumes, container project labels. */
-  dockerInventory: () => { composeProjects: string[]; volumes: string[]; labelledContainers: string[] };
+  dockerInventory: () => {
+    composeProjects: string[];
+    volumes: string[];
+    labelledContainers: string[];
+  };
   /** Whether a port is free. */
   portIsFree: (port: number) => Promise<boolean>;
   openDashboard: (origin: string) => Promise<Dashboard>;
@@ -141,9 +145,13 @@ export const DRY_RUN_NOTE =
 
 class StopRun extends Error {}
 
-function requireState<K extends keyof RehearsalState>(state: RehearsalState, key: K): NonNullable<RehearsalState[K]> {
+function requireState<K extends keyof RehearsalState>(
+  state: RehearsalState,
+  key: K,
+): NonNullable<RehearsalState[K]> {
   const value = state[key];
-  if (value === undefined || value === null) throw new Error(`phase ordering: ${String(key)} is not set yet.`);
+  if (value === undefined || value === null)
+    throw new Error(`phase ordering: ${String(key)} is not set yet.`);
   return value as NonNullable<RehearsalState[K]>;
 }
 
@@ -167,7 +175,13 @@ async function waitFor<T>(
   timeoutMs: number,
   probe: () => Promise<T | undefined | false>,
 ): Promise<T> {
-  return await waitUntil(probe, { what, timeoutMs, intervalMs: 3_000, sleep: ctx.sleep, now: ctx.now });
+  return await waitUntil(probe, {
+    what,
+    timeoutMs,
+    intervalMs: 3_000,
+    sleep: ctx.sleep,
+    now: ctx.now,
+  });
 }
 
 async function ticketRow(ctx: RehearsalContext): Promise<WorkItemRow> {
@@ -190,7 +204,9 @@ const preflight: Phase = {
     if (envRefused) throw new Error(envRefused);
     const docs = resolve(ctx.primary, DOCS_LOCAL);
     if (!existsSync(docs) || !statSync(docs).isDirectory()) {
-      throw new Error(`${docs} is not a directory; the rehearsal links the primary's documentation folder.`);
+      throw new Error(
+        `${docs} is not a directory; the rehearsal links the primary's documentation folder.`,
+      );
     }
 
     const inventory = ctx.dockerInventory();
@@ -203,10 +219,14 @@ const preflight: Phase = {
     });
     if (refused) throw new Error(refused);
     if (options.warmFrom && !inventory.volumes.includes(`${options.warmFrom}_redactor_models`)) {
-      throw new Error(`--warm-from ${options.warmFrom}: no ${options.warmFrom}_redactor_models volume exists.`);
+      throw new Error(
+        `--warm-from ${options.warmFrom}: no ${options.warmFrom}_redactor_models volume exists.`,
+      );
     }
 
-    const ports = options.portBase ? portsFromBase(options.portBase) : await pickFreePorts(ctx.portIsFree);
+    const ports = options.portBase
+      ? portsFromBase(options.portBase)
+      : await pickFreePorts(ctx.portIsFree);
     const portRefused = await portsRefusal(ports, ctx.portIsFree);
     if (portRefused) throw new Error(portRefused);
     ctx.record.ports = ports;
@@ -218,15 +238,21 @@ const preflight: Phase = {
     state.mutationNames = await readMutationNames(ctx.linear);
     for (const needed of ['issueUpdate', 'commentDelete']) {
       if (!state.mutationNames.includes(needed)) {
-        throw new Error(`Linear's schema exposes no ${needed} mutation; the run could not be put back.`);
+        throw new Error(
+          `Linear's schema exposes no ${needed} mutation; the run could not be put back.`,
+        );
       }
     }
-    ctx.log(`Linear: viewer ${state.viewer.name}; ${TICKET} ${state.ticketBefore.stateName}, unassigned, ${state.ticketBefore.commentIds.length} comment(s)`);
+    ctx.log(
+      `Linear: viewer ${state.viewer.name}; ${TICKET} ${state.ticketBefore.stateName}, unassigned, ${state.ticketBefore.commentIds.length} comment(s)`,
+    );
     if (ctx.slack) {
       state.slackBot = await ctx.slack.authTest();
       ctx.log(`Slack: workspace ${state.slackBot.team}, bot ${state.slackBot.botId}`);
     } else {
-      ctx.record.notes.push('No SLACK_BOT_TOKEN in the secrets file: the Slack card is left unapproved.');
+      ctx.record.notes.push(
+        'No SLACK_BOT_TOKEN in the secrets file: the Slack card is left unapproved.',
+      );
     }
     return `ports ${ports.backend}-${ports.app}; ${TICKET} at rest (${state.ticketBefore.stateName})`;
   },
@@ -241,7 +267,9 @@ const clone: Phase = {
     ctx.record.commit = commit.slice(0, 7);
     const dirty = bed.dirtyPaths(ctx.runner, ctx.source);
     if (dirty.length > 0) {
-      ctx.record.notes.push(`The source tree had ${dirty.length} uncommitted path(s); the clone is of commit ${commit.slice(0, 7)} without them.`);
+      ctx.record.notes.push(
+        `The source tree had ${dirty.length} uncommitted path(s); the clone is of commit ${commit.slice(0, 7)} without them.`,
+      );
     }
     bed.cloneAt(ctx.runner, ctx.source, commit, ctx.record.clone);
     bed.installDependencies(ctx.runner, ctx.record.clone);
@@ -276,7 +304,8 @@ const warmVolumes: Phase = {
   name: 'warm-volumes',
   writes: [],
   run: async (ctx) => {
-    if (!ctx.options.warmFrom) return 'no --warm-from: the redactor downloads its wheels and model on first start';
+    if (!ctx.options.warmFrom)
+      return 'no --warm-from: the redactor downloads its wheels and model on first start';
     bed.warmRedactorVolumes(ctx.runner, ctx.options.warmFrom, requireState(ctx.state, 'bed'));
     return `redactor volumes copied from ${ctx.options.warmFrom}`;
   },
@@ -331,12 +360,18 @@ const documentation: Phase = {
     const dashboard = requireState(ctx.state, 'dashboard');
     const backend = requireState(ctx.state, 'backend');
     await dashboard.linkFolder(DOCS_LABEL, '.');
-    const sources = await waitFor(ctx, 'the documentation folder to sync', 15 * 60_000, async () => {
-      const rows = await backend.docSources();
-      const failed = failedSource(rows);
-      if (failed) throw new Error(`documentation sync failed: ${failed.lastError ?? 'no reason recorded'}`);
-      return allSourcesSynced(rows) ? rows : undefined;
-    });
+    const sources = await waitFor(
+      ctx,
+      'the documentation folder to sync',
+      15 * 60_000,
+      async () => {
+        const rows = await backend.docSources();
+        const failed = failedSource(rows);
+        if (failed)
+          throw new Error(`documentation sync failed: ${failed.lastError ?? 'no reason recorded'}`);
+        return allSourcesSynced(rows) ? rows : undefined;
+      },
+    );
     await shot(ctx, 'documentation-synced');
     return `${sources.map((source) => `${source.label}: ${source.pageCount} pages`).join(', ')}`;
   },
@@ -349,7 +384,9 @@ const deploy: Phase = {
     const dashboard = requireState(ctx.state, 'dashboard');
     const backend = requireState(ctx.state, 'backend');
     const agentId = await dashboard.deploy(AGENT_NAME);
-    await waitFor(ctx, 'the agent row', 60_000, async () => agentNamed(await backend.agents(), AGENT_NAME));
+    await waitFor(ctx, 'the agent row', 60_000, async () =>
+      agentNamed(await backend.agents(), AGENT_NAME),
+    );
     ctx.state.agentId = agentId;
     await shot(ctx, 'deployed');
     return `agent ${agentId}`;
@@ -370,13 +407,22 @@ const dayOne: Phase = {
       if (outcome === 'complete') break;
       const answer = nextAnswer(turn);
       if (answer === undefined) {
-        throw new Error(`the 1:1 asked a ${turn + 1}th question after the scripted answers ran out: "${await dashboard.lastAgentMessage()}"`);
+        throw new Error(
+          `the 1:1 asked a ${turn + 1}th question after the scripted answers ran out: "${await dashboard.lastAgentMessage()}"`,
+        );
       }
-      ctx.log(`1:1 turn ${turn + 1}: agent asked "${(await dashboard.lastAgentMessage()).slice(0, 160)}"`);
+      ctx.log(
+        `1:1 turn ${turn + 1}: agent asked "${(await dashboard.lastAgentMessage()).slice(0, 160)}"`,
+      );
       await dashboard.sendReply(answer);
       turn += 1;
     }
-    await waitFor(ctx, 'the charter draft', 5 * 60_000, async () => (await backend.charter(agentId)) ?? undefined);
+    await waitFor(
+      ctx,
+      'the charter draft',
+      5 * 60_000,
+      async () => (await backend.charter(agentId)) ?? undefined,
+    );
     await shot(ctx, 'day-one-complete');
     return `${turn} replies; charter drafted`;
   },
@@ -406,10 +452,15 @@ const orientation: Phase = {
     const dashboard = requireState(ctx.state, 'dashboard');
     const backend = requireState(ctx.state, 'backend');
     const agentId = requireState(ctx.state, 'agentId');
-    const surfaces = await waitFor(ctx, 'orientation to propose the cards', 10 * 60_000, async () => {
-      const rows = await backend.surfaces(agentId);
-      return orientationDone(rows) ? rows : undefined;
-    });
+    const surfaces = await waitFor(
+      ctx,
+      'orientation to propose the cards',
+      10 * 60_000,
+      async () => {
+        const rows = await backend.surfaces(agentId);
+        return orientationDone(rows) ? rows : undefined;
+      },
+    );
     await dashboard.openSurfaces();
     await shot(ctx, 'orientation-cards');
     return surfaceSummary(surfaces);
@@ -436,7 +487,8 @@ const cards: Phase = {
       }
     }
     for (const card of CARDS) {
-      if (card.credential === 'linear') await dashboard.landCredential(card.slug, ctx.secrets.linearApiKey ?? '');
+      if (card.credential === 'linear')
+        await dashboard.landCredential(card.slug, ctx.secrets.linearApiKey ?? '');
       if (card.credential === 'slack') {
         if (!ctx.secrets.slackBotToken) {
           outcomes.push(`${card.slug}: left unapproved (no token)`);
@@ -449,11 +501,14 @@ const cards: Phase = {
         const surface = surfaceBySlug(await backend.surfaces(agentId), card.slug);
         if (!surface) return undefined;
         if (['ungranted', 'listed-dead', 'absent'].includes(surface.verdict)) {
-          throw new Error(`${card.slug} ended ${surface.verdict}: ${surface.reason ?? 'no reason recorded'}`);
+          throw new Error(
+            `${card.slug} ended ${surface.verdict}: ${surface.reason ?? 'no reason recorded'}`,
+          );
         }
         return surface.verdict === 'connected' ? surface : undefined;
       });
-      if (card.slug === 'slack') ctx.state.managerDmChannelId = (row as { managerDmChannelId?: string }).managerDmChannelId;
+      if (card.slug === 'slack')
+        ctx.state.managerDmChannelId = (row as { managerDmChannelId?: string }).managerDmChannelId;
       outcomes.push(`${card.slug}: connected`);
     }
     await shot(ctx, 'cards-connected');
@@ -465,15 +520,21 @@ const cards: Phase = {
 
 const assignTicket: Phase = {
   name: BOUNDARY,
-  writes: [`Linear issueUpdate ${TICKET} assigneeId = the key's own user (undone at cleanup: assignee back to the snapshot)`],
+  writes: [
+    `Linear issueUpdate ${TICKET} assigneeId = the key's own user (undone at cleanup: assignee back to the snapshot)`,
+  ],
   run: async (ctx) => {
     const viewer = requireState(ctx.state, 'viewer');
     const before = requireState(ctx.state, 'ticketBefore');
-    ctx.state.slackStartTs = ((ctx.now() / 1000) - SLACK_START_SLACK_S).toFixed(6);
-    ctx.ledger.register(`${TICKET} assignee back to ${before.assigneeId ?? 'unassigned'}`, async () => {
-      const current = await readIssueSnapshot(ctx.linear, TICKET);
-      if (current.assigneeId === viewer.id) await assignIssue(ctx.linear, before.id, before.assigneeId);
-    });
+    ctx.state.slackStartTs = (ctx.now() / 1000 - SLACK_START_SLACK_S).toFixed(6);
+    ctx.ledger.register(
+      `${TICKET} assignee back to ${before.assigneeId ?? 'unassigned'}`,
+      async () => {
+        const current = await readIssueSnapshot(ctx.linear, TICKET);
+        if (current.assigneeId === viewer.id)
+          await assignIssue(ctx.linear, before.id, before.assigneeId);
+      },
+    );
     await assignIssue(ctx.linear, before.id, viewer.id);
     ctx.record.writes.push(`Linear: ${TICKET} assigned to ${viewer.name} (${viewer.id})`);
     if (ctx.slack && ctx.state.managerDmChannelId) {
@@ -483,7 +544,9 @@ const assignTicket: Phase = {
       const startTs = ctx.state.slackStartTs;
       ctx.ledger.register(`this work item's bot DMs in ${channel} deleted`, async () => {
         const messages = botMessagesSince(
-          await slack.history(channel, startTs), botId, startTs,
+          await slack.history(channel, startTs),
+          botId,
+          startTs,
           ctx.state.ticketItemId ? [ctx.state.ticketItemId] : [],
         );
         const failures: string[] = [];
@@ -535,7 +598,8 @@ async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
     if (item.state === 'plan-pending' && item.plan) return item;
     if (item.state === 'skipped') {
       const kind = skipKind(item);
-      if (kind === 'out-of-scope') throw new StopRun(`${TICKET} skipped as out of scope: "${item.skipReason}"`);
+      if (kind === 'out-of-scope')
+        throw new StopRun(`${TICKET} skipped as out of scope: "${item.skipReason}"`);
       if (kind === 'quality-fit' && !acted.has('take-anyway')) {
         acted.add('take-anyway');
         ctx.log(`${TICKET} skipped by the quality-fit filter; ${TAKE_IT_ANYWAY} from its card`);
@@ -545,7 +609,9 @@ async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
       throw new StopRun(`${TICKET} skipped: "${item.skipReason}"`);
     }
     if (item.state === 'needs-skill') {
-      const proposed = (await backend.skills(agentId, 'proposed')).find((skill) => skill.proposedFor === item._id);
+      const proposed = (await backend.skills(agentId, 'proposed')).find(
+        (skill) => skill.proposedFor === item._id,
+      );
       if (proposed && !acted.has(`skill:${proposed._id}`)) {
         acted.add(`skill:${proposed._id}`);
         ctx.log(`approving the proposed skill "${proposed.name}"`);
@@ -564,7 +630,8 @@ async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
       await dashboard.showAgent();
       return undefined;
     }
-    if (['failed', 'cancelled'].includes(item.state)) throw new StopRun(`${TICKET} ${item.state}: ${item.skipReason ?? ''}`);
+    if (['failed', 'cancelled'].includes(item.state))
+      throw new StopRun(`${TICKET} ${item.state}: ${item.skipReason ?? ''}`);
     return undefined;
   });
 }
@@ -589,11 +656,17 @@ const approvePlan: Phase = {
   run: async (ctx) => {
     const dashboard = requireState(ctx.state, 'dashboard');
     await dashboard.approvePlan(requireState(ctx.state, 'ticketTitle'));
-    const item = await waitFor(ctx, 'phase one to park with the batch held', 15 * 60_000, async () => {
-      const row = await ticketRow(ctx);
-      if (['failed', 'cancelled', 'skipped'].includes(row.state)) throw new StopRun(`${TICKET} ${row.state}: ${row.skipReason ?? ''}`);
-      return batchHeld(row) ? row : undefined;
-    });
+    const item = await waitFor(
+      ctx,
+      'phase one to park with the batch held',
+      15 * 60_000,
+      async () => {
+        const row = await ticketRow(ctx);
+        if (['failed', 'cancelled', 'skipped'].includes(row.state))
+          throw new StopRun(`${TICKET} ${row.state}: ${row.skipReason ?? ''}`);
+        return batchHeld(row) ? row : undefined;
+      },
+    );
     await shot(ctx, 'batch-held');
     recordCheck(ctx, checkBrowserBatchHeldWhole(item, TILE_SLUG));
     recordCheck(ctx, checkWrongKeyReadRepaired(item));
@@ -612,11 +685,17 @@ const approveBatch: Phase = {
     const dashboard = requireState(ctx.state, 'dashboard');
     const title = requireState(ctx.state, 'ticketTitle');
     await dashboard.approveAll(title);
-    const item = await waitFor(ctx, 'the closing phase to park with the comment held', 15 * 60_000, async () => {
-      const row = await ticketRow(ctx);
-      if (['failed', 'cancelled', 'skipped'].includes(row.state)) throw new StopRun(`${TICKET} ${row.state}: ${row.skipReason ?? ''}`);
-      return closingHeld(row, TILE_SLUG) ? row : undefined;
-    });
+    const item = await waitFor(
+      ctx,
+      'the closing phase to park with the comment held',
+      15 * 60_000,
+      async () => {
+        const row = await ticketRow(ctx);
+        if (['failed', 'cancelled', 'skipped'].includes(row.state))
+          throw new StopRun(`${TICKET} ${row.state}: ${row.skipReason ?? ''}`);
+        return closingHeld(row, TILE_SLUG) ? row : undefined;
+      },
+    );
     await shot(ctx, 'closing-held');
     recordCheck(ctx, checkClosingCommentQuotesReadBack(item));
     return 'closing comment held';
@@ -638,23 +717,40 @@ const approveClosing: Phase = {
       const after = await readIssueSnapshot(linear, TICKET);
       const item = await ticketRow(ctx);
       const comments = await readComments(linear, before.id);
-      const ownedComments = comments.filter(comment => belongsToWorkItems(comment.body, [item._id]));
+      const ownedComments = comments.filter((comment) =>
+        belongsToWorkItems(comment.body, [item._id]),
+      );
       const ledgers = [item.output, item.output?.initial];
-      const receiptedCurrentState = ledgers.some(output => output?.actions?.some((action, index) => {
-        const receipt = output.applied?.[index];
-        if (!receipt?.ok || receipt.held || receipt.awaitingApproval) return false;
-        if (action.tool !== 'mcp.call' || action.args.surface !== 'linear' || action.args.tool !== 'save_issue') return false;
-        const args = JSON.parse(action.args.toolArgsJson ?? '{}') as Record<string, unknown>;
-        return [before.id, before.identifier].includes(String(args.id)) && args.state === after.stateName;
-      }));
+      const receiptedCurrentState = ledgers.some((output) =>
+        output?.actions?.some((action, index) => {
+          const receipt = output.applied?.[index];
+          if (!receipt?.ok || receipt.held || receipt.awaitingApproval) return false;
+          if (
+            action.tool !== 'mcp.call' ||
+            action.args.surface !== 'linear' ||
+            action.args.tool !== 'save_issue'
+          )
+            return false;
+          const args = JSON.parse(action.args.toolArgsJson ?? '{}') as Record<string, unknown>;
+          return (
+            [before.id, before.identifier].includes(String(args.id)) &&
+            args.state === after.stateName
+          );
+        }),
+      );
       // A move whose receipt was lost is still attributed by the provider's
       // own history: this key moved it from the snapshot's state to this one.
-      const wroteCurrentState = receiptedCurrentState || (
-        after.stateId !== before.stateId &&
-        stateMovedByActor(await readStateHistory(linear, before.id), viewer.id, before.stateId, after.stateId)
-      );
+      const wroteCurrentState =
+        receiptedCurrentState ||
+        (after.stateId !== before.stateId &&
+          stateMovedByActor(
+            await readStateHistory(linear, before.id),
+            viewer.id,
+            before.stateId,
+            after.stateId,
+          ));
       for (const step of issueRestoreSteps(before, after, {
-        commentIds: ownedComments.map(comment => comment.id),
+        commentIds: ownedComments.map((comment) => comment.id),
         ...(wroteCurrentState ? { stateId: after.stateId } : {}),
       })) {
         if (step.kind === 'delete-comment') await deleteComment(linear, step.commentId);
@@ -665,13 +761,18 @@ const approveClosing: Phase = {
     await dashboard.approveAll(requireState(ctx.state, 'ticketTitle'));
     const item = await waitFor(ctx, 'the run to complete', 10 * 60_000, async () => {
       const row = await ticketRow(ctx);
-      if (['failed', 'cancelled', 'skipped'].includes(row.state)) throw new StopRun(`${TICKET} ${row.state}: ${row.skipReason ?? ''}`);
+      if (['failed', 'cancelled', 'skipped'].includes(row.state))
+        throw new StopRun(`${TICKET} ${row.state}: ${row.skipReason ?? ''}`);
       return row.state === 'completed' ? row : undefined;
     });
     const after = await readIssueSnapshot(linear, TICKET);
     const comments = await readComments(linear, before.id);
-    const newComments = comments.filter((comment) => !before.commentIds.includes(comment.id)).map((comment) => comment.body);
-    ctx.record.writes.push(`Linear: ${TICKET} now ${after.stateName} with ${newComments.length} new comment(s)`);
+    const newComments = comments
+      .filter((comment) => !before.commentIds.includes(comment.id))
+      .map((comment) => comment.body);
+    ctx.record.writes.push(
+      `Linear: ${TICKET} now ${after.stateName} with ${newComments.length} new comment(s)`,
+    );
     await shot(ctx, 'completed');
     recordCheck(ctx, checkCompletion(item, { stateName: after.stateName, newComments }));
     return `completed; ${TICKET} ${after.stateName}`;
@@ -725,7 +826,9 @@ export function declaredWrites(phases: readonly Phase[] = PHASES): string[] {
   const boundary = phases.findIndex((phase: Phase): boolean => phase.name === BOUNDARY);
   return phases
     .slice(boundary)
-    .flatMap((phase: Phase): string[] => phase.writes.map((write: string): string => `${phase.name}: ${write}`));
+    .flatMap((phase: Phase): string[] =>
+      phase.writes.map((write: string): string => `${phase.name}: ${write}`),
+    );
 }
 
 /**
@@ -738,7 +841,10 @@ export function declaredWrites(phases: readonly Phase[] = PHASES): string[] {
  * Returns:
  *   Nothing; the record says what happened.
  */
-export async function runPhases(ctx: RehearsalContext, phases: readonly Phase[] = PHASES): Promise<void> {
+export async function runPhases(
+  ctx: RehearsalContext,
+  phases: readonly Phase[] = PHASES,
+): Promise<void> {
   for (const phase of phases) {
     if (ctx.options.dryRun && phase.name === BOUNDARY) {
       ctx.record.status = 'dry-run';
@@ -756,11 +862,21 @@ export async function runPhases(ctx: RehearsalContext, phases: readonly Phase[] 
     ctx.log(`phase ${phase.name}`);
     try {
       const detail = await phase.run(ctx);
-      ctx.record.phases.push({ name: phase.name, status: 'ok', seconds: (ctx.now() - startedAt) / 1000, detail: detail ?? undefined });
+      ctx.record.phases.push({
+        name: phase.name,
+        status: 'ok',
+        seconds: (ctx.now() - startedAt) / 1000,
+        detail: detail ?? undefined,
+      });
     } catch (error) {
       const reason = (error as Error).message;
       const stopped = error instanceof StopRun;
-      ctx.record.phases.push({ name: phase.name, status: stopped ? 'stopped' : 'failed', seconds: (ctx.now() - startedAt) / 1000, detail: reason });
+      ctx.record.phases.push({
+        name: phase.name,
+        status: stopped ? 'stopped' : 'failed',
+        seconds: (ctx.now() - startedAt) / 1000,
+        detail: reason,
+      });
       ctx.record.status = 'failed';
       ctx.record.stoppedAt = `${phase.name}: ${reason}`;
       ctx.out.writeRecord(ctx.record);
@@ -769,6 +885,9 @@ export async function runPhases(ctx: RehearsalContext, phases: readonly Phase[] 
     }
     ctx.out.writeRecord(ctx.record);
   }
-  ctx.record.status = ctx.record.checks.every((check) => check.passed) && ctx.record.checks.length === 5 ? 'passed' : 'failed';
+  ctx.record.status =
+    ctx.record.checks.every((check) => check.passed) && ctx.record.checks.length === 5
+      ? 'passed'
+      : 'failed';
   ctx.out.writeRecord(ctx.record);
 }

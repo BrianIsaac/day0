@@ -2,7 +2,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { REHEARSALS_DIR, RunDirectory, runDirectory, shotPath } from '../../../../scripts/bed/rehearsal/output';
+import {
+  REHEARSALS_DIR,
+  RunDirectory,
+  runDirectory,
+  shotPath,
+} from '../../../../scripts/bed/rehearsal/output';
 import type { RunRecord } from '../../../../scripts/bed/rehearsal/report';
 
 const record: RunRecord = {
@@ -57,7 +62,9 @@ describe('the run record on disk', (): void => {
     directory.appendLog('one');
     directory.appendLog('two');
     expect(
-      JSON.parse(readFileSync(join(directory.path, 'checks', 'plan-without-ownership-gate.json'), 'utf8')),
+      JSON.parse(
+        readFileSync(join(directory.path, 'checks', 'plan-without-ownership-gate.json'), 'utf8'),
+      ),
     ).toEqual({ steps: ['a'] });
     expect(readFileSync(join(directory.path, 'export.json'), 'utf8')).toContain('"ledger"');
     expect(readFileSync(join(directory.path, 'log.txt'), 'utf8')).toBe('one\ntwo\n');

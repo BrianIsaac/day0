@@ -23,8 +23,18 @@ describe('the run record', (): void => {
         { name: 'completion', status: 'skipped' },
       ],
       checks: [
-        { check: 'plan-without-ownership-gate', passed: true, detail: 'three runbook steps', rows: null },
-        { check: 'closing-comment-quotes-read-back', passed: false, detail: 'no save_comment', rows: null },
+        {
+          check: 'plan-without-ownership-gate',
+          passed: true,
+          detail: 'three runbook steps',
+          rows: null,
+        },
+        {
+          check: 'closing-comment-quotes-read-back',
+          passed: false,
+          detail: 'no save_comment',
+          rows: null,
+        },
       ],
       writes: ['Linear issueUpdate REVOPS-7 assigneeId=u1'],
       cleanup: [{ label: 'REVOPS-7 assignee back to none', ok: true }],

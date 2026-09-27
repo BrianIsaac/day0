@@ -11,7 +11,14 @@ import { writePrivateEnv } from '../../private-env';
 import { pinnedNodeImage, redactorVolumeClone } from '../../lib/docker';
 import { BED_PROFILES, bedComposeArgs } from './docker';
 import type { BedPorts } from './env';
-import { must, waitUntil, type Runner, type RunResult, type ServerHandle, type ServerStarter } from './process';
+import {
+  must,
+  waitUntil,
+  type Runner,
+  type RunResult,
+  type ServerHandle,
+  type ServerStarter,
+} from './process';
 
 /** The query parameter the unlock URL carries; restated from src/lib/dev-auth-server.ts, which tsx cannot import. */
 export const UNLOCK_PARAM: typeof import('../../../src/lib/dev-auth-server').DEV_NO_AUTH_UNLOCK_PARAM =
@@ -45,7 +52,9 @@ function composeCommand(bed: Bed, profiles: readonly string[] = BED_PROFILES): s
  */
 export function resolveCommit(runner: Runner, source: string, ref: string): string {
   const result = must(
-    runner('git', ['-C', source, 'rev-parse', '--verify', `${ref}^{commit}`], { timeoutMs: 30_000 }),
+    runner('git', ['-C', source, 'rev-parse', '--verify', `${ref}^{commit}`], {
+      timeoutMs: 30_000,
+    }),
     `git rev-parse ${ref}`,
   );
   return result.stdout.trim();
@@ -168,7 +177,10 @@ export function generateKeys(runner: Runner, clone: string): void {
 export function warmRedactorVolumes(runner: Runner, fromProject: string, bed: Bed): void {
   const image = pinnedNodeImage(readFileSync(join(bed.clone, 'docker-compose.yml'), 'utf8'));
   for (const step of redactorVolumeClone(fromProject, bed.project, image)) {
-    must(runner('docker', step.create, { timeoutMs: 60_000 }), `docker volume create ${step.volume}`);
+    must(
+      runner('docker', step.create, { timeoutMs: 60_000 }),
+      `docker volume create ${step.volume}`,
+    );
     must(runner('docker', step.copy, { timeoutMs: LONG_STEP_MS }), `copy into ${step.volume}`);
   }
 }
@@ -282,7 +294,9 @@ export async function waitForHealthy(
 ): Promise<void> {
   await waitUntil(
     async () => {
-      const line = composePs(runner, bed).find((row: string): boolean => row.startsWith(`${service} `));
+      const line = composePs(runner, bed).find((row: string): boolean =>
+        row.startsWith(`${service} `),
+      );
       if (line?.includes('exited')) throw new Error(`${service} exited: ${line}`);
       return line?.includes('healthy') && !line.includes('unhealthy') ? line : undefined;
     },
@@ -302,15 +316,20 @@ export async function waitForHealthy(
  */
 export function readAdminKey(runner: Runner, bed: Bed): string {
   const result = must(
-    runner('docker', [...composeCommand(bed, ['real']), 'exec', '-T', 'backend', './generate_admin_key.sh'], {
-      cwd: bed.clone,
-      env: bed.env,
-      timeoutMs: 60_000,
-    }),
+    runner(
+      'docker',
+      [...composeCommand(bed, ['real']), 'exec', '-T', 'backend', './generate_admin_key.sh'],
+      {
+        cwd: bed.clone,
+        env: bed.env,
+        timeoutMs: 60_000,
+      },
+    ),
     'generate_admin_key.sh',
   );
   const key = parseAdminKey(result.stdout);
-  if (!key) throw new Error(`generate_admin_key.sh printed no key:\n${result.stdout}${result.stderr}`);
+  if (!key)
+    throw new Error(`generate_admin_key.sh printed no key:\n${result.stdout}${result.stderr}`);
   return key;
 }
 
@@ -398,15 +417,21 @@ export async function startApp(
   fetchImpl: typeof fetch = fetch,
   timeoutMs: number = 180_000,
 ): Promise<ServerHandle> {
-  const server = startServer('pnpm', ['exec', 'next', 'dev', '-H', 'localhost', '-p', String(bed.ports.app)], {
-    cwd: bed.clone,
-    env: { ...bed.env, PORT: String(bed.ports.app) },
-  });
+  const server = startServer(
+    'pnpm',
+    ['exec', 'next', 'dev', '-H', 'localhost', '-p', String(bed.ports.app)],
+    {
+      cwd: bed.clone,
+      env: { ...bed.env, PORT: String(bed.ports.app) },
+    },
+  );
   try {
     await waitUntil(
       async () => {
         try {
-          const response = await fetchImpl(appUrl(bed, '/'), { signal: AbortSignal.timeout(5_000) });
+          const response = await fetchImpl(appUrl(bed, '/'), {
+            signal: AbortSignal.timeout(5_000),
+          });
           return response.status < 500 ? true : undefined;
         } catch {
           return undefined;

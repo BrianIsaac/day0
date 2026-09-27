@@ -36,7 +36,9 @@ const specSchema = z.object({
   /** Named subsets of the tickets a sitting may file instead of all of them. */
   sets: z.record(z.string().regex(/^[a-z0-9-]+$/), z.array(z.string().min(1)).min(1)).default({}),
   teams: z
-    .array(z.object({ key: z.string().min(1), name: z.string().min(1), project: z.string().min(1) }))
+    .array(
+      z.object({ key: z.string().min(1), name: z.string().min(1), project: z.string().min(1) }),
+    )
     .min(1),
   tickets: z.array(ticketSchema).min(1),
 });
@@ -57,23 +59,31 @@ export type BedTicket = z.infer<typeof ticketSchema>;
  *   Error: If the file is malformed or names a team or state it does not declare.
  */
 export function loadBedSpec(cwd: string): BedSpec {
-  const spec = specSchema.parse(JSON.parse(readFileSync(join(cwd, BED_DIR, 'linear.json'), 'utf8')));
+  const spec = specSchema.parse(
+    JSON.parse(readFileSync(join(cwd, BED_DIR, 'linear.json'), 'utf8')),
+  );
   const keys = new Set<string>();
   for (const ticket of spec.tickets) {
     if (keys.has(ticket.key)) throw new Error(`linear.json names ticket ${ticket.key} twice.`);
     keys.add(ticket.key);
     if (!spec.teams.some((team) => team.key === ticket.team)) {
-      throw new Error(`linear.json puts ${ticket.key} in team ${ticket.team}, which it does not declare.`);
+      throw new Error(
+        `linear.json puts ${ticket.key} in team ${ticket.team}, which it does not declare.`,
+      );
     }
     if (!spec.states.includes(ticket.state)) {
-      throw new Error(`linear.json puts ${ticket.key} in state ${ticket.state}, which it does not declare.`);
+      throw new Error(
+        `linear.json puts ${ticket.key} in state ${ticket.state}, which it does not declare.`,
+      );
     }
   }
   for (const [name, members] of Object.entries(spec.sets)) {
     for (const key of members) {
       const ticket = spec.tickets.find((candidate) => candidate.key === key);
-      if (!ticket) throw new Error(`linear.json set ${name} names ticket ${key}, which it does not declare.`);
-      if (ticket.late) throw new Error(`linear.json set ${name} names ${key}, a late ticket that post files.`);
+      if (!ticket)
+        throw new Error(`linear.json set ${name} names ticket ${key}, which it does not declare.`);
+      if (ticket.late)
+        throw new Error(`linear.json set ${name} names ${key}, a late ticket that post files.`);
     }
   }
   return spec;
@@ -97,7 +107,9 @@ export function ticketsToFile(spec: BedSpec, set: string | undefined): BedTicket
   const members = spec.sets[set];
   if (!members) {
     const names = Object.keys(spec.sets);
-    throw new Error(`linear.json has no set ${set}; its sets are ${names.length > 0 ? names.join(', ') : 'none'}.`);
+    throw new Error(
+      `linear.json has no set ${set}; its sets are ${names.length > 0 ? names.join(', ') : 'none'}.`,
+    );
   }
   return spec.tickets.filter((ticket) => members.includes(ticket.key));
 }
@@ -113,7 +125,9 @@ export function ticketsToFile(spec: BedSpec, set: string | undefined): BedTicket
  *   Lines to print, unindented.
  */
 export function companyHandSteps(spec: BedSpec): string[] {
-  const teams = spec.teams.map((team) => `${team.key} (${team.name}, project "${team.project}")`).join(', ');
+  const teams = spec.teams
+    .map((team) => `${team.key} (${team.name}, project "${team.project}")`)
+    .join(', ');
   return [
     `1. Linear, as a workspace admin: the teams ${teams}, each with the workflow states ${spec.states.join(', ')}.`,
     `2. Slack: the public channels ${BED_CHANNELS.map((name) => `#${name}`).join(', ')}, and one shared bot app with chat:write.customize, invited to all five. The asks of ${BED_DIR}/slack-asks.md are posted by you during each sitting, once the employees are deployed (that file says which a sitting posts).`,

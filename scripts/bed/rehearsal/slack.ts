@@ -32,7 +32,8 @@ export function botMessagesSince(
   const start = Number.parseFloat(startTs);
   return messages.filter(
     (message: SlackMessage): boolean =>
-      message.botId === botId && Number.parseFloat(message.ts) >= start &&
+      message.botId === botId &&
+      Number.parseFloat(message.ts) >= start &&
       belongsToWorkItems(message.text, workItemIds),
   );
 }

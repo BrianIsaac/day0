@@ -9,7 +9,7 @@
  */
 
 export const DAY_ONE_ANSWERS: readonly string[] = [
-  "Honestly, Q3 close is a mess. Stuff falls through the cracks between sales and finance, follow-ups depend on whoever remembers, and nobody wants another meeting about it. I need someone keeping the tickets in Linear moving and keeping an audit trail.",
+  'Honestly, Q3 close is a mess. Stuff falls through the cracks between sales and finance, follow-ups depend on whoever remembers, and nobody wants another meeting about it. I need someone keeping the tickets in Linear moving and keeping an audit trail.',
   "You're our revops coordinator for the Q3 close. Triage what comes in, work the tickets in Linear, keep the audit notes on them, draft updates for me, and flag anything that smells like risk. First month, learn how we work and get your access sorted. Month two, you run the routine tickets yourself. By month three I want you catching problems before I hear about them.",
   "There's the Linear admin for access and workflow, the Slack admin for channels, and business systems for the CRM. Go through me for all of them for now, I'll intro you.",
   'The onboarding page in the handbook, then the runbooks. The queue page tells you what is open and what is stuck.',

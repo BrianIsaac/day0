@@ -90,13 +90,22 @@ export async function retrySlackOnce<T>(
         error.code,
       );
     }
-    io.say(`retrying ${what} after ${error.reason}${asked === undefined ? '' : `, in ${seconds(asked)} s as Slack asked`}`);
+    io.say(
+      `retrying ${what} after ${error.reason}${asked === undefined ? '' : `, in ${seconds(asked)} s as Slack asked`}`,
+    );
     await io.sleep(asked ?? SLACK_RETRY_PAUSE_MS);
     try {
       return await again(error);
     } catch (second) {
-      const reason = second instanceof SlackRequestError && second.transient ? second.reason : (second as Error).message;
-      throw new SlackRequestError(`${what} failed twice: ${error.reason}, then ${reason}`, reason, false);
+      const reason =
+        second instanceof SlackRequestError && second.transient
+          ? second.reason
+          : (second as Error).message;
+      throw new SlackRequestError(
+        `${what} failed twice: ${error.reason}, then ${reason}`,
+        reason,
+        false,
+      );
     }
   }
 }
@@ -146,10 +155,23 @@ export async function requestSlack(
     );
   }
   if (!response.ok) {
-    throw new SlackRequestError(`Slack ${method}: ${code ?? reason}`, reason, false, undefined, response.status, code);
+    throw new SlackRequestError(
+      `Slack ${method}: ${code ?? reason}`,
+      reason,
+      false,
+      undefined,
+      response.status,
+      code,
+    );
   }
   if (!answer) {
-    throw new SlackRequestError(`Slack ${method}: ${reason} with invalid JSON`, reason, false, undefined, response.status);
+    throw new SlackRequestError(
+      `Slack ${method}: ${reason} with invalid JSON`,
+      reason,
+      false,
+      undefined,
+      response.status,
+    );
   }
   if (!answer.ok) {
     const transient = code === 'ratelimited';

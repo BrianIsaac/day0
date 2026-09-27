@@ -22,7 +22,11 @@ describe('the Slack client', (): void => {
       bot_id: 'BBOT',
     }));
     const client = new SlackClient('xoxb-test', fetch);
-    await expect(client.authTest()).resolves.toEqual({ team: 'day0', userId: 'UBOT', botId: 'BBOT' });
+    await expect(client.authTest()).resolves.toEqual({
+      team: 'day0',
+      userId: 'UBOT',
+      botId: 'BBOT',
+    });
     expect(calls[0]!.url).toBe('https://slack.com/api/auth.test');
     expect(calls[0]!.auth).toBe('Bearer xoxb-test');
   });
@@ -80,8 +84,11 @@ describe('the Slack client', (): void => {
     let calls = 0;
     const fetch = (async (): Promise<Response> => {
       calls += 1;
-      if (calls === 1) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
-      return new Response(JSON.stringify({ ok: true, team: 'day0', user_id: 'UBOT', bot_id: 'BBOT' }));
+      if (calls === 1)
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      return new Response(
+        JSON.stringify({ ok: true, team: 'day0', user_id: 'UBOT', bot_id: 'BBOT' }),
+      );
     }) as typeof globalThis.fetch;
     const lines: string[] = [];
     const sleeps: number[] = [];
@@ -129,7 +136,8 @@ describe('the Slack client', (): void => {
     let calls = 0;
     const fetch = (async (): Promise<Response> => {
       calls += 1;
-      if (calls === 1) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      if (calls === 1)
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
       return new Response(JSON.stringify({ ok: false, error: 'message_not_found' }));
     }) as typeof globalThis.fetch;
     const lines: string[] = [];
@@ -197,7 +205,9 @@ describe('the Slack client', (): void => {
 
       await expect(
         code === 'cant_delete_message' ? client.deleteMessage('D1', '2.0') : client.authTest(),
-      ).rejects.toThrow(`Slack ${code === 'cant_delete_message' ? 'chat.delete' : 'auth.test'}: ${code}`);
+      ).rejects.toThrow(
+        `Slack ${code === 'cant_delete_message' ? 'chat.delete' : 'auth.test'}: ${code}`,
+      );
       expect(calls, code).toBe(1);
       expect(lines, code).toEqual([]);
       expect(sleeps, code).toEqual([]);

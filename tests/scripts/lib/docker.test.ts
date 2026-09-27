@@ -16,7 +16,11 @@ describe('the redactor volume copy', (): void => {
   });
 
   it('clones the two redactor volumes with compose labels and never from or into a protected project', (): void => {
-    const plan = redactorVolumeClone('day0-redactor-warm', 'day0-rehearsal-1', 'node:22-alpine@sha256:abc');
+    const plan = redactorVolumeClone(
+      'day0-redactor-warm',
+      'day0-rehearsal-1',
+      'node:22-alpine@sha256:abc',
+    );
     expect(REDACTOR_VOLUME_SUFFIXES).toEqual(['redactor_venv', 'redactor_models']);
     expect(plan).toHaveLength(2);
     expect(plan[0]!.create).toEqual([
@@ -32,6 +36,8 @@ describe('the redactor volume copy', (): void => {
     expect(plan[0]!.copy).toContain('day0-rehearsal-1_redactor_venv:/to');
     expect(plan[0]!.copy.join(' ')).toContain('cp -a /from/. /to/');
     expect(() => redactorVolumeClone('day0', 'day0-rehearsal-1', 'img')).toThrow('protected');
-    expect(() => redactorVolumeClone('day0-redactor-warm', 'day0-demo-7c65e7', 'img')).toThrow('protected');
+    expect(() => redactorVolumeClone('day0-redactor-warm', 'day0-demo-7c65e7', 'img')).toThrow(
+      'protected',
+    );
   });
 });

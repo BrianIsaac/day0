@@ -25,7 +25,11 @@ import {
   writeBedEnv,
   type Bed,
 } from '../../../../scripts/bed/rehearsal/bed';
-import type { RunOptions, RunResult, ServerHandle } from '../../../../scripts/bed/rehearsal/process';
+import type {
+  RunOptions,
+  RunResult,
+  ServerHandle,
+} from '../../../../scripts/bed/rehearsal/process';
 
 interface Call {
   command: string;
@@ -57,8 +61,21 @@ const bed: Bed = {
 };
 
 const compose = [
-  'compose', '-p', 'day0-rehearsal-abc123', '--env-file', '.env.local',
-  '--profile', 'real', '--profile', 'sandbox', '--profile', 'browser', '--profile', 'demo', '--profile', 'redactor',
+  'compose',
+  '-p',
+  'day0-rehearsal-abc123',
+  '--env-file',
+  '.env.local',
+  '--profile',
+  'real',
+  '--profile',
+  'sandbox',
+  '--profile',
+  'browser',
+  '--profile',
+  'demo',
+  '--profile',
+  'redactor',
 ];
 
 describe('bringing the bed up', (): void => {
@@ -68,7 +85,9 @@ describe('bringing the bed up', (): void => {
   });
 
   it('resolves the ref, clones it detached and installs from the lockfile', (): void => {
-    const { calls, runner } = recorder({ 'git -C /src rev-parse': { status: 0, stdout: 'abc123def\n', stderr: '' } });
+    const { calls, runner } = recorder({
+      'git -C /src rev-parse': { status: 0, stdout: 'abc123def\n', stderr: '' },
+    });
     expect(resolveCommit(runner, '/src', 'HEAD')).toBe('abc123def');
     cloneAt(runner, '/src', 'abc123def', '/tmp/clone');
     installDependencies(runner, '/tmp/clone');
@@ -79,15 +98,26 @@ describe('bringing the bed up', (): void => {
       'pnpm install --frozen-lockfile --prefer-offline',
     ]);
     expect(calls[3].options.cwd).toBe('/tmp/clone');
-    const failing = recorder({ 'git clone': { status: 128, stdout: '', stderr: 'fatal: no such path' } });
-    expect(() => cloneAt(failing.runner, '/src', 'abc', '/tmp/x')).toThrow('git clone failed (status 128)');
+    const failing = recorder({
+      'git clone': { status: 128, stdout: '', stderr: 'fatal: no such path' },
+    });
+    expect(() => cloneAt(failing.runner, '/src', 'abc', '/tmp/x')).toThrow(
+      'git clone failed (status 128)',
+    );
   });
 
   it("writes the bed's env from the example, private to the owner, and reads it back", (): void => {
     const clone = mkdtempSync(join(tmpdir(), 'rehearsal-bed-'));
     created.push(clone);
-    writeFileSync(join(clone, '.env.example'), 'CONVEX_DEPLOYMENT=\nOPENAI_API_KEY=\n# comment\nDAY0_SURFACE_MODE=mock\n');
-    writeBedEnv(clone, { OPENAI_API_KEY: 'sk-test', DAY0_SURFACE_MODE: 'real', COMPOSE_PROJECT_NAME: 'p' });
+    writeFileSync(
+      join(clone, '.env.example'),
+      'CONVEX_DEPLOYMENT=\nOPENAI_API_KEY=\n# comment\nDAY0_SURFACE_MODE=mock\n',
+    );
+    writeBedEnv(clone, {
+      OPENAI_API_KEY: 'sk-test',
+      DAY0_SURFACE_MODE: 'real',
+      COMPOSE_PROJECT_NAME: 'p',
+    });
     const path = join(clone, '.env.local');
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(readFileSync(path, 'utf8')).toBe(
@@ -111,11 +141,12 @@ describe('bringing the bed up', (): void => {
         stdout: 'Admin key:\nconvex-self-hosted|abc\n',
         stderr: '',
       },
-      'docker compose -p day0-rehearsal-abc123 --env-file .env.local --profile real --profile sandbox --profile browser --profile demo --profile redactor ps': {
-        status: 0,
-        stdout: 'backend running healthy\nredactor running starting\n',
-        stderr: '',
-      },
+      'docker compose -p day0-rehearsal-abc123 --env-file .env.local --profile real --profile sandbox --profile browser --profile demo --profile redactor ps':
+        {
+          status: 0,
+          stdout: 'backend running healthy\nredactor running starting\n',
+          stderr: '',
+        },
     });
     generateKeys(runner, bed.clone);
     composeUp(runner, bed);
@@ -124,7 +155,10 @@ describe('bringing the bed up', (): void => {
     pushFunctions(runner, bed);
     restartBackend(runner, bed);
     pollIntake(runner, bed);
-    expect(composePs(runner, bed)).toEqual(['backend running healthy', 'redactor running starting']);
+    expect(composePs(runner, bed)).toEqual([
+      'backend running healthy',
+      'redactor running starting',
+    ]);
     composeDown(runner, bed);
     composeDown(runner, bed, false);
     expect(calls.map((call) => [call.command, ...call.args].join(' '))).toEqual([
@@ -156,33 +190,54 @@ describe('bringing the bed up', (): void => {
 
     let pings = 0;
     const { runner } = recorder({
-      'docker': { status: 0, stdout: 'backend running healthy\nredactor running starting\n', stderr: '' },
+      docker: {
+        status: 0,
+        stdout: 'backend running healthy\nredactor running starting\n',
+        stderr: '',
+      },
     });
     const sleep = async (): Promise<void> => {
       pings += 1;
     };
     await waitForHealthy(runner, bed, 'backend', 60_000, sleep);
     expect(pings).toBe(0);
-    const exited = recorder({ 'docker': { status: 0, stdout: 'redactor exited (1)\n', stderr: '' } });
-    await expect(waitForHealthy(exited.runner, bed, 'redactor', 60_000, sleep)).rejects.toThrow('redactor exited');
+    const exited = recorder({ docker: { status: 0, stdout: 'redactor exited (1)\n', stderr: '' } });
+    await expect(waitForHealthy(exited.runner, bed, 'redactor', 60_000, sleep)).rejects.toThrow(
+      'redactor exited',
+    );
 
     const started: Array<{ command: string; args: string[]; options: RunOptions }> = [];
     let stopped = 0;
-    const startServer = (command: string, args: readonly string[], options: RunOptions): ServerHandle => {
+    const startServer = (
+      command: string,
+      args: readonly string[],
+      options: RunOptions,
+    ): ServerHandle => {
       started.push({ command, args: [...args], options });
-      return { pid: 4242, output: () => 'ready', stop: async () => { stopped += 1; } };
+      return {
+        pid: 4242,
+        output: () => 'ready',
+        stop: async () => {
+          stopped += 1;
+        },
+      };
     };
     const server = await startApp(startServer, bed, fetchImpl, 60_000);
     expect(server.pid).toBe(4242);
     expect(started[0].command).toBe('pnpm');
     expect(started[0].args).toEqual(['exec', 'next', 'dev', '-H', 'localhost', '-p', '45213']);
-    expect(started[0].options.env).toMatchObject({ COMPOSE_PROJECT_NAME: 'day0-rehearsal-abc123', PORT: '45213' });
+    expect(started[0].options.env).toMatchObject({
+      COMPOSE_PROJECT_NAME: 'day0-rehearsal-abc123',
+      PORT: '45213',
+    });
     expect(stopped).toBe(0);
 
     const never = (async (): Promise<Response> => {
       throw new Error('refused');
     }) as typeof fetch;
-    await expect(startApp(startServer, bed, never, 1)).rejects.toThrow('the app on localhost:45213');
+    await expect(startApp(startServer, bed, never, 1)).rejects.toThrow(
+      'the app on localhost:45213',
+    );
     expect(stopped).toBe(1);
   });
 

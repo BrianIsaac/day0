@@ -29,8 +29,17 @@ const tileActions = [
 
 const parked: WorkItemView = {
   state: 'actions-pending',
-  plan: { steps: ['Sign in to the tile', 'Enter 74% and save', 'Read back the audit line and comment on REVOPS-7'] },
-  actionVerdicts: [{ disposition: 'auto' }, ...tileActions.map(() => ({ disposition: 'held' as const }))],
+  plan: {
+    steps: [
+      'Sign in to the tile',
+      'Enter 74% and save',
+      'Read back the audit line and comment on REVOPS-7',
+    ],
+  },
+  actionVerdicts: [
+    { disposition: 'auto' },
+    ...tileActions.map(() => ({ disposition: 'held' as const })),
+  ],
   output: {
     actions: [mcp('linear', 'get_issue', { issueId: 'REVOPS-7' }), ...tileActions],
     applied: [
@@ -41,7 +50,12 @@ const parked: WorkItemView = {
         effect: '{"identifier":"REVOPS-7"}',
         repair: { reason: 'Tool input validation failed', toolArgsJson: '{"issueId":"REVOPS-7"}' },
       },
-      ...tileActions.map(() => ({ tool: 'mcp.call', ok: false, held: true, awaitingApproval: true })),
+      ...tileActions.map(() => ({
+        tool: 'mcp.call',
+        ok: false,
+        held: true,
+        awaitingApproval: true,
+      })),
     ],
   },
 };
@@ -51,7 +65,12 @@ describe('check 1: the plan has no ownership gate', (): void => {
     expect(checkPlanWithoutOwnershipGate(parked)).toMatchObject({ passed: true });
     const gated: WorkItemView = {
       ...parked,
-      plan: { steps: ['Open REVOPS-7 in Linear to confirm it is owned and prioritized', 'Refresh the tile'] },
+      plan: {
+        steps: [
+          'Open REVOPS-7 in Linear to confirm it is owned and prioritized',
+          'Refresh the tile',
+        ],
+      },
     };
     const result = checkPlanWithoutOwnershipGate(gated);
     expect(result.passed).toBe(false);
@@ -61,7 +80,8 @@ describe('check 1: the plan has no ownership gate', (): void => {
 
   it('fails when the audit had to mark a step advisory, and when there is no plan', (): void => {
     expect(
-      checkPlanWithoutOwnershipGate({ ...parked, plan: { steps: ['x'], advisorySteps: [1] } }).passed,
+      checkPlanWithoutOwnershipGate({ ...parked, plan: { steps: ['x'], advisorySteps: [1] } })
+        .passed,
     ).toBe(false);
     expect(checkPlanWithoutOwnershipGate({ state: 'claimed' }).passed).toBe(false);
   });
@@ -107,7 +127,10 @@ describe('check 3: a wrong-key read is repaired once when it occurs', (): void =
   it('passes as not needed when the read landed first time, and fails on a read left failed', (): void => {
     const clean: WorkItemView = {
       ...parked,
-      output: { ...parked.output, applied: [{ tool: 'mcp.call', ok: true, authority: 'standing' }] },
+      output: {
+        ...parked.output,
+        applied: [{ tool: 'mcp.call', ok: true, authority: 'standing' }],
+      },
     };
     expect(checkWrongKeyReadRepaired(clean)).toMatchObject({ passed: true });
     expect(checkWrongKeyReadRepaired(clean).detail).toContain('not needed');
@@ -139,7 +162,9 @@ describe('check 4: the closing comment quotes the read-back', (): void => {
         actions: parked.output!.actions,
         applied: [
           parked.output!.applied![0]!,
-          ...tileActions.slice(0, 5).map(() => ({ tool: 'mcp.call', ok: true, authority: 'manager' })),
+          ...tileActions
+            .slice(0, 5)
+            .map(() => ({ tool: 'mcp.call', ok: true, authority: 'manager' })),
           {
             tool: 'mcp.call',
             ok: true,
@@ -187,18 +212,28 @@ describe('check 5: completion', (): void => {
     };
     const result = checkCompletion(done, {
       stateName: 'Done',
-      newComments: [`Refreshed: visible figure 74%. ${AUDIT} -- rehearsal worker (Day0) · run wi_1/run_2`],
+      newComments: [
+        `Refreshed: visible figure 74%. ${AUDIT} -- rehearsal worker (Day0) · run wi_1/run_2`,
+      ],
     });
     expect(result.passed).toBe(true);
     expect(result.detail).toContain('Done');
   });
 
   it('fails on a blocked step, a ticket not Done, or no new comment', (): void => {
-    const done: WorkItemView = { state: 'completed', output: { planStepOutcomes: [{ status: 'blocked' }] } };
+    const done: WorkItemView = {
+      state: 'completed',
+      output: { planStepOutcomes: [{ status: 'blocked' }] },
+    };
     expect(checkCompletion(done, { stateName: 'Done', newComments: ['x'] }).passed).toBe(false);
-    const ok: WorkItemView = { state: 'completed', output: { planStepOutcomes: [{ status: 'satisfied' }] } };
+    const ok: WorkItemView = {
+      state: 'completed',
+      output: { planStepOutcomes: [{ status: 'satisfied' }] },
+    };
     expect(checkCompletion(ok, { stateName: 'Backlog', newComments: ['x'] }).passed).toBe(false);
     expect(checkCompletion(ok, { stateName: 'Done', newComments: [] }).passed).toBe(false);
-    expect(checkCompletion({ state: 'failed' }, { stateName: 'Done', newComments: ['x'] }).passed).toBe(false);
+    expect(
+      checkCompletion({ state: 'failed' }, { stateName: 'Done', newComments: ['x'] }).passed,
+    ).toBe(false);
   });
 });

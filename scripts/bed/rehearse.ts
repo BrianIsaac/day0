@@ -29,7 +29,12 @@ import { PlaywrightDashboard } from './rehearsal/driver';
 import { parseEnvText, parseSecrets } from './rehearsal/env';
 import { finish, sleepUntilCeiling } from './rehearsal/finish';
 import { LinearClient } from '../lib/linear';
-import { parseComposeProjects, parseRehearsalArguments, rehearsalProjectName, USAGE } from './rehearsal/options';
+import {
+  parseComposeProjects,
+  parseRehearsalArguments,
+  rehearsalProjectName,
+  USAGE,
+} from './rehearsal/options';
 import { RunDirectory, runDirectory } from './rehearsal/output';
 import { portIsFree } from './rehearsal/ports';
 import { runCommand, startServer } from './rehearsal/process';
@@ -60,9 +65,17 @@ function readPrivateFile(path: string, what: string): string {
   return readFileSync(path, 'utf8');
 }
 
-function dockerInventory(): { composeProjects: string[]; volumes: string[]; labelledContainers: string[] } {
-  const projects = runCommand('docker', ['compose', 'ls', '-a', '--format', 'json'], { timeoutMs: 30_000 });
-  const volumes = runCommand('docker', ['volume', 'ls', '--format', '{{.Name}}'], { timeoutMs: 30_000 });
+function dockerInventory(): {
+  composeProjects: string[];
+  volumes: string[];
+  labelledContainers: string[];
+} {
+  const projects = runCommand('docker', ['compose', 'ls', '-a', '--format', 'json'], {
+    timeoutMs: 30_000,
+  });
+  const volumes = runCommand('docker', ['volume', 'ls', '--format', '{{.Name}}'], {
+    timeoutMs: 30_000,
+  });
   const containers = runCommand(
     'docker',
     ['ps', '-a', '--format', '{{.Label "com.docker.compose.project"}}'],
@@ -132,7 +145,9 @@ async function main(): Promise<number> {
     process.stdout.write(`${stamped}\n`);
     out.appendLog(stamped);
   };
-  log(`rehearsal ${stamp}: project ${project}, clone ${clone}, record ${out.path}${options.dryRun ? ' (dry run)' : ''}`);
+  log(
+    `rehearsal ${stamp}: project ${project}, clone ${clone}, record ${out.path}${options.dryRun ? ' (dry run)' : ''}`,
+  );
 
   const ctx: RehearsalContext = {
     options,
@@ -168,18 +183,21 @@ async function main(): Promise<number> {
   // stuck on a call with no timeout of its own never reaches one, so past a
   // grace the clean-up runs beside it: the lesser harm than leaving the
   // workspaces written and the bed polling them.
-  const backstop = setTimeout(() => {
-    log(`no wait was reached ${CEILING_GRACE_MINUTES} minutes past the ceiling; cleaning up now`);
-    record.status = 'failed';
-    record.stoppedAt = `${CEILING_GRACE_MINUTES} minutes past the ${options.timeoutMinutes}-minute ceiling`;
-    void finish(ctx, 1).then(
-      (code) => process.exit(code),
-      (error: unknown) => {
-        log(`cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
-        process.exit(1);
-      },
-    ); // Both outcomes end the process here; nothing awaits the stuck phase.
-  }, (options.timeoutMinutes + CEILING_GRACE_MINUTES) * 60_000);
+  const backstop = setTimeout(
+    () => {
+      log(`no wait was reached ${CEILING_GRACE_MINUTES} minutes past the ceiling; cleaning up now`);
+      record.status = 'failed';
+      record.stoppedAt = `${CEILING_GRACE_MINUTES} minutes past the ${options.timeoutMinutes}-minute ceiling`;
+      void finish(ctx, 1).then(
+        (code) => process.exit(code),
+        (error: unknown) => {
+          log(`cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+          process.exit(1);
+        },
+      ); // Both outcomes end the process here; nothing awaits the stuck phase.
+    },
+    (options.timeoutMinutes + CEILING_GRACE_MINUTES) * 60_000,
+  );
   backstop.unref();
 
   try {

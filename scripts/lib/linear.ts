@@ -90,13 +90,22 @@ export async function retryOnce<T>(
         asked,
       );
     }
-    io.say(`retrying ${what} after ${error.reason}${asked === undefined ? '' : `, in ${seconds(asked)} s as Linear asked`}`);
+    io.say(
+      `retrying ${what} after ${error.reason}${asked === undefined ? '' : `, in ${seconds(asked)} s as Linear asked`}`,
+    );
     await io.sleep(asked ?? RETRY_PAUSE_MS);
     try {
       return await again(error);
     } catch (second) {
-      const reason = second instanceof LinearRequestError && second.transient ? second.reason : (second as Error).message;
-      throw new LinearRequestError(`${what} failed twice: ${error.reason}, then ${reason}`, reason, false);
+      const reason =
+        second instanceof LinearRequestError && second.transient
+          ? second.reason
+          : (second as Error).message;
+      throw new LinearRequestError(
+        `${what} failed twice: ${error.reason}, then ${reason}`,
+        reason,
+        false,
+      );
     }
   }
 }
@@ -119,11 +128,19 @@ function resetMs(header: string | null, now: number): number | undefined {
 /** The failure a rejected fetch or body read stands for; anything else is not Linear's. */
 function transportFailure(error: unknown): unknown {
   if (error instanceof Error && error.name === 'TimeoutError') {
-    return new LinearRequestError(`Linear did not answer within ${seconds(LINEAR_TIMEOUT_MS)} s.`, 'a timeout', true);
+    return new LinearRequestError(
+      `Linear did not answer within ${seconds(LINEAR_TIMEOUT_MS)} s.`,
+      'a timeout',
+      true,
+    );
   }
   if (error instanceof TypeError && error.message === 'fetch failed') {
     const cause = (error as { cause?: { message?: string } }).cause?.message;
-    return new LinearRequestError(`Linear could not be reached${cause ? ` (${cause})` : ''}.`, 'a network failure', true);
+    return new LinearRequestError(
+      `Linear could not be reached${cause ? ` (${cause})` : ''}.`,
+      'a network failure',
+      true,
+    );
   }
   return error;
 }
@@ -186,14 +203,23 @@ export class LinearClient {
       const wait =
         retryAfterMs(response.headers.get('retry-after'), now) ??
         resetMs(response.headers.get('x-ratelimit-requests-reset'), now);
-      throw new LinearRequestError(`Linear rate-limited the call: ${listed}`, 'a Linear rate limit', true, wait);
+      throw new LinearRequestError(
+        `Linear rate-limited the call: ${listed}`,
+        'a Linear rate limit',
+        true,
+        wait,
+      );
     }
     if (response.status === 429) {
       const wait = retryAfterMs(response.headers.get('retry-after'), now);
       throw new LinearRequestError(`Linear answered ${status}.`, status, true, wait);
     }
     if (response.status >= 500) {
-      throw new LinearRequestError(`Linear answered ${status}${listed ? `: ${listed}` : '.'}`, status, true);
+      throw new LinearRequestError(
+        `Linear answered ${status}${listed ? `: ${listed}` : '.'}`,
+        status,
+        true,
+      );
     }
     if (errors.length > 0) throw new LinearRequestError(`Linear: ${listed}`, status, false);
     if (!response.ok || parsed?.data === undefined) {
@@ -231,5 +257,6 @@ export async function deleteComment(client: LinearClient, commentId: string): Pr
   const data = await client.request<{ commentDelete: { success: boolean } }>(COMMENT_DELETE, {
     id: commentId,
   });
-  if (!data.commentDelete.success) throw new Error(`Linear commentDelete ${commentId} did not succeed.`);
+  if (!data.commentDelete.success)
+    throw new Error(`Linear commentDelete ${commentId} did not succeed.`);
 }
