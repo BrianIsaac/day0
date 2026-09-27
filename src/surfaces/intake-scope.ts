@@ -71,7 +71,8 @@ const FIELD_GRAMMARS: Record<Exclude<ScopeField, 'channel'>, readonly RegExp[]> 
 const CHANNELS_LABEL = /^\s*(?:[-*+]\s+)?Channels?\s*:/i;
 const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-const FORBIDDEN_QUEUE_LINE = /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
+const FORBIDDEN_QUEUE_LINE =
+  /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+/;
 const HEADING = /^\s{0,3}#{1,6}\s/;
 const MAX_NOTE_VALUE = 80;
@@ -170,7 +171,8 @@ export function scopeCandidates(
       for (const field of fields) {
         if (field === 'channel') {
           if (!CHANNELS_LABEL.test(line)) continue;
-          for (const match of line.matchAll(CHANNEL_NAME)) add(candidates, field, match[1], page, quote);
+          for (const match of line.matchAll(CHANNEL_NAME))
+            add(candidates, field, match[1], page, quote);
           continue;
         }
         for (const grammar of FIELD_GRAMMARS[field]) {
@@ -223,7 +225,9 @@ export function channelDescriptions(
     read.add(page);
     const mentions = channels
       .filter((item): boolean => item.ref === page.ref && item.sourceId === page.sourceId)
-      .map((item): RegExp => new RegExp(`(?<![a-z0-9_-])#${escaped(item.value)}(?![a-z0-9_-])`, 'i'));
+      .map(
+        (item): RegExp => new RegExp(`(?<![a-z0-9_-])#${escaped(item.value)}(?![a-z0-9_-])`, 'i'),
+      );
     for (const passage of passages(page.markdown)) {
       if (CHANNELS_LABEL.test(passage) || containsTokenShape(passage)) continue;
       if (!mentions.some((mention): boolean => mention.test(passage))) continue;
@@ -312,7 +316,11 @@ export function groundScopePicks(
     if (field === 'project') {
       const first = scope.project;
       if (!first) scope.project = kept;
-      else if (first.value !== value && first.ref === kept.ref && first.sourceId === kept.sourceId) {
+      else if (
+        first.value !== value &&
+        first.ref === kept.ref &&
+        first.sourceId === kept.sourceId
+      ) {
         if (!projects.some((project): boolean => project.value === value)) projects.push(kept);
       } else if (first.value !== value) {
         notes.push(
@@ -411,8 +419,24 @@ export function roleScopeCandidates(
     values.add(`${named.field}\0${named.value}`);
     namedByRef.set(named.ref, values);
   }
-  const roleWords = [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
-    .filter((word): boolean => word.length >= 5 && !['about', 'after', 'before', 'their', 'these', 'those', 'would', 'could', 'should', 'coordinator', 'manager', 'employee'].includes(word));
+  const roleWords = [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])].filter(
+    (word): boolean =>
+      word.length >= 5 &&
+      ![
+        'about',
+        'after',
+        'before',
+        'their',
+        'these',
+        'those',
+        'would',
+        'could',
+        'should',
+        'coordinator',
+        'manager',
+        'employee',
+      ].includes(word),
+  );
   const scores = refs.map((ref) => {
     const page = pages.find((candidate): boolean => candidate.ref === ref);
     const heading = /^#\s+(.+)$/m.exec(page?.markdown ?? '')?.[1] ?? '';
@@ -423,7 +447,7 @@ export function roleScopeCandidates(
   const highest = Math.max(...scores.map((item): number => item.score));
   if (highest === 0) return [];
   const top = scores.filter((item): boolean => item.score === highest);
-  const root = (ref: string): string => ref.includes('/') ? ref.split('/')[0] : ref;
+  const root = (ref: string): string => (ref.includes('/') ? ref.split('/')[0] : ref);
   const roots = new Set(top.map((item): string => root(item.ref)));
   if (roots.size !== 1) return [];
   const selected = root(top[0].ref);
@@ -448,9 +472,12 @@ export function approvedLinearScope(scope: IntakeScope): {
     ...(scope.team ? { team: scope.team.value } : {}),
     ...(scope.project ? { project: scope.project.value } : {}),
     ...(scope.projects?.length
-      ? { projects: [scope.project?.value, ...scope.projects.map((project) => project.value)].filter(
-          (project): project is string => project !== undefined,
-        ) }
+      ? {
+          projects: [
+            scope.project?.value,
+            ...scope.projects.map((project) => project.value),
+          ].filter((project): project is string => project !== undefined),
+        }
       : {}),
   };
 }
