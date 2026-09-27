@@ -1178,8 +1178,26 @@ describe('probing a documented API that is not Slack', (): void => {
     expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
   });
 
-  it('says a chat API whose page names no operation is a limitation of Day0', async (): Promise<void> => {
-    const graph = connector(() => Response.json({}));
+  it('says a page that names no operation is a limitation of Day0', async (): Promise<void> => {
+    const tracker = connector(() => Response.json({}));
+    const { outcome, failures } = await probe(
+      { slug: 'tracker', displayName: 'Tracker', class: 'kanban', endpoint: TRACKER },
+      [{ markdown: '# Tracker\n\nIt has a REST API.' }],
+      tracker.connect,
+    );
+    expect(outcome).toMatchObject({
+      verdict: 'ungranted',
+      reason: expect.stringContaining('not evidence that the system is unavailable'),
+    });
+    expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
+    expect(tracker.urls).toEqual([]);
+  });
+
+  // Chat intake reads every documented-API chat surface through Slack's Web
+  // API with the surface's key (`intakeActions.ts` `slackGet`), so connecting
+  // another chat system here would send its key to slack.com on the next poll.
+  it('does not connect a chat API that is not Slack, however well its page is documented', async (): Promise<void> => {
+    const graph = connector(() => Response.json({ id: 'me' }));
     const { outcome, failures } = await probe(
       {
         slug: 'teams',
@@ -1187,12 +1205,19 @@ describe('probing a documented API that is not Slack', (): void => {
         class: 'chat',
         endpoint: 'https://graph.microsoft.com/v1.0/',
       },
-      [{ markdown: '# Microsoft Teams\n\nPost through the Graph API.' }],
+      [
+        {
+          markdown:
+            '# Microsoft Teams\n\n- `GET /me` reads the signed-in user.\n- `POST /chats` starts a chat.',
+        },
+      ],
       graph.connect,
     );
     expect(outcome).toMatchObject({
       verdict: 'ungranted',
-      reason: expect.stringContaining('not evidence that the system is unavailable'),
+      reason: expect.stringContaining(
+        'limitation of this Day0 deployment, not evidence that Microsoft Teams is unavailable',
+      ),
     });
     expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
     expect(graph.urls).toEqual([]);

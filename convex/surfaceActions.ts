@@ -1097,8 +1097,18 @@ export async function runSurfaceProbe(
         toolArguments = discovery.toolArguments;
       } else if (
         surface.path === 'documented-api' &&
-        (surface.class !== 'chat' || !isSlackApiEndpoint(surface.endpoint))
+        surface.class === 'chat' &&
+        !isSlackApiEndpoint(surface.endpoint)
       ) {
+        // Chat intake reads every documented-API chat surface through Slack's
+        // Web API with the surface's key (`intakeActions.ts` `slackGet`), so
+        // another chat system connected here would have its key sent to Slack.
+        throw new Day0ProbeLimitation(
+          `Day0 reads chat over a documented API only through Slack's Web API, so it does not connect ${surface.displayName} at ${surface.endpoint ?? 'an undocumented address'}. ` +
+            `This is a limitation of this Day0 deployment, not evidence that ${surface.displayName} is unavailable. ` +
+            'The approved endpoint remains on the card.',
+        );
+      } else if (surface.path === 'documented-api' && surface.class !== 'chat') {
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
