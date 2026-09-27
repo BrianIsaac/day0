@@ -28,7 +28,7 @@ Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) show
 
 Three things to know before the rest of this file. Each is repeated where it applies; this is the one place they are stated together.
 
-**What is simulated and what is real.** Every route in this README except real mode runs against a seeded mock office: the documents, spreadsheet, channels, tickets and social feed are fixtures shipped in this repository, seeded per agent, and nothing the agent does leaves your machine. In that setting the model calls, the sandbox, the state machine and the approval gates are still real. Real mode, which is local-only by construction, reads the documentation you link and acts on your own systems. The run this README documents, and the run the demo video shows, both ran in real mode against the operator's own demonstration Linear and Slack workspaces, an operator-owned Notion workspace and the synthetic Looker-style tile this repository ships, all holding synthetic content; no production, customer, employee or personal data was involved, and none is needed to reproduce anything here. The [controlled comparison](evaluation/README.md) ran in mock mode, on the seeded office. Day0 has no users and no production deployment, and the supervision figures in this file are counts from single runs, not rates. The full statement, including credential handling and retention, is [`docs/submission/compliance.md`](docs/submission/compliance.md).
+**What is simulated and what is real.** Every route in this README except real mode runs against a seeded mock office: the documents, spreadsheet, channels, tickets and social feed are fixtures shipped in this repository, seeded per agent, and nothing the agent does leaves your machine. In that setting the model calls, the sandbox, the state machine and the approval gates are still real. Real mode, which is local-only by construction, reads the documentation you link and acts on your own systems. The run this README documents, and the run the demo video shows, both ran in real mode against the operator's own demonstration Linear and Slack workspaces, an operator-owned Notion workspace and the synthetic Looker-style tile this repository ships, all holding synthetic content; no production, customer, employee or personal data was involved, and none is needed to reproduce anything here. The [controlled comparison](evaluation/README.md) ran in mock mode, on the seeded office. Day0 has no users and no production deployment, and the supervision figures in this file are counts from single runs, not rates. How credentials are handled, what is stored and what a reset deletes are stated in [`SECURITY.md`](SECURITY.md).
 
 **Third-party dependencies.** Day0's own code is the onboarding pipeline, the charter and the work loop, the skill lifecycle and its static gate, the surface layer and the exact-action gate, the redaction layer, the evaluation harness and the dashboard. It depends on:
 
@@ -53,7 +53,7 @@ The container images for the backend, the model service, the sandbox, the redact
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Controlled evaluation](evaluation/README.md) · [Reproduce the evidence](#reproduce-the-evidence) · [Evaluation quick start](#evaluation-quick-start) · [Evaluation and the mock office](#evaluation-and-the-mock-office) · [API and interface documentation](#api-and-interface-documentation) · [Data and compliance](docs/submission/compliance.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Credits](#credits) · [Licence](#licence)
+**Project** · [Controlled evaluation](evaluation/README.md) · [Reproduce the evidence](#reproduce-the-evidence) · [Evaluation quick start](#evaluation-quick-start) · [Evaluation and the mock office](#evaluation-and-the-mock-office) · [API and interface documentation](#api-and-interface-documentation) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Credits](#credits) · [Licence](#licence)
 
 ## Quick start
 
@@ -1079,7 +1079,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 以下三点请在阅读其余内容之前了解。它们在相关章节各自出现，这里是集中说明的唯一位置。
 
-**哪些是模拟的，哪些是真实的。** 除 real mode 之外，本文件中的每条路径都运行在预置的 mock office 上：文档、表格、频道、工单和社交信息流都是随本仓库提供、按 Agent 单独写入的 fixture，Agent 的任何操作都不会离开你的机器。在这一设定下，模型调用、沙箱、状态机和审批门仍然是真实运行的。real mode 从构造上就只限本机，它读取你链接的文档并操作你自己的系统。本文件记录的那次运行，以及演示视频展示的那次运行，都在 real mode 下进行，连接的是操作者本人的 Linear 与 Slack 演示 workspace、操作者拥有的 Notion workspace，以及本仓库自带的合成 Looker 式 tile，其中全部为合成内容；过程中不涉及任何生产、客户、员工或个人数据，复现本文件的任何部分也不需要这些数据。[受控比较](evaluation/README.md)在 mock mode 下、于预置 office 上运行。Day0 目前没有用户，也没有生产部署；本文件中的监督数字是单次运行的计数，不是比率。完整声明（含凭据处理与保留）见 [`docs/submission/compliance.md`](docs/submission/compliance.md)。
+**哪些是模拟的，哪些是真实的。** 除 real mode 之外，本文件中的每条路径都运行在预置的 mock office 上：文档、表格、频道、工单和社交信息流都是随本仓库提供、按 Agent 单独写入的 fixture，Agent 的任何操作都不会离开你的机器。在这一设定下，模型调用、沙箱、状态机和审批门仍然是真实运行的。real mode 从构造上就只限本机，它读取你链接的文档并操作你自己的系统。本文件记录的那次运行，以及演示视频展示的那次运行，都在 real mode 下进行，连接的是操作者本人的 Linear 与 Slack 演示 workspace、操作者拥有的 Notion workspace，以及本仓库自带的合成 Looker 式 tile，其中全部为合成内容；过程中不涉及任何生产、客户、员工或个人数据，复现本文件的任何部分也不需要这些数据。[受控比较](evaluation/README.md)在 mock mode 下、于预置 office 上运行。Day0 目前没有用户，也没有生产部署；本文件中的监督数字是单次运行的计数，不是比率。凭据如何处理、保存哪些内容以及重置会删除什么，见 [`SECURITY.md`](SECURITY.md)。
 
 **第三方依赖。** Day0 自己的代码包括入职流程、章程与工作循环、技能生命周期及其静态门、surface 层与 exact-action gate、脱敏层、评测 harness 和 dashboard。它依赖：
 
@@ -1104,7 +1104,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **工作原理** · [运行流程](#runtime-flow) · [技术栈](#stack) · [路由](#routes) · [Convex 后端](#convex-backend-convex) · [数据结构](#schema-convexschemats) · [领域逻辑](#domain-logic-src)
 
-**项目** · [受控评测](evaluation/README.md) · [复现证据](#复现证据) · [评测快速开始](#评测快速开始) · [评测与 mock office](#评测与-mock-office) · [接口与 API 文档](#接口与-api-文档) · [数据来源与合规](docs/submission/compliance.md) · [贡献指南](CONTRIBUTING.md) · [安全](SECURITY.md) · [变更记录](CHANGELOG.md) · [致谢](#credits) · [许可证](#licence)
+**项目** · [受控评测](evaluation/README.md) · [复现证据](#复现证据) · [评测快速开始](#评测快速开始) · [评测与 mock office](#评测与-mock-office) · [接口与 API 文档](#接口与-api-文档) · [贡献指南](CONTRIBUTING.md) · [安全](SECURITY.md) · [变更记录](CHANGELOG.md) · [致谢](#credits) · [许可证](#licence)
 
 ### 快速开始
 
