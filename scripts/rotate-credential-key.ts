@@ -115,7 +115,7 @@ async function main(): Promise<void> {
   }
   const key = randomBytes(32).toString('base64');
   if (deployment) {
-    // `--` before the value: base64 can begin with a character the CLI would read as an option.
+    // `--` before the value, as the env sync does, so no value is ever read as an option.
     const set = spawnSync('npx', ['convex', 'env', 'set', KEY_NAME, '--', key], {
       encoding: 'utf8',
       timeout: 120_000,

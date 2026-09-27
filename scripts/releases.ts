@@ -180,12 +180,10 @@ export const MIGRATIONS_ARGUMENTS: readonly string[] = ['convex', 'run', 'migrat
 /**
  * The Convex CLI arguments that stamp the release once the upgrade is done.
  *
- * Args:
- *   release: The checkout's release.
- *   commit: The commit the functions were pushed from, when known.
+ * @param release - The checkout's release.
+ * @param commit - The commit the functions were pushed from, when known.
  *
- * Returns:
- *   Arguments for `npx`.
+ * @returns Arguments for `npx`.
  */
 export function releaseStampArguments(release: string, commit?: string): string[] {
   return [
@@ -205,14 +203,11 @@ export interface MigrationReport {
 /**
  * The report `npx convex run migrations:runPending` printed.
  *
- * Args:
- *   stdout: The CLI's output: the function's return value as JSON.
+ * @param stdout - The CLI's output: the function's return value as JSON.
  *
- * Returns:
- *   The report.
+ * @returns The report.
  *
- * Raises:
- *   Error: When the output holds no report.
+ * @throws When the output holds no report.
  */
 export function parseMigrationReport(stdout: string): MigrationReport {
   const start = stdout.indexOf('{');
@@ -229,11 +224,9 @@ export function parseMigrationReport(stdout: string): MigrationReport {
  * The lines the setup prints for a migration report: what each migration
  * changed, and the ownerless agents it could not give to anyone.
  *
- * Args:
- *   report: One call's report.
+ * @param report - One call's report.
  *
- * Returns:
- *   Lines to print, none when nothing changed.
+ * @returns Lines to print, none when nothing changed.
  */
 export function migrationLines(report: MigrationReport): string[] {
   const lines = report.migrations

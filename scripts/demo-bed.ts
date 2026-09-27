@@ -1325,11 +1325,9 @@ export interface SnapshotManifest {
  * The manifest a snapshot is written with. The checksum sidecar keeps its
  * `sha256sum -c` form; this file carries the rest (step 48).
  *
- * Args:
- *   input: What the snapshot is and what took it.
+ * @param input - What the snapshot is and what took it.
  *
- * Returns:
- *   The manifest's JSON text.
+ * @returns The manifest's JSON text.
  */
 export function snapshotManifestText(input: SnapshotManifest): string {
   return `${JSON.stringify(input, null, 2)}\n`;
@@ -1339,12 +1337,10 @@ export function snapshotManifestText(input: SnapshotManifest): string {
  * The question a data-removing command asks, answered from the terminal. A
  * run with no terminal must say `--yes`; it is never taken as a yes.
  *
- * Args:
- *   options: The command line; `yes` answers without asking.
- *   question: What is about to be removed.
+ * @param options - The command line; `yes` answers without asking.
+ * @param question - What is about to be removed.
  *
- * Raises:
- *   Error: When the answer is not yes, or there is no terminal to ask.
+ * @throws When the answer is not yes, or there is no terminal to ask.
  */
 async function confirmRemoval(options: DemoBedOptions, question: string): Promise<void> {
   if (options.yes) return;

@@ -2264,13 +2264,11 @@ function onlyOwedCompanyTokenGaps(output: string): boolean {
  * pushed over its rows. Runs before any push, with the Convex CLI's `data`
  * command, because the functions that could answer are about to be replaced.
  *
- * Args:
- *   io: The setup environment.
- *   environment: The child environment naming the deployment.
- *   checkout: This checkout's release and the releases it records.
+ * @param io - The setup environment.
+ * @param environment - The child environment naming the deployment.
+ * @param checkout - This checkout's release and the releases it records.
  *
- * Returns:
- *   The verdict; a deployment that cannot be read is refused.
+ * @returns The verdict; a deployment that cannot be read is refused.
  */
 function releaseCheck(
   io: SetupIo,
@@ -2288,13 +2286,11 @@ function releaseCheck(
  * sync that follows pushes it back unchanged and every credential the
  * restored rows hold stays readable.
  *
- * Args:
- *   io: The setup environment.
- *   environment: The child environment naming the deployment.
- *   envPath: The env file.
+ * @param io - The setup environment.
+ * @param environment - The child environment naming the deployment.
+ * @param envPath - The env file.
  *
- * Returns:
- *   Undefined once adopted or already the same, else why it could not be read.
+ * @returns Undefined once adopted or already the same, else why it could not be read.
  */
 function adoptDeploymentCredentialKey(
   io: SetupIo,
@@ -3713,14 +3709,12 @@ export const BACKUP_DIRECTORY_NAME = 'day0-backups';
 /**
  * Where a backup of a project is written.
  *
- * Args:
- *   named: `--to`, when given.
- *   home: The user's home directory, when known.
- *   project: Compose project name.
- *   cwd: The directory a relative `--to` is read against.
+ * @param named - `--to`, when given.
+ * @param home - The user's home directory, when known.
+ * @param project - Compose project name.
+ * @param cwd - The directory a relative `--to` is read against.
  *
- * Returns:
- *   An absolute directory, or undefined when neither `--to` nor a home says where.
+ * @returns An absolute directory, or undefined when neither `--to` nor a home says where.
  */
 export function backupDirectory(
   named: string | undefined,
@@ -3736,9 +3730,8 @@ export function backupDirectory(
  * Whether a path is the checkout or inside it. A backup there would go with
  * the checkout it is meant to outlive, and a `git clean` would take it.
  *
- * Args:
- *   path: An absolute path.
- *   checkoutRoot: The checkout, resolved.
+ * @param path - An absolute path.
+ * @param checkoutRoot - The checkout, resolved.
  */
 export function insideCheckout(path: string, checkoutRoot: string): boolean {
   const root = resolve(checkoutRoot);
@@ -3749,9 +3742,8 @@ export function insideCheckout(path: string, checkoutRoot: string): boolean {
 /**
  * The file name a backup of a project takes at a moment, sortable by time.
  *
- * Args:
- *   project: Compose project name.
- *   now: When it is taken.
+ * @param project - Compose project name.
+ * @param now - When it is taken.
  */
 export function backupFileName(project: string, now: Date): string {
   const stamp = now
@@ -3766,12 +3758,10 @@ export function backupFileName(project: string, now: Date): string {
  * same second, such as the one a restore takes of what it replaces, never
  * overwrites the first.
  *
- * Args:
- *   directory: Where the backup goes.
- *   name: The name `backupFileName` gave it.
+ * @param directory - Where the backup goes.
+ * @param name - The name `backupFileName` gave it.
  *
- * Returns:
- *   The name, or the name with the first free `-<n>` before `.tar.gz`.
+ * @returns The name, or the name with the first free `-<n>` before `.tar.gz`.
  */
 export function unusedBackupName(directory: string, name: string): string {
   const stem = name.replace(/\.tar\.gz$/, '');
@@ -3787,12 +3777,11 @@ export function unusedBackupName(directory: string, name: string): string {
  * by the user and readable only by them: the data volume holds the
  * deployment's env, the credential key among it.
  *
- * Args:
- *   volume: The volume, mounted read-only.
- *   directory: The host directory the tar is written into.
- *   name: The tar's file name.
- *   image: The pinned node image the tar runs in.
- *   owner: `uid:gid` the file is handed to.
+ * @param volume - The volume, mounted read-only.
+ * @param directory - The host directory the tar is written into.
+ * @param name - The tar's file name.
+ * @param image - The pinned node image the tar runs in.
+ * @param owner - `uid:gid` the file is handed to.
  */
 export function volumeBackupArguments(
   volume: string,
@@ -3818,11 +3807,10 @@ export function volumeBackupArguments(
 /**
  * The `docker` arguments that untar a backup into an empty volume.
  *
- * Args:
- *   directory: The host directory holding the backup, mounted read-only.
- *   name: The backup's file name.
- *   volume: The volume it is written into.
- *   image: The pinned node image the untar runs in.
+ * @param directory - The host directory holding the backup, mounted read-only.
+ * @param name - The backup's file name.
+ * @param volume - The volume it is written into.
+ * @param image - The pinned node image the untar runs in.
  */
 export function volumeRestoreArguments(
   directory: string,
@@ -3918,12 +3906,10 @@ function upgradeRefusedEarly(options: SetupOptions, io: SetupIo): string | undef
  * manifest beside it. The backend is stopped for the copy, because a tar of a
  * live database is not a backup, and started again after.
  *
- * Args:
- *   options: The command line.
- *   io: The setup environment.
+ * @param options - The command line.
+ * @param io - The setup environment.
  *
- * Returns:
- *   0 when the backup is written, 1 otherwise.
+ * @returns 0 when the backup is written, 1 otherwise.
  */
 export async function runBackup(options: SetupOptions, io: SetupIo): Promise<number> {
   try {
@@ -4064,12 +4050,10 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
  * credential key so what it stores stays readable. Refused while the env file
  * points Slack at the test double: that is the demo bed's restore, not this.
  *
- * Args:
- *   options: The command line.
- *   io: The setup environment.
+ * @param options - The command line.
+ * @param io - The setup environment.
  *
- * Returns:
- *   What the resume returns, 130 when the reader declined, 1 otherwise.
+ * @returns What the resume returns, 130 when the reader declined, 1 otherwise.
  */
 export async function runRestore(options: SetupOptions, io: SetupIo): Promise<number> {
   try {
@@ -4207,12 +4191,10 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
  * the release stamp before it pushes, runs the migrations and stamps the new
  * release.
  *
- * Args:
- *   options: The command line.
- *   io: The setup environment.
+ * @param options - The command line.
+ * @param io - The setup environment.
  *
- * Returns:
- *   What the resume returns, or the backup's or the install's failure.
+ * @returns What the resume returns, or the backup's or the install's failure.
  */
 export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<number> {
   const early = upgradeRefusedEarly(options, io);

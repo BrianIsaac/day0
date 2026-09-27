@@ -110,6 +110,14 @@ export const getDoc = query({
   },
 });
 
+/**
+ * Upsert one page of an agent's Docs surface by slug. Internal; written by the
+ * seed and by the documentation sync's mirror. A sync names its generation
+ * and writes nothing once a newer sync has superseded it (step 14).
+ *
+ * @throws Error when `syncRunId` is given without its source, or is not the
+ *   source's running generation.
+ */
 export const upsertDoc = internalMutation({
   args: {
     agentId: v.id('agents'),
