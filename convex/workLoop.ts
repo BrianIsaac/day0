@@ -163,6 +163,37 @@ export const waitingWork = internalQuery({
 });
 
 /**
+ * Which of a poll's listed items already have a row for this employee.
+ *
+ * Internal; the intake sweep's. A re-listed item updates its row and adds
+ * nothing to the waiting queue, so only the others count against the bound
+ * on seeding. One index lookup per listed item.
+ */
+export const seededItems = internalQuery({
+  args: {
+    agentId: v.id('agents'),
+    sourceSystem: v.string(),
+    externalIds: v.array(v.string()),
+  },
+  handler: async (ctx, args): Promise<string[]> => {
+    const seeded: string[] = [];
+    for (const externalId of new Set(args.externalIds)) {
+      for await (const row of ctx.db
+        .query('workItems')
+        .withIndex('by_extId', (q) =>
+          q.eq('sourceSystem', args.sourceSystem).eq('externalId', externalId),
+        )) {
+        if (row.agentId === args.agentId) {
+          seeded.push(externalId);
+          break;
+        }
+      }
+    }
+    return seeded;
+  },
+});
+
+/**
  * Count the employee's rows holding a slot, stopping once the cap is reached.
  *
  * Args:

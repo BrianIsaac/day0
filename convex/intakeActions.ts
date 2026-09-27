@@ -102,6 +102,12 @@ export interface IntakeRuntime {
   grantedScopes(agentId: Id<'agents'>): Promise<string[]>;
   /** The rows waiting to be evaluated for the employee, and the bound intake keeps (N7). */
   waitingWork(agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }>;
+  /** Which of the listed items already have a row for the employee. */
+  seededItems(
+    agentId: Id<'agents'>,
+    sourceSystem: string,
+    externalIds: readonly string[],
+  ): Promise<string[]>;
   decrypt(credentialId: CredentialId): Promise<string>;
   recordIntake(record: IntakeRecord): Promise<void>;
   recordDecisionPoll(record: {
@@ -1692,13 +1698,60 @@ function queueFullReason(limit: number, held?: number): string {
 }
 
 /**
+ * The listed items a poll seeds within the bound on waiting work (N7).
+ *
+ * An item that already has a row is re-listed whatever the room, since it
+ * adds nothing to the queue; a new item takes a place while one is left.
+ *
+ * Args:
+ *   runtime: Persistence boundary.
+ *   agentId: The employee.
+ *   candidates: The poll's items, in list order.
+ *   room: Places left in the employee's waiting queue.
+ *
+ * Returns:
+ *   The items to seed, how many new items were left for a later poll, and the room left.
+ */
+async function admitWithinBound(
+  runtime: IntakeRuntime,
+  agentId: Id<'agents'>,
+  candidates: readonly WorkCandidate[],
+  room: number,
+): Promise<{ admitted: WorkCandidate[]; held: number; room: number }> {
+  const known = new Set<string>();
+  for (const sourceSystem of new Set(candidates.map((candidate) => candidate.sourceSystem))) {
+    const ids = candidates
+      .filter((candidate) => candidate.sourceSystem === sourceSystem)
+      .map((candidate) => candidate.externalId);
+    for (const id of await runtime.seededItems(agentId, sourceSystem, ids)) {
+      known.add(`${sourceSystem}:${id}`);
+    }
+  }
+  const admitted: WorkCandidate[] = [];
+  let held = 0;
+  let left = room;
+  for (const candidate of candidates) {
+    if (known.has(`${candidate.sourceSystem}:${candidate.externalId}`)) {
+      admitted.push(candidate);
+    } else if (left > 0) {
+      admitted.push(candidate);
+      left -= 1;
+    } else {
+      held += 1;
+    }
+  }
+  return { admitted, held, room: left };
+}
+
+/**
  * Run one deployment-wide waterfall sweep.
  *
  * A connected surface is read only while its employee holds `<slug>:read`
  * (Q7): a revoked read scope stops intake before the credential is touched.
  * Seeding is bounded (N7): while the employee's waiting queue is at its bound
- * nothing is read, and a poll seeds only the room left, holding the checkpoint
- * so the rest is read again once the queue drains.
+ * nothing is read, and a poll seeds new items only into the room left, holding
+ * the checkpoint so the rest is read again once the queue drains. An item that
+ * already has a row is always re-listed: it adds nothing to the queue.
  * The manager's decision poll (`runDecisionSweep`) runs under the manager
  * channel's own scope and is not stopped by it (N2).
  *
@@ -1858,12 +1911,18 @@ export async function runIntakeSweep(
         const polledPage: LinearPoll = chat
           ? { candidates: chat.candidates, withdrawn: [], trackers: new Map() }
           : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
-        const mapped = polledPage.candidates.slice(0, queue.limit - waiting);
-        const held = polledPage.candidates.length - mapped.length;
+        const admission = await admitWithinBound(
+          runtime,
+          agentId,
+          polledPage.candidates,
+          queue.limit - waiting,
+        );
+        const mapped = admission.admitted;
+        const held = admission.held;
         for (const candidate of mapped) {
           await seedCandidate(runtime, agentId, candidate, polledPage.trackers);
         }
-        waiting += mapped.length;
+        waiting = queue.limit - admission.room;
         for (const { candidate, leftQueue } of polledPage.withdrawn) {
           await runtime.withdraw({
             ...seedOf(agentId, candidate, polledPage.trackers),
@@ -1976,6 +2035,18 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       await ctx.runQuery(internal.orientationData.pagesForAgent, { agentId }),
     waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> =>
       await ctx.runQuery(internal.workLoop.waitingWork, { agentId }),
+    seededItems: async (
+      agentId: Id<'agents'>,
+      sourceSystem: string,
+      externalIds: readonly string[],
+    ): Promise<string[]> =>
+      externalIds.length === 0
+        ? []
+        : await ctx.runQuery(internal.workLoop.seededItems, {
+            agentId,
+            sourceSystem,
+            externalIds: [...externalIds],
+          }),
     grantedScopes: async (agentId: Id<'agents'>): Promise<string[]> =>
       (await ctx.runQuery(internal.agents.grantedScopes, { agentId })).map(
         (grant: Doc<'permissionGrants'>): string => grant.scope,

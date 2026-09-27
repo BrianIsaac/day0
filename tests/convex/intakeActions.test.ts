@@ -86,6 +86,8 @@ interface RuntimeHarness {
   decrypted: string[];
   /** Rows waiting to be evaluated, per agent id; none unless a test sets it. */
   waiting: Map<string, number>;
+  /** `<sourceSystem>:<externalId>` of the items that already have a row. */
+  seeded: Set<string>;
 }
 
 /**
@@ -211,6 +213,7 @@ function runtimeHarness(
   const revoked = new Set<string>();
   const decrypted: string[] = [];
   const waiting = new Map<string, number>();
+  const seeded = new Set<string>();
   const runtime: IntakeRuntime = {
     recordBotIdentity: async (record): Promise<void> => {
       botIdentities.push(record);
@@ -225,6 +228,11 @@ function runtimeHarness(
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       agents.find((agent: Doc<'agents'>): boolean => agent._id === agentId) ?? null,
     listPages: async (): Promise<Doc<'docPages'>[]> => pages,
+    seededItems: async (
+      _agentId: Id<'agents'>,
+      sourceSystem: string,
+      externalIds: readonly string[],
+    ): Promise<string[]> => externalIds.filter((id) => seeded.has(`${sourceSystem}:${id}`)),
     waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> => ({
       waiting: waiting.get(String(agentId)) ?? 0,
       limit: WAITING_WORK_LIMIT,
@@ -289,6 +297,7 @@ function runtimeHarness(
     revoked,
     decrypted,
     waiting,
+    seeded,
   };
 }
 
@@ -1186,6 +1195,7 @@ describe('real surface intake', (): void => {
       listPages: vi.fn(),
       grantedScopes: vi.fn(),
       waitingWork: vi.fn(),
+      seededItems: vi.fn(),
       decrypt: vi.fn(),
       recordIntake: vi.fn(),
       recordDecisionPoll: vi.fn(),
@@ -3543,6 +3553,26 @@ describe('the bound on seeding (N7)', (): void => {
     expect(linear.lastPolledAt).toBeUndefined();
   });
 
+  it('re-lists the tickets it already holds whatever the room, so a long listing cannot hold the checkpoint for ever', async (): Promise<void> => {
+    const { harness, linear, makeMcpClient } = listing(['REVOPS-1', 'REVOPS-2', 'REVOPS-3']);
+    harness.waiting.set(String(agentRow()._id), WAITING_WORK_LIMIT - 1);
+    harness.seeded.add('linear:REVOPS-1');
+    harness.seeded.add('linear:REVOPS-2');
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 10_000, makeMcpClient }),
+    ).resolves.toMatchObject({ candidates: 3, polled: 1 });
+
+    expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual([
+      'REVOPS-1',
+      'REVOPS-2',
+      'REVOPS-3',
+    ]);
+    expect(harness.records).toEqual([
+      { surfaceId: linear._id, waterfallPosition: 1, polledAt: 10_000 },
+    ]);
+  });
+
   it('reads nothing while the waiting queue is full', async (): Promise<void> => {
     const { harness, linear, makeMcpClient } = listing(['REVOPS-1']);
     harness.waiting.set(String(agentRow()._id), WAITING_WORK_LIMIT);
@@ -3560,6 +3590,53 @@ describe('the bound on seeding (N7)', (): void => {
         skipReason: `${WAITING_WORK_LIMIT} items are waiting to be evaluated; intake reads more once the queue drains`,
       },
     ]);
+  });
+
+  it("names the listed items that already have a row for this employee, not another's", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = await harness.run(async (ctx) => {
+      const agent = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          state: 'active',
+          createdAt: 1,
+        });
+      const ids = [await agent('Priya'), await agent('Mateo')];
+      for (const [agentId, externalId] of [
+        [ids[0], 'REVOPS-1'],
+        [ids[1], 'REVOPS-2'],
+      ] as const) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: 'Triage',
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'skipped',
+          createdAt: 1,
+        });
+      }
+      return ids;
+    });
+
+    await expect(
+      harness.query(internal.workLoop.seededItems, {
+        agentId: priya,
+        sourceSystem: 'linear',
+        externalIds: ['REVOPS-1', 'REVOPS-2', 'REVOPS-3', 'REVOPS-1'],
+      }),
+    ).resolves.toEqual(['REVOPS-1']);
+    await expect(
+      harness.query(internal.workLoop.seededItems, {
+        agentId: mateo,
+        sourceSystem: 'slack',
+        externalIds: ['REVOPS-2'],
+      }),
+    ).resolves.toEqual([]);
   });
 
   it('counts the rows the database holds waiting', async (): Promise<void> => {
