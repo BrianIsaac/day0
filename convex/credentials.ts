@@ -423,22 +423,23 @@ export const moveToRef = internalMutation({
  * A row's value, or undefined when it holds none this deployment can read.
  *
  * @param ctx - The action context the Node decrypt runs through.
- * @param row - A stored credential row.
+ * @param row - A stored credential row; its owner is the one its value must be bound to.
  */
 async function storedValue(
   ctx: ActionCtx,
-  row: Pick<Doc<'credentials'>, 'ciphertext' | 'iv'>,
+  row: Pick<Doc<'credentials'>, 'ciphertext' | 'iv' | 'userId'>,
 ): Promise<string | undefined> {
   if (row.ciphertext === undefined || row.iv === undefined) return undefined;
   try {
     return await ctx.runAction(internal.credentialCryptoActions.open, {
       ciphertext: row.ciphertext,
       iv: row.iv,
+      userId: row.userId,
     });
   } catch {
-    // Sealed under a rotated DAY0_CREDENTIAL_KEY: unreadable, so it holds no
-    // value this sync can match, and the page's value replaces it rather than
-    // failing every sync of that page.
+    // Sealed under a rotated DAY0_CREDENTIAL_KEY, or bound to another owner:
+    // unreadable, so it holds no value this sync can match, and the page's
+    // value replaces it rather than failing every sync of that page.
     return undefined;
   }
 }
@@ -451,7 +452,8 @@ async function storedValue(
  * source has no row for is first looked for on the same page: a value the
  * page already holds under the ref its old count of values gave it is moved
  * to the new ref, not stored again, so a page gaining or losing a value never
- * mints a row for a value already known. The Node-only AES operation is
+ * mints a row for a value already known. The value is sealed bound to its
+ * owner, so it opens only on that owner's row. The Node-only AES operation is
  * isolated in `credentialCryptoActions` because Convex forbids a Node module
  * from also exporting this module's public query and mutation.
  */
@@ -521,7 +523,10 @@ export const store = internalAction({
         if (moved) return row._id;
       }
     }
-    const encrypted = await ctx.runAction(internal.credentialCryptoActions.seal, { plaintext });
+    const encrypted = await ctx.runAction(internal.credentialCryptoActions.seal, {
+      plaintext,
+      userId: args.userId,
+    });
     return await ctx.runMutation(internal.credentials.persistEncrypted, {
       userId: args.userId,
       source: args.source,
@@ -533,7 +538,11 @@ export const store = internalAction({
   },
 });
 
-/** Decrypt one active value for another server-side action. */
+/**
+ * Decrypt one active value for another server-side action. Internal; records
+ * the use. The value opens only on its owner's row: a ciphertext bound to
+ * another owner is refused.
+ */
 export const decrypt = internalAction({
   args: { credentialId: v.id('credentials') },
   handler: async (ctx, args): Promise<string> => {
@@ -550,6 +559,7 @@ export const decrypt = internalAction({
     const plaintext = await ctx.runAction(internal.credentialCryptoActions.open, {
       ciphertext: credential.ciphertext,
       iv: credential.iv,
+      userId: credential.userId,
     });
     if (!plaintext) throw new Error('Credential does not contain a landed value.');
     await ctx.runMutation(internal.credentials.touch, args);
