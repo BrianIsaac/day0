@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   FinishControl,
+  REPLY_MAX_CHARS,
+  ReplyInput,
   TurnFailureNotice,
   askAgain,
   canFinish,
@@ -328,5 +330,23 @@ describe('finishing the 1:1 from the room', (): void => {
     );
     expect(enabled).not.toContain('disabled=""');
     expect(disabled).toContain('disabled=""');
+  });
+});
+
+describe('the composer', (): void => {
+  it('bounds a reply and names the field', (): void => {
+    const markup = renderToStaticMarkup(
+      <ReplyInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        disabled={false}
+        placeholder="type"
+      />,
+    );
+
+    expect(REPLY_MAX_CHARS).toBe(4000);
+    expect(markup).toContain(`maxLength="${REPLY_MAX_CHARS}"`);
+    expect(markup).toContain('aria-label="Your reply"');
   });
 });

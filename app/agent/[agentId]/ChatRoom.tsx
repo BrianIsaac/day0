@@ -136,6 +136,46 @@ export function canFinish(state: {
   return !state.done && !answering && managerReplies(state.messages) > 0;
 }
 
+/**
+ * The most characters one reply in the 1:1 may carry. The route bounds only
+ * the output, so without this one pasted document is sent whole on every
+ * later turn of the conversation.
+ */
+export const REPLY_MAX_CHARS = 4000;
+
+/** The composer's text field: Enter sends, and a reply is bounded at `REPLY_MAX_CHARS`. */
+export function ReplyInput({
+  value,
+  onChange,
+  onSend,
+  disabled,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  disabled: boolean;
+  placeholder: string;
+}) {
+  return (
+    <input
+      value={value}
+      maxLength={REPLY_MAX_CHARS}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          onSend();
+        }
+      }}
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label="Your reply"
+      className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm disabled:opacity-50"
+    />
+  );
+}
+
 /** The manager's control for ending the 1:1 and drafting the charter from it. */
 export function FinishControl({ disabled, onFinish }: { disabled: boolean; onFinish: () => void }) {
   return (
@@ -269,7 +309,7 @@ export function ChatRoom({
   const composerDisabled = composerLocked({ status, done, opened });
 
   function send() {
-    const trimmed = draft.trim();
+    const trimmed = draft.trim().slice(0, REPLY_MAX_CHARS);
     if (!trimmed || composerDisabled) return;
     setStreamError(null);
     sendMessage({ text: trimmed });
@@ -338,20 +378,14 @@ export function ChatRoom({
         ) : null}
       </div>
       <div className="border-t border-[var(--color-border)] p-2 flex gap-2">
-        <input
+        <ReplyInput
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
+          onChange={setDraft}
+          onSend={send}
           disabled={composerDisabled}
           placeholder={
             done ? 'conversation complete' : opened ? 'type your reply…' : 'waiting for Day0…'
           }
-          className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm disabled:opacity-50"
         />
         <button
           onClick={send}
