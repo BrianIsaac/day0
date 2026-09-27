@@ -256,9 +256,16 @@ describe('where the Featherless key comes from', (): void => {
       source: 'environment',
       variable: 'FEATHERLESS_API_KEY',
     });
-    expect(featherlessKeySource({ OPENAI_API_KEY: 'b' }, {})).toMatchObject({
-      source: 'environment',
-      variable: 'OPENAI_API_KEY',
+    expect(
+      featherlessKeySource(
+        { OPENAI_API_KEY: 'b', OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL },
+        {},
+      ),
+    ).toMatchObject({ source: 'environment', variable: 'OPENAI_API_KEY' });
+    // A shell OPENAI_API_KEY for another provider is not a Featherless key.
+    expect(featherlessKeySource({ OPENAI_API_KEY: 'b' }, {})).toEqual({
+      source: 'prompt',
+      ignored: 'OPENAI_API_KEY',
     });
     expect(
       featherlessKeySource(

@@ -1365,15 +1365,21 @@ export interface FeatherlessKey {
   variable?: string;
   /** The value to write, when it is not already the file's own. */
   key?: string;
+  /** A variable the environment carries that was not taken, because it is another provider's. */
+  ignored?: string;
 }
 
 /**
  * Where the Featherless key comes from, without printing it.
  *
- * The environment wins (`FEATHERLESS_API_KEY`, then `OPENAI_API_KEY`), so a
- * venue script can hand the key in without a prompt. A file already on the
- * Featherless route keeps its own key. The probe script's `FEATHERLESS_API_KEY`
- * line in the file is taken next, and only then is the reader asked.
+ * The environment wins (`FEATHERLESS_API_KEY`, then `OPENAI_API_KEY` when the
+ * environment's `OPENAI_BASE_URL` is Featherless's), so a venue script can
+ * hand the key in without a prompt. A bare `OPENAI_API_KEY` is usually an
+ * OpenAI key a shell exports for everything, and stored beside the Featherless
+ * address it would fail every call, so it is named and not taken, as the file
+ * path below already required. A file already on the Featherless route keeps
+ * its own key. The probe script's `FEATHERLESS_API_KEY` line in the file is
+ * taken next, and only then is the reader asked.
  *
  * Args:
  *   environment: The process environment.
@@ -1386,19 +1392,28 @@ export function featherlessKeySource(
   environment: Readonly<Record<string, string | undefined>>,
   existing: Readonly<Record<string, string>>,
 ): FeatherlessKey {
-  for (const variable of ['FEATHERLESS_API_KEY', 'OPENAI_API_KEY']) {
-    const key = (environment[variable] ?? '').trim();
-    if (key !== '') return { source: 'environment', variable, key };
+  const featherlessKey = (environment.FEATHERLESS_API_KEY ?? '').trim();
+  if (featherlessKey !== '') {
+    return { source: 'environment', variable: 'FEATHERLESS_API_KEY', key: featherlessKey };
   }
+  const openaiKey = (environment.OPENAI_API_KEY ?? '').trim();
+  const forFeatherless =
+    (environment.OPENAI_BASE_URL ?? '').trim() === FEATHERLESS_SETTINGS.OPENAI_BASE_URL;
+  if (openaiKey !== '' && forFeatherless) {
+    return { source: 'environment', variable: 'OPENAI_API_KEY', key: openaiKey };
+  }
+  const ignored = openaiKey !== '' ? { ignored: 'OPENAI_API_KEY' } : {};
   if (
     (existing.OPENAI_API_KEY ?? '').trim() !== '' &&
     (existing.OPENAI_BASE_URL ?? '').trim() === FEATHERLESS_SETTINGS.OPENAI_BASE_URL
   ) {
-    return { source: 'file', variable: 'OPENAI_API_KEY' };
+    return { source: 'file', variable: 'OPENAI_API_KEY', ...ignored };
   }
   const probeKey = (existing.FEATHERLESS_API_KEY ?? '').trim();
-  if (probeKey !== '') return { source: 'file', variable: 'FEATHERLESS_API_KEY', key: probeKey };
-  return { source: 'prompt' };
+  if (probeKey !== '') {
+    return { source: 'file', variable: 'FEATHERLESS_API_KEY', key: probeKey, ...ignored };
+  }
+  return { source: 'prompt', ...ignored };
 }
 
 /** Env names whose values are never shown, in a plan or anywhere else. */
@@ -2314,6 +2329,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       }
     } else if (route === 'featherless') {
       const source = featherlessKeySource(io.environment, existing);
+      if (source.ignored) {
+        io.log(
+          `  ${source.ignored} in the environment is not taken: OPENAI_BASE_URL there does not name ` +
+            "Featherless, so it is another provider's key. Set FEATHERLESS_API_KEY to hand this route its key.",
+        );
+      }
       io.log(
         `GLM 5.3 Flash through Featherless: ${FEATHERLESS_SETTINGS.OPENAI_MODEL} at ` +
           `${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}, JSON by prompt, ${FEATHERLESS_SETTINGS.OPENAI_MAX_OUTPUT_TOKENS} ` +

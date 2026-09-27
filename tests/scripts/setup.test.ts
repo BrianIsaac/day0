@@ -496,6 +496,23 @@ describe('a port setup never publishes', (): void => {
   });
 });
 
+describe('the Featherless key', (): void => {
+  it('asks rather than storing a shell OPENAI_API_KEY that belongs to another provider, and says why', async (): Promise<void> => {
+    const h = harness({
+      answers: ['synthetic-featherless-key'],
+      services: ['backend'],
+      environment: { OPENAI_API_KEY: 'sk-an-openai-key' },
+    });
+    expect(await runSetup(keyRoute({ route: 'featherless' }), h.io)).toBe(0);
+    expect(readEnvValues(join(h.directory, '.env.local')).OPENAI_API_KEY).toBe(
+      'synthetic-featherless-key',
+    );
+    expect(h.output.join('\n')).toContain(
+      'OPENAI_API_KEY in the environment is not taken: OPENAI_BASE_URL there does not name Featherless',
+    );
+  });
+});
+
 describe('refusing anything that is not this machine', (): void => {
   it('refuses to run as part of a hosted build', (): void => {
     expect(buildEnvironmentRefusal({ VERCEL: '1' })).toContain('Vercel');
