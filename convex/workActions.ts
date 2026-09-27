@@ -543,7 +543,7 @@ async function evaluateWorkItemHandler(
         agentId: asAgentId(agentId),
         charter,
         agentsMd: agentsMd ?? '',
-        bossLabel: charter.approvalChain.boss,
+        bossLabel: agent.bossEmail,
         autonomousActions: autonomousActionsOn(agent),
         surfaceMode: surfaceConfig.mode,
         surfaces,

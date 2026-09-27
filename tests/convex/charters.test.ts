@@ -714,7 +714,7 @@ describe('editing the clause that enforces a rule', (): void => {
 });
 
 describe('amending the people fields', (): void => {
-  it('takes an adjacent role, a collaborator and who approves through the dashboard, and IDENTITY.md shows the collaborator', async (): Promise<void> => {
+  it('takes an adjacent role and a collaborator through the dashboard, and IDENTITY.md shows the collaborator and the agent row’s manager', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApproved(harness);
     const changes = [
@@ -728,7 +728,6 @@ describe('amending the people fields', (): void => {
         index: 0,
         collaborator: { name: 'Aiko', topic: 'the close calendar', introPath: 'manager' as const },
       },
-      { kind: 'set-approval-chain' as const, boss: 'Priya Shah' },
     ];
 
     await harness
@@ -745,12 +744,27 @@ describe('amending the people fields', (): void => {
       topic: 'the close calendar',
       introPath: 'manager',
     });
-    expect(body.approvalChain).toEqual({ boss: 'Priya Shah', confidence: 'high' });
-    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toContain('Aiko');
+    const identity = await workspaceFile(harness, agentId, 'IDENTITY.md');
+    expect(identity).toContain('Aiko');
+    const manager = (await harness.run(async (ctx) => await ctx.db.get(agentId)))?.bossEmail;
+    expect(identity).toContain(`## Manager (who approves)\n- ${manager}`);
     const event = (await eventsOf(harness, agentId)).find((e) => e.type === 'charter.amended');
     expect(
       (event?.payload as { diff: Array<{ field: string }> }).diff.map((entry) => entry.field),
-    ).toEqual(expect.arrayContaining(['adjacentRoles', 'namedCollaborators', 'approvalChain']));
+    ).toEqual(expect.arrayContaining(['adjacentRoles', 'namedCollaborators']));
+  });
+
+  it('takes no second manager on the charter: who approves is the agent row’s (U9 D3 (b))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    const before = (await latestCharter(harness, agentId))._id;
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+        agentId,
+        changes: [{ kind: 'set-approval-chain', boss: 'Priya Shah' }],
+      } as never),
+    ).rejects.toThrow();
+    expect((await latestCharter(harness, agentId))._id).toBe(before);
   });
 });
 
