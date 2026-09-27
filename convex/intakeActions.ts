@@ -1199,7 +1199,8 @@ async function pollSlack(
     for (const channel of channels) {
       const messages = await slackHistory(fetcher, credential, channel.id, surface.lastPolledAt);
       for (const message of messages) {
-        if (!message.text.includes(mention) || postedByConnectedApp(message, surface, botId)) continue;
+        if (!message.text.includes(mention) || postedByConnectedApp(message, surface, botId))
+          continue;
         candidates.push(slackCandidate(message, channel, surface, observedAt));
       }
     }
