@@ -539,12 +539,15 @@ export function browserSetupConfiguration(configured: string | undefined): {
 /**
  * Report which optional components are running and which are merely configured.
  *
- * None of this can fail the command. An enterprise whose systems all have APIs
- * never starts the browser component, and an enterprise that keeps its
- * documentation in a folder never starts the Notion one; both are complete
- * installations. What is worth saying out loud is a half-state - a component
- * running that day0 was never told about, or one day0 was told about that is
- * not there - because that is the shape that looks finished and is not.
+ * One thing here fails the command: the redactor in real mode, missing or not
+ * running, because every documentation sync then refuses to persist and the
+ * installation reads nothing while it looks finished. The rest cannot fail it.
+ * An enterprise whose systems all have APIs never starts the browser
+ * component, and an enterprise that keeps its documentation in a folder never
+ * starts the Notion one; both are complete installations. What is worth
+ * saying out loud is a half-state - a component running that day0 was never
+ * told about, or one day0 was told about that is not there - because that is
+ * the shape that looks finished and is not.
  *
  * Args:
  *   values: Resolved deployment environment.
@@ -554,7 +557,7 @@ export function browserSetupConfiguration(configured: string | undefined): {
  * Returns:
  *   One informational section.
  */
-function componentsSection(
+export function componentsSection(
   values: Values,
   projectName: string,
   services: string[] | undefined,
@@ -613,7 +616,7 @@ function componentsSection(
   const redactorConfigured = Boolean(values.DAY0_REDACTOR_URL);
   const realMode = values.DAY0_SURFACE_MODE === 'real';
   if (redactorConfigured && !redactorRunning) {
-    status = 'warn';
+    status = realMode ? 'gap' : 'warn';
     lines.push(
       `DAY0_REDACTOR_URL names ${values.DAY0_REDACTOR_URL} and nothing is running there.`,
       'Every documentation sync will refuse to persist and every provider outcome will be',
@@ -627,7 +630,7 @@ function componentsSection(
       'or stop the component.',
     );
   } else if (!redactorConfigured && realMode) {
-    status = 'warn';
+    status = 'gap';
     lines.push(
       'No redaction component. Documentation sync refuses to persist a page without one, and',
       'provider outcomes record that only the exact-value and structural layers ran.',
@@ -644,7 +647,7 @@ function componentsSection(
     for (const row of kinds) lines.push(`  ${docSourceDependency(row)}`);
     const needsNotion = kinds.some((row): boolean => row.component === 'docs-notion-mcp');
     if (needsNotion && !services.includes('docs-notion-mcp')) {
-      status = 'warn';
+      if (status !== 'gap') status = 'warn';
       lines.push(
         'A Notion source is linked and docs-notion-mcp is not running, so its next sync will',
         'fail. Start it with `pnpm convex:up --profile docs-notion`.',

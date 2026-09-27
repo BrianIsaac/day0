@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   browserSetupConfiguration,
+  componentsSection,
   composeRunningServices,
   docSourceDependency,
   main,
@@ -193,5 +194,30 @@ describe('the model address the backend container calls', (): void => {
     expect(section.lines.join('\n')).toContain(
       'http://host.docker.internal:8080/v1 for a server on this host',
     );
+  });
+});
+
+describe('the redactor in real mode', (): void => {
+  const real = { DAY0_SURFACE_MODE: 'real', DAY0_REDACTOR_URL: 'http://redactor:8000' };
+
+  it('fails a real-mode installation whose redactor is configured and not running', (): void => {
+    const section = componentsSection(real, 'day0-bed', ['backend']);
+    expect(section.status).toBe('gap');
+    expect(section.title).toBe('Components - needs fixing');
+    expect(section.lines.join('\n')).toContain('Every documentation sync will refuse to persist');
+  });
+
+  it('fails a real-mode installation with no redactor at all', (): void => {
+    expect(componentsSection({ DAY0_SURFACE_MODE: 'real' }, 'day0-bed', ['backend']).status).toBe(
+      'gap',
+    );
+  });
+
+  it('passes a running one, and only notes a missing one in mock mode', (): void => {
+    expect(componentsSection(real, 'day0-bed', ['backend', 'redactor']).status).toBe('ok');
+    expect(
+      componentsSection({ DAY0_REDACTOR_URL: 'http://redactor:8000' }, 'day0-bed', ['backend'])
+        .status,
+    ).toBe('warn');
   });
 });
