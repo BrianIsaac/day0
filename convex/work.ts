@@ -4835,12 +4835,15 @@ export const setProposedSkill = internalMutation({
 
 const OPEN_CLAIM_STATES = new Set<string>(OPEN_WORK_STATES);
 
+/**
+ * The employee's rows holding a slot, counted up to the largest cap.
+ *
+ * Read state by state through the index, so the employee's closed rows and
+ * their outputs are never read: every caller compares the count with a cap
+ * no larger than `AUTONOMOUS_WIP_LIMIT` (P9-1).
+ */
 async function countOpenForAgentImpl(ctx: QueryCtx, agentId: Id<'agents'>): Promise<number> {
-  const open = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
-    .collect();
-  return open.filter((w) => OPEN_CLAIM_STATES.has(w.state)).length;
+  return await openSlotCount(ctx, agentId, Math.max(AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT));
 }
 
 async function findExistingClaimImpl(

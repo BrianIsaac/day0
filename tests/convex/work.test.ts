@@ -3865,3 +3865,49 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     expect(finished).toMatchObject({ state: 'completed', title: 'Renamed on the tracker' });
   });
 });
+
+describe('the cap count behind every evaluation (P9-1)', (): void => {
+  it('counts open work up to the largest cap without reading the closed rows', async (): Promise<void> => {
+    // More closed rows than the read limit allows in one query: the count
+    // reads the open states by index, never the employee's whole history.
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 60 },
+    });
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    const insert = async (state: Doc<'workItems'>['state'], from: number, count: number) => {
+      await harness.run(async (ctx) => {
+        for (let index = from; index < from + count; index += 1) {
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: `REVOPS-${index}`,
+            title: `Triage REVOPS-${index}`,
+            contentSummary: 'Triage.',
+            contentRefs: [],
+            observedAt: 1,
+            state,
+            createdAt: 1,
+          });
+        }
+      });
+    };
+    for (let from = 0; from < 100; from += 20) await insert('completed', from, 20);
+    await insert('plan-pending', 100, 5);
+
+    await expect(harness.query(internal.work.countOpenForAgentInternal, { agentId })).resolves.toBe(
+      3,
+    );
+  });
+});
