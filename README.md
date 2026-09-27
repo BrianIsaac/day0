@@ -312,7 +312,7 @@ Three things are the cloud-model way's own:
 
 - **The key is asked for, never pasted.** It is read in a hidden prompt, written to `.env.local` with owner-only permissions, never printed and never passed to another program as an argument; `pnpm sync:env` pushes it to the deployment, and a rerun keeps the key already in the file.
 - **Coming from the local-model way, both addresses are cleared for you on the key route.** The setup writes `OPENAI_BASE_URL` and `CONVEX_OPENAI_BASE_URL` empty and `pnpm sync:env` clears the deployment's copy when both are empty, which is the one case where "unset" is a value rather than an omission: a deployment still holding `http://model:11434/v1` would call a model server you have since stopped, and only the actions would fail. The restart that follows is what makes the backend read it, because a module keeps whatever env it was first evaluated with.
-- **This way meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.6-terra` a demo run is cents rather than dollars, but it is not zero, which the local-model way is.
+- **This way meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.6-terra` a demo run is cents rather than dollars, but it is not zero, which the local-model way is.
 
 ## Local, local model
 
@@ -1348,7 +1348,7 @@ key 路线上两个模型地址归并为同一个默认值。变量留空表示 
 
 - **key 通过询问获得，而不是粘贴。** 它通过隐藏输入读取，以仅本人可读的权限写入 `.env.local`，从不打印，也从不作为参数传给其他程序；`pnpm sync:env` 把它推送到 deployment，再次运行时保留文件中已有的 key。
 - **从本地模型方式切换过来时，key 路线上两个地址会自动清空。** setup 把 `OPENAI_BASE_URL` 和 `CONVEX_OPENAI_BASE_URL` 写为空，两者都为空时 `pnpm sync:env` 会清除 deployment 中此前保存的地址；这是"未设置"作为一个值而非遗漏的唯一情形：仍保存着 `http://model:11434/v1` 的 deployment 会去调用一个你早已停掉的模型服务，而且只有 action 会失败。随后的重启才让 backend 读到新值，因为 module 会保留首次求值时的 env。
-- **这种方式会产生模型费用。** 完整流程包括一对一的七个主题、章程生成、good-habits 检索、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
+- **这种方式会产生模型费用。** 完整流程包括一对一的七个主题、章程生成、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
 
 ### 本地运行，本地模型
 
