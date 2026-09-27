@@ -1252,7 +1252,15 @@ describe('executor output contract', (): void => {
       notes: 'n',
       openQuestion: null,
       procedureTrails: [],
-      planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0', basis: 'ledger' as const }],
+      planStepOutcomes: [
+        {
+          step: 1,
+          status: 'satisfied' as const,
+          evidence: 'ledger row 0',
+          basis: 'ledger' as const,
+          charterClause: null,
+        },
+      ],
       actions: Array.from({ length: count }, () => read),
     });
     const closingSetOnly = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real', CLOSING_SET_CAP);
@@ -1572,6 +1580,25 @@ describe('advisory plan steps in the closing phase', (): void => {
     expect(mockPhase.safeParse({ ...mockFirst, openQuestion: null }).success).toBe(false);
   });
 
+  it('makes every real closing outcome name the charter clause it was decided under, or none', (): void => {
+    const closing = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real');
+    const reply = (outcome: Record<string, unknown>) => ({
+      draft: 'd',
+      notes: 'n',
+      openQuestion: null,
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', evidence: 'held', basis: 'ledger', ...outcome },
+      ],
+    });
+    expect(
+      closing.safeParse(reply({ charterClause: 'Never post to public channels.' })).success,
+    ).toBe(true);
+    expect(closing.safeParse(reply({ charterClause: null })).success).toBe(true);
+    expect(closing.safeParse(reply({})).success).toBe(false);
+  });
+
   it('tells the real executor when to declare the open question and when not to', (): void => {
     const preamble = executorPreamble('real', true);
     expect(preamble).toContain('Open question - `openQuestion`');
@@ -1598,6 +1625,10 @@ describe('advisory plan steps in the closing phase', (): void => {
       dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real').safeParse({
         ...row,
         openQuestion: null,
+        planStepOutcomes: row.planStepOutcomes.map((outcome) => ({
+          ...outcome,
+          charterClause: null,
+        })),
       }).success,
     ).toBe(true);
     expect(

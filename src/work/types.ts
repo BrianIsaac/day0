@@ -387,6 +387,21 @@ export const DEFERRED_SEQUENCE_ALLOWANCE = 6;
 /** The fixed upper bound on the one result-dependent phase of a run: the closing set plus one deferred sequence. */
 export const DEPENDENT_ACTION_CAP = CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE;
 
+/** The charter clause lists a closing decision can be taken under. */
+export const CHARTER_CLAUSE_FIELDS = ['willDo', 'willNotDo', 'escalationTriggers'] as const;
+
+/**
+ * A charter clause a closing-phase decision was taken under (backlog step 4):
+ * the clause as the approved charter words it, which list it is in, and the
+ * version of the charter the executor read. Only a clause the charter carries
+ * is kept; the model's quote is checked against it.
+ */
+export interface CharterClauseRef {
+  field: (typeof CHARTER_CLAUSE_FIELDS)[number];
+  text: string;
+  charterVersion: string;
+}
+
 /** How one approved plan step is accounted for after real action results exist. */
 export interface PlanStepOutcome {
   /** One-based position in the approved plan. */
@@ -398,6 +413,8 @@ export interface PlanStepOutcome {
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   /** A ledger effect, provider failure or explicit reason the step could not run. */
   evidence: string;
+  /** The charter clause the closing phase decided this step under, when one did; see `CharterClauseRef`. */
+  charterClause?: CharterClauseRef;
   /**
    * What the evidence rests on. Absent means the ledger; `manager-feedback`
    * means a fact the manager stated in a rejection reason or retry note,

@@ -4,6 +4,8 @@ import { agentJson, MODEL_CONFIG, MODEL_PROVIDER_MAX_RETRIES } from '../lib/mast
 import type { Charter } from '../agent/charter';
 import {
   type ArgumentRepairAttempt,
+  CHARTER_CLAUSE_FIELDS,
+  type CharterClauseRef,
   CLOSING_SET_CAP,
   DEFERRED_SEQUENCE_ALLOWANCE,
   DEPENDENT_ACTION_CAP,
@@ -37,6 +39,7 @@ import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { closingPhaseOwed } from './obligations';
+import { answeredQuestionLines } from './charter-answers';
 import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
@@ -661,6 +664,7 @@ const realPlanStepOutcomeSchema = z
     status: z.enum(['satisfied', 'blocked', 'not-verifiable']),
     evidence: z.string().min(1),
     basis: z.enum(['ledger', 'manager-feedback']),
+    charterClause: z.string().nullable(),
   })
   .strict();
 
@@ -883,6 +887,30 @@ export function normalisePlanStepOutcomes(
   });
 }
 
+/**
+ * What the closing phase is told about the clause a decision was taken under.
+ * The quote is checked against the charter and kept with the outcome.
+ */
+const CHARTER_CLAUSE_RULE =
+  "When a charter clause decides a step's outcome (a willNotDo clause or an escalation trigger that blocks or withholds it, or the willDo clause that puts it in the role), quote that clause exactly as the charter words it in the step's `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.";
+
+/**
+ * A closing outcome as it is kept: the basis only when it is not the ledger,
+ * and the charter clause only when the charter carries the model's quote.
+ */
+function recordedPlanStepOutcome(
+  outcome: Omit<PlanStepOutcome, 'basis' | 'charterClause'> & {
+    basis?: 'ledger' | 'manager-feedback';
+    charterClause?: string | null;
+  },
+  charter: Charter,
+): PlanStepOutcome {
+  const { charterClause, ...rest } = outcome;
+  const clause = charterClause ? charterClauseOf(charter, charterClause) : undefined;
+  const recorded = recordedPlanStepBasis(rest);
+  return clause ? { ...recorded, charterClause: clause } : recorded;
+}
+
 /** The persisted outcome names its basis only when it is not the ledger. */
 function recordedPlanStepBasis(
   outcome:
@@ -997,6 +1025,70 @@ export interface RunSkillArgs {
    */
   groundingReads?: readonly GroundingRead[];
 }
+
+/**
+ * The charter as an executor prompt reads it. The mock prompt keeps the role
+ * and the two boundary lists it always had; the real prompt adds the
+ * escalation triggers, the adjacent roles and the questions the manager has
+ * answered, so both phases see the whole contract they are told to stay
+ * inside (P8-9).
+ *
+ * @param charter - The approved charter.
+ * @param mode - The deployment's surface mode.
+ * @returns The prompt lines.
+ */
+export function executorCharterLines(charter: Charter, mode: SurfaceMode): string[] {
+  const boundaries = charter.proposedBoundaries;
+  const lines = [
+    `Role: ${charter.proposedFunction}`,
+    '',
+    `Charter willDo: ${boundaries.willDo.join(' | ')}`,
+    `Charter willNotDo: ${boundaries.willNotDo.join(' | ')}`,
+  ];
+  if (mode !== 'real') return lines;
+  const clauses = (values: readonly string[]): string =>
+    values.length > 0 ? values.join(' | ') : '(none)';
+  return [
+    ...lines,
+    `Charter escalationTriggers: ${clauses(boundaries.escalationTriggers)}`,
+    `Charter adjacentRoles: ${clauses((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
+    ...answeredQuestionLines(charter),
+  ];
+}
+
+/** Clause text compared as the manager would read it: case, spacing and a closing stop aside. */
+function comparableClause(text: string): string {
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/[.。]\s*$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The charter clause a closing decision quotes, if the charter carries it:
+ * the quote matches a clause, or is a stretch of one long enough to name it.
+ *
+ * @param charter - The approved charter the executor read.
+ * @param quote - The clause the model says it acted under.
+ * @returns The clause as the charter words it, or undefined when no clause carries the quote.
+ */
+export function charterClauseOf(charter: Charter, quote: string): CharterClauseRef | undefined {
+  const wanted = comparableClause(quote);
+  if (wanted === '') return undefined;
+  const clauses = CHARTER_CLAUSE_FIELDS.flatMap((field) =>
+    (charter.proposedBoundaries[field] ?? []).map((text) => ({ field, text })),
+  );
+  const found =
+    clauses.find((clause) => comparableClause(clause.text) === wanted) ??
+    (wanted.length >= CLAUSE_STRETCH_CHARS
+      ? clauses.find((clause) => comparableClause(clause.text).includes(wanted))
+      : undefined);
+  return found ? { ...found, charterVersion: charter.version } : undefined;
+}
+
+/** The shortest stretch of a clause that names it, so a quoted fragment such as "customer" does not. */
+const CLAUSE_STRETCH_CHARS = 24;
 
 /**
  * The prompt lines that put the manager's answers at approval in front of the run.
@@ -2621,10 +2713,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   const runtimeSchema = executeSchemaForProcedureContract(procedureContract, candidate, plan, mode);
 
   const userPrompt = [
-    `Role: ${charter.proposedFunction}`,
-    '',
-    `Charter willDo: ${charter.proposedBoundaries.willDo.join(' | ')}`,
-    `Charter willNotDo: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
+    ...executorCharterLines(charter, mode),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
@@ -3329,7 +3418,7 @@ async function authorDependentSkillRun(
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
-    ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback)] : []),
+    ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback), CHARTER_CLAUSE_RULE] : []),
     ...(advisory.length > 0
       ? [
           `Advisory plan steps: ${advisory.join(', ')}. Each checks a property of the candidate (ownership, priority, age) that the ledger cannot carry and nothing asked for. Report such a step as not-verifiable with what the data showed, never as blocked, and never let it hold back the documented steps, the audit comment or the state change the work earned.`,
@@ -3347,7 +3436,7 @@ async function authorDependentSkillRun(
   });
   const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode, cap);
   const userPrompt = [
-    `Role: ${charter.proposedFunction}`,
+    ...executorCharterLines(charter, mode),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
@@ -3401,7 +3490,10 @@ async function authorDependentSkillRun(
       notes: raw.notes,
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
-      planStepOutcomes: normalisePlanStepOutcomes(ordered.map(recordedPlanStepBasis), advisory),
+      planStepOutcomes: normalisePlanStepOutcomes(
+        ordered.map((outcome) => recordedPlanStepOutcome(outcome, charter)),
+        advisory,
+      ),
       ...(mode === 'real' ? { declaredQuestion: declaredQuestionOf(raw.openQuestion) } : {}),
     };
   }

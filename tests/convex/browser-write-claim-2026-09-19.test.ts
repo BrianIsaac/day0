@@ -65,8 +65,8 @@ vi.mock('../../src/lib/mastra', () => ({
         actions: [],
         procedureTrails: [],
         planStepOutcomes: [
-          { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile' },
-          { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 5: the snapshot with the visible figure' },
+          { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile', charterClause: null },
+          { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 5: the snapshot with the visible figure', charterClause: null },
         ],
       }) as T;
     }
