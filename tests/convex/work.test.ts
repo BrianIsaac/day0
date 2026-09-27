@@ -5990,3 +5990,30 @@ describe('the resend refusals the card shows (wave 3 review m9)', (): void => {
     );
   });
 });
+
+describe('the manager channel past its access end date (wave 2 review D4, M21)', (): void => {
+  it('asks nothing through a chat surface whose end date passed before the sweep ended it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .first();
+      if (slack) await ctx.db.patch(slack._id, { expiresAt: Date.UTC(2026, 8, 1) });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
+    ).rejects.toThrow('No manager chat channel is connected');
+    await expect(
+      harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'ab3xyz',
+      }),
+    ).resolves.toEqual({ prepared: false, reason: 'no connected manager chat channel' });
+  });
+});

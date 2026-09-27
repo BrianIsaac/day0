@@ -141,13 +141,25 @@ async function scheduleDecisionRequest(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .collect();
-  const available = surfaces.some(isManagerChannel);
+  const available = surfaces.some(askableChannel);
   if (available) {
     await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
       workItemId: row._id,
       kind,
     });
   }
+}
+
+/**
+ * A manager chat channel the manager can be asked through now: connected
+ * with the manager's ids (`isManagerChannel`), and its access end date not
+ * passed, whatever the row says until the hourly sweep ends it (Q5, M21).
+ *
+ * @param surface - A surface row of the agent.
+ * @returns True when a request or a note may be sent through it.
+ */
+function askableChannel(surface: Doc<'surfaces'>): boolean {
+  return isManagerChannel(surface) && !accessEnded(surface, Date.now());
 }
 
 /**
@@ -2818,7 +2830,7 @@ export const prepareDecisionRequest = internalMutation({
       .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
       .collect();
     const chat = surfaceRows
-      .filter(isManagerChannel)
+      .filter(askableChannel)
       .sort(
         (left, right) =>
           (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
@@ -3706,7 +3718,7 @@ export const resendDecisionRequest = mutation({
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
         .collect();
-      if (!surfaces.some(isManagerChannel)) {
+      if (!surfaces.some(askableChannel)) {
         throw new ConvexError(
           'No manager chat channel is connected, so there is nowhere to ask; decide here instead.',
         );
@@ -4486,7 +4498,7 @@ async function queueManagerNote(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .collect();
-  if (!surfaces.some(isManagerChannel)) return;
+  if (!surfaces.some(askableChannel)) return;
   const mode = managerNotificationMode(agent);
   if (kind === 'stopped' && mode === 'per-run') return;
   const noteId = await ctx.db.insert('managerNotes', {
@@ -4516,7 +4528,7 @@ async function managerDelivery(ctx: MutationCtx, agentId: Id<'agents'>) {
       .collect(),
   ]);
   const chat = surfaceRows
-    .filter(isManagerChannel)
+    .filter(askableChannel)
     .sort(
       (left, right) =>
         (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
