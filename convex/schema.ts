@@ -632,6 +632,16 @@ export default defineSchema({
      * leaves it to lapse after `STEP_LEASE_MS` for the stalled-step sweep.
      */
     evaluationClaimedAt: v.optional(v.number()),
+    /**
+     * Real mode: how many evaluations of this row began since it last had a
+     * verdict. A row whose evaluation keeps dying ranks behind unattempted
+     * rows and is parked after `MAX_EVALUATION_ATTEMPTS` (`convex/workLoop.ts`),
+     * so it cannot hold the queue at a cap of one. Cleared by a verdict and by
+     * every re-admission.
+     */
+    evaluationAttempts: v.optional(v.number()),
+    /** When an evaluation of this row last found the scope judgement unreachable (E-70). */
+    evaluationUnavailableAt: v.optional(v.number()),
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),

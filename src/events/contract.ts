@@ -659,6 +659,12 @@ export interface WorkScopeJudgementUnavailablePayload extends WorkItemNamed {
   readonly cause: string;
 }
 
+/** The payload of `work.evaluation-parked`: a row whose evaluation kept dying, and why the last one did. */
+export interface WorkEvaluationParkedPayload extends WorkItemNamed {
+  readonly attempts: number;
+  readonly reason: 'evaluation-attempts-spent' | 'scope-judgement-unavailable';
+}
+
 /** The payload of `work.waiting-for-charter`. */
 export type WorkWaitingForCharterPayload = WorkItemNamed;
 
@@ -1033,6 +1039,7 @@ export interface EventPayloads {
   'work.evaluated': WorkEvaluatedPayload;
   'work.skipped': WorkSkippedPayload;
   'work.scope-judgement-unavailable': WorkScopeJudgementUnavailablePayload;
+  'work.evaluation-parked': WorkEvaluationParkedPayload;
   'work.waiting-for-charter': WorkWaitingForCharterPayload;
   'work.check-requested': WorkCheckRequestedPayload;
   'work.plan-grounding-read': WorkPlanGroundingReadPayload;
@@ -1172,6 +1179,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.evaluated',
   'work.skipped',
   'work.scope-judgement-unavailable',
+  'work.evaluation-parked',
   'work.waiting-for-charter',
   'work.check-requested',
   'work.plan-grounding-read',

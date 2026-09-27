@@ -570,10 +570,9 @@ async function evaluateWorkItemHandler(
     ),
   );
   if (isScopeUnavailable(verdict)) {
-    await logEvent(ctx, {
-      agentId,
-      type: 'work.scope-judgement-unavailable',
-      payload: { workItemId: args.workItemId, cause: verdict.cause },
+    await ctx.runMutation(internal.work.recordScopeJudgementUnavailable, {
+      workItemId: args.workItemId,
+      cause: verdict.cause,
     });
     return { decision: SCOPE_JUDGEMENT_UNAVAILABLE };
   }

@@ -498,5 +498,7 @@ export const VALUE_THRESHOLD = 30;
 export const QUALITY_FIT_SKIP_PREFIX = 'quality-fit-fail: ';
 /** Prefix of the skip reason the scope judgement writes. */
 export const OUT_OF_SCOPE_SKIP_PREFIX = 'out-of-scope: ';
+/** The defer reason of an item whose scope call gave no judgement (E-70). */
+export const SCOPE_JUDGEMENT_UNAVAILABLE = 'scope-judgement-unavailable';
 /** Prefix of the skip reason for an item another employee of the owner holds. */
 export const CLAIMED_BY_COLLEAGUE_SKIP_PREFIX = 'claimed-by-colleague: ';

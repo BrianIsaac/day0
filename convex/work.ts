@@ -22,6 +22,7 @@ import {
 import {
   AWAITING_CHARTER,
   claimLoopStepInTransaction,
+  EVALUATION_ATTEMPTS_SPENT,
   EXECUTION_STALL_MS,
   isManagerChannel,
   OPEN_WORK_STATES,
@@ -57,6 +58,7 @@ import {
   type ReplyTarget,
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
+  SCOPE_JUDGEMENT_UNAVAILABLE,
 } from '../src/work/types';
 import {
   HELD_ELSEWHERE_LIMIT,
@@ -937,6 +939,31 @@ export const recordScopeAdmission = internalMutation({
   },
 });
 
+/**
+ * Record that an evaluation of a row could not get a scope judgement (E-70):
+ * the `work.scope-judgement-unavailable` event and, on a row still waiting,
+ * the moment, so a row parked after its attempts is parked as unavailable and
+ * the charter trigger and Check for new work re-admit it. Internal; the
+ * evaluation stage's, real mode.
+ */
+export const recordScopeJudgementUnavailable = internalMutation({
+  args: { workItemId: v.id('workItems'), cause: v.string() },
+  handler: async (ctx, args): Promise<void> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) return;
+    const at = Date.now();
+    if (row.state === 'discovered') {
+      await ctx.db.patch(row._id, { evaluationUnavailableAt: at });
+    }
+    await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.scope-judgement-unavailable',
+      payload: { workItemId: row._id, cause: args.cause },
+      createdAt: at,
+    });
+  },
+});
+
 export interface ReevaluatePendingArgs {
   agentId: Id<'agents'>;
   trigger: ReevaluationTrigger;
@@ -994,6 +1021,11 @@ function verdictReturnsOn(
     return false;
   }
   if (row.state === 'deferred' && reason === AWAITING_CHARTER) return trigger === 'charter';
+  // An evaluation the scope judgement could not answer was parked after its
+  // attempts; a charter change asks the judgement again (E-70 D2).
+  if (row.state === 'deferred' && reason === SCOPE_JUDGEMENT_UNAVAILABLE) {
+    return trigger === 'charter';
+  }
   if (row.state !== 'deferred' || trigger !== 'surface' || !surface) return false;
   if (reason === 'awaiting-connection' && verdict.missingSurface !== undefined) {
     return missingSurfaceResolvedBy(verdict.missingSurface, surface.surface, surface.siblings);
@@ -1066,6 +1098,8 @@ export async function reevaluatePendingInTransaction(
         // the scope judgement never read, and keeps its in-scope verdict.
         ...(row.state === 'skipped' ? { scopeAdmission: undefined } : {}),
         reevaluation: reevaluationStamp(row, args.trigger, args.key, now),
+        evaluationAttempts: undefined,
+        evaluationUnavailableAt: undefined,
       });
       await appendEvent(ctx, {
         agentId: args.agentId,
@@ -1938,6 +1972,14 @@ async function waitSatisfiedBy(
       ? { key: `surface:${live._id}:${live.lastVerifiedAt}`, landed: `${live.slug} connected` }
       : undefined;
   }
+  if (verdict.decision === 'defer' && verdict.reason === SCOPE_JUDGEMENT_UNAVAILABLE) {
+    // Check for new work asks the judgement again, once per lease window, so
+    // an outage that outlasted the attempts ends at the manager's check.
+    return {
+      key: `scope-retry:${Math.floor(now / STEP_LEASE_MS)}`,
+      landed: 'the scope judgement is asked again',
+    };
+  }
   if (verdict.decision === 'defer' && verdict.reason === 'awaiting-permission') {
     // The verdict arrives as `v.any()`: a shape the evaluator never writes
     // parks as written rather than failing the write that ends the step.
@@ -2144,6 +2186,8 @@ async function readmitSatisfiedInTransaction(
         state: 'discovered',
         verdict: undefined,
         reevaluation: reevaluationStamp(row, 'check', satisfied.key, now),
+        evaluationAttempts: undefined,
+        evaluationUnavailableAt: undefined,
       });
       await logSatisfiedRequeue(ctx, row, 'check', satisfied.key, waited, now);
       await scheduleNextStep(ctx, { ...row, state: 'discovered', verdict: undefined });
@@ -2285,8 +2329,10 @@ export async function applyVerdict(
     state: nextState,
     ...(skipReason ? { skipReason } : {}),
     // The verdict ends the evaluation step; a row queued at the cap must be
-    // evaluable again the moment a slot frees.
+    // evaluable again the moment a slot frees, and counts no attempt.
     ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
+    evaluationAttempts: undefined,
+    evaluationUnavailableAt: undefined,
     ...(readmission
       ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
@@ -3509,7 +3555,11 @@ export const retryFailed = mutation({
     // way a rejection reason does.
     const feedback = managerText(args.feedback);
     const recoverable = ['failed', 'skipped', 'cancelled', 'completed'];
-    if (!recoverable.includes(row.state)) {
+    // A row parked because its evaluations kept dying waits for this Retry.
+    const spentEvaluation =
+      row.state === 'deferred' &&
+      (row.verdict as { reason?: unknown } | undefined)?.reason === EVALUATION_ATTEMPTS_SPENT;
+    if (!recoverable.includes(row.state) && !spentEvaluation) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
     }
     // Finished work is sent back only with a direction: a retry that changes
@@ -3601,6 +3651,8 @@ export const retryFailed = mutation({
       // A retry starts every step afresh; no claim from an earlier attempt holds it back.
       ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
+      evaluationAttempts: undefined,
+      evaluationUnavailableAt: undefined,
     });
     // The note is also kept for the employee's later work of the same kind.
     if (feedback) await keepCorrectionInTransaction(ctx, row, 'retry-note', feedback);

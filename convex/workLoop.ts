@@ -6,8 +6,13 @@ import { assertOwnsAgent } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT } from '../src/work/types';
+import {
+  AUTONOMOUS_WIP_LIMIT,
+  COLD_START_WIP_LIMIT,
+  SCOPE_JUDGEMENT_UNAVAILABLE,
+} from '../src/work/types';
 import { normaliseActionVerdict } from '../src/surfaces/policy';
+
 import { appendEvent } from './eventLog';
 
 /**
@@ -43,6 +48,25 @@ export const EXECUTION_STALL_MS = STEP_LEASE_MS + 2 * 60 * 1000;
  * stops for the manager's Retry instead.
  */
 export const MAX_DRAFT_RESUMES = 3;
+
+/**
+ * How many evaluations of one row may begin without a verdict. A row whose
+ * evaluation dies after its claim (an action killed at the time limit, a
+ * throw) keeps the claim until the lease passes, then ranks behind every
+ * unattempted row; after this many it is parked, so one dying evaluation at a
+ * cap of one never holds the queue (wave 2 review M23).
+ */
+export const MAX_EVALUATION_ATTEMPTS = 3;
+
+/**
+ * The deferral reason of a row parked after `MAX_EVALUATION_ATTEMPTS`
+ * evaluations died; the manager's Retry takes it back. A row whose last
+ * evaluation found the scope judgement unreachable is parked as
+ * `scope-judgement-unavailable` instead, which the charter trigger and Check
+ * for new work re-admit, because half an hour of provider outage is three
+ * attempts (E-70 D2).
+ */
+export const EVALUATION_ATTEMPTS_SPENT = 'evaluation-attempts-spent';
 
 /** The event each restart of a dead draft writes; the cap is counted from it. */
 const DRAFT_RESUMED = 'work.draft-resumed';
@@ -128,8 +152,15 @@ export async function claimLoopStepInTransaction(
   const ready = step === 'evaluation' ? 'discovered' : 'claimed';
   if (row.state !== ready) return { claimed: false, reason: `state=${row.state}` };
   if (holdsLiveStepClaim(row, step, now)) return { claimed: false, reason: 'claimed' };
-  if (step === 'evaluation' && (await queueState(ctx, row.agentId, now, row._id)).free === 0) {
-    return { claimed: false, reason: 'queued' };
+  if (step === 'evaluation') {
+    if ((await queueState(ctx, row.agentId, now, row._id)).free === 0) {
+      return { claimed: false, reason: 'queued' };
+    }
+    await ctx.db.patch(workItemId, {
+      evaluationClaimedAt: now,
+      evaluationAttempts: (row.evaluationAttempts ?? 0) + 1,
+    });
+    return { claimed: true };
   }
   await ctx.db.patch(workItemId, { [CLAIM_FIELD[step]]: now });
   return { claimed: true };
@@ -344,13 +375,14 @@ async function queueState(
 }
 
 /**
- * The discovered row a free slot goes to: the most urgent one no evaluation
- * holds, the oldest first among equals.
+ * The discovered row a free slot goes to: a row no evaluation has begun
+ * before one whose evaluation died, then the most urgent, then the oldest.
  *
  * A row whose evaluation is running lands its own verdict and wakes the next
  * one itself, and a row whose evaluation died keeps its claim until the lease
- * passes, so neither blocks the rows behind it. Only `QUEUE_WINDOW` rows are
- * read, so an urgent row behind a longer queue waits its turn into the window.
+ * passes and then waits behind every unattempted row, so neither blocks the
+ * rows behind it. Only `QUEUE_WINDOW` rows are read, so an urgent row behind a
+ * longer queue waits its turn into the window.
  *
  * Args:
  *   ctx: Mutation context.
@@ -368,12 +400,65 @@ export async function nextRowForFreeSlot(
 ): Promise<Id<'workItems'> | undefined> {
   const { free, waiting } = await queueState(ctx, agentId, now);
   if (free === 0) return undefined;
+  const order = (row: Doc<'workItems'>): [number, number] => [
+    (row.evaluationAttempts ?? 0) > 0 ? 1 : 0,
+    queueRank(row.priority),
+  ];
   let next: Doc<'workItems'> | undefined;
   for (const row of waiting) {
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
-    if (next === undefined || queueRank(row.priority) < queueRank(next.priority)) next = row;
+    if (next === undefined) {
+      next = row;
+      continue;
+    }
+    const [attempted, rank] = order(row);
+    const [nextAttempted, nextRank] = order(next);
+    if (attempted < nextAttempted || (attempted === nextAttempted && rank < nextRank)) next = row;
   }
   return next?._id;
+}
+
+/**
+ * Park every waiting row whose evaluation died `MAX_EVALUATION_ATTEMPTS`
+ * times, each with a `work.evaluation-parked` event.
+ *
+ * A row is parked only once its last claim has lapsed, so an evaluation still
+ * running is never cut short. The last attempt decides the reason: one that
+ * found the scope judgement unreachable parks as `scope-judgement-unavailable`,
+ * which the charter trigger and Check for new work re-admit; any other as
+ * `EVALUATION_ATTEMPTS_SPENT`, which waits for the manager's Retry.
+ *
+ * Returns:
+ *   How many rows were parked.
+ */
+async function parkSpentEvaluations(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  let parked = 0;
+  for (const row of await queueWindow(ctx, agentId)) {
+    const attempts = row.evaluationAttempts ?? 0;
+    if (attempts < MAX_EVALUATION_ATTEMPTS || holdsLiveStepClaim(row, 'evaluation', now)) continue;
+    const unavailable =
+      row.evaluationUnavailableAt !== undefined &&
+      row.evaluationClaimedAt !== undefined &&
+      row.evaluationUnavailableAt >= row.evaluationClaimedAt;
+    const reason = unavailable ? SCOPE_JUDGEMENT_UNAVAILABLE : EVALUATION_ATTEMPTS_SPENT;
+    await ctx.db.patch(row._id, {
+      state: 'deferred',
+      verdict: { decision: 'defer', reason, attempts, missingPermissions: [] },
+      evaluationClaimedAt: undefined,
+    });
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.evaluation-parked',
+      payload: { workItemId: row._id, attempts, reason },
+      createdAt: now,
+    });
+    parked += 1;
+  }
+  return parked;
 }
 
 async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>): Promise<void> {
@@ -438,16 +523,18 @@ async function parkForCharter(
 
 /**
  * Evaluate the queue's next row, or park the queue while the charter waits.
+ * A row whose evaluation died too often is parked on the way.
  *
  * Returns:
  *   How many steps were scheduled or rows parked.
  */
 async function evaluateNext(ctx: MutationCtx, agentId: Id<'agents'>, now: number): Promise<number> {
   if (await charterAwaitsApproval(ctx, agentId)) return await parkForCharter(ctx, agentId, now);
+  const parked = await parkSpentEvaluations(ctx, agentId, now);
   const next = await nextRowForFreeSlot(ctx, agentId, now);
-  if (!next) return 0;
+  if (!next) return parked;
   await scheduleEvaluation(ctx, next);
-  return 1;
+  return parked + 1;
 }
 
 /**
