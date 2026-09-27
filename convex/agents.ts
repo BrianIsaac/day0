@@ -687,7 +687,9 @@ export const grantScope = internalMutation({
 
 /**
  * Choose how the manager hears about run outcomes: as each run finishes, or
- * in one hourly digest. Decision requests are sent at once either way.
+ * in one digest on the hour in the agent's zone. Decision requests are sent
+ * at once either way; notes kept for a digest are sent when the manager
+ * switches back to per run.
  */
 export const setManagerNotifications = mutation({
   args: { agentId: v.id('agents'), mode: v.union(v.literal('per-run'), v.literal('digest')) },
@@ -706,6 +708,11 @@ export const setManagerNotifications = mutation({
       payload: { from, to: args.mode, reason: NOTIFICATIONS_CHANGE_REASON },
       createdAt: Date.now(),
     });
+    // The notes kept for the next digest would otherwise wait for an hour
+    // that per run never has: send them now.
+    if (args.mode === 'per-run') {
+      await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerDigests, {});
+    }
     return { ok: true, managerNotifications: args.mode, changed: true };
   },
 });

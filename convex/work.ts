@@ -86,12 +86,14 @@ import {
 } from '../src/work/reconciliation';
 import { isStopped, landedNoteRows, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
+  digestDue,
   digestText,
   landedNoteText,
   managerNotificationMode,
   stoppedNoteText,
   type ManagerNoteKind,
 } from '../src/work/manager-notes';
+import { agentZone } from '../src/lib/zone';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /** Parked rows examined per state in one re-evaluation call; the rest continue by schedule. */
@@ -3962,14 +3964,17 @@ export const recordManagerNote = internalMutation({
   },
 });
 
-/** The agents whose kept notes are due in a digest. */
+/**
+ * The agents holding kept notes: digest agents, and agents switched to per
+ * run with notes the switch stranded. `prepareManagerDigest` decides which
+ * are due now.
+ */
 export const digestCandidates = internalQuery({
   args: {},
   handler: async (ctx): Promise<Id<'agents'>[]> => {
     const agents = await ctx.db.query('agents').collect();
     const due: Id<'agents'>[] = [];
     for (const agent of agents) {
-      if (managerNotificationMode(agent) !== 'digest') continue;
       const notes = await ctx.db
         .query('managerNotes')
         .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
@@ -3982,19 +3987,42 @@ export const digestCandidates = internalQuery({
   },
 });
 
-/** Claim every kept note of one agent for a single digest send. */
+/**
+ * Claim every kept note of one agent for a single digest send, when it is
+ * due: at the top of the hour in the agent's zone, or at once for notes a
+ * switch to per run stranded.
+ */
 export const prepareManagerDigest = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
     const agent = await ctx.db.get(args.agentId);
-    if (!agent || managerNotificationMode(agent) !== 'digest') return { prepared: false as const };
+    if (!agent || !digestDue(agent, Date.now())) return { prepared: false as const };
+    // A per-run agent's own notes are on their way one by one; only those
+    // kept before the switch are the digest's to send.
+    const keptUntil =
+      managerNotificationMode(agent) === 'digest'
+        ? Number.POSITIVE_INFINITY
+        : ((
+            await ctx.db
+              .query('events')
+              .withIndex('by_agent_type', (q) =>
+                q.eq('agentId', args.agentId).eq('type', 'agent.notifications-changed'),
+              )
+              .order('desc')
+              .first()
+          )?.createdAt ?? Number.NEGATIVE_INFINITY);
     const notes = (
       await ctx.db
         .query('managerNotes')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .collect()
     )
-      .filter((note) => note.claimedAt === undefined && note.providerTs === undefined)
+      .filter(
+        (note) =>
+          note.claimedAt === undefined &&
+          note.providerTs === undefined &&
+          note.createdAt <= keptUntil,
+      )
       .sort((left, right) => left.createdAt - right.createdAt);
     if (notes.length === 0) return { prepared: false as const };
     const delivery = await managerDelivery(ctx, args.agentId);
@@ -4014,7 +4042,7 @@ export const prepareManagerDigest = internalMutation({
       requestRunId: digestId,
       workItemId: notes[0].workItemId,
       noteIds: notes.map((note) => note._id),
-      text: digestText({ agentName: agent.name, notes }),
+      text: digestText({ agentName: agent.name, zone: agentZone(agent), notes }),
     };
   },
 });

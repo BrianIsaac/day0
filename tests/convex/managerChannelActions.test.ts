@@ -22,7 +22,18 @@ afterEach((): void => {
   sent.length = 0;
   hooks.afterCredentialRead = undefined;
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
+
+/** The top of an hour in UTC, the deployment's zone in the suite, and quarter past it. */
+const TOP_OF_HOUR = Date.UTC(2026, 8, 28, 9, 1);
+const QUARTER_PAST = Date.UTC(2026, 8, 28, 9, 16);
+
+/** Fake only the clock, so the provider's fetch still resolves on its own. */
+function clockAt(ms: number): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(ms);
+}
 
 async function seedParkedPlan(harness: ReturnType<typeof convexTest>): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
@@ -468,6 +479,7 @@ describe('the notes the gate sends for the manager', (): void => {
   });
 
   it('sends one digest for every kept note and nothing on the next hour', async (): Promise<void> => {
+    clockAt(TOP_OF_HOUR);
     recordSends();
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedParkedPlan(harness);
@@ -480,7 +492,8 @@ describe('the notes the gate sends for the manager', (): void => {
     await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 1, failed: 0 });
     expect(sent).toHaveLength(1);
     const text = JSON.parse(sent[0].body).text as string;
-    expect(text).toContain('ops worker: 2 updates since the last digest.');
+    expect(text).toContain('ops worker: 2 updates since the last digest (times in UTC).');
+    expect(text).toContain('28 Sep 2026, 09:01: ops worker stopped on “A”: no owner.');
     expect(text).toContain('ops worker stopped on “A”: no owner.');
     expect(text).toContain('ops worker finished “B”: 1 change landed.');
     for (const noteId of [first, second]) {
@@ -493,7 +506,51 @@ describe('the notes the gate sends for the manager', (): void => {
     expect(sent).toHaveLength(1);
   });
 
+  it('keeps a digest agent’s notes until the top of the hour in its own zone', async (): Promise<void> => {
+    clockAt(TOP_OF_HOUR);
+    recordSends();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest', zone: 'Asia/Kolkata' });
+    });
+    await keepNote(harness, agentId, workItemId, 'landed', 'ops worker finished “B”: 1 change landed.');
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 0, failed: 0 });
+    clockAt(Date.UTC(2026, 8, 28, 9, 31));
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 1, failed: 0 });
+    expect(JSON.parse(sent[0].body).text).toContain('28 Sep 2026, 14:31: ops worker finished');
+  });
+
+  it('sends the notes a switch to per run stranded at the next check, whatever the hour, and leaves later per-run notes to their own send', async (): Promise<void> => {
+    recordSends();
+    const harness = convexTest(schema, allConvexModules());
+    clockAt(QUARTER_PAST);
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest' });
+    });
+    const stranded = await keepNote(harness, agentId, workItemId, 'landed', 'kept for the digest');
+    clockAt(QUARTER_PAST + 1_000);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'per-run' });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'agent.notifications-changed',
+        payload: { from: 'digest', to: 'per-run', reason: 'set by the manager' },
+        createdAt: Date.now(),
+      });
+    });
+    clockAt(QUARTER_PAST + 2_000);
+    const inFlight = await keepNote(harness, agentId, workItemId, 'landed', 'a per-run note');
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 1, failed: 0 });
+    expect(JSON.parse(sent[0].body).text).toContain('kept for the digest');
+    expect(JSON.parse(sent[0].body).text).not.toContain('a per-run note');
+    expect((await harness.run(async (ctx) => await ctx.db.get(stranded)))?.providerTs).toBe('provider-1');
+    expect((await harness.run(async (ctx) => await ctx.db.get(inFlight)))?.claimedAt).toBeUndefined();
+  });
+
   it('releases the notes of a digest that did not land for the next one', async (): Promise<void> => {
+    clockAt(TOP_OF_HOUR);
     vi.stubGlobal('fetch', vi.fn(async (): Promise<Response> => new Response('{"ok":false,"error":"channel_not_found"}', { status: 200, headers: { 'content-type': 'application/json' } })));
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedParkedPlan(harness);

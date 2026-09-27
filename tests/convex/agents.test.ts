@@ -630,6 +630,31 @@ describe('the autonomous-actions switch', (): void => {
       { from: 'per-run', to: 'digest', reason: 'set by the manager' },
     ]);
   });
+
+  it('sends the notes kept for a digest when the manager switches back to per run', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          managerNotifications: 'digest',
+          createdAt: 1,
+        }),
+    );
+    const scheduled = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).map((job) => job.name),
+      );
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' });
+    expect(await scheduled()).toEqual([]);
+    await owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' });
+    expect(await scheduled()).toEqual(['managerChannelActions:sendManagerDigests']);
+  });
 });
 
 describe('the agent’s zone and mode (N12)', (): void => {

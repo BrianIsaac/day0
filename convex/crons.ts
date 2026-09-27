@@ -1,7 +1,7 @@
 import { cronJobs } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
 import { internal } from './_generated/api';
-import { DIGEST_INTERVAL_MINUTES } from '../src/work/manager-notes';
+import { DIGEST_SCHEDULE } from '../src/work/manager-notes';
 
 const intakeInternal = internal as unknown as {
   intakeActions: {
@@ -52,9 +52,12 @@ crons.interval(
   {},
 );
 
-crons.interval(
+// Every quarter hour on the clock; each agent's digest goes at the top of its
+// own zone's hour (`digestDue`), and notes stranded by a switch to per run go
+// at the next run.
+crons.cron(
   'send manager digests',
-  { minutes: DIGEST_INTERVAL_MINUTES },
+  DIGEST_SCHEDULE,
   internal.managerChannelActions.sendManagerDigests,
   {},
 );
