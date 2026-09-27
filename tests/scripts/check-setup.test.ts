@@ -175,7 +175,9 @@ describe('the model address the backend container calls', (): void => {
   it('says when the address could not be dialled at all, without failing', (): void => {
     const notRunning = modelSection(endpoint, true, undefined);
     expect(notRunning.status).toBe('warn');
-    expect(notRunning.lines.join('\n')).toContain('the backend is not running, so');
+    expect(notRunning.lines.join('\n')).toContain(
+      'was not dialled from inside the backend container: it is not running, or Docker could not be asked.',
+    );
     const unknown = modelSection(endpoint, true, {
       reach: 'unknown',
       detail: 'service "backend" is not running',

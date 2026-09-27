@@ -844,7 +844,7 @@ function authSection(v: Values): Section {
  *   v: Resolved values.
  *   selfHosted: Whether the backend is the self-hosted container.
  *   dial: What dialling the backend's address from inside it found; undefined
- *     when the backend was not running to dial from.
+ *     when the backend was not running, or Docker could not be asked.
  *
  * Returns:
  *   The section.
@@ -894,8 +894,8 @@ export function modelSection(v: Values, selfHosted: boolean, dial?: ModelDial): 
     if (dial === undefined) {
       status = 'warn';
       lines.push(
-        `the backend is not running, so ${backendUrl} was not dialled from inside it.`,
-        'Run this again once it is: an address this machine reaches may still be one the container cannot.',
+        `${backendUrl} was not dialled from inside the backend container: it is not running, or Docker could not be asked.`,
+        'Run this again once it is up: an address this machine reaches may still be one the container cannot.',
       );
     } else if (dial.reach === 'reached') {
       lines.push(`The backend container reached ${backendUrl} (${dial.detail}).`);
