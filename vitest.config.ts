@@ -18,6 +18,7 @@ export default defineConfig({
         test: {
           name: 'convex',
           include: ['tests/convex/**/*.test.ts'],
+          setupFiles: ['tests/setup/clean-env.ts'],
           environment: 'edge-runtime',
           // The first test of a file that resets the module registry imports
           // every Convex module again: over a second on a quiet machine, and
@@ -37,8 +38,10 @@ export default defineConfig({
         },
         test: {
           name: 'node',
+          setupFiles: ['tests/setup/clean-env.ts'],
           include: [
             'tests/*.test.ts',
+            'tests/setup/**/*.test.ts',
             'tests/fake-slack/**/*.test.ts',
             'tests/looker-tile/**/*.test.ts',
             'tests/src/**/*.test.ts',
