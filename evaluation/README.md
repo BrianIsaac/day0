@@ -1,14 +1,18 @@
-# Semi-final controlled comparison
+# Evaluation
 
-This directory is the reproducible testing method for the judges' Direction 1
-question: does onboarding improve task success and time to operational, measured
-as an onboarded day0 agent against an ordinary agent on the same unfamiliar work.
-The default run is three paired repetitions of 15 fixed tasks in both arms: 90 task
-outcomes.
+This directory is how Day0 is measured. The controlled comparison asks whether
+onboarding improves task success and time to operational, measured as an onboarded
+day0 agent against an ordinary agent on the same unfamiliar work. The default run is
+three paired repetitions of 15 fixed tasks in both arms: 90 task outcomes. The
+[permissions and supervision](#permissions-and-supervision) measurements ask whether
+a revoked grant stops the next write and how the exact-action gate classifies
+actions. The method is under [Controlled arms](#controlled-arms) and
+[Programmatic grading](#programmatic-grading); how to run it again is under
+[Reproduce](#reproduce).
 
-**中文摘要：** Harness v2 的提交证据列出三个冻结评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。
+**中文摘要：** Harness v2 的冻结证据包括三个评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。注意（2026 年 9 月 27 日，决定 N16）：上述数字在五项任务集机制修正之前评分，且未重新评分；这些机制在五个方面对 Day0 有利（仅向 Day0 显示的请求方标签本身是原因词、固定 Day-1 记录含原因词与引用标题、三个产品字符串命中原因词、五项任务未禁止 slack.postMessage、两项文档任务自带引用或必需词），数字保持不变，详见下文 Caveat 段。
 
-- [Fixed task specifications](tasks/semifinal.json) - the 15 tasks, each with its
+- [Fixed task specifications](tasks/comparison.json) - the 15 tasks, each with its
   seed payload, timeout, required effect, prohibited effects and the exact check in
   plain language. The four ticket-backed tasks each seed a dedicated
   `REVOPS-EVAL-*` ticket with the same task payload.
@@ -23,12 +27,16 @@ outcomes.
   adapter-consumed payload. This makes action-binding and repeated-effect claims
   reproducible without retaining model-produced values.
 - [Onboarding transcript](onboarding/day0.json) - the fixed 1:1 replayed for day0.
-- `results/<timestamp>/semifinal.json` and `.md` - one directory per invocation.
-  Since 27 September 2026 each JSON carries the task definitions it was graded
+- `results/<timestamp>/comparison.json` and `.md` - one directory per invocation.
+  The directories written before 27 September 2026 name these two files
+  `semifinal.json` and `semifinal.md`, the harness's earlier name; they are recorded
+  evidence and keep their names and bytes, and their JSON records the experiment id
+  `day0-semifinal-controlled-comparison`, which the report and the re-grade still
+  read. Since 27 September 2026 each JSON carries the task definitions it was graded
   against, a resume is refused when they differ from the task file, and a report
   reads adherence from those definitions, never from the current task file.
   Evidence recorded earlier is read against
-  [`tasks/semifinal-2026-09-02.json`](tasks/semifinal-2026-09-02.json), the task
+  [`tasks/comparison-2026-09-02.json`](tasks/comparison-2026-09-02.json), the task
   file as it stood from `045683b` (2 September 2026), which every harness-v2
   evidence file was graded against.
 
@@ -46,12 +54,11 @@ only a work item that remains non-terminal is classified as a harness timeout.
 The four harness-v1 beds at `results/2026-09-01T07-23-30Z/` (qwen3:8b),
 `results/2026-09-01T14-26-55Z/`, `results/2026-09-01T08-12-35Z/`
 (gpt-5.6-terra), and `results/2026-09-01T08-39-48Z/` (gpt-5.6-sol) remain immutable.
-They are superseded for submission claims by the operator-selected harness-v2 evidence
-below and remain audit history only.
+They are superseded by the harness-v2 evidence below and remain audit history only.
 
 ## Evidence status
 
-The submission publishes the following three fresh, frozen beds. Each ran both arms,
+The comparison rests on the following three frozen beds. Each ran both arms,
 all 15 tasks and three repetitions per task. The self-hosted Qwen bed exercised the
 OpenAI-compatible chat-completions route; both hosted beds exercised the OpenAI
 Responses API route for both arms. The ordinary arm produced non-zero completed rows
@@ -70,7 +77,7 @@ mock office, but without Day0's onboarding pipeline.
 | Supervision on approval writes | 10/15 (66.7%) | 0/15 (0.0%) | 15/15 (100.0%) | 0/15 (0.0%) | 14/15 (93.3%) | 0/15 (0.0%) |
 
 Measured 2 September 2026: the 8B bed at commit `906f991`, the Terra and Sol beds at
-`cbd6d79`; each `semifinal.json` records its commit and generation time.
+`cbd6d79`; each bed's `semifinal.json` records its commit and generation time.
 
 **Caveat (27 September 2026, decision N16):** these figures were graded before five
 task-set mechanisms were fixed and are not re-graded, so some passes may have been met
@@ -115,13 +122,16 @@ disclosures apply to the table:
 - F18: the tweet guide's out-of-scope sentence is shared input that names a tested
   category in both arms.
 
-Deck-safe wording: on the self-hosted comparison, Day0 led the ordinary agent 7/15
-to 6/15 on task-majority pass, 20/45 to 4/45 on per-run a-priori procedure adherence,
-and 42/45 to 34/45 on prohibited-action-free runs. On the hosted Responses route,
-Day0 led 15/15 to 12/15 on Terra and 15/15 to 13/15 on Sol task-majority pass; it
-also led on procedure adherence, prohibited-action freedom and out-of-scope pass in
-both beds. Day0 did not pass every task-run (44/45 on each hosted model), and this
-controlled mock-office result is not a claim of universal performance.
+### Findings
+
+On the self-hosted comparison, Day0 led the ordinary agent 7/15 to 6/15 on
+task-majority pass, 20/45 to 4/45 on per-run a-priori procedure adherence, and 42/45
+to 34/45 on prohibited-action-free runs. On the hosted Responses route, Day0 led 15/15
+to 12/15 on Terra and 15/15 to 13/15 on Sol task-majority pass; it also led on
+procedure adherence, prohibited-action freedom and out-of-scope pass in both beds.
+Day0 did not pass every task-run (44/45 on each hosted model), and this controlled
+mock-office result is not a claim of universal performance. The N16 caveat above
+applies to every figure in this paragraph.
 
 ### Paired GLM bed - 12 September 2026
 
@@ -129,7 +139,7 @@ The new [`2026-09-12T06-33-21Z-v4-glm53flash`](results/2026-09-12T06-33-21Z-v4-g
 `zai-org/GLM-5.3-Flash` through Featherless, with JSON mode `prompt`, output budget
 `32768` and reasoning effort `low`. **6/6 arm-runs, 90/90 terminal task rows; three
 Day0 charters approved; no harness timeout or deadline overrun.** It supplements
-the frozen submission beds; the first GLM bed below stays an ordinary-only route check.
+the three frozen beds above; the first GLM bed below stays an ordinary-only route check.
 
 | Measure | 8B day0 | 8B plain | Terra day0 | Terra plain | Sol day0 | Sol plain | GLM day0 | GLM plain |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -176,7 +186,7 @@ uses model-authored onboarding; its containment measurements are model-free.
 逐次通过 **37/45 对 28/45**，预先定义的流程遵循 **26/45 对 6/45**，无禁止操作
 **45/45 对 34/45**，超范围任务 **15/15 对 5/15**；审批写入通过率则为 **10/15 对 15/15**。
 两 arm 的 17 项参数一致，输出预算 32768、推理强度 low、JSON 模式 prompt。旧 GLM 单 arm
-结果仍作为线路检查保留；旧评测与本次产品提交不同，不能把跨环境差异全部归因于模型。
+结果仍作为线路检查保留；各环境的产品代码版本不同，不能把跨环境差异全部归因于模型。
 
 ### GLM re-bed with prompt-mode schema repair - 12 September 2026
 
@@ -309,29 +319,29 @@ alike, not that each backend ran with every recorded value (P6-8).
 ### Superseded history
 
 Every earlier comparison result directory is retained as immutable audit history but
-is **superseded for submission claims** by the three fresh beds above. The initial
+is **superseded** by the three frozen beds above. The initial
 29 August run remains under
 [`results/archive/2026-08-29-qwen3-8b-superseded/`](results/archive/2026-08-29-qwen3-8b-superseded/)
-with its specific invalidation reasons. None of those older figures should be used
-as final evidence.
+with its specific invalidation reasons. None of those older figures is quoted as a
+result.
 
 On 27 September 2026, under decision Q8, the 22 result directories that nothing in
 this README, the root README, the tests or the scripts cited (19 harness-v1 runs of
 30 and 31 August, the two hosted `v2` reruns of 2 September that the `v3` beds
 superseded, and the three-task Terra control of 12 September) moved out of the public
-tree into the operator's private archive with a provenance note and checksums. They
+tree into the maintainers' private archive with a provenance note and checksums. They
 remain in git history up to `dbdde97`; no figure quoted here came from them. The
 tracked re-grade `results/2026-08-30T12-40-05Z/` names one of them,
 `2026-08-30T12-02-26Z`, as its source; that source is now in the archive.
 
-## Direction 2 - permissions and supervision
+## Permissions and supervision
 
-Two deterministic measurements cover the judges' second direction:
+Two deterministic measurements cover permissions and supervision:
 
 - [Live revocation evidence](results/revocation-2026-09-02T12-17-54Z/trials.md), with
   [raw JSON](results/revocation-2026-09-02T12-17-54Z/trials.json), the complete
   redacted agent trace (`trace-agent.json`) and the exact commands (`commands.txt`).
-  This is the trial set the submission quotes. It ran on 2 September 2026 at commit
+  This is the trial set this page and the README quote. It ran on 2 September 2026 at commit
   `2b3ee44` in real mode on an isolated self-hosted backend (compose project
   `day0-revoc-cf6879`) against `fake-slack` and the browser-driven Looker tile, with
   Daytona blanked; trial measurements are model-free, while preparation synthesises
@@ -362,7 +372,7 @@ Two deterministic measurements cover the judges' second direction:
   N attempted=17, N blocked=13,
   N landed=4 by design, N unexpected=0; block latency n=13, median=56 ms, max=123 ms;
   fake-provider log n=4, no blocked attempt reached it) is retained as audit history
-  and is superseded for submission claims by the 2 September directory above.
+  and is superseded by the 2 September directory above.
 - [Gate-accuracy confusion matrix](gate/2026-08-30T09-20-51Z/matrix.md), with
   [raw JSON](gate/2026-08-30T09-20-51Z/matrix.json). Its 28 pre-labelled actions
   were passed through `reviewActions` once with the autonomous switch off and once
@@ -555,7 +565,7 @@ while the latter is one value per run from deployment to the first effect of any
 task that passed. The timing table shows human wait beside the raw figure and
 subtracts it only in a net column; day0's raw figure includes onboarding by design.
 ~~A task that exceeds its declared timeout is terminalised as failed and cannot later
-apply a delayed model response.~~ REFUTED BY scripts/eval-semifinal.ts stateAtDeadlineCheck and evaluationTaskTiming, 12 Sep 2026. A still-nonterminal task at the deadline check is terminalised as failed, fencing later model results. A task already terminal when the driver regains control keeps its result and records any deadline overrun separately.
+apply a delayed model response.~~ REFUTED BY scripts/eval-comparison.ts stateAtDeadlineCheck and evaluationTaskTiming, 12 Sep 2026. A still-nonterminal task at the deadline check is terminalised as failed, fencing later model results. A task already terminal when the driver regains control keeps its result and records any deadline overrun separately.
 
 ## Reproduce
 
@@ -583,15 +593,15 @@ pnpm sync:env
 pnpm convex:restart
 pnpm exec convex dev --once --typecheck disable
 
-pnpm eval:semifinal
+pnpm eval:comparison
 ```
 
-The run writes `evaluation/results/<timestamp>/semifinal.json` atomically after
+The run writes `evaluation/results/<timestamp>/comparison.json` atomically after
 deployment, every approval and every terminal task, and regenerates
-`semifinal.md` beside it each time. To resume an interrupted run, pass its path:
+`comparison.md` beside it each time. To resume an interrupted run, pass its path:
 
 ```bash
-pnpm eval:semifinal -- --out evaluation/results/<timestamp>/semifinal.json
+pnpm eval:comparison -- --out evaluation/results/<timestamp>/comparison.json
 ```
 
 Resume is refused if the commit, model, temperature, arms, task set, run count,
@@ -605,13 +615,16 @@ the directories quoted above can be re-scored from a clone: their backends were 
 retained.
 
 ```bash
-pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json
+pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json
 ```
+
+A directory written before 27 September 2026 holds its evidence as `semifinal.json`;
+pass that path the same way.
 
 Re-grade mode makes only authenticated backend queries: it invokes no mutation,
 action or model-bearing stage, refuses if any recorded work item is absent from its
 recorded agent, and writes a fresh timestamped evidence directory without touching
-the source. Pass `--out <new-directory>/semifinal.json` to choose that new path.
+the source. Pass `--out <new-directory>/comparison.json` to choose that new path.
 The new JSON records the source path, source run commit and current grader commit in
 `regradedFrom`, plus `modelCallsMade: 0`; the markdown states the same provenance.
 Recorded human wait and task timing are copied, except that a task newly made
@@ -621,8 +634,8 @@ effect timestamp inside its original start-to-finish window.
 Useful subsets:
 
 ```bash
-pnpm eval:semifinal -- --arms day0
-pnpm eval:semifinal -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
+pnpm eval:comparison -- --arms day0
+pnpm eval:comparison -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
 ```
 
 `--arms` accepts `day0`, `baseline` or both; `--tasks` accepts fixture ids or
@@ -633,10 +646,9 @@ the export carries no credential material and no personal address.
 
 ## Build provenance
 
-The harness was built on `agent/day0-build-job-j2-of-the-semi-20260829T181719-b6adf3`
-from `a139796`, with the reviewed A/B/F staging update `41cba4f` merged as
+The harness was built on a job branch from `a139796`, with the reviewed A/B/F staging update `41cba4f` merged as
 `74e141b`. The cross-model review of 30 Aug 2026 (`docs/plans/progress/evaluation-review.md`
-in the operator's records) changed the task payloads, graders, driver, report and
+in the maintainers' records) changed the task payloads, graders, driver, report and
 control prompt; the reasons are listed with the archived first run.
 
 ### Prompt-mode schema repair (12 September 2026)
@@ -650,7 +662,7 @@ the captured GLM failures omitted required actions that a validator cannot inven
 
 The setting is the eighteenth shared parity field. New evidence includes a
 `structured-output.json` companion record, produced by
-`pnpm exec tsx scripts/eval-structured-output.ts <semifinal.json> <function-logs.jsonl>`.
+`pnpm exec tsx scripts/eval-structured-output.ts <evidence.json> <function-logs.jsonl>`.
 It records initial schema failures, repair attempts and coercions for every observed
 structured call and task, and flags incomplete log coverage. It refuses to replace a
 record already in the evidence directory, which is frozen once written. First-reply validity means
