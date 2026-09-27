@@ -223,10 +223,13 @@ function systemNames(ctx: EvalContext): { live: string[]; absent: string[] } {
   const now = ctx.now ?? Date.now();
   const names = (surfaces: readonly EvaluationSurface[]): string[] =>
     surfaces.flatMap((surface) => [surface.displayName, surface.slug]);
-  const connected = ctx.surfaces.filter((surface): boolean => verdictFor(surface, now) === 'connected');
+  const connected = ctx.surfaces.filter(
+    (surface): boolean => verdictFor(surface, now) === 'connected',
+  );
   const absent = ctx.surfaces.filter(
     (surface): boolean =>
-      !connected.includes(surface) && !connected.some((live) => sameEvaluationSystem(surface, live)),
+      !connected.includes(surface) &&
+      !connected.some((live) => sameEvaluationSystem(surface, live)),
   );
   return { live: names(connected), absent: names(absent) };
 }
@@ -242,10 +245,7 @@ function evaluationSurfaceIdentity(surface: EvaluationSurface) {
   });
 }
 
-function sameEvaluationSystem(
-  left: EvaluationSurface,
-  right: EvaluationSurface,
-): boolean {
+function sameEvaluationSystem(left: EvaluationSurface, right: EvaluationSurface): boolean {
   const leftIdentity = evaluationSurfaceIdentity(left);
   const rightIdentity = evaluationSurfaceIdentity(right);
   return (

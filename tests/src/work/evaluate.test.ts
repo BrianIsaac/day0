@@ -170,7 +170,9 @@ describe('work surface enablement', (): void => {
       operation: 'comment-and-close',
     });
     expect(verdict.suggestedSkillName).not.toContain(ticket.externalId.toLowerCase());
-    expect(verdict.suggestedSkillRationale).toContain('ticket comment-and-close on a kanban surface');
+    expect(verdict.suggestedSkillRationale).toContain(
+      'ticket comment-and-close on a kanban surface',
+    );
     expect(verdict.suggestedSkillRationale).toContain(`"${ticket.title}"`);
     expect(verdict.suggestedSkillRationale).not.toContain(charter.proposedFunction);
     expect(verdict.suggestedSkillRationale).not.toContain('Charter');
@@ -441,18 +443,16 @@ describe('work surface enablement', (): void => {
         decision: 'skip',
         reason: 'out-of-scope: no charter or current documented-system overlap',
       });
-      await expect(
-        evaluateCandidate(work, context('mock', []), lookups()),
-      ).resolves.toMatchObject({ decision: 'skip' });
+      await expect(evaluateCandidate(work, context('mock', []), lookups())).resolves.toMatchObject({
+        decision: 'skip',
+      });
     });
   });
 
   it('leaves the eligibility rule out once the manager has waived it, in either mode', async (): Promise<void> => {
     const work = candidate('ticket', 'Reserve the venue and confirm the catering headcount.');
     work.title = 'Book the offsite venue';
-    await expect(
-      evaluateCandidate(work, context('mock', []), lookups()),
-    ).resolves.toEqual({
+    await expect(evaluateCandidate(work, context('mock', []), lookups())).resolves.toEqual({
       decision: 'skip',
       reason: 'out-of-scope: no charter or current documented-system overlap',
     });
@@ -466,7 +466,11 @@ describe('work surface enablement', (): void => {
         { ...context('real', [surface('linear', 'absent')]), scopeWaived: true },
         lookups(),
       ),
-    ).resolves.toEqual({ decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' });
+    ).resolves.toEqual({
+      decision: 'defer',
+      reason: 'awaiting-connection',
+      missingSurface: 'linear',
+    });
   });
 
   it('does not use retired documentation evidence to widen charter scope', async (): Promise<void> => {

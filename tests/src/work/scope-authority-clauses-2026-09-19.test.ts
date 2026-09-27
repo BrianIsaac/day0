@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateCandidate } from '../../../src/work/evaluate';
-import { charterJudgementPrompt, isAuthorityClause, type ScopeJudgement } from '../../../src/work/scope';
+import {
+  charterJudgementPrompt,
+  isAuthorityClause,
+  type ScopeJudgement,
+} from '../../../src/work/scope';
 import {
   L_REASON,
   fin1,
@@ -52,7 +56,10 @@ async function evaluate(
   candidate: Parameters<typeof evaluateCandidate>[0],
   ctx: Parameters<typeof evaluateCandidate>[1],
   lookups = noSkill,
-): Promise<{ verdict: Awaited<ReturnType<typeof evaluateCandidate>>; judgements: ScopeJudgement[] }> {
+): Promise<{
+  verdict: Awaited<ReturnType<typeof evaluateCandidate>>;
+  judgements: ScopeJudgement[];
+}> {
   const judgements: ScopeJudgement[] = [];
   const verdict = await evaluateCandidate(candidate, ctx, lookups, {
     onScopeJudgement: (judgement): void => void judgements.push(judgement),
@@ -95,7 +102,7 @@ describe('clauses about who approves are not scope exclusions (finding L, FIN-1)
     expect(isAuthorityClause(clause)).toBe(false);
   });
 
-  it('does not let the run\'s skip stand: the clause it quotes is met by supervision', async (): Promise<void> => {
+  it("does not let the run's skip stand: the clause it quotes is met by supervision", async (): Promise<void> => {
     model.answers.push(runSkip, runSkip);
 
     const { verdict, judgements } = await evaluate(fin1, runContext('mateo'));
@@ -105,7 +112,8 @@ describe('clauses about who approves are not scope exclusions (finding L, FIN-1)
       {
         admitted: true,
         basis: 'source-named',
-        namedBy: 'Read the September close step tickets in Linear (team FIN, project September close).',
+        namedBy:
+          'Read the September close step tickets in Linear (team FIN, project September close).',
         overruled: [L_REASON, L_REASON],
       },
     ]);
@@ -149,14 +157,19 @@ describe('clauses about who approves are not scope exclusions (finding L, FIN-1)
     };
     const prompt = charterJudgementPrompt({ candidate: revops27, charter, agentsMd: '' });
 
-    expect(prompt).toContain('willNotDo: Access or work in Northstar CRM until there is an approved way in.\n');
+    expect(prompt).toContain(
+      'willNotDo: Access or work in Northstar CRM until there is an approved way in.\n',
+    );
     expect(prompt).not.toContain('authority (');
   });
 });
 
 describe('a row already judged in scope is not judged again', (): void => {
   it('asks no model, runs the rest of the chain and reaches the skill match', async (): Promise<void> => {
-    const findMatchingSkill = vi.fn(async () => ({ name: 'kanban-comment-and-close', description: '' }));
+    const findMatchingSkill = vi.fn(async () => ({
+      name: 'kanban-comment-and-close',
+      description: '',
+    }));
 
     const { verdict, judgements } = await evaluate(
       fin1,

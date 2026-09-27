@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateCandidate } from '../../../src/work/evaluate';
-import { charterJudgementPrompt, willDoClauseNaming, type ScopeJudgement } from '../../../src/work/scope';
+import {
+  charterJudgementPrompt,
+  willDoClauseNaming,
+  type ScopeJudgement,
+} from '../../../src/work/scope';
 import {
   K_REASON,
   mateoCharter,
@@ -58,7 +62,10 @@ const uncitedSkip: Answer = {
 async function evaluate(
   candidate: Parameters<typeof evaluateCandidate>[0],
   ctx: Parameters<typeof evaluateCandidate>[1],
-): Promise<{ verdict: Awaited<ReturnType<typeof evaluateCandidate>>; judgements: ScopeJudgement[] }> {
+): Promise<{
+  verdict: Awaited<ReturnType<typeof evaluateCandidate>>;
+  judgements: ScopeJudgement[];
+}> {
   const judgements: ScopeJudgement[] = [];
   const verdict = await evaluateCandidate(candidate, ctx, noSkill, {
     onScopeJudgement: (judgement): void => void judgements.push(judgement),
@@ -72,8 +79,9 @@ beforeEach((): void => {
 });
 
 describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)', (): void => {
-  it('does not stand on the run\'s reason: asked once more, then kept in scope with both readings', async (): Promise<void> => {
-    const second = 'Refreshing a dashboard tile is analytics work, which the willDo clauses do not list.';
+  it("does not stand on the run's reason: asked once more, then kept in scope with both readings", async (): Promise<void> => {
+    const second =
+      'Refreshing a dashboard tile is analytics work, which the willDo clauses do not list.';
     model.answers.push(uncitedSkip, { ...uncitedSkip, reason: second });
 
     const { verdict, judgements } = await evaluate(revops27, runContext('priya'));
@@ -87,7 +95,10 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
         overruled: [K_REASON, second],
       },
     ]);
-    expect(model.calls.map((call) => call.agent)).toEqual(['day0-scope-judgement', 'day0-scope-judgement']);
+    expect(model.calls.map((call) => call.agent)).toEqual([
+      'day0-scope-judgement',
+      'day0-scope-judgement',
+    ]);
   });
 
   it('tells the second asking what the first said, which clause names the source, and what a skip must cite', async (): Promise<void> => {
@@ -124,16 +135,21 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
   });
 
   it('shows the model which systems are connected, one spelling each, so an absent one is not a guess', async (): Promise<void> => {
-    model.answers.push({ inScope: true, fit: true, reason: 'ticket work', exclusion: { kind: 'none', quote: '' } });
+    model.answers.push({
+      inScope: true,
+      fit: true,
+      reason: 'ticket work',
+      exclusion: { kind: 'none', quote: '' },
+    });
 
     await evaluate(revops27, runContext('priya'));
 
     expect(model.calls[0]!.user).toContain(
       'Systems the role is connected to now: Linear, Slack, Looker pipeline tile\n',
     );
-    expect(charterJudgementPrompt({ candidate: revops27, charter: priyaCharter, agentsMd: '' })).not.toContain(
-      'connected to now',
-    );
+    expect(
+      charterJudgementPrompt({ candidate: revops27, charter: priyaCharter, agentsMd: '' }),
+    ).not.toContain('connected to now');
   });
 
   it('takes the second reading when it places the item in scope, and keeps the first beside it', async (): Promise<void> => {
@@ -164,13 +180,18 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
       inScope: false,
       fit: true,
       reason,
-      exclusion: { kind: 'will-not-do', quote: 'Access or work in Northstar CRM until there is an approved way in.' },
+      exclusion: {
+        kind: 'will-not-do',
+        quote: 'Access or work in Northstar CRM until there is an approved way in.',
+      },
     });
 
     const { verdict, judgements } = await evaluate(revops29, runContext('priya'));
 
     expect(verdict).toEqual({ decision: 'skip', reason: `out-of-scope: ${reason}` });
-    expect(judgements).toEqual([{ admitted: false, basis: 'charter-judgement', reason: `out-of-scope: ${reason}` }]);
+    expect(judgements).toEqual([
+      { admitted: false, basis: 'charter-judgement', reason: `out-of-scope: ${reason}` },
+    ]);
     expect(model.calls).toHaveLength(1);
   });
 
@@ -179,7 +200,10 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
       inScope: false,
       fit: true,
       reason: 'Northstar is closed to the role.',
-      exclusion: { kind: 'will-not-do', quote: '"access or work in Northstar CRM until there is an approved way in"' },
+      exclusion: {
+        kind: 'will-not-do',
+        quote: '"access or work in Northstar CRM until there is an approved way in"',
+      },
     });
 
     const { verdict } = await evaluate(revops29, runContext('priya'));
@@ -233,7 +257,10 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
 
   it('takes only a listed system that is not connected for an absent one, never a phrase of the item', async (): Promise<void> => {
     model.answers.push(
-      { ...uncitedSkip, exclusion: { kind: 'absent-system', quote: 'Friday standup coverage summary' } },
+      {
+        ...uncitedSkip,
+        exclusion: { kind: 'absent-system', quote: 'Friday standup coverage summary' },
+      },
       { ...uncitedSkip, exclusion: { kind: 'absent-system', quote: 'pipeline coverage figure' } },
     );
 
@@ -261,7 +288,7 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
     model.answers.push({
       inScope: false,
       fit: true,
-      reason: 'The billing system of record is not the role\'s to change.',
+      reason: "The billing system of record is not the role's to change.",
       exclusion: { kind: 'will-not-do', quote: 'Change the billing system of record' },
     });
 
@@ -272,12 +299,15 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
   });
 
   it('lets the second reading skip when that one cites', async (): Promise<void> => {
-    const cited = 'Configuring Linear is the admins\' lane.';
+    const cited = "Configuring Linear is the admins' lane.";
     model.answers.push(uncitedSkip, {
       inScope: false,
       fit: true,
       reason: cited,
-      exclusion: { kind: 'will-not-do', quote: "Own Linear or Slack administration (the admins' lane)." },
+      exclusion: {
+        kind: 'will-not-do',
+        quote: "Own Linear or Slack administration (the admins' lane).",
+      },
     });
 
     const { verdict } = await evaluate(revops27, runContext('priya'));
@@ -323,7 +353,9 @@ describe('never the reverse: an item whose source the willDo does not name', ():
     const { verdict, judgements } = await evaluate(opsRequestsMention, runContext('mateo'));
 
     expect(verdict).toEqual({ decision: 'skip', reason: `out-of-scope: ${reason}` });
-    expect(judgements).toEqual([{ admitted: false, basis: 'charter-judgement', reason: `out-of-scope: ${reason}` }]);
+    expect(judgements).toEqual([
+      { admitted: false, basis: 'charter-judgement', reason: `out-of-scope: ${reason}` },
+    ]);
     expect(model.calls).toHaveLength(1);
     expect(model.calls[0]!.user).not.toContain('names where this item came from');
   });
@@ -353,12 +385,12 @@ describe('which willDo clause names a source', (): void => {
   const linear = { surface: 'Linear', slug: 'linear' };
 
   it('reads the team or the project as a whole phrase', (): void => {
-    expect(willDoClauseNaming(priyaCharter, { ...linear, team: 'REVOPS', projects: ['Q3 close'] })).toBe(
-      'Work the tickets in Linear, team REVOPS, project Q3 close.',
-    );
-    expect(willDoClauseNaming(mateoCharter, { ...linear, team: 'FIN', projects: ['September close'] })).toBe(
-      'Read the September close step tickets in Linear (team FIN, project September close).',
-    );
+    expect(
+      willDoClauseNaming(priyaCharter, { ...linear, team: 'REVOPS', projects: ['Q3 close'] }),
+    ).toBe('Work the tickets in Linear, team REVOPS, project Q3 close.');
+    expect(
+      willDoClauseNaming(mateoCharter, { ...linear, team: 'FIN', projects: ['September close'] }),
+    ).toBe('Read the September close step tickets in Linear (team FIN, project September close).');
   });
 
   it('needs the channel itself for a mention, never only the chat surface', (): void => {
@@ -370,7 +402,7 @@ describe('which willDo clause names a source', (): void => {
     expect(willDoClauseNaming(mateoCharter, { ...slack, channel: 'finance' })).toBeUndefined();
   });
 
-  it('does not take the surface\'s name for the source where intake is bounded, or for any mention', (): void => {
+  it("does not take the surface's name for the source where intake is bounded, or for any mention", (): void => {
     const charter = {
       ...priyaCharter,
       proposedBoundaries: {
@@ -378,17 +410,26 @@ describe('which willDo clause names a source', (): void => {
         willDo: ['Slack RevOps messages', 'Keep audit notes on the Linear tickets.'],
       },
     };
-    expect(willDoClauseNaming(charter, { ...linear, team: 'REVOPS', projects: ['Q3 close'] })).toBeUndefined();
-    expect(willDoClauseNaming(charter, { surface: 'Slack', slug: 'slack', mention: true })).toBeUndefined();
+    expect(
+      willDoClauseNaming(charter, { ...linear, team: 'REVOPS', projects: ['Q3 close'] }),
+    ).toBeUndefined();
+    expect(
+      willDoClauseNaming(charter, { surface: 'Slack', slug: 'slack', mention: true }),
+    ).toBeUndefined();
     expect(willDoClauseNaming(charter, linear)).toBe('Keep audit notes on the Linear tickets.');
   });
 
   it('matches an upper-case identifier by case, so a team LOG is not the verb', (): void => {
     const charter = {
       ...priyaCharter,
-      proposedBoundaries: { ...priyaCharter.proposedBoundaries, willDo: ['Log each exception as it comes in.'] },
+      proposedBoundaries: {
+        ...priyaCharter.proposedBoundaries,
+        willDo: ['Log each exception as it comes in.'],
+      },
     };
-    expect(willDoClauseNaming(charter, { surface: 'Tracker', slug: 'tracker', team: 'LOG' })).toBeUndefined();
+    expect(
+      willDoClauseNaming(charter, { surface: 'Tracker', slug: 'tracker', team: 'LOG' }),
+    ).toBeUndefined();
   });
 
   it('names nothing for a charter without willDo clauses', (): void => {
