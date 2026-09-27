@@ -7,7 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Id, TableNames } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { recomputeFromExport, recomputeFromTraces, runRecompute } from '../../scripts/recompute-metrics';
+import {
+  recomputeFromExport,
+  recomputeFromTraces,
+  runRecompute,
+} from '../../scripts/recompute-metrics';
 import { assembleTrace, type AgentTrace } from '../../src/export/trace';
 import { allConvexModules } from '../convex/all-modules';
 
@@ -231,18 +235,30 @@ describe('recomputing the supervision figures from an export', (): void => {
     if (!priyaId) throw new Error('synthetic employee absent');
     const eventsPath = join(directory, 'events', 'documents.jsonl');
     const earlier = {
-      _id: 'z-earlier', _creationTime: 500_000.1, agentId: priyaId,
-      type: 'skill.registered', payload: {}, createdAt: 500_000,
+      _id: 'z-earlier',
+      _creationTime: 500_000.1,
+      agentId: priyaId,
+      type: 'skill.registered',
+      payload: {},
+      createdAt: 500_000,
     };
     const later = {
-      _id: 'a-later', _creationTime: 500_000.2, agentId: priyaId,
-      type: 'skill.failed', payload: {}, createdAt: 500_000,
+      _id: 'a-later',
+      _creationTime: 500_000.2,
+      agentId: priyaId,
+      type: 'skill.failed',
+      payload: {},
+      createdAt: 500_000,
     };
-    writeFileSync(eventsPath, `${readFileSync(eventsPath, 'utf8')}${JSON.stringify(later)}\n${JSON.stringify(earlier)}\n`);
+    writeFileSync(
+      eventsPath,
+      `${readFileSync(eventsPath, 'utf8')}${JSON.stringify(later)}\n${JSON.stringify(earlier)}\n`,
+    );
 
     const { timeline } = recomputeFromExport(directory, { owner: OWNER });
     expect(timeline.filter((row) => row.at === 500_000).map((row) => row.type)).toEqual([
-      'skill.registered', 'skill.failed',
+      'skill.registered',
+      'skill.failed',
     ]);
   });
 
@@ -308,8 +324,8 @@ describe('recomputing the supervision figures from an export', (): void => {
 /** Every employee's trace of the owner, through the paged export actions, as the command line assembles them. */
 async function exportedTraces(harness: ReturnType<typeof convexTest>): Promise<AgentTrace[]> {
   const owner = harness.withIdentity({ subject: OWNER });
-  const agentIds = await harness.run(
-    async (ctx) => (await ctx.db.query('agents').collect()).map((agent) => agent._id),
+  const agentIds = await harness.run(async (ctx) =>
+    (await ctx.db.query('agents').collect()).map((agent) => agent._id),
   );
   return await Promise.all(
     agentIds.map(
@@ -348,8 +364,12 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     const run = capture();
     expect(runRecompute(files, run.io)).toBe(0);
     const ran = run.out.find((line) => line.startsWith('recomputed '));
-    expect(ran).toMatch(/^recomputed \d{4}-\d{2}-\d{2}T[\d:.]+Z from 3 traces: Priya exported \d{4}-\d{2}-\d{2} \(UTC\) at release unstamped, commit unknown; /);
-    expect(run.out.some((line) => line.includes("(first event): the recording's own time"))).toBe(true);
+    expect(ran).toMatch(
+      /^recomputed \d{4}-\d{2}-\d{2}T[\d:.]+Z from 3 traces: Priya exported \d{4}-\d{2}-\d{2} \(UTC\) at release unstamped, commit unknown; /,
+    );
+    expect(run.out.some((line) => line.includes("(first event): the recording's own time"))).toBe(
+      true,
+    );
   });
 
   it('refuses a JSON file that is not a trace, and traces mixed with a snapshot', async (): Promise<void> => {
@@ -380,7 +400,10 @@ const RECORDING_CARD = resolve('tests/fixtures/recording-2026-09-17-card.json');
 describe('the 17 September recording, as a tracked trace', (): void => {
   it('reproduces the Supervision card the manager saw, with --expect', (): void => {
     const run = capture();
-    expect(runRecompute([RECORDING_TRACE, '--expect', RECORDING_CARD], run.io), run.err.join('\n')).toBe(0);
+    expect(
+      runRecompute([RECORDING_TRACE, '--expect', RECORDING_CARD], run.io),
+      run.err.join('\n'),
+    ).toBe(0);
     expect(run.out.at(-1)).toBe(`every figure in ${RECORDING_CARD} holds`);
     expect(run.out.find((line) => line.startsWith('recomputed '))).toContain(
       'ops worker exported 2026-09-16 (UTC) at release unstamped, commit 70a15c0',
@@ -389,7 +412,11 @@ describe('the 17 September recording, as a tracked trace', (): void => {
 
   it('splits its automatic rows and gives the pilot figures the card did not have', (): void => {
     const { figures } = recomputeFromTraces([JSON.parse(readFileSync(RECORDING_TRACE, 'utf8'))]);
-    expect(figures.company.actions.automatic).toEqual({ reads: 12, managerMessages: 1, writes: 12 });
+    expect(figures.company.actions.automatic).toEqual({
+      reads: 12,
+      managerMessages: 1,
+      writes: 12,
+    });
     expect(figures.company.pilot).toEqual({
       skillReuse: { runs: 3, reused: 0, rate: 0 },
       cycleTime: {

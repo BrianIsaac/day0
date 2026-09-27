@@ -60,14 +60,26 @@ export const bySourceForStore = internalQuery({
     const row = fakeCredentialState().rows.get(
       fakeCredentialKey(args.userId, String(args.sourceId), args.ref),
     );
-    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt, explicitlyAssigned: row.explicitlyAssigned, ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!) } : null;
+    return row
+      ? {
+          _id: row._id,
+          kind: 'value',
+          label: row.label,
+          revokedAt: row.revokedAt,
+          explicitlyAssigned: row.explicitlyAssigned,
+          ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!),
+        }
+      : null;
   },
 });
 
 /** Mirror lane A's list for the exact-value layer: these fixtures store nothing to remove. */
 export const activeValuesForOwner = internalQuery({
   args: { userId: v.string() },
-  handler: async (): Promise<{ overflow: boolean; rows: never[] }> => ({ overflow: false, rows: [] }),
+  handler: async (): Promise<{ overflow: boolean; rows: never[] }> => ({
+    overflow: false,
+    rows: [],
+  }),
 });
 
 /** Mirror lane A's `decrypt`: an unknown or revoked row is unavailable. */
