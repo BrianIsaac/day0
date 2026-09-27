@@ -35,9 +35,7 @@ const goodHabitsAgent = makeAgent('day0-good-habits', SYSTEM_PROMPT);
 
 function formatResults(results: ExaResult[]): string {
   if (results.length === 0) return '(no search results returned)';
-  return results
-    .map((r, idx) => `[${idx + 1}] ${r.title}\nURL: ${r.url}\n${r.text}`)
-    .join('\n\n');
+  return results.map((r, idx) => `[${idx + 1}] ${r.title}\nURL: ${r.url}\n${r.text}`).join('\n\n');
 }
 
 export interface DistilArgs {
