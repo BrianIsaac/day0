@@ -24,7 +24,7 @@ import { awaitsManagerProposal, charterNamesWorkSystems } from '@/surfaces/chart
 import {
   presentIntakeScope,
   presentScopeDrift,
-  scopeDrift,
+  restatedScope,
   scopeFieldsFor,
   type IntakeScope,
   type ScopePage,
@@ -858,7 +858,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
               ) : null}
               {surface.intakeScope && scopeFieldsFor(surface.class).length > 0 ? (
                 <IntakeScopeRow
-                  drift={scopeDrift(surface.intakeScope, scopePages)}
+                  drift={restatedScope(surface.intakeScope, scopePages).drift}
                   scope={surface.intakeScope}
                   sourceLabels={sourceLabels}
                   surfaceClass={surface.class}

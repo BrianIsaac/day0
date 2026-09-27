@@ -699,10 +699,9 @@ describe('SurfacesTab and what each employee reads', (): void => {
     state.pages = [
       {
         ...financePages[0],
-        markdown: FINANCE.markdown.replace(
-          '- Project: `September close`',
-          '- Project: `October close`',
-        ),
+        // The handbook states the project twice (lines 10 and 32); the card
+        // judges by value, so the page has stopped stating it only once both go.
+        markdown: FINANCE.markdown.replaceAll('`September close`', '`October close`'),
       },
     ];
     state.surfaces = [
@@ -722,6 +721,32 @@ describe('SurfacesTab and what each employee reads', (): void => {
     expect(markup).toContain(
       'Changed since this card was proposed: project September close is no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.',
     );
+  });
+
+  it('keeps a value the page still states on another line: a reworded line is not drift (U8 D2)', (): void => {
+    state.pages = [
+      {
+        ...financePages[0],
+        markdown: FINANCE.markdown.replace(
+          '- Project: `September close`',
+          '- Project: `October close`',
+        ),
+      },
+    ];
+    state.surfaces = [
+      card({
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'mcp',
+        verdict: 'connected',
+        intakeScope: {
+          team: scopeValue('FIN', '- Team: `FIN`'),
+          project: scopeValue('September close', '- Project: `September close`'),
+        },
+      }),
+    ];
+    expect(render()).not.toContain('Changed since this card was proposed');
   });
 
   it("lists the documented systems this role's charter does not name under the cards, each with Propose", (): void => {
