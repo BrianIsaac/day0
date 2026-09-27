@@ -9,6 +9,7 @@ import {
   questionKey,
   sharedContentWords,
 } from '../src/agent/manager-questions';
+import { appendEvent } from './eventLog';
 
 /**
  * Questions for the manager: the charter's open questions, asked once each
@@ -89,7 +90,7 @@ export async function askOpenQuestionsAtPlan(
       workItemId: row._id,
       charterId: charter._id,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'charter.question-asked',
       payload: { questionId, workItemId: row._id, question, touchedBy: context.touchedBy },
@@ -164,7 +165,7 @@ export async function answerQuestionInTransaction(
   });
   // Every answer is one reorientation the manager settled, whether or not
   // it changed the charter: A9's acceptance figure reads the pair.
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: record.agentId,
     type: 'charter.question-answered',
     payload: {
