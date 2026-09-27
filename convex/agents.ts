@@ -1,4 +1,4 @@
-import { v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
 import {
   mutation,
   query,
@@ -25,6 +25,7 @@ import {
   NOTIFICATIONS_CHANGE_REASON,
   type ManagerNotificationMode,
 } from '../src/work/manager-notes';
+import { agentZone, deploymentZone, isTimeZone } from '../src/lib/zone';
 
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
 export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
@@ -433,6 +434,8 @@ export const deploy = mutation({
     avatarId: v.optional(v.string()),
     arm: v.optional(v.union(v.literal('day0'), v.literal('baseline'))),
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
+    /** The manager's browser zone (N12); one the backend does not know reads as the deployment's. */
+    zone: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
@@ -448,6 +451,7 @@ export const deploy = mutation({
         throw new Error('Documentation source not found or owned by another user.');
       }
     }
+    const zone = args.zone !== undefined && isTimeZone(args.zone) ? args.zone : deploymentZone();
     const agentId = await ctx.db.insert('agents', {
       bossEmail: args.bossEmail,
       name: args.name ?? 'Day0',
@@ -458,12 +462,14 @@ export const deploy = mutation({
       userId: identity.subject,
       state: 'deployed',
       arm: args.arm ?? 'day0',
+      zone,
+      mode: SURFACE_MODE,
       createdAt: Date.now(),
     });
     await ctx.db.insert('events', {
       agentId,
       type: 'agent.deployed',
-      payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0' },
+      payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0', zone, mode: SURFACE_MODE },
       createdAt: Date.now(),
     });
     const initialScopes =
@@ -701,6 +707,34 @@ export const setManagerNotifications = mutation({
       createdAt: Date.now(),
     });
     return { ok: true, managerNotifications: args.mode, changed: true };
+  },
+});
+
+/**
+ * Set the zone the agent's day is measured in, from the card (N12).
+ *
+ * Public, owner-guarded, both modes. Every day boundary the server draws for
+ * the agent and every stamp the dashboard prints move with it; setting the
+ * zone the row already has records nothing. Writes `agents.zone` and an
+ * `agent.zone-changed` event.
+ *
+ * @throws ConvexError when the zone is not one the backend knows.
+ */
+export const setZone = mutation({
+  args: { agentId: v.id('agents'), zone: v.string() },
+  handler: async (ctx, args): Promise<{ zone: string; changed: boolean }> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    if (!isTimeZone(args.zone)) throw new ConvexError(`${args.zone} is not a time zone.`);
+    const from = agentZone(agent);
+    if (agent.zone === args.zone) return { zone: args.zone, changed: false };
+    await ctx.db.patch(args.agentId, { zone: args.zone });
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'agent.zone-changed',
+      payload: { from, to: args.zone },
+      createdAt: Date.now(),
+    });
+    return { zone: args.zone, changed: true };
   },
 });
 

@@ -632,6 +632,76 @@ describe('the autonomous-actions switch', (): void => {
   });
 });
 
+describe('the agent’s zone and mode (N12)', (): void => {
+  it('stores the manager’s browser zone and the deployment’s mode at deploy, on the row and the deploy event', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+      zone: 'Asia/Singapore',
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toMatchObject({
+      zone: 'Asia/Singapore',
+      mode: 'mock',
+    });
+    const deployed = (
+      await harness.run(async (ctx) => await ctx.db.query('events').collect())
+    ).find((event) => event.type === 'agent.deployed');
+    expect(deployed?.payload).toMatchObject({ zone: 'Asia/Singapore', mode: 'mock' });
+  });
+
+  it('falls back to the deployment’s zone when the browser sends none or one the backend does not know', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const none = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
+    const unknown = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+      zone: 'Mars/Olympus',
+    });
+    const rows = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(none), ctx.db.get(unknown)]),
+    );
+    expect(rows.map((row) => row?.zone)).toEqual(['UTC', 'UTC']);
+  });
+
+  it('lets only the owner change the zone from the card, refuses an unknown zone, and records the change', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          zone: 'UTC',
+          createdAt: 1,
+        }),
+    );
+    await expect(
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
+    ).rejects.toThrow('forbidden');
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.agents.setZone, { agentId, zone: 'Nowhere/Else' }),
+    ).rejects.toThrow('not a time zone');
+    await expect(
+      owner.mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
+    ).resolves.toEqual({ zone: 'Asia/Singapore', changed: true });
+    await expect(
+      owner.mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
+    ).resolves.toEqual({ zone: 'Asia/Singapore', changed: false });
+    const changes = (
+      await harness.run(async (ctx) => await ctx.db.query('events').collect())
+    ).filter((event) => event.type === 'agent.zone-changed');
+    expect(changes.map((event) => event.payload)).toEqual([{ from: 'UTC', to: 'Asia/Singapore' }]);
+  });
+});
+
 type Harness = TestConvex<typeof schema>;
 
 /**
