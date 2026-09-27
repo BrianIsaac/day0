@@ -85,8 +85,20 @@ export const autonomyChanges = query({
   },
 });
 
-/** Payload keys that identify a person rather than describe an action. */
-const PERSONAL_KEYS = new Set(['assigneeEmail', 'bossEmail', 'email', 'managerEmail']);
+/**
+ * Keys an export never carries: those that identify a person rather than
+ * describe an action, and a surface's live install claim (a single-use
+ * state nonce and the URL that spends it).
+ */
+const PERSONAL_KEYS = new Set([
+  'assigneeEmail',
+  'bossEmail',
+  'email',
+  'managerEmail',
+  'managerName',
+  'managerUserId',
+  'provisioning',
+]);
 
 /**
  * Redact one value for export: personal keys are dropped, every string has
@@ -111,8 +123,11 @@ export function redactForExport(value: unknown): unknown {
   return value;
 }
 
-/** The most retirement tombstones the owner section reads. */
+/** The most of the owner's retirements the owner section lists, newest first. */
 const RETIREMENT_LIMIT = 1_000;
+
+/** The most tombstones, of any owner, one owner section walks. */
+const RETIREMENT_SCAN_LIMIT = 10_000;
 
 /** The owner's retired employees, from the tombstone events their retire left. */
 async function ownerRetirements(
@@ -120,22 +135,25 @@ async function ownerRetirements(
   owner: string | undefined,
 ): Promise<TraceRetirement[]> {
   if (owner === undefined) return [];
-  // U14 D1 (a): the next schema step's owner-keyed `retirements` table replaces this read.
-  const tombstones = await ctx.db
+  // U14 D1 (a): the next schema step's owner-keyed `retirements` table replaces this walk.
+  const retired: TraceRetirement[] = [];
+  let scanned = 0;
+  for await (const event of ctx.db
     .query('events')
     .withIndex('by_type', (q) => q.eq('type', AGENT_RETIRED_EVENT))
-    .take(RETIREMENT_LIMIT);
-  return tombstones.flatMap((event) => {
+    .order('desc')) {
+    scanned += 1;
     const payload = event.payload as Record<string, unknown> | undefined;
-    if (payload?.userId !== owner) return [];
-    return [
-      {
+    if (payload?.userId === owner) {
+      retired.push({
         agentId: event.agentId,
         retiredAt: typeof payload.retiredAt === 'number' ? payload.retiredAt : event.createdAt,
         payload: redactForExport(payload) as Record<string, unknown>,
-      },
-    ];
-  });
+      });
+    }
+    if (retired.length >= RETIREMENT_LIMIT || scanned >= RETIREMENT_SCAN_LIMIT) break;
+  }
+  return retired;
 }
 
 /**
@@ -211,10 +229,12 @@ const SECTION_PAGES: Readonly<
       .query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .paginate(options),
+  // By creation, not by state: a row that changes state between two pages
+  // would otherwise be read twice or not at all.
   workItems: async (ctx, agentId, options) =>
     await ctx.db
       .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .paginate(options),
   skills: async (ctx, agentId, options) =>
     await ctx.db

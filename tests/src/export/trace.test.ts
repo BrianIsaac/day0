@@ -56,4 +56,19 @@ describe('assembling a trace from its pages', (): void => {
     expect(isAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 1 } })).toBe(false);
     expect(isAgentTrace({ version: 1, agent: {}, events: [] })).toBe(false);
   });
+
+  it('keeps a row two pages both returned once', async (): Promise<void> => {
+    const row = { _id: 'e1', type: 'work.discovered' };
+    const trace = await assembleTrace('a', {
+      head: async () => ({ ...HEAD, next: { section: 'events', cursor: null } }),
+      page: async ({ page }) =>
+        ({
+          section: 'events',
+          rows: [row],
+          next: page.cursor === null ? { section: 'events', cursor: 'again' } : null,
+        }) as unknown as TracePage,
+    });
+    expect(trace.sections.events).toEqual([row]);
+    expect(trace.manifest.counts.events).toBe(1);
+  });
 });

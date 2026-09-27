@@ -170,13 +170,20 @@ export async function assembleTrace(
     surfaces: [],
     events: [],
   };
+  const seen = new Set<string>();
   let next: TraceCursor | null = head.next;
   while (next !== null) {
     const page: TracePage = await call.page({ agentId, page: next });
     if (page.section !== next.section) {
       throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
     }
-    sections[page.section].push(...page.rows);
+    // A row read twice across pages is one row.
+    for (const row of page.rows) {
+      const id = (row as { _id?: unknown })._id;
+      if (seen.has(`${page.section}:${String(id)}`)) continue;
+      seen.add(`${page.section}:${String(id)}`);
+      sections[page.section].push(row);
+    }
     next = page.next;
   }
   const counts = Object.fromEntries(

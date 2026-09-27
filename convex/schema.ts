@@ -732,6 +732,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_agent_state', ['agentId', 'state'])
+    /** One agent's rows in creation order: a stable order for the export's pages. */
+    .index('by_agent', ['agentId'])
     .index('by_agent_decision', ['agentId', 'decision.id'])
     .index('by_agent_decision_surface_channel', [
       'agentId',

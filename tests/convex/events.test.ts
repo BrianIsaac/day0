@@ -177,6 +177,47 @@ describe('the paged trace export', (): void => {
     expect(serialised).not.toContain('boss@day0.local');
   });
 
+  it('carries no live install claim and no manager identity on a surface', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const credential = (await ctx.db.query('credentials').first())!;
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'team-chat',
+        displayName: 'Team chat',
+        class: 'chat',
+        verdict: 'approved',
+        whereFound: [],
+        credentialLanded: false,
+        managerName: 'Priya Raman',
+        managerUserId: 'U0PRIYA',
+        managerDmChannelId: 'D0MANAGER',
+        provisioning: {
+          appId: 'A0DAY0',
+          appName: 'Day0',
+          clientId: '123.456',
+          clientSecretCredentialId: credential._id,
+          installUrl: 'https://slack.com/oauth/v2/authorize?state=LIVE-NONCE-123',
+          redirectUrl: 'https://day0.example/oauth',
+          scopes: ['chat:write'],
+          createdAt: 2,
+          stateNonce: 'LIVE-NONCE-123',
+          stateExpiresAt: 99,
+        },
+        createdAt: 2,
+      });
+    });
+    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    const serialised = JSON.stringify(trace);
+    expect(serialised).not.toContain('LIVE-NONCE-123');
+    expect(serialised).not.toContain('Priya Raman');
+    expect(serialised).not.toContain('U0PRIYA');
+    expect(trace.sections.surfaces.find((surface) => surface.slug === 'team-chat')).toMatchObject({
+      managerDmChannelId: 'D0MANAGER',
+    });
+  });
+
   it('never returns more than one page of rows in a call, however many events the agent has', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedTracedAgent(harness);

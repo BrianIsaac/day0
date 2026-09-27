@@ -63,7 +63,7 @@ export const exportForAgent = action({
       agentId: args.agentId,
       exportedAt: Date.now(),
     });
-    return redactStrings(head, known);
+    return { ...redactStrings(head, known), next: head.next };
   },
 });
 
@@ -81,6 +81,8 @@ export const exportPage = action({
   handler: async (ctx, args): Promise<TracePage> => {
     const known = await knownValuesFor(ctx, args.agentId);
     const page: TracePage = await ctx.runQuery(internal.events.exportPage, args);
-    return redactStrings(page, known);
+    // The cursor is the backend's own position, never data: redacting it
+    // could turn it into one the next call cannot read.
+    return { ...page, rows: redactStrings(page.rows, known) };
   },
 });
