@@ -1,6 +1,11 @@
 import type { MockAction } from '../work/types';
 import { parseSurfaceAction } from './policy';
-import type { ActionAuthority, AppliedAction, SessionRecipeStep, SessionRestoreStep } from './types';
+import type {
+  ActionAuthority,
+  AppliedAction,
+  SessionRecipeStep,
+  SessionRestoreStep,
+} from './types';
 
 export type { SessionRecipeStep } from './types';
 
@@ -29,7 +34,8 @@ export interface EarlierRows {
 
 /** `{{secret}}`, or its qualified form, in a credential field's value. */
 const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
-const CREDENTIAL_FIELD = /^(?:user ?name|e-?mail(?: address)?|password|passcode|access code|secret|api key|token)$/i;
+const CREDENTIAL_FIELD =
+  /^(?:user ?name|e-?mail(?: address)?|password|passcode|access code|secret|api key|token)$/i;
 const SIGN_IN_CONTROL = /^(?:sign[ -]?in|log[ -]?(?:in|on))$/i;
 const NEXT_CONTROL = /^next$/i;
 
@@ -138,7 +144,8 @@ export function ledgerRunIds(applied: readonly (AppliedAction | undefined)[]): s
 }
 
 const isNavigate = (row: BrowserRow): boolean => row.tool === 'browser_navigate';
-const isCredentialFill = (row: BrowserRow): boolean => signsIn(row.action, String(row.action.args.surface));
+const isCredentialFill = (row: BrowserRow): boolean =>
+  signsIn(row.action, String(row.action.args.surface));
 
 function directlyAfter(before: BrowserRow | undefined, after: BrowserRow | undefined): boolean {
   if (!before || !after || before.runId !== after.runId) return false;
@@ -174,9 +181,12 @@ export function signsIn(action: MockAction | undefined, slug: string): boolean {
   if (!action) return false;
   const parsed = parseSurfaceAction(action);
   if (
-    !parsed.ok || parsed.action.kind !== 'mcp.call' ||
-    parsed.action.surface !== slug || parsed.action.tool !== 'browser_fill_form'
-  ) return false;
+    !parsed.ok ||
+    parsed.action.kind !== 'mcp.call' ||
+    parsed.action.surface !== slug ||
+    parsed.action.tool !== 'browser_fill_form'
+  )
+    return false;
   const fields = parsed.action.toolArgs.fields;
   if (!Array.isArray(fields) || fields.length === 0) return false;
   let hasSecret = false;
@@ -184,7 +194,12 @@ export function signsIn(action: MockAction | undefined, slug: string): boolean {
     if (!field || typeof field !== 'object' || Array.isArray(field)) return false;
     const name = (field as Record<string, unknown>).name;
     const value = (field as Record<string, unknown>).value;
-    if (typeof name !== 'string' || !CREDENTIAL_FIELD.test(name.trim()) || typeof value !== 'string') return false;
+    if (
+      typeof name !== 'string' ||
+      !CREDENTIAL_FIELD.test(name.trim()) ||
+      typeof value !== 'string'
+    )
+      return false;
     if (SECRET_PLACEHOLDER.test(value)) hasSecret = true;
   }
   return hasSecret;
@@ -289,7 +304,11 @@ export function sessionRecipe(
     {
       action: {
         tool: 'mcp.call',
-        args: { surface: slug, tool: 'browser_navigate', toolArgsJson: JSON.stringify({ url: endpoint }) },
+        args: {
+          surface: slug,
+          tool: 'browser_navigate',
+          toolArgsJson: JSON.stringify({ url: endpoint }),
+        },
       },
     },
     ...steps,

@@ -10,10 +10,18 @@ import type { ActionAuthority, AppliedAction } from '../../../src/surfaces/types
 import type { MockAction } from '../../../src/work/types';
 
 const ENDPOINT = 'http://looker-tile:8080/';
-const sessionRecipe = (slug: string, earlier: EarlierRows, endpoint: string | undefined, runId = 'run') =>
-  recipeForRun(slug, earlier, endpoint, runId);
+const sessionRecipe = (
+  slug: string,
+  earlier: EarlierRows,
+  endpoint: string | undefined,
+  runId = 'run',
+) => recipeForRun(slug, earlier, endpoint, runId);
 
-const call = (tool: string, args: Record<string, unknown> = {}, surface = 'looker'): MockAction => ({
+const call = (
+  tool: string,
+  args: Record<string, unknown> = {},
+  surface = 'looker',
+): MockAction => ({
   tool: 'mcp.call',
   args: { surface, tool, toolArgsJson: JSON.stringify(args) },
 });
@@ -26,7 +34,9 @@ const signIn = call('browser_fill_form', {
 });
 const clickSignIn = call('browser_click', { element: 'Sign in' });
 const snapshot = call('browser_snapshot');
-const fillCoverage = call('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '74%' }] });
+const fillCoverage = call('browser_fill_form', {
+  fields: [{ name: 'Pipeline coverage', value: '74%' }],
+});
 const clickSave = call('browser_click', { element: 'Save' });
 
 const landed = (key: string, authority: ActionAuthority = 'autonomous'): AppliedAction => ({
@@ -38,7 +48,11 @@ const landed = (key: string, authority: ActionAuthority = 'autonomous'): Applied
 });
 
 /** A ledger for one run: every action landed under the toggle, keyed by its index. */
-function run(actions: MockAction[], runId = 'run', offset = 0): { actions: MockAction[]; applied: AppliedAction[] } {
+function run(
+  actions: MockAction[],
+  runId = 'run',
+  offset = 0,
+): { actions: MockAction[]; applied: AppliedAction[] } {
   return { actions, applied: actions.map((_, index) => landed(`wi:${runId}:${index + offset}`)) };
 }
 
@@ -47,7 +61,11 @@ const tools = (recipe: SessionRecipeStep[]): Array<[string, string | undefined]>
 
 describe('the steps that re-establish a browser session', (): void => {
   it('replays the navigate, the credential fill and the Sign in click of a sign-in then read', (): void => {
-    const recipe = sessionRecipe('looker', run([navigate(), signIn, clickSignIn, snapshot]), ENDPOINT);
+    const recipe = sessionRecipe(
+      'looker',
+      run([navigate(), signIn, clickSignIn, snapshot]),
+      ENDPOINT,
+    );
     expect(recipe).toEqual([
       { action: navigate(), replayOf: 'wi:run:0', authority: 'autonomous' },
       { action: signIn, replayOf: 'wi:run:1', authority: 'autonomous' },
@@ -122,9 +140,9 @@ describe('the steps that re-establish a browser session', (): void => {
   });
 
   it('refuses a credential fill whose submit is separated by a read', (): void => {
-    expect(() => sessionRecipe('looker', run([navigate(), signIn, snapshot, clickSignIn]), ENDPOINT)).toThrow(
-      'incomplete sign-in',
-    );
+    expect(() =>
+      sessionRecipe('looker', run([navigate(), signIn, snapshot, clickSignIn]), ENDPOINT),
+    ).toThrow('incomplete sign-in');
   });
 
   it('refuses a click separated from a credential fill by a held or failed row', (): void => {
@@ -165,8 +183,19 @@ describe('the steps that re-establish a browser session', (): void => {
     const applied: AppliedAction[] = [
       landed('wi:run:0'),
       { tool: 'mcp.call', ok: true, held: true, reason: 'held', idempotencyKey: 'wi:run:1' },
-      { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, idempotencyKey: 'wi:run:2' },
-      { tool: 'mcp.call', ok: false, reason: 'no grant (looker:write)', idempotencyKey: 'wi:run:3' },
+      {
+        tool: 'mcp.call',
+        ok: true,
+        held: true,
+        awaitingApproval: true,
+        idempotencyKey: 'wi:run:2',
+      },
+      {
+        tool: 'mcp.call',
+        ok: false,
+        reason: 'no grant (looker:write)',
+        idempotencyKey: 'wi:run:3',
+      },
       landed('wi:run:4'),
       landed('wi:run:5', 'manager'),
       landed('wi:run:6', 'manager'),
@@ -178,14 +207,17 @@ describe('the steps that re-establish a browser session', (): void => {
     ]);
   });
 
-  it('reads the latest run only, so an earlier run\'s landed writes are not replayed before its own navigate', (): void => {
+  it("reads the latest run only, so an earlier run's landed writes are not replayed before its own navigate", (): void => {
     // A retry's prerequisite ledger: the earlier run's landed writes first
     // (no navigate, which is a read), then this run's own phase one.
     const earlier = run([signIn, clickSignIn, fillCoverage, clickSave], 'first', 1);
     const own = run([navigate(), signIn, clickSignIn, snapshot], 'second');
     const recipe = sessionRecipe(
       'looker',
-      { actions: [...earlier.actions, ...own.actions], applied: [...earlier.applied, ...own.applied] },
+      {
+        actions: [...earlier.actions, ...own.actions],
+        applied: [...earlier.applied, ...own.applied],
+      },
       ENDPOINT,
       'second',
     );
@@ -218,7 +250,10 @@ describe('the steps that re-establish a browser session', (): void => {
     const carried = run([navigate(), snapshot], 'first');
     const recipe = recipeForRun(
       'looker',
-      { actions: [...older.actions, ...carried.actions], applied: [...older.applied, ...carried.applied] },
+      {
+        actions: [...older.actions, ...carried.actions],
+        applied: [...older.applied, ...carried.applied],
+      },
       ENDPOINT,
       'retry',
       ['first'],
@@ -232,7 +267,9 @@ describe('the steps that re-establish a browser session', (): void => {
     // closing sign-in included) carried ahead of its own phase one.
     const writes = {
       actions: [signIn, clickSignIn, signIn, clickSignIn, fillCoverage],
-      applied: ['wi:first:1', 'wi:first:2', 'wi:first:4', 'wi:first:5', 'wi:first:6'].map((key) => landed(key)),
+      applied: ['wi:first:1', 'wi:first:2', 'wi:first:4', 'wi:first:5', 'wi:first:6'].map((key) =>
+        landed(key),
+      ),
     };
     const phaseOne = run([navigate(), signIn, clickSignIn, snapshot], 'first');
     const recipe = sessionRecipe(
@@ -253,7 +290,9 @@ describe('the steps that re-establish a browser session', (): void => {
   });
 
   it('replays every credential fill of a sign-in that spans two pages', (): void => {
-    const username = call('browser_fill_form', { fields: [{ name: 'Email', value: '{{secret:looker}}' }] });
+    const username = call('browser_fill_form', {
+      fields: [{ name: 'Email', value: '{{secret:looker}}' }],
+    });
     const next = call('browser_click', { element: 'Next' });
     const recipe = sessionRecipe(
       'looker',
@@ -314,7 +353,12 @@ describe('the runs a ledger was landed under', (): void => {
     const phaseOne = run([navigate(), signIn], 'first');
     const refreshed: AppliedAction = { ...landed('wi:retry:2'), idempotencyKey: 'wi:retry:2' };
     expect(
-      ledgerRunIds([...phaseOne.applied, refreshed, undefined, { ...landed('x'), idempotencyKey: 'not-a-run-key' }]),
+      ledgerRunIds([
+        ...phaseOne.applied,
+        refreshed,
+        undefined,
+        { ...landed('x'), idempotencyKey: 'not-a-run-key' },
+      ]),
     ).toEqual(['first', 'retry']);
   });
 });
@@ -322,9 +366,19 @@ describe('the runs a ledger was landed under', (): void => {
 describe('telling a sign-in from any other fill', (): void => {
   it('is a credential fill on the surface, and nothing else', (): void => {
     expect(signsIn(signIn, 'looker')).toBe(true);
-    expect(signsIn(call('browser_fill_form', { fields: [{ name: 'Email', value: '{{ secret:looker }}' }] }), 'looker')).toBe(true);
+    expect(
+      signsIn(
+        call('browser_fill_form', { fields: [{ name: 'Email', value: '{{ secret:looker }}' }] }),
+        'looker',
+      ),
+    ).toBe(true);
     expect(signsIn(fillCoverage, 'looker')).toBe(false);
-    expect(signsIn(call('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '{{secret}}' }] }), 'looker')).toBe(false);
+    expect(
+      signsIn(
+        call('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '{{secret}}' }] }),
+        'looker',
+      ),
+    ).toBe(false);
     expect(signsIn(clickSignIn, 'looker')).toBe(false);
     expect(signsIn(signIn, 'other')).toBe(false);
     expect(signsIn(undefined, 'looker')).toBe(false);
