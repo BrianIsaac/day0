@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { hasHostTool } from '../setup/host-tools';
 import {
   BED_PROFILES,
   PROTECTED_PROJECTS,
@@ -950,7 +951,7 @@ describe('the evidence directory', (): void => {
     expect(RUNG_OUTPUT_FILES).toEqual(['commands.txt', 'trace-agent.json', 'trials.json', 'trials.md']);
   });
 
-  it('writes SHA256SUMS in the format sha256sum -c reads', (): void => {
+  it.skipIf(!hasHostTool('sha256sum'))('writes SHA256SUMS in the format sha256sum -c reads (needs sha256sum)', (): void => {
     const directory = mkdtempSync(join(tmpdir(), 'day0-p11-sums-'));
     try {
       const digests = RUNG_OUTPUT_FILES.map((name) => {

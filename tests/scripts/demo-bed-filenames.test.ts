@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { hasHostTool } from '../setup/host-tools';
 import { restoreCommand, snapshotCommand } from '../../scripts/demo-bed';
 
-describe('snapshot filenames at the container command boundary', () => {
+describe.skipIf(!hasHostTool('python3'))('snapshot filenames at the container command boundary (needs python3)', () => {
   it.each(['snapshot', 'restore'])('keeps spaces and shell syntax literal during %s', (operation) => {
     const directory = mkdtempSync(join(tmpdir(), 'day0-tar-args-'));
     const filename = 'bed sample; echo injected.tar.gz';

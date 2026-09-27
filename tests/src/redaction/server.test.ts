@@ -1,6 +1,7 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { hasHostTool } from '../../setup/host-tools';
 import { redactText } from '../../../src/redaction/redact';
 import type { ModelSpan } from '../../../src/redaction/client';
 
@@ -8,7 +9,7 @@ import type { ModelSpan } from '../../../src/redaction/client';
 const SERVER = fileURLToPath(new URL('../../../redactor/server.py', import.meta.url));
 
 /** The server is Python; a machine without `python3` skips these rather than failing. */
-const HAS_PYTHON = spawnSync('python3', ['--version']).status === 0;
+const HAS_PYTHON = hasHostTool('python3');
 
 /**
  * Run a Python snippet with the server module loaded as `server`.

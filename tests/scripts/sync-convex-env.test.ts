@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join} from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { hasHostTool } from '../setup/host-tools';
 
 /** The repository root, found from this file rather than the working directory. */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -81,7 +82,7 @@ function runSync(
   return { status: result.status, calls, stderr: result.stderr, deployment };
 }
 
-describe('sync-convex-env.sh', (): void => {
+describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): void => {
   it('sets model knobs and removes stale knobs when the local settings are cleared', (): void => {
     const configured = runSync([], 'OPENAI_MAX_OUTPUT_TOKENS=32768\nOPENAI_REASONING_EFFORT=low\n');
     expect(configured.status).toBe(0);

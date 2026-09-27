@@ -12,13 +12,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hasHostTools } from '../../setup/host-tools';
 
 const START = fileURLToPath(new URL('../../../redactor/start.sh', import.meta.url));
 
 /** The script is POSIX shell over `find` and `sha256sum`; a machine without them skips. */
-const HAS_TOOLS = ['sh', 'find', 'sha256sum'].every(
-  (tool) => spawnSync('sh', ['-c', `command -v ${tool}`]).status === 0,
-);
+const HAS_TOOLS = hasHostTools('sh', 'find', 'sha256sum');
 
 let root = '';
 
