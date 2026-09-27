@@ -1036,6 +1036,15 @@ describe('what an outage leaves (P7-18)', (): void => {
     expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([]);
 
     await harness.run(async (ctx) => await ctx.db.patch(slack, { verdict: 'connected' }));
+    // A set with nothing held has nothing to ask about, and is not asked every sweep.
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(workItemId, { actionVerdicts: [{ disposition: 'refused', reason: 'x' }] }),
+    );
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([]);
+
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { actionVerdicts: undefined }));
     await harness.mutation(internal.work.resumeStalledSteps, {});
     expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([
       { workItemId, kind: 'actions' },

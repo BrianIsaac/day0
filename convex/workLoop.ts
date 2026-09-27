@@ -7,6 +7,7 @@ import { isRevocationTrialRow } from './revocationEvaluation';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT } from '../src/work/types';
+import { normaliseActionVerdict } from '../src/surfaces/policy';
 
 /**
  * The server-driven work loop, real mode only.
@@ -668,6 +669,13 @@ export async function resumeStalledStepsInTransaction(
     if (channel) {
       for (const row of await ready('actions-pending', async (row) => {
         if (row.decision || row.approvedIndexes !== undefined || !row.pendingRunId) return false;
+        // A set with nothing held has nothing to ask about; the request would
+        // refuse it and the next sweep would ask again.
+        const count = (row.output as { actions?: unknown[] } | undefined)?.actions?.length ?? 0;
+        const held = Array.from({ length: count }, (_, index) =>
+          normaliseActionVerdict(row.actionVerdicts?.[index] ?? {}),
+        ).some((verdict) => verdict.disposition === 'held');
+        if (!held) return false;
         const parked = await ctx.db.get(row.pendingRunId);
         return !!parked && now - parked.createdAt >= STEP_LEASE_MS;
       })) {
