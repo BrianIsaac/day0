@@ -146,10 +146,15 @@ describe('sync-convex-env.sh', (): void => {
 
   it('refuses to clear or replace the credential key while the deployment stores credentials', (): void => {
     const stored = '{"_id":"c1","label":"linear service token"}';
-    const cleared = runSync(['DAY0_CREDENTIAL_KEY=held'], 'DAY0_SURFACE_MODE=mock\n', stored);
+    const cleared = runSync(
+      ['DAY0_CREDENTIAL_KEY=held', 'NOTION_TOKEN=retired'],
+      'DAY0_SURFACE_MODE=mock\n',
+      stored,
+    );
     expect(cleared.status).toBe(1);
     expect(cleared.stderr).toContain('Clearing it would leave every one unreadable');
-    expect(cleared.calls).not.toContain('convex env remove DAY0_CREDENTIAL_KEY');
+    // Refused before any change, the retired name included.
+    expect(cleared.calls.filter((call) => /^convex env (set|remove)/.test(call))).toEqual([]);
 
     const replaced = runSync(
       ['DAY0_CREDENTIAL_KEY=held'],

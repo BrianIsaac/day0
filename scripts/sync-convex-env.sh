@@ -221,6 +221,9 @@ set_key() {
   fi
 }
 
+# Before any change: a refusal here must leave the deployment exactly as it was.
+guard_credential_key "$(read_local DAY0_CREDENTIAL_KEY)"
+
 for key in "${RETIRED[@]}"; do
   clear_key "$key" "no longer read by the deployment"
 done
@@ -251,8 +254,6 @@ if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ]; then
 else
   clear_key NODE_ENV "only needed by the real-mode guard"
 fi
-
-guard_credential_key "$(read_local DAY0_CREDENTIAL_KEY)"
 
 for key in "${KEYS[@]}"; do
   override_var=$(aliased_name "$key")
