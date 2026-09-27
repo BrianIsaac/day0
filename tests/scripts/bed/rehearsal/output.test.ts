@@ -27,9 +27,9 @@ describe('the run record on disk', (): void => {
     for (const path of created.splice(0)) rmSync(path, { recursive: true, force: true });
   });
 
-  it('lives under the primary docs tree by stamp and numbers its screenshots', (): void => {
+  it("lives beside the company bed's own state, outside the documentation tree, by stamp, and numbers its screenshots", (): void => {
     expect(runDirectory('/home/op/day0', '2026-09-15T10-00-00Z')).toBe(
-      `/home/op/day0/${REHEARSALS_DIR}/2026-09-15T10-00-00Z`,
+      '/home/op/day0/.demo-bed/rehearsals/2026-09-15T10-00-00Z',
     );
     expect(shotPath('/run', 3, 'charter-approved')).toBe('/run/shots/03-charter-approved.png');
   });

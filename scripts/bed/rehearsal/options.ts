@@ -54,7 +54,7 @@ Options:
   --clone <dir>            where to clone (default: a fresh directory under the system temp dir)
   --ref <ref>              git ref to clone at (default: HEAD)
   --source <path>          repository to clone from (default: this checkout)
-  --out <dir>              run record (default: <primary>/docs/plans/progress/real-mode-rehearsals/<stamp>)
+  --out <dir>              run record (default: <primary>/.demo-bed/rehearsals/<stamp>)
   --warm-from <project>    copy that project's redactor wheel and model volumes into the bed
   --port-base <n>          backend, site, dashboard and app ports from n (default: picked free)
   --timeout-minutes <n>    ceiling for the whole run (default 40)

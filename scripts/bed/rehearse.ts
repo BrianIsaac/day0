@@ -13,7 +13,7 @@
  * in Linear and drives the five checks, recording each with a screenshot and
  * the ledger rows. Afterwards it puts the workspaces back and tears the bed
  * down. The record lands under the primary checkout's
- * docs/plans/progress/real-mode-rehearsals/<stamp>/ and is never committed.
+ * .demo-bed/rehearsals/<stamp>/ and is never committed.
  *
  * `--help` prints the options; scripts/bed/rehearsal/run.ts is the phase list.
  */

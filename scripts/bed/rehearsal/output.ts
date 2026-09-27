@@ -1,13 +1,16 @@
 /**
  * The run record on disk: a dated directory under the primary checkout's
- * `docs/plans/progress/real-mode-rehearsals/`, never committed.
+ * `.demo-bed/rehearsals/`, beside the company bed's own state, never committed.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderSummary, type RunRecord } from './report';
 
-/** Where every run record lives, relative to the primary checkout. */
-export const REHEARSALS_DIR = 'docs/plans/progress/real-mode-rehearsals';
+/**
+ * Where every run record lives, relative to the primary checkout: the bed's
+ * ignored directory, so a clone with no documentation tree holds it too.
+ */
+export const REHEARSALS_DIR = '.demo-bed/rehearsals';
 
 /**
  * The record directory for one run.
@@ -17,7 +20,7 @@ export const REHEARSALS_DIR = 'docs/plans/progress/real-mode-rehearsals';
  *   stamp: The run stamp.
  *
  * Returns:
- *   `<primary>/docs/plans/progress/real-mode-rehearsals/<stamp>`.
+ *   `<primary>/.demo-bed/rehearsals/<stamp>`.
  */
 export function runDirectory(primary: string, stamp: string): string {
   return join(primary, REHEARSALS_DIR, stamp);
