@@ -290,7 +290,7 @@ async function insertDiscovered(
 }
 
 describe('the server-side steps', (): void => {
-  it('does not let a pre-claim failure stop another caller\'s execution', async (): Promise<void> => {
+  it("does not let a pre-claim failure stop another caller's execution", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -464,7 +464,9 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(recorded.planCalls).toEqual(['Add the Q3 close-summary audit note']);
     expect(recorded.skillRuns).toEqual([]);
     expect(
-      recorded.http.filter((call) => call.url.endsWith('/chat.postMessage')).map((call) => call.body),
+      recorded.http
+        .filter((call) => call.url.endsWith('/chat.postMessage'))
+        .map((call) => call.body),
     ).toEqual([expect.objectContaining({ channel: 'D0MANAGER' })]);
   });
 
@@ -654,15 +656,22 @@ describe('the server drives the work loop in real mode', (): void => {
     });
     await harness.mutation(internal.work.setPlan, {
       workItemId,
-      plan: { summary: 'x', steps: ['x'], expectedOutputType: 'message', riskNotes: '', reversibility: 'r', estimatedMinutes: 1 },
+      plan: {
+        summary: 'x',
+        steps: ['x'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'r',
+        estimatedMinutes: 1,
+      },
     });
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
-    expect((await scheduledNames(harness)).filter((name) => name.startsWith('workActions:'))).toEqual(
-      [],
-    );
+    expect(
+      (await scheduledNames(harness)).filter((name) => name.startsWith('workActions:')),
+    ).toEqual([]);
     const row = await readItem(harness, workItemId);
     expect(row).not.toHaveProperty('evaluationClaimedAt');
     expect(row).not.toHaveProperty('draftClaimedAt');
@@ -821,9 +830,9 @@ describe('a scope call that fails parks the row (E-70)', (): void => {
       expect(recorded.scopeCalls).toHaveLength(1);
       expect(recorded.planCalls).toEqual([]);
       expect(recorded.skillRuns).toEqual([]);
-      expect((await eventsOf(harness, 'work.scope-judgement-unavailable')).map((e) => e.payload)).toEqual([
-        { workItemId, cause },
-      ]);
+      expect(
+        (await eventsOf(harness, 'work.scope-judgement-unavailable')).map((e) => e.payload),
+      ).toEqual([{ workItemId, cause }]);
       expect(await eventsOf(harness, 'work.evaluated')).toEqual([]);
       expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
     },
@@ -980,7 +989,7 @@ describe('what an outage leaves (P7-18)', (): void => {
     ]);
   });
 
-  it('counts the dead drafts again from the manager\'s last Retry', async (): Promise<void> => {
+  it("counts the dead drafts again from the manager's last Retry", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -1042,7 +1051,9 @@ describe('what an outage leaves (P7-18)', (): void => {
     // A set with nothing held has nothing to ask about, and is not asked every sweep.
     await harness.run(
       async (ctx) =>
-        await ctx.db.patch(workItemId, { actionVerdicts: [{ disposition: 'refused', reason: 'x' }] }),
+        await ctx.db.patch(workItemId, {
+          actionVerdicts: [{ disposition: 'refused', reason: 'x' }],
+        }),
     );
     await harness.mutation(internal.work.resumeStalledSteps, {});
     expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([]);
@@ -1072,7 +1083,11 @@ describe('a closing phase whose authoring never claimed the run (P5-1)', (): voi
       await ctx.db.patch(workItemId, {
         state: 'executing',
         executionRunId: claim,
-        output: { ...managerDm, phase: 'dependent-authoring', applied: [{ tool: 'http.request', ok: true }] },
+        output: {
+          ...managerDm,
+          phase: 'dependent-authoring',
+          applied: [{ tool: 'http.request', ok: true }],
+        },
       });
       return claim;
     });
@@ -1080,7 +1095,10 @@ describe('a closing phase whose authoring never claimed the run (P5-1)', (): voi
     const jobs = (
       await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
     ).map((job) => ({ name: job.name, args: job.args[0] }));
-    expect(jobs).toContainEqual({ name: 'work:recoverDependentAuthoring', args: { workItemId, runId } });
+    expect(jobs).toContainEqual({
+      name: 'work:recoverDependentAuthoring',
+      args: { workItemId, runId },
+    });
     expect(jobs.map((job) => job.name)).not.toContain('work:setFailed');
   });
 });
@@ -1110,10 +1128,9 @@ describe('queued work while the charter is not approved (step 4)', (): void => {
         verdict: { decision: 'defer', reason: AWAITING_CHARTER },
       });
     }
-    expect((await eventsOf(harness, 'work.waiting-for-charter')).map((event) => event.payload)).toEqual([
-      { workItemId: first },
-      { workItemId: second },
-    ]);
+    expect(
+      (await eventsOf(harness, 'work.waiting-for-charter')).map((event) => event.payload),
+    ).toEqual([{ workItemId: first }, { workItemId: second }]);
     expect(await scheduledNames(harness)).not.toContain('workActions:evaluateWorkItemInternal');
 
     await harness.run(async (ctx) => {
