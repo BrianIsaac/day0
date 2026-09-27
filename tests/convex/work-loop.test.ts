@@ -900,6 +900,9 @@ describe('checking for new work on demand', (): void => {
       .withIdentity(OWNER)
       .mutation(api.workLoop.checkForNewWork, { agentId });
     expect(later).toMatchObject({ scheduled: 2 });
+    // The polls the advanced clock fired are still running: finish them here,
+    // so none of them runs on into a later test.
+    await harness.finishInProgressScheduledFunctions();
   });
 
   it('refuses a caller who does not own the employee, and the mock deployment', async (): Promise<void> => {
