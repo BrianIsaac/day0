@@ -1426,6 +1426,20 @@ async function connectedBotId(
   return auth.bot_id;
 }
 
+/** What one chat poll reads: the manager's decision replies, the channels' asks, or both. */
+interface ChatPollScope {
+  readonly decisions: boolean;
+  readonly work: boolean;
+  /**
+   * When the agent was deployed, in epoch milliseconds. A mention written
+   * before it was addressed to whatever answered the bot then (an earlier
+   * agent, or another deployment on the same workspace), so the work read
+   * starts here and never takes an older mention, as a decision reply that
+   * predates the agent is never taken either.
+   */
+  readonly mentionsSince?: number;
+}
+
 /**
  * Poll documented Slack channels for exact mentions of the connected bot.
  *
@@ -1446,7 +1460,7 @@ async function pollSlack(
   observedAt: number,
   fetcher: IntakeFetcher,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
-  include: { decisions: boolean; work: boolean },
+  include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const requiredMethods = include.work
@@ -1468,11 +1482,19 @@ async function pollSlack(
     if (names.length === 0) throw new Error('Slack policy names no intake channels.');
     const channels = await resolveSlackChannels(fetcher, credential, names);
     const mention = `<@${surface.providerIdentityId}>`;
+    const since = include.mentionsSince;
+    const sinceTs = since === undefined ? undefined : String(since / 1_000);
     for (const channel of channels) {
-      const messages = await slackHistory(fetcher, credential, channel.id, surface.lastPolledAt);
+      const messages = await slackHistory(
+        fetcher,
+        credential,
+        channel.id,
+        surface.lastPolledAt ?? since,
+      );
       for (const message of messages) {
         if (!message.text.includes(mention) || postedByConnectedApp(message, surface, botId))
           continue;
+        if (sinceTs !== undefined && compareProviderTs(message.ts, sinceTs) < 0) continue;
         candidates.push(slackCandidate(message, channel, surface, observedAt));
       }
     }
@@ -1530,7 +1552,7 @@ async function pollChat(
   fetcher: IntakeFetcher,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
-  include: { decisions: boolean; work: boolean },
+  include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const polled = await (async (): Promise<ChatPollResult> => {
@@ -1762,7 +1784,7 @@ export async function runIntakeSweep(
                 fetcher,
                 makeMcpClient,
                 () => runtime.listOpenDecisionRequests(surface._id),
-                { decisions: false, work: true },
+                { decisions: false, work: true, mentionsSince: agent.createdAt },
                 rememberBotId(runtime, surface._id),
               )
             : undefined;

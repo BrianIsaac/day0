@@ -1590,6 +1590,74 @@ describe('intake provider contracts', (): void => {
     expect(cycle.seeds.size).toBe(0);
   });
 
+  it('takes no mention written before the agent was deployed, so a second deployment on one workspace answers no standing ask again', async (): Promise<void> => {
+    const deployedAt = Date.parse('2026-09-27T09:00:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+      [{ ...agentRow(), createdAt: deployedAt }],
+    );
+    const historyUrls: URL[] = [];
+    // A double that ignores `oldest`, as a provider that returns the whole
+    // history would: the guard must hold on the rows themselves too.
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.list')) {
+        return slackResponse({
+          ok: true,
+          channels: [
+            { id: 'CASKS', name: 'revops-asks' },
+            { id: 'CREVOPS', name: 'revops' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      historyUrls.push(url);
+      if (url.searchParams.get('channel') !== 'CASKS') {
+        return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+      }
+      return slackResponse({
+        ok: true,
+        messages: [
+          {
+            ts: `${String(deployedAt / 1_000 + 60)}.000100`,
+            user: 'UUSER',
+            text: '<@UBOT> asked after',
+          },
+          {
+            ts: `${String(deployedAt / 1_000 - 3_600)}.000100`,
+            user: 'UUSER',
+            text: '<@UBOT> answered by the first deployment an hour ago',
+          },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => deployedAt + 120_000,
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 1 });
+    expect([...harness.seeds.values()].map((seed) => seed.contentSummary)).toEqual([
+      '<@UBOT> asked after',
+    ]);
+    expect(historyUrls[0].searchParams.get('oldest')).toBe(String(deployedAt / 1_000));
+  });
+
   it('includes the Slack checkpoint boundary when a message appears after the prior snapshot', async (): Promise<void> => {
     const firstPollAt = Date.parse('2026-08-26T02:00:00.000Z');
     const secondPollAt = Date.parse('2026-08-26T03:00:00.000Z');
