@@ -36,6 +36,7 @@ import {
   refFieldFor,
   resolveElementRef,
   secretPlacementRefusal,
+  unknownPlaceholderRefusal,
   withResolvedRefs,
   withSecretTyped,
   withinDocumentedSurface,
@@ -696,6 +697,8 @@ export class McpAdapter implements SurfaceAdapter {
       const outside = navigationRefusal(call.tool, call.toolArgs, surface.endpoint);
       if (outside) return { tool: action.tool, ok: false, reason: outside, idempotencyKey };
     }
+    const unfilled = unknownPlaceholderRefusal(call.toolArgs);
+    if (unfilled) return { tool: action.tool, ok: false, reason: unfilled, idempotencyKey };
     const carriesSecret = carriesSecretPlaceholder(call.toolArgs);
     if (carriesSecret) {
       const refusal = !browserDriven

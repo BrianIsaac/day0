@@ -1523,7 +1523,7 @@ describe('where the credential is substituted', (): void => {
     expect(calls).toEqual([]);
   });
 
-  it('leaves other double-brace text in a typed value as it was written', async (): Promise<void> => {
+  it('refuses a placeholder other than the credential in a typed value', async (): Promise<void> => {
     const { adapter, calls } = driverOn({
       url: 'http://looker-tile:8080/',
       elements: '- textbox "Pipeline coverage" [ref=e21]',
@@ -1532,13 +1532,38 @@ describe('where the credential is substituted', (): void => {
       ctx,
       run,
       call('browser_fill_form', {
-        fields: [{ name: 'Pipeline coverage', value: '{{quarter}} 74%' }],
+        fields: [{ name: 'Pipeline coverage', value: '{{figure}} 74%' }],
       }),
       0,
       'k',
     );
-    expect(applied.ok).toBe(true);
-    expect(calls[1].args).toMatchObject({ fields: [{ value: '{{quarter}} 74%' }] });
+    expect(applied).toMatchObject({
+      ok: false,
+      reason:
+        'unknown placeholder {{figure}} in fields.0.value: a value was left unfilled, so the call was not sent',
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses the whole sign-in when another field carries a placeholder beside the credential', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({ url: 'http://looker-tile:8080/login', elements: LOGIN });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', {
+        fields: [
+          { name: 'Username', value: '{{username}}' },
+          { name: 'Password', value: '{{secret}}' },
+        ],
+      }),
+      0,
+      'k',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('unknown placeholder {{username}} in fields.0.value'),
+    });
+    expect(calls).toEqual([]);
   });
 
   it('never substitutes the credential into an MCP tool argument', async (): Promise<void> => {
@@ -1557,6 +1582,33 @@ describe('where the credential is substituted', (): void => {
     };
     const applied = await adapter(client).apply(ctx, run, leak, 0, 'k');
     expect(applied).toMatchObject({ ok: false, reason: MCP_SECRET_ARGUMENT_REFUSAL });
+    expect(client.executions).toEqual([]);
+    expect(client.options).toEqual([]);
+  });
+
+  it('refuses a placeholder other than the credential in an MCP tool argument', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+    });
+    const unfilled: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'iss-1',
+          body: 'Pipeline coverage is {{figure}}.',
+        }),
+      },
+    };
+    const applied = await adapter(client).apply(ctx, run, unfilled, 0, 'k');
+    expect(applied).toMatchObject({
+      ok: false,
+      reason:
+        'unknown placeholder {{figure}} in body: a value was left unfilled, so the call was not sent',
+    });
     expect(client.executions).toEqual([]);
     expect(client.options).toEqual([]);
   });

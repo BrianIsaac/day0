@@ -21,6 +21,7 @@ import {
   refFieldFor,
   resolveElementRef,
   secretPlacementRefusal,
+  unknownPlaceholderRefusal,
   withinDocumentedSurface,
   withResolvedRefs,
   withSecretTyped,
@@ -427,6 +428,40 @@ describe('putting resolved refs back into an action', (): void => {
     expect(withResolvedRefs('browser_navigate', { url: 'http://x/' }, [])).toEqual({
       url: 'http://x/',
     });
+  });
+});
+
+describe('a placeholder left in a tool argument', (): void => {
+  it('refuses any placeholder other than the credential, naming it and where it sits', (): void => {
+    expect(
+      unknownPlaceholderRefusal({
+        fields: [
+          { name: 'Password', value: '{{secret}}' },
+          { name: 'Pipeline coverage', value: '{{ figure }} this quarter' },
+        ],
+      }),
+    ).toBe(
+      'unknown placeholder {{figure}} in fields.1.value: a value was left unfilled, so the call was not sent',
+    );
+    expect(unknownPlaceholderRefusal({ body: 'Coverage is {{}}' })).toContain(
+      'unknown placeholder {{}} in body',
+    );
+    expect(unknownPlaceholderRefusal('{{secret:}}')).toContain('in the arguments');
+  });
+
+  it('leaves the credential placeholder and plain braces to the other checks', (): void => {
+    expect(
+      unknownPlaceholderRefusal({
+        text: '{{secret}}',
+        fields: [
+          { value: '{{ secret }}' },
+          { value: '{{secret:tile}}' },
+          { value: '{{secret.tile}}' },
+        ],
+        body: 'a {single} brace and {{ unclosed',
+        count: 3,
+      }),
+    ).toBeUndefined();
   });
 });
 
