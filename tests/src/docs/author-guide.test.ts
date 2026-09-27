@@ -144,13 +144,16 @@ describe('the documentation author guide', (): void => {
     );
   });
 
-  it('admits each documented operation with its verb, the value segment kept, and finds the key header', (): void => {
+  it('admits each documented operation with its verb, reads the probe read and finds the key header', (): void => {
     const text = example('api-operations');
-    expect(http.documentedApiOperations(text, 'https://tracker.example.com/api/v2/')).toEqual([
+    const base = 'https://tracker.example.com/api/v2/';
+    expect(http.documentedApiOperations(text, base)).toEqual([
       { method: 'GET', operation: 'issues' },
       { method: 'POST', operation: 'comments' },
       { method: 'GET', operation: 'issues/{id}' },
+      { method: 'GET', operation: 'me' },
     ]);
+    expect(http.documentedProbeRead(text, base)).toEqual({ method: 'GET', operation: 'me' });
     expect(http.documentedCredentialHeader(text)).toEqual({ name: 'X-Api-Key' });
   });
 

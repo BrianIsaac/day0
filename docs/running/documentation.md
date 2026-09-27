@@ -107,8 +107,9 @@ Probe marker: page title `Pipeline coverage`
 
 When a system is reached through its own HTTP API rather than an MCP server or Slack, the page
 names the API's base address in a sentence that names the system, the operations the employee may
-call, and the header the key goes in. day0 checks the key with one documented read before the
-connection is used, and the operations you list are the only ones the employee may call.
+call, the one read day0 checks the key with, and the header the key goes in. day0 checks the key
+with that read before the connection is used, and the operations you list are the only ones the
+employee may call.
 
 <!-- example: api-operations -->
 
@@ -121,6 +122,7 @@ The Tracker API base is https://tracker.example.com/api/v2/.
 - `POST /comments` adds a comment to an issue.
 - `GET /issues/{id}` reads one issue.
 - Send the key as `X-Api-Key: {{secret}}`.
+- Probe read: `GET /me`
 ```
 
 - An operation is a verb (`GET`, `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE`) and a path in
@@ -136,10 +138,14 @@ The Tracker API base is https://tracker.example.com/api/v2/.
 - The key's header is the first header in backticks that carries `{{secret}}`
   (`X-Api-Key: {{secret}}`, `Authorization: Token {{secret}}`), or an `Authorization` header
   with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token.
-- day0 checks the key with the first documented `GET` without a `{id}` segment that only reads,
-  never one that changes anything, and does not follow a redirect. A page with no operation, or no read among them,
-  leaves the system unconnected with a card that says so; that is day0's limitation, not
-  evidence that the system is unavailable.
+- The probe read is the one request day0 sends, with the key, when it checks the connection:
+  on approval and every hour after. Write it on its own line, `Probe read:` and a `GET` in
+  backticks, and pick a request that changes nothing, such as the API's "who am I" call. It must
+  be a plain path under the base with no `{id}` segment. day0 never guesses one from your list,
+  because a `GET` can change things (`GET /auth/logout`); a page with no probe read leaves the
+  system unconnected with a card that says so. The probe read is also callable by the employee.
+- day0 does not follow a redirect with the key, and a page with no operation leaves the system
+  unconnected; both are day0's limitation, not evidence that the system is unavailable.
 - The base address follows the same rule as an MCP endpoint: public `https`, or a host the
   operator lists in `DAY0_PRIVATE_HOSTS`.
 - Only the system's own pages are read for its operations. An operation written on another

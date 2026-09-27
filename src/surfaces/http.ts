@@ -179,6 +179,9 @@ export function providerIdFrom(payload: unknown): string | undefined {
 /** A verb and path the documentation gives for one operation, as `` `GET /issues` ``. */
 const DOCUMENTED_OPERATION = /`\s*(GET|HEAD|POST|PUT|PATCH|DELETE)\s+([^\s`]+)\s*`/g;
 
+/** The read a page names for the probe: `` Probe read: `GET /me` ``. */
+const DOCUMENTED_PROBE_READ = /\bProbe read:\s*`\s*GET\s+([^\s`]+)\s*`/gi;
+
 /**
  * A header the documentation shows the credential in: `` `X-Api-Key: {{secret}}` ``,
  * `` `Authorization: Token {{secret}}` `` or, without the placeholder,
@@ -288,6 +291,42 @@ export function documentedApiOperations(
 }
 
 /**
+ * Read the one request the page names for checking the credential:
+ * `` Probe read: `GET /me` ``.
+ *
+ * Only a line written for the purpose is taken: a documented `GET` is not a
+ * read because its words miss a list of mutation verbs (`GET /auth/logout`
+ * reads as one and signs the key out), so the page's author names the read,
+ * and a page that names none is not guessed at. The read must be a plain
+ * path under the base with no value segment, and the gate must class it a
+ * read as well; the first line that is both is the one used.
+ *
+ * @param documentation - The surface's own documentation.
+ * @param endpoint - The documented API base the surface was approved with.
+ * @returns The probe's read, or undefined when the page names none it may send.
+ */
+export function documentedProbeRead(
+  documentation: string,
+  endpoint: string,
+): DocumentedApiOperation | undefined {
+  const base = documentedBase(endpoint);
+  if (!base) return undefined;
+  for (const match of documentation.matchAll(DOCUMENTED_PROBE_READ)) {
+    const operation = operationUnder(base, match[1].split(/[?#]/, 1)[0]);
+    if (!operation || canonicalOperation(operation).includes('{')) continue;
+    const request: ParsedHttpRequest = {
+      kind: 'http.request',
+      surface: '',
+      method: 'GET',
+      path: operation,
+      headers: {},
+    };
+    if (actionIntent(request) === 'read') return { method: 'GET', operation };
+  }
+  return undefined;
+}
+
+/**
  * Read the header a documented API takes its credential in.
  *
  * @param documentation - The surface's own documentation.
@@ -327,8 +366,8 @@ export async function connectCheckedApi(endpoint: string): Promise<CheckedApi> {
  * Verify a documented API that is not Slack: check the credential with one
  * documented read and admit every operation the documentation names.
  *
- * The read is the first documented `GET` the gate would class as a read, so
- * checking the credential never changes anything on the system. It is sent
+ * The read is the one the page names for the probe (`documentedProbeRead`),
+ * so checking the credential never changes anything on the system. It is sent
  * with the credential in the documented header, follows no redirect, and a
  * 2xx answer without an `ok: false` envelope connects the surface.
  *
@@ -354,21 +393,10 @@ export async function probeDocumentedApi(
       `The documentation names no operation on ${endpoint} in the form \`GET /path\`, so Day0 has nothing it may call there. This is not evidence that the system is unavailable.`,
     );
   }
-  const read = operations.find(
-    (entry: DocumentedApiOperation): boolean =>
-      entry.method === 'GET' &&
-      !entry.operation.includes('{') &&
-      actionIntent({
-        kind: 'http.request',
-        surface: '',
-        method: 'GET',
-        path: entry.operation,
-        headers: {},
-      }) === 'read',
-  );
+  const read = documentedProbeRead(documentation, endpoint);
   if (!read) {
     throw new DocumentedApiLimitation(
-      `The documentation names no read (\`GET\`) operation on ${endpoint}, so Day0 cannot check the credential without changing anything. This is not evidence that the system is unavailable.`,
+      `The documentation names no read for Day0 to check the credential with on ${endpoint} (a line \`Probe read: GET /path\`), so Day0 does not guess one that could change something. This is not evidence that the system is unavailable.`,
     );
   }
   const api = await connect(endpoint);

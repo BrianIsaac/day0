@@ -1057,6 +1057,7 @@ describe('probing a documented API that is not Slack', (): void => {
     '',
     '- `GET /issues` lists the open issues.',
     '- `POST /comments` adds a comment.',
+    '- Probe read: `GET /issues`',
   ].join('\n');
   // Another system's page on the same agent: its operations are not the tracker's.
   const BILLING_PAGE = ['# Billing', '', '- `GET /invoices` and `DELETE /accounts`.'].join('\n');

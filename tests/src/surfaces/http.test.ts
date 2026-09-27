@@ -8,6 +8,7 @@ import {
   DocumentedApiLimitation,
   documentedApiOperations,
   documentedCredentialHeader,
+  documentedProbeRead,
   EFFECT_LENGTH,
   HttpAdapter,
   HTTP_TIMEOUT_MS,
@@ -487,6 +488,7 @@ const TRACKER_PAGE = [
   '- `GET /issues/{id}` reads one issue.',
   '- `DELETE https://other.example.com/api/v2/issues` belongs to another system.',
   '- `Content-Type: application/json` on every write.',
+  '- Probe read: `GET /issues`',
 ].join('\n');
 
 const TRACKER = 'https://tracker.example.com/api/v2/';
@@ -577,8 +579,36 @@ describe('the header a documented API takes its credential in', (): void => {
   });
 });
 
+describe('the read a page names for the probe', (): void => {
+  it('takes the documented probe read, and a plain path under the base only', (): void => {
+    expect(documentedProbeRead(TRACKER_PAGE, TRACKER)).toEqual({
+      method: 'GET',
+      operation: 'issues',
+    });
+    expect(
+      documentedProbeRead('Probe read: `GET https://tracker.example.com/api/v2/me?x=1`', TRACKER),
+    ).toEqual({ method: 'GET', operation: 'me' });
+    expect(documentedProbeRead('Probe read: `GET /issues/{id}`', TRACKER)).toBeUndefined();
+    expect(
+      documentedProbeRead('Probe read: `GET https://other.example/me`', TRACKER),
+    ).toBeUndefined();
+    expect(documentedProbeRead('Probe read: `POST /me`', TRACKER)).toBeUndefined();
+  });
+
+  it('never guesses one: a documented GET is not a probe read (review M2)', (): void => {
+    const page = '- `GET /auth/logout` signs the key out.\n- `GET /issues` lists the issues.';
+    expect(documentedApiOperations(page, TRACKER)).toHaveLength(2);
+    expect(documentedProbeRead(page, TRACKER)).toBeUndefined();
+  });
+
+  it('skips a named read the gate classes a write, and takes the next', (): void => {
+    const page = 'Probe read: `GET /tokens/revoke`\nProbe read: `GET /me`';
+    expect(documentedProbeRead(page, TRACKER)).toEqual({ method: 'GET', operation: 'me' });
+  });
+});
+
 describe('probing a documented API that is not Slack', (): void => {
-  it('checks the credential with the first documented read and admits every operation with its verb', async (): Promise<void> => {
+  it('checks the credential with the documented probe read and admits every operation with its verb', async (): Promise<void> => {
     const tracker = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
     const discovery = await probeDocumentedApi(
       TRACKER,
@@ -609,8 +639,21 @@ describe('probing a documented API that is not Slack', (): void => {
       ),
     ).rejects.toThrow(DocumentedApiLimitation);
     await expect(
-      probeDocumentedApi(TRACKER, 'k', '# Tracker\n`GET /issues.delete`', tracker.connect),
+      probeDocumentedApi(
+        TRACKER,
+        'k',
+        '# Tracker\n`GET /issues.delete`\nProbe read: `GET /issues.delete`',
+        tracker.connect,
+      ),
     ).rejects.toThrow('names no read');
+    await expect(
+      probeDocumentedApi(
+        TRACKER,
+        'k',
+        '# Tracker\n`GET /auth/logout` `GET /issues`',
+        tracker.connect,
+      ),
+    ).rejects.toThrow('does not guess one that could change something');
     expect(tracker.calls).toEqual([]);
   });
 
