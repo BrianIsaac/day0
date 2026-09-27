@@ -4,8 +4,10 @@ import { v } from 'convex/values';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
+  SCOPE_JUDGEMENT_UNAVAILABLE,
   evaluateCandidate,
   inferRequiredPermissions,
+  isScopeUnavailable,
   type EvaluateLookups,
 } from '../src/work/evaluate';
 import { spanModelFromEnv } from '../src/redaction/client';
@@ -400,13 +402,21 @@ async function recordingModelCalls<T>(
  * claims the row first, so a second run arriving while this one holds the
  * model call returns at once.
  *
+ * A scope call that gives no judgement (a throw, a timeout, a reply out of
+ * shape) stores no verdict: the row stays `discovered` under the evaluation
+ * claim, `work.scope-judgement-unavailable` is the one event it writes, and
+ * the stall sweep evaluates it again once the claim's lease has passed. A
+ * verdict would move it to `deferred`, which nothing re-admits for this
+ * reason, or write an admission no reading made.
+ *
  * Args:
  *   ctx: Convex action context.
  *   args: The work item.
  *   internalCaller: Whether the caller is the scheduler rather than a page.
  *
  * Returns:
- *   The stored decision, or a `noop-` reason when the step was not this run's.
+ *   The stored decision, `scope-judgement-unavailable` when the row was left
+ *   parked, or a `noop-` reason when the step was not this run's.
  */
 async function evaluateWorkItemHandler(
   ctx: ActionCtx,
@@ -423,7 +433,7 @@ async function evaluateWorkItemHandler(
   // (e.g. evaluator + draftPlan on the same render tick). The
   // findExistingClaim self-match below would otherwise see the
   // item's own `claimed` state and stomp the verdict back to skip.
-  // No-op cleanly in that case — same posture as draftPlan and
+  // No-op cleanly in that case: same posture as draftPlan and
   // executeApprovedPlan (lines below).
   if (item.state !== 'discovered') {
     return { decision: `noop-state=${item.state}` };
@@ -489,7 +499,6 @@ async function evaluateWorkItemHandler(
   // admission when it sends the row back, and an amendment is a new charter.
   const scopeHeld =
     surfaceConfig.mode === 'real' && item.scopeAdmission?.charterId === charterRow._id;
-  let scopeJudgementUnavailable: string | undefined;
   let scopeAdmission: { basis: string; namedBy?: string; overruled?: string[] } | undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'evaluation' } as const;
   const verdict = await recordingModelCalls(ctx, step, () => evaluateCandidate(
@@ -509,17 +518,13 @@ async function evaluateWorkItemHandler(
     lookups,
     {
       onScopeJudgement: (judgement): void => {
-        if (judgement.admitted && judgement.failedOpen !== undefined) {
-          scopeJudgementUnavailable = judgement.failedOpen;
-        }
         // Only a reading of the charter is kept: the model's own in-scope
         // judgement, or the skip readings a named source set aside. A waiver
         // is already on the row, a held judgement is the one already kept,
-        // and a fail-open admission read nothing.
+        // and an unavailable judgement admitted nothing.
         const judged =
           judgement.admitted &&
-          (judgement.overruled !== undefined ||
-            (judgement.basis === 'charter-judgement' && judgement.failedOpen === undefined));
+          (judgement.overruled !== undefined || judgement.basis === 'charter-judgement');
         if (surfaceConfig.mode === 'real' && judged) {
           scopeAdmission = {
             basis: judgement.basis,
@@ -530,12 +535,13 @@ async function evaluateWorkItemHandler(
       },
     },
   ));
-  if (scopeJudgementUnavailable !== undefined) {
+  if (isScopeUnavailable(verdict)) {
     await ctx.runMutation(internal.events.log, {
       agentId,
       type: 'work.scope-judgement-unavailable',
-      payload: { workItemId: args.workItemId, cause: scopeJudgementUnavailable },
+      payload: { workItemId: args.workItemId, cause: verdict.cause },
     });
+    return { decision: SCOPE_JUDGEMENT_UNAVAILABLE };
   }
   if (scopeAdmission !== undefined) {
     await ctx.runMutation(internal.work.recordScopeAdmission, {

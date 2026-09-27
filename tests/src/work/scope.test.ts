@@ -9,22 +9,44 @@ import {
 import { charterJudgementPrompt, judgeScope, type ScopeJudgement } from '../../../src/work/scope';
 import type { WorkCandidate } from '../../../src/work/types';
 
+/** A charter judgement that cites nothing, as the schema requires of an in-scope answer. */
+const NO_EXCLUSION = { kind: 'none', quote: '' } as const;
+
 const model = vi.hoisted(() => ({
   calls: [] as Array<{ agent: string; user: string }>,
-  answer: { inScope: true, fit: true, reason: 'inside the role' } as
-    | { inScope: boolean; fit: boolean; reason: string }
+  answer: {
+    inScope: true,
+    fit: true,
+    reason: 'inside the role',
+    exclusion: { kind: 'none', quote: '' },
+  } as
+    | {
+        inScope: boolean;
+        fit: boolean;
+        reason: string;
+        exclusion: { kind: 'none' | 'will-not-do' | 'absent-system'; quote: string };
+      }
     | Error,
+  /** Hand the reply over without the schema, as a transport that skipped it would. */
+  unchecked: false,
 }));
 
-vi.mock('../../../src/lib/mastra', () => ({
-  makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+const { schemaChecked } = await vi.hoisted(async () => await import('../../convex/fakes/mastra'));
+
+vi.mock('../../../src/lib/mastra', () => {
+  const reply = async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
     model.calls.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name === 'day0-quality-fit') return { pass: false, reason: 'busywork' };
     if (model.answer instanceof Error) throw model.answer;
     return model.answer;
-  },
-}));
+  };
+  const checked = schemaChecked(reply);
+  return {
+    makeAgent: (name: string): { name: string } => ({ name }),
+    agentJson: async (args: Parameters<typeof checked>[0]): Promise<unknown> =>
+      model.unchecked ? await reply(args) : await checked(args),
+  };
+});
 
 const NOW = Date.parse('2026-09-15T02:00:00.000Z');
 
@@ -42,8 +64,10 @@ const r6Charter: Charter = {
     'Review the mock onboarding docs, identify procedural and ownership gaps, and route unresolved questions to the manager before acting.',
   evidence: [],
   shortTermGoals: {
-    day30: 'Review the mock onboarding docs and compile missing-procedure and unclear-ownership questions for the manager.',
-    day60: 'Not yet defined; confirm the next priority, expected outputs, and success criteria with the manager.',
+    day30:
+      'Review the mock onboarding docs and compile missing-procedure and unclear-ownership questions for the manager.',
+    day60:
+      'Not yet defined; confirm the next priority, expected outputs, and success criteria with the manager.',
     day90: "Not yet defined; confirm the role's longer-term scope and ownership with the manager.",
   },
   proposedBoundaries: {
@@ -57,7 +81,9 @@ const r6Charter: Charter = {
   namedCollaborators: [{ name: 'Priya', topic: 'revenue operations', introPath: 'manager' }],
   namedSystems: [],
   priorityReading: [],
-  adjacentRoles: [{ who: 'RevOps analyst', staysOutOfTheirLaneBy: 'never editing revenue records' }],
+  adjacentRoles: [
+    { who: 'RevOps analyst', staysOutOfTheirLaneBy: 'never editing revenue records' },
+  ],
   approvalChain: { boss: 'boss@day0.local', confidence: 'high' },
   openQuestions: [],
   createdAt: new Date(NOW).toISOString(),
@@ -128,17 +154,20 @@ describe('one scope judgement for the R6 card', (): void => {
     const verdict = await evaluateCandidate(r6Card, context('mock', { agentsMd: GOOD_HABITS }), {
       ...noSkill,
       hasGrantForScope: async () => guard !== 'permission',
-      findExistingClaim: async () => guard === 'ownership' ? { state: 'executing' } : null,
+      findExistingClaim: async () => (guard === 'ownership' ? { state: 'executing' } : null),
     });
-    expect(verdict).toMatchObject(guard === 'permission'
-      ? { decision: 'defer', reason: 'awaiting-permission' }
-      : { decision: 'skip', reason: 'already-claimed: state=executing' });
+    expect(verdict).toMatchObject(
+      guard === 'permission'
+        ? { decision: 'defer', reason: 'awaiting-permission' }
+        : { decision: 'skip', reason: 'already-claimed: state=executing' },
+    );
     expect(model.calls).toEqual([]);
   });
 
   beforeEach((): void => {
     model.calls.length = 0;
-    model.answer = { inScope: true, fit: true, reason: 'inside the role' };
+    model.unchecked = false;
+    model.answer = { inScope: true, fit: true, reason: 'inside the role', exclusion: NO_EXCLUSION };
   });
 
   it('writes one verdict and one description that agree, from the whole charter', async (): Promise<void> => {
@@ -147,6 +176,7 @@ describe('one scope judgement for the R6 card', (): void => {
       fit: true,
       reason:
         'Updating the Q4 Revenue Tracker is outside a role limited to reviewing onboarding docs and routing ownership questions to the manager.',
+      exclusion: NO_EXCLUSION,
     };
     const judgements: ScopeJudgement[] = [];
     const findMatchingSkill = vi.fn(async (): Promise<null> => null);
@@ -164,7 +194,11 @@ describe('one scope judgement for the R6 card', (): void => {
         'out-of-scope: Updating the Q4 Revenue Tracker is outside a role limited to reviewing onboarding docs and routing ownership questions to the manager.',
     });
     expect(judgements).toEqual([
-      { admitted: false, basis: 'charter-judgement', reason: (verdict as { reason: string }).reason },
+      {
+        admitted: false,
+        basis: 'charter-judgement',
+        reason: (verdict as { reason: string }).reason,
+      },
     ]);
     expect(findMatchingSkill).not.toHaveBeenCalled();
     expect(model.calls.map((call) => call.agent)).toEqual(['day0-scope-judgement']);
@@ -172,14 +206,18 @@ describe('one scope judgement for the R6 card', (): void => {
 
   it('hands the model the boundaries, the adjacent roles and the request, and nothing about the lexical rule', (): void => {
     const prompt = charterJudgementPrompt({ candidate: r6Card, charter: r6Charter, agentsMd: '' });
-    expect(prompt).toContain('willNotDo: Do not update the Q4 Revenue Tracker or any revenue record. | Do not act on requests from Priya before the manager introduction.');
+    expect(prompt).toContain(
+      'willNotDo: Do not update the Q4 Revenue Tracker or any revenue record. | Do not act on requests from Priya before the manager introduction.',
+    );
     expect(prompt).toContain('adjacentRoles: RevOps analyst: never editing revenue records');
-    expect(prompt).toContain('No good-habits memory yet: judge the boundaries only and answer fit: true.');
+    expect(prompt).toContain(
+      'No good-habits memory yet: judge the boundaries only and answer fit: true.',
+    );
     expect(prompt).toContain('Title: Add Friday closed-won deals to revenue tracker');
     expect(prompt).not.toContain('overlap');
-    expect(charterJudgementPrompt({ candidate: r6Card, charter: r6Charter, agentsMd: GOOD_HABITS })).toContain(
-      '--- AGENTS.md (good-habits memory) ---\n## Good-habits memory',
-    );
+    expect(
+      charterJudgementPrompt({ candidate: r6Card, charter: r6Charter, agentsMd: GOOD_HABITS }),
+    ).toContain('--- AGENTS.md (good-habits memory) ---\n## Good-habits memory');
   });
 
   it("hands the model the manager's answers to the charter's questions, which bind every later item", (): void => {
@@ -206,7 +244,8 @@ describe('one scope judgement for the R6 card', (): void => {
 
     expect(verdict).toMatchObject({
       decision: 'needs-skill',
-      reason: 'no registered skill covers ticket comment-and-close on a kanban surface; agent will propose "kanban-comment-and-close"',
+      reason:
+        'no registered skill covers ticket comment-and-close on a kanban surface; agent will propose "kanban-comment-and-close"',
       suggestedSkillName: 'kanban-comment-and-close',
     });
     expect(model.calls).toEqual([]);
@@ -222,7 +261,9 @@ describe('one scope judgement for the R6 card', (): void => {
     );
 
     expect(verdict).toEqual({ decision: 'skip', reason: 'quality-fit-fail: busywork' });
-    expect(judgements).toEqual([{ admitted: false, basis: 'quality-fit', reason: 'quality-fit-fail: busywork' }]);
+    expect(judgements).toEqual([
+      { admitted: false, basis: 'quality-fit', reason: 'quality-fit-fail: busywork' },
+    ]);
     expect(model.calls.map((call) => call.agent)).toEqual(['day0-quality-fit']);
   });
 
@@ -232,7 +273,9 @@ describe('one scope judgement for the R6 card', (): void => {
       title: 'Book the offsite venue',
       contentSummary: 'Reserve the venue and confirm the catering headcount.',
     };
-    await expect(judgeScope(unrelated, context('real'), { provenance: false, namesDocumentedSystem: false })).resolves.toEqual({
+    await expect(
+      judgeScope(unrelated, context('real'), { provenance: false, namesDocumentedSystem: false }),
+    ).resolves.toEqual({
       admitted: false,
       basis: 'no-overlap',
       reason: 'out-of-scope: no charter or current documented-system overlap',
@@ -240,27 +283,67 @@ describe('one scope judgement for the R6 card', (): void => {
     expect(model.calls).toEqual([]);
   });
 
-  it('admits the item on the lexical inputs alone when the model cannot be reached, and says so', async (): Promise<void> => {
-    model.answer = new Error('model unavailable');
-    const judgements: ScopeJudgement[] = [];
+  it.each([
+    ['throws', new Error('model unavailable'), 'model unavailable'],
+    [
+      'times out',
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      'The operation was aborted due to timeout',
+    ],
+    [
+      "answers `inScope: 'yes'`",
+      { inScope: 'yes', fit: true, reason: 'inside the role', exclusion: NO_EXCLUSION },
+      'agentJson(day0-scope-judgement): reply did not satisfy the schema',
+    ],
+  ])(
+    'defers the item unjudged when the charter call %s, and never admits it',
+    async (_how, answer, cause): Promise<void> => {
+      model.answer = answer as typeof model.answer;
+      const judgements: ScopeJudgement[] = [];
+      const lookups = { ...noSkill, hasGrantForScope: vi.fn(noSkill.hasGrantForScope) };
 
-    const verdict = await evaluateCandidate(r6Card, context('real'), noSkill, {
-      onScopeJudgement: (judgement): void => void judgements.push(judgement),
+      const verdict = await evaluateCandidate(r6Card, context('real'), lookups, {
+        onScopeJudgement: (judgement): void => void judgements.push(judgement),
+      });
+
+      expect(verdict).toEqual({ decision: 'defer', reason: 'scope-judgement-unavailable', cause });
+      expect(judgements).toEqual([{ admitted: false, basis: 'unavailable', cause }]);
+      expect(lookups.hasGrantForScope).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reads a reply that reached it out of shape as an unavailable judgement, whatever the transport did', async (): Promise<void> => {
+    model.unchecked = true;
+    model.answer = { inScope: true, fit: true, reason: 'inside the role' } as typeof model.answer;
+
+    await expect(
+      judgeScope(r6Card, context('real'), { provenance: true, namesDocumentedSystem: false }),
+    ).resolves.toEqual({
+      admitted: false,
+      basis: 'unavailable',
+      cause: expect.stringContaining('the scope judgement reply did not satisfy the schema'),
     });
-
-    expect(verdict.decision).toBe('needs-skill');
-    expect(judgements).toEqual([{ admitted: true, basis: 'provenance', failedOpen: 'model unavailable' }]);
   });
 
   it('counts the fit half only when a good-habits memory exists and the filter is not waived', async (): Promise<void> => {
-    model.answer = { inScope: true, fit: false, reason: 'the role norm says confirm the owner first' };
+    model.answer = {
+      inScope: true,
+      fit: false,
+      reason: 'the role norm says confirm the owner first',
+      exclusion: NO_EXCLUSION,
+    };
 
-    await expect(judgeScope(r6Card, context('real'), { provenance: true, namesDocumentedSystem: false })).resolves.toEqual({
+    await expect(
+      judgeScope(r6Card, context('real'), { provenance: true, namesDocumentedSystem: false }),
+    ).resolves.toEqual({
       admitted: true,
       basis: 'charter-judgement',
     });
     await expect(
-      judgeScope(r6Card, context('real', { agentsMd: GOOD_HABITS }), { provenance: true, namesDocumentedSystem: false }),
+      judgeScope(r6Card, context('real', { agentsMd: GOOD_HABITS }), {
+        provenance: true,
+        namesDocumentedSystem: false,
+      }),
     ).resolves.toEqual({
       admitted: false,
       basis: 'quality-fit',
@@ -275,10 +358,18 @@ describe('one scope judgement for the R6 card', (): void => {
   });
 
   it('honours the eligibility waiver: no call when nothing else is asked, and only the fit half when it is', async (): Promise<void> => {
-    model.answer = { inScope: false, fit: false, reason: 'outside the role and against a norm' };
+    model.answer = {
+      inScope: false,
+      fit: false,
+      reason: 'outside the role and against a norm',
+      exclusion: NO_EXCLUSION,
+    };
 
     await expect(
-      judgeScope(r6Card, context('real', { scopeWaived: true }), { provenance: false, namesDocumentedSystem: false }),
+      judgeScope(r6Card, context('real', { scopeWaived: true }), {
+        provenance: false,
+        namesDocumentedSystem: false,
+      }),
     ).resolves.toEqual({ admitted: true, basis: 'waived' });
     expect(model.calls).toEqual([]);
 
@@ -292,7 +383,12 @@ describe('one scope judgement for the R6 card', (): void => {
       basis: 'quality-fit',
       reason: 'quality-fit-fail: outside the role and against a norm',
     });
-    model.answer = { inScope: false, fit: true, reason: 'outside the role' };
+    model.answer = {
+      inScope: false,
+      fit: true,
+      reason: 'outside the role',
+      exclusion: NO_EXCLUSION,
+    };
     await expect(
       judgeScope(r6Card, context('real', { scopeWaived: true, agentsMd: GOOD_HABITS }), {
         provenance: false,
@@ -302,12 +398,16 @@ describe('one scope judgement for the R6 card', (): void => {
   });
 
   it('names the lexical input that admitted the item where no model decides', async (): Promise<void> => {
-    await expect(judgeScope(r6Card, context('mock'), { provenance: false, namesDocumentedSystem: false })).resolves.toEqual({
+    await expect(
+      judgeScope(r6Card, context('mock'), { provenance: false, namesDocumentedSystem: false }),
+    ).resolves.toEqual({
       admitted: true,
       basis: 'charter-overlap',
     });
     const titleOnly: WorkCandidate = { ...r6Card, contentSummary: '' };
-    await expect(judgeScope(titleOnly, context('mock'), { provenance: false, namesDocumentedSystem: true })).resolves.toEqual({
+    await expect(
+      judgeScope(titleOnly, context('mock'), { provenance: false, namesDocumentedSystem: true }),
+    ).resolves.toEqual({
       admitted: true,
       basis: 'documented-system',
     });

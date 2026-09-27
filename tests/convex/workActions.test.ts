@@ -137,6 +137,8 @@ const recorded = vi.hoisted(() => ({
   questionJudgements: [] as string[],
   /** Set to make the manager-question judgement unavailable. */
   questionJudgementFails: false,
+  /** Set to make the charter scope judgement unavailable. */
+  scopeJudgementFails: false,
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; method?: string; authorization: string | undefined; body: unknown }>,
   failMcpAfterRequest: false,
@@ -467,6 +469,15 @@ const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mas
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: schemaChecked(async (args): Promise<unknown> => {
+    if (args.agent.name === 'day0-scope-judgement') {
+      if (recorded.scopeJudgementFails) throw new Error('model unavailable in tests');
+      return {
+        inScope: true,
+        fit: true,
+        reason: 'revenue operations hand-offs are the charter work',
+        exclusion: { kind: 'none', quote: '' },
+      };
+    }
     if (args.agent.name !== 'day0-manager-question') throw new Error('model unavailable in tests');
     recorded.questionJudgements.push(args.user);
     if (recorded.questionJudgementFails) throw new Error('model unavailable in tests');
@@ -733,6 +744,7 @@ afterEach((): void => {
   recorded.planFailure = undefined;
   recorded.questionJudgements.length = 0;
   recorded.questionJudgementFails = false;
+  recorded.scopeJudgementFails = false;
   recorded.mcp.length = 0;
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
@@ -4330,9 +4342,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
   });
 
-  it('admits a real-mode item on the lexical inputs and records it when the charter judgement is unavailable', async (): Promise<void> => {
+  it('parks a real-mode item whose charter judgement is unavailable: one unavailable event, no verdict, no admission', async (): Promise<void> => {
     useSurfaceMode('real');
-    // The claim schedules the server's draft; this test reads the verdict alone.
+    recorded.scopeJudgementFails = true;
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'real');
@@ -4347,16 +4359,21 @@ describe('the autonomous-actions switch through the gate', (): void => {
 
     await expect(
       harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
-    ).resolves.toEqual({ decision: 'claim' });
-    const unavailable = (
-      await harness.run(
-        async (ctx) =>
-          await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
-      )
-    ).filter((event) => event.type === 'work.scope-judgement-unavailable');
-    expect(unavailable.map((event) => event.payload)).toEqual([
-      { workItemId, cause: 'model unavailable in tests' },
-    ]);
+    ).resolves.toEqual({ decision: 'scope-judgement-unavailable' });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+    );
+    expect(
+      events
+        .filter((event) => event.type === 'work.scope-judgement-unavailable')
+        .map((event) => event.payload),
+    ).toEqual([{ workItemId, cause: 'model unavailable in tests' }]);
+    expect(events.filter((event) => event.type === 'work.evaluated')).toEqual([]);
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({ state: 'discovered', evaluationClaimedAt: expect.any(Number) });
+    expect(parked).not.toHaveProperty('verdict');
+    expect(parked).not.toHaveProperty('scopeAdmission');
   });
 
   it('re-evaluates an out-of-scope skip the manager retried without the eligibility rule and records the decision', async (): Promise<void> => {

@@ -33,7 +33,7 @@ import {
  *      count) are passed in as `Lookups` callbacks instead of imported
  *      from a global store. The Convex action wires them.
  *
- *   2. There's a new terminal verdict — `needs-skill`. When the
+ *   2. There's a new terminal verdict, `needs-skill`. When the
  *      candidate reaches skill matching but no registered skill matches, we
  *      surface this as a propose-new-skill flow rather than
  *      hard-skipping. Capability is meant to grow in place, so an
@@ -116,9 +116,52 @@ export interface EvalContext extends AgentContext {
 
 export { QUALITY_FIT_SKIP_PREFIX } from './types';
 
+/** The defer reason of an item whose scope call gave no judgement. */
+export const SCOPE_JUDGEMENT_UNAVAILABLE = 'scope-judgement-unavailable';
+
+/** The verdict of a candidate whose scope call gave no judgement. */
+export interface ScopeUnavailableVerdict {
+  readonly decision: 'defer';
+  readonly reason: typeof SCOPE_JUDGEMENT_UNAVAILABLE;
+  /** Why the call gave none, as the scope judgement recorded it. */
+  readonly cause: string;
+}
+
+/** What the evaluator decides about one candidate. */
 export type EvaluationVerdict =
   | WorkVerdict
-  | { decision: 'defer'; reason: 'awaiting-connection'; missingSurface: string };
+  | { decision: 'defer'; reason: 'awaiting-connection'; missingSurface: string }
+  | ScopeUnavailableVerdict;
+
+/**
+ * Whether a verdict is the defer of a candidate nobody judged in scope.
+ *
+ * `WorkVerdict`'s own defer takes any reason, so the reason alone does not
+ * narrow the union; the cause does.
+ *
+ * @param verdict - The evaluator's verdict.
+ * @returns True for a `scope-judgement-unavailable` defer.
+ */
+export function isScopeUnavailable(verdict: EvaluationVerdict): verdict is ScopeUnavailableVerdict {
+  return (
+    verdict.decision === 'defer' &&
+    verdict.reason === SCOPE_JUDGEMENT_UNAVAILABLE &&
+    'cause' in verdict
+  );
+}
+
+/**
+ * The verdict a scope judgement that did not admit the item stands for.
+ *
+ * @param scope - A judgement that did not admit the candidate.
+ * @returns A skip with the judgement's reason, or, when no judgement was
+ *   made, a defer that keeps the item out of the work until one is.
+ */
+function unadmittedVerdict(scope: Extract<ScopeJudgement, { admitted: false }>): EvaluationVerdict {
+  return scope.basis === 'unavailable'
+    ? { decision: 'defer', reason: SCOPE_JUDGEMENT_UNAVAILABLE, cause: scope.cause }
+    : { decision: 'skip', reason: scope.reason };
+}
 
 export function inferRequiredPermissions(candidate: WorkCandidate): string[] {
   const required = new Set<string>();
@@ -223,10 +266,13 @@ function systemNames(ctx: EvalContext): { live: string[]; absent: string[] } {
   const now = ctx.now ?? Date.now();
   const names = (surfaces: readonly EvaluationSurface[]): string[] =>
     surfaces.flatMap((surface) => [surface.displayName, surface.slug]);
-  const connected = ctx.surfaces.filter((surface): boolean => verdictFor(surface, now) === 'connected');
+  const connected = ctx.surfaces.filter(
+    (surface): boolean => verdictFor(surface, now) === 'connected',
+  );
   const absent = ctx.surfaces.filter(
     (surface): boolean =>
-      !connected.includes(surface) && !connected.some((live) => sameEvaluationSystem(surface, live)),
+      !connected.includes(surface) &&
+      !connected.some((live) => sameEvaluationSystem(surface, live)),
   );
   return { live: names(connected), absent: names(absent) };
 }
@@ -242,10 +288,7 @@ function evaluationSurfaceIdentity(surface: EvaluationSurface) {
   });
 }
 
-function sameEvaluationSystem(
-  left: EvaluationSurface,
-  right: EvaluationSurface,
-): boolean {
+function sameEvaluationSystem(left: EvaluationSurface, right: EvaluationSurface): boolean {
   const leftIdentity = evaluationSurfaceIdentity(left);
   const rightIdentity = evaluationSurfaceIdentity(right);
   return (
@@ -379,6 +422,21 @@ function inferSkillRationale(
   return { name, rationale };
 }
 
+/**
+ * Decide what the employee does with one candidate: skip it, defer it, queue
+ * it at the cap, ask for a skill, or claim it.
+ *
+ * The scope judgement comes first. A candidate whose scope call gave no
+ * judgement is deferred as `scope-judgement-unavailable` before any
+ * connection, grant, claim or skill is read, so nothing downstream acts on an
+ * item no reading admitted.
+ *
+ * @param candidate - The work item being evaluated.
+ * @param ctx - The charter, the mode, the surfaces and the manager's waivers.
+ * @param lookups - The grant, claim, capacity and skill reads the caller wires.
+ * @param opts - The cap override and the scope judgement observer.
+ * @returns The verdict.
+ */
 export async function evaluateCandidate(
   candidate: WorkCandidate,
   ctx: EvalContext,
@@ -395,9 +453,7 @@ export async function evaluateCandidate(
     absentSystems: systems?.absent,
   });
   if (ctx.surfaceMode !== 'mock' || !scope.admitted) opts.onScopeJudgement?.(scope);
-  if (!scope.admitted) {
-    return { decision: 'skip', reason: scope.reason };
-  }
+  if (!scope.admitted) return unadmittedVerdict(scope);
 
   const missingSurface = missingConnectionSurface(candidate, ctx);
   if (missingSurface) {
@@ -428,9 +484,7 @@ export async function evaluateCandidate(
       namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
     });
     opts.onScopeJudgement?.(mockScope);
-    if (!mockScope.admitted) {
-      return { decision: 'skip', reason: mockScope.reason };
-    }
+    if (!mockScope.admitted) return unadmittedVerdict(mockScope);
   }
 
   const value = scoreValue(candidate);
