@@ -6,6 +6,7 @@ vi.mock('@clerk/nextjs/server', () => ({
 
 let cookieValue: string | undefined;
 const synthesised: unknown[] = [];
+const dialled: string[] = [];
 
 vi.mock('next/headers', () => ({
   cookies: async (): Promise<{ get: () => { value: string } | undefined }> => ({
@@ -16,6 +17,9 @@ vi.mock('next/headers', () => ({
 /** The Convex HTTP transport: records what the route asks the deployment to run. */
 vi.mock('convex/browser', () => ({
   ConvexHttpClient: class {
+    constructor(address: string) {
+      dialled.push(address);
+    }
     setAuth(): void {}
     async action(_reference: unknown, args: unknown): Promise<{ charterId: string }> {
       synthesised.push(args);
@@ -62,6 +66,7 @@ beforeEach(async (): Promise<void> => {
   vi.resetModules();
   cookieValue = undefined;
   synthesised.length = 0;
+  dialled.length = 0;
 });
 
 afterEach((): void => {
@@ -122,5 +127,20 @@ describe('the charter synthesis route', (): void => {
     const response = await synthesise(incoming);
     expect(response.status).toBe(403);
     expect(incoming.bodyUsed).toBe(false);
+  });
+
+  it('dials the server-side CONVEX_URL, not the address built into the browser bundle', async (): Promise<void> => {
+    vi.stubEnv('CONVEX_URL', 'http://backend:3210');
+    await unlock();
+    const response = await synthesise(request({ origin: APP, 'content-type': 'application/json' }));
+    expect(response.status).toBe(200);
+    expect(dialled).toEqual(['http://backend:3210']);
+  });
+
+  it('answers a signed-out caller outside no-auth mode with a 401 and synthesises nothing', async (): Promise<void> => {
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', '');
+    const response = await synthesise(request({ origin: APP, 'content-type': 'application/json' }));
+    expect(response.status).toBe(401);
+    expect(synthesised).toEqual([]);
   });
 });
