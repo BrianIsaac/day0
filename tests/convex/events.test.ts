@@ -120,7 +120,11 @@ describe('the paged trace export', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedTracedAgent(harness);
     await harness.run(async (ctx) => {
-      await ctx.db.insert('deploymentVersions', { release: '0.4.0', commit: 'd71b1cf8', recordedAt: 1 });
+      await ctx.db.insert('deploymentVersions', {
+        release: '0.4.0',
+        commit: 'd71b1cf8',
+        recordedAt: 1,
+      });
     });
     const { api } = await import('../../convex/_generated/api');
     const head = await harness
@@ -223,13 +227,20 @@ describe('the paged trace export', (): void => {
     const agentId = await seedTracedAgent(harness);
     await harness.run(async (ctx) => {
       for (let index = 0; index < 250; index += 1) {
-        await ctx.db.insert('events', { agentId, type: 'work.model-call', payload: { index }, createdAt: 10 + index });
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.model-call',
+          payload: { index },
+          createdAt: 10 + index,
+        });
       }
     });
     const pages: TracePage[] = [];
     const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId, pages);
     expect(Math.max(...pages.map((page) => page.rows.length))).toBe(100);
-    expect(pages.filter((page) => page.section === 'events').map((page) => page.rows.length)).toEqual([100, 100, 52]);
+    expect(
+      pages.filter((page) => page.section === 'events').map((page) => page.rows.length),
+    ).toEqual([100, 100, 52]);
     expect(trace.sections.events).toHaveLength(252);
     expect(trace.sections.events.at(-1)?.payload).toEqual({ index: 249 });
   });
@@ -238,16 +249,41 @@ describe('the paged trace export', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedTracedAgent(harness);
     await harness.run(async (ctx) => {
-      const gone = await ctx.db.insert('agents', { bossEmail: 'boss@day0.local', name: 'Mateo', userId: 'owner', state: 'active', createdAt: 1 });
-      const elsewhere = await ctx.db.insert('agents', { bossEmail: 'x@day0.local', name: 'Other', userId: 'someone-else', state: 'active', createdAt: 1 });
-      await ctx.db.insert('events', { agentId: gone, type: 'agent.retired', payload: { userId: 'owner', agentId: gone, retiredAt: 7, rowCounts: { events: 3 } }, createdAt: 7 });
-      await ctx.db.insert('events', { agentId: elsewhere, type: 'agent.retired', payload: { userId: 'someone-else', agentId: elsewhere, retiredAt: 8, rowCounts: {} }, createdAt: 8 });
+      const gone = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const elsewhere = await ctx.db.insert('agents', {
+        bossEmail: 'x@day0.local',
+        name: 'Other',
+        userId: 'someone-else',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: gone,
+        type: 'agent.retired',
+        payload: { userId: 'owner', agentId: gone, retiredAt: 7, rowCounts: { events: 3 } },
+        createdAt: 7,
+      });
+      await ctx.db.insert('events', {
+        agentId: elsewhere,
+        type: 'agent.retired',
+        payload: { userId: 'someone-else', agentId: elsewhere, retiredAt: 8, rowCounts: {} },
+        createdAt: 8,
+      });
       await ctx.db.delete(gone);
       await ctx.db.delete(elsewhere);
     });
     const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
     expect(trace.owner.retired).toEqual([
-      expect.objectContaining({ retiredAt: 7, payload: expect.objectContaining({ rowCounts: { events: 3 } }) }),
+      expect.objectContaining({
+        retiredAt: 7,
+        payload: expect.objectContaining({ rowCounts: { events: 3 } }),
+      }),
     ]);
   });
 
@@ -322,7 +358,7 @@ describe('event trace export on a deployed agent', (): void => {
 });
 
 describe('the flips of the autonomous-actions switch', (): void => {
-  it('returns the employee\'s own flips oldest first, past any feed window, to the owner only', async (): Promise<void> => {
+  it("returns the employee's own flips oldest first, past any feed window, to the owner only", async (): Promise<void> => {
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const [priya, mateo] = await harness.run(async (ctx): Promise<Array<Id<'agents'>>> => {
@@ -340,12 +376,32 @@ describe('the flips of the autonomous-actions switch', (): void => {
       }
       const flip = { reason: 'set by the manager' };
       // The rehearsal's two flips (19 Sep 2026), then enough feed to roll past them.
-      await ctx.db.insert('events', { agentId: ids[0]!, type: 'agent.autonomy-changed', payload: { from: false, to: true, ...flip }, createdAt: 1789788458102 });
-      await ctx.db.insert('events', { agentId: ids[1]!, type: 'agent.autonomy-changed', payload: { from: false, to: true, ...flip }, createdAt: 1789788477973 });
+      await ctx.db.insert('events', {
+        agentId: ids[0]!,
+        type: 'agent.autonomy-changed',
+        payload: { from: false, to: true, ...flip },
+        createdAt: 1789788458102,
+      });
+      await ctx.db.insert('events', {
+        agentId: ids[1]!,
+        type: 'agent.autonomy-changed',
+        payload: { from: false, to: true, ...flip },
+        createdAt: 1789788477973,
+      });
       for (let index = 0; index < 40; index += 1) {
-        await ctx.db.insert('events', { agentId: ids[0]!, type: 'work.model-call', payload: {}, createdAt: 1789788460000 + index });
+        await ctx.db.insert('events', {
+          agentId: ids[0]!,
+          type: 'work.model-call',
+          payload: {},
+          createdAt: 1789788460000 + index,
+        });
       }
-      await ctx.db.insert('events', { agentId: ids[0]!, type: 'agent.autonomy-changed', payload: { from: true, to: false, ...flip }, createdAt: 1789788500000 });
+      await ctx.db.insert('events', {
+        agentId: ids[0]!,
+        type: 'agent.autonomy-changed',
+        payload: { from: true, to: false, ...flip },
+        createdAt: 1789788500000,
+      });
       return ids;
     });
 
@@ -354,9 +410,13 @@ describe('the flips of the autonomous-actions switch', (): void => {
       { at: 1789788458102, on: true },
       { at: 1789788500000, on: false },
     ]);
-    expect(await owner.query(api.events.autonomyChanges, { agentId: mateo! })).toEqual([{ at: 1789788477973, on: true }]);
+    expect(await owner.query(api.events.autonomyChanges, { agentId: mateo! })).toEqual([
+      { at: 1789788477973, on: true },
+    ]);
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).query(api.events.autonomyChanges, { agentId: priya! }),
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .query(api.events.autonomyChanges, { agentId: priya! }),
     ).rejects.toThrow('forbidden');
   });
 });
@@ -373,10 +433,25 @@ describe('the dashboard ticker', (): void => {
         state: 'active',
         createdAt: 1,
       });
-      await ctx.db.insert('events', { agentId: id, type: 'work.discovered', payload: {}, createdAt: 1 });
-      await ctx.db.insert('events', { agentId: id, type: 'work.completed', payload: {}, createdAt: 2 });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.discovered',
+        payload: {},
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.completed',
+        payload: {},
+        createdAt: 2,
+      });
       for (let index = 0; index < 12; index += 1) {
-        await ctx.db.insert('events', { agentId: id, type: 'work.listed', payload: {}, createdAt: 3 + index });
+        await ctx.db.insert('events', {
+          agentId: id,
+          type: 'work.listed',
+          payload: {},
+          createdAt: 3 + index,
+        });
       }
       return id;
     });
