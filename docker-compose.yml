@@ -54,17 +54,23 @@
 # only your browser can resolve belongs in CONVEX_BROWSER_ORIGIN or
 # NEXT_PUBLIC_CONVEX_URL instead.
 #
-# CONVEX_BIND_ADDR is the host address every port below is published on, and it
-# defaults to loopback. It is read from `.env.local` because `pnpm convex:up`
-# passes `--env-file .env.local`; plain `docker compose up` reads your shell or
-# `.env` instead and will silently take the default.
+# Every published port is bound through a variable of its own, and each
+# defaults to loopback: CONVEX_BIND_ADDR for the backend (3210, 3211),
+# CONVEX_DASHBOARD_BIND_ADDR for the dashboard, MODEL_BIND_ADDR for the bundled
+# model server and FAKE_SLACK_BIND_ADDR for the Slack double. Widening one
+# publishes that service alone: a phone on the LAN needs the backend, not an
+# unauthenticated model API or a test double. They are read from `.env.local`
+# because `pnpm convex:up` passes `--env-file .env.local`; plain
+# `docker compose up` reads your shell or `.env` instead and will silently take
+# the defaults.
 #
-# It is hygiene, not a boundary, and nothing else reads it. No-auth dev mode used
-# to treat this value as evidence that the backend was unreachable from off the
-# machine; it never was, because the socket is opened here and the guard ran over
-# there. What holds that boundary now is a key the caller has to present, so
-# widening this address exposes an unauthenticated backend to your network but
-# does not let anyone act as the local boss. See `convex/devAuth.ts`.
+# They are hygiene, not a boundary, and nothing else reads them. No-auth dev
+# mode used to treat CONVEX_BIND_ADDR as evidence that the backend was
+# unreachable from off the machine; it never was, because the socket is opened
+# here and the guard ran over there. What holds that boundary now is a key the
+# caller has to present, so widening the backend's address exposes an
+# unauthenticated backend to your network but does not let anyone act as the
+# local boss. See `convex/devAuth.ts`.
 #
 # Container names are left to compose so that `-p <project>` is enough to run a
 # second stack; a fixed name would collide on the first one started.
@@ -172,7 +178,7 @@ services:
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
-      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_DASHBOARD_PORT:-6791}:6791'
+      - '${CONVEX_DASHBOARD_BIND_ADDR:-127.0.0.1}:${CONVEX_DASHBOARD_PORT:-6791}:6791'
     environment:
       # Resolved by the browser rendering the dashboard, not by the container,
       # so this one does follow the published host port. Set
@@ -206,7 +212,7 @@ services:
     environment:
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
     ports:
-      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
+      - '${MODEL_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
     volumes:
       - model_data:/root/.ollama
 
@@ -291,12 +297,33 @@ services:
   # refuses to start, and the healthcheck says so. Neither the wheels nor the
   # model are in the repository. No host port: the backend reaches it at
   # http://redactor:8000 (DAY0_REDACTOR_URL), and nothing else needs to.
+  #
+  # It runs third-party model code over every page it is sent, so it carries
+  # the sandbox's hardening where its job allows. Every capability is dropped
+  # (it runs as root only to own the two volumes Docker creates, and writes
+  # nothing it does not own), privileges cannot be regained, and processes and
+  # memory are capped so a flood of requests costs a restart rather than the
+  # host. It restarts for the same reason. Not carried, and why: it needs a
+  # network, for the backend and for the first start's wheels and model; and
+  # its root filesystem stays writable, because the first start's install
+  # unpacks the wheels (a CUDA torch is gigabytes) through /tmp.
+  #
+  # HF_ENDPOINT and PIP_INDEX_URL, when set in `.env.local`, point the first
+  # start at a Hugging Face mirror and a PyPI mirror instead of the internet.
+  # The torch wheel's own index is named inside redactor/requirements.txt.
   redactor:
     profiles: ['redactor']
     image: python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+    restart: unless-stopped
     stop_grace_period: 10s
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 1024
+    mem_limit: 6g
     command: ['/opt/day0/start.sh']
     environment:
+      - HF_ENDPOINT
+      - PIP_INDEX_URL
       - REDACTOR_MODEL=${REDACTOR_MODEL:-urchade/gliner_multi_pii-v1}
       - REDACTOR_DEVICE=${REDACTOR_DEVICE:-cpu}
       - REDACTOR_PORT=8000
@@ -383,7 +410,7 @@ services:
     volumes:
       - ./fake-slack/server.js:/app/server.js:ro
     ports:
-      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${FAKE_SLACK_HOST_PORT:-8090}:8090'
+      - '${FAKE_SLACK_BIND_ADDR:-127.0.0.1}:${FAKE_SLACK_HOST_PORT:-8090}:8090'
     healthcheck:
       test:
         [
