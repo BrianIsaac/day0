@@ -1,9 +1,9 @@
 /** @vitest-environment node */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { hasHostTool } from '../setup/host-tools';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -45,7 +45,12 @@ const recorded = vi.hoisted(() => ({
 const REPLY_CHANNEL = 'C0BSF04TZ19';
 const REPLY_THREAD = '1787746453.202809';
 const RECORDED_ITEM = 'n57d5ekg1grzcgk9atf2698mgn8ehqq9';
-const RECORDING_EXPORT = 'docs/plans/progress/recording-run-2026-09-17/export.zip';
+/**
+ * The 17 September recording's export. It carries the operator's address, so it
+ * is not tracked; the replay runs only when TEST_RECORDING_EXPORT names a copy,
+ * so the gate gives the same answer on every machine, the maintainer's included.
+ */
+const RECORDING_EXPORT = process.env.TEST_RECORDING_EXPORT ?? '';
 
 /** The closing phase's view of the ledger: the section the prompt renders it in, to the end. */
 function ledgerSection(prompt: string): string {
@@ -433,7 +438,7 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(reply).not.toContain('68%');
   }, 30_000);
 
-  it.skipIf(!existsSync(RECORDING_EXPORT))('replays the failed Slack item directly from the 17 September export', async (): Promise<void> => {
+  it.skipIf(RECORDING_EXPORT === '' || !hasHostTool('unzip'))('replays the failed Slack item directly from the 17 September export (needs TEST_RECORDING_EXPORT and unzip)', async (): Promise<void> => {
     const lines = execFileSync('unzip', ['-p', RECORDING_EXPORT, 'events/documents.jsonl'], {
       encoding: 'utf8',
     }).trim().split('\n');
