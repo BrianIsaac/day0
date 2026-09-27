@@ -212,7 +212,14 @@ export const setConstraintStruck = mutation({
 });
 
 /**
- * Approve the draft, applying its strikes to the clauses.
+ * Approve the draft, applying its strikes to the clauses, and seed the work
+ * it implies.
+ *
+ * Public, owner-guarded (`assertOwnsCharter`). Writes the approval, the
+ * agent's `active` state and `charter.approved`, and in the same transaction
+ * schedules `onboarding.postCharterApproval`, so the seeding no longer rests
+ * on the page staying open (P5-6, P9-10). Approving an approved charter
+ * changes nothing and seeds nothing again: a second tab's click is a no-op.
  *
  * A strike is refused by `setConstraintStruck` before it is ever flagged,
  * so the refusal here is a last guard for a body that reached the table
@@ -224,6 +231,7 @@ export const approve = mutation({
   returns: strikeResultValidator,
   handler: async (ctx, args): Promise<StrikeResult> => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
+    if (charter.approved) return { ok: true };
     const drafted = charter.body as Charter;
     const struck = (drafted.constraints ?? []).filter(
       (constraint: CharterConstraint): boolean => constraint.struck === true,
@@ -264,6 +272,10 @@ export const approve = mutation({
           : {}),
       },
       createdAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.onboarding.postCharterApproval, {
+      agentId: charter.agentId,
+      charterId: args.charterId,
     });
     return { ok: true };
   },

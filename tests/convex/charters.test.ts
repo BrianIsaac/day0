@@ -553,7 +553,13 @@ describe('amending an approved charter', (): void => {
       }),
     ).rejects.toThrow(/no willDo clause at index 7/);
     expect(await owner.query(api.charters.listForAgent, { agentId: draft.agentId })).toHaveLength(1);
-    expect(await scheduledJobs(harness)).toEqual([]);
+    // The approval's own seeding is the only job: no refused amendment scheduled anything.
+    expect(await scheduledJobs(harness)).toEqual([
+      {
+        name: 'onboarding:postCharterApproval',
+        args: [{ agentId: draft.agentId, charterId: draft.charterId }],
+      },
+    ]);
   });
 
   it('strikes a constraint after approval, removing its wording from the clauses', async (): Promise<void> => {
@@ -741,5 +747,30 @@ describe('amending the named systems', (): void => {
     expect(surfaces).toEqual([]);
     expect((await scheduledJobs(harness)).map((job) => job.name)).toEqual(['work:reevaluatePending']);
     expect(((await latestCharter(harness, agentId)).body as Charter).namedSystems).toHaveLength(3);
+  });
+});
+
+describe('approval seeds the work on the server (P5-6, P9-10)', (): void => {
+  it('schedules the seeding in the approval and approves only once', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    expect(await owner.mutation(api.charters.approve, { charterId })).toEqual({ ok: true });
+    const approvedAt = (await charter(harness, charterId)).approvedAt;
+    expect(await scheduledJobs(harness)).toEqual([
+      { name: 'onboarding:postCharterApproval', args: [{ agentId, charterId }] },
+    ]);
+
+    // A second tab's click finds the charter approved and changes nothing.
+    vi.advanceTimersByTime(1_000);
+    expect(await owner.mutation(api.charters.approve, { charterId })).toEqual({ ok: true });
+    expect((await charter(harness, charterId)).approvedAt).toBe(approvedAt);
+    expect(
+      (await eventsOf(harness, agentId)).filter((event) => event.type === 'charter.approved'),
+    ).toHaveLength(1);
+    expect(await scheduledJobs(harness)).toHaveLength(1);
+    vi.useRealTimers();
   });
 });

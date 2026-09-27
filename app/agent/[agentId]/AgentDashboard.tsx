@@ -907,7 +907,6 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
   const requestChanges = useMutation(api.charters.requestChanges);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
   const amend = useMutation(api.charters.amend);
-  const postApproval = useAction(api.onboarding.postCharterApproval);
   const [posting, setPosting] = useState(false);
   const [amendError, setAmendError] = useState<string | null>(null);
   const [strikeError, setStrikeError] = useState<string | null>(null);
@@ -932,18 +931,22 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
     }
   }
 
-  async function onApprove() {
+  // The approval seeds the work the charter implies on the server, in the
+  // same transaction, so nothing here waits on or retries it.
+  function onApprove(): void {
     setPosting(true);
     setStrikeError(null);
-    const result = await approve({ charterId: charter._id });
-    if (!result.ok) {
-      setStrikeError(result.reason);
-      setPosting(false);
-      return;
-    }
-    // Seed the work the approved charter implies: orientation in real mode,
-    // the generated work items in mock mode.
-    postApproval({ agentId: charter.agentId, charterId: charter._id }).catch(() => {});
+    approve({ charterId: charter._id })
+      .then((result) => {
+        if (!result.ok) {
+          setStrikeError(result.reason);
+          setPosting(false);
+        }
+      })
+      .catch((err: unknown) => {
+        setStrikeError(err instanceof Error ? err.message : 'The approval was not recorded.');
+        setPosting(false);
+      });
   }
 
   return (
@@ -4125,6 +4128,11 @@ export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): stri
   if (event.type === 'work.scope-judgement-unavailable') {
     const cause = (event.payload as { cause?: unknown } | undefined)?.cause;
     return `scope judgement unavailable${typeof cause === 'string' ? ` (${cause})` : ''} · the item waits and is judged again`;
+  }
+  if (event.type === 'charter.seeding-failed') {
+    const payload = (event.payload ?? {}) as { reason?: unknown; retrying?: unknown };
+    const reason = typeof payload.reason === 'string' ? `: ${payload.reason}` : '';
+    return `seeding the approved charter failed${reason}${payload.retrying === true ? ' · trying again' : ' · gave up'}`;
   }
   if (event.type === 'work.draft-resumed') {
     const attempt = (event.payload as { attempt?: unknown } | undefined)?.attempt;
