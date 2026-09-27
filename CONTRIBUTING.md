@@ -77,7 +77,7 @@ A test lives at the path of the module it covers, with `tests/` in front:
 | `app/agent/[agentId]/page.tsx` | `tests/app/agent/...` |
 | `scripts/check-setup.ts` | `tests/scripts/check-setup.test.ts` |
 
-A change to a module comes with a change to its mirror. Convex functions are tested with `convex-test` against the real schema; the fakes and fixtures they share live under `tests/convex/fakes/` and `tests/convex/fixtures/`. A test that reproduces a defect before the fix is the preferred shape for a bug fix, and a seam test under `tests/app/` or `tests/src/` is the preferred shape for anything the dashboard shows.
+A change to a module comes with a change to its mirror. Convex functions are tested with `convex-test` against the real schema; the fakes they share live under `tests/convex/fakes/`, and every fixture more than one test reads lives under `tests/fixtures/`, whichever project reads it. A test that reproduces a defect before the fix is the preferred shape for a bug fix, and a seam test under `tests/app/` or `tests/src/` is the preferred shape for anything the dashboard shows.
 
 Two conventions the existing tests follow and new ones should too:
 

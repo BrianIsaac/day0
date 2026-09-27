@@ -6,7 +6,7 @@ import {
   auditNotePlan,
   auditNotePrerequisites,
   REVOPS_5_DM_2_CLAIM,
-} from '../../convex/fixtures/closing-gates-2026-09-16';
+} from '../../fixtures/closing-gates-2026-09-16';
 
 /**
  * The evidence invariant on what phase one says to people: on 16 September

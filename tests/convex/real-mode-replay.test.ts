@@ -11,7 +11,7 @@ import { dependentActionCap } from '../../src/work/execute-skill';
 import { CLOSING_SET_CAP, type ExecutionOutput, type ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
-import { auditRetryPlan, auditPrerequisites, auditPrerequisiteLedger, auditClosing, closingTransportFailure } from './fixtures/closing-retry-2026-09-16';
+import { auditRetryPlan, auditPrerequisites, auditPrerequisiteLedger, auditClosing, closingTransportFailure } from '../fixtures/closing-retry-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**

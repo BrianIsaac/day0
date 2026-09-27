@@ -25,7 +25,7 @@ import {
   run3RetryPhaseOne,
   run3TwoCommentClosing,
   run3TwoCommentPhaseOne,
-} from './fixtures/retry-reentry-2026-09-16';
+} from '../fixtures/retry-reentry-2026-09-16';
 import { landedWritesOf } from '../../src/work/landed-writes';
 import { providerReconciliationEntries } from '../../src/work/reconciliation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';

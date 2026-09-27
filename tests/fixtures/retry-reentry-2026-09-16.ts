@@ -1,9 +1,9 @@
-import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../../src/work/types';
+import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../src/work/types';
 import {
   RUN_3_AUDIT_LINE,
   RUN_3_RETRY_COMMENT_CORRECTED,
   RUN_3_RETRY_NOTE,
-} from '../../fixtures/work/audit-note-2026-09-16-run-3';
+} from './work/audit-note-2026-09-16-run-3';
 
 /**
  * The 16 September third run's REVOPS-5 item and its retry (fresh clone of

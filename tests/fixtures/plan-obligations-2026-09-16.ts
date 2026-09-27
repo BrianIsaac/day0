@@ -1,5 +1,5 @@
-import type { AppliedAction } from '../../../src/surfaces/types';
-import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../../src/work/types';
+import type { AppliedAction } from '../../src/surfaces/types';
+import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../src/work/types';
 
 /**
  * The 16 September fourth run (fresh clone of main d943084, GLM 5.3 Flash via

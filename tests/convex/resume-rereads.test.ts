@@ -19,7 +19,7 @@ import {
   FIRST_FAILURE_2026_09_17,
   FIRST_RUN_2026_09_17,
   firstAttempt2026_09_17,
-} from './fixtures/resume-rereads-2026-09-17';
+} from '../fixtures/resume-rereads-2026-09-17';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**
