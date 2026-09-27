@@ -9,7 +9,12 @@
  * The marker label names the system and the kind of credential, so the
  * owner's credential list reads as a list of what was found and where.
  */
-import { KNOWN_VALUE_LABEL, redactText, type Finding, type RedactOptions } from '../redaction/redact';
+import {
+  KNOWN_VALUE_LABEL,
+  redactText,
+  type Finding,
+  type RedactOptions,
+} from '../redaction/redact';
 import { explicitlyAssignedCredential, guardReason } from '../redaction/guard';
 import type { SpanModel } from '../redaction/client';
 import { PROVIDER_LABELS } from '../redaction/structural';
@@ -120,9 +125,20 @@ function credentialLabel(line: string, label: string, title: string): string {
     pattern.test(descriptor),
   )?.[1];
   const kind = lineKind ?? LABEL_KINDS[label] ?? 'credential';
-  const namedSystem = ['linear', 'slack', 'notion', 'github', 'stripe', 'aws', 'google', 'openai', 'anthropic', 'postgres', 'mysql', 'redis'].find(
-    (system: string): boolean => new RegExp(`\\b${system}\\b`).test(descriptor),
-  );
+  const namedSystem = [
+    'linear',
+    'slack',
+    'notion',
+    'github',
+    'stripe',
+    'aws',
+    'google',
+    'openai',
+    'anthropic',
+    'postgres',
+    'mysql',
+    'redis',
+  ].find((system: string): boolean => new RegExp(`\\b${system}\\b`).test(descriptor));
   return `${namedSystem || systemFromTitle(title)} ${kind}`;
 }
 
@@ -171,7 +187,10 @@ export async function redactCredentials(
     (context: string) =>
     (finding: Finding): string => {
       if (!labels.has(finding.value)) {
-        labels.set(finding.value, credentialLabel(lineAround(context, finding), finding.label, safeTitle));
+        labels.set(
+          finding.value,
+          credentialLabel(lineAround(context, finding), finding.label, safeTitle),
+        );
       }
       return credentialMarker(labels.get(finding.value) ?? finding.label);
     };
@@ -190,11 +209,16 @@ export async function redactCredentials(
     secretMarker: collect(markdown),
   });
   const credentials: RedactedCredential[] = [];
-  for (const [context, findings] of [[title, titleResult.findings], [markdown, bodyResult.findings]] as const) {
+  for (const [context, findings] of [
+    [title, titleResult.findings],
+    [markdown, bodyResult.findings],
+  ] as const) {
     for (const finding of findings) {
       if (finding.kind !== 'secret') continue;
-      const assigned = explicitlyAssignedCredential(context, finding.start, finding.end) &&
-        guardReason(finding.value) !== undefined && guardReason(finding.value, { assigned: true }) === undefined;
+      const assigned =
+        explicitlyAssignedCredential(context, finding.start, finding.end) &&
+        guardReason(finding.value) !== undefined &&
+        guardReason(finding.value, { assigned: true }) === undefined;
       const existing = credentials.find((row) => row.plaintext === finding.value);
       if (existing) {
         if (assigned) existing.explicitlyAssigned = true;
