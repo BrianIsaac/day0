@@ -9,8 +9,9 @@
 #   ./setup.sh --route local           Local, local model: the bundled model, no account
 #   ./setup.sh stop | resume | clear   stop for the day, come back, or throw it away
 #
-# This checks the three tools the setup needs, installs the dependencies if
-# they are not there yet, and hands everything else to the typed, tested entry:
+# This checks the tools the setup needs (the Docker daemon itself, not only
+# its client), installs the dependencies if they are not there yet (never on
+# --dry-run), and hands everything else to the typed, tested entry:
 # `pnpm setup:local --mode real`. Every flag goes straight through, so
 # `pnpm setup:local --help` is the full list. Mock mode, the seeded office the
 # evaluation harness and the hosted demo run on, stays `pnpm setup:local`.
@@ -93,11 +94,39 @@ if ! command -v pnpm >/dev/null 2>&1 || [ "$(major "$(pnpm --version)")" -lt 9 ]
   echo "     corepack enable && corepack prepare pnpm@9 --activate" >&2
   missing=1
 fi
-if ! command -v docker >/dev/null 2>&1 || ! docker --version >/dev/null 2>&1; then
-  echo "gap  Docker is needed and did not answer. Start Docker Desktop or the docker service." >&2
+# The env sync the setup runs is a bash script with associative arrays, and it
+# runs under whichever bash is first on the path; macOS ships 3.2.
+path_bash="$(major "$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || true)")"
+if [ "${path_bash:-0}" -lt 4 ]; then
+  echo "gap  bash 4 or newer is needed on the path; found: $(bash -c 'echo "$BASH_VERSION"' 2>/dev/null || echo 'none')." >&2
+  echo "     macOS ships bash 3.2: brew install bash, then open a new terminal." >&2
   missing=1
-elif ! compose_version="$(docker compose version 2>/dev/null)" || [ "$(major "$compose_version")" -lt 2 ]; then
-  echo "gap  Docker Compose v2 is needed; docker-compose v1 is not enough." >&2
+fi
+if ! command -v docker >/dev/null 2>&1 || ! docker --version >/dev/null 2>&1; then
+  echo "gap  Docker is needed and is not on the path. Install Docker Desktop or Docker Engine." >&2
+  missing=1
+elif ! daemon="$(docker info --format '{{.ServerVersion}}' 2>&1)"; then
+  # The client answers on its own; only the daemon can say whether it runs and
+  # whether this user may talk to it, so its own words are kept.
+  reason="$(printf '%s' "$daemon" | grep -v '^[[:space:]]*$' | head -n1)"
+  case "$daemon" in
+    *"permission denied"*)
+      echo "gap  Docker is installed and this user may not reach its daemon: ${reason}" >&2
+      echo "     Add yourself to the docker group and log in again: sudo usermod -aG docker \"\$USER\"" >&2
+      ;;
+    *)
+      echo "gap  Docker is installed and its daemon did not answer: ${reason}" >&2
+      echo "     Start Docker Desktop, or the service: sudo systemctl start docker" >&2
+      ;;
+  esac
+  missing=1
+elif ! compose_version="$(docker compose version 2>&1)"; then
+  reason="$(printf '%s' "$compose_version" | grep -v '^[[:space:]]*$' | head -n1)"
+  echo "gap  The Docker Compose v2 plugin (\`docker compose\`) did not answer: ${reason}" >&2
+  echo "     Install it: Docker Desktop carries it; on Linux, the docker-compose-plugin package." >&2
+  missing=1
+elif compose_major="$(major "$compose_version")" && [ "${compose_major:-0}" -lt 2 ]; then
+  echo "gap  Docker Compose v2 is needed; found: ${compose_version}. The old docker-compose v1 is not enough." >&2
   missing=1
 fi
 if [ "$missing" -ne 0 ]; then
@@ -106,7 +135,23 @@ if [ "$missing" -ne 0 ]; then
   exit 1
 fi
 
+dry_run=0
+for argument in "$@"; do
+  if [ "$argument" = "--dry-run" ]; then dry_run=1; fi
+done
+
 if [ ! -d node_modules ]; then
+  if [ "$dry_run" -eq 1 ]; then
+    # A dry run writes nothing, and an install writes node_modules; the full
+    # plan needs the dependencies, so it says what it would do and stops here.
+    echo "Dry run. The prerequisites above are in place. The dependencies are not installed yet, so the"
+    echo "plan cannot be printed without writing node_modules. The setup would run, in order:"
+    echo "  pnpm install --frozen-lockfile"
+    echo "  pnpm setup:local --mode real $*"
+    echo "Install them (pnpm install --frozen-lockfile) and run the dry run again for the full plan."
+    echo "Nothing was started and nothing was written."
+    exit 0
+  fi
   echo "Installing dependencies (pnpm install --frozen-lockfile)..."
   pnpm install --frozen-lockfile
 fi
