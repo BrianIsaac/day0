@@ -58,7 +58,10 @@ export const deleteMyData = mutation({
     let deleted = 0;
     for (const agent of agents) {
       const agentId = agent._id;
-      const sandboxLease = await ctx.db.query('sandboxLeases').withIndex('by_name', (q) => q.eq('name', 'local-sandbox')).unique();
+      const sandboxLease = await ctx.db
+        .query('sandboxLeases')
+        .withIndex('by_name', (q) => q.eq('name', 'local-sandbox'))
+        .unique();
       if (sandboxLease) {
         const heldSkill = await ctx.db.get(sandboxLease.skillId);
         if (heldSkill?.agentId === agentId) await ctx.db.delete(sandboxLease._id);

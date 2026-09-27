@@ -37,7 +37,11 @@ vi.mock('../../src/lib/mastra', async (importOriginal) => {
           const next = recorded.scopeOutcomes.shift() ?? {
             object: { inScope: true, fit: true, reason: 'close summaries are the charter work' },
           };
-          if ('statusCode' in next) throw Object.assign(new Error(`provider answered ${next.statusCode} to: ${user}`), next);
+          if ('statusCode' in next)
+            throw Object.assign(
+              new Error(`provider answered ${next.statusCode} to: ${user}`),
+              next,
+            );
           return next;
         }
         if (name === 'day0-quality-fit') {
@@ -114,7 +118,11 @@ async function seedEmployee(harness: Harness): Promise<Id<'agents'>> {
   });
 }
 
-async function insertDiscovered(harness: Harness, agentId: Id<'agents'>, externalId: string): Promise<Id<'workItems'>> {
+async function insertDiscovered(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  externalId: string,
+): Promise<Id<'workItems'>> {
   return await harness.run(
     async (ctx) =>
       await ctx.db.insert('workItems', {
@@ -140,7 +148,7 @@ async function modelCallEvents(harness: Harness): Promise<Doc<'events'>[]> {
 }
 
 describe('work.model-call on the item events', (): void => {
-  it('records the evaluation step\'s charter judgement with its stage, agent, attempts and duration', async (): Promise<void> => {
+  it("records the evaluation step's charter judgement with its stage, agent, attempts and duration", async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -164,7 +172,7 @@ describe('work.model-call on the item events', (): void => {
     });
   });
 
-  it('records the retries a call needed, and never the prompt or the provider\'s message', async (): Promise<void> => {
+  it("records the retries a call needed, and never the prompt or the provider's message", async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -180,11 +188,11 @@ describe('work.model-call on the item events', (): void => {
     // slices, yielding to the real event loop between them, until the action
     // settles.
     let settled = false;
-    const pending = harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }).finally(
-      (): void => {
+    const pending = harness
+      .action(internal.workActions.evaluateWorkItemInternal, { workItemId })
+      .finally((): void => {
         settled = true;
-      },
-    );
+      });
     const deadline = Date.now() + 15_000;
     while (!settled && Date.now() < deadline) {
       await new Promise((resolve) => setImmediate(resolve));

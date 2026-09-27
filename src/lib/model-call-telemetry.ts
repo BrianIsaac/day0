@@ -73,7 +73,10 @@ const requiredObserverScopes: AsyncLocalStorage<boolean> = ((
  * Returns:
  *   Whatever the step returns.
  */
-export async function observeModelCalls<T>(observer: ModelCallObserver, fn: () => Promise<T>): Promise<T> {
+export async function observeModelCalls<T>(
+  observer: ModelCallObserver,
+  fn: () => Promise<T>,
+): Promise<T> {
   return await requiredObserverScopes.run(true, () => modelCallObservers.run(observer, fn));
 }
 
@@ -139,7 +142,8 @@ function reportFor(
   };
   if (err === undefined) return report;
   const error = err as { name?: unknown; statusCode?: unknown };
-  const errorName = err instanceof Error ? (err.name === 'TimeoutError' ? 'TimeoutError' : 'Error') : undefined;
+  const errorName =
+    err instanceof Error ? (err.name === 'TimeoutError' ? 'TimeoutError' : 'Error') : undefined;
   report.outcome = errorName === 'TimeoutError' ? 'timed-out' : 'failed';
   if (errorName !== undefined) report.errorName = errorName;
   if (typeof error.statusCode === 'number') report.statusCode = error.statusCode;
@@ -165,7 +169,8 @@ export async function reportModelCall(
 ): Promise<void> {
   const observer = modelCallObservers.getStore();
   if (!observer) {
-    if (requiredObserverScopes.getStore()) throw new Error('model-call observer missing in an observed scope');
+    if (requiredObserverScopes.getStore())
+      throw new Error('model-call observer missing in an observed scope');
     return;
   }
   try {

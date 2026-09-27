@@ -74,23 +74,36 @@ describe('reset transient verification state', (): void => {
     const harness = convexTest(schema, allConvexModules());
     await seedOwner(harness);
     const agentId = await harness.run(async (ctx) => {
-      const row = await ctx.db.query('agents').withIndex('by_userId', (q) => q.eq('userId', 'owner')).unique();
+      const row = await ctx.db
+        .query('agents')
+        .withIndex('by_userId', (q) => q.eq('userId', 'owner'))
+        .unique();
       if (!row) throw new Error('agent missing');
       return row._id;
     });
     const { skillId, runId } = await harness.run(async (ctx) => {
       const skillId = await ctx.db.insert('skills', {
-        agentId, name: 'queued skill', description: 'Queued', body: '',
-        sourceType: 'agent-authored', state: 'authoring', createdAt: 1,
+        agentId,
+        name: 'queued skill',
+        description: 'Queued',
+        body: '',
+        sourceType: 'agent-authored',
+        state: 'authoring',
+        createdAt: 1,
       });
       const runId = await ctx.db.insert('events', {
-        agentId, type: 'skill.authoring-claimed', payload: { skillId }, createdAt: 1,
+        agentId,
+        type: 'skill.authoring-claimed',
+        payload: { skillId },
+        createdAt: 1,
       });
       return { skillId, runId };
     });
     await harness.mutation(internal.sandboxLease.take, { skillId, runId });
     await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
-    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual([]);
+    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual(
+      [],
+    );
   });
 });
 
@@ -100,7 +113,9 @@ describe('reset completeness', (): void => {
     const total = Object.keys(schema.tables).length;
     const agentOwned = agentKeyedTables().length + 1;
     const enumerated = AGENT_KEYED_TABLES.length;
-    expect(readme).toContain(`The schema contains ${total} tables: ${agentOwned} carry per-agent or agent-owned runtime state`);
+    expect(readme).toContain(
+      `The schema contains ${total} tables: ${agentOwned} carry per-agent or agent-owned runtime state`,
+    );
     expect(readme).toContain(`from ${enumerated} explicitly enumerated related tables`);
     expect(readme).toContain(`in ${enumerated} enumerated related tables`);
     // SECURITY.md is where the README sends a reader for what a reset deletes (review m9).
@@ -129,9 +144,11 @@ describe('reset completeness', (): void => {
       await harness.run(async (ctx) => {
         const counts: Record<string, number> = {};
         for (const table of tables) {
-          const rows = await (ctx.db as unknown as {
-            query: (t: string) => { collect: () => Promise<Array<{ agentId?: string }>> };
-          })
+          const rows = await (
+            ctx.db as unknown as {
+              query: (t: string) => { collect: () => Promise<Array<{ agentId?: string }>> };
+            }
+          )
             .query(table)
             .collect();
           counts[table] = rows.filter((row) => row.agentId === agentId).length;
@@ -230,9 +247,9 @@ describe('credential retention on reset', (): void => {
     expect(rows[0]?.source).toEqual({ sourceId, ref: 'linear-automation' });
     expect(rows[2]).toMatchObject({ appId: 'A0DAY0', source: 'oauth' });
     for (const id of ids) {
-      await expect(harness.action(internal.credentials.decrypt, { credentialId: id })).rejects.toThrow(
-        'unavailable',
-      );
+      await expect(
+        harness.action(internal.credentials.decrypt, { credentialId: id }),
+      ).rejects.toThrow('unavailable');
     }
     // The summary the Surfaces tab reads still lists the rows as revoked.
     const summary = await harness

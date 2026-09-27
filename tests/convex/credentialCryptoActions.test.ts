@@ -16,7 +16,10 @@ import { redactCredentials } from '../../src/docs/redaction';
 import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { ScriptedSpanModel } from '../fixtures/redaction-double';
 import { encrypt } from '../../src/lib/credential-crypto';
-import { OWNER_KNOWN_VALUE_CAP, OWNER_KNOWN_VALUES_CAP_REASON } from '../../src/redaction/known-values';
+import {
+  OWNER_KNOWN_VALUE_CAP,
+  OWNER_KNOWN_VALUES_CAP_REASON,
+} from '../../src/redaction/known-values';
 import { allConvexModules } from './all-modules';
 
 const KEY = randomBytes(32).toString('base64');
@@ -72,22 +75,62 @@ describe('the owner known-value source', (): void => {
 
   it('returns every active value this owner holds, and nothing of anyone else', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    await insertRow(harness, { userId: 'owner', label: 'Linear service token', plaintext: 'lin-value-one' });
-    await insertRow(harness, { userId: 'owner', label: 'Looker tile password', plaintext: 'tile-value-two' });
-    await insertRow(harness, { userId: 'owner', label: 'Revoked', plaintext: 'revoked-value', revokedAt: 5 });
-    await insertRow(harness, { userId: 'owner', label: 'Purged', plaintext: 'purged-value', purged: true });
-    await insertRow(harness, { userId: 'owner', label: 'Location', plaintext: '', kind: 'location' });
-    await insertRow(harness, { userId: 'owner', label: 'Rotated', plaintext: 'rotated-value', key: OTHER_KEY });
-    await insertRow(harness, { userId: 'neighbour', label: 'Neighbour token', plaintext: 'neighbour-value' });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Linear service token',
+      plaintext: 'lin-value-one',
+    });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Looker tile password',
+      plaintext: 'tile-value-two',
+    });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Revoked',
+      plaintext: 'revoked-value',
+      revokedAt: 5,
+    });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Purged',
+      plaintext: 'purged-value',
+      purged: true,
+    });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Location',
+      plaintext: '',
+      kind: 'location',
+    });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Rotated',
+      plaintext: 'rotated-value',
+      key: OTHER_KEY,
+    });
+    await insertRow(harness, {
+      userId: 'neighbour',
+      label: 'Neighbour token',
+      plaintext: 'neighbour-value',
+    });
     const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
     const warn = vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
     const error = vi.spyOn(console, 'error').mockImplementation((): void => undefined);
 
-    const values = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+    const values = await harness.action(internal.credentialCryptoActions.ownerValues, {
+      userId: 'owner',
+    });
 
     expect([...values].sort()).toEqual(['lin-value-one', 'tile-value-two']);
     const logged = JSON.stringify([log.mock.calls, warn.mock.calls, error.mock.calls]);
-    for (const value of ['lin-value-one', 'tile-value-two', 'revoked-value', 'rotated-value', 'neighbour-value']) {
+    for (const value of [
+      'lin-value-one',
+      'tile-value-two',
+      'revoked-value',
+      'rotated-value',
+      'neighbour-value',
+    ]) {
       expect(logged).not.toContain(value);
     }
     const rows = await harness.run(async (ctx) => await ctx.db.query('credentials').collect());
@@ -124,7 +167,8 @@ describe('the owner known-value source', (): void => {
 describe('the public API surface and decryption', (): void => {
   it('has no public query in a module that can reach a decrypted value', (): void => {
     const modules = readdirSync('convex').filter((name: string): boolean => name.endsWith('.ts'));
-    const reaches = /credential-crypto|credentialCryptoActions|ownerKnownValues|ownerValuesRef|credentials\.decrypt|DAY0_CREDENTIAL_KEY|ciphertext/;
+    const reaches =
+      /credential-crypto|credentialCryptoActions|ownerKnownValues|ownerValuesRef|credentials\.decrypt|DAY0_CREDENTIAL_KEY|ciphertext/;
     // Each exported definition is one chunk; a public query's chunk is its handler.
     const offenders = modules.flatMap((name: string): string[] =>
       readFileSync(join('convex', name), 'utf8')
@@ -140,16 +184,32 @@ describe('the public API surface and decryption', (): void => {
 
 it('keeps a page-derived password that happens to look like a scope, by its label', async () => {
   const harness = convexTest(schema, allConvexModules());
-  const passwordId = await insertRow(harness, { userId: 'owner', label: 'looker password', plaintext: 'ops:hunter2' });
-  const scopeId = await insertRow(harness, { userId: 'owner', label: 'slack credential', plaintext: 'chat:write' });
+  const passwordId = await insertRow(harness, {
+    userId: 'owner',
+    label: 'looker password',
+    plaintext: 'ops:hunter2',
+  });
+  const scopeId = await insertRow(harness, {
+    userId: 'owner',
+    label: 'slack credential',
+    plaintext: 'chat:write',
+  });
   await harness.run(async (ctx) => {
     const sourceId = await ctx.db.insert('docSources', {
-      userId: 'owner', label: 'Handbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+      userId: 'owner',
+      label: 'Handbook',
+      kind: 'folder',
+      locator: '.',
+      status: 'synced',
+      createdAt: 1,
+      updatedAt: 1,
     });
     await ctx.db.patch(passwordId, { source: { sourceId, ref: 'looker.md' } });
     await ctx.db.patch(scopeId, { source: { sourceId, ref: 'slack.md' } });
   });
-  expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual(['ops:hunter2']);
+  expect(
+    await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' }),
+  ).toEqual(['ops:hunter2']);
   const rows = await harness.run(async (ctx) => ({
     password: (await ctx.db.get(passwordId))!,
     scope: (await ctx.db.get(scopeId))!,
@@ -160,22 +220,43 @@ it('keeps a page-derived password that happens to look like a scope, by its labe
 
 it('lets resync repair an old scope row instead of redacting it as a known value forever', async () => {
   const harness = convexTest(schema, allConvexModules());
-  const credentialId = await insertRow(harness, { userId: 'owner', label: 'Slack credential', plaintext: 'users:read' });
+  const credentialId = await insertRow(harness, {
+    userId: 'owner',
+    label: 'Slack credential',
+    plaintext: 'users:read',
+  });
   await harness.run(async (ctx) => {
     const sourceId = await ctx.db.insert('docSources', {
-      userId: 'owner', label: 'Handbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+      userId: 'owner',
+      label: 'Handbook',
+      kind: 'folder',
+      locator: '.',
+      status: 'synced',
+      createdAt: 1,
+      updatedAt: 1,
     });
     await ctx.db.patch(credentialId, { source: { sourceId, ref: 'slack.md' } });
   });
-  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, {
+    userId: 'owner',
+  });
   const markdown = readFileSync('tests/fixtures/slack-manifest-scopes.md', 'utf8');
-  const model = new ScriptedSpanModel((text) => [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].map((match) => ({
-    start: match.index!, end: match.index! + match[0].length, label: 'credential', score: 0.99,
-  })));
-  expect((await redactCredentials(markdown, 'Slack automation policy', { model, known })).credentials).toEqual([]);
+  const model = new ScriptedSpanModel((text) =>
+    [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].map((match) => ({
+      start: match.index!,
+      end: match.index! + match[0].length,
+      label: 'credential',
+      score: 0.99,
+    })),
+  );
+  expect(
+    (await redactCredentials(markdown, 'Slack automation policy', { model, known })).credentials,
+  ).toEqual([]);
   // Explicitly entered material still participates in exact-value protection.
   await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: 'users:read' });
-  expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual(['users:read']);
+  expect(
+    await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' }),
+  ).toEqual(['users:read']);
 });
 
 it('leaves a stored channel name or method name out of exact removal while every real secret stays in', async () => {
@@ -184,23 +265,65 @@ it('leaves a stored channel name or method name out of exact removal while every
   // The rows a sync at 0acb98f left behind: the two originals, and the copies the
   // owner-wide removal itself stored under other pages' refs.
   const stored = {
-    channel: await insertRow(harness, { userId: 'owner', label: 'revenue operations token', plaintext: '#ops-requests' }),
-    method: await insertRow(harness, { userId: 'owner', label: 'slack token', plaintext: 'users.lookupByEmail' }),
-    spread: await insertRow(harness, { userId: 'owner', label: 'slack credential', plaintext: '#ops-requests' }),
-    slack: await insertRow(harness, { userId: 'owner', label: 'slack bot token', plaintext: CORPUS_SLOTS.slack_bot_token }),
-    linear: await insertRow(harness, { userId: 'owner', label: 'linear service token', plaintext: CORPUS_SLOTS.linear_token }),
-    generic: await insertRow(harness, { userId: 'owner', label: 'warehouse api key', plaintext: CORPUS_SLOTS.client_secret }),
-    dotted: await insertRow(harness, { userId: 'owner', label: 'looker password', plaintext: dotted }),
+    channel: await insertRow(harness, {
+      userId: 'owner',
+      label: 'revenue operations token',
+      plaintext: '#ops-requests',
+    }),
+    method: await insertRow(harness, {
+      userId: 'owner',
+      label: 'slack token',
+      plaintext: 'users.lookupByEmail',
+    }),
+    spread: await insertRow(harness, {
+      userId: 'owner',
+      label: 'slack credential',
+      plaintext: '#ops-requests',
+    }),
+    slack: await insertRow(harness, {
+      userId: 'owner',
+      label: 'slack bot token',
+      plaintext: CORPUS_SLOTS.slack_bot_token,
+    }),
+    linear: await insertRow(harness, {
+      userId: 'owner',
+      label: 'linear service token',
+      plaintext: CORPUS_SLOTS.linear_token,
+    }),
+    generic: await insertRow(harness, {
+      userId: 'owner',
+      label: 'warehouse api key',
+      plaintext: CORPUS_SLOTS.client_secret,
+    }),
+    dotted: await insertRow(harness, {
+      userId: 'owner',
+      label: 'looker password',
+      plaintext: dotted,
+    }),
   };
   await harness.run(async (ctx) => {
     const sourceId = await ctx.db.insert('docSources', {
-      userId: 'owner', label: 'Handbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+      userId: 'owner',
+      label: 'Handbook',
+      kind: 'folder',
+      locator: '.',
+      status: 'synced',
+      createdAt: 1,
+      updatedAt: 1,
     });
-    for (const [ref, id] of Object.entries(stored)) await ctx.db.patch(id, { source: { sourceId, ref: `${ref}.md` } });
+    for (const [ref, id] of Object.entries(stored))
+      await ctx.db.patch(id, { source: { sourceId, ref: `${ref}.md` } });
   });
-  const values = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  const values = await harness.action(internal.credentialCryptoActions.ownerValues, {
+    userId: 'owner',
+  });
   expect([...values].sort()).toEqual(
-    [CORPUS_SLOTS.slack_bot_token, CORPUS_SLOTS.linear_token, CORPUS_SLOTS.client_secret, dotted].sort(),
+    [
+      CORPUS_SLOTS.slack_bot_token,
+      CORPUS_SLOTS.linear_token,
+      CORPUS_SLOTS.client_secret,
+      dotted,
+    ].sort(),
   );
   const rows = await harness.run(async (ctx) => ({
     channel: (await ctx.db.get(stored.channel))!,
@@ -212,14 +335,25 @@ it('leaves a stored channel name or method name out of exact removal while every
   expect(cryptoActions.storedCredentialGuardReason(rows.dotted)).toBeUndefined();
   // A value a person typed in is theirs to protect, whatever its shape.
   await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: '#ops-requests' });
-  expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toContain('#ops-requests');
+  expect(
+    await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' }),
+  ).toContain('#ops-requests');
 });
 
 it('keeps explicitly assigned name-shaped tokens in owner-wide removal after page storage', async () => {
   const harness = convexTest(schema, allConvexModules());
-  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
-    userId: 'owner', label: 'Access', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
-  }));
+  const sourceId = await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Access',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+  );
   const cases = [
     { value: ['#', 'cobalt', 'harbor'].join(''), line: 'Service token:', swallowed: false },
     { value: ['Cobalt', 'Harbor', 'Winter'].join('.'), line: 'Service token:', swallowed: false },
@@ -228,26 +362,35 @@ it('keeps explicitly assigned name-shaped tokens in owner-wide removal after pag
     { value: ['Silver', 'Meadow', 'Spring'].join('.'), line: '| Bot |', swallowed: false },
   ];
   for (const [index, entry] of cases.entries()) {
-    const text = entry.line === '| Bot |'
-      ? `| Service | Service token |\n|---|---|\n| Bot | ${entry.value} |`
-      : `${entry.line} ${entry.value}`;
+    const text =
+      entry.line === '| Bot |'
+        ? `| Service | Service token |\n|---|---|\n| Bot | ${entry.value} |`
+        : `${entry.line} ${entry.value}`;
     const model = new ScriptedSpanModel((body) => {
       const candidate = entry.swallowed ? text : entry.value;
       const start = body.indexOf(candidate);
-      return start < 0 ? [] : [{ start, end: start + candidate.length, label: 'access token', score: 0.99 }];
+      return start < 0
+        ? []
+        : [{ start, end: start + candidate.length, label: 'access token', score: 0.99 }];
     });
     const extracted = await redactCredentials(text, 'Access', { model });
     expect(extracted.credentials).toHaveLength(1);
     await harness.action(internal.credentials.store, {
-      userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: `page-${index}.md` },
+      userId: 'owner',
+      kind: 'value',
+      ...extracted.credentials[0],
+      source: { sourceId, ref: `page-${index}.md` },
     });
   }
-  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, {
+    userId: 'owner',
+  });
   for (const { value } of cases) {
     expect(known.includes(value)).toBe(true);
     const repeated = `The same token is mentioned here: ${value}`;
     const result = await redactCredentials(repeated, 'Other page', {
-      model: new ScriptedSpanModel(() => []), known,
+      model: new ScriptedSpanModel(() => []),
+      known,
     });
     expect(result.markdown.includes(value)).toBe(false);
   }
@@ -255,34 +398,55 @@ it('keeps explicitly assigned name-shaped tokens in owner-wide removal after pag
 
 it('stores long opaque name-spelled credentials and removes them from another page', async () => {
   const harness = convexTest(schema, allConvexModules());
-  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
-    userId: 'owner', label: 'Access', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
-  }));
+  const sourceId = await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Access',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+  );
   const alphabet = 'abcdefghijklmnopqrstuvwxyz';
   const letters = (offset: number, count: number): string =>
-    Array.from({ length: count }, (_, index) => alphabet[(offset + index * 7) % alphabet.length]).join('');
+    Array.from(
+      { length: count },
+      (_, index) => alphabet[(offset + index * 7) % alphabet.length],
+    ).join('');
   const values = [
     [letters(0, 7), letters(1, 6), letters(2, 6), letters(3, 6), letters(4, 6)]
-      .map((part, index) => index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`).join(''),
+      .map((part, index) => (index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`))
+      .join(''),
     [letters(5, 14), letters(9, 14)].join('_'),
   ];
   for (const [index, value] of values.entries()) {
     const text = `Use ${value} for the integration.`;
     const model = new ScriptedSpanModel((body) => {
       const start = body.indexOf(value);
-      return start < 0 ? [] : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
+      return start < 0
+        ? []
+        : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
     });
     const extracted = await redactCredentials(text, 'Access', { model });
     expect(extracted.credentials.map((row) => row.plaintext)).toEqual([value]);
     await harness.action(internal.credentials.store, {
-      userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: `opaque-${index}.md` },
+      userId: 'owner',
+      kind: 'value',
+      ...extracted.credentials[0],
+      source: { sourceId, ref: `opaque-${index}.md` },
     });
   }
-  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, {
+    userId: 'owner',
+  });
   for (const value of values) {
     expect(known.includes(value)).toBe(true);
     const repeated = await redactCredentials(`Repeated: ${value}`, 'Other page', {
-      model: new ScriptedSpanModel(() => []), known,
+      model: new ScriptedSpanModel(() => []),
+      known,
     });
     expect(repeated.markdown.includes(value)).toBe(false);
   }
@@ -290,27 +454,51 @@ it('stores long opaque name-spelled credentials and removes them from another pa
 
 it('drops old page-derived runbook words from exact removal but keeps an assigned word token', async () => {
   const harness = convexTest(schema, allConvexModules());
-  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
-    userId: 'owner', label: 'Runbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
-  }));
+  const sourceId = await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+  );
   for (const [index, value] of ['postMessage', 'save_comment'].entries()) {
-    const id = await insertRow(harness, { userId: 'owner', label: 'slack token', plaintext: value });
-    await harness.run(async (ctx) => await ctx.db.patch(id, { source: { sourceId, ref: `old-${index}.md` } }));
+    const id = await insertRow(harness, {
+      userId: 'owner',
+      label: 'slack token',
+      plaintext: value,
+    });
+    await harness.run(
+      async (ctx) => await ctx.db.patch(id, { source: { sourceId, ref: `old-${index}.md` } }),
+    );
   }
-  const before = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  const before = await harness.action(internal.credentialCryptoActions.ownerValues, {
+    userId: 'owner',
+  });
   expect(before.includes('postMessage')).toBe(false);
   expect(before.includes('save_comment')).toBe(false);
 
   const text = 'token: lookupByEmail';
   const model = new ScriptedSpanModel((body) => {
     const start = body.indexOf('lookupByEmail');
-    return start < 0 ? [] : [{ start, end: start + 'lookupByEmail'.length, label: 'access token', score: 0.99 }];
+    return start < 0
+      ? []
+      : [{ start, end: start + 'lookupByEmail'.length, label: 'access token', score: 0.99 }];
   });
   const extracted = await redactCredentials(text, 'Access', { model });
   expect(extracted.credentials).toHaveLength(1);
   await harness.action(internal.credentials.store, {
-    userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: 'assigned.md' },
+    userId: 'owner',
+    kind: 'value',
+    ...extracted.credentials[0],
+    source: { sourceId, ref: 'assigned.md' },
   });
-  const after = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  const after = await harness.action(internal.credentialCryptoActions.ownerValues, {
+    userId: 'owner',
+  });
   expect(after.includes('lookupByEmail')).toBe(true);
 });
