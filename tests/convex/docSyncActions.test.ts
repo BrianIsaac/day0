@@ -22,6 +22,7 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
+import { FINISHING_CURSOR } from '../../convex/docSources';
 import { encrypt, openOwnedCredential as openSpy } from '../../src/lib/credential-crypto';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import { temporaryDirectories } from '../setup/temporary-directories';
@@ -622,6 +623,64 @@ describe('documentation sync batching', (): void => {
     expect(state.runs[0]).toMatchObject({ state: 'completed', pageCount: 99 });
     expect(state.runs[1]).toMatchObject({ state: 'superseded' });
     expect(state.runs[1].reason).toContain('the listing changed under its cursor');
+  });
+
+  it('words a failure while finishing as the error it is, not as a credential to land (adversarial pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Notion connection secret',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt('connection-contract-value', process.env.DAY0_CREDENTIAL_KEY ?? ''),
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Notion',
+        kind: 'mcp',
+        serverKind: 'notion',
+        locator: 'http://notion-mcp:3000/mcp',
+        credentialId,
+        status: 'linking',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        cursor: FINISHING_CURSOR,
+        refs: [],
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: 1,
+      });
+      await ctx.db.patch(sourceId, { activeSyncId: runId });
+      // More page-derived credentials than one source may hold: the finish refuses.
+      for (let index = 0; index < 1_001; index += 1) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: `value ${index}`,
+          source: { sourceId, ref: `page-${index}` },
+          ciphertext: 'sealed',
+          iv: 'iv',
+          createdAt: 1,
+        });
+      }
+      return { sourceId, runId };
+    });
+    await harness.action(internal.docSyncActions.syncBatch, {
+      sourceId,
+      runId,
+      cursor: FINISHING_CURSOR,
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(sourceId))).toMatchObject({
+      status: 'error',
+      lastError: expect.stringContaining('Source exceeds 1,000 credentials.'),
+    });
   });
 
   it('reads a private wiki with the reader secret it was linked with, and keeps the secret out of every stored reason (E-74)', async (): Promise<void> => {

@@ -365,6 +365,8 @@ export const syncBatch = internalAction({
     if (!context) return { ok: false, pages: 0, redactions: 0, complete: true };
     const source = context.source;
     let secret: string | undefined;
+    // Only a secret that could not be landed or opened makes the failure the credential's.
+    let credentialUnavailable = false;
     let known: readonly string[] = [];
     try {
       if (args.cursor === FINISHING_CURSOR) return await finishGeneration(ctx, source, args.runId);
@@ -372,10 +374,12 @@ export const syncBatch = internalAction({
       // An MCP source always reads with its connection secret; a git or URL
       // source reads with its own secret when it was linked with one (E-74).
       if (readsWithSecret(source)) {
+        credentialUnavailable = true;
         if (!source.credentialId) throw new Error('Documentation credential is not landed.');
         secret = await ctx.runAction(internal.credentials.decrypt, {
           credentialId: source.credentialId,
         });
+        credentialUnavailable = false;
       }
       const batch = await readerFor(source.kind).listPageBatch(
         source as DocSourceRecord,
@@ -462,7 +466,7 @@ export const syncBatch = internalAction({
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: source._id,
         runId: args.runId,
-        status: readsWithSecret(source) && !secret ? 'credential-not-landed' : 'error',
+        status: credentialUnavailable ? 'credential-not-landed' : 'error',
         reason,
       });
       return { ok: false, pages: 0, redactions: 0, complete: true, reason };
