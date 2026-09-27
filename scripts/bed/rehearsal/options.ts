@@ -1,5 +1,5 @@
 /**
- * The command line of `pnpm bed:rehearse` and the refusals that decide
+ * The command line of the rehearsal entry and the refusals that decide
  * whether a compose project may be used for a bed.
  */
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES } from '../../demo-bed';
@@ -35,7 +35,7 @@ export interface RehearsalOptions {
   help: boolean;
 }
 
-export const USAGE = `Usage: pnpm bed:rehearse --secrets <file> [options]
+export const USAGE = `Usage: pnpm exec tsx scripts/bed/rehearse.ts --secrets <file> [options]
 
 Brings real mode up from a clean clone on its own compose project and ports,
 links the primary checkout's documentation folder, deploys an agent, holds the

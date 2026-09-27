@@ -4,7 +4,7 @@
  * internal tooling for the maintainers, beside the company bed, and the one
  * deliberate second deployment on a workspace (decision N4).
  *
- *   pnpm bed:rehearse --secrets <file> [--dry-run] [--warm-from <project>] [...]
+ *   pnpm exec tsx scripts/bed/rehearse.ts --secrets <file> [--dry-run] [--warm-from <project>] [...]
  *
  * From a clean clone of this checkout it brings real mode up on its own
  * compose project and ports, links the primary's documentation folder,
