@@ -1212,6 +1212,12 @@ describe('stopping blocked work with only a manager message left', (): void => {
   it('still stops on a note that asks the manager nothing', (): void => {
     expect(closingStopReason(run('REVOPS-7 has no owner, so nothing was changed and I stopped.'))).toContain('blocked');
   });
+
+  it('lets a Chinese question or ask for a decision through, and stops on a Chinese report', (): void => {
+    expect(closingStopReason(run('REVOPS-7 没有负责人，应该指派给谁？'))).toBeUndefined();
+    expect(closingStopReason(run('请为 REVOPS-7 指派负责人，之后我会继续处理。'))).toBeUndefined();
+    expect(closingStopReason(run('REVOPS-7 没有负责人，因此没有做任何更改，我已停止。'))).toContain('blocked');
+  });
 });
 
 describe('writes the plan left to the manager\'s answer stop with the question (19 Sep fourth run, finding V)', (): void => {
