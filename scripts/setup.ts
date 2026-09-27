@@ -74,7 +74,12 @@ import {
   WAY_NAMES,
 } from '../src/setup/quickstart';
 import { composeArguments, PROFILES } from './compose';
-import { containerDialArguments, readContainerDial, unreachableFix } from './model-reach';
+import {
+  containerDialArguments,
+  firstLine,
+  readContainerDial,
+  unreachableFix,
+} from './model-reach';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
 import {
@@ -1377,6 +1382,12 @@ export interface FeatherlessKey {
   ignored?: string;
 }
 
+/** Whether two base URLs name the same address, a trailing slash aside. */
+function sameBaseUrl(left: string | undefined, right: string): boolean {
+  const bare = (url: string | undefined): string => (url ?? '').trim().replace(/\/+$/, '');
+  return bare(left) === bare(right);
+}
+
 /**
  * Where the Featherless key comes from, without printing it.
  *
@@ -1405,15 +1416,17 @@ export function featherlessKeySource(
     return { source: 'environment', variable: 'FEATHERLESS_API_KEY', key: featherlessKey };
   }
   const openaiKey = (environment.OPENAI_API_KEY ?? '').trim();
-  const forFeatherless =
-    (environment.OPENAI_BASE_URL ?? '').trim() === FEATHERLESS_SETTINGS.OPENAI_BASE_URL;
+  const forFeatherless = sameBaseUrl(
+    environment.OPENAI_BASE_URL,
+    FEATHERLESS_SETTINGS.OPENAI_BASE_URL,
+  );
   if (openaiKey !== '' && forFeatherless) {
     return { source: 'environment', variable: 'OPENAI_API_KEY', key: openaiKey };
   }
   const ignored = openaiKey !== '' ? { ignored: 'OPENAI_API_KEY' } : {};
   if (
     (existing.OPENAI_API_KEY ?? '').trim() !== '' &&
-    (existing.OPENAI_BASE_URL ?? '').trim() === FEATHERLESS_SETTINGS.OPENAI_BASE_URL
+    sameBaseUrl(existing.OPENAI_BASE_URL, FEATHERLESS_SETTINGS.OPENAI_BASE_URL)
   ) {
     return { source: 'file', variable: 'OPENAI_API_KEY', ...ignored };
   }
@@ -3549,17 +3562,6 @@ function numberFrom(value: string | undefined, fallback: number): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-/** What a tool prints for its version, or undefined when it is not there. */
-/** The first non-blank line of a tool's output, trimmed. */
-function firstLine(text: string): string {
-  return (
-    text
-      .split('\n')
-      .map((line: string): string => line.trim())
-      .find((line: string): boolean => line !== '') ?? ''
-  );
-}
-
 /**
  * Ask the Docker daemon itself whether it answers this user. The client's
  * `--version` answers with no daemon at all, so it cannot tell a stopped
@@ -3590,6 +3592,7 @@ function daemonAnswer(io: SetupIo): DaemonAnswer {
   };
 }
 
+/** What a tool prints for its version, or undefined when it is not there. */
 function versionOf(io: SetupIo, command: string, args: readonly string[]): string | undefined {
   const result = io.run(command, args, { timeoutMs: 30_000 });
   return result.status === 0 ? result.stdout.trim() : undefined;

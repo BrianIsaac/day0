@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   containerDialArguments,
+  firstLine,
   readContainerDial,
   unreachableFix,
 } from '../../scripts/model-reach';
@@ -66,5 +67,12 @@ describe('dialling the model address from inside the backend container', (): voi
     expect(unreachableFix('https://gateway.example.com/v1', 'day0-bed').join(' ')).toContain(
       'proxy or firewall',
     );
+  });
+});
+
+describe('the first line a tool printed', (): void => {
+  it('skips blank lines and trims, and is empty for nothing at all', (): void => {
+    expect(firstLine('\n  \n  permission denied  \nmore\n')).toBe('permission denied');
+    expect(firstLine('')).toBe('');
   });
 });

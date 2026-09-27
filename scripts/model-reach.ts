@@ -52,7 +52,7 @@ export function containerDialArguments(baseUrl: string): string[] {
 }
 
 /** The first non-blank line of a tool's output, trimmed. */
-function firstLine(text: string): string {
+export function firstLine(text: string): string {
   return (
     text
       .split('\n')
