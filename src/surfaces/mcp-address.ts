@@ -276,7 +276,7 @@ function boundedBody(response: IncomingMessage, limit: number): ReadableStream<U
  */
 export function pinnedFetch(
   checked: CheckedMcpAddress,
-  request: HttpsRequest = httpsRequest as unknown as HttpsRequest,
+  request: HttpsRequest = httpsRequest,
   limitBytes: number = MCP_RESPONSE_LIMIT_BYTES,
 ): PinnedFetch {
   const lookupChecked = pinnedLookup(checked.addresses);

@@ -55,6 +55,9 @@ import type {
 
 export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['tool'][];
 
+export const MCP_TIMEOUT_MS = 30_000;
+export const EFFECT_LENGTH = 180;
+
 /**
  * The most of one tool result the adapter redacts. The ledger keeps at most
  * `READ_EFFECT_LENGTH` of it, and a page or a provider decides how long the
@@ -73,8 +76,6 @@ function boundedResultText(text: string, removals: readonly string[]): string {
     .reduce((scrubbed: string, value: string): string => redactValue(scrubbed, value), text)
     .slice(0, MCP_RESULT_TEXT_LIMIT);
 }
-export const MCP_TIMEOUT_MS = 30_000;
-export const EFFECT_LENGTH = 180;
 
 /** Keep the two human-checkable results from a long accessibility snapshot. */
 export function browserSnapshotEvidence(text: string): string | undefined {
