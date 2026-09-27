@@ -5167,6 +5167,115 @@ describe('the apply dead-man switch (P9-1)', (): void => {
 });
 
 describe('what an outage leaves for the manager (P7-18)', (): void => {
+  it('asks about an action set parked in an outage after its plan was approved from Slack (wave 3 review M5)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', undefined, {
+      withSlack: true,
+    });
+    const slackPlanDecision = {
+      id: 'ab3xyz',
+      kind: 'plan' as const,
+      requestedAt: 1,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      ts: '1787770700.000100',
+      decidedAt: 2,
+      outcome: 'approved' as const,
+      decidedVia: 'channel' as const,
+      decidedTs: '1787770760.000100',
+    };
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { executionRunId: runId, decision: slackPlanDecision });
+      // Slack is down when execution parks the set.
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .first();
+      if (slack) await ctx.db.patch(slack._id, { verdict: 'listed-dead' });
+    });
+    await harness.mutation(internal.work.setActionsPending, {
+      workItemId,
+      runId,
+      output: pendingOutput,
+    });
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    expect(parked).not.toHaveProperty('decision');
+
+    // Slack comes back: the card's ask reaches the parked set.
+    await harness.run(async (ctx): Promise<void> => {
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .first();
+      if (slack) await ctx.db.patch(slack._id, { verdict: 'connected' });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-asked')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([{ workItemId, kind: 'actions' }]);
+  });
+
+  it('asks from the card about a set a row parked before the fix, with the plan’s Slack decision still on it (M5)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await pend(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1787770700.000100',
+          decidedAt: 2,
+          outcome: 'approved',
+          decidedVia: 'channel',
+        },
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'team chat token',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage'],
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        credentialId,
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    expect(await scheduledFunctionNames(harness)).toContain(
+      'managerChannelActions:requestDecision',
+    );
+  });
+
   it('asks on the chat surface from the card for a parked row that was never asked', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

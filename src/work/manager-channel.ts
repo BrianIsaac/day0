@@ -49,6 +49,30 @@ export function undeliveredDecisionReason(
   if (now - decision.requestedAt >= DECISION_REQUEST_RECOVERY_MS) return 'request not delivered';
   return undefined;
 }
+/**
+ * Whether a parked row's decision is the request for the decision it waits
+ * on now: of the parked kind and undecided.
+ *
+ * A decided plan request left on a row that then parked an action set, or a
+ * decided phase-one request on a closing set, answered an earlier park; the
+ * set now waiting was never asked about, and every place that asks must see
+ * that (wave 3 review M5).
+ *
+ * @param decision - The row's decision fields, if any.
+ * @param state - The row's state.
+ * @returns True when the decision belongs to the state the row is parked in.
+ */
+export function askedFor(
+  decision: { readonly kind: DecisionKind; readonly decidedAt?: number } | undefined,
+  state: string,
+): boolean {
+  if (!decision || decision.decidedAt !== undefined) return false;
+  return (
+    (state === 'plan-pending' && decision.kind === 'plan') ||
+    (state === 'actions-pending' && decision.kind === 'actions')
+  );
+}
+
 export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string };

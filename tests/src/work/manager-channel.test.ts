@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
+  askedFor,
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
   decisionRequestText,
@@ -285,5 +286,16 @@ describe('manager channel decision requests', (): void => {
       reason: 'not this week',
     });
     expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
+  });
+});
+
+describe('askedFor (wave 3 review M5)', (): void => {
+  it('counts only an undecided request of the kind the row is parked on', (): void => {
+    expect(askedFor({ kind: 'plan' }, 'plan-pending')).toBe(true);
+    expect(askedFor({ kind: 'actions' }, 'actions-pending')).toBe(true);
+    expect(askedFor(undefined, 'actions-pending')).toBe(false);
+    expect(askedFor({ kind: 'plan', decidedAt: 2 }, 'actions-pending')).toBe(false);
+    expect(askedFor({ kind: 'plan' }, 'actions-pending')).toBe(false);
+    expect(askedFor({ kind: 'actions', decidedAt: 2 }, 'actions-pending')).toBe(false);
   });
 });

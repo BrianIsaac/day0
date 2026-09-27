@@ -72,6 +72,7 @@ import {
 import { landedWritesOf } from '../src/work/landed-writes';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import {
+  askedFor,
   batchDecisionNoticeText,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
@@ -3614,7 +3615,7 @@ export const resendDecisionRequest = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    const decision = row.decision;
+    const decision = askedFor(row.decision, row.state) ? row.decision : undefined;
     const neverAsked =
       !decision &&
       (row.state === 'plan-pending' ||
@@ -4989,6 +4990,9 @@ export const setActionsPending = internalMutation({
       actionVerdicts,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      // Whatever decision the row carries answered an earlier park (the plan,
+      // or phase one's set); this set has not been asked about (review M5).
+      decision: undefined,
     });
     await appendEvent(ctx, {
       agentId: row.agentId,
@@ -5041,6 +5045,8 @@ export const setAwaitingApproval = internalMutation({
       applyPhase: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      // The held rows of this set have not been asked about (review M5).
+      decision: undefined,
     });
     await appendEvent(ctx, {
       agentId: row.agentId,
