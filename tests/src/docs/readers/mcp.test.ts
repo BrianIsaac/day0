@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import {
   McpReader,
+  DRIVE_INCOMPLETE_SEARCH_REASON,
   TRUNCATED_CONTINUATION_REASON,
   authorizationHeader,
   sessionBoundFetch,
@@ -354,13 +355,13 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     });
   const secret = 'contract-value';
 
-  it('walks Confluence oldest first, so a page edited mid-walk moves behind the cursor, not ahead of it', async (): Promise<void> => {
+  it('walks Confluence in creation order, which a page edited mid-walk cannot change', async (): Promise<void> => {
     const calls: Array<Record<string, unknown>> = [];
     const batch = await confluence(
       { _links: { next: '/wiki/rest/api/search?cursor=abc&limit=10' } },
       calls,
     ).listPageBatch(sourceOf('confluence'), secret, undefined, 10);
-    expect(calls[0]?.cql).toBe('type=page ORDER BY lastmodified ASC');
+    expect(calls[0]?.cql).toBe('type=page ORDER BY created ASC');
     expect(batch.nextCursor).toBe('abc');
   });
 
@@ -403,11 +404,12 @@ describe('MCP documentation continuations (P10-1)', (): void => {
         drive(search).listPageBatch(sourceOf('drive'), secret, undefined, 25),
       ).resolves.toMatchObject({ nextCursor: undefined });
     }
-    for (const search of [{ nextPageToken: 12 }, { incompleteSearch: true }]) {
-      await expect(
-        drive(search).listPageBatch(sourceOf('drive'), secret, undefined, 25),
-      ).rejects.toThrow(TRUNCATED_CONTINUATION_REASON);
-    }
+    await expect(
+      drive({ nextPageToken: 12 }).listPageBatch(sourceOf('drive'), secret, undefined, 25),
+    ).rejects.toThrow(TRUNCATED_CONTINUATION_REASON);
+    await expect(
+      drive({ incompleteSearch: true }).listPageBatch(sourceOf('drive'), secret, undefined, 25),
+    ).rejects.toThrow(DRIVE_INCOMPLETE_SEARCH_REASON);
   });
 
   it('fails a Notion walk that has more pages and no cursor, and ends one that has none', async (): Promise<void> => {

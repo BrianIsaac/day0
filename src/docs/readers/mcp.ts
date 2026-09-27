@@ -392,6 +392,14 @@ export const TRUNCATED_CONTINUATION_REASON =
   'the documentation provider said there were more pages but gave no continuation day0 can follow; the sync stops here rather than delete the pages after it';
 
 /**
+ * The reason a Drive walk stops when Drive says its search did not cover
+ * every corpus and gives no token to go on from. Completing there would
+ * delete every document the search missed.
+ */
+export const DRIVE_INCOMPLETE_SEARCH_REASON =
+  'Google Drive reported an incomplete search with no page token; the sync stops here rather than delete the documents it could not list. Narrow the linked Drive location or check its sharing.';
+
+/**
  * Derive an Atlassian continuation cursor from common response fields.
  *
  * @returns The cursor, or undefined when the response names no next page.
@@ -567,14 +575,12 @@ export class McpReader implements DocSourceReader {
             : Date.now(),
       });
     }
+    const nextCursor = continuationCursor(searchResult.nextPageToken);
     // A search Drive could not finish, with no token to go on from, is not the end of the corpus.
-    return {
-      pages,
-      nextCursor: continuationCursor(
-        searchResult.nextPageToken,
-        searchResult.incompleteSearch === true ? true : undefined,
-      ),
-    };
+    if (nextCursor === undefined && searchResult.incompleteSearch === true) {
+      throw new Error(DRIVE_INCOMPLETE_SEARCH_REASON);
+    }
+    return { pages, nextCursor };
   }
 
   /** Read one Atlassian CQL page and retrieve each Confluence page as Markdown. */
@@ -607,10 +613,10 @@ export class McpReader implements DocSourceReader {
       await search.execute!(
         {
           cloudId,
-          // Oldest first: a page edited mid-walk moves to the end, where the
-          // walk still reaches it, instead of ahead of the cursor, where the
-          // walk would miss it and the final batch would delete it.
-          cql: 'type=page ORDER BY lastmodified ASC',
+          // Oldest first by creation, which an edit never changes: newest
+          // first by modification put a page edited mid-walk ahead of the
+          // cursor, where the walk missed it and the final batch deleted it.
+          cql: 'type=page ORDER BY created ASC',
           limit,
           ...(cursor ? { cursor } : {}),
         },
