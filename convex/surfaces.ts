@@ -18,7 +18,7 @@ import {
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
-import { reevaluatePendingInTransaction } from './work';
+import { reevaluatePendingInTransaction, resendDecisionsAfterManagerChange } from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
@@ -1314,7 +1314,9 @@ function frozenTools(
  * here: a row still being evaluated from a read taken before this write is
  * caught where its verdict lands (`applyVerdict`), under this write's key.
  * No probe widens a stored tool list, a renewal's included (`frozenTools`);
- * the connected event names any tool it withheld.
+ * the connected event names any tool it withheld. A probe that resolves a
+ * different manager than the row held writes `manager.changed` (Q6), so the
+ * ledger shows who the approver became and when.
  */
 export const recordConnected = internalMutation({
   args: {
@@ -1338,6 +1340,10 @@ export const recordConnected = internalMutation({
       return false;
     }
     const transitioned = surface.verdict !== 'connected';
+    const managerChanged =
+      surface.managerUserId !== undefined &&
+      args.managerUserId !== undefined &&
+      surface.managerUserId !== args.managerUserId;
     const tools = frozenTools(surface, args);
     await ctx.db.patch(surface._id, {
       verdict: 'connected',
@@ -1369,6 +1375,20 @@ export const recordConnected = internalMutation({
           : { surfaceId: surface._id },
       createdAt: args.verifiedAt,
     });
+    if (managerChanged) {
+      await ctx.db.insert('events', {
+        agentId: surface.agentId,
+        type: 'manager.changed',
+        payload: {
+          surfaceId: surface._id,
+          via: 'probe',
+          previousManagerUserId: surface.managerUserId,
+          managerUserId: args.managerUserId,
+        },
+        createdAt: args.verifiedAt,
+      });
+      await resendDecisionsAfterManagerChange(ctx, surface, surface.managerDmChannelId);
+    }
     if (transitioned) {
       const readScope = `${surface.slug}:read`;
       if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {

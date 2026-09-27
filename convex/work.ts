@@ -2468,7 +2468,10 @@ export const prepareDecisionRequest = internalMutation({
       return { prepared: false as const, reason: `work item is ${row.state}` };
     }
     const live = row.decision?.kind === args.kind && !row.decision.decidedAt ? row.decision : undefined;
-    if (live && (live.ts || live.id !== args.supersedes)) {
+    // A delivered code is replaced only once it was marked failed, which only
+    // a change of manager does to a delivered request: the old one went to a
+    // DM nobody reads for this agent any more.
+    if (live && (live.id !== args.supersedes || (live.ts && !live.requestFailedAt))) {
       return { prepared: false as const, reason: 'decision request already claimed' };
     }
     if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.decisionId)) {
@@ -2623,6 +2626,52 @@ async function supersedeDecisionRequest(
     kind: decision.kind,
     supersedes: decision.id,
   });
+}
+
+/** Why a request delivered to the previous manager is sent again. */
+export const MANAGER_CHANGED_RESEND_REASON = 'the manager changed; the request went to the previous one';
+
+/**
+ * Send the open decision requests delivered to a previous manager again.
+ *
+ * A probe that resolves a different manager moves the surface's DM; a code
+ * the previous manager holds would be refused if they answered and never
+ * reaches the new one. Each such request is marked failed and re-sent on the
+ * surface's new DM with a fresh code, like an undelivered one.
+ *
+ * @param previousChannel - The DM channel the requests were delivered to.
+ * @returns How many requests were re-sent.
+ */
+export async function resendDecisionsAfterManagerChange(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  previousChannel: string | undefined,
+): Promise<number> {
+  if (surface.class !== 'chat' || previousChannel === undefined) return 0;
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  const stale = parked.flat().flatMap((row) => {
+    const decision = row.decision;
+    const open =
+      !!decision?.ts &&
+      !decision.decidedAt &&
+      !decision.requestFailedAt &&
+      decision.surfaceSlug === surface.slug &&
+      decision.channel === previousChannel &&
+      row.state === (decision.kind === 'plan' ? 'plan-pending' : 'actions-pending');
+    return open && decision ? [{ row, decision }] : [];
+  });
+  for (const { row, decision } of stale) {
+    await supersedeDecisionRequest(ctx, row, decision, MANAGER_CHANGED_RESEND_REASON);
+  }
+  return stale.length;
 }
 
 /**

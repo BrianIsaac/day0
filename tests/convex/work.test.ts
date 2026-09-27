@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import {
   INTERRUPTED_APPLY_REASON,
+  MANAGER_CHANGED_RESEND_REASON,
   PLAN_CANCELLED_REASON,
   REEVALUATION_BATCH,
 } from '../../convex/work';
@@ -650,6 +651,78 @@ describe('manager channel request claims', (): void => {
       kind: 'plan',
       channel: 'D0MANAGER',
       surfaceName: 'Slack',
+    });
+  });
+
+  it('re-sends a delivered request to the new manager when a probe resolves a different one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787746453.000100',
+    });
+    // Delivered to the manager who holds the code: never replaced.
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+        supersedes: 'ab3xyz',
+      }),
+    ).toEqual({ prepared: false, reason: 'decision request already claimed' });
+
+    const slackId = await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!row) throw new Error('slack surface missing');
+      return row._id;
+    });
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: slackId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0SUCCESSOR',
+      managerUserId: 'USUCCESSOR',
+      verifiedAt: Date.now(),
+    });
+
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      requestFailure: MANAGER_CHANGED_RESEND_REASON,
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: MANAGER_CHANGED_RESEND_REASON },
+    ]);
+    expect(await scheduledFunctionNames(harness)).toContain('managerChannelActions:requestDecision');
+    await expect(
+      harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+        supersedes: 'ab3xyz',
+      }),
+    ).resolves.toMatchObject({ prepared: true, surface: { managerDmChannelId: 'D0SUCCESSOR' } });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'cd4uvw',
+      channel: 'D0SUCCESSOR',
     });
   });
 

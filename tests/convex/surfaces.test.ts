@@ -2968,4 +2968,45 @@ describe('a replaceable manager on the surface row', (): void => {
       }),
     ).resolves.toMatchObject({ surface: { path: 'browser-driven' } });
   });
+
+  it('records manager.changed when a re-probe resolves a different Slack user, once', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Slack', 'chat');
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const connect = async (managerUserId: string, verifiedAt: number): Promise<void> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: probe.generation,
+        toolAllowlist: ['chat.postMessage'],
+        toolArguments: [],
+        managerDmChannelId: `D${managerUserId}`,
+        managerUserId,
+        managerName: managerUserId,
+        verifiedAt,
+      });
+    };
+    await connect('UFIRST', 100);
+    await connect('UFIRST', 200);
+    await connect('USECOND', 300);
+    await connect('USECOND', 400);
+    const changes = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type === 'manager.changed')
+        .map((event) => ({ payload: event.payload, createdAt: event.createdAt })),
+    );
+    expect(changes).toEqual([
+      {
+        payload: {
+          surfaceId,
+          via: 'probe',
+          previousManagerUserId: 'UFIRST',
+          managerUserId: 'USECOND',
+        },
+        createdAt: 300,
+      },
+    ]);
+  });
 });
