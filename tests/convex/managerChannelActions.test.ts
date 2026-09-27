@@ -95,6 +95,30 @@ async function seedParkedPlan(
 }
 
 describe('the outbound manager-channel action', (): void => {
+  it('sends nothing through a chat surface whose access end date passed before the sweep ended it (M21)', async (): Promise<void> => {
+    const fetchSpy = vi.fn(
+      async (): Promise<Response> => new Response('{"ok":true}', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seedParkedPlan(harness);
+    // The claim reads the row as connected; the end date passes before the send.
+    hooks.afterCredentialRead = async (): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const surface = await ctx.db.query('surfaces').first();
+        if (surface) await ctx.db.patch(surface._id, { expiresAt: Date.UTC(2026, 8, 1) });
+      });
+    };
+
+    await expect(
+      harness.action(internal.managerChannelActions.requestDecision, { workItemId, kind: 'plan' }),
+    ).resolves.toEqual({
+      sent: false,
+      reason: 'access ended on 2026-09-01; the manager renews it on the card',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('stops at the last boundary when the DM authority is gone, and audits the failed request', async (): Promise<void> => {
     const fetchSpy = vi.fn(
       async (): Promise<Response> => new Response('{"ok":true}', { status: 200 }),

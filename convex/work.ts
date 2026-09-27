@@ -98,6 +98,7 @@ import {
   type ManagerNoteKind,
 } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
+import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent } from './eventLog';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
@@ -148,7 +149,8 @@ async function scheduleDecisionRequest(
  *
  * The agent, grants and one surface are read in one transaction so an action
  * cannot combine a switch value from one revision with grants or a connection
- * from another.
+ * from another. A surface whose access end date has passed is named as ended,
+ * so the last boundary before a send refuses it whatever its row still says.
  */
 export const transportAuthority = internalQuery({
   args: { agentId: v.id('agents'), surfaceSlug: v.string() },
@@ -164,6 +166,11 @@ export const transportAuthority = internalQuery({
         /** Scopes the manager revoked that no later grant restored. */
         revokedScopes?: string[];
         surface?: ReturnType<typeof toSurfaceRecord>;
+        /**
+         * Why the surface is not connected though its row still says so: its
+         * access end date passed before the hourly sweep ended it (Q5, M21).
+         */
+        accessEnded?: string;
       }
   > => {
     const agent = await ctx.db.get(args.agentId);
@@ -194,6 +201,9 @@ export const transportAuthority = internalQuery({
       grants: [...active],
       revokedScopes: revoked,
       ...(surface ? { surface: toSurfaceRecord(surface) } : {}),
+      ...(surface?.expiresAt !== undefined && accessEnded(surface, Date.now())
+        ? { accessEnded: accessEndedReason(surface.expiresAt, agentZone(agent)) }
+        : {}),
     };
   },
 });

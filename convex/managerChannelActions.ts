@@ -137,6 +137,7 @@ function beforeManagerTransport(
     if (!authority.agentExists) return 'agent not found';
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
+    if (authority.accessEnded) return authority.accessEnded;
     if (!sameAuthority(surface, claimedSurface))
       return 'surface authority changed before transport';
     const refusal =

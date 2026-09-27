@@ -8348,3 +8348,100 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     expect(linearTools()).toEqual(['get_issue']);
   });
 });
+
+describe('the access end date at the apply (wave 2 review D4, M21)', (): void => {
+  it('sends and reads nothing through a surface whose end date passed after the hold', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    recorded.skillOutput = {
+      draft: 'Leave the audit note.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note.' }),
+          },
+        },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('actions-pending');
+    if (!held.pendingRunId) throw new Error('pending run missing');
+    // The hourly sweep has not ended the row yet: it still reads connected.
+    await harness.run(async (ctx): Promise<void> => {
+      const linear = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', held.agentId).eq('slug', 'linear'))
+        .first();
+      if (linear) await ctx.db.patch(linear._id, { expiresAt: Date.UTC(2026, 8, 1) });
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: held.pendingRunId,
+      approvedIndexes: [0],
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect(recorded.mcp).toEqual([]);
+    const rows = ledger(await readItem(harness, workItemId));
+    expect(rows).toHaveLength(1);
+    // As the hourly sweep will leave it: approved, its credential no longer landed.
+    expect(rows[0]).toMatchObject({ ok: false, reason: 'surface not connected (ungranted)' });
+  });
+  it('refuses a write at the last boundary when the end date passes during the apply', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    recorded.skillOutput = {
+      draft: 'Leave the audit note.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note.' }),
+          },
+        },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const held = await readItem(harness, workItemId);
+    if (!held.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: held.pendingRunId,
+      approvedIndexes: [0],
+    });
+    // The end date passes once the apply has resolved the surface as connected.
+    recorded.afterCredentialRead = async (): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        const linear = await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (q) => q.eq('agentId', held.agentId).eq('slug', 'linear'))
+          .first();
+        if (linear) await ctx.db.patch(linear._id, { expiresAt: Date.UTC(2026, 8, 1) });
+      });
+    };
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
+    const rows = ledger(await readItem(harness, workItemId));
+    expect(rows[0]).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(
+        'access ended on 2026-09-01; the manager renews it on the card',
+      ),
+    });
+  });
+});

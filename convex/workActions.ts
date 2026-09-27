@@ -19,6 +19,7 @@ import {
   type DraftPlanArgs,
 } from '../src/work/plan';
 import type { ObligationEvent } from '../src/work/plan-obligations';
+import { accessEnded } from '../src/work/surface-access';
 import type { ClosingAuthoring, ModelCallStage } from '../src/events/contract';
 import {
   ClosingGateRefusal,
@@ -3590,6 +3591,7 @@ function authorityBeforeTransport(
     if (!authority.agentExists) return 'agent not found';
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
+    if (authority.accessEnded) return authority.accessEnded;
     if (surfaceAuthorityShape(surface) !== surfaceAuthorityShape(claimedSurface)) {
       return 'surface authority changed before transport';
     }
@@ -3630,16 +3632,6 @@ function authorityBeforeTransport(
   };
 }
 
-/**
- * Load the agent's surfaces as the executors read them.
- *
- * Args:
- *   ctx: Convex action context.
- *   agentId: The agent.
- *
- * Returns:
- *   Executor-facing surface records.
- */
 /**
  * Load what a real-mode plan is drawn from: the agent's surfaces with their
  * verdicts and the same documentation the executor cites.
@@ -3864,11 +3856,33 @@ async function executorCorrections(
   return scrubbed.entries;
 }
 
+/**
+ * Load the agent's surfaces as the executors read them, with an access whose
+ * end date has passed resolved as not connected (`endedAccessView`).
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The agent.
+ *
+ * Returns:
+ *   Executor-facing surface records.
+ */
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
   const rows: Doc<'surfaces'>[] = await ctx.runQuery(internal.orientationData.surfacesForAgent, {
     agentId,
   });
-  return rows.map((row) => toSurfaceRecord(row));
+  const now = Date.now();
+  return rows.map((row) => toSurfaceRecord(accessEnded(row, now) ? endedAccessView(row) : row));
+}
+
+/**
+ * A surface whose access end date has passed, as the hourly sweep will leave
+ * it (`surfaces.recordExpired`): approved, no credential landed, unverified.
+ * The end date is the boundary (Q5, wave 2 review M21), so nothing the loop
+ * resolves reads or writes through it in the hour before the sweep runs.
+ */
+function endedAccessView(row: Doc<'surfaces'>): Doc<'surfaces'> {
+  return { ...row, verdict: 'approved', credentialLanded: false, lastVerifiedAt: undefined };
 }
 
 /** What `finishRun` needs from the apply claim. */
