@@ -32,6 +32,12 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { cardPageRefs } from '../src/docs/card-pages';
+import {
+  FINISHING_CURSOR,
+  finishingCursor,
+  finishingStep,
+  type FinishingPhase,
+} from '../src/docs/finishing';
 import type { MigrationName } from './migrations';
 import schema from './schema';
 
@@ -52,13 +58,15 @@ const serverKind = v.union(
 /** The listed pages a batch could not read, each kept at its last stored version (P5-11). */
 const unreadPages = v.optional(v.array(v.object({ ref: v.string(), reason: v.string() })));
 
+export { FINISHING_CURSOR };
+
 /**
- * The cursor a run holds once it has read every page and is finishing: its
- * stale pages and mirrors are being removed and its intake scopes re-read.
- * No reader emits it (their cursors are offsets and provider tokens, never
- * with a NUL), so a run resumed at it resumes the finishing, not a read.
+ * How many finishing pages go by between the checkpoints a run's cursor
+ * records: a run lists its pages, so recording it after every page would
+ * rewrite that list each time; a finish resumed from a checkpoint walks at
+ * most this many pages again, which delete nothing new.
  */
-export const FINISHING_CURSOR = '\u0000finishing';
+export const FINISHING_CHECKPOINT_EVERY = 10;
 
 /**
  * One page of a paged read over a source's pages or mirrors: few enough rows
@@ -1013,11 +1021,16 @@ export const recordSyncBatch = internalMutation({
   },
 });
 
-/** The fence of a run that has read every page and is finishing. */
+/**
+ * The fence of a run that has read every page and is finishing: it is the
+ * source's running run and its cursor is still the checkpoint the caller
+ * last saw, so no newer sync and no other finish has moved it on.
+ */
 async function finishingRun(
   ctx: QueryCtx,
   sourceId: Id<'docSources'>,
   runId: Id<'docSyncRuns'>,
+  checkpoint: string,
 ): Promise<{ source: Doc<'docSources'>; run: Doc<'docSyncRuns'> } | null> {
   const [source, run] = await Promise.all([ctx.db.get(sourceId), ctx.db.get(runId)]);
   if (
@@ -1025,56 +1038,97 @@ async function finishingRun(
     !run ||
     source.activeSyncId !== run._id ||
     run.state !== 'running' ||
-    run.cursor !== FINISHING_CURSOR
+    run.cursor !== checkpoint
   ) {
     return null;
   }
   return { source, run };
 }
 
-/** What one pruning page did, and where the next one starts. */
-interface PrunedPage {
-  readonly kept: number;
+/** What one finishing page did, and where the finish stands after it. */
+export interface FinishingPage {
   readonly removed: number;
-  readonly continueCursor: string;
-  readonly isDone: boolean;
+  /** Whether the phase's walk is over, and the run's cursor now starts the next phase. */
+  readonly done: boolean;
+  /** Where the phase's walk goes on from. */
+  readonly from: string;
+  /** The run's cursor after the page: the fence for the next one. */
+  readonly checkpoint: string;
 }
 
-/** The result of a pruning page for a run that is no longer the finishing one. */
-const NOT_FINISHING: PrunedPage = { kept: 0, removed: 0, continueCursor: '', isDone: true };
+/** The arguments of one finishing page. */
+const finishingPageArgs = {
+  sourceId: v.id('docSources'),
+  runId: v.id('docSyncRuns'),
+  /** The run's cursor as the caller last saw it. */
+  checkpoint: v.string(),
+  /** Where in the phase's walk to read from. */
+  from: v.union(v.string(), v.null()),
+  /** Whether to record the page's position on the run. */
+  record: v.boolean(),
+};
+
+/**
+ * Close one finishing page: record where the finish stands when the phase
+ * ends or the caller asks, and say where the walk goes on.
+ */
+async function closeFinishingPage(
+  ctx: MutationCtx,
+  run: Doc<'docSyncRuns'>,
+  args: { readonly checkpoint: string; readonly record: boolean },
+  phase: FinishingPhase,
+  next: FinishingPhase,
+  walked: { readonly removed: number; readonly isDone: boolean; readonly continueCursor: string },
+): Promise<FinishingPage> {
+  const position = finishingCursor(
+    walked.isDone ? { phase: next, cursor: null } : { phase, cursor: walked.continueCursor },
+  );
+  const recorded = walked.isDone || args.record;
+  if (recorded) await ctx.db.patch(run._id, { cursor: position });
+  return {
+    removed: walked.removed,
+    done: walked.isDone,
+    from: walked.continueCursor,
+    checkpoint: recorded ? position : args.checkpoint,
+  };
+}
+
+/** The phase a finishing checkpoint is in, refused when it is not the one a step runs in. */
+function phaseOf(checkpoint: string, phase: FinishingPhase): void {
+  if (finishingStep(checkpoint)?.phase !== phase) {
+    throw new Error(`This step of a finish runs in its ${phase} phase only.`);
+  }
+}
 
 /**
  * Delete one bounded page of the stored pages a finishing generation did not list.
  *
  * Internal; the finishing sync walks the source's pages with it. A page the
  * generation listed but could not read is in its refs and is kept (P5-11).
+ *
+ * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
 export const prunePages = internalMutation({
-  args: {
-    sourceId: v.id('docSources'),
-    runId: v.id('docSyncRuns'),
-    cursor: v.union(v.string(), v.null()),
-  },
-  handler: async (ctx, args): Promise<PrunedPage> => {
-    const finishing = await finishingRun(ctx, args.sourceId, args.runId);
-    if (!finishing) return NOT_FINISHING;
+  args: finishingPageArgs,
+  handler: async (ctx, args): Promise<FinishingPage | null> => {
+    phaseOf(args.checkpoint, 'pages');
+    const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
+    if (!finishing) return null;
     const current = new Set(finishing.run.refs);
     const page = await ctx.db
       .query('docPages')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-      .paginate({ ...PAGED_READ, cursor: args.cursor });
+      .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const row of page.page) {
       if (current.has(row.ref)) continue;
       await ctx.db.delete(row._id);
       removed += 1;
     }
-    return {
-      kept: page.page.length - removed,
+    return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'mirrors', {
+      ...page,
       removed,
-      continueCursor: page.continueCursor,
-      isDone: page.isDone,
-    };
+    });
   },
 });
 
@@ -1085,21 +1139,20 @@ export const prunePages = internalMutation({
  * `mirroredDocSlug` gives it now: one an earlier slug rule keyed (a
  * non-ASCII reference before v0.5.0) is a second copy beside the one this
  * sync wrote (review M20).
+ *
+ * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
 export const pruneMirrors = internalMutation({
-  args: {
-    sourceId: v.id('docSources'),
-    runId: v.id('docSyncRuns'),
-    cursor: v.union(v.string(), v.null()),
-  },
-  handler: async (ctx, args): Promise<PrunedPage> => {
-    const finishing = await finishingRun(ctx, args.sourceId, args.runId);
-    if (!finishing) return NOT_FINISHING;
+  args: finishingPageArgs,
+  handler: async (ctx, args): Promise<FinishingPage | null> => {
+    phaseOf(args.checkpoint, 'mirrors');
+    const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
+    if (!finishing) return null;
     const current = new Set(finishing.run.refs);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-      .paginate({ ...PAGED_READ, cursor: args.cursor });
+      .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
       if (
@@ -1112,12 +1165,10 @@ export const pruneMirrors = internalMutation({
       await ctx.db.delete(mirror._id);
       removed += 1;
     }
-    return {
-      kept: page.page.length - removed,
+    return await closeFinishingPage(ctx, finishing.run, args, 'mirrors', 'scopes', {
+      ...page,
       removed,
-      continueCursor: page.continueCursor,
-      isDone: page.isDone,
-    };
+    });
   },
 });
 
@@ -1195,7 +1246,8 @@ export const applyRestatedScope = internalMutation({
     drifted: v.boolean(),
   },
   handler: async (ctx, args): Promise<'repointed' | 'reapproval' | 'unchanged'> => {
-    if (!(await finishingRun(ctx, args.sourceId, args.runId))) return 'unchanged';
+    const scopes = finishingCursor({ phase: 'scopes', cursor: null });
+    if (!(await finishingRun(ctx, args.sourceId, args.runId, scopes))) return 'unchanged';
     const surface = await ctx.db.get(args.surfaceId);
     if (
       !surface?.intakeScope ||
@@ -1250,10 +1302,11 @@ export const applyRestatedScope = internalMutation({
  * Complete a generation: supersede the credentials it no longer found and publish one synced state.
  *
  * Internal. The sync action calls it last, once the generation has read every
- * page (its cursor is `FINISHING_CURSOR`) and removed the pages and mirrors
- * it did not list and re-read the intake scopes, passing what those steps
- * counted as `pruned`; a caller that finishes a run from its last read batch
- * passes that batch instead. A page the generation could not read is in its
+ * page, removed the pages and mirrors it did not list and re-read the intake
+ * scopes (its cursor is the finish's `scopes` checkpoint), passing what those
+ * steps removed as `pruned`; a resumed finish counts its own part only. A
+ * caller that finishes a run from its last read batch passes that batch
+ * instead. `pagesKept` is the pages the generation lists. A page the generation could not read is in its
  * refs, so it keeps its last stored version, mirror and credentials; the
  * run's reason names it and the source's line says so until a sync reads it
  * (P5-11).
@@ -1270,7 +1323,6 @@ export const finishSync = internalMutation({
     unread: unreadPages,
     pruned: v.optional(
       v.object({
-        pagesKept: v.number(),
         pagesRemoved: v.number(),
         mirrorsRemoved: v.number(),
         surfacesToReapprove: v.number(),
@@ -1310,12 +1362,7 @@ export const finishSync = internalMutation({
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
     const unreadRecord = withUnreadPages(run.reason, args.unread ?? []);
-    const pruned = args.pruned ?? {
-      pagesKept: refs.length,
-      pagesRemoved: 0,
-      mirrorsRemoved: 0,
-      surfacesToReapprove: 0,
-    };
+    const pruned = args.pruned ?? { pagesRemoved: 0, mirrorsRemoved: 0, surfacesToReapprove: 0 };
     const now = Date.now();
     await ctx.db.patch(run._id, {
       cursor: undefined,
@@ -1326,7 +1373,7 @@ export const finishSync = internalMutation({
       state: 'completed',
       completedAt: now,
       reason: unreadRecord,
-      summary: { ...pruned, credentialsSuperseded },
+      summary: { pagesKept: refs.length, ...pruned, credentialsSuperseded },
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,

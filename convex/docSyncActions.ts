@@ -26,7 +26,13 @@ import {
   type ScopePage,
 } from '../src/surfaces/intake-scope';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { FINISHING_CURSOR, PAGED_READ } from './docSources';
+import { FINISHING_CHECKPOINT_EVERY, PAGED_READ, type FinishingPage } from './docSources';
+import {
+  FINISHING_CURSOR,
+  finishingCursor,
+  finishingStep,
+  type FinishingStep,
+} from '../src/docs/finishing';
 
 export const SYNC_BATCH_SIZE = 25;
 
@@ -369,7 +375,9 @@ export const syncBatch = internalAction({
     let credentialUnavailable = false;
     let known: readonly string[] = [];
     try {
-      if (args.cursor === FINISHING_CURSOR) return await finishGeneration(ctx, source, args.runId);
+      const finishing = finishingStep(args.cursor);
+      if (finishing !== undefined)
+        return await finishGeneration(ctx, source, args.runId, finishing);
       known = await ownerKnownValues(ctx, source.userId);
       // An MCP source always reads with its connection secret; a git or URL
       // source reads with its own secret when it was linked with one (E-74).
@@ -390,7 +398,7 @@ export const syncBatch = internalAction({
       if (batch.pages.length + batch.unread.length > SYNC_BATCH_SIZE) {
         throw new Error('Documentation reader exceeded the 25-page action limit.');
       }
-      if (batch.nextCursor === FINISHING_CURSOR) {
+      if (batch.nextCursor?.startsWith('\u0000')) {
         throw new Error('Documentation reader returned a continuation Day0 reserves.');
       }
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
@@ -433,7 +441,9 @@ export const syncBatch = internalAction({
       });
       const counts = { pages: persisted.pages, redactions: persisted.redactions };
       if (!recorded) return { ok: false, ...counts, complete: true };
-      if (nextCursor === FINISHING_CURSOR) return await finishGeneration(ctx, source, args.runId);
+      if (nextCursor === FINISHING_CURSOR) {
+        return await finishGeneration(ctx, source, args.runId, { phase: 'pages', cursor: null });
+      }
       await ctx.scheduler.runAfter(0, internal.docSyncActions.syncBatch, {
         sourceId: source._id,
         runId: args.runId,
@@ -474,46 +484,63 @@ export const syncBatch = internalAction({
   },
 });
 
-/** What walking one finishing step over a source's rows counted. */
-interface PruneTotals {
-  kept: number;
-  removed: number;
-}
-
 /**
  * Finish a generation that has read every page, one bounded transaction at a time.
  *
- * The stored pages and mirrors it did not list are removed in pages, the
- * employees' intake scopes are re-read against the pages as they now stand
- * (real mode), and `finishSync` supersedes the credentials no page states and
- * publishes the synced state with what each step counted. Each step is fenced
- * on the run, so a newer sync stops it; a finish cut off part-way resumes at
- * `FINISHING_CURSOR`. A completed generation schedules discovery and the
- * re-orientation of the absent systems its pages may now document.
+ * From the point the run's cursor records, the stored pages and then the
+ * mirrors it did not list are removed a page at a time, the employees'
+ * intake scopes are re-read against the pages as they now stand (real mode),
+ * and `finishSync` supersedes the credentials no page states and publishes
+ * the synced state. Each step is fenced on the run's cursor, so a newer sync
+ * stops it, and the cursor records where the finish stands, so a finish cut
+ * off part-way resumes there (`src/docs/finishing.ts`). A completed
+ * generation schedules discovery and the re-orientation of the absent
+ * systems its pages may now document.
  */
 async function finishGeneration(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
   runId: Id<'docSyncRuns'>,
+  from: FinishingStep,
 ): Promise<SyncResult> {
-  const pages = await pruneWhole(ctx, internal.docSources.prunePages, source._id, runId);
-  const mirrors = await pruneWhole(ctx, internal.docSources.pruneMirrors, source._id, runId);
+  const stopped: SyncResult = { ok: false, pages: 0, redactions: 0, complete: true };
+  let checkpoint =
+    from.phase === 'pages' && from.cursor === null ? FINISHING_CURSOR : finishingCursor(from);
+  let pagesRemoved = 0;
+  let mirrorsRemoved = 0;
+  if (from.phase === 'pages') {
+    const pages = await walkFinishingPhase(ctx, internal.docSources.prunePages, {
+      sourceId: source._id,
+      runId,
+      checkpoint,
+      from: from.cursor,
+    });
+    if (pages === null) return stopped;
+    pagesRemoved = pages.removed;
+    checkpoint = pages.checkpoint;
+  }
+  if (from.phase !== 'scopes') {
+    const mirrors = await walkFinishingPhase(ctx, internal.docSources.pruneMirrors, {
+      sourceId: source._id,
+      runId,
+      checkpoint,
+      from: from.phase === 'mirrors' ? from.cursor : null,
+    });
+    if (mirrors === null) return stopped;
+    mirrorsRemoved = mirrors.removed;
+    checkpoint = mirrors.checkpoint;
+  }
   const surfacesToReapprove =
     SURFACE_MODE === 'real' ? await restateScopes(ctx, source._id, runId) : 0;
   const completed = await ctx.runMutation(internal.docSources.finishSync, {
     sourceId: source._id,
     runId,
-    currentCursor: FINISHING_CURSOR,
+    currentCursor: checkpoint,
     refs: [],
     credentialRefs: [],
     pageCount: 0,
     redactionCount: 0,
-    pruned: {
-      pagesKept: pages.kept,
-      pagesRemoved: pages.removed,
-      mirrorsRemoved: mirrors.removed,
-      surfacesToReapprove,
-    },
+    pruned: { pagesRemoved, mirrorsRemoved, surfacesToReapprove },
   });
   if (completed.completed) {
     await ctx.scheduler.runAfter(0, internal.documentationDiscoveryActions.discoverSource, {
@@ -532,22 +559,38 @@ async function finishGeneration(
   };
 }
 
-/** Walk one pruning step over the whole source, a bounded page per transaction. */
-async function pruneWhole(
+/**
+ * Walk one finishing phase to its end, a bounded page per transaction.
+ *
+ * @returns What the phase removed and the run's cursor after it (the next
+ *   phase's start), or null when the run moved on from under the finish.
+ */
+async function walkFinishingPhase(
   ctx: ActionCtx,
   step: typeof internal.docSources.prunePages | typeof internal.docSources.pruneMirrors,
-  sourceId: Id<'docSources'>,
-  runId: Id<'docSyncRuns'>,
-): Promise<PruneTotals> {
-  const totals: PruneTotals = { kept: 0, removed: 0 };
-  let cursor: string | null = null;
-  for (;;) {
-    const page: { kept: number; removed: number; continueCursor: string; isDone: boolean } =
-      await ctx.runMutation(step, { sourceId, runId, cursor });
-    totals.kept += page.kept;
-    totals.removed += page.removed;
-    if (page.isDone) return totals;
-    cursor = page.continueCursor;
+  start: {
+    readonly sourceId: Id<'docSources'>;
+    readonly runId: Id<'docSyncRuns'>;
+    readonly checkpoint: string;
+    readonly from: string | null;
+  },
+): Promise<{ removed: number; checkpoint: string } | null> {
+  let checkpoint = start.checkpoint;
+  let from = start.from;
+  let removed = 0;
+  for (let walked = 1; ; walked += 1) {
+    const page: FinishingPage | null = await ctx.runMutation(step, {
+      sourceId: start.sourceId,
+      runId: start.runId,
+      checkpoint,
+      from,
+      record: walked % FINISHING_CHECKPOINT_EVERY === 0,
+    });
+    if (page === null) return null;
+    removed += page.removed;
+    checkpoint = page.checkpoint;
+    if (page.done) return { removed, checkpoint };
+    from = page.from;
   }
 }
 

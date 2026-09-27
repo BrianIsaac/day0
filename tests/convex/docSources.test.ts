@@ -1512,6 +1512,72 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(await page()).toMatchObject({ markdown: '# Page\n\nEdited.', updatedAt: 9 });
   });
 
+  it('resumes a finish cut off part-way from the checkpoint its run recorded (adversarial pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    const listed: string[] = [];
+    await harness.run(async (ctx): Promise<void> => {
+      const insert = async (ref: string): Promise<void> => {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+      };
+      await insert('stale-first.md');
+      for (let index = 0; index < 150; index += 1) {
+        listed.push(`page-${index}.md`);
+        await insert(`page-${index}.md`);
+      }
+      await insert('stale-last.md');
+    });
+    const cutOff = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: cutOff,
+      nextCursor: FINISHING_CURSOR,
+      refs: listed,
+      credentialRefs: [],
+      pageCount: listed.length,
+      redactionCount: 0,
+    });
+    // One recorded page of the finish, then the action is cut off.
+    const first = await harness.mutation(internal.docSources.prunePages, {
+      sourceId,
+      runId: cutOff,
+      checkpoint: FINISHING_CURSOR,
+      from: null,
+      record: true,
+    });
+    expect(first).toMatchObject({ removed: 2, done: false });
+    const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const context = await harness.query(internal.docSources.syncContext, {
+      sourceId,
+      runId: resumed,
+    });
+    expect(context?.run.cursor).toBe(first?.checkpoint);
+    await harness.action(internal.docSyncActions.syncBatch, {
+      sourceId,
+      runId: resumed,
+      cursor: context?.run.cursor,
+    });
+    const run = await harness.run(async (ctx) => await ctx.db.get(resumed));
+    expect(run).toMatchObject({ state: 'completed' });
+    expect(run?.summary).toMatchObject({ pagesKept: 150, pagesRemoved: 1 });
+    const left = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .take(200),
+    );
+    expect(left.map((page) => page.ref).sort()).toEqual([...listed].sort());
+  });
+
   it('prunes a source’s old runs, keeping what it points at and what a migration still reads', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
