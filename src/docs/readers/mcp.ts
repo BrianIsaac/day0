@@ -11,7 +11,13 @@ import {
 import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../../surfaces/mcp-address';
 import type { McpConnection } from '../../surfaces/mcp';
-import { isTransportUnreachable } from '../../lib/transport-error';
+import {
+  PROVIDER_BACKOFF,
+  TransientProviderError,
+  transportFailureKind,
+  withBackoff,
+  type BackoffPolicy,
+} from '../../lib/transport-error';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
 const SERVER_NAME = 'docs';
@@ -355,10 +361,52 @@ function providerValue(result: unknown): unknown {
     const payload = value as Record<string, unknown>;
     if (payload.status === 'error' || payload.object === 'error') {
       const code = typeof payload.code === 'string' ? ` (${payload.code})` : '';
+      // Notion answers a rate limit or an outage inside the tool result, not as HTTP.
+      const status = typeof payload.status === 'number' ? payload.status : undefined;
+      if (payload.code === 'rate_limited' || status === 429 || (status ?? 0) >= 500) {
+        throw new TransientProviderError(`Documentation provider returned an error${code}.`, {
+          status,
+        });
+      }
       throw new Error(`Documentation provider returned an error${code}.`);
     }
   }
   return value;
+}
+
+/** The innermost message of an error's cause chain, for the recorded reason. */
+function rootMessage(error: unknown): string {
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    depth < 5 && current instanceof Error && current.cause !== undefined;
+    depth += 1
+  ) {
+    current = current.cause;
+  }
+  return current instanceof Error ? current.message : String(current);
+}
+
+/**
+ * Say what a failed batch means once its retries are spent.
+ *
+ * The component's preflight has already answered, so only a connection that
+ * nobody answers means day0's Notion component has stopped; a read that was
+ * timed out or reset is a transient, recorded with its cause so the source's
+ * last error says what happened rather than that nothing is running.
+ */
+function batchFailure(source: DocSourceRecord, error: unknown): unknown {
+  const kind = transportFailureKind(error);
+  if (kind === 'refused' && componentFor(source) === DOCS_NOTION_SERVICE) {
+    return new Error(NOTION_DRIVER_ABSENT_REASON, { cause: error });
+  }
+  if (kind === 'interrupted') {
+    return new TransientProviderError(
+      `The documentation read was interrupted (${rootMessage(error)}); this is transient, and the next sync reads the source again.`,
+      { cause: error },
+    );
+  }
+  return error;
 }
 
 /** Return an object-shaped provider payload. */
@@ -504,10 +552,12 @@ export class McpReader implements DocSourceReader {
    * Args:
    *   clientFactory: Builds one credential-bound session.
    *   reach: How a bundled component's presence is checked before a sync.
+   *   backoff: How a transient failure of one batch is retried.
    */
   constructor(
     private readonly clientFactory: McpClientFactory = productionClient,
     private readonly reach?: ReachFetch,
+    private readonly backoff: BackoffPolicy = PROVIDER_BACKOFF,
   ) {}
 
   /**
@@ -557,6 +607,24 @@ export class McpReader implements DocSourceReader {
     // component is not running, rather than letting a transport error reach
     // `lastError` where the reader can only guess what a human should do.
     await assertDocsComponentReachable(source, this.reach);
+    try {
+      // A batch only reads, so a transient failure is retried from the same cursor.
+      return await withBackoff(
+        () => this.readBatchOnce(source, secret, cursor, limit),
+        this.backoff,
+      );
+    } catch (error) {
+      throw batchFailure(source, error);
+    }
+  }
+
+  /** Read one batch in one credential-bound session. */
+  private async readBatchOnce(
+    source: DocSourceRecord,
+    secret: string,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<DocPageBatch> {
     const client = this.clientFactory(connectionConfig(source, secret));
     try {
       if (source.serverKind === 'notion') {
@@ -569,11 +637,6 @@ export class McpReader implements DocSourceReader {
         return await this.readDriveBatch(client, source, cursor, limit);
       }
       return await this.readConfluenceBatch(client, source, cursor, Math.min(limit, 10));
-    } catch (error) {
-      if (componentFor(source) === DOCS_NOTION_SERVICE && isTransportUnreachable(error)) {
-        throw new Error(NOTION_DRIVER_ABSENT_REASON);
-      }
-      throw error;
     } finally {
       await client.disconnect();
     }

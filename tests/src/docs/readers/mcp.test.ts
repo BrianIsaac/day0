@@ -34,6 +34,7 @@ import {
 } from '../../../../src/docs/readers/mcp';
 import type { DocSourceRecord } from '../../../../src/docs/types';
 import { NOTION_DRIVER_ABSENT } from '../../../../src/docs/components';
+import { PROVIDER_BACKOFF, TransientProviderError } from '../../../../src/lib/transport-error';
 import { notionPageTemplate, type NotionPageName } from '../../../fixtures/notion-pages';
 
 /** Wrap one object in the MCP text-content result shape. */
@@ -250,6 +251,64 @@ describe('MCP documentation reader', (): void => {
       NOTION_DRIVER_ABSENT,
     );
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('records a read cut off after the preflight as a transient with its cause, not as an absent component', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    let tries = 0;
+    const reader = new McpReader(
+      () => ({
+        listTools: async (): Promise<Record<string, never>> => {
+          tries += 1;
+          throw new Error('request failed', { cause: reset });
+        },
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: vi.fn().mockResolvedValue(undefined),
+      }),
+      componentUp,
+      { ...PROVIDER_BACKOFF, sleep: async (): Promise<void> => undefined },
+    );
+    const failure = await reader.listPageBatch(notionSource(), 'ntn_value', undefined, 25).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(TransientProviderError);
+    expect((failure as Error).message).not.toContain(NOTION_DRIVER_ABSENT);
+    expect((failure as Error).message).toContain('transient');
+    expect((failure as Error).message).toContain('read ECONNRESET');
+    expect((failure as Error).cause).toBeDefined();
+    expect(tries).toBe(PROVIDER_BACKOFF.attempts);
+  });
+
+  it('retries a Notion rate limit and reads the batch', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    let searches = 0;
+    const waits: number[] = [];
+    const reader = new McpReader(
+      () => ({
+        listTools: async () => ({
+          'docs_API-post-search': {
+            execute: async () => {
+              searches += 1;
+              return searches === 1
+                ? textResult({ object: 'error', status: 429, code: 'rate_limited' })
+                : textResult({ object: 'list', results: [], has_more: false });
+            },
+          },
+          'docs_API-retrieve-page-markdown': { execute: async () => textResult({ markdown: '' }) },
+        }),
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: vi.fn().mockResolvedValue(undefined),
+      }),
+      componentUp,
+      { ...PROVIDER_BACKOFF, sleep: async (ms: number): Promise<void> => void waits.push(ms) },
+    );
+    await expect(
+      reader.listPageBatch(notionSource(), 'ntn_value', undefined, 25),
+    ).resolves.toMatchObject({ pages: [] });
+    expect(searches).toBe(2);
+    expect(waits).toEqual([PROVIDER_BACKOFF.baseMs]);
   });
 
   it('authenticates the private hop under the new service name and the old alias', async (): Promise<void> => {
