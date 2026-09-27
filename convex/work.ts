@@ -296,6 +296,8 @@ export const workItemSeedFields = {
       threadTs: v.optional(v.string()),
     }),
   ),
+  /** When the ask was made, by the provider's clock (a Linear `createdAt`), when intake read it. */
+  askedAt: v.optional(v.number()),
 } as const;
 
 export interface WorkItemSeedInput {
@@ -313,6 +315,21 @@ export interface WorkItemSeedInput {
   owner?: string;
   requester?: string;
   replyTarget?: { channel: string; channelName?: string; threadTs?: string };
+  /** When the ask was made, by the provider's clock, when intake read it. */
+  askedAt?: number;
+}
+
+/**
+ * When an item was asked for: the provider's time intake passed, else the
+ * `ts` a chat message's id carries (`<channel>:<ts>`), else now. Cycle time
+ * (A9) starts here, so a chat ask seen on a later poll still counts from the
+ * message.
+ */
+function askedAtOf(args: Pick<WorkItemSeedInput, 'askedAt' | 'externalId'>, now: number): number {
+  if (args.askedAt !== undefined) return args.askedAt;
+  const ts = /:(\d{9,10}\.\d{1,6})$/.exec(args.externalId)?.[1];
+  const fromTs = ts === undefined ? null : providerTsToMs(ts);
+  return fromTs === null ? now : Math.round(fromTs);
 }
 
 /**
@@ -762,7 +779,7 @@ export async function seedItemInTransaction(
     await rememberExternalAlias(ctx, existing, args.externalAlias, externalClaimAlias);
     return existing._id;
   }
-  const { externalAlias, ...seed } = args;
+  const { externalAlias, askedAt, ...seed } = args;
   const id = await ctx.db.insert('workItems', {
     ...seed,
     ...(externalClaimKey ? { externalClaimKey } : {}),
@@ -770,7 +787,7 @@ export async function seedItemInTransaction(
       ? { externalAlias, externalClaimAlias }
       : {}),
     state: 'discovered',
-    observedAt: Date.now(),
+    observedAt: askedAtOf({ askedAt, externalId: args.externalId }, Date.now()),
     createdAt: Date.now(),
   });
   await ctx.db.insert('events', {

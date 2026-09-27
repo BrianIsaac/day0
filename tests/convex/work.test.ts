@@ -3572,6 +3572,29 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     return rows[0]!;
   }
 
+  it('dates the ask by the provider’s own time when intake gives one, or a chat message’s ts, and by the seed otherwise', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 8, 28, 9, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const askedAt = Date.UTC(2026, 8, 27, 23, 30);
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), askedAt });
+    await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      sourceCategory: 'inbox',
+      sourceSystem: 'team-chat',
+      externalId: 'C0REVOPS:1790551800.123456',
+    });
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), externalId: 'REVOPS-10' });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('workItems').collect());
+    expect(Object.fromEntries(rows.map((row) => [row.externalId, row.observedAt]))).toEqual({
+      'REVOPS-9': askedAt,
+      'C0REVOPS:1790551800.123456': 1_790_551_800_123,
+      'REVOPS-10': Date.UTC(2026, 8, 28, 9, 0),
+    });
+    vi.useRealTimers();
+  });
+
   it('updates the title, summary and owner the tracker now shows instead of keeping the first read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);
