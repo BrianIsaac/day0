@@ -5,6 +5,7 @@ import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { appendEvent } from './eventLog';
 
 /**
  * Every table whose rows belong to one agent through an `agentId` field.
@@ -222,7 +223,7 @@ export const deleteMyData = mutation({
       const { revoked, kept } = await revokeUnbound(ctx, userId, bound, now);
       for (const [agentId, entry] of retired) {
         const own = [...entry.boundCredentials];
-        await ctx.db.insert('events', {
+        await appendEvent(ctx, {
           agentId,
           type: AGENT_RETIRED_EVENT,
           payload: {
