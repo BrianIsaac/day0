@@ -273,7 +273,7 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 export function assertResumeCompatible(
   evidence: EvaluationEvidence,
   options: CliOptions,
-  tasks: EvaluationTask[],
+  tasks: readonly EvaluationTask[],
   commit: string,
 ): void {
   const config = evidence.configuration;
@@ -573,6 +573,9 @@ function endsWorkItem(event: RawSnapshot['events'][number], item: Doc<'workItems
  *
  * @returns The latest such event's time, or null when the item is not terminal
  *   or no event records its end, in which case the caller uses the poll time.
+ * @remarks `skill.rejected` names the skill, not the rows it cancels, so a row
+ *   cancelled as the proposal's `proposedFor` without a `proposedSkillId` still
+ *   takes the poll time; the scripted manager never rejects, so no bed meets it.
  */
 export function terminalTimestamp(raw: RawSnapshot, item: Doc<'workItems'>): number | null {
   if (!isTerminalWorkState(item.state)) return null;

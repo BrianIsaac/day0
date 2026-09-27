@@ -43,7 +43,7 @@ describe('day0 onboarding fixture', (): void => {
     }
   });
 
-  it('names no documentation system the graded office does not have', async (): Promise<void> => {
+  it('does not place team guidance in Notion, which the graded office does not have', async (): Promise<void> => {
     expect(await readTranscript()).not.toMatch(/\bNotion\b/);
   });
 });

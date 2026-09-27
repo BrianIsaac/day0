@@ -229,10 +229,12 @@ function taskRows(
 }
 
 /**
- * The task definitions every evidence file without embedded definitions was
- * graded against: the task file as it stood from `045683b` (2 September 2026)
- * until 27 September 2026. Every tracked evidence file from
- * `2026-08-30T07-05-50Z` on agrees with it on every field adherence reads.
+ * The task definitions evidence without embedded ones is read against: the
+ * task file as it stood from `045683b` (2 September 2026) until 27 September
+ * 2026, which every harness-v2 file was graded against. Every tracked file
+ * from `2026-08-30T07-05-50Z` on agrees with it on each field adherence reads;
+ * the eight earlier 30 August files were graded before the `REVOPS-EVAL-*`
+ * tickets and differ on the four ticket-backed tasks.
  */
 const LEGACY_TASK_DEFINITIONS: readonly EvaluationTask[] = loadEvaluationTasksSync(
   new URL('./tasks/semifinal-2026-09-02.json', import.meta.url),

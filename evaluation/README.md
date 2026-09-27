@@ -320,7 +320,9 @@ this README, the root README, the tests or the scripts cited (19 harness-v1 runs
 30 and 31 August, the two hosted `v2` reruns of 2 September that the `v3` beds
 superseded, and the three-task Terra control of 12 September) moved out of the public
 tree into the operator's private archive with a provenance note and checksums. They
-remain in git history up to `dbdde97`; no figure quoted here came from them.
+remain in git history up to `dbdde97`; no figure quoted here came from them. The
+tracked re-grade `results/2026-08-30T12-40-05Z/` names one of them,
+`2026-08-30T12-02-26Z`, as its source; that source is now in the archive.
 
 ## Direction 2 - permissions and supervision
 
@@ -484,7 +486,9 @@ Day0's prompts show, was `Marketing`, one of its own reason words, and is now
 `Brand team`; the same task named `@AcmeCo` as the tweet's author where the office
 records `@random_person` writing to `@AcmeCo`. `docs-q4-source-of-truth` and
 `docs-first-week-observation` no longer carry their own citation or required
-words ("team overview", "source of truth", "onboarding") in prose both arms see.
+words ("team overview", "source of truth", "onboarding") in prose both arms see;
+the `doc://` refs still name the page to read, by design, so `doc://onboarding`
+still carries the Onboarding citation's word.
 Tests hold every reason word out of each out-of-scope task's text and label, and
 every docs answer and citation out of each docs task's prose.
 
