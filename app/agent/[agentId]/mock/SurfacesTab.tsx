@@ -1,10 +1,10 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { useAction, useMutation, useQuery } from 'convex/react';
 import { makeFunctionReference } from 'convex/server';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
   presentChannelsNotJoined,
   presentProvisioning,
@@ -31,6 +31,8 @@ import {
   type ScopeValue,
 } from '@/surfaces/intake-scope';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
+import { clockTime, useAgentZone, useNow } from '../time';
+import { LiveStatus, refusalText, type ChangeOutcome } from '../live-status';
 
 type SurfaceEvidence = {
   sourceId?: string;
@@ -526,6 +528,169 @@ export function SurfaceLadder({ candidates, attempts }: SurfaceLadderProps): Rea
   );
 }
 
+/** Q5's access length, in days: what a renewal offers until the manager types another. */
+export const DEFAULT_ACCESS_DAYS = 90;
+
+/** How long before the end date the card warns, as the server's notice does (Q5). */
+const EXPIRY_WARNING_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The verdicts of a card both approvals reached, whose access runs on a clock. */
+const ACCESS_VERDICTS: ReadonlySet<string> = new Set([
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+]);
+
+/** Who set the end date, in the manager's words. */
+const ACCESS_SET_BY_WORDS: Readonly<Record<NonNullable<Doc<'surfaces'>['accessSetBy']>, string>> = {
+  approval: 'set when you approved the card',
+  manager: 'set by you',
+  upgrade: 'restarted by the upgrade',
+};
+
+/** A surface as the access row reads it. */
+export type AccessSurface = Pick<
+  Doc<'surfaces'>,
+  '_id' | 'displayName' | 'verdict' | 'expiresAt' | 'accessSetBy' | 'reason'
+>;
+
+/**
+ * The card's access line (Q5): when access ends, in the employee's zone, who
+ * set the date, and the control that sets it again, which is also the
+ * explicit renewal of an access that has ended (`surfaces.setAccessDays`).
+ *
+ * A probe never moves the date and nothing renews on its own, so the line is
+ * the one place the manager keeps a connection alive. The outcome is announced
+ * in the row's live region and focus returns to the control.
+ *
+ * Args:
+ *   props: The surface, the instant to judge the warning against, and the setter.
+ *
+ * Returns:
+ *   The row, or nothing for a card whose access has not started.
+ */
+export function AccessRow({
+  surface,
+  now,
+  onSetDays,
+}: {
+  surface: AccessSurface;
+  now: number;
+  onSetDays: (days: number) => Promise<{ expiresAt: number }>;
+}): React.ReactNode {
+  const zone = useAgentZone();
+  const [editing, setEditing] = useState(false);
+  const [days, setDays] = useState(String(DEFAULT_ACCESS_DAYS));
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  if (!ACCESS_VERDICTS.has(surface.verdict) || surface.expiresAt === undefined) return null;
+  const ended = surface.reason === 'expired';
+  const endingSoon = !ended && surface.expiresAt - now <= EXPIRY_WARNING_MS;
+  const fieldId = `access-days-${surface._id}`;
+  const close = (): void => {
+    setEditing(false);
+    toggle.current?.focus();
+  };
+  const save = (): void => {
+    setBusy(true);
+    setOutcome(null);
+    onSetDays(Number(days))
+      .then((result) => {
+        setOutcome({
+          tone: 'done',
+          text: `${ended ? 'Access renewed' : 'Access length set'}: ${surface.displayName} access now ends ${clockTime(result.expiresAt, zone)}.`,
+        });
+        close();
+      })
+      .catch((err: unknown) =>
+        setOutcome({ tone: 'refused', text: refusalText(err, 'The access length was not set.') }),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div
+      className={`mt-3 rounded border p-2 text-xs ${
+        ended || endingSoon ? 'border-[var(--color-warn)]/40' : 'border-[var(--color-border)]'
+      }`}
+    >
+      <p className={ended || endingSoon ? 'text-[var(--color-warn)]' : undefined}>
+        {ended ? 'Access ended ' : 'Access ends '}
+        <time dateTime={new Date(surface.expiresAt).toISOString()}>
+          {clockTime(surface.expiresAt, zone)}
+        </time>
+        {surface.accessSetBy ? ` · ${ACCESS_SET_BY_WORDS[surface.accessSetBy]}` : ''}
+        {ended
+          ? '. Nothing is read or sent through this card until you renew it.'
+          : endingSoon
+            ? '. That is within a week; renew it to keep the connection.'
+            : '.'}
+      </p>
+      <button
+        ref={toggle}
+        type="button"
+        aria-expanded={editing}
+        aria-controls={`${fieldId}-form`}
+        onClick={() => {
+          setOutcome(null);
+          setEditing(!editing);
+        }}
+        className="mt-2 min-h-11 rounded border px-3 text-xs"
+      >
+        {ended ? 'Renew access' : 'Change the end date'}
+      </button>
+      {editing ? (
+        <form
+          id={`${fieldId}-form`}
+          className="mt-2 flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+        >
+          <label htmlFor={fieldId}>Days from now</label>
+          <input
+            id={fieldId}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            required
+            autoFocus
+            value={days}
+            disabled={busy}
+            onChange={(event) => setDays(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                close();
+              }
+            }}
+            className="min-h-11 w-24 rounded border bg-transparent px-2"
+          />
+          <button
+            type="submit"
+            disabled={busy || days.trim() === ''}
+            className="min-h-11 rounded border px-3 disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : ended ? 'Renew' : 'Set'}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={close}
+            className="min-h-11 rounded border px-3 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </form>
+      ) : null}
+      <LiveStatus outcome={outcome} />
+    </div>
+  );
+}
+
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
@@ -624,6 +789,8 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   );
   const approve = useMutation(api.surfaces.approve);
   const reject = useMutation(api.surfaces.reject);
+  const setAccessDays = useMutation(api.surfaces.setAccessDays);
+  const now = useNow();
   const reorient = useAction(api.surfaces.reorient);
   const requestProposal = useMutation(api.surfaces.requestProposal);
   const probe = useAction(api.surfaceActions.probe);
@@ -845,17 +1012,26 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   ) : null}
                   <dt className="text-[var(--color-muted)]">Blast radius</dt>
                   <dd>{request.blastRadius || 'not stated'}</dd>
-                  <dt className="text-[var(--color-muted)]">Cost / expiry</dt>
-                  <dd>
-                    {request.costBand || 'not stated'} /{' '}
-                    {request.expiresInDays
-                      ? `${request.expiresInDays} ${request.expiresInDays === 1 ? 'day' : 'days'}`
-                      : 'not stated'}
-                  </dd>
+                  <dt className="text-[var(--color-muted)]">Cost</dt>
+                  <dd>{request.costBand || 'not stated'}</dd>
+                  {surface.verdict === 'proposed' ? (
+                    <>
+                      <dt className="text-[var(--color-muted)]">Access</dt>
+                      <dd>
+                        starts when you approve; the end date shows on this card, where you change
+                        or renew it
+                      </dd>
+                    </>
+                  ) : null}
                   <dt className="text-[var(--color-muted)]">Rollback</dt>
                   <dd>{request.rollback || 'not stated'}</dd>
                 </dl>
               ) : null}
+              <AccessRow
+                surface={surface}
+                now={now}
+                onSetDays={(days) => setAccessDays({ surfaceId: surface._id, days })}
+              />
               {surface.intakeScope && scopeFieldsFor(surface.class).length > 0 ? (
                 <IntakeScopeRow
                   drift={restatedScope(surface.intakeScope, scopePages).drift}

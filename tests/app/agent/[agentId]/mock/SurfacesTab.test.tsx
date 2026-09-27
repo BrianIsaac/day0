@@ -58,6 +58,7 @@ vi.mock('convex/react', () => ({
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
+  AccessRow,
   CredentialRow,
   EMPTY_SURFACES,
   DiscoveryProvenance,
@@ -67,9 +68,11 @@ import {
   ProvisioningRow,
   SurfaceLadder,
   SurfacesTab,
+  type AccessSurface,
   type CredentialRowProps,
   type ProvisioningRowProps,
 } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
+import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 import { companyPage } from '../../../../fixtures/company-bed';
 import {
   presentProvisioning,
@@ -800,5 +803,55 @@ describe('SurfacesTab and what each employee reads', (): void => {
     expect(markup).toContain('id="surface-looker-pipeline-tile"');
     expect(markup).toContain('1 declared system has no proposal yet.');
     expect(markup).not.toContain('<details');
+  });
+});
+
+describe('the access line and its renewal (Q5, U3 D5)', (): void => {
+  const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
+  const DAY = 24 * 60 * 60 * 1000;
+  const surface = (patch: Partial<AccessSurface>): AccessSurface => ({
+    _id: 'surface-linear' as Id<'surfaces'>,
+    displayName: 'Linear',
+    verdict: 'connected',
+    expiresAt: AT,
+    accessSetBy: 'approval',
+    ...patch,
+  });
+  const renderAccess = (row: AccessSurface, now: number): string =>
+    renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Singapore">
+        <AccessRow surface={row} now={now} onSetDays={async () => ({ expiresAt: AT })} />
+      </AgentZoneContext>,
+    ).replace(/&#x27;/g, "'");
+
+  it("shows the end date in the employee's day, who set it, and the control that changes it", (): void => {
+    const markup = renderAccess(surface({}), AT - 30 * DAY);
+    expect(markup).toContain(
+      'Access ends <time dateTime="2026-09-27T16:05:09.000Z">28 Sep 2026, 00:05</time>',
+    );
+    expect(markup).toContain(' · set when you approved the card.');
+    expect(markup).toMatch(/<button[^>]*aria-expanded="false"[^>]*>Change the end date<\/button>/);
+    expect(markup).toContain('role="status"');
+    expect(markup).not.toContain('set by the model');
+  });
+
+  it('warns within a week of the end, and offers the renewal once access has ended', (): void => {
+    expect(renderAccess(surface({ accessSetBy: 'manager' }), AT - 2 * DAY)).toContain(
+      ' · set by you. That is within a week; renew it to keep the connection.',
+    );
+    const ended = renderAccess(
+      surface({ verdict: 'approved', reason: 'expired', accessSetBy: 'upgrade' }),
+      AT + DAY,
+    );
+    expect(ended).toContain('Access ended <time');
+    expect(ended).toContain(
+      ' · restarted by the upgrade. Nothing is read or sent through this card until you renew it.',
+    );
+    expect(ended).toMatch(/>Renew access<\/button>/);
+  });
+
+  it('is absent before the card is approved, when access has not started', (): void => {
+    expect(renderAccess(surface({ verdict: 'proposed', expiresAt: undefined }), AT)).toBe('');
+    expect(renderAccess(surface({ verdict: 'declared' }), AT)).toBe('');
   });
 });
