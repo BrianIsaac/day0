@@ -61,6 +61,7 @@ export const exportForAgent = action({
     const known = await knownValuesFor(ctx, args.agentId);
     const head: TraceHead = await ctx.runQuery(internal.events.exportHead, {
       agentId: args.agentId,
+      exportedAt: Date.now(),
     });
     return redactStrings(head, known);
   },

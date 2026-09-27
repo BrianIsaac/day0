@@ -141,14 +141,14 @@ async function ownerRetirements(
 /**
  * The head of an agent's trace: the manifest, the agent, the owner section
  * and the credential labels, and where the first page starts. Internal; the
- * export action runs it under the caller's identity and the ownership check
- * here runs again.
+ * export action runs it under the caller's identity, with the moment of the
+ * export (a query reads no clock), and the ownership check here runs again.
  */
 export const exportHead = internalQuery({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.id('agents'), exportedAt: v.number() },
   handler: async (ctx, args): Promise<TraceHead> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const exportedAt = Date.now();
+    const { exportedAt } = args;
     const zone = agentZone(agent);
     const [stamp, surfaces, retired] = await Promise.all([
       ctx.db.query('deploymentVersions').order('desc').first(),
