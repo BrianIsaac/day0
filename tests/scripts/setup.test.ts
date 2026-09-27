@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -573,6 +574,75 @@ describe('an --endpoint the backend container cannot reach', (): void => {
     expect(h.output.join('\n')).toContain(
       'the backend container reached https://gateway.example.com/v1 (HTTP 401)',
     );
+  });
+});
+
+describe('a checkout that moved', (): void => {
+  /** A checkout whose env file was written at another path, with that path's containers still there. */
+  function moved(oldRoot: string): Harness {
+    const h = harness({
+      envLocal: `COMPOSE_PROJECT_NAME=day0-setup-test\nOPENAI_API_KEY=synthetic\nDAY0_SETUP_ROOT=${oldRoot}\n`,
+      volumes: ['day0-setup-test_convex_data'],
+      services: ['backend'],
+    });
+    const original = h.io.run;
+    // The old containers until they are removed, none until `up` recreates
+    // them, then this checkout's, as Docker would report each.
+    let containers: 'old' | 'none' | 'new' = 'old';
+    h.io.run = (command, args, options) => {
+      if (args[0] === 'rm') containers = 'none';
+      if (args.includes('convex:up')) containers = 'new';
+      if (containers === 'none' && args[0] === 'ps') {
+        h.commands.push({ command, args: [...args] });
+        return { status: 0, stdout: '\n', stderr: '' };
+      }
+      return args[0] === 'inspect' && containers === 'old'
+        ? { status: 0, stdout: `${oldRoot}\n`, stderr: '' }
+        : original(command, args, options);
+    };
+    return h;
+  }
+
+  it('says the checkout looks moved and names --adopt, rather than asking for a fresh project', async (): Promise<void> => {
+    const h = moved('/home/someone/old-place/day0');
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'was set up at /home/someone/old-place/day0, which no longer holds it',
+    );
+    expect(printed).toContain('--adopt');
+    expect(printed).not.toContain('choose a fresh project');
+  });
+
+  it('re-adopts with --adopt: the old containers go, the volumes and the data stay, the new root is written', async (): Promise<void> => {
+    const h = moved('/home/someone/old-place/day0');
+    expect(await runSetup(keyRoute({ project: undefined, adopt: true }), h.io)).toBe(0);
+    const removal = h.commands.find((call) => call.args[0] === 'rm');
+    expect(removal?.args.slice(0, 2)).toEqual(['rm', '-f']);
+    expect(h.commands.some((call) => call.args.includes('down') && call.args.includes('-v'))).toBe(
+      false,
+    );
+    expect(readEnvValues(join(h.directory, '.env.local')).DAY0_SETUP_ROOT).toBe(
+      realpathSync(h.directory),
+    );
+    expect(h.output.join('\n')).toContain('re-adopting day0-setup-test');
+  });
+
+  it('refuses --adopt while the old path still holds a checkout that claims the project', async (): Promise<void> => {
+    const other = mkdtempSync(join(tmpdir(), 'day0-setup-other-'));
+    directories.push(other);
+    writeFileSync(join(other, 'package.json'), '{"name":"day0"}\n', 'utf8');
+    writeFileSync(join(other, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-setup-test\n', 'utf8');
+    const h = moved(other);
+    expect(await runSetup(keyRoute({ project: undefined, adopt: true }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      `${other} still holds a checkout whose .env.local names day0-setup-test`,
+    );
+    expect(h.commands.some((call) => call.args[0] === 'rm')).toBe(false);
+  });
+
+  it('reads --adopt from the command line', (): void => {
+    expect(parseSetupArguments(['--adopt']).adopt).toBe(true);
   });
 });
 

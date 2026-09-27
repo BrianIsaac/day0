@@ -433,6 +433,8 @@ describe('protected and read-only projects', (): void => {
     });
     expect(await runCommand(verb('clear', { assumeYes: true }), h.io)).toBe(1);
     expect(h.output.join('\n')).toContain('belongs to another checkout');
+    // /somewhere/else holds no checkout any more, so the way back is named.
+    expect(h.output.join('\n')).toContain('--adopt');
     expect(ran(h)).not.toContain('down');
   });
 });

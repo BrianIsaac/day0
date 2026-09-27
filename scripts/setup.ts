@@ -208,6 +208,8 @@ export interface SetupOptions {
   dryRun: boolean;
   /** Take the project down, volumes included, before setting it up. */
   reset: boolean;
+  /** Re-adopt the installation of a checkout that moved here, keeping its volumes. */
+  adopt?: boolean;
   /** `clear`: remove `.env.local` as well. */
   purgeEnv: boolean;
   /** Take the default answer to every question that has one. */
@@ -291,6 +293,8 @@ const USAGE = `Usage: pnpm setup:local [options]
                                 hand steps and run pnpm bed:company check
   --dry-run                     print the plan of commands and write nothing
   --reset                       clear this project (containers and volumes) first
+  --adopt                       re-adopt the installation of a checkout that moved here:
+                                its containers are recreated, its volumes are kept
   --purge-env                   clear: remove .env.local as well
   --yes                         take the default answer wherever there is one
   --help                        print this
@@ -362,6 +366,8 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.dryRun = true;
     } else if (argument === '--reset') {
       options.reset = true;
+    } else if (argument === '--adopt') {
+      options.adopt = true;
     } else if (argument === '--purge-env') {
       options.purgeEnv = true;
     } else if (argument === '--company') {
@@ -1859,6 +1865,85 @@ function projectContainers(
 }
 
 /**
+ * Refuse to re-adopt an installation whose env file names another checkout,
+ * unless that checkout has moved here and the reader said so. A checkout that
+ * still sits at the recorded path and still claims the project is a second
+ * checkout, and two checkouts on one installation is what the refusal exists
+ * to stop.
+ *
+ * Args:
+ *   recordedRoot: The checkout path `DAY0_SETUP_ROOT` records.
+ *   project: The Compose project.
+ *   adopt: Whether `--adopt` was given.
+ *
+ * Returns:
+ *   The refusal, one line each, or undefined when the adoption may go ahead.
+ */
+export function adoptionRefusal(
+  recordedRoot: string,
+  project: string,
+  adopt: boolean,
+): string[] | undefined {
+  const envPath = join(recordedRoot, ENV_FILE);
+  const stillClaimed =
+    existsSync(join(recordedRoot, 'package.json')) &&
+    existsSync(envPath) &&
+    readEnvValues(envPath).COMPOSE_PROJECT_NAME?.trim() === project;
+  if (stillClaimed) {
+    return [
+      `error: ${recordedRoot} still holds a checkout whose ${ENV_FILE} names ${project}, and this ` +
+        `${ENV_FILE} names it too. Two checkouts on one installation would put each on the other's data.`,
+      `       Run the setup from ${recordedRoot}, or give this checkout its own: \`--project <name>\`.`,
+    ];
+  }
+  if (adopt) return undefined;
+  return [
+    `error: this checkout was set up at ${recordedRoot}, which no longer holds it, so it looks moved.`,
+    `       \`--adopt\` re-adopts the ${project} installation here: its containers are recreated from this`,
+    '       checkout, and its volumes, the data among them, are kept.',
+  ];
+}
+
+/**
+ * Remove the containers a moved checkout left, so the next `up` recreates
+ * them from this one. Only containers whose Compose working directory is the
+ * recorded path are touched; volumes never are.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   project: The Compose project.
+ *   recordedRoot: Where the checkout was.
+ *   dryRun: Say what would be removed and remove nothing.
+ *
+ * Returns:
+ *   A refusal when a container belongs to a third path, else undefined.
+ */
+function readoptContainers(
+  io: SetupIo,
+  project: string,
+  recordedRoot: string,
+  dryRun: boolean,
+): string | undefined {
+  const containers = projectContainers(io, project, recordedRoot);
+  if (containers.refusal !== undefined) {
+    return `${containers.refusal} Nothing was removed; \`docker ps -a --filter label=com.docker.compose.project=${project}\` lists them.`;
+  }
+  if (containers.ids.length === 0) return undefined;
+  if (dryRun) {
+    io.log(`    would remove ${containers.ids.length} container(s) created from ${recordedRoot}`);
+    return undefined;
+  }
+  const removed = io.run('docker', ['rm', '-f', ...containers.ids], { timeoutMs: 120_000 });
+  if (removed.status !== 0) {
+    return `the containers created from ${recordedRoot} could not be removed: ${removed.stderr.trim()}`;
+  }
+  io.log(
+    `    removed ${containers.ids.length} container(s) created from ${recordedRoot}; the volumes are kept`,
+  );
+  return undefined;
+}
+
+/**
  * The volumes Docker lists under a project's compose label.
  *
  * Args:
@@ -2247,18 +2332,34 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const checkoutRoot = realpathSync(io.cwd);
-    if (existing.DAY0_SETUP_ROOT && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
+    const recordedRoot = existing.DAY0_SETUP_ROOT?.trim() ?? '';
+    const adopting = recordedRoot !== '' && recordedRoot !== checkoutRoot;
+    if (adopting) {
+      const refusal = adoptionRefusal(recordedRoot, resolvedProject, options.adopt === true);
+      if (refusal !== undefined) {
+        for (const line of refusal) io.log(line);
+        return 1;
+      }
       io.log(
-        'error: this env file belongs to another checkout; choose a fresh project and env file.',
+        `Moved checkout: re-adopting ${resolvedProject}, set up at ${recordedRoot}. Its volumes are kept; ` +
+          'its containers are recreated from this checkout.',
       );
-      return 1;
+      const readopted = readoptContainers(io, resolvedProject, recordedRoot, options.dryRun);
+      if (readopted !== undefined) {
+        io.log(`error: ${readopted}`);
+        return 1;
+      }
     }
-    const containers = projectContainers(io, resolvedProject, checkoutRoot);
+    const containers =
+      adopting && options.dryRun
+        ? { ids: [] }
+        : projectContainers(io, resolvedProject, checkoutRoot);
     if (containers.refusal !== undefined && (containers.ids.length > 0 || !options.dryRun)) {
       io.log(`error: ${containers.refusal}`);
       return 1;
     }
     if (
+      !adopting &&
       containers.ids.length === 0 &&
       decision === 'rerun' &&
       existing.DAY0_SETUP_ROOT !== checkoutRoot
@@ -3085,7 +3186,11 @@ function lifecycleTarget(
   assertLocalProject(project, { mainWorktree: isMainWorktree(io.cwd), fileProject: project });
   const checkoutRoot = realpathSync(io.cwd);
   if (existing.DAY0_SETUP_ROOT && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
-    return `this env file belongs to another checkout (${existing.DAY0_SETUP_ROOT}); nothing here is that checkout's to ${verb}.`;
+    const moved =
+      adoptionRefusal(existing.DAY0_SETUP_ROOT, project, true) === undefined
+        ? ` If this checkout moved from there, \`${entryCommand(options.mode)} --adopt\` re-adopts its installation first.`
+        : '';
+    return `this env file belongs to another checkout (${existing.DAY0_SETUP_ROOT}); nothing here is that checkout's to ${verb}.${moved}`;
   }
   const containers = projectContainers(io, project, checkoutRoot);
   if (containers.refusal !== undefined) return containers.refusal;
