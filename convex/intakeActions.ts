@@ -479,11 +479,19 @@ function decodeMcpPayload(value: unknown): unknown {
 /**
  * Locate issue arrays in the supported MCP result envelopes.
  *
+ * A GraphQL connection (`{ issues: { nodes, pageInfo } }`) nests its rows one
+ * level down. A shape with no list in any of these places is refused rather
+ * than read as an empty page: an empty page advances the checkpoint, and every
+ * ticket updated in that window would never be seen (P5-14).
+ *
  * Args:
  *   value: Decoded provider result.
  *
  * Returns:
  *   Issue objects and an optional next-page cursor.
+ *
+ * Raises:
+ *   Error: If the result carries no issue list intake can read.
  */
 export function mcpIssuePage(value: unknown): McpPage {
   const decoded = decodeMcpPayload(value);
@@ -493,11 +501,18 @@ export function mcpIssuePage(value: unknown): McpPage {
   const record = asRecord(decoded) ?? {};
   const data = asRecord(record.data);
   const container = data ?? record;
-  const candidates = container.issues ?? container.items ?? container.nodes;
-  const issues = Array.isArray(candidates)
-    ? candidates.map(asRecord).filter((row): row is Record<string, unknown> => !!row)
-    : [];
-  const pageInfo = asRecord(container.pageInfo) ?? asRecord(record.pageInfo);
+  const listed = container.issues ?? container.items ?? container.nodes;
+  const connection = Array.isArray(listed) ? undefined : asRecord(listed);
+  const rows: unknown = Array.isArray(listed) ? listed : connection?.nodes;
+  if (!Array.isArray(rows)) {
+    const keys = Object.keys(container).slice(0, 8).join(', ') || 'none';
+    throw new Error(
+      `Linear list_issues returned a shape intake cannot read (top-level keys: ${keys}), so the checkpoint is not advanced.`,
+    );
+  }
+  const issues = rows.map(asRecord).filter((row): row is Record<string, unknown> => !!row);
+  const pageInfo =
+    asRecord(connection?.pageInfo) ?? asRecord(container.pageInfo) ?? asRecord(record.pageInfo);
   const cursor =
     container.nextCursor ??
     container.next_cursor ??

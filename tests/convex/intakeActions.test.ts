@@ -1829,6 +1829,29 @@ describe('intake provider contracts', (): void => {
     ).toEqual(['revops-asks', 'revops']);
   });
 
+  it('reads a connection-shaped page and refuses a shape it cannot read rather than taking it as empty', (): void => {
+    expect(
+      mcpIssuePage({
+        data: {
+          issues: {
+            nodes: [{ id: 'four' }],
+            pageInfo: { hasNextPage: true, endCursor: 'five' },
+          },
+        },
+      }),
+    ).toEqual({ issues: [{ id: 'four' }], nextCursor: 'five' });
+    expect(mcpIssuePage({ issues: { nodes: [], pageInfo: { hasNextPage: false } } })).toEqual({
+      issues: [],
+    });
+    expect(mcpIssuePage({ issues: [] })).toEqual({ issues: [] });
+    expect(() => mcpIssuePage({ data: { results: [{ id: 'six' }] } })).toThrow(
+      'Linear list_issues returned a shape intake cannot read',
+    );
+    expect(() => mcpIssuePage({ issues: { edges: [] } })).toThrow(
+      'Linear list_issues returned a shape intake cannot read',
+    );
+  });
+
   it('redacts exact and token-shaped credentials from bounded errors', (): void => {
     const tokenShape = ['xoxb', 'another-private-value'].join('-');
     const safe = safeIntakeError(
