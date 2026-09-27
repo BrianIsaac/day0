@@ -8,9 +8,11 @@ import { slackAuthorizeUrl } from './slack-endpoint';
  * shape of the app an employee registers for itself is the shape the team wrote
  * down: this module locates the fenced manifest template on the synced policy
  * page, substitutes the two placeholders the page documents, and refuses
- * anything that is not a usable manifest. Nothing here is Slack-specific beyond
- * the manifest's own field names - the template decides the scopes, the
- * description and the settings.
+ * anything that is not a usable manifest. The template decides the app's name,
+ * its description, its bot user and its bot scopes. Everything else is Day0's:
+ * the manifest sent with the administrator's token is rebuilt from an
+ * allowlist, so a page edit cannot add an event subscription, an interactivity
+ * or slash-command address, user-token scopes or a second redirect.
  */
 
 /** The placeholder the policy page uses for the employee's name. */
@@ -25,11 +27,27 @@ export const SLACK_REDIRECT_PATH = '/api/oauth/slack';
 /** Slack refuses an app whose name is longer than this. */
 const APP_NAME_LIMIT = 35;
 
+/** The only settings a dedicated app may carry, each a switch Slack documents. */
+const SETTING_KEYS = [
+  'org_deploy_enabled',
+  'socket_mode_enabled',
+  'token_rotation_enabled',
+] as const;
+
+/** A Slack OAuth scope: a resource, a colon and an action, as `users:read.email` or `links.embed:write`. */
+const SLACK_SCOPE = /^[a-z][a-z_.]*:[a-z][a-z_.]*$/;
+
+/** The shape of a dedicated app's manifest, and all of it Day0 sends. */
 export interface SlackManifest {
-  display_information: { name: string; description?: string };
+  display_information: {
+    name: string;
+    description?: string;
+    long_description?: string;
+    background_color?: string;
+  };
   features?: { bot_user?: { display_name?: string; always_online?: boolean } };
   oauth_config: { redirect_urls: string[]; scopes: { bot: string[] } };
-  settings?: Record<string, unknown>;
+  settings?: Partial<Record<(typeof SETTING_KEYS)[number], boolean>>;
 }
 
 export interface BuiltSlackManifest {
@@ -216,37 +234,101 @@ export function buildSlackManifest(input: {
     );
   }
 
-  const manifest = substitute(parsed, agentName, origin) as SlackManifest;
-  const appName = dedicatedAppName(agentName, String(manifest.display_information.name ?? ''));
+  const written = substitute(parsed, agentName, origin) as Record<string, unknown>;
+  const display = record(written.display_information);
+  const appName = dedicatedAppName(agentName, stringOr(display.name, ''));
   if (!appName) {
     throw new ManifestTemplateError('The documented manifest template names no app.');
   }
-  manifest.display_information.name = appName;
-  if (manifest.features?.bot_user?.display_name) {
-    manifest.features.bot_user.display_name = dedicatedAppName(
-      agentName,
-      manifest.features.bot_user.display_name,
-    );
-  }
 
+  const oauth = record(written.oauth_config);
   const redirectUrl = `${origin}${SLACK_REDIRECT_PATH}`;
-  const declared = manifest.oauth_config.redirect_urls.map((url: string): string => url.trim());
+  const declared = (Array.isArray(oauth.redirect_urls) ? oauth.redirect_urls : []).map(
+    (url: unknown): string => stringOr(url, '').trim(),
+  );
   if (!declared.includes(redirectUrl)) {
     throw new ManifestTemplateError(
       `The documented manifest redirects to ${declared.join(', ') || '(nothing)'}, not to ${redirectUrl}.`,
     );
   }
-  manifest.oauth_config.redirect_urls = declared;
 
-  const scopes = manifest.oauth_config.scopes.bot
-    .map((scope: string): string => scope.trim())
+  const scopes = botScopes(record(oauth.scopes).bot);
+  const manifest: SlackManifest = {
+    display_information: displayInformation(display, appName),
+    ...features(record(written.features), agentName),
+    oauth_config: { redirect_urls: [redirectUrl], scopes: { bot: scopes } },
+    ...settings(record(written.settings)),
+  };
+  return { appName, manifest, redirectUrl, scopes };
+}
+
+/** A parsed JSON value as an object, or an empty one when it is anything else. */
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringOr(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+/** The app's name and the three optional display strings, nothing else. */
+function displayInformation(
+  display: Record<string, unknown>,
+  appName: string,
+): SlackManifest['display_information'] {
+  const out: SlackManifest['display_information'] = { name: appName };
+  for (const key of ['description', 'long_description', 'background_color'] as const) {
+    const value = display[key];
+    if (typeof value === 'string' && value.trim() !== '') out[key] = value;
+  }
+  return out;
+}
+
+/** The bot user and nothing else: no slash commands, shortcuts or unfurl domains. */
+function features(
+  written: Record<string, unknown>,
+  agentName: string,
+): Pick<SlackManifest, 'features'> {
+  const bot = record(written.bot_user);
+  if (Object.keys(bot).length === 0) return {};
+  const displayName = stringOr(bot.display_name, '');
+  return {
+    features: {
+      bot_user: {
+        ...(displayName ? { display_name: dedicatedAppName(agentName, displayName) } : {}),
+        ...(typeof bot.always_online === 'boolean' ? { always_online: bot.always_online } : {}),
+      },
+    },
+  };
+}
+
+/** The documented switches, when the template set them, and no addresses. */
+function settings(written: Record<string, unknown>): Pick<SlackManifest, 'settings'> {
+  const out: NonNullable<SlackManifest['settings']> = {};
+  for (const key of SETTING_KEYS) {
+    const value = written[key];
+    if (typeof value === 'boolean') out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? { settings: out } : {};
+}
+
+/** The bot scopes, trimmed, each one a Slack scope, at least one. */
+function botScopes(value: unknown): string[] {
+  const scopes = (Array.isArray(value) ? value : [])
+    .map((scope: unknown): string => stringOr(scope, '').trim())
     .filter((scope: string): boolean => scope !== '');
   if (scopes.length === 0) {
     throw new ManifestTemplateError('The documented manifest requests no bot scopes.');
   }
-  manifest.oauth_config.scopes.bot = scopes;
-
-  return { appName, manifest, redirectUrl, scopes };
+  const odd = scopes.find((scope: string): boolean => !SLACK_SCOPE.test(scope));
+  if (odd !== undefined) {
+    throw new ManifestTemplateError(
+      `The documented manifest's bot scope "${odd}" is not a Slack scope.`,
+    );
+  }
+  return scopes;
 }
 
 /**
