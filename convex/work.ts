@@ -1631,6 +1631,73 @@ export const writeClaimHolder = internalQuery({
 });
 
 /**
+ * Take the tickets a run's landed writes went to, when no work item holds them.
+ *
+ * Internal; the apply path's, after a phase's writes land. A write to a
+ * ticket no work item was discovered from took no claim, so the ticket,
+ * re-listed by the write, was claimed unopposed by a colleague's intake,
+ * whose executor was told nothing of the comment (P8-2). Each landed ticket
+ * write now leaves the writing work item holding the ticket, so the
+ * colleague's evaluation meets the claim and its executor lists the item
+ * with what landed. A ticket another work item holds is left to it, the
+ * work item's own discovered item is never claimed twice, and a browser page
+ * field is claimed before authoring (`takeWriteTargetClaims`), not here.
+ *
+ * @returns The keys taken.
+ */
+export const claimLandedTicketWrites = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    writes: v.array(v.object({ surfaceSlug: v.string(), targets: v.array(v.string()) })),
+  },
+  handler: async (ctx, args): Promise<string[]> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    const userId = (await ctx.db.get(row.agentId))?.userId;
+    if (!userId) return [];
+    const keys = new Set<string>();
+    for (const write of args.writes) {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', row.agentId).eq('slug', write.surfaceSlug),
+        )
+        .first();
+      if (surface?.class !== 'kanban' || surface.path === 'browser-driven') continue;
+      for (const target of write.targets) {
+        const key = providerItemKey(
+          surface,
+          { sourceSystem: surface.slug, externalId: target },
+          SURFACE_MODE,
+        );
+        if (key !== undefined && key !== row.externalClaimKey && key !== row.externalClaimAlias) {
+          keys.add(key);
+        }
+      }
+    }
+    const now = Date.now();
+    const taken: string[] = [];
+    for (const key of keys) {
+      const live = await ctx.db
+        .query('externalClaims')
+        .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
+        .filter((q) => q.eq(q.field('releasedAt'), undefined))
+        .collect();
+      if (live.length > 0 || (await retiredClaimOn(ctx, userId, key))) continue;
+      await ctx.db.insert('externalClaims', {
+        userId,
+        key,
+        agentId: row.agentId,
+        workItemId: row._id,
+        claimedAt: now,
+      });
+      taken.push(key);
+    }
+    return taken;
+  },
+});
+
+/**
  * Whether a live claim holds against a work item.
  *
  * A claim on the item a row was discovered from holds against everything. A

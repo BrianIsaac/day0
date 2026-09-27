@@ -3899,6 +3899,36 @@ function endedAccessView(row: Doc<'surfaces'>): Doc<'surfaces'> {
   return { ...row, verdict: 'approved', credentialLanded: false, lastVerifiedAt: undefined };
 }
 
+/**
+ * Hold the tickets a phase's landed writes went to, when no work item holds
+ * them (P8-2; `work.claimLandedTicketWrites`). Real mode only.
+ *
+ * @param actions - The phase's actions.
+ * @param applied - Their ledger rows, by index.
+ * @param surfaces - The agent's surfaces.
+ */
+async function claimLandedTicketWrites(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+  surfaces: readonly SurfaceRecord[],
+): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const writes = actions.flatMap((action, index) => {
+    const row = applied[index];
+    if (!row?.ok || row.held) return [];
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) return [];
+    const surface = surfaces.find((candidate) => candidate.slug === parsed.action.surface);
+    if (surface?.class !== 'kanban' || surface.path === 'browser-driven') return [];
+    const targets = writeTargetIds(parsed.action, surface);
+    return targets.length > 0 ? [{ surfaceSlug: surface.slug, targets }] : [];
+  });
+  if (writes.length === 0) return;
+  await ctx.runMutation(internal.work.claimLandedTicketWrites, { workItemId, writes });
+}
+
 /** What `finishRun` needs from the apply claim. */
 interface FinishClaim {
   runId: Id<'events'>;
@@ -3939,6 +3969,7 @@ async function finishRun(
   knownValues: readonly string[] = [],
   surfaces: readonly SurfaceRecord[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
+  await claimLandedTicketWrites(ctx, workItemId, rawOutput.actions ?? [], rawApplied, surfaces);
   // The whole persisted record passes the exact-value layer once more here:
   // the adapters already applied it to provider text, and this covers every
   // other string the dashboard renders from the run, whatever wrote it.

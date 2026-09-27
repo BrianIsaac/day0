@@ -8512,3 +8512,77 @@ describe('an execution that fails on the model (P7-18, U9 step 20)', (): void =>
     expect(await payloadsOf(harness, agentId, 'work.execution-resumed')).toEqual([]);
   });
 });
+
+describe('a write to a ticket no work item was discovered from (P8-2)', (): void => {
+  it('leaves the writer holding the ticket, so a colleague’s item for it is refused and told who holds it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    recorded.skillOutput = {
+      draft: 'Noted the close on the related ticket.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'REVOPS-9', body: 'Covered by iss-1.' }),
+          },
+        },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, {
+      autonomousActions: true,
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toHaveLength(1);
+    const claims = await harness.run(async (ctx) => await ctx.db.query('externalClaims').collect());
+    expect(
+      claims.filter((claim) => claim.workItemId === workItemId).map((claim) => claim.key),
+    ).toContain('linear:REVOPS-9');
+
+    // A colleague of the same owner lists REVOPS-9 on the next poll.
+    const colleague = await harness.run(async (ctx) => {
+      const colleagueId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId: colleagueId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        endpoint: 'https://mcp.linear.app/mcp',
+        path: 'mcp',
+        toolAllowlist: ['save_comment', 'save_issue', 'get_issue', 'list_comments'],
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      });
+      return colleagueId;
+    });
+    const listed = await harness.mutation(internal.work.seedItem, {
+      agentId: colleague,
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-9',
+      title: 'Follow up on the close',
+      contentSummary: 'Follow up.',
+      contentRefs: [],
+    });
+    await expect(
+      harness.mutation(internal.work.claimLoopStep, { workItemId: listed, step: 'evaluation' }),
+    ).resolves.toMatchObject({ claimed: false, reason: 'held-elsewhere' });
+    expect((await readItem(harness, listed)).verdict).toMatchObject({
+      decision: 'skip',
+      reason: expect.stringContaining('Priya holds it (Add the close-summary audit note)'),
+    });
+  });
+});
