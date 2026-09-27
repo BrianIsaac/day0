@@ -2209,7 +2209,8 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
     expect(markup).toContain('12 automatic changes');
     expect(markup).not.toContain('25 actions automatic');
     expect(markup).toContain('Also applied on their own: 12 reads, 1 manager message.');
-    expect(markup).toContain('Pilot figures');
+    // A heading above the list, not a row inside it: a dl holds only dt and dd groups.
+    expect(markup).toMatch(/<h3[^>]*>Pilot figures<\/h3><dl/);
     expect(markup).toContain('1 of 3 (33%)');
     expect(markup).toContain('2 min / 3 min (2 done)');
     expect(markup).toContain('1 of 1 answer');
