@@ -3,7 +3,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES } from '../../convex/migrations';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -432,6 +432,62 @@ describe('the retirements migration (Q15, N1)', (): void => {
     expect(
       status.migrations.find((row) => row.name === 'retirements-from-tombstones'),
     ).toMatchObject({ release: '0.6.0', read: 2, changed: 1, completedAt: expect.any(Number) });
+  });
+});
+
+describe('the approved tool list backfill (U10 D2 (b))', (): void => {
+  it('copies the stored tool list of every card that has one into its approved list, and leaves one the manager approved', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [connected, expired, approvedByManager, bare] = await harness.run(async (ctx) => {
+      const card = async (
+        slug: string,
+        fields: Partial<Doc<'surfaces'>>,
+      ): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          createdAt: 1,
+          ...fields,
+        });
+      return await Promise.all([
+        card('linear', { toolAllowlist: ['list_issues', 'save_comment'], lastVerifiedAt: 5 }),
+        card('jira', { verdict: 'approved', reason: 'expired', toolAllowlist: ['search'] }),
+        card('asana', {
+          toolAllowlist: ['list_tasks'],
+          approvedToolAllowlist: ['list_tasks', 'create_task'],
+          toolAllowlistApprovedAt: 9,
+        }),
+        card('notion', { verdict: 'proposed', credentialLanded: false }),
+      ]);
+    });
+
+    await runAll(harness);
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [connected, expired, approvedByManager, bare].map((id) => ctx.db.get(id)),
+        ),
+    );
+    expect(rows.map((row) => [row?.approvedToolAllowlist, row?.toolAllowlistApprovedAt])).toEqual([
+      [['list_issues', 'save_comment'], 5],
+      [['search'], 1],
+      [['list_tasks', 'create_task'], 9],
+      [undefined, undefined],
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-approved-tools')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
   });
 });
 

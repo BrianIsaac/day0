@@ -54,6 +54,7 @@ export const MIGRATION_NAMES = [
   'ticket-listings',
   'agents-zone',
   'retirements-from-tombstones',
+  'surfaces-approved-tools',
 ] as const;
 
 /** One migration's name. */
@@ -127,6 +128,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'copies each retire tombstone an older release wrote as an agent.retired payload into the owner’s retirements table, where the export’s owner section now reads it',
     thenRemoves: 'nothing: the agent.retired events stay as the ledger’s record',
+  },
+  'surfaces-approved-tools': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies the tool list of each card that stores one into its approved list, which every later probe is frozen against and only the manager widens',
+    thenRemoves: 'the fallback to toolAllowlist in surfaces.frozenTools',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -449,6 +455,31 @@ async function copyRetirements(ctx: MutationCtx, cursor: string | null): Promise
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
+/**
+ * Give each card that stores a tool list an approved list of the same tools,
+ * stamped at its last verification, so the freeze reads the approved list
+ * whatever became of the stored one. A card with an approved list already is
+ * left alone.
+ */
+async function copyApprovedTools(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
+  const carrying = page.page.filter(
+    (surface) => surface.toolAllowlist !== undefined && surface.approvedToolAllowlist === undefined,
+  );
+  for (const surface of carrying) {
+    await ctx.db.patch(surface._id, {
+      approvedToolAllowlist: surface.toolAllowlist,
+      toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+    });
+  }
+  return {
+    read: page.page.length,
+    changed: carrying.length,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
 /** Each migration's page, keyed by name, so a name with no page fails the typecheck. */
 const MIGRATION_PAGES: Readonly<
   Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
@@ -466,6 +497,7 @@ const MIGRATION_PAGES: Readonly<
   'ticket-listings': copyListings,
   'agents-zone': stampZoneAndMode,
   'retirements-from-tombstones': copyRetirements,
+  'surfaces-approved-tools': copyApprovedTools,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
 };
