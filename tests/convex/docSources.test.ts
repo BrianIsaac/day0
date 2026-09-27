@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import { STALE_SYNC_MS, agentReadsSource, validateLinkInput } from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
 import { allConvexModules } from './all-modules';
+import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
@@ -662,6 +663,59 @@ describe('documentation sources in real mode', (): void => {
       credentialsSuperseded: 0,
       surfacesToReapprove: 0,
     });
+  });
+
+  it('deletes a mirror an earlier slug rule keyed, once the sync has mirrored the page under its own (review M20)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: `source-${String(sourceId).slice(-10).toLowerCase()}-caf-md`,
+        title: 'Café, as v0.4.0 keyed it',
+        body: '# Café',
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'Café.md',
+        updatedAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'Café.md',
+      title: 'Café',
+      markdown: '# Café',
+      updatedAt: 2,
+    });
+    await harness.mutation(internal.mock.upsertDoc, {
+      syncRunId: runId,
+      agentId,
+      slug: mirroredDocSlug(sourceId, 'Café.md'),
+      title: 'Café',
+      body: '# Café',
+      category: 'team-doc',
+      sourceId,
+      sourceRef: 'Café.md',
+    });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId,
+      refs: ['Café.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    const mirrors = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(mirrors.map((mirror) => mirror.slug)).toEqual([mirroredDocSlug(sourceId, 'Café.md')]);
   });
 
   it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {

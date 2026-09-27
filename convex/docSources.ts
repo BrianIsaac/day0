@@ -21,6 +21,7 @@ import { purgeCredential } from './credentials';
 import { restatedScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { appendEvent } from './eventLog';
+import { mirroredDocSlug } from '../src/docs/types';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -712,7 +713,15 @@ export const finishSync = internalMutation({
     }
     let mirrorsRemoved = 0;
     for (const mirror of mirrors) {
-      if (mirror.sourceRef && current.has(mirror.sourceRef)) continue;
+      // A mirror an earlier slug rule keyed (a non-ASCII reference before
+      // v0.5.0) is a second copy beside the one this sync wrote (review M20).
+      if (
+        mirror.sourceRef &&
+        current.has(mirror.sourceRef) &&
+        mirror.slug === mirroredDocSlug(source._id, mirror.sourceRef)
+      ) {
+        continue;
+      }
       await ctx.db.delete(mirror._id);
       mirrorsRemoved += 1;
     }
