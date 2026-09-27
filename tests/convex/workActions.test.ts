@@ -614,6 +614,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                         ? '- Page URL: http://looker-tile:8080/'
                         : tool === 'browser_snapshot'
                           ? [
+                              '### Page',
+                              '- Page URL: http://looker-tile:8080/',
+                              '### Snapshot',
                               '- textbox "Username" [ref=e11]',
                               '- textbox "Password" [ref=e14]',
                               '- button "Sign in" [ref=e15]',

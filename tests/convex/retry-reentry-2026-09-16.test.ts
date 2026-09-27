@@ -43,8 +43,11 @@ import { randomBytes } from 'node:crypto';
  */
 
 const FIRST_COMMENT_ID = 'comment-6098cba6';
-/** The tile as the browser double snapshots it: the sign-in form, the figure and the audit line. */
+/** The tile as the browser double snapshots it: the page, the sign-in form, the figure and the audit line. */
 const TILE_SNAPSHOT = [
+  '### Page',
+  '- Page URL: http://looker-tile:8080/',
+  '### Snapshot',
   '- textbox "Username" [ref=e11]',
   '- textbox "Password" [ref=e14]',
   '- button "Sign in" [ref=e15]',

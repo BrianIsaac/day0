@@ -136,8 +136,11 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
   return new Response(JSON.stringify({ ok: true, ts: '1789000000.000100' }), { status: 200 });
 });
 
-/** The tile as the browser double snapshots it: the sign-in form, the figure and the audit line. */
+/** The tile as the browser double snapshots it: the page, the sign-in form, the figure and the audit line. */
 const TILE_SNAPSHOT = [
+  '### Page',
+  '- Page URL: http://looker-tile:8080/',
+  '### Snapshot',
   '- textbox "Username" [ref=e11]',
   '- textbox "Password" [ref=e14]',
   '- button "Sign in" [ref=e15]',

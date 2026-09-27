@@ -312,7 +312,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                   if (tool === 'browser_snapshot') {
                     return text(
                       context.navigated
-                        ? SNAPSHOT
+                        ? `### Page\n- Page URL: http://looker-tile:8080/\n### Snapshot\n${SNAPSHOT}`
                         : '### Page\n- Page URL: about:blank\n### Snapshot\n```yaml\n```',
                     );
                   }

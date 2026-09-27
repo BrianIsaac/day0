@@ -1439,6 +1439,23 @@ describe('where the credential is substituted', (): void => {
 
   const LOGIN = '- textbox "Username" [ref=e11]\n- textbox "Password" [ref=e14]';
 
+  it('checks the page before typing the credential, on a run that is not a replay', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({ url: 'http://phish.example/login', elements: LOGIN });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
+      0,
+      'k',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('outside the approved surface'),
+    });
+    expect(calls.map((entry) => entry.tool)).toEqual(['browser_snapshot']);
+    expect(JSON.stringify(calls)).not.toContain(SECRET);
+  });
+
   it('types the credential into a password field on the surface', async (): Promise<void> => {
     const { adapter, calls } = driverOn({ url: 'http://looker-tile:8080/login', elements: LOGIN });
     const applied = await adapter.apply(

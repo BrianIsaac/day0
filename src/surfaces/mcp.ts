@@ -753,7 +753,10 @@ export class McpAdapter implements SurfaceAdapter {
             surface.toolArguments?.find(
               (entry: { arguments: string[]; tool: string }): boolean => entry.tool === call.tool,
             )?.arguments,
-            replay ? surface.endpoint : undefined,
+            // The page is checked before any action that carries the
+            // credential, on every run: a click or a script can have moved
+            // the browser since the last navigation was checked.
+            replay || carriesSecret ? surface.endpoint : undefined,
           );
           if ('reason' in resolved) {
             const redacted = await redactOutcome(
