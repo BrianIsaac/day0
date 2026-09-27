@@ -94,6 +94,11 @@ import {
   useNow,
 } from './time';
 import { eventLabel } from './event-labels';
+import {
+  compareWaitingRows,
+  EVALUATION_ATTEMPTS_SPENT,
+  MAX_EVALUATION_ATTEMPTS,
+} from '../../../src/work/queue-order';
 import { LiveStatus, refusalText, type ChangeOutcome } from './live-status';
 import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
@@ -163,6 +168,7 @@ export function AgentDashboard({ agentId }: Props) {
     surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
   );
   const retireCorrection = useMutation(api.corrections.retire);
+  const unavailableCauses = useMemo(() => scopeUnavailableCauses(events ?? []), [events]);
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],
@@ -292,6 +298,7 @@ export function AgentDashboard({ agentId }: Props) {
               surfaceMode={surfaceConfig?.mode}
               corrections={corrections}
               autonomyChanges={autonomyChanges ?? []}
+              unavailableCauses={unavailableCauses}
             />
           </div>
 
@@ -2197,8 +2204,22 @@ const QUEUE_ORDER = [
  * Returns:
  *   A sorted copy; rows of one state keep their order.
  */
-export function sortedForQueue<T extends { state: string }>(workItems: readonly T[]): T[] {
-  return [...workItems].sort((a, b) => QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state));
+export function sortedForQueue<
+  T extends {
+    state: string;
+    _creationTime?: number;
+    priority?: string;
+    evaluationAttempts?: number;
+  },
+>(workItems: readonly T[]): T[] {
+  // The rows waiting for a free slot are listed in the order the loop takes
+  // them, so the top of the queue is the next one evaluated (U3 D5).
+  const waiting = (row: T) => ({ ...row, _creationTime: row._creationTime ?? 0 });
+  return [...workItems].sort(
+    (a, b) =>
+      QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state) ||
+      (a.state === 'discovered' ? compareWaitingRows(waiting(a), waiting(b)) : 0),
+  );
 }
 
 export function WorkQueue({
@@ -2212,6 +2233,7 @@ export function WorkQueue({
   surfaceMode,
   corrections = [],
   autonomyChanges = [],
+  unavailableCauses = new Map(),
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
@@ -2228,6 +2250,8 @@ export function WorkQueue({
   corrections?: KeptCorrection[];
   /** The employee's flips of the autonomous-actions switch, oldest first. */
   autonomyChanges?: readonly AutonomyChange[];
+  /** The newest cause each waiting item's scope check gave, by item id (`scopeUnavailableCauses`). */
+  unavailableCauses?: ReadonlyMap<string, string>;
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -2331,6 +2355,8 @@ export function WorkQueue({
                   : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
               }
               onResendDecision={() => resendDecision({ workItemId: item._id })}
+              unavailableCause={unavailableCauses.get(item._id)}
+              servedByLoop={surfaceMode === 'real'}
             />
           ))}
         </div>
@@ -3417,12 +3443,15 @@ export function PlanApprovalForm({
   questions,
   onApprove,
   onCancel,
+  busy = false,
 }: {
   riskNotes: string;
   questions: Doc<'managerQuestions'>[];
   onApprove: (decision: PlanApproval) => void;
   /** Cancels the plan with the manager's reason, empty when none was written. */
   onCancel: (reason: string) => void;
+  /** Whether a decision on this plan is in flight. */
+  busy?: boolean;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
@@ -3499,13 +3528,15 @@ export function PlanApprovalForm({
       <div className="flex gap-2">
         <button
           onClick={() => onApprove(decision())}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs"
+          disabled={busy}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
         >
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
         </button>
         <button
           onClick={() => onCancel(cancelReason.trim())}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs"
+          disabled={busy}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
         >
           Cancel
         </button>
@@ -3655,6 +3686,85 @@ export function PendingDecisionsPanel({
   );
 }
 
+/**
+ * The newest cause each item's scope check gave for not reaching the model,
+ * from the events the page has read (`work.scope-judgement-unavailable`).
+ *
+ * Args:
+ *   events: Recent events, newest first.
+ *
+ * Returns:
+ *   The cause by work item id; an item whose event is older than the window is absent.
+ */
+export function scopeUnavailableCauses(
+  events: ReadonlyArray<Pick<Doc<'events'>, 'type' | 'payload'>>,
+): ReadonlyMap<string, string> {
+  const causes = new Map<string, string>();
+  for (const event of events) {
+    if (event.type !== 'work.scope-judgement-unavailable') continue;
+    const payload = (event.payload ?? {}) as { workItemId?: unknown; cause?: unknown };
+    if (typeof payload.workItemId !== 'string' || causes.has(payload.workItemId)) continue;
+    if (typeof payload.cause === 'string' && payload.cause.trim() !== '') {
+      causes.set(payload.workItemId, payload.cause);
+    }
+  }
+  return causes;
+}
+
+/** What the waiting line reads of a row. */
+type WaitingItem = Pick<
+  Doc<'workItems'>,
+  'state' | 'verdict' | 'evaluationClaimedAt' | 'evaluationAttempts' | 'evaluationUnavailableAt'
+>;
+
+/**
+ * Why a row that holds no slot is waiting, in the manager's words: for a
+ * free slot, for the scope check to reach the model again (E-70 D3), or for
+ * the manager's Retry after its evaluations kept dying (S D3).
+ *
+ * Args:
+ *   item: The row.
+ *   cause: The newest reason its scope check gave, when the page has it.
+ *   zone: The agent's zone, for the time.
+ *
+ * Returns:
+ *   One sentence, or undefined for a row that is not waiting on the loop.
+ */
+export function waitingLine(
+  item: WaitingItem,
+  cause: string | undefined,
+  zone: string | undefined,
+): string | undefined {
+  const verdict = item.verdict as
+    | { decision?: unknown; reason?: unknown; attempts?: unknown }
+    | undefined;
+  const attempts =
+    typeof verdict?.attempts === 'number' ? verdict.attempts : (item.evaluationAttempts ?? 0);
+  const because = cause ? ` (${cause})` : '';
+  const unavailableAt =
+    item.evaluationUnavailableAt !== undefined
+      ? clockTime(item.evaluationUnavailableAt, zone)
+      : undefined;
+  if (item.state === 'deferred' && verdict?.reason === EVALUATION_ATTEMPTS_SPENT) {
+    return `Parked: ${attempts} evaluations of this item stopped without a verdict, so it no longer takes a slot. Retry sends it back to be evaluated.`;
+  }
+  if (item.state === 'deferred' && verdict?.reason === 'scope-judgement-unavailable') {
+    return `Waiting: the scope check could not reach the model${unavailableAt ? ` at ${unavailableAt}` : ''}${because}, ${attempts} times. Check for new work asks it again; nothing runs until it answers.`;
+  }
+  if (item.state !== 'discovered' || verdict !== undefined) return undefined;
+  if (
+    item.evaluationUnavailableAt !== undefined &&
+    item.evaluationUnavailableAt >= (item.evaluationClaimedAt ?? 0)
+  ) {
+    return `Waiting: the scope check could not reach the model at ${unavailableAt}${because}. Day0 tries again after ten minutes; nothing runs until it answers.`;
+  }
+  if (item.evaluationClaimedAt !== undefined) {
+    const attempt = attempts > 1 ? `, attempt ${attempts} of ${MAX_EVALUATION_ATTEMPTS}` : '';
+    return `Evaluation started ${clockTime(item.evaluationClaimedAt, zone)}${attempt}; if it does not answer, the item waits for the next free slot.`;
+  }
+  return 'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.';
+}
+
 export function WorkItemCard({
   item,
   surfaces,
@@ -3669,6 +3779,8 @@ export function WorkItemCard({
   onApproveActions,
   onRejectActions,
   onResendDecision,
+  unavailableCause,
+  servedByLoop = false,
 }: {
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
@@ -3679,16 +3791,38 @@ export function WorkItemCard({
   corrections?: readonly KeptCorrection[];
   /** The employee's flips of the autonomous-actions switch, for a plan drafted before one. */
   autonomyChanges?: readonly AutonomyChange[];
-  onApprovePlan: (decision: PlanApproval) => void;
-  onCancelPlan: (reason: string) => void;
-  onRetryFailed: (feedback?: string) => void;
+  onApprovePlan: (decision: PlanApproval) => Promise<unknown> | void;
+  onCancelPlan: (reason: string) => Promise<unknown> | void;
+  onRetryFailed: (feedback?: string) => Promise<unknown> | void;
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
   onResendDecision: () => Promise<unknown>;
+  /** The newest cause the item's scope check gave for not reaching the model, when the page has it. */
+  unavailableCause?: string;
+  /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */
+  servedByLoop?: boolean;
 }) {
   const now = useNow();
   const zone = useAgentZone();
+  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const [deciding, setDeciding] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // A decision moves the row, and the control that made it goes with it, so
+  // the outcome is said in the card's own live region and focus comes back to
+  // the card rather than falling to the page.
+  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void => {
+    setDeciding(true);
+    setOutcome(null);
+    Promise.resolve()
+      .then(call)
+      .then(() => {
+        setOutcome({ tone: 'done', text: done });
+        cardRef.current?.focus();
+      })
+      .catch((err: unknown) => setOutcome({ tone: 'refused', text: refusalText(err, refused) }))
+      .finally(() => setDeciding(false));
+  };
   const verdict = item.verdict as
     | {
         decision: string;
@@ -3817,8 +3951,18 @@ export function WorkItemCard({
   // A failed item whose run landed nothing and left nothing to decide is
   // shown as stopped: Retry stands, and the badge says no harm was done.
   const shownState = item.state === 'failed' && isStopped(item.skipReason) ? 'stopped' : item.state;
+  // A row whose evaluations kept dying waits for this Retry and nothing else (S D3).
+  const parkedForRetry =
+    item.state === 'deferred' &&
+    (verdict as { reason?: unknown } | undefined)?.reason === EVALUATION_ATTEMPTS_SPENT;
+  const waiting = servedByLoop ? waitingLine(item, unavailableCause, zone) : undefined;
   return (
-    <div className="border border-[var(--color-border)] rounded-lg p-3">
+    <div
+      ref={cardRef}
+      tabIndex={-1}
+      aria-labelledby={`work-item-${item._id}`}
+      className="border border-[var(--color-border)] rounded-lg p-3"
+    >
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -3834,7 +3978,9 @@ export function WorkItemCard({
               <span className="text-[10px] text-[var(--color-warn)]">{item.priority}</span>
             ) : null}
           </div>
-          <h3 className="text-sm font-medium text-[var(--color-fg)]">{item.title}</h3>
+          <h3 id={`work-item-${item._id}`} className="text-sm font-medium text-[var(--color-fg)]">
+            {item.title}
+          </h3>
           <p className="text-xs text-[var(--color-muted)] mt-1 line-clamp-2">
             {item.contentSummary}
           </p>
@@ -3876,7 +4022,9 @@ export function WorkItemCard({
         </p>
       ) : null}
 
-      {item.state === 'cancelled' ? (
+      {waiting ? (
+        <p className="mt-2 text-xs text-[var(--color-fg)]">{waiting}</p>
+      ) : item.state === 'cancelled' ? (
         <div className="mt-2 text-xs">
           <span className="text-[var(--color-muted)]">cancelled:</span>{' '}
           <span className="text-[var(--color-fg)]">
@@ -3970,8 +4118,21 @@ export function WorkItemCard({
               key={item._id}
               riskNotes={plan.riskNotes ?? ''}
               questions={questions}
-              onApprove={onApprovePlan}
-              onCancel={onCancelPlan}
+              busy={deciding}
+              onApprove={(decision) =>
+                decide(
+                  () => onApprovePlan(decision),
+                  `Plan approved: ${item.title}.`,
+                  'The plan was not approved.',
+                )
+              }
+              onCancel={(reason) =>
+                decide(
+                  () => onCancelPlan(reason),
+                  `Plan cancelled: ${item.title}.`,
+                  'The plan was not cancelled.',
+                )
+              }
             />
           ) : null}
           {item.state !== 'plan-pending' &&
@@ -4166,6 +4327,7 @@ export function WorkItemCard({
       {item.state === 'failed' ||
       item.state === 'completed' ||
       skipWaivable ||
+      parkedForRetry ||
       item.state === 'cancelled' ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
@@ -4208,8 +4370,16 @@ export function WorkItemCard({
             />
           ) : null}
           <button
-            onClick={() => onRetryFailed(retryNote)}
-            disabled={retryBlocked || (item.state === 'completed' && !sendingBack)}
+            onClick={() =>
+              decide(
+                () => onRetryFailed(retryNote),
+                takeAnywayNote
+                  ? `Taken: ${item.title} goes back to be evaluated.`
+                  : `Sent back: ${item.title}.`,
+                'The item was not sent back.',
+              )
+            }
+            disabled={deciding || retryBlocked || (item.state === 'completed' && !sendingBack)}
             title={takeAnywayNote}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -4244,6 +4414,7 @@ export function WorkItemCard({
           ) : null}
         </div>
       ) : null}
+      <LiveStatus outcome={outcome} />
     </div>
   );
 }
@@ -4448,7 +4619,17 @@ export function PermissionRows({
   );
 }
 
-function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
+/**
+ * What revoking a grant does, including the manager channel's own scope:
+ * the DM to the manager is authorised by `boss:message` (or the chat
+ * surface's write scope, which is never standing), and every new item needs
+ * a way to reach the manager, so its evaluation waits for the grant (U3 D5).
+ */
+export const PERMISSIONS_NOTE =
+  "Reads and manager messages stop when their grant is revoked. A literal write you approve remains authorised by that exact approval. boss:message is the manager channel's own scope: revoking it makes the channel one-way, so Day0 stops messaging you there and decisions wait on this dashboard, and new work waits until you grant it again.";
+
+/** The employee's grants, each with its revoke or re-grant, under what revoking does. Real mode only. */
+export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   const scopes = useQuery(api.agents.permissionScopes, { agentId });
   const revokeScope = useMutation(api.agents.revokeScope);
   const grantScopes = useMutation(api.agents.grantScopes);
@@ -4480,8 +4661,7 @@ function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   return (
     <Card title="Permissions">
       <p className="text-[10px] text-[var(--color-muted)] mb-3 leading-relaxed">
-        Reads and manager messages stop when their grant is revoked. A literal write you approve
-        remains authorised by that exact approval.
+        {PERMISSIONS_NOTE}
       </p>
       {scopes === undefined ? (
         <p className="text-xs text-[var(--color-muted)]">loading permissions…</p>

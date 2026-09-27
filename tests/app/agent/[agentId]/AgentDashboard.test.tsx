@@ -8,7 +8,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
-import type { Doc } from '../../../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../../../convex/_generated/dataModel';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
@@ -37,7 +37,10 @@ import {
   WorkItemCard,
   sortedForQueue,
   phasedLedger,
+  PermissionsCard,
+  scopeUnavailableCauses,
   TICKET_REREAD_STOP,
+  waitingLine,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import {
   ticketRereadStopReason,
@@ -2278,6 +2281,169 @@ describe('the charter card carries what step 4 stored (U18 carried members)', ()
       />,
     );
     expect(markup).toContain('waiting for you to approve the charter');
+  });
+});
+
+describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
+  const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
+  const waiting = (fields: Record<string, unknown>): Doc<'workItems'> =>
+    ({
+      _id: 'w-wait',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'discovered',
+      title: 'Reconcile the Q3 pipeline',
+      contentSummary: 'Pipeline hygiene.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'REVOPS-30',
+      observedAt: 1,
+      contentRefs: [],
+      ...fields,
+    }) as unknown as Doc<'workItems'>;
+  const render = (item: Doc<'workItems'>, servedByLoop = true, cause?: string): string =>
+    renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Singapore">
+        <WorkItemCard
+          item={item}
+          surfaces={[]}
+          autonomousActions={false}
+          onApprovePlan={(): void => undefined}
+          onCancelPlan={(): void => undefined}
+          onRetryFailed={(): void => undefined}
+          onReconcileFailed={async (): Promise<void> => undefined}
+          onApproveActions={async (): Promise<void> => undefined}
+          onRejectActions={async (): Promise<void> => undefined}
+          onResendDecision={async (): Promise<void> => undefined}
+          servedByLoop={servedByLoop}
+          unavailableCause={cause}
+        />
+      </AgentZoneContext>,
+    );
+
+  it('says a row with no verdict is waiting for a free slot, in real mode only', (): void => {
+    expect(render(waiting({}))).toContain(
+      'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.',
+    );
+    expect(render(waiting({}), false)).not.toContain('Waiting for a free slot');
+  });
+
+  it("gives the parked row's time in the employee's day and the cause from the latest unavailable event", (): void => {
+    const markup = render(
+      waiting({
+        evaluationClaimedAt: AT - 1_000,
+        evaluationUnavailableAt: AT,
+        evaluationAttempts: 1,
+      }),
+      true,
+      'timeout after 60 s',
+    );
+    expect(markup).toContain(
+      'Waiting: the scope check could not reach the model at 28 Sep 2026, 00:05 (timeout after 60 s). Day0 tries again after ten minutes; nothing runs until it answers.',
+    );
+    expect(markup).not.toContain('>Retry<');
+  });
+
+  it('says when a running evaluation started and which attempt it is', (): void => {
+    expect(
+      waitingLine(
+        { state: 'discovered', evaluationClaimedAt: AT, evaluationAttempts: 2 } as Doc<'workItems'>,
+        undefined,
+        'Asia/Singapore',
+      ),
+    ).toBe(
+      'Evaluation started 28 Sep 2026, 00:05, attempt 2 of 3; if it does not answer, the item waits for the next free slot.',
+    );
+  });
+
+  it('parks a row its evaluations kept failing with Retry as the way out', (): void => {
+    const markup = render(
+      waiting({
+        state: 'deferred',
+        evaluationAttempts: 3,
+        verdict: {
+          decision: 'defer',
+          reason: 'evaluation-attempts-spent',
+          attempts: 3,
+          missingPermissions: [],
+        },
+      }),
+    );
+    expect(markup).toContain(
+      'Parked: 3 evaluations of this item stopped without a verdict, so it no longer takes a slot. Retry sends it back to be evaluated.',
+    );
+    expect(markup).toMatch(/>Retry<\/button>/);
+    expect(markup).not.toContain('evaluation-attempts-spent');
+  });
+
+  it('points a row parked on an unreachable model at Check for new work, with no Retry', (): void => {
+    const markup = render(
+      waiting({
+        state: 'deferred',
+        evaluationUnavailableAt: AT,
+        verdict: {
+          decision: 'defer',
+          reason: 'scope-judgement-unavailable',
+          attempts: 3,
+          missingPermissions: [],
+        },
+      }),
+      true,
+      'HTTP 503',
+    );
+    expect(markup).toContain(
+      'Waiting: the scope check could not reach the model at 28 Sep 2026, 00:05 (HTTP 503), 3 times. Check for new work asks it again; nothing runs until it answers.',
+    );
+    expect(markup).not.toMatch(/>Retry<\/button>/);
+  });
+
+  it('reads the newest cause per item from the events the page has', (): void => {
+    const causes = scopeUnavailableCauses([
+      {
+        type: 'work.scope-judgement-unavailable',
+        payload: { workItemId: 'w1', cause: 'HTTP 503' },
+      },
+      { type: 'work.completed', payload: { workItemId: 'w2' } },
+      { type: 'work.scope-judgement-unavailable', payload: { workItemId: 'w1', cause: 'timeout' } },
+      { type: 'work.scope-judgement-unavailable', payload: { workItemId: 'w3' } },
+    ]);
+    expect(causes.get('w1')).toBe('HTTP 503');
+    expect(causes.has('w3')).toBe(false);
+  });
+
+  it("lists the waiting rows in the loop's order: unattempted, then the most urgent, then the oldest", (): void => {
+    const order = sortedForQueue([
+      { state: 'discovered', title: 'new-low', _creationTime: 9, priority: 'Low' },
+      { state: 'plan-pending', title: 'plan', _creationTime: 1 },
+      {
+        state: 'discovered',
+        title: 'died-urgent',
+        _creationTime: 1,
+        priority: 'Urgent',
+        evaluationAttempts: 1,
+      },
+      { state: 'discovered', title: 'new-urgent', _creationTime: 8, priority: 'Urgent' },
+      { state: 'discovered', title: 'old-urgent', _creationTime: 2, priority: 'Urgent' },
+      { state: 'discovered', title: 'old-low', _creationTime: 3, priority: 'Low' },
+    ]).map((item) => item.title);
+    expect(order).toEqual([
+      'plan',
+      'old-urgent',
+      'new-urgent',
+      'old-low',
+      'new-low',
+      'died-urgent',
+    ]);
+  });
+
+  it("says boss:message is the manager channel's own scope and what revoking it does", (): void => {
+    const markup = renderToStaticMarkup(<PermissionsCard agentId={'a1' as Id<'agents'>} />).replace(
+      /&#x27;/g,
+      "'",
+    );
+    expect(markup).toContain(
+      "boss:message is the manager channel's own scope: revoking it makes the channel one-way, so Day0 stops messaging you there and decisions wait on this dashboard, and new work waits until you grant it again.",
+    );
   });
 });
 
