@@ -114,6 +114,7 @@ import {
   lastLandedState,
   reusedFrom,
   reusedLedger,
+  withReusedRunNumbers,
 } from '../src/work/landed-writes';
 import {
   personKey,
@@ -2326,10 +2327,12 @@ function priorPhasesLedger(
  * phase one is not a source: the closing phase authors from that ledger
  * and a second comment it puts on the same ticket is the plan's, as when
  * phase one landed a fixed-payload comment and the audit comment follows
- * the reads. The manager's note on the retry decides whether a change to
- * a landed comment goes through. A read is never reused: it is taken now,
- * because what it reads may have changed since, not least by the writes
- * before it in this set.
+ * the reads, though a status change it landed ends any reuse of an earlier
+ * run's state on that ticket. The manager's note on the retry decides
+ * whether a change to a landed comment goes through. A read is never
+ * reused: it is taken now, because what it reads may have changed since,
+ * not least by the writes before it in this set. Each reuse names the run
+ * that sent what it reuses.
  */
 async function reusedRows(
   ctx: ActionCtx,
@@ -2349,8 +2352,32 @@ async function reusedRows(
         applied: [...output.initial.applied, ...(output.initial.previousClosing?.applied ?? [])],
       }, run, options)
     : output.actions.map(() => undefined);
-  const fromEarlier = reusedLedger(output.actions, earlier, run, options);
-  return output.actions.map((action, index) => (isRead(action) ? undefined : (fromResume[index] ?? fromEarlier[index])));
+  const fromEarlier = reusedLedger(output.actions, earlier, run, {
+    ...options,
+    thisRun: dependent ? thisRunWrites(output.initial, run) : [],
+  });
+  const rows = output.actions.map((action, index) =>
+    isRead(action) ? undefined : (fromResume[index] ?? fromEarlier[index]),
+  );
+  if (!rows.some((row) => row !== undefined && reusedFrom(row) !== undefined)) return rows;
+  const runIds = await ctx.runQuery(internal.work.executionRunIds, { workItemId: run.workItemId });
+  return withReusedRunNumbers(rows, runIds);
+}
+
+/**
+ * The writes an earlier phase of this run landed, as reuse sources whose
+ * status changes end a reuse on their ticket; rows an earlier run sent and
+ * a resumed set carries are not this run's.
+ */
+export function thisRunWrites(
+  phase: { actions: readonly MockAction[]; applied: ReadonlyArray<AppliedAction | undefined> },
+  run: { workItemId: string; runId: string },
+): LandedWrite[] {
+  const key = `${run.workItemId}:${run.runId}:`;
+  return phase.actions.flatMap((action, index): LandedWrite[] => {
+    const applied = phase.applied[index];
+    return applied?.idempotencyKey.startsWith(key) ? [{ action, applied }] : [];
+  });
 }
 
 /** Whether an action is a surface read. */

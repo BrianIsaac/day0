@@ -74,6 +74,8 @@ export interface ReusedAppliedAction extends AppliedAction {
    * names the run that sent it; a reuse of a reuse names the original.
    */
   readonly reusedFrom: string;
+  /** The number of the run that sent it, counting the item's runs from one, when known. */
+  readonly reusedFromRun?: number;
 }
 
 /**
@@ -88,6 +90,28 @@ export interface ReusedAppliedAction extends AppliedAction {
 export function reusedFrom(applied: AppliedAction): string | undefined {
   const source = (applied as Partial<ReusedAppliedAction>).reusedFrom;
   return typeof source === 'string' && source !== '' ? source : undefined;
+}
+
+/**
+ * Number each reused row by the run that sent what it reuses.
+ *
+ * Args:
+ *   rows: A phase's ledger rows, reused or not.
+ *   runIds: The item's runs, oldest first.
+ *
+ * Returns:
+ *   The rows, each reuse with `reusedFromRun` when its run is among them.
+ */
+export function withReusedRunNumbers<T extends AppliedAction | undefined>(
+  rows: readonly T[],
+  runIds: readonly string[],
+): T[] {
+  return rows.map((row) => {
+    const source = row ? reusedFrom(row) : undefined;
+    // Keys are `workItemId:runId:actionIndex`, and neither id holds a colon.
+    const index = source === undefined ? -1 : runIds.indexOf(source.split(':')[1] ?? '');
+    return index < 0 ? row : ({ ...row, reusedFromRun: index + 1 } as T);
+  });
 }
 
 /** A reused row persisted before reuses named their source: known only by its note. */

@@ -14,6 +14,7 @@ import {
   dependentTransitionRefusal,
   findMatchingSkillForCandidate,
   prerequisiteOutput,
+  thisRunWrites,
   validatePlanStepOutcomes,
 } from '../../convex/workActions';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
@@ -6396,6 +6397,78 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
 
     expect((await readItem(harness, workItemId)).state).toBe('completed');
     expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
+  });
+
+  it('reports a status change an earlier run landed as reused from that run, and sends nothing for it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    // The first run's claim and the Done it landed, then the retry's claim.
+    await harness.run(async (ctx): Promise<void> => {
+      const row = (await ctx.db.get(workItemId))!;
+      await ctx.db.delete(row.executionRunId!);
+      const earlierClaim = await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: 2,
+      });
+      const retryClaim = await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: 3,
+      });
+      await ctx.db.patch(workItemId, {
+        executionRunId: retryClaim,
+        pendingRunId: retryClaim,
+        output: {
+          ...(row.output as object),
+          landedWrites: [
+            {
+              action: linearCall('save_issue', { id: 'iss-1', state: 'Done' }),
+              applied: {
+                tool: 'mcp.call',
+                ok: true,
+                providerId: 'iss-1',
+                idempotencyKey: `${workItemId}:${earlierClaim}:1`,
+              },
+            },
+          ],
+        },
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'Done',
+      statusType: 'completed',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const done = await readItem(harness, workItemId);
+    expect(done.state).toBe('completed');
+    expect(linearTools()).toEqual(['get_issue', 'save_comment']);
+    expect(ledger(done)[1]).toMatchObject({
+      ok: true,
+      reusedFromRun: 1,
+      reason: expect.stringContaining('reused landed status change to Done'),
+    });
+  });
+
+  it("gives the reuse this run's own landed writes and nothing an earlier run sent", (): void => {
+    const comment = linearCall('save_comment', { issueId: 'iss-1', body: 'b' });
+    const applied = (key: string): AppliedAction => ({
+      tool: 'mcp.call',
+      ok: true,
+      idempotencyKey: key,
+    });
+    expect(
+      thisRunWrites(
+        { actions: [comment, comment], applied: [applied('wi:earlier:0'), applied('wi:run:1')] },
+        { workItemId: 'wi', runId: 'run' },
+      ),
+    ).toEqual([{ action: comment, applied: applied('wi:run:1') }]);
   });
 
   it('withholds when the ticket cannot be re-read', async (): Promise<void> => {

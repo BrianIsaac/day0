@@ -427,6 +427,29 @@ export const listedSnapshot = internalQuery({
   },
 });
 
+/** How many of an item's runs the run numbering reads, oldest first. */
+const RUN_SCAN_LIMIT = 200;
+
+/**
+ * An item's runs, oldest first, so a reused ledger row can name the run
+ * that sent what it reuses ("reused from run 2"). Internal; read by the apply.
+ */
+export const executionRunIds = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<Array<Id<'events'>>> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) return [];
+    const claims = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (q) =>
+        q.eq('agentId', row.agentId).eq('type', 'work.execution-claimed'),
+      )
+      .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
+      .take(RUN_SCAN_LIMIT);
+    return claims.map((claim) => claim._id);
+  },
+});
+
 /** How a row intake withdrew says so on the card; its return is found by the same words. */
 export const WITHDRAWN_FROM_QUEUE_PREFIX = 'withdrawn from the queue on the tracker: ';
 

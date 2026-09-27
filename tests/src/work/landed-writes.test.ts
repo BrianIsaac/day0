@@ -6,6 +6,7 @@ import {
   landedWriteLines,
   landedWritesOf,
   reusedLedger,
+  withReusedRunNumbers,
   writeTarget,
 } from '../../../src/work/landed-writes';
 import type { LandedWrite, MockAction } from '../../../src/work/types';
@@ -481,6 +482,21 @@ describe('the writes earlier runs landed', () => {
         (write) => write.applied.idempotencyKey,
       ),
     ).toEqual(['work:retry:6']);
+  });
+
+  it('numbers a reused row by the run that sent what it reuses', () => {
+    const sources: LandedWrite[] = [
+      { action: done, applied: row({ providerId: 'REVOPS-5', idempotencyKey: 'work:second:1' }) },
+    ];
+    const [reused] = reusedLedger([done], sources, run, { surfaces });
+    const sent = row({ idempotencyKey: 'work:retry:7' });
+    expect(withReusedRunNumbers([reused, sent, undefined], ['first', 'second', 'retry'])).toEqual([
+      { ...reused, reusedFromRun: 2 },
+      sent,
+      undefined,
+    ]);
+    // A run outside the numbering leaves the row as it was.
+    expect(withReusedRunNumbers([reused], ['retry'])).toEqual([reused]);
   });
 
   it("sends a landed status change again when the manager's note directs that state, and not when it declines it", () => {
