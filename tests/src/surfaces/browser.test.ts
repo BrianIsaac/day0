@@ -8,7 +8,10 @@ import {
   browserComponent,
   browserPageUrl,
   browserPageTitle,
+  browserSignedInMarker,
   browserTitleMarker,
+  documentedUsername,
+  loginForm,
   carriesSecretPlaceholder,
   isCredentialField,
   isLoginNameField,
@@ -237,6 +240,29 @@ describe('checking where a browser navigation landed', (): void => {
       'Pipeline coverage - Looker',
     );
     expect(browserTitleMarker('Open the browser and look for Pipeline coverage.')).toBeUndefined();
+  });
+
+  it('reads the element a signed-in page shows, apart from the title marker', (): void => {
+    const page = [
+      '- Probe marker: page title `Sign in - Looker`.',
+      '- Probe marker: after sign-in, element `Pipeline coverage`.',
+    ].join('\n');
+    expect(browserSignedInMarker(page)).toBe('Pipeline coverage');
+    expect(browserTitleMarker(page)).toBe('Sign in - Looker');
+    expect(browserSignedInMarker('Probe marker: after signin element `Revenue`')).toBe('Revenue');
+    expect(browserSignedInMarker('- Probe marker: page title `Sign in - Looker`.')).toBeUndefined();
+  });
+
+  it('reads the documented account name from a credential line', (): void => {
+    expect(
+      documentedUsername(
+        '- Dashboard login (Looker tile): `<redacted>` (username `revops`), held by the RevOps lead',
+      ),
+    ).toBe('revops');
+    expect(documentedUsername('Login: (user name `ops@kestrel.example`)')).toBe(
+      'ops@kestrel.example',
+    );
+    expect(documentedUsername('- Dashboard login (Looker tile): `<redacted>`')).toBeUndefined();
   });
 
   it('refuses a redirect to another origin', (): void => {
@@ -658,5 +684,29 @@ describe('where a browser action may carry the credential', (): void => {
         'tile',
       ),
     ).toEqual({ element: 'Password', text: 's' });
+  });
+});
+
+describe('the login form on a page', (): void => {
+  it('finds the account box, the password box and the controls a sign-in uses', (): void => {
+    expect(loginForm(SIGN_IN_PAGE)).toMatchObject({
+      account: { role: 'textbox', name: 'Username' },
+      credential: { role: 'textbox', name: 'Password' },
+      submit: { role: 'button', name: 'Sign in' },
+    });
+  });
+
+  it('takes no control from a heading, and none a name two controls share', (): void => {
+    const form = loginForm(
+      [
+        '- heading "Sign in" [level=1] [ref=e7]',
+        '- textbox "Password" [ref=e14]',
+        '- textbox "Password" [ref=e16]',
+        '- link "Log in" [ref=e20]',
+      ].join('\n'),
+    );
+    expect(form.credential).toBeUndefined();
+    expect(form.submit).toMatchObject({ role: 'link', name: 'Log in' });
+    expect(loginForm(RELABELLED_SIGN_IN_PAGE).submit).toMatchObject({ name: 'Log in' });
   });
 });

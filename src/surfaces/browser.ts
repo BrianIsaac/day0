@@ -462,6 +462,12 @@ export function isCredentialField(description: unknown): boolean {
   );
 }
 
+/** The names a login form gives the control that submits it. */
+export const SIGN_IN_CONTROL = /^(?:sign[ -]?in|log[ -]?(?:in|on))$/i;
+
+/** The name a two-page login gives the control between the account and the credential. */
+export const NEXT_CONTROL = /^next$/i;
+
 /** Whether a field or element description names the account field of a login form. */
 export function isLoginNameField(description: unknown): boolean {
   return (
@@ -848,6 +854,59 @@ export function browserPageTitle(result: string): string | undefined {
 export function browserTitleMarker(markdown: string): string | undefined {
   const match = /\bProbe marker:\s*page title\s+`([^`\r\n]+)`/i.exec(markdown);
   return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * Read the element a signed-in page shows, from the line
+ * `Probe marker: after sign-in, element \`<name>\``: the probe signs in with the
+ * credential and looks for it, so a rotated password or a redesigned login is
+ * found by the probe rather than by the first write.
+ */
+export function browserSignedInMarker(markdown: string): string | undefined {
+  const match = /\bProbe marker:\s*after sign[ -]?in,?\s*element\s+`([^`\r\n]+)`/i.exec(markdown);
+  return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * Read the account name a login is documented with, from the parenthesis a
+ * credential line carries: `` `<value>` (username `revops`) ``. The account
+ * name is not a secret, so the stored page keeps it.
+ */
+export function documentedUsername(markdown: string): string | undefined {
+  const match = /\(\s*user ?name\s+`([^`\r\n]+)`\s*\)/i.exec(markdown);
+  return match?.[1]?.trim() || undefined;
+}
+
+/** The controls of the login form one page shows, each only when the page offers exactly one. */
+export interface LoginForm {
+  readonly account?: SnapshotElement;
+  readonly credential?: SnapshotElement;
+  readonly submit?: SnapshotElement;
+  readonly next?: SnapshotElement;
+}
+
+/**
+ * Find a login form's controls in one driver snapshot, by the names the apply
+ * and the sign-in replay read: a text box for the account, a text box for the
+ * credential, and the control that submits the form or moves to its second
+ * page. A name two controls share is none of them.
+ *
+ * @param snapshot - The text a `browser_snapshot` call returned.
+ */
+export function loginForm(snapshot: string): LoginForm {
+  const elements = parseSnapshotRefs(snapshot);
+  const only = (pick: (element: SnapshotElement) => boolean): SnapshotElement | undefined => {
+    const found = elements.filter(pick);
+    return found.length === 1 ? found[0] : undefined;
+  };
+  const control = (element: SnapshotElement): boolean =>
+    element.role === 'button' || element.role === 'link';
+  return {
+    account: only((e) => e.role === 'textbox' && isLoginNameField(e.name)),
+    credential: only((e) => e.role === 'textbox' && isCredentialField(e.name)),
+    submit: only((e) => control(e) && SIGN_IN_CONTROL.test(e.name.trim())),
+    next: only((e) => control(e) && NEXT_CONTROL.test(e.name.trim())),
+  };
 }
 
 /**

@@ -77,6 +77,32 @@ No approved API or MCP server is recorded for Northstar CRM.
 Probe marker: page title `Pipeline coverage`
 ```
 
+- When the page needs a login, also name one element the page shows only once you are signed in,
+  and write the account name beside the login's credential. day0 then signs in with the
+  credential when it checks the connection, and looks for that element: a password that was
+  rotated, or a login page that was redesigned, leaves the system unconnected with a card that
+  says so, instead of being found by the first piece of work.
+
+<!-- example: probe-signed-in -->
+
+```markdown
+- Probe marker: page title `Sign in - Looker`.
+- Probe marker: after sign-in, element `Pipeline coverage`.
+- Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`)
+```
+
+- The element is named as the page names it to a screen reader: a heading, a field or a button's
+  label. Any element with that name will do.
+- day0 types the account name into the field labelled for it (`Username`, `User name`, `Email`)
+  and the credential only into the field labelled for it (`Password`, `Passcode`, `Access code`,
+  `API key`, `Token`), then presses the page's `Sign in` (or `Log in`) control. A login that asks
+  for the account on one page and the password on the next is followed through its `Next`
+  control. Nothing else on the page is clicked.
+- A page with only a title marker is checked by its title. day0 does not sign in to it, so a
+  rotated password is found by the first piece of work that signs in.
+- A single sign-on or a second factor cannot be completed by day0; a page that sends the login to
+  another address is left unconnected.
+
 ## A documented API that is not Slack
 
 When a system is reached through its own HTTP API rather than an MCP server or Slack, the page

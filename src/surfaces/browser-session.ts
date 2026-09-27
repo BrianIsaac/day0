@@ -1,5 +1,5 @@
 import type { MockAction } from '../work/types';
-import { isCredentialField, isLoginNameField } from './browser';
+import { isCredentialField, isLoginNameField, NEXT_CONTROL, SIGN_IN_CONTROL } from './browser';
 import { parseSurfaceAction } from './policy';
 import type {
   ActionAuthority,
@@ -35,8 +35,6 @@ export interface EarlierRows {
 
 /** `{{secret}}`, or its qualified form, in a credential field's value. */
 const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
-const SIGN_IN_CONTROL = /^(?:sign[ -]?in|log[ -]?(?:in|on))$/i;
-const NEXT_CONTROL = /^next$/i;
 
 interface BrowserRow {
   action: MockAction;

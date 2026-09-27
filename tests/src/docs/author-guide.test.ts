@@ -10,7 +10,11 @@ import {
 } from '../../../convex/orientationActions';
 import { structuralSystemCandidates } from '../../../src/docs/system-discovery';
 import { structuralSpans } from '../../../src/redaction/structural';
-import { browserTitleMarker } from '../../../src/surfaces/browser';
+import {
+  browserSignedInMarker,
+  browserTitleMarker,
+  documentedUsername,
+} from '../../../src/surfaces/browser';
 import * as http from '../../../src/surfaces/http';
 import { scopeCandidates } from '../../../src/surfaces/intake-scope';
 import { extractManifestTemplate } from '../../../src/surfaces/slack-manifest';
@@ -94,6 +98,17 @@ describe('the documentation author guide', (): void => {
 
   it('reads the probe marker', (): void => {
     expect(browserTitleMarker(example('probe-marker'))).toBe('Pipeline coverage');
+  });
+
+  it('reads the element after sign-in and the account name the probe signs in with', (): void => {
+    const text = example('probe-signed-in');
+    expect(browserTitleMarker(text)).toBe('Sign in - Looker');
+    expect(browserSignedInMarker(text)).toBe('Pipeline coverage');
+    expect(documentedUsername(text)).toBe('revops');
+    // The credential on the same line is still stored, not read as the account name.
+    expect(structuralSpans(text).map((span) => text.slice(span.start, span.end))).toContain(
+      'pipeline-tile-local',
+    );
   });
 
   it('stores the quoted credential and leaves the prose login alone', (): void => {

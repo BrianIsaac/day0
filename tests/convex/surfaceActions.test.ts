@@ -21,6 +21,7 @@ import {
   runSurfaceProbe,
   safeProviderError,
   slackMethodsFromPolicy,
+  type BrowserProbeRequest,
   type McpDiscovery,
   type ToolDefinition,
 } from '../../convex/surfaceActions';
@@ -29,6 +30,7 @@ import { probeDocumentedApi, type ApiConnector } from '../../src/surfaces/http';
 import {
   BROWSER_DRIVER_ABSENT,
   BROWSER_DRIVER_ABSENT_REASON,
+  BROWSER_TOOLS,
   DEFAULT_BROWSER_MCP_URL,
 } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
@@ -1509,6 +1511,11 @@ describe('probing the browser floor', (): void => {
   /** This deployment runs the browser component, at the address `--profile browser` starts. */
   const DRIVER = DEFAULT_BROWSER_MCP_URL;
 
+  /** A probe of the tile with its documented title marker, and whatever a test changes. */
+  function request(overrides: Partial<BrowserProbeRequest> = {}): BrowserProbeRequest {
+    return { endpoint: TILE, driverUrl: DRIVER, markers: { title: TITLE }, ...overrides };
+  }
+
   /** A driver whose catalogue and navigation result the test decides. */
   function fakeDriver(options: {
     catalogue?: Record<string, { inputSchema?: unknown }>;
@@ -1550,7 +1557,7 @@ describe('probing the browser floor', (): void => {
 
   it('constrains the driver catalogue to the floor and opens the documented page', async (): Promise<void> => {
     const { client, disconnect, navigated } = fakeDriver({});
-    const discovery = await probeBrowserSurface(TILE, DRIVER, () => client, TITLE);
+    const discovery = await probeBrowserSurface(request(), () => client);
     expect(discovery.toolAllowlist).toEqual([
       'browser_navigate',
       'browser_snapshot',
@@ -1572,7 +1579,7 @@ describe('probing the browser floor', (): void => {
     const { client, disconnect } = fakeDriver({
       navigate: { isError: true, text: 'net::ERR_CONNECTION_REFUSED at http://looker-tile:8080/' },
     });
-    await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
+    await expect(probeBrowserSurface(request(), () => client)).rejects.toThrow(
       'the documented page could not be opened',
     );
     expect(disconnect).toHaveBeenCalledOnce();
@@ -1585,7 +1592,7 @@ describe('probing the browser floor', (): void => {
         text: '- Page URL: http://looker-tile:8080/\n- Page Title: Generic reverse proxy',
       },
     });
-    await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
+    await expect(probeBrowserSurface(request(), () => client)).rejects.toThrow(
       'title did not match the approved marker',
     );
     expect(disconnect).toHaveBeenCalledOnce();
@@ -1593,24 +1600,24 @@ describe('probing the browser floor', (): void => {
 
   it('refuses a browser surface whose documentation gives no liveness marker', async (): Promise<void> => {
     const { client } = fakeDriver({});
-    await expect(probeBrowserSurface(TILE, DRIVER, () => client)).rejects.toThrow(
-      'No page title marker is documented',
+    await expect(probeBrowserSurface(request({ markers: {} }), () => client)).rejects.toThrow(
+      'No probe marker (a page title, or an element after sign-in) is documented',
     );
   });
 
   it('fails when the driver reports an error rather than reading it as no tools', async (): Promise<void> => {
     const { client } = fakeDriver({ error: 'Browser is already in use' });
-    await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
+    await expect(probeBrowserSurface(request(), () => client)).rejects.toThrow(
       'Browser is already in use',
     );
   });
 
   it('refuses with the absence code when no browser component is configured', async (): Promise<void> => {
     const { client, disconnect } = fakeDriver({});
-    await expect(probeBrowserSurface(TILE, undefined, () => client, TITLE)).rejects.toThrow(
-      BROWSER_DRIVER_ABSENT,
-    );
-    await expect(probeBrowserSurface(TILE, '  ', () => client, TITLE)).rejects.toThrow(
+    await expect(
+      probeBrowserSurface(request({ driverUrl: undefined }), () => client),
+    ).rejects.toThrow(BROWSER_DRIVER_ABSENT);
+    await expect(probeBrowserSurface(request({ driverUrl: '  ' }), () => client)).rejects.toThrow(
       '--profile browser',
     );
     // The driver is never dialled, so there is nothing to disconnect from.
@@ -1619,26 +1626,175 @@ describe('probing the browser floor', (): void => {
 
   it('refuses with the absence code when the configured driver is not listening', async (): Promise<void> => {
     const { client } = fakeDriver({ error: 'fetch failed: connect ECONNREFUSED 172.18.0.9:8931' });
-    await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
+    await expect(probeBrowserSurface(request(), () => client)).rejects.toThrow(
       BROWSER_DRIVER_ABSENT,
     );
   });
 
   it('fails when the driver exposes none of the floor tools', async (): Promise<void> => {
     const { client } = fakeDriver({ catalogue: { browser_evaluate: {} } });
-    await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
+    await expect(probeBrowserSurface(request(), () => client)).rejects.toThrow(
       'no tools allowed for the browser floor',
     );
   });
 
   it('refuses a surface with no documented address', async (): Promise<void> => {
     const { client } = fakeDriver({});
-    await expect(probeBrowserSurface(undefined, DRIVER, () => client, TITLE)).rejects.toThrow(
-      'No web UI address is documented',
+    await expect(
+      probeBrowserSurface(request({ endpoint: undefined }), () => client),
+    ).rejects.toThrow('No web UI address is documented');
+    await expect(
+      probeBrowserSurface(request({ endpoint: 'not-a-url' }), () => client),
+    ).rejects.toThrow('not a valid URL');
+  });
+
+  /**
+   * A driver serving the tile's sign-in page and, once the right password is
+   * submitted, its dashboard. What was filled and clicked is recorded.
+   */
+  function signInDriver(options: {
+    password: string;
+    /** The dashboard's element lines; the documented marker unless a test redesigns it. */
+    dashboard?: string;
+    /** Serve the login over two pages, the account first and the password after Next. */
+    twoPages?: boolean;
+  }) {
+    const filled: Array<Record<string, unknown>> = [];
+    const clicked: string[] = [];
+    type TilePage = 'account' | 'password' | 'sign-in' | 'dashboard';
+    let at: TilePage = options.twoPages ? ('account' as TilePage) : ('sign-in' as TilePage);
+    const lines: Record<TilePage, string> = {
+      account: '- textbox "Email" [ref=e11]\n- button "Next" [ref=e12]',
+      password: '- textbox "Password" [ref=e14]\n- button "Sign in" [ref=e15]',
+      'sign-in': [
+        '- heading "Sign in" [level=1] [ref=e7]',
+        '- textbox "Username" [ref=e11]',
+        '- textbox "Password" [ref=e14]',
+        '- button "Sign in" [ref=e15] [cursor=pointer]',
+      ].join('\n'),
+      dashboard:
+        options.dashboard ??
+        '- heading "Pipeline coverage" [level=2] [ref=e20]\n- textbox "Pipeline coverage" [ref=e21]',
+    };
+    const page = (): string =>
+      `### Page\n- Page URL: ${TILE}\n- Page Title: ${TITLE}\n### Snapshot\n\`\`\`yaml\n${lines[at]}\n\`\`\``;
+    const client = {
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: Object.fromEntries(
+            [...BROWSER_TOOLS].map((tool) => [
+              tool,
+              { inputSchema: { properties: { target: {}, element: {}, fields: {}, url: {} } } },
+            ]),
+          ),
+        },
+        errors: {} as Record<string, string>,
+      }),
+      callTool: async (name: string, args: Record<string, unknown>) => {
+        if (name === 'browser_fill_form') filled.push(args);
+        if (name === 'browser_click') {
+          clicked.push(String(args.element));
+          if (at === 'account') at = 'password';
+          else {
+            const fields = filled.flatMap(
+              (entry) => entry.fields as Array<Record<string, unknown>>,
+            );
+            const typed = fields.find((field) => field.name === 'Password')?.value;
+            at = typed === options.password ? 'dashboard' : at;
+          }
+        }
+        return { isError: false, text: page() };
+      },
+      disconnect: vi.fn(async (): Promise<void> => undefined),
+    };
+    return { client, filled, clicked };
+  }
+
+  const MARKER = 'Pipeline coverage';
+  const signedInRequest = (login: BrowserProbeRequest['login']): BrowserProbeRequest =>
+    request({ markers: { title: TITLE, afterSignIn: MARKER }, login });
+
+  it('signs in with the credential and finds the element the signed-in page documents', async (): Promise<void> => {
+    const { client, filled, clicked } = signInDriver({ password: 'pipeline-tile-local' });
+    const discovery = await probeBrowserSurface(
+      signedInRequest({ credential: 'pipeline-tile-local', username: 'revops' }),
+      () => client,
     );
-    await expect(probeBrowserSurface('not-a-url', DRIVER, () => client, TITLE)).rejects.toThrow(
-      'not a valid URL',
+    expect(discovery.toolAllowlist).toContain('browser_fill_form');
+    // The account name goes in the account field and the credential only in the password field.
+    expect(filled).toEqual([
+      {
+        fields: [
+          { name: 'Username', target: 'e11', type: 'textbox', value: 'revops' },
+          { name: 'Password', target: 'e14', type: 'textbox', value: 'pipeline-tile-local' },
+        ],
+      },
+    ]);
+    expect(clicked).toEqual(['Sign in']);
+  });
+
+  it('refuses a rotated password as a sign-in not accepted, naming the element it did not find', async (): Promise<void> => {
+    const { client, clicked } = signInDriver({ password: 'rotated-in-october' });
+    await expect(
+      probeBrowserSurface(
+        signedInRequest({ credential: 'pipeline-tile-local', username: 'revops' }),
+        () => client,
+      ),
+    ).rejects.toThrow('the page did not show the documented element "Pipeline coverage"');
+    expect(clicked).toEqual(['Sign in']);
+  });
+
+  it('refuses a redesigned dashboard whose documented element is gone', async (): Promise<void> => {
+    const { client } = signInDriver({
+      password: 'pipeline-tile-local',
+      dashboard: '- heading "Revenue" [level=2] [ref=e30]',
+    });
+    await expect(
+      probeBrowserSurface(
+        signedInRequest({ credential: 'pipeline-tile-local', username: 'revops' }),
+        () => client,
+      ),
+    ).rejects.toThrow('did not show the documented element');
+  });
+
+  it('follows a two-page login through its Next control', async (): Promise<void> => {
+    const { client, filled, clicked } = signInDriver({
+      password: 'pipeline-tile-local',
+      twoPages: true,
+    });
+    await probeBrowserSurface(
+      signedInRequest({ credential: 'pipeline-tile-local', username: 'revops@kestrel.example' }),
+      () => client,
     );
+    expect(filled).toEqual([
+      {
+        fields: [
+          { name: 'Email', target: 'e11', type: 'textbox', value: 'revops@kestrel.example' },
+        ],
+      },
+      {
+        fields: [
+          { name: 'Password', target: 'e14', type: 'textbox', value: 'pipeline-tile-local' },
+        ],
+      },
+    ]);
+    expect(clicked).toEqual(['Next', 'Sign in']);
+  });
+
+  it('asks for the user name when the page has an account field the documentation does not fill', async (): Promise<void> => {
+    const { client, filled } = signInDriver({ password: 'pipeline-tile-local' });
+    await expect(
+      probeBrowserSurface(signedInRequest({ credential: 'pipeline-tile-local' }), () => client),
+    ).rejects.toThrow('write it beside the credential as (username `...`)');
+    expect(filled).toEqual([]);
+  });
+
+  it('does not sign in without a landed credential, whatever the page documents', async (): Promise<void> => {
+    const { client, filled } = signInDriver({ password: 'pipeline-tile-local' });
+    await expect(probeBrowserSurface(signedInRequest(undefined), () => client)).rejects.toThrow(
+      'no credential is landed for this surface',
+    );
+    expect(filled).toEqual([]);
   });
 
   /** One approved browser-driven surface whose runbook documents the marker. */
@@ -1692,6 +1848,58 @@ describe('probing the browser floor', (): void => {
     );
     return { agentId, harness, surfaceId };
   }
+
+  it('signs in from the documented login and leaves a refused sign-in ungranted, not dead', async (): Promise<void> => {
+    const { harness, surfaceId } = await tileHarness();
+    await harness.run(async (ctx): Promise<void> => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Dashboard login (Looker tile)',
+        ciphertext: 'not-read-by-this-contract',
+        iv: 'not-read-by-this-contract',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.patch(surfaceId, { credentialId });
+      const page = await ctx.db.query('docPages').first();
+      await ctx.db.patch(page!._id, {
+        markdown: [
+          '# Looker pipeline tile',
+          '',
+          `- Probe marker: page title \`${TITLE}\`.`,
+          `- Probe marker: after sign-in, element \`${MARKER}\`.`,
+          '- Dashboard login (Looker tile): `<redacted>` (username `revops`).',
+        ].join('\n'),
+      });
+    });
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', DRIVER);
+    const rotated = signInDriver({ password: 'rotated-in-october' });
+    const probeBrowser = vi.fn(
+      async (probe: BrowserProbeRequest): Promise<McpDiscovery> =>
+        await probeBrowserSurface(probe, () => rotated.client),
+    );
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: harness.mutation.bind(harness),
+        runQuery: harness.query.bind(harness),
+        runAction: fakeRunAction('pipeline-tile-local'),
+      } as unknown as ActionCtx,
+      surfaceId,
+      { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+    );
+    expect(probeBrowser).toHaveBeenCalledWith({
+      endpoint: TILE,
+      driverUrl: DRIVER,
+      markers: { title: TITLE, afterSignIn: MARKER },
+      login: { credential: 'pipeline-tile-local', username: 'revops' },
+    });
+    // The page answered and refused the key: the manager's or IT's to fix, not a dead system.
+    expect(outcome.verdict).toBe('ungranted');
+    expect(outcome.reason).toContain('did not show the documented element "Pipeline coverage"');
+    expect(outcome.reason).not.toContain('pipeline-tile-local');
+    expect(rotated.clicked).toEqual(['Sign in']);
+  });
 
   it('refuses to probe a web UI when no browser component is configured', async (): Promise<void> => {
     const { harness, surfaceId } = await tileHarness();
@@ -1759,7 +1967,11 @@ describe('probing the browser floor', (): void => {
         },
       ),
     ).resolves.toMatchObject({ verdict: 'connected' });
-    expect(probeBrowser).toHaveBeenCalledWith(TILE, DRIVER, undefined, TITLE);
+    expect(probeBrowser).toHaveBeenCalledWith({
+      endpoint: TILE,
+      driverUrl: DRIVER,
+      markers: { title: TITLE },
+    });
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'connected', credentialLanded: true });
     const grants = await harness.run(
@@ -1894,12 +2106,11 @@ describe('probing the browser floor', (): void => {
         { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
       ),
     ).resolves.toMatchObject({ verdict: 'connected' });
-    expect(probeBrowser).toHaveBeenCalledWith(
-      'https://reports.example.test/forecast',
-      DRIVER,
-      undefined,
-      'Forecast - Home',
-    );
+    expect(probeBrowser).toHaveBeenCalledWith({
+      endpoint: 'https://reports.example.test/forecast',
+      driverUrl: DRIVER,
+      markers: { title: 'Forecast - Home' },
+    });
   });
 
   it('keeps a withdrawn credential from descending to a credentialless rung', async (): Promise<void> => {
@@ -2059,10 +2270,11 @@ describe('probing the browser floor', (): void => {
     // A 503 earns the one retry; the descent happens only after it failed too.
     expect(probeMcp).toHaveBeenCalledTimes(2);
     expect(probeBrowser).toHaveBeenCalledWith(
-      'https://jira.example/issues',
-      DEFAULT_BROWSER_MCP_URL,
-      undefined,
-      'Jira - Issues',
+      expect.objectContaining({
+        endpoint: 'https://jira.example/issues',
+        driverUrl: DEFAULT_BROWSER_MCP_URL,
+        markers: { title: 'Jira - Issues' },
+      }),
     );
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({

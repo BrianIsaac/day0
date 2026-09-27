@@ -26,9 +26,19 @@ import {
   BROWSER_DRIVER_ABSENT_REASON,
   isDriverUnreachable,
   browserPageTitle,
+  browserPageUrl,
+  browserSignedInMarker,
   browserTitleMarker,
   BROWSER_TOOLS,
+  documentedUsername,
+  loginForm,
   navigationResultRefusal,
+  refFieldFor,
+  resolveElementRef,
+  withinDocumentedSurface,
+  withResolvedRefs,
+  type LoginForm,
+  type SnapshotElement,
 } from '../src/surfaces/browser';
 import { interpretToolResult } from '../src/surfaces/mcp';
 import {
@@ -124,6 +134,14 @@ type CredentialId = GenericId<'credentials'>;
 class Day0ProbeLimitation extends Error {}
 
 /**
+ * A web UI that answered but did not let the credential in: the signed-in
+ * page never showed its documented element. The password may have been
+ * rotated or the login redesigned; either is the manager's or IT's to fix,
+ * and neither says the system is down.
+ */
+class BrowserSignInRefused extends Error {}
+
+/**
  * Run one Day0-side step so its failure is never read as provider liveness.
  *
  * Reading the agent's pages and writing the connected row are Day0's own
@@ -157,7 +175,11 @@ const ACCESS_REFUSAL =
   /\b(?:HTTP\s+)?(?:401|403)\b|\bunauthori[sz]ed\b|\bforbidden\b|invalid[_ -]?(?:auth|token|credential)|token[_ -]?expired|missing[_ -]?scope|not[_ -]?authed|not a member|no manager email|deactivated|own bot user/i;
 
 function probeFailureVerdict(error: unknown, safeReason: string): 'ungranted' | 'listed-dead' {
-  if (error instanceof Day0ProbeLimitation || safeReason.includes(BROWSER_DRIVER_ABSENT)) {
+  if (
+    error instanceof Day0ProbeLimitation ||
+    error instanceof BrowserSignInRefused ||
+    safeReason.includes(BROWSER_DRIVER_ABSENT)
+  ) {
     return 'ungranted';
   }
   if (ACCESS_REFUSAL.test(safeReason)) return 'ungranted';
@@ -462,6 +484,147 @@ function createBrowserProbeClient(endpoint: URL): BrowserProbeClient {
   };
 }
 
+/** What the documentation says a browser probe should see. */
+export interface BrowserProbeMarkers {
+  /** The page title the documented page shows when it opens (`Probe marker: page title`). */
+  readonly title?: string;
+  /** An element the page shows once signed in (`Probe marker: after sign-in, element`). */
+  readonly afterSignIn?: string;
+}
+
+/** The login a browser probe signs in with. */
+export interface BrowserProbeLogin {
+  /** The surface's decrypted credential, typed only into the page's credential field. */
+  readonly credential: string;
+  /** The documented account name, for a form that asks for one. */
+  readonly username?: string;
+}
+
+/** One browser probe: where the page is, the driver that reaches it, and what to check. */
+export interface BrowserProbeRequest {
+  readonly endpoint: string | undefined;
+  readonly driverUrl: string | undefined;
+  readonly markers: BrowserProbeMarkers;
+  /** Absent when no credential is landed on the surface. */
+  readonly login?: BrowserProbeLogin;
+}
+
+/** The argument names the driver's schema gives one browser tool. */
+function argumentNamesOf(discovery: McpDiscovery, tool: string): string[] | undefined {
+  return discovery.toolArguments.find((entry) => entry.tool === tool)?.arguments;
+}
+
+/**
+ * Call one driver tool for the probe, refusing a tool the floor does not
+ * have or a call the driver refuses. The driver's text is never quoted: after
+ * a credential is typed it can echo the page.
+ */
+async function probeCall(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!discovery.toolAllowlist.includes(tool)) {
+    throw new Day0ProbeLimitation(
+      `Day0 browser component does not expose ${tool}, which signing in needs.`,
+    );
+  }
+  const result = await client.callTool(tool, args);
+  if (result.isError) throw new Error(`${tool} failed while Day0 was signing in.`);
+  return result.text;
+}
+
+/** Take a snapshot and refuse it when the page has left the documented surface. */
+async function probeSnapshot(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  endpoint: string,
+): Promise<string> {
+  const text = await probeCall(client, discovery, 'browser_snapshot', {});
+  const page = browserPageUrl(text);
+  if (!page || !withinDocumentedSurface(page, endpoint)) {
+    throw new Day0ProbeLimitation(
+      `The sign-in left the approved surface (${endpoint}); Day0 signs in only on the documented page.`,
+    );
+  }
+  return text;
+}
+
+/** Click one resolved control on the probe's page. */
+async function probeClick(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  control: SnapshotElement,
+): Promise<void> {
+  await probeCall(
+    client,
+    discovery,
+    'browser_click',
+    withResolvedRefs(
+      'browser_click',
+      { element: control.name },
+      [control],
+      refFieldFor(argumentNamesOf(discovery, 'browser_click')),
+    ),
+  );
+}
+
+/**
+ * Sign the probe's browser in on the page it has open, and return the
+ * snapshot of the page the sign-in reached.
+ *
+ * The form is read by the names the apply types a credential into: the
+ * account field takes the documented user name, the credential field takes
+ * the credential, and the sign-in control submits it. A two-page login is
+ * followed through its Next control. The credential is never typed anywhere
+ * else, and nothing on the page is clicked but those two controls.
+ */
+async function signInForProbe(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  endpoint: string,
+  login: BrowserProbeLogin,
+): Promise<string> {
+  const fill = async (fields: ReadonlyArray<[SnapshotElement, string]>): Promise<void> => {
+    await probeCall(
+      client,
+      discovery,
+      'browser_fill_form',
+      withResolvedRefs(
+        'browser_fill_form',
+        { fields: fields.map(([element, value]) => ({ name: element.name, value })) },
+        fields.map(([element]) => element),
+        refFieldFor(argumentNamesOf(discovery, 'browser_fill_form')),
+      ),
+    );
+  };
+  const account = (form: LoginForm): Array<[SnapshotElement, string]> => {
+    if (!form.account) return [];
+    if (!login.username) {
+      throw new Day0ProbeLimitation(
+        'The sign-in page asks for a user name and the documentation gives none; write it beside the credential as (username `...`).',
+      );
+    }
+    return [[form.account, login.username]];
+  };
+  let form = loginForm(await probeSnapshot(client, discovery, endpoint));
+  if (!form.credential && form.account && form.next) {
+    await fill(account(form));
+    await probeClick(client, discovery, form.next);
+    form = loginForm(await probeSnapshot(client, discovery, endpoint));
+    form = { ...form, account: undefined };
+  }
+  if (!form.credential || !form.submit) {
+    throw new BrowserSignInRefused(
+      'The documented page shows no sign-in form Day0 can complete (a text box named for the password and a Sign in control), so the credential was not checked.',
+    );
+  }
+  await fill([...account(form), [form.credential, login.credential]]);
+  await probeClick(client, discovery, form.submit);
+  return await probeSnapshot(client, discovery, endpoint);
+}
+
 /**
  * Verify the browser floor can reach one documented web UI.
  *
@@ -471,30 +634,37 @@ function createBrowserProbeClient(endpoint: URL): BrowserProbeClient {
  * would connect a surface whose system is gone - presence is not liveness, and
  * on this path the driver's presence says nothing at all about the system's.
  *
- * Args:
- *   endpoint: The documented web UI address from the surface row.
- *   driverUrl: Configured browser driver address.
- *   makeClient: Client factory, replaceable by behavioural tests.
+ * When the documentation names an element the signed-in page shows, the
+ * probe signs in with the credential and looks for it, so a rotated password
+ * or a redesigned login leaves the surface unconnected instead of being found
+ * by the first write. A page that documents only its title is checked by the
+ * title, and says nothing about the credential.
  *
- * Returns:
- *   Allowlisted browser tools and their provider-discovered argument names.
- *
- * Raises:
- *   Error: If the driver is unreachable, exposes none of the floor's tools, or
- *     cannot open the documented page.
+ * @param request - The page, the driver, the documented markers and the login.
+ * @param makeClient - Client factory, replaceable by behavioural tests.
+ * @returns Allowlisted browser tools and their provider-discovered argument names.
+ * @throws Error when the driver is unreachable, exposes none of the floor's
+ *   tools or cannot open the page; BrowserSignInRefused when the signed-in
+ *   page does not show the documented element.
  */
 export async function probeBrowserSurface(
-  endpoint: string | undefined,
-  driverUrl: string | undefined,
+  request: BrowserProbeRequest,
   makeClient: (url: URL) => BrowserProbeClient = createBrowserProbeClient,
-  titleMarker?: string,
 ): Promise<McpDiscovery> {
+  const { endpoint, markers, login } = request;
   if (!endpoint) {
     throw new Day0ProbeLimitation('No web UI address is documented for this surface.');
   }
-  if (!titleMarker?.trim()) {
+  const title = markers.title?.trim();
+  const signedIn = markers.afterSignIn?.trim();
+  if (!title && !signedIn) {
     throw new Day0ProbeLimitation(
-      'No page title marker is documented for this browser surface, so Day0 cannot verify the page safely.',
+      'No probe marker (a page title, or an element after sign-in) is documented for this browser surface, so Day0 cannot verify the page safely.',
+    );
+  }
+  if (signedIn && !login?.credential) {
+    throw new Day0ProbeLimitation(
+      'The documentation names an element to check after sign-in, but no credential is landed for this surface, so Day0 cannot sign in.',
     );
   }
   let target: URL;
@@ -503,7 +673,7 @@ export async function probeBrowserSurface(
   } catch {
     throw new Day0ProbeLimitation('The documented web UI address is not a valid URL.');
   }
-  const component = browserComponent(driverUrl);
+  const component = browserComponent(request.driverUrl);
   if (!component.present) throw new Error(component.reason);
   const client = makeClient(component.url);
   try {
@@ -527,10 +697,18 @@ export async function probeBrowserSurface(
     }
     const outside = navigationResultRefusal('browser_navigate', opened.text, endpoint);
     if (outside) throw new Day0ProbeLimitation(outside);
-    if (browserPageTitle(opened.text) !== titleMarker.trim()) {
+    if (title && browserPageTitle(opened.text) !== title) {
       throw new Day0ProbeLimitation(
-        `The documented page answered, but its title did not match the approved marker (${titleMarker.trim()}).`,
+        `The documented page answered, but its title did not match the approved marker (${title}).`,
       );
+    }
+    if (signedIn && login) {
+      const page = await signInForProbe(client, discovery, endpoint, login);
+      if (!resolveElementRef(page, signedIn, 'read')) {
+        throw new BrowserSignInRefused(
+          `Day0 signed in with the stored credential, but the page did not show the documented element "${signedIn}": the credential may have been rotated or the sign-in page changed.`,
+        );
+      }
     }
     return discovery;
   } catch (error) {
@@ -1078,20 +1256,22 @@ export async function runSurfaceProbe(
         // and the second such surface would be checked against the first's page
         // title - which matters now that a public web UI reaches this rung
         // without a login.
-        const titleMarker = browserTitleMarker(
-          pages
-            .map((page: Doc<'docPages'>): string =>
-              relevantSystemText(page.markdown, surface.displayName, page.title),
-            )
-            .join('\n\n'),
-        );
+        const documentation = pages
+          .map((page: Doc<'docPages'>): string =>
+            relevantSystemText(page.markdown, surface.displayName, page.title),
+          )
+          .join('\n\n');
+        const username = documentedUsername(documentation);
         const discovery = await withOneRetry(credential, known, () =>
-          dependencies.probeBrowser(
-            surface.endpoint,
-            process.env.DAY0_BROWSER_MCP_URL,
-            undefined,
-            titleMarker,
-          ),
+          dependencies.probeBrowser({
+            endpoint: surface.endpoint,
+            driverUrl: process.env.DAY0_BROWSER_MCP_URL,
+            markers: {
+              title: browserTitleMarker(documentation),
+              afterSignIn: browserSignedInMarker(documentation),
+            },
+            ...(credential ? { login: { credential, ...(username ? { username } : {}) } } : {}),
+          }),
         );
         toolAllowlist = discovery.toolAllowlist;
         toolArguments = discovery.toolArguments;
