@@ -23,6 +23,16 @@ import {
 } from '../src/surfaces/intake-scope';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
+import {
+  DO_NOT_AUTOMATE_LABEL,
+  isClosedStateType,
+  personKey,
+  samePerson,
+  ticketAssignee,
+  ticketLabels,
+  ticketStateType,
+  type PersonIdentity,
+} from '../src/work/ticket-ownership';
 import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
 
 const PROVIDER_TIMEOUT_MS = 10_000;
@@ -553,114 +563,9 @@ export function mcpIssuePage(value: unknown): McpPage {
 /** Why an assigned ticket is left alone when the key's owner could not be read. */
 const OWNER_UNREAD = "the ticket is assigned and the key's owner could not be read";
 
-/** The label a person puts on a ticket to keep every Day0 employee off it (Q11). */
-export const DO_NOT_AUTOMATE_LABEL = 'do-not-automate';
-
-/** Workflow state types Linear gives a ticket nobody is to work on any more. */
-const CLOSED_STATE_TYPES: ReadonlySet<string> = new Set(['completed', 'canceled', 'cancelled']);
-
-/** A name compared case- and separator-insensitively: `Do not automate` is `do-not-automate`. */
-function labelKey(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, '-');
-}
-
 /** Why a ticket assigned to somebody Day0 can name but not identify is left alone. */
 const ASSIGNEE_UNIDENTIFIED =
   'the ticket is assigned to a person named without an id or email Day0 can compare';
-
-/** A person's id or address as the assignee rule compares them. */
-function personKey(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-/** A person as the assignee rule identifies them: by id, then by email, never by name (M9). */
-interface PersonIdentity {
-  id?: string;
-  email?: string;
-}
-
-/** The first non-empty string among the values, compared case-insensitively. */
-function firstKey(...values: unknown[]): string | undefined {
-  const found = values.find(
-    (value): value is string => typeof value === 'string' && value.trim() !== '',
-  );
-  return found === undefined ? undefined : personKey(found);
-}
-
-/**
- * Whether two people are the same person: their ids decide when both carry
- * one, their addresses when both carry one and an id is missing, and
- * nothing decides otherwise. Names are not unique in Linear.
- *
- * Returns:
- *   True or false when the two can be compared, undefined when they cannot.
- */
-function samePerson(left: PersonIdentity, right: PersonIdentity): boolean | undefined {
-  if (left.id !== undefined && right.id !== undefined) return left.id === right.id;
-  if (left.email !== undefined && right.email !== undefined) return left.email === right.email;
-  return undefined;
-}
-
-/**
- * Read the workflow state type of an issue, in the shapes providers use.
- *
- * Args:
- *   issue: Provider issue object.
- *
- * Returns:
- *   The lower-cased state type (`unstarted`, `completed`), or undefined.
- */
-function issueStateType(issue: Record<string, unknown>): string | undefined {
-  const type = [issue.statusType, asRecord(issue.status)?.type, asRecord(issue.state)?.type].find(
-    (value): value is string => typeof value === 'string' && value.trim() !== '',
-  );
-  return type?.trim().toLowerCase();
-}
-
-/**
- * Read an issue's label names, in the shapes providers use.
- *
- * Args:
- *   issue: Provider issue object.
- *
- * Returns:
- *   Label names compared case- and separator-insensitively.
- */
-function issueLabels(issue: Record<string, unknown>): string[] {
-  const listed: unknown = Array.isArray(issue.labels)
-    ? issue.labels
-    : asRecord(issue.labels)?.nodes;
-  if (!Array.isArray(listed)) return [];
-  return listed.flatMap((label: unknown): string[] => {
-    const name = typeof label === 'string' ? label : asRecord(label)?.name;
-    return typeof name === 'string' && name.trim() !== '' ? [labelKey(name)] : [];
-  });
-}
-
-/**
- * An issue's assignee, as the rule identifies a person: the assignee id or a
- * nested object's id, and a nested object's address or an assignee printed
- * as one. A printed name is only evidence that somebody is assigned.
- *
- * Args:
- *   issue: Provider issue object.
- *
- * Returns:
- *   The assignee's id and address, or undefined when nobody is assigned.
- */
-function issueAssignee(issue: Record<string, unknown>): PersonIdentity | undefined {
-  const nested = asRecord(issue.assignee);
-  const printed = typeof issue.assignee === 'string' ? issue.assignee.trim() : '';
-  const identity: PersonIdentity = {
-    id: firstKey(issue.assigneeId, nested?.id),
-    email: firstKey(nested?.email, printed.includes('@') ? printed : undefined),
-  };
-  const named = printed !== '' || firstKey(nested?.name, nested?.displayName) !== undefined;
-  return identity.id !== undefined || identity.email !== undefined || named ? identity : undefined;
-}
 
 /**
  * Why intake leaves a Linear ticket alone, by the kanban's own primitives
@@ -681,12 +586,12 @@ export function linearIntakeRefusal(
   issue: Record<string, unknown>,
   owner: PersonIdentity | undefined,
 ): string | undefined {
-  const state = issueStateType(issue);
-  if (state !== undefined && CLOSED_STATE_TYPES.has(state)) return `the ticket is ${state}`;
-  if (issueLabels(issue).includes(DO_NOT_AUTOMATE_LABEL)) {
+  const state = ticketStateType(issue);
+  if (isClosedStateType(state)) return `the ticket is ${state}`;
+  if (ticketLabels(issue).includes(DO_NOT_AUTOMATE_LABEL)) {
     return `the ticket is labelled ${DO_NOT_AUTOMATE_LABEL}`;
   }
-  const assignee = issueAssignee(issue);
+  const assignee = ticketAssignee(issue);
   if (assignee === undefined) return undefined;
   if (owner === undefined) return OWNER_UNREAD;
   const same = samePerson(assignee, owner);
@@ -735,7 +640,7 @@ async function linearKeyOwner(
       ),
     );
     const user = asRecord(answer?.user) ?? answer;
-    const owner: PersonIdentity = { id: firstKey(user?.id), email: firstKey(user?.email) };
+    const owner: PersonIdentity = { id: personKey(user?.id), email: personKey(user?.email) };
     return owner.id !== undefined || owner.email !== undefined ? owner : undefined;
   } catch (error) {
     log.warn('linear key owner unreadable; assigned tickets are left alone this poll', {
