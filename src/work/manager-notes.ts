@@ -179,7 +179,6 @@ export function digestText(args: {
   const more = owed.length - shown.length;
   return [
     `${args.agentName}: ${count} ${count === 1 ? 'update' : 'updates'} since the last digest (times in ${args.zone}).`,
-    '',
     ...args.notes.map((note) => `${formatStamp(note.createdAt, args.zone)}: ${note.text}`),
     ...(owed.length > 0
       ? [

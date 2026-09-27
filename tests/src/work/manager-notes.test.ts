@@ -81,7 +81,7 @@ describe('the notes the gate writes for the manager', (): void => {
     );
   });
 
-  it('gathers notes into one digest, each stamped with its date and time in the agent’s zone', (): void => {
+  it('gathers notes into one digest, each stamped with its date and time in the agent’s zone, one blank line apart', (): void => {
     const morning = Date.UTC(2026, 8, 27, 23, 40);
     const evening = Date.UTC(2026, 8, 27, 9, 5);
     expect(
@@ -94,7 +94,7 @@ describe('the notes the gate writes for the manager', (): void => {
         ],
       }),
     ).toBe(
-      'Priya: 2 updates since the last digest (times in Asia/Singapore).\n\n\n\n' +
+      'Priya: 2 updates since the last digest (times in Asia/Singapore).\n\n' +
         '27 Sep 2026, 17:05: one\n\n28 Sep 2026, 07:40: two',
     );
     expect(
