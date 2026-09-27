@@ -611,7 +611,8 @@ export function AccessRow({
   const save = (): void => {
     setBusy(true);
     setOutcome(null);
-    onSetDays(Number(days))
+    // The chain ends in its own catch, which says the refusal in the live region.
+    void onSetDays(Number(days))
       .then((result) => {
         setOutcome({
           tone: 'done',
@@ -775,7 +776,8 @@ export function ToolsRow({
     const tools = options.filter((tool) => chosen.has(tool));
     setBusy(true);
     setOutcome(null);
-    onApprove(tools)
+    // The chain ends in its own catch, which says the refusal in the live region.
+    void onApprove(tools)
       .then(() => {
         const gained = tools.filter((tool) => !approved.includes(tool));
         const dropped = approved.filter((tool) => !tools.includes(tool));

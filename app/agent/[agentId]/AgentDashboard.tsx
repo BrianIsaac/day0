@@ -677,7 +677,8 @@ export function ZoneLine({
     const next = draft.trim();
     setBusy(true);
     setOutcome(null);
-    onChange(next)
+    // The chain ends in its own catch, which says the refusal in the live region.
+    void onChange(next)
       .then(() => {
         setOutcome({
           tone: 'done',
@@ -3898,7 +3899,8 @@ export function WorkItemCard({
   const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void => {
     setDeciding(true);
     setOutcome(null);
-    Promise.resolve()
+    // The chain ends in its own catch, which says the refusal in the live region.
+    void Promise.resolve()
       .then(call)
       .then(() => {
         setOutcome({ tone: 'done', text: done });
