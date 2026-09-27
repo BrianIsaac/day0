@@ -154,6 +154,17 @@ describe('the company bed pages', (): void => {
       }
     }
   });
+
+  it.fails('sends every question the employee asks to the manager DM, on every page that says where one goes', (): void => { // the two page edits wait on the wave 2 bed pane's span re-record, which turns this into `it`
+    const elsewhere = [...folderPages, ...notionPages].flatMap((bedPage) =>
+      bedPage.markdown
+        .split(/\n\s*\n|\n- /)
+        .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+        .filter((sentence) => /\bask (?:questions?|the operations lead)\b/i.test(sentence) && !sentence.includes('manager DM'))
+        .map((sentence) => `${bedPage.ref}: ${sentence}`),
+    );
+    expect(elsewhere).toEqual([]);
+  });
 });
 
 describe('system discovery over the folder pages', (): void => {
