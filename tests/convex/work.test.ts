@@ -3525,6 +3525,14 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       owner: 'Ana Ruiz',
       skipReason: 'withdrawn from the queue on the tracker: the ticket is assigned to someone else',
     });
+    await harness.mutation(internal.work.withdrawListedItem, {
+      ...listed(agentId),
+      owner: 'Ana Ruiz',
+      leftQueue: 'the ticket is completed',
+    });
+    expect((await onlyRow(harness)).skipReason).toBe(
+      'withdrawn from the queue on the tracker: the ticket is completed',
+    );
     await harness.mutation(internal.work.seedItem, { ...listed(agentId), owner: undefined });
     const returned = await onlyRow(harness);
     expect(returned.state).toBe('discovered');

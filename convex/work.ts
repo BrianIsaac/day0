@@ -519,6 +519,11 @@ async function refreshListedItem(
     await scheduleNextStep(ctx, { ...existing, state: 'cancelled' });
     return;
   }
+  if (leftQueue !== undefined && withdrawn) {
+    const skipReason = `${WITHDRAWN_FROM_QUEUE_PREFIX}${leftQueue}`;
+    await ctx.db.patch(existing._id, { ...changed, skipReason });
+    return;
+  }
   if (leftQueue === undefined && withdrawn) {
     await ctx.db.patch(existing._id, {
       ...changed,
