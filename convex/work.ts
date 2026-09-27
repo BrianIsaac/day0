@@ -2263,14 +2263,19 @@ async function verdictCharter(
 ): Promise<Doc<'charters'> | undefined> {
   const evaluated = evaluatedCharterId ? await ctx.db.get(evaluatedCharterId) : null;
   if (evaluated?.agentId === agentId && evaluated.approved) return evaluated;
-  for await (const charter of ctx.db
+  const recent = await ctx.db
     .query('charters')
     .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-    .order('desc')) {
-    if (charter.approved) return charter;
-  }
-  return undefined;
+    .order('desc')
+    .take(VERDICT_CHARTER_READ);
+  return recent.find((charter) => charter.approved);
 }
+
+/**
+ * The newest charter rows a verdict looks through for an approved one: drafts
+ * sent back and redrafted stack above it only a few deep.
+ */
+const VERDICT_CHARTER_READ = 20;
 
 /**
  * Record an evaluation verdict and move the row to where it puts it.
