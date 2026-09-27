@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadEvaluationTasks, type EvaluationTask } from '../../evaluation/graders';
-import type { EvaluationEvidence } from '../../evaluation/report';
+import {
+  COMPARISON_EXPERIMENT,
+  RECORDED_COMPARISON_EXPERIMENT,
+  type EvaluationEvidence,
+} from '../../evaluation/report';
 import {
   evaluationHarnessParameters,
   INTENTIONAL_ARM_DIFFERENCES,
@@ -15,9 +19,9 @@ import {
   isFatalEvaluationInfrastructureError,
   parseCliOptions,
   selectEvaluationTasks,
-} from '../../scripts/eval-semifinal';
+} from '../../scripts/eval-comparison';
 
-describe('semi-final evaluation CLI', (): void => {
+describe('comparison evaluation CLI', (): void => {
   it('defaults to the full paired three-run comparison', (): void => {
     const options = parseCliOptions([]);
     expect(options).toMatchObject({
@@ -28,7 +32,7 @@ describe('semi-final evaluation CLI', (): void => {
       pollIntervalMs: 500,
     });
     expect(options.out).toMatch(
-      /^evaluation\/results\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\/semifinal\.json$/,
+      /^evaluation\/results\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\/comparison\.json$/,
     );
   });
 
@@ -107,11 +111,11 @@ describe('semi-final evaluation CLI', (): void => {
 
   it('refuses to resume evidence whose task definitions differ from the task file', async (): Promise<void> => {
     const tasks = await loadEvaluationTasks();
-    const options = parseCliOptions(['--out', 'evaluation/results/resume/semifinal.json']);
+    const options = parseCliOptions(['--out', 'evaluation/results/resume/comparison.json']);
     const taskTimeoutMs = Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs]));
     const recorded = (taskDefinitions: EvaluationTask[]): EvaluationEvidence => ({
       schemaVersion: 1,
-      experiment: 'day0-semifinal-controlled-comparison',
+      experiment: COMPARISON_EXPERIMENT,
       generatedAt: '2026-09-27T00:00:00.000Z',
       configuration: {
         harnessVersion: EVALUATION_HARNESS_VERSION,
@@ -165,7 +169,7 @@ import {
   terminalTimestamp,
   type ActiveTask,
   type HarnessContext,
-} from '../../scripts/eval-semifinal';
+} from '../../scripts/eval-comparison';
 
 const temporaryDirectories: string[] = [];
 
@@ -205,7 +209,7 @@ async function stubContext(
     authenticatedAt: Date.now(),
     evidence: {
       schemaVersion: 1,
-      experiment: 'day0-semifinal-controlled-comparison',
+      experiment: COMPARISON_EXPERIMENT,
       generatedAt: '',
       configuration: {
         commit: 'abc',
@@ -410,7 +414,7 @@ describe('headless baseline driver', (): void => {
 function regradeFixture() {
   return {
     schemaVersion: 1,
-    experiment: 'day0-semifinal-controlled-comparison',
+    experiment: RECORDED_COMPARISON_EXPERIMENT,
     generatedAt: '2026-08-30T02:14:46.000Z',
     configuration: {
       commit: 'run-commit',
@@ -573,7 +577,7 @@ describe('read-only evidence re-grading', (): void => {
   it('writes a new grade from retained state with provenance and no model calls', async (): Promise<void> => {
     const dir = await temporaryDirectory('regrade-');
     const sourcePath = join(dir, 'original.json');
-    const outPath = join(dir, 'regraded', 'semifinal.json');
+    const outPath = join(dir, 'regraded', 'comparison.json');
     await writeFile(sourcePath, `${JSON.stringify(regradeFixture(), null, 2)}\n`, 'utf8');
     const original = await readFile(sourcePath, 'utf8');
     const calls: string[] = [];
@@ -599,6 +603,7 @@ describe('read-only evidence re-grading', (): void => {
     );
 
     expect(calls).toEqual(['config:surfaceMode', 'evaluation:snapshot']);
+    expect(evidence.experiment).toBe(RECORDED_COMPARISON_EXPERIMENT);
     expect(evidence.regradedFrom).toEqual({
       path: sourcePath,
       commit: 'run-commit',
@@ -647,10 +652,33 @@ describe('read-only evidence re-grading', (): void => {
     );
   });
 
+  it('refuses a source that records another experiment', async (): Promise<void> => {
+    const dir = await temporaryDirectory('regrade-foreign-');
+    const sourcePath = join(dir, 'original.json');
+    const outPath = join(dir, 'new', 'comparison.json');
+    await writeFile(
+      sourcePath,
+      JSON.stringify({ ...regradeFixture(), experiment: 'day0-gate-accuracy' }),
+      'utf8',
+    );
+
+    await expect(
+      runRegrade(parseCliOptions(['--regrade', sourcePath, '--out', outPath]), {
+        client: {
+          setAuth: (): void => undefined,
+          query: async (): Promise<unknown> => ({}),
+        } as never,
+        authenticate: async (): Promise<void> => undefined,
+        commit: 'grader-commit',
+      }),
+    ).rejects.toThrow('regrade source is not evaluation evidence v1');
+    await expect(readFile(outPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('refuses when the backend no longer holds a recorded work item', async (): Promise<void> => {
     const dir = await temporaryDirectory('regrade-missing-');
     const sourcePath = join(dir, 'original.json');
-    const outPath = join(dir, 'new', 'semifinal.json');
+    const outPath = join(dir, 'new', 'comparison.json');
     await writeFile(sourcePath, JSON.stringify(regradeFixture()), 'utf8');
     const client = {
       setAuth: (): void => undefined,

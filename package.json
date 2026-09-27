@@ -37,7 +37,7 @@
     "start": "next start -p 3000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "eval:semifinal": "tsx --env-file-if-exists=.env.local scripts/eval-semifinal.ts",
+    "eval:comparison": "tsx --env-file-if-exists=.env.local scripts/eval-comparison.ts",
     "eval:gate": "tsx evaluation/gate/run.ts",
     "metrics:recompute": "tsx scripts/recompute-metrics.ts",
     "eval:revocation": "tsx --env-file-if-exists=.env.local scripts/eval-revocation.ts",

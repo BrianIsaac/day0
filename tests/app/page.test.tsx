@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { getFunctionName, type FunctionReference } from 'convex/server';
 
 /**
- * The landing page is the judge-facing surface: it is what the hosted demo shows
+ * The landing page is the public surface: it is what the hosted demo shows
  * before sign-in. Clerk and Convex are replaced so the signed-out hero renders
  * exactly as it would for a stranger, and the copy can be checked as text.
  */
@@ -13,7 +13,11 @@ const authState = vi.hoisted(() => ({ loaded: true, signedIn: false, rosterAvail
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
     authState.loaded && when === 'signed-out' ? children : null,
-  useUser: () => ({ user: authState.signedIn ? { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' } : undefined }),
+  useUser: () => ({
+    user: authState.signedIn
+      ? { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' }
+      : undefined,
+  }),
 }));
 
 /** The signed-in owner's company as `agents.rosterForUser` returns it, newest first. */
@@ -58,17 +62,35 @@ const roster = [
 let shownRoster = roster;
 
 const oneEmployeeMetrics = {
-  charter: { timeToFirstDraftedMs: 30_000, timeToFirstApprovedMs: 67_000, revisions: 0, requestChanges: 0 },
+  charter: {
+    timeToFirstDraftedMs: 30_000,
+    timeToFirstApprovedMs: 67_000,
+    revisions: 0,
+    requestChanges: 0,
+  },
   decisions: {
-    requested: 2, approved: 2, rejected: 0, partiallyApproved: 0, cancelled: 0,
-    medianLatencyMs: 48_000, p90LatencyMs: 49_000,
+    requested: 2,
+    approved: 2,
+    rejected: 0,
+    partiallyApproved: 0,
+    cancelled: 0,
+    medianLatencyMs: 48_000,
+    p90LatencyMs: 49_000,
     byVia: {
       dashboard: { decided: 2, medianLatencyMs: 48_000, p90LatencyMs: 49_000 },
       channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
     },
   },
-  actions: { autoApplied: 25, sessionRestores: 0, held: 1, approved: 1, rejected: 0, refused: 0,
-    blockedAfterRevocation: null, firstBlockAfterRevocationMs: null },
+  actions: {
+    autoApplied: 25,
+    sessionRestores: 0,
+    held: 1,
+    approved: 1,
+    rejected: 0,
+    refused: 0,
+    blockedAfterRevocation: null,
+    firstBlockAfterRevocationMs: null,
+  },
   surfaces: { approved: 3, rejected: 0, absent: 1 },
   skills: { approved: 3, rejected: 0 },
   autonomyChanges: 1,
@@ -80,18 +102,35 @@ vi.mock('convex/react', () => ({
     if (!authState.signedIn) return undefined;
     const name = getFunctionName(reference);
     if (name === 'agents:listForUser') {
-      return shownRoster.map((row) => ({ _id: row.agentId, name: row.name, state: row.state, createdAt: 1 }));
+      return shownRoster.map((row) => ({
+        _id: row.agentId,
+        name: row.name,
+        state: row.state,
+        createdAt: 1,
+      }));
     }
     if (name === 'agents:rosterForUser') {
-      if (!authState.rosterAvailable) throw new Error('Function agents:rosterForUser is unavailable');
+      if (!authState.rosterAvailable)
+        throw new Error('Function agents:rosterForUser is unavailable');
       return shownRoster;
     }
     if (name === 'metrics:forOwner' && shownRoster.length === 1) {
       return {
-        employees: [{ agentId: shownRoster[0].agentId, name: shownRoster[0].name, deployedAt: 1, metrics: oneEmployeeMetrics }],
+        employees: [
+          {
+            agentId: shownRoster[0].agentId,
+            name: shownRoster[0].name,
+            deployedAt: 1,
+            metrics: oneEmployeeMetrics,
+          },
+        ],
         company: {
           employees: 1,
-          charter: { timesToFirstApprovedMs: [67_000], medianTimeToFirstApprovedMs: 67_000, approvedEmployees: 1 },
+          charter: {
+            timesToFirstApprovedMs: [67_000],
+            medianTimeToFirstApprovedMs: 67_000,
+            approvedEmployees: 1,
+          },
           decisions: oneEmployeeMetrics.decisions,
           actions: oneEmployeeMetrics.actions,
           surfaces: oneEmployeeMetrics.surfaces,
@@ -126,7 +165,9 @@ describe('signed-out landing page', (): void => {
       const pending = renderToStaticMarkup(<LandingPage />);
       expect(pending).toContain('Try the demo');
       expect(pending).toContain('Set up Day0');
-    } finally { authState.loaded = true; }
+    } finally {
+      authState.loaded = true;
+    }
   });
 
   const html = renderToStaticMarkup(<LandingPage />);
@@ -154,7 +195,9 @@ describe('signed-out landing page', (): void => {
     const walkthrough = /<a\b([^>]*)>Watch the recorded walkthrough<\/a>/.exec(html)?.[1] ?? '';
     expect(walkthrough).toContain('href="/demo"');
     // Below the hero and the four loop steps, not beside the two hero CTAs.
-    expect(html.indexOf('Watch the recorded walkthrough')).toBeGreaterThan(html.indexOf('Skill creation'));
+    expect(html.indexOf('Watch the recorded walkthrough')).toBeGreaterThan(
+      html.indexOf('Skill creation'),
+    );
     const hero = html.slice(html.indexOf('Try the demo'), html.indexOf('Set up Day0'));
     expect(hero).not.toContain('href="/demo"');
   });
@@ -179,7 +222,9 @@ describe('signed-out landing page', (): void => {
   });
 
   it('says what the demo is before the visitor spends a click on it', (): void => {
-    expect(html).toContain('Sign in, deploy an agent into the mock office, and hold its Day-1 1:1 yourself.');
+    expect(html).toContain(
+      'Sign in, deploy an agent into the mock office, and hold its Day-1 1:1 yourself.',
+    );
   });
 
   it('keeps the source repository, smaller than the two routes into the product', (): void => {
@@ -206,9 +251,7 @@ describe('landing footer', (): void => {
 
   it('describes what Day0 runs on without naming a provider', (): void => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
-    expect(footer).toContain(
-      'Run Day0 with a compatible model provider or your own model server.',
-    );
+    expect(footer).toContain('Run Day0 with a compatible model provider or your own model server.');
     expect(footer).not.toContain('Cloudflare');
     expect(footer).not.toContain('ElevenLabs');
   });
@@ -275,7 +318,9 @@ describe('the employee list', (): void => {
       expect(readAs(list)).toContain('0 open \u00b7 3 parked \u00b7 2 need you');
       expect(readAs(list)).toContain('0 open \u00b7 1 parked \u00b7 0 need you');
       expect(readAs(list)).toContain('0 open \u00b7 0 need you');
-      expect(list).toContain('Parked: waiting on a connection, a permission, a skill or a free slot');
+      expect(list).toContain(
+        'Parked: waiting on a connection, a permission, a skill or a free slot',
+      );
     } finally {
       shownRoster = roster;
     }
@@ -300,7 +345,9 @@ describe('the employee list', (): void => {
         'title="Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release count under need you. Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
       );
       expect(list.match(/title="[^"]*Stopped/g)).toHaveLength(2);
-      expect(list).toContain('<span class="whitespace-nowrap">1 stopped \u00b7</span> <span class="whitespace-nowrap">1 needs you</span>');
+      expect(list).toContain(
+        '<span class="whitespace-nowrap">1 stopped \u00b7</span> <span class="whitespace-nowrap">1 needs you</span>',
+      );
     } finally {
       shownRoster = roster;
     }

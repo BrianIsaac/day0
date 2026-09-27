@@ -27,7 +27,7 @@ export const CURATED_MODELS: readonly CuratedModel[] = [
     id: 'qwen3:8b',
     downloadLabel: 'about 5.2 GB',
     residentMiB: 6144,
-    tested: 'the semi-final local bed, 2 September 2026',
+    tested: 'the local evaluation bed, 2 September 2026',
   },
 ];
 

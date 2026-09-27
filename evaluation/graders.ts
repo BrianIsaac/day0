@@ -315,14 +315,14 @@ export interface EvaluationGrade {
 
 /** Read and validate a task file, by default the current task set. */
 export async function loadEvaluationTasks(
-  file = new URL('./tasks/semifinal.json', import.meta.url),
+  file = new URL('./tasks/comparison.json', import.meta.url),
 ): Promise<EvaluationTask[]> {
   return parseEvaluationTasks(await readFile(file, 'utf8'));
 }
 
 /** Synchronous fixture loader for the synchronous report renderer. */
 export function loadEvaluationTasksSync(
-  file = new URL('./tasks/semifinal.json', import.meta.url),
+  file = new URL('./tasks/comparison.json', import.meta.url),
 ): EvaluationTask[] {
   return parseEvaluationTasks(readFileSync(file, 'utf8'));
 }

@@ -99,7 +99,9 @@ function actionKeyFromIdempotencyKey(key: unknown): string | undefined {
  * Every row of a ledger, a re-established browser session's replayed calls
  * each counted as the row it is, just before the row that needed the page.
  */
-function ledgerEntries(output: unknown): Array<{ entry: UnknownRecord; sessionRestoreOf?: string }> {
+function ledgerEntries(
+  output: unknown,
+): Array<{ entry: UnknownRecord; sessionRestoreOf?: string }> {
   const record = asRecord(output);
   const failedReread = asRecord(record?.failedReread);
   const applied = [record?.applied, failedReread?.applied].flatMap((rows) =>
@@ -411,7 +413,8 @@ function actionMetrics(
     // so the ledger is the only place it is recorded.
     // A read the gate refused and the run went on without is kept as a held
     // row; the refusal under its line counts as any other does.
-    const refusal = droppedReadRefusal(reason) ?? (observation.entry.held !== true ? reason : undefined);
+    const refusal =
+      droppedReadRefusal(reason) ?? (observation.entry.held !== true ? reason : undefined);
     if (refusal && isGateRefusal(refusal)) {
       refused.add(key);
       if (observation.observedAt !== null && !refusalObservations.has(key)) {
@@ -433,7 +436,8 @@ function actionMetrics(
       .sort((left, right) => right.at - left.at)[0];
     return revoked ? [{ latency: observation.at - revoked.at }] : [];
   });
-  const landed = ({ entry }: LedgerObservation): boolean => entry.ok === true && entry.held !== true;
+  const landed = ({ entry }: LedgerObservation): boolean =>
+    entry.ok === true && entry.held !== true;
   // A replayed sign-in repeats a call the run already landed; it is counted
   // as a replay, never as a second automatic action.
   const autoApplied = ledger.filter(
@@ -528,7 +532,7 @@ function agentFigures(
   return { metrics, decisions };
 }
 
-/** Compute the complete judge-facing summary from one agent's durable records. */
+/** Compute the complete supervision summary from one agent's durable records. */
 export function computeAgentMetrics(
   events: readonly Doc<'events'>[],
   workItems: readonly Doc<'workItems'>[],
@@ -608,7 +612,9 @@ export interface CompanySelection {
  * Returns:
  *   True for an evaluation agent.
  */
-export function isEvaluationAgent(agent: Pick<Doc<'agents'>, 'bossEmail' | 'name' | 'arm'>): boolean {
+export function isEvaluationAgent(
+  agent: Pick<Doc<'agents'>, 'bossEmail' | 'name' | 'arm'>,
+): boolean {
   if (agent.arm === 'baseline') return true;
   if (!agent.bossEmail.startsWith('eval-') || !agent.bossEmail.endsWith('@day0.local')) {
     return false;
