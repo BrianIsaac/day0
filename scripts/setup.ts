@@ -3763,6 +3763,27 @@ export function backupFileName(project: string, now: Date): string {
 }
 
 /**
+ * A backup name no file in the directory has yet, so a second backup in the
+ * same second, such as the one a restore takes of what it replaces, never
+ * overwrites the first.
+ *
+ * Args:
+ *   directory: Where the backup goes.
+ *   name: The name `backupFileName` gave it.
+ *
+ * Returns:
+ *   The name, or the name with the first free `-<n>` before `.tar.gz`.
+ */
+export function unusedBackupName(directory: string, name: string): string {
+  const stem = name.replace(/\.tar\.gz$/, '');
+  let candidate = name;
+  for (let copy = 2; existsSync(join(directory, candidate)); copy += 1) {
+    candidate = `${stem}-${copy}.tar.gz`;
+  }
+  return candidate;
+}
+
+/**
  * The `docker` arguments that tar a quiescent volume into a directory, owned
  * by the user and readable only by them: the data volume holds the
  * deployment's env, the credential key among it.
@@ -3884,7 +3905,10 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
       );
       return 1;
     }
-    const name = backupFileName(project, new Date(io.now?.() ?? Date.now()));
+    const name = unusedBackupName(
+      directory,
+      backupFileName(project, new Date(io.now?.() ?? Date.now())),
+    );
     const image = pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
     const owner = `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
     const tar = volumeBackupArguments(volume, directory, name, image, owner);
@@ -3981,8 +4005,8 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
 }
 
 /**
- * Put a backup back: check it against its checksum, replace the project's
- * data volume with it, then resume, adopting the restored deployment's
+ * Put a backup back: check it against its checksum, back up the data volume
+ * it replaces, replace that volume with it, then resume, adopting the restored deployment's
  * credential key so what it stores stays readable. Refused while the env file
  * points Slack at the test double: that is the demo bed's restore, not this.
  *
@@ -4049,6 +4073,7 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
     if (options.dryRun) {
       io.log('');
       io.log('Would run:');
+      io.log(`  ${verbCommand('backup', options.mode)}, of the ${volume} it replaces`);
       io.log(`  docker ${stopArguments().join(' ')}`);
       io.log(`  docker volume rm ${volume}`);
       io.log(`  docker volume create ${volume}`);
@@ -4066,6 +4091,15 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
       if (!['y', 'yes'].includes(answer.trim().toLowerCase())) {
         throw new SetupCancelled('restore was declined');
       }
+    }
+    if (labelledVolumes(io, project).includes(volume)) {
+      io.log(`First, a backup of the ${volume} this replaces.`);
+      const kept = await runBackup({ ...options, command: 'backup' }, io);
+      if (kept !== 0) {
+        io.log('The restore stops here: nothing is replaced without a copy of it.');
+        return kept;
+      }
+      io.log('');
     }
     const steps: [string, string[]][] = [
       ['taking the project down', stopArguments()],

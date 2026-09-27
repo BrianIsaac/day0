@@ -590,6 +590,7 @@ describe('backup, restore and upgrade (step 15)', (): void => {
 
     const h = configured({
       services: ['backend'],
+      environment: { HOME: homeDirectory },
       deploymentEnv: 'DAY0_CREDENTIAL_KEY=the-restored-key\nDAY0_SURFACE_MODE=real\n',
       answers: ['y'],
     });
@@ -603,7 +604,10 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     );
     const lines = ran(h).split('\n');
     const at = (text: string): number => lines.findIndex((line) => line.includes(text));
-    expect(at(`volume rm ${PROJECT}_convex_data`)).toBeGreaterThan(-1);
+    // What it replaces is backed up before anything is removed.
+    expect(at('tar czf')).toBeGreaterThan(-1);
+    expect(at('tar czf')).toBeLessThan(at(`volume rm ${PROJECT}_convex_data`));
+    expect(readdirSync(directory).filter((name) => name.endsWith('.tar.gz'))).toHaveLength(2);
     expect(at('tar xzf')).toBeGreaterThan(at(`volume create`));
     expect(at('tar xzf')).toBeLessThan(at('run sync:env'));
     // Every profile but the test double comes up on the restored volume.
