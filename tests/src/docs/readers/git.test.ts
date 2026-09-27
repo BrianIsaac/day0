@@ -255,6 +255,7 @@ describe('a private repository read with its own secret (E-74)', (): void => {
     expect(gitAuthorization('token-value')).toBe(
       `Basic ${Buffer.from('x-access-token:token-value').toString('base64')}`,
     );
+    expect(gitAuthorization('Bearer token-value')).toBe('Bearer token-value');
     expect(gitAuthorization('reader:token-value')).toBe(
       `Basic ${Buffer.from('reader:token-value').toString('base64')}`,
     );

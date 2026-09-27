@@ -144,13 +144,15 @@ function gitAtLeast(version: string, release: { major: number; minor: number }):
 /**
  * The authorization header a repository's reader secret is sent as (E-74).
  *
- * An access token alone goes as the password of HTTP Basic under a
- * placeholder user, which GitHub and GitLab both accept; a host that needs
- * the user name takes the secret as `user:token`.
+ * A secret that already names its scheme (`Bearer ...`, `Basic ...`) is sent
+ * as written, as a URL source's is. An access token alone goes as the
+ * password of HTTP Basic under a placeholder user, which GitHub and GitLab
+ * both accept; a host that needs the user name takes the secret as `user:token`.
  *
  * @param secret - The source's reader secret.
  */
 export function gitAuthorization(secret: string): string {
+  if (/^(?:basic|bearer) \S+$/i.test(secret)) return secret;
   const pair = secret.includes(':') ? secret : `x-access-token:${secret}`;
   return `Basic ${Buffer.from(pair, 'utf8').toString('base64')}`;
 }
