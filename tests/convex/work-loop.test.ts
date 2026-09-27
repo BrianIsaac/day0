@@ -469,7 +469,7 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(await eventsOf(harness, 'work.completed')).toHaveLength(1);
   });
 
-  it('holds the second row at the supervised cap until the first completes, then evaluates it', async (): Promise<void> => {
+  it('holds the second row at the supervised cap without a scope call until the first completes', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -482,7 +482,8 @@ describe('the server drives the work loop in real mode', (): void => {
     expect((await readItem(harness, first)).state).toBe('plan-pending');
     const queued = await readItem(harness, second);
     expect(queued.state).toBe('discovered');
-    expect(queued.verdict).toMatchObject({ decision: 'queue' });
+    expect(queued.verdict).toBeUndefined();
+    expect(recorded.scopeCalls).toHaveLength(1);
     expect(recorded.planCalls).toEqual(['Triage the Linear close summary REVOPS-23']);
 
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId: first });
@@ -508,8 +509,9 @@ describe('the server drives the work loop in real mode', (): void => {
     const third = await seedTicket(harness, agentId, 'REVOPS-30');
     await drain(harness);
     expect((await readItem(harness, first)).state).toBe('plan-pending');
-    expect((await readItem(harness, second)).verdict).toMatchObject({ decision: 'queue' });
-    expect((await readItem(harness, third)).verdict).toMatchObject({ decision: 'queue' });
+    expect((await readItem(harness, second)).verdict).toBeUndefined();
+    expect((await readItem(harness, third)).verdict).toBeUndefined();
+    expect(recorded.scopeCalls).toHaveLength(1);
 
     await harness
       .withIdentity(OWNER)
@@ -646,6 +648,126 @@ describe('the server drives the work loop in real mode', (): void => {
     const row = await readItem(harness, workItemId);
     expect(row).not.toHaveProperty('evaluationClaimedAt');
     expect(row).not.toHaveProperty('draftClaimedAt');
+  });
+});
+
+describe('the loop under load (P9-1)', (): void => {
+  /**
+   * Insert discovered tickets directly, so nothing is scheduled for them.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   agentId: The employee.
+   *   rows: Each ticket's external id and priority.
+   *
+   * Returns:
+   *   The work item ids, in insertion order.
+   */
+  async function insertQueue(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    rows: ReadonlyArray<{ externalId: string; priority?: string; verdict?: unknown }>,
+  ): Promise<Id<'workItems'>[]> {
+    return await harness.run(async (ctx) => {
+      const ids: Id<'workItems'>[] = [];
+      for (const row of rows) {
+        ids.push(
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: row.externalId,
+            title: `Triage the Linear close summary ${row.externalId}`,
+            contentSummary: 'Triage this Linear close summary revenue operations hand-off.',
+            contentRefs: [`ticket://${row.externalId}`],
+            ...(row.priority === undefined ? {} : { priority: row.priority }),
+            ...(row.verdict === undefined ? {} : { verdict: row.verdict }),
+            state: 'discovered',
+            observedAt: Date.now(),
+            createdAt: Date.now(),
+          }),
+        );
+      }
+      return ids;
+    });
+  }
+
+  /** The work items the scheduler holds an evaluation for. */
+  async function scheduledEvaluations(harness: Harness): Promise<string[]> {
+    return (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    )
+      .filter((job) => job.name === 'workActions:evaluateWorkItemInternal')
+      .map((job) => String((job.args[0] as { workItemId: string }).workItemId));
+  }
+
+  it('claims an evaluation only while a slot is free, an evaluation in flight holding one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness, { autonomousActions: true });
+    const rows = await insertQueue(
+      harness,
+      agentId,
+      ['REVOPS-60', 'REVOPS-61', 'REVOPS-62', 'REVOPS-63', 'REVOPS-64'].map((externalId) => ({
+        externalId,
+      })),
+    );
+
+    const claims = [];
+    for (const workItemId of rows) {
+      claims.push(
+        await harness.mutation(internal.work.claimLoopStep, { workItemId, step: 'evaluation' }),
+      );
+    }
+
+    expect(claims).toEqual([
+      { claimed: true },
+      { claimed: true },
+      { claimed: true },
+      { claimed: false, reason: 'queued' },
+      { claimed: false, reason: 'queued' },
+    ]);
+  });
+
+  it('gives a free slot to the most urgent waiting row, then the oldest', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const [, , urgent] = await insertQueue(harness, agentId, [
+      { externalId: 'REVOPS-70', priority: 'Low' },
+      { externalId: 'REVOPS-71', priority: 'No priority' },
+      { externalId: 'REVOPS-72', priority: 'Urgent' },
+      { externalId: 'REVOPS-73', priority: 'High' },
+      { externalId: 'REVOPS-74', priority: 'Urgent' },
+    ]);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledEvaluations(harness)).toEqual([String(urgent)]);
+  });
+
+  it('sweeps a deep backlog within the transaction limits, waking only what the free slots admit', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    // A backlog deeper than the limit allows reading in one transaction: the
+    // sweep reads a bounded window of it, not every waiting row.
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 400 },
+    });
+    const agentId = await seedEmployee(harness);
+    const backlog = Array.from({ length: 600 }, (_, index) => ({
+      externalId: `REVOPS-${1000 + index}`,
+      verdict: { decision: 'queue', reason: 'WIP cap reached: supervised cold-start limit is 1' },
+    }));
+    const [oldest] = await insertQueue(harness, agentId, backlog);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledEvaluations(harness)).toEqual([String(oldest)]);
   });
 });
 

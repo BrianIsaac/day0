@@ -102,6 +102,11 @@ describe('the stalled-step sweep', (): void => {
     restoreSurfaceMode();
   });
 
+  /** The sweep runs as one transaction, so its harness enforces Convex's limits. */
+  function sweepHarness(): Harness {
+    return convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+  }
+
   it('runs with the five-minute intake poll', (): void => {
     expect(crons.crons['resume stalled work steps']).toMatchObject({
       name: 'work:resumeStalledSteps',
@@ -109,10 +114,10 @@ describe('the stalled-step sweep', (): void => {
     });
   });
 
-  it('reschedules a row whose lease expired and leaves a live claim alone', async (): Promise<void> => {
+  it('reschedules a lapsed step, leaves a live claim alone, and evaluates nothing while the cap is full', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, true);
     const now = Date.now();
     const ids = await harness.run(async (ctx) => ({
@@ -145,21 +150,59 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
+    // The two claimed rows and the approved plan hold all three slots, so the
+    // lapsed evaluation waits for one rather than spending a scope call to
+    // learn it would queue.
     const scheduled = await scheduledSteps(harness);
     expect(scheduled).toEqual(
       expect.arrayContaining([
-        ['workActions:evaluateWorkItemInternal', ids.lapsedEvaluation],
         ['workActions:draftPlanInternal', ids.lapsedDraft],
         ['workActions:executeApprovedPlanInternal', ids.approved],
       ]),
     );
-    expect(scheduled).toHaveLength(3);
+    expect(scheduled).toHaveLength(2);
+  });
+
+  it('resumes a lapsed evaluation when a slot is free, a live evaluation holding another', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = sweepHarness();
+    const agentId = await seedAgent(harness, true);
+    const now = Date.now();
+    const ids = await harness.run(async (ctx) => ({
+      open: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-36', now),
+        state: 'plan-pending',
+        plan: PLAN,
+        planPendingAt: now,
+      }),
+      lapsed: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-37', now),
+        state: 'discovered',
+        evaluationClaimedAt: now - LEASE_MS - 1,
+      }),
+      live: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-38', now),
+        state: 'discovered',
+        evaluationClaimedAt: now - 60_000,
+      }),
+      waiting: await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-39', now),
+        state: 'discovered',
+      }),
+    }));
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledSteps(harness)).toEqual([
+      ['workActions:evaluateWorkItemInternal', ids.lapsed],
+    ]);
   });
 
   it('wakes the oldest queued row only when the employee has a free slot', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const queued = {
@@ -193,7 +236,7 @@ describe('the stalled-step sweep', (): void => {
   it('recovers a plan whose drafting action died before deciding it', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const workItemId = await harness.run(async (ctx) =>
@@ -212,7 +255,7 @@ describe('the stalled-step sweep', (): void => {
   it('continues an autonomous plan when the recovered decision wins', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, true);
     const now = Date.now();
     const workItemId = await harness.run(async (ctx) =>
@@ -235,7 +278,7 @@ describe('the stalled-step sweep', (): void => {
   it('recovers a killed execution without touching a live run or gate apply', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const ids = await harness.run(async (ctx) => {
@@ -306,7 +349,7 @@ describe('the stalled-step sweep', (): void => {
   it('wakes ordinary work behind retained revocation trials', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     const ordinary = await harness.run(async (ctx) => {
@@ -336,7 +379,7 @@ describe('the stalled-step sweep', (): void => {
   it('reaches a stale draft behind one hundred live claims', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, true);
     const now = Date.now();
     const stale = await harness.run(async (ctx) => {
@@ -365,7 +408,7 @@ describe('the stalled-step sweep', (): void => {
   it('does nothing in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     vi.useFakeTimers();
-    const harness = convexTest(schema, allConvexModules());
+    const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
     await harness.run(async (ctx) => {

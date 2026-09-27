@@ -242,19 +242,19 @@ describe('a skill that registers while several items wait for it', (): void => {
         verdict: { decision: 'pending-reevaluation', reason: 'skill registered, ready to retry' },
       });
     }
-    expect(await pendingEvaluations(harness)).toEqual([String(first), String(second)]);
+    expect(new Set(await pendingEvaluations(harness))).toEqual(new Set([String(first)]));
 
     await drain(harness);
 
     // The supervised cap is one: the first item takes the slot and drafts its
-    // plan, the second is evaluated too and queues behind it. Neither is
-    // judged for scope again: both were in scope when they parked, and a
+    // plan, and the second waits for the slot without an evaluation. Neither
+    // is judged for scope again: both were in scope when they parked, and a
     // skill registering changes nothing that judgement reads (finding L, 19 Sep).
     expect(recorded.scopeCalls).toEqual([]);
     expect((await readItem(harness, first)).state).toBe('plan-pending');
     expect(await readItem(harness, second)).toMatchObject({
       state: 'discovered',
-      verdict: { decision: 'queue' },
+      verdict: { decision: 'pending-reevaluation' },
     });
     expect(recorded.planCalls).toEqual(['Post the shipment status note on LOG-2']);
   });
@@ -289,7 +289,7 @@ describe('a skill that registers while several items wait for it', (): void => {
 
     await register(harness, skillId, runId);
 
-    expect(await pendingEvaluations(harness)).toEqual([String(first), String(second)]);
+    expect(new Set(await pendingEvaluations(harness))).toEqual(new Set([String(first)]));
   });
 
   it('leaves alone a linked item that has already moved on', async (): Promise<void> => {
@@ -461,7 +461,7 @@ describe('an authoring run that does not register the skill', (): void => {
 
     await register(harness, skillId, await claim(harness, skillId));
 
-    expect(await pendingEvaluations(harness)).toEqual([String(first), String(second)]);
+    expect(new Set(await pendingEvaluations(harness))).toEqual(new Set([String(first)]));
     expect((await readItem(harness, first)).state).toBe('discovered');
     expect((await readItem(harness, second)).state).toBe('discovered');
   });
@@ -631,7 +631,7 @@ describe('an item linked to a skill after it registered', (): void => {
 });
 
 describe('an evaluation that straddles the registration', (): void => {
-  it('is re-evaluated once its late verdict lands, and ends up behind the cap like the others', async (): Promise<void> => {
+  it('is re-evaluated once its late verdict lands, and waits behind the cap like the others', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -651,22 +651,24 @@ describe('an evaluation that straddles the registration', (): void => {
     release();
     await drain(harness);
 
-    // One of the two waiting rows holds the slot and the other queues behind
-    // it. Which one is the harness's to decide here: their re-evaluations hold
-    // their in-scope verdicts and ask no model (finding L, 19 Sep), so both
-    // run while the late row's verdict and proposal are still being written,
-    // and the order their claims land in is the order of that interleaving.
-    const waiting = [await readItem(harness, first), await readItem(harness, second)];
-    expect(waiting.map((row) => row.state).sort()).toEqual(['discovered', 'plan-pending']);
-    expect(waiting.find((row) => row.state === 'discovered')).toMatchObject({
-      verdict: { decision: 'queue' },
-    });
-    const settled = await readItem(harness, late);
-    expect(settled).toMatchObject({
-      state: 'discovered',
-      verdict: { decision: 'queue' },
-      proposedSkillId: skillId,
-    });
+    // One row holds the slot and the other two wait for it unevaluated. The
+    // late row's evaluation held the one slot while the registration landed,
+    // so nothing else was evaluated until its verdict and proposal were written.
+    const rows = [
+      await readItem(harness, first),
+      await readItem(harness, second),
+      await readItem(harness, late),
+    ];
+    expect(rows.map((row) => row.state).sort()).toEqual([
+      'discovered',
+      'discovered',
+      'plan-pending',
+    ]);
+    for (const row of rows.filter((candidate) => candidate.state === 'discovered')) {
+      expect(row.verdict).toMatchObject({ decision: 'pending-reevaluation' });
+    }
+    const settled = rows[2];
+    expect(settled.proposedSkillId).toBe(skillId);
     expect(settled.reevaluation?.trigger).toBe('skill-registered');
   });
 });
