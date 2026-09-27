@@ -57,7 +57,7 @@ const PERSONAL_KEYS = new Set(['bossEmail', 'email', 'managerEmail']);
  *   value: A stored payload, ledger entry or nested part of one.
  *
  * Returns:
- *   The same shape with nothing a judge should not receive.
+ *   The same shape with nothing an export should not carry.
  */
 export function redactForExport(value: unknown): unknown {
   if (typeof value === 'string') return redactTokenShapes(value);
@@ -72,7 +72,7 @@ export function redactForExport(value: unknown): unknown {
   return value;
 }
 
-/** The judge-facing trace, as the export action returns it. */
+/** One agent's redacted trace, as the export action returns it. */
 export interface AgentTrace {
   version: 1;
   agent: { id: Id<'agents'>; name: string };

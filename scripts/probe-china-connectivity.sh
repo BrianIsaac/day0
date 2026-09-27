@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Arrival connectivity probe for running Day0 on a hosted OpenAI-compatible
 # model endpoint from a network you do not control (a hotel, a venue, a
-# roaming SIM). Written for the GOAI final in mainland China with GLM 5.3 Flash
+# roaming SIM). Written for a live demonstration in mainland China with GLM 5.3 Flash
 # on Featherless as the model route, but nothing in it is specific to that
 # pair: pass --base-url and --model for any OpenAI-compatible server.
 #

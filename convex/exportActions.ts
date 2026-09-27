@@ -8,7 +8,7 @@ import type { AgentTrace } from './events';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 
 /**
- * The complete redacted trace one owner exports for a judge or a report.
+ * The complete redacted trace one owner exports for an audit or a report.
  *
  * The synchronous trace query applies the structural floor but cannot
  * decrypt, so the export is an action: it checks ownership, runs the

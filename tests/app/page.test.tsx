@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { getFunctionName, type FunctionReference } from 'convex/server';
 
 /**
- * The landing page is the judge-facing surface: it is what the hosted demo shows
+ * The landing page is the public surface: it is what the hosted demo shows
  * before sign-in. Clerk and Convex are replaced so the signed-out hero renders
  * exactly as it would for a stranger, and the copy can be checked as text.
  */

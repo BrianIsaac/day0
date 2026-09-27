@@ -12,7 +12,7 @@
  *   outcome        a provider effect, reason or id persisted to the ledger
  *   record         a grounding read rendered to the planner and persisted
  *   prompt         already-stored material rendered into a model prompt
- *   export         the judge-facing trace
+ *   export         the trace an owner exports
  *
  * Coworker names, channel names, ticket ids, dates, figures, URLs and audit
  * lines are the working material this system reads to do its job; no policy

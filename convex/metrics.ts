@@ -528,7 +528,7 @@ function agentFigures(
   return { metrics, decisions };
 }
 
-/** Compute the complete judge-facing summary from one agent's durable records. */
+/** Compute the complete supervision summary from one agent's durable records. */
 export function computeAgentMetrics(
   events: readonly Doc<'events'>[],
   workItems: readonly Doc<'workItems'>[],

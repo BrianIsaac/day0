@@ -355,8 +355,8 @@ const completeMetrics: AgentMetrics = {
   auditTrail: { complete: 11, total: 11, fraction: 1 },
 };
 
-describe('judge-facing dashboard evidence', (): void => {
-  it('renders the judges\' labels with the live-run numbers', (): void => {
+describe('the supervision metrics card', (): void => {
+  it('renders its labels with the live-run numbers', (): void => {
     const html = renderToStaticMarkup(createElement(MetricsCard, { metrics: completeMetrics }));
     expect(html).toContain('Supervision metrics');
     expect(html).toContain('time to first approved charter');
