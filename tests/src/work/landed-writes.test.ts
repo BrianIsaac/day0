@@ -266,7 +266,7 @@ describe('the writes earlier runs landed', () => {
     ).toContain('reused landed comment comment-1');
   });
 
-  it('reuses a same-target comment and thread reply from earlier runs, never a state change or a browser write, and lets a rewrite by id through on a correction', () => {
+  it('reuses a same-target comment and thread reply and an identical state change from earlier runs, never a browser write, and lets a rewrite by id through on a correction', () => {
     const click = call('looker-pipeline-tile', 'browser_click', { element: 'Sign in' });
     const sources: LandedWrite[] = [
       {
@@ -310,9 +310,13 @@ describe('the writes earlier runs landed', () => {
     });
     expect(ledger[1]?.reason).toContain('reused landed message 1789.2');
     expect(ledger[2]).toBeUndefined();
-    // The same Done and the same sign-in click as an earlier run are sent again: the
-    // provider's Done is idempotent and the click belongs to this run's session.
-    expect(ledger[3]).toBeUndefined();
+    // The Done an earlier run landed is not sent again: a person who moved the
+    // ticket back since keeps their change. The sign-in click belongs to this
+    // run's session and is sent.
+    expect(ledger[3]).toMatchObject({ ok: true, idempotencyKey: 'work:retry:9' });
+    expect(ledger[3]?.reason).toBe(
+      'reused landed status change to Done on REVOPS-5: an earlier run of this item already set it; not sent again, so a change a person made since is kept',
+    );
     expect(ledger[4]).toBeUndefined();
     expect(ledger[5]).toBeUndefined();
     // Identical payloads are reused only for a resumed closing set's previous attempt.
@@ -331,6 +335,34 @@ describe('the writes earlier runs landed', () => {
         { surfaces },
       ),
     ).toEqual([undefined]);
+    expect(
+      reusedLedger(
+        [call('linear', 'save_issue', { id: 'REVOPS-6', state: 'Done' })],
+        sources,
+        run,
+        { surfaces },
+      ),
+    ).toEqual([undefined]);
+    expect(
+      reusedLedger(
+        [call('linear', 'save_issue', { id: 'revops-5', state: 'done' })],
+        sources,
+        run,
+        { surfaces },
+      )[0]?.reason,
+    ).toContain('reused landed status change');
+    // A correction to the comment is not a reason to move the ticket again.
+    expect(
+      reusedLedger([done], sources, run, {
+        surfaces,
+        managerFeedback: 'Fix the audit comment: name check 3 too.',
+      })[0]?.reason,
+    ).toContain('reused landed status change');
+    // A status change the provider refused, or one still held, never landed, so it is sent.
+    const refusedDone: LandedWrite[] = [
+      { action: done, applied: row({ ok: false, reason: 'transport' }) },
+    ];
+    expect(reusedLedger([done], refusedDone, run, { surfaces })).toEqual([undefined]);
     expect(
       reusedLedger([byId], sources, run, {
         surfaces,
@@ -369,6 +401,7 @@ describe('the writes earlier runs landed', () => {
       '  2. slack · POST /chat.postMessage · C0REVOPS/1789.1 · provider id 1789.2 · "Tile at 74%."',
     );
     expect(lines[6]).toContain('rewrite the landed comment with `id` set to its provider id');
+    expect(lines[6]).toContain('A status change listed here is not sent again');
     expect(landedWriteLines([], surfaces)).toEqual([]);
     expect(landedWriteLines(undefined)).toEqual([]);
   });

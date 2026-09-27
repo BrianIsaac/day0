@@ -2,8 +2,10 @@ import {
   actionIntent,
   isAuditComment,
   isManagerDm,
+  isStatusChange,
   messageTarget,
   parseSurfaceAction,
+  statusChangeTarget,
   targetIssue,
   type ParsedSurfaceAction,
 } from '../surfaces/policy';
@@ -27,6 +29,10 @@ import type { LandedWrite, MockAction } from './types';
  * or message on a target one of them already carries is reused with a
  * ledger note instead of being sent, unless the manager's note asked for a
  * correction and the action rewrites the landed comment by its id.
+ *
+ * A status change an earlier run landed is reused the same way (P7-4): the
+ * provider takes a second Done without complaint, which is exactly how a
+ * Retry used to undo a colleague who had moved the ticket back to Todo.
  */
 
 /** The most landed writes a retry prompt lists; the row keeps them all. */
@@ -40,6 +46,20 @@ export function reusedLandedNote(
   kind: 'comment' | 'message',
 ): string {
   return `reused landed ${kind} ${providerId ?? '(no provider id)'}: this target already carries the ${kind} an earlier run of this item landed; not sent again`;
+}
+
+/**
+ * The note on a ledger row that reused a status change an earlier run landed.
+ *
+ * Args:
+ *   state: The state both changes set.
+ *   ticket: The ticket they set it on.
+ *
+ * Returns:
+ *   The ledger reason, which the card shows.
+ */
+export function reusedStatusNote(state: string, ticket: string): string {
+  return `reused landed status change to ${state} on ${ticket}: an earlier run of this item already set it; not sent again, so a change a person made since is kept`;
 }
 
 /** The note on a ledger row that reused a row of identical payload. */
@@ -129,6 +149,24 @@ export function writeTarget(
   return { key: `${parsed.surface}|message|${target}`, kind: 'message', target };
 }
 
+/**
+ * The ticket and state a status change sets, as a key two changes share when
+ * they set the same state on the same ticket; undefined for anything else.
+ */
+function statusKey(
+  parsed: ParsedSurfaceAction,
+): { key: string; state: string; ticket: string } | undefined {
+  if (!isStatusChange(parsed)) return undefined;
+  const ticket = targetIssue(parsed)?.trim();
+  const state = statusChangeTarget(parsed)?.trim();
+  if (!ticket || !state) return undefined;
+  return {
+    key: `${parsed.surface}|status|${ticket.toLowerCase()}|${state.toLowerCase()}`,
+    state,
+    ticket,
+  };
+}
+
 const CORRECTION_VERB =
   /\b(?:correct|fix|amend|revise|rewrite|redo|reword|edit|update|change|replace|adjust)\b/gi;
 const CORRECTION_NOUN = /\b(?:comment|note|message|reply|wording|text|body|summary|write-?up)\b/i;
@@ -208,18 +246,21 @@ function payload(action: MockAction): string | undefined {
 /**
  * The ledger rows a phase's actions reuse from what already landed, by
  * index: a comment or message on a target an earlier landed row already
- * carries, and, only when the caller says the sources are a resumed
- * closing set's previous attempt, a row of identical payload. When the
- * manager's note asked for a correction or a further message, nothing is
- * reused by target; a status change and a read are never reused by target.
+ * carries, a status change setting the state an earlier landed change set
+ * on the same ticket, and, only when the caller says the sources are a
+ * resumed closing set's previous attempt, a row of identical payload. When
+ * the manager's note asked for a correction or a further message, no
+ * comment or message is reused by target; a read is never reused.
  *
  * Identical payloads are reused for a resumed closing set alone: the set
  * is re-authored over the same landed prerequisites, so the same closing
  * write again is the same write. Across runs the same payload is not the
  * same effect: a retry's phase one signs in and saves again in a new
- * browser session, and a status change is idempotent at the provider, so
- * every such write is sent again and only a comment or message that would
- * land twice in the same place is reused.
+ * browser session, so those writes are sent again. A status change is the
+ * exception by rule rather than by payload: the provider accepts it twice,
+ * and the second time it undoes whatever a person did to the ticket since
+ * (P7-4), so a state an earlier run set is never set again by a retry, and
+ * a correction to a comment is not a reason to move the ticket.
  *
  * Args:
  *   actions: The phase's actions.
@@ -248,11 +289,14 @@ export function reusedLedger(
   const correction = correctionRequested(options.managerFeedback);
   const byPayload = new Map<string, AppliedAction>();
   const byTarget = new Map<string, { applied: AppliedAction; kind: 'comment' | 'message' }>();
+  const byStatus = new Map<string, AppliedAction>();
   for (const source of sources) {
     if (!landed(source.applied)) continue;
     const key = options.identicalPayloads ? payload(source.action) : undefined;
     if (key && !byPayload.has(key)) byPayload.set(key, source.applied);
     const parsed = parsedWrite(source.action);
+    const status = parsed ? statusKey(parsed) : undefined;
+    if (status && !byStatus.has(status.key)) byStatus.set(status.key, source.applied);
     const target = parsed ? writeTarget(parsed, source.action, surfaces) : undefined;
     if (target && !byTarget.has(target.key))
       byTarget.set(target.key, { applied: source.applied, kind: target.kind });
@@ -267,6 +311,15 @@ export function reusedLedger(
     const identical = key ? byPayload.get(key) : undefined;
     if (identical) return { ...identical, reason: REUSED_IDENTICAL_NOTE, idempotencyKey: identity };
     const parsed = parsedWrite(action);
+    const status = parsed ? statusKey(parsed) : undefined;
+    const setBefore = status ? byStatus.get(status.key) : undefined;
+    if (status && setBefore) {
+      return {
+        ...setBefore,
+        reason: reusedStatusNote(status.state, status.ticket),
+        idempotencyKey: identity,
+      };
+    }
     const target = parsed ? writeTarget(parsed, action, surfaces) : undefined;
     const prior = target ? byTarget.get(target.key) : undefined;
     if (!parsed || !prior) return undefined;
@@ -354,6 +407,6 @@ export function landedWriteLines(
     `--- Writes earlier runs of this item already landed (${writes.length}${writes.length > shown.length ? `, last ${shown.length} shown` : ''}) ---`,
     'Each line: surface · tool · target · provider id · excerpt of the body. Every one is on the provider now.',
     ...rows,
-    "Do not post a comment or message on a target listed here again: the plan step it fulfils is satisfied from that landed row (basis `ledger`, evidence quoting the line above). A comment or message on such a target is reused as the landed one and never sent. Only when the manager's note asks for a correction to it, rewrite the landed comment with `id` set to its provider id; never post a second one.",
+    "Do not post a comment or message on a target listed here again: the plan step it fulfils is satisfied from that landed row (basis `ledger`, evidence quoting the line above). A comment or message on such a target is reused as the landed one and never sent. Only when the manager's note asks for a correction to it, rewrite the landed comment with `id` set to its provider id; never post a second one. A status change listed here is not sent again either: a person may have moved the ticket since, and the state an earlier run set is satisfied from its landed row.",
   ];
 }
