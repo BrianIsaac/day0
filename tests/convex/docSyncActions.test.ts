@@ -1,8 +1,7 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -25,6 +24,9 @@ import {
 import type { DocPage } from '../../src/docs/types';
 import { encrypt, openOwnedCredential as openSpy } from '../../src/lib/credential-crypto';
 import { ownerValuesRef } from '../../src/redaction/known-values';
+import { temporaryDirectories } from '../setup/temporary-directories';
+
+const temporary = temporaryDirectories();
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -217,7 +219,7 @@ describe('documentation sync batching', (): void => {
    *   The fixture root and the runtime-built token it hides on page 30.
    */
   async function sixtyPages(): Promise<{ root: string; value: string }> {
-    const root = await mkdtemp(join(tmpdir(), 'day0-sync-batch-'));
+    const root = temporary('day0-sync-batch-');
     await mkdir(join(root, 'many'));
     const value = token(['lin', 'api'], '_', 'batch-contract-0123456789abcdef');
     for (let index = 1; index <= 60; index += 1) {
@@ -394,7 +396,7 @@ describe('documentation sync batching', (): void => {
   });
 
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {
-    const root = await mkdtemp(join(tmpdir(), 'day0-sync-known-'));
+    const root = temporary('day0-sync-known-');
     await mkdir(join(root, 'few'));
     const stored = ['Sunny-Day-42', 'Winter2026!'];
     for (let index = 1; index <= 3; index += 1) {

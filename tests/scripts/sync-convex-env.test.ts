@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { hasHostTool } from '../setup/host-tools';
+import { temporaryDirectories } from '../setup/temporary-directories';
+
+const temporary = temporaryDirectories();
 
 /** The repository root, found from this file rather than the working directory. */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -27,7 +29,7 @@ function runSync(
   storedCredentials = '',
   pushed = false,
 ): { status: number | null; calls: string[]; stderr: string; deployment: string[] } {
-  const directory = mkdtempSync(join(tmpdir(), 'day0-sync-env-'));
+  const directory = temporary('day0-sync-env-');
   const envFile = join(directory, '.env.local');
   const log = join(directory, 'calls.log');
   const state = join(directory, 'deployment.env');
