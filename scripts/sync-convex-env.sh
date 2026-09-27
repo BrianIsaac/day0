@@ -139,6 +139,12 @@ if [ "$(read_local NEXT_PUBLIC_DEV_NO_AUTH)" = "true" ] && [ -z "$(read_local DE
   echo "       \`pnpm dev:no-auth-key\`, then re-run this script." >&2
   exit 1
 fi
+if [ -n "$(read_local DAY0_OIDC_ISSUER)" ] && [ -z "$(read_local DAY0_OIDC_AUDIENCE)" ]; then
+  echo "error: DAY0_OIDC_ISSUER is set in $ENV_FILE but DAY0_OIDC_AUDIENCE is empty." >&2
+  echo "       The deployment refuses an issuer without the client id its tokens carry" >&2
+  echo "       in \`aud\`. Set DAY0_OIDC_AUDIENCE, then re-run this script." >&2
+  exit 1
+fi
 if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ] && [ -z "$(read_local DAY0_CREDENTIAL_KEY)" ]; then
   echo "error: DAY0_SURFACE_MODE=real in $ENV_FILE but DAY0_CREDENTIAL_KEY is empty." >&2
   echo "       Run \`pnpm dev:no-auth-key\` once, then re-run this script." >&2

@@ -275,6 +275,18 @@ describe('sync-convex-env.sh', (): void => {
       expect(deployment.some((line) => line.startsWith('NEXT_PUBLIC_DEV_NO_AUTH='))).toBe(false);
     });
 
+    it('refuses an issuer with no audience before it changes anything', (): void => {
+      const { status, calls, stderr } = runSync(
+        LOCAL_KEY,
+        [...LOCAL_KEY, 'DAY0_OIDC_ISSUER=https://sso.example.com', ''].join('\n'),
+        '',
+        true,
+      );
+      expect(status).toBe(1);
+      expect(stderr).toContain('DAY0_OIDC_AUDIENCE is empty');
+      expect(calls.filter((call) => /^convex env (set|remove)/.test(call))).toEqual([]);
+    });
+
     it('removes the issuer before the audience, and the profile and private hosts with it', (): void => {
       const { status, calls, deployment } = runSync(
         [...LOCAL_KEY, ...CUSTOMER, 'DAY0_PRIVATE_HOSTS=.corp.internal'],
