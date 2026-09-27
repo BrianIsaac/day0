@@ -97,6 +97,7 @@ import {
 } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
 import { appendEvent } from './eventLog';
+import { retiredClaimOn, retiredHolderName } from './retirements';
 import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
@@ -1238,7 +1239,20 @@ async function liveClaimOn(
       state: holding.state,
     };
   }
-  return undefined;
+  // A retired employee's claim on an item it may already have written is
+  // never released: the item stays its, whoever asks (review M14).
+  const retired = await retiredClaimOn(ctx, scope.userId, scope.key);
+  if (!retired) return undefined;
+  return {
+    holder: {
+      claimId: retired.claim.claimId,
+      agentId: retired.retirement.agentId,
+      workItemId: retired.claim.workItemId,
+      name: retiredHolderName(retired.retirement),
+      title: retired.claim.title,
+    },
+    state: retired.claim.state,
+  };
 }
 
 /**
@@ -1488,6 +1502,16 @@ export const writeClaimHolder = internalQuery({
         if (!holdsAgainst(claim, row)) continue;
         return await holderOf(target, holding, false);
       }
+      const retired = await retiredClaimOn(ctx, userId, key);
+      if (retired && holdsAgainst(retired.claim, row)) {
+        return {
+          target,
+          holderName: retiredHolderName(retired.retirement),
+          sameEmployee: false,
+          title: retired.claim.title,
+          state: retired.claim.state,
+        };
+      }
       // The work items discovered from the item under either of its names:
       // one that holds a claim keyed by the other name, then one that has
       // not claimed yet.
@@ -1540,7 +1564,10 @@ export const writeClaimHolder = internalQuery({
  * Returns:
  *   False only for a settled write-target claim and a row created after it settled.
  */
-function holdsAgainst(claim: Doc<'externalClaims'>, row: Doc<'workItems'>): boolean {
+function holdsAgainst(
+  claim: Pick<Doc<'externalClaims'>, 'writeTarget' | 'settledAt'>,
+  row: Doc<'workItems'>,
+): boolean {
   return (
     claim.writeTarget === undefined ||
     claim.settledAt === undefined ||

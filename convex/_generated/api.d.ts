@@ -40,6 +40,7 @@ import type * as orientationData from "../orientationData.js";
 import type * as ownership from "../ownership.js";
 import type * as probeActions from "../probeActions.js";
 import type * as reset from "../reset.js";
+import type * as retirements from "../retirements.js";
 import type * as revocationEvaluation from "../revocationEvaluation.js";
 import type * as revocationEvaluationActions from "../revocationEvaluationActions.js";
 import type * as sandboxLease from "../sandboxLease.js";
@@ -95,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   ownership: typeof ownership;
   probeActions: typeof probeActions;
   reset: typeof reset;
+  retirements: typeof retirements;
   revocationEvaluation: typeof revocationEvaluation;
   revocationEvaluationActions: typeof revocationEvaluationActions;
   sandboxLease: typeof sandboxLease;

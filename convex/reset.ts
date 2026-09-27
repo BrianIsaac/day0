@@ -1,11 +1,14 @@
 import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
+import { ConvexError } from 'convex/values';
 import { mutation, type MutationCtx } from './_generated/server';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
+import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
+import { reevaluatePendingInTransaction } from './work';
 
 /**
  * Every table whose rows belong to one agent through an `agentId` field.
@@ -39,8 +42,43 @@ export const AGENT_KEYED_TABLES = [
   'mockTickets',
 ] as const;
 
-/** The event a real-mode retire leaves behind for each employee it deletes. */
+/**
+ * The tables that name an agent through `agentId` and outlive it: the record
+ * a real-mode retire leaves. No reset deletes their rows.
+ */
+export const RETIRE_RECORD_TABLES = ['retirements'] as const;
+
+/** The event a real-mode retire leaves on each employee's id, naming its `retirements` row. */
 export const AGENT_RETIRED_EVENT = 'agent.retired';
+
+/**
+ * The states of a work item that may already have written its provider item.
+ * Its claim outlives a single employee's retire: a colleague taking the item
+ * could repeat what landed (review M14). A claim held in any other state is
+ * released instead, so the colleague it refused wakes (review M8).
+ */
+const WRITING_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'executing',
+  'actions-pending',
+  'completed',
+  'failed',
+]);
+
+/**
+ * The most claims and rejections one retirement keeps: far past any
+ * employee's own work, and inside one document's size.
+ */
+const RETIRED_BOUNDARY_LIMIT = 2_000;
+
+/** What a single employee's retire keeps binding its colleagues, and the claims it lets go. */
+interface Boundaries {
+  readonly claims: RetiredClaim[];
+  readonly rejections: RetiredRejection[];
+  readonly released: Id<'externalClaims'>[];
+}
+
+/** A whole-owner retire keeps nothing binding: every employee the boundaries protected is gone too. */
+const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [] };
 
 /** What one employee's retire deleted and revoked, for its tombstone. */
 interface Retired {
@@ -61,6 +99,111 @@ function credentialsBoundBy(surfaces: readonly Doc<'surfaces'>[]): Set<Id<'crede
     if (surface.provisioning) bound.add(surface.provisioning.clientSecretCredentialId);
   }
   return bound;
+}
+
+/**
+ * The claims and rejections a retiring employee's colleagues must still meet,
+ * read before its rows are deleted: a live claim on an item it may already
+ * have written is kept, any other is let go, and every rejection of its plan
+ * or held actions is kept by the item's names (decision N3's sibling hold).
+ *
+ * @param ctx - The retire's mutation context.
+ * @param agent - The employee being retired.
+ * @returns What its retirement keeps, and the claims to release.
+ * @throws ConvexError when there are more than one retirement can keep.
+ */
+async function boundariesOf(ctx: MutationCtx, agent: Doc<'agents'>): Promise<Boundaries> {
+  const items = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+    .collect();
+  const claims: RetiredClaim[] = [];
+  const rejections: RetiredRejection[] = [];
+  const released: Id<'externalClaims'>[] = [];
+  for (const item of items) {
+    const keys = [item.externalClaimKey, item.externalClaimAlias].filter(
+      (key): key is string => key !== undefined,
+    );
+    const rejectedAt = item.rejectedAt ?? item.planRejectedAt;
+    if (rejectedAt !== undefined && keys.length > 0) {
+      rejections.push({ workItemId: item._id, keys, rejectedAt });
+    }
+    const live = await ctx.db
+      .query('externalClaims')
+      .withIndex('by_work_item', (q) => q.eq('workItemId', item._id))
+      .filter((q) => q.eq(q.field('releasedAt'), undefined))
+      .collect();
+    for (const claim of live) {
+      if (!WRITING_HOLDER_STATES.has(item.state)) {
+        released.push(claim._id);
+        continue;
+      }
+      claims.push({
+        claimId: claim._id,
+        key: claim.key,
+        ...(claim.aliases ? { aliases: claim.aliases } : {}),
+        workItemId: item._id,
+        title: item.title,
+        state: item.state,
+        ...(claim.writeTarget ? { writeTarget: claim.writeTarget } : {}),
+        ...(claim.settledAt !== undefined ? { settledAt: claim.settledAt } : {}),
+        claimedAt: claim.claimedAt,
+      });
+    }
+  }
+  if (claims.length + rejections.length > RETIRED_BOUNDARY_LIMIT) {
+    throw new ConvexError(
+      `This employee holds ${claims.length} items and ${rejections.length} rejections, more than one retirement keeps (${RETIRED_BOUNDARY_LIMIT}).`,
+    );
+  }
+  return { claims, rejections, released };
+}
+
+/**
+ * Wake what each released claim refused: a colleague's row skipped because
+ * the retired employee held its item is evaluated again.
+ *
+ * @param ctx - The retire's mutation context.
+ * @param userId - The owner.
+ * @param released - The claims the retire let go.
+ * @param now - The retire time.
+ */
+async function wakeReleasedClaims(
+  ctx: MutationCtx,
+  userId: string,
+  released: readonly Id<'externalClaims'>[],
+  now: number,
+): Promise<void> {
+  if (released.length === 0) return;
+  const employees = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .collect();
+  for (const claimId of released) {
+    for (const employee of employees) {
+      await reevaluatePendingInTransaction(ctx, {
+        agentId: employee._id,
+        trigger: 'claim-released',
+        key: claimId,
+        now,
+      });
+    }
+  }
+}
+
+/**
+ * Empty the boundaries of the owner's earlier retirements, when every
+ * employee retires: the live claims go with the employees, and so do the kept
+ * ones; the record of each retirement stays.
+ *
+ * @param ctx - The retire's mutation context.
+ * @param userId - The owner.
+ */
+async function releaseRetiredBoundaries(ctx: MutationCtx, userId: string): Promise<void> {
+  for (const retirement of await ownerRetirements(ctx, userId)) {
+    if (retirement.claims.length === 0 && retirement.rejections.length === 0) continue;
+    await ctx.db.patch(retirement._id, { claims: [], rejections: [] });
+  }
 }
 
 /**
@@ -175,12 +318,14 @@ async function revokeUnbound(
  * In mock mode this is the hosted demo's full wipe. In real mode it is a
  * retire (decisions Q15 and N1): the working rows go, each credential a
  * retired employee bound that nothing else binds is revoked with its
- * ciphertext deleted, and each employee leaves one `agent.retired` event
- * that no later reset deletes. The event sits on the retired agent's own id
- * with the owner in its payload (the schema has no owner-keyed home for it
- * yet) and counts the rows deleted and the credentials that employee bound,
- * revoked or kept; a credential two retired employees shared is counted in
- * both.
+ * ciphertext deleted, and each employee leaves a `retirements` row under its
+ * owner that no later reset deletes, counting the rows deleted and the
+ * credentials that employee bound, revoked or kept (a credential two retired
+ * employees shared is counted in both), with one `agent.retired` event on its
+ * own id naming the row. Retiring one employee keeps its claims on items it
+ * may already have written and its rejections on its row, where a colleague's
+ * claim, write and plan still meet them, and releases its other claims;
+ * retiring every employee lets both go.
  *
  * Owner-level documentation and credentials outlive a plain reset. With
  * `alsoUnlinkDocumentation` every owned source is unlinked and every owned
@@ -210,6 +355,11 @@ export const deleteMyData = mutation({
         : [await assertOwnsAgent(ctx, args.agentId)];
 
     const now = Date.now();
+    const single = args.agentId !== undefined && SURFACE_MODE === 'real';
+    const boundaries = new Map<Id<'agents'>, Boundaries>();
+    for (const agent of agents) {
+      boundaries.set(agent._id, single ? await boundariesOf(ctx, agent) : NO_BOUNDARIES);
+    }
     const retired = new Map<Id<'agents'>, Retired>();
     for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
     // Unlinked before the retire counts, so a credential the unlink purges is
@@ -219,23 +369,32 @@ export const deleteMyData = mutation({
       : 0;
     if (args.alsoUnlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
     if (SURFACE_MODE === 'real') {
+      if (!single) await releaseRetiredBoundaries(ctx, userId);
       const bound = new Set([...retired.values()].flatMap((entry) => [...entry.boundCredentials]));
       const { revoked, kept } = await revokeUnbound(ctx, userId, bound, now);
-      for (const [agentId, entry] of retired) {
+      for (const agent of agents) {
+        const entry = retired.get(agent._id);
+        const held = boundaries.get(agent._id) ?? NO_BOUNDARIES;
+        if (!entry) continue;
         const own = [...entry.boundCredentials];
+        const retirementId = await ctx.db.insert('retirements', {
+          userId,
+          agentId: agent._id,
+          agentName: agent.name,
+          retiredAt: now,
+          rowCounts: entry.rowCounts,
+          revokedCredentials: own.filter((id) => revoked.has(id)).length,
+          keptCredentials: own.filter((id) => kept.has(id)).length,
+          claims: held.claims,
+          rejections: held.rejections,
+        });
         await appendEvent(ctx, {
-          agentId,
+          agentId: agent._id,
           type: AGENT_RETIRED_EVENT,
-          payload: {
-            userId,
-            agentId,
-            retiredAt: now,
-            rowCounts: entry.rowCounts,
-            revokedCredentials: own.filter((id) => revoked.has(id)).length,
-            keptCredentials: own.filter((id) => kept.has(id)).length,
-          },
+          payload: { retirementId, agentId: agent._id, retiredAt: now },
           createdAt: now,
         });
+        await wakeReleasedClaims(ctx, userId, held.released, now);
       }
     }
     return { deleted: agents.length, unlinkedSources };

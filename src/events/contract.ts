@@ -185,14 +185,11 @@ export interface AgentAutonomyChangedPayload {
   readonly reason: string;
 }
 
-/** The payload of `agent.retired`. */
+/** The payload of `agent.retired`: the retire's record is the named `retirements` row, under its owner. */
 export interface AgentRetiredPayload {
-  readonly userId: string;
+  readonly retirementId: Id<'retirements'>;
   readonly agentId: Id<'agents'>;
   readonly retiredAt: number;
-  readonly rowCounts: Record<string, number>;
-  readonly revokedCredentials: number;
-  readonly keptCredentials: number;
 }
 
 /** The payload of `permission.granted`. */

@@ -1021,6 +1021,50 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_agent_scope', ['agentId', 'scope']),
 
+  /**
+   * One row per employee a real-mode retire deleted, keyed by its owner
+   * (decisions Q15 and N1): the owner-keyed tombstone, what the retire
+   * deleted and revoked, and the two boundaries a colleague's work reads that
+   * must outlive the employee. `claims` are the provider items the retired
+   * employee may already have written, which a colleague still may not take;
+   * `rejections` are the items the manager rejected its plan or actions for,
+   * whose sibling plans still wait for the manager (N3). A whole-owner retire
+   * empties both, as it deletes the live claims. No reset deletes a row.
+   */
+  retirements: defineTable({
+    userId: v.string(),
+    /** The retired employee's id; its row is gone. */
+    agentId: v.id('agents'),
+    /** Absent on a row the upgrade copied from an older tombstone event. */
+    agentName: v.optional(v.string()),
+    retiredAt: v.number(),
+    rowCounts: v.record(v.string(), v.number()),
+    revokedCredentials: v.number(),
+    keptCredentials: v.number(),
+    claims: v.array(
+      v.object({
+        claimId: v.id('externalClaims'),
+        key: v.string(),
+        aliases: v.optional(v.array(v.string())),
+        workItemId: v.id('workItems'),
+        title: v.string(),
+        /** The holding item's state when its employee was retired. */
+        state: v.string(),
+        writeTarget: v.optional(v.object({ surface: v.string(), field: v.string() })),
+        settledAt: v.optional(v.number()),
+        claimedAt: v.number(),
+      }),
+    ),
+    rejections: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        /** The item's claim key and alias, as the sibling check matches them. */
+        keys: v.array(v.string()),
+        rejectedAt: v.number(),
+      }),
+    ),
+  }).index('by_user', ['userId', 'retiredAt']),
+
   events: defineTable({
     agentId: v.id('agents'),
     type: v.string(),
@@ -1029,7 +1073,7 @@ export default defineSchema({
   })
     .index('by_agent', ['agentId'])
     .index('by_agent_type', ['agentId', 'type'])
-    /** Events of one type across agents: the export's owner section reads the retire tombstones here. */
+    /** Events of one type across agents: the `retirements` migration reads the older retire tombstones here. */
     .index('by_type', ['type']),
 
   /**
