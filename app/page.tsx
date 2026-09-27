@@ -411,7 +411,11 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         // linked later would never reach this agent.
         excludedDocSourceIds: excludedSourceIds.length > 0 ? excludedSourceIds : undefined,
       });
-      fetch(`/api/seed?agentId=${agentId}`, { method: 'POST' }).catch(() => {});
+      fetch('/api/seed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId }),
+      }).catch(() => {});
       router.push(`/agent/${agentId}`);
     } catch (err) {
       setError((err as Error).message);
