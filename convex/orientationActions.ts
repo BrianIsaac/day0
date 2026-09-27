@@ -710,34 +710,71 @@ export function documentedEndpoints(
   const plaintextPublic = urls.filter(
     (url: string): boolean => !isCredentialSafeEndpoint(url) && documentsRung(url),
   );
+  // A fragment never reaches the server, so the endpoint is judged and kept without it.
   const judge = (candidates: readonly string[]): JudgedEndpoint[] =>
-    candidates.filter(isCredentialSafeEndpoint).map((endpoint: string) => ({
-      endpoint,
-      reason: probeAddressRefusal(endpoint, privateHosts),
-    }));
+    [...new Set(candidates.filter(isCredentialSafeEndpoint).map(withoutFragment))].map(
+      (endpoint: string) => ({ endpoint, reason: probeAddressRefusal(endpoint, privateHosts) }),
+    );
   const judgedMcp = judge(urls.filter((url: string): boolean => MCP_SEGMENT.test(url)));
   const mcp = firstAdmitted(judgedMcp);
-  const judgedApi = judge(urls.filter((url: string): boolean => url !== mcp && API_BASE.test(url)));
+  const judgedApi = judge(
+    urls.filter((url: string): boolean => withoutFragment(url) !== mcp && API_BASE.test(url)),
+  );
   const api = firstAdmitted(judgedApi);
+  // Only a refusal of the host keeps the host off the browser rung; an
+  // address refused for the credentials written into it says nothing of its host.
   const refusedHosts = new Set(
     [
       ...[...judgedMcp, ...judgedApi]
-        .filter(({ reason }): boolean => reason !== undefined)
+        .filter(
+          ({ reason, endpoint }): boolean => reason !== undefined && !carriesUserinfo(endpoint),
+        )
         .map(({ endpoint }) => endpoint),
       ...plaintextPublic,
     ].map(hostnameOf),
   );
-  const webUi = urls.find(
-    (url: string): boolean => url !== mcp && url !== api && !refusedHosts.has(hostnameOf(url)),
-  );
+  const webUi = urls.find((url: string): boolean => {
+    const bare = withoutFragment(url);
+    return (
+      bare !== mcp && bare !== api && !carriesUserinfo(url) && !refusedHosts.has(hostnameOf(url))
+    );
+  });
+  const refusedApi = api === undefined ? firstRefused(judgedApi) : undefined;
   return {
     mcp,
     api,
     webUi,
     insecure: plaintextPublic[0],
     refusedMcp: mcp === undefined ? firstRefused(judgedMcp) : undefined,
-    refusedApi: api === undefined ? firstRefused(judgedApi) : undefined,
+    // The address rule is the MCP client's; only the noun on the card differs.
+    refusedApi:
+      refusedApi === undefined
+        ? undefined
+        : { ...refusedApi, reason: refusedApi.reason.replace(/\bMCP\b/g, 'API') },
   };
+}
+
+/** A URL without its fragment, or the text as it was when it does not parse. */
+function withoutFragment(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    return parsed.href;
+  } catch {
+    // Not a URL: nothing to strip, and the address rule refuses it as written.
+    return url;
+  }
+}
+
+/** Whether a URL carries a user name or password, which no credential-bearing client sends. */
+function carriesUserinfo(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.username !== '' || parsed.password !== '';
+  } catch {
+    // Not a URL: it carries nothing.
+    return false;
+  }
 }
 
 /** The first endpoint the probe would admit. */

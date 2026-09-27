@@ -763,6 +763,22 @@ describe('URL attribution', (): void => {
     ).toBeUndefined();
   });
 
+  it('judges an address without its fragment, and keeps a written-in login off the browser rung (adversarial pass)', (): void => {
+    expect(
+      documentedEndpoints(['https://app.acme.com/api#auth', 'https://app.acme.com/login']),
+    ).toMatchObject({ api: 'https://app.acme.com/api', webUi: 'https://app.acme.com/login' });
+    expect(
+      documentedEndpoints(['https://user:pw@api.acme.com/', 'https://app.acme.com/login']).webUi,
+    ).toBe('https://app.acme.com/login');
+    expect(documentedEndpoints(['https://user:pw@wiki.acme.com/start']).webUi).toBeUndefined();
+    const refused = documentedEndpoints(
+      ['https://tracker.corp.internal/api/v2/'],
+      privateHostAllowlist(''),
+    ).refusedApi;
+    expect(refused?.reason).toContain('The approved API endpoint');
+    expect(refused?.reason).not.toMatch(/\bMCP\b/);
+  });
+
   it('reads the allowlist from the environment when none is passed', (): void => {
     vi.stubEnv('DAY0_PRIVATE_HOSTS', '.corp.internal');
     expect(documentedEndpoints(['https://mcp.corp.internal/mcp']).mcp).toBe(
