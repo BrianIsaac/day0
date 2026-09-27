@@ -9,6 +9,8 @@ import {
   type ReachFetch,
 } from '../components';
 import { createSecretMcpClient } from '../../surfaces/mcp-client';
+import { checkMcpAddress, pinnedFetch, resolveHostname } from '../../surfaces/mcp-address';
+import type { McpConnection } from '../../surfaces/mcp';
 import { isTransportUnreachable } from '../../lib/transport-error';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
@@ -52,6 +54,9 @@ export interface SessionBoundFetch {
   terminate(): Promise<void>;
 }
 
+/** The transport a session sends through: the checked, pinned one, or plain fetch. */
+export type SessionTransport = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
 /**
  * Bind one session's headers to fetch and remember its server session id.
  *
@@ -71,10 +76,13 @@ export interface SessionBoundFetch {
  */
 export function sessionBoundFetch(
   config: McpConnectionConfig,
-  transport: typeof fetch = fetch,
+  transport: SessionTransport = fetch,
 ): SessionBoundFetch {
   let sessionId: string | undefined;
   const boundFetch: typeof fetch = async (input, init) => {
+    // The MCP transport addresses its endpoint by URL; a Request would carry
+    // headers and a body this session could not see.
+    if (input instanceof Request) throw new Error('MCP documentation session takes a URL.');
     const headers = new Headers(init?.headers);
     for (const [name, value] of Object.entries(config.headers)) headers.set(name, value);
     const response = await transport(input, { ...init, headers });
@@ -99,28 +107,62 @@ export function sessionBoundFetch(
   };
 }
 
-/** Create the production Mastra client for one credential-bound session. */
-function productionClient(config: McpConnectionConfig): McpClientLike {
-  const session = sessionBoundFetch(config);
-  const client = createSecretMcpClient({
-    id: config.id,
-    servers: {
-      [SERVER_NAME]: {
-        url: config.url,
-        allowedHosts: [config.url.host],
-        fetch: session.fetch,
+/**
+ * Create the production Mastra client for one credential-bound session.
+ *
+ * The client resolves the locator's hostname once, before its first request,
+ * refuses it unless it is a public HTTPS name whose every answer is public,
+ * and then dials only those answers, as the surfaces layer's clients do. The
+ * one exception is Day0's own Notion component, reached by its service name
+ * on the compose network, which no public check could pass.
+ *
+ * @param config - The session's endpoint and credential headers.
+ * @param connection - The resolver and transport; a test supplies its own.
+ * @returns A client that connects on first use.
+ */
+export function productionClient(
+  config: McpConnectionConfig,
+  connection: McpConnection = { resolveHostname },
+): McpClientLike {
+  let created: Promise<{ client: McpClientLike; session: SessionBoundFetch }> | undefined;
+  const create = async (): Promise<{ client: McpClientLike; session: SessionBoundFetch }> => {
+    const transport: SessionTransport = isBundledNotionLocator(config.url.href)
+      ? fetch
+      : pinnedFetch(
+          await checkMcpAddress(config.url, connection.resolveHostname),
+          connection.request,
+        );
+    const session = sessionBoundFetch(config, transport);
+    const client = createSecretMcpClient({
+      id: config.id,
+      servers: {
+        [SERVER_NAME]: {
+          url: config.url,
+          allowedHosts: [config.url.host],
+          fetch: session.fetch,
+        },
       },
-    },
-    timeout: 60_000,
-  }) as unknown as McpClientLike;
+      timeout: 60_000,
+    }) as unknown as McpClientLike;
+    return { client, session };
+  };
+  const connected = (): Promise<McpClientLike> =>
+    (created ??= create()).then(({ client }) => client);
   return {
-    listTools: (): Promise<Record<string, McpTool>> => client.listTools(),
-    resources: client.resources,
+    listTools: async (): Promise<Record<string, McpTool>> => await (await connected()).listTools(),
+    resources: {
+      list: async () => await (await connected()).resources.list(),
+      read: async (serverName, uri) => await (await connected()).resources.read(serverName, uri),
+    },
     async disconnect(): Promise<void> {
+      if (!created) return;
+      // A client whose address check refused it never connected, so there is nothing to close.
+      const opened = await created.catch((): undefined => undefined);
+      if (!opened) return;
       try {
-        await client.disconnect();
+        await opened.client.disconnect();
       } finally {
-        await session.terminate();
+        await opened.session.terminate();
       }
     },
   };

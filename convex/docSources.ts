@@ -9,7 +9,11 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { assertDocsComponentReachable, componentFor } from '../src/docs/components';
+import {
+  assertDocsComponentReachable,
+  componentFor,
+  isBundledNotionLocator,
+} from '../src/docs/components';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { reconcileDocumentedSystems } from './surfaces';
@@ -80,7 +84,11 @@ export function validateLinkInput(input: LinkInput): LinkInput {
   } else {
     const rawUrl = input.kind === 'git' ? locator.split('#')[0] : locator;
     const url = new URL(rawUrl);
-    if (url.protocol !== 'https:' && !(input.kind === 'mcp' && url.protocol === 'http:')) {
+    // Only Day0's own Notion component is reached over plain HTTP, on the
+    // compose network; every other MCP server gets a secret, and the reader
+    // connects to it over HTTPS at a checked public address alone (M16).
+    const bundled = input.kind === 'mcp' && isBundledNotionLocator(url.href);
+    if (url.protocol !== 'https:' && !(bundled && url.protocol === 'http:')) {
       throw new Error('Remote documentation locators must use HTTPS.');
     }
   }

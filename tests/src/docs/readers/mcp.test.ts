@@ -1,10 +1,33 @@
+import type { IncomingMessage } from 'node:http';
+import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+/** The configurations the production client built, when a test reaches it. */
+const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
+
+// Only the address tests reach the production client; the rest inject a factory.
+vi.mock('@mastra/mcp', () => ({
+  MCPClient: class {
+    constructor(config: unknown) {
+      mastra.configs.push(config);
+    }
+
+    __setLogger(): void {}
+
+    async listTools(): Promise<Record<string, unknown>> {
+      return { docs_search: {} };
+    }
+
+    async disconnect(): Promise<void> {}
+  },
+}));
 import type { Id } from '../../../../convex/_generated/dataModel';
 import {
   McpReader,
   DRIVE_INCOMPLETE_SEARCH_REASON,
   TRUNCATED_CONTINUATION_REASON,
   authorizationHeader,
+  productionClient,
   sessionBoundFetch,
   unwrapWholePageFence,
   type McpConnectionConfig,
@@ -483,5 +506,82 @@ describe('MCP session termination', (): void => {
     await active.fetch(config.url, { method: 'POST' });
     await expect(active.terminate()).resolves.toBeUndefined();
     expect(deletes).toBe(1);
+  });
+});
+
+describe('the documentation MCP client reaches only the address it checked (M16)', (): void => {
+  const config = (locator: string): McpConnectionConfig => ({
+    id: 'session',
+    url: new URL(locator),
+    headers: { Authorization: 'Bearer docs-secret' },
+  });
+
+  it('refuses a server that answers with a private address and builds no client', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const client = productionClient(config('https://docs.example.com/mcp'), {
+      resolveHostname: async (): Promise<string[]> => ['192.168.1.20'],
+    });
+    await expect(client.listTools()).rejects.toThrow('resolved to a private, loopback');
+    expect(mastra.configs).toEqual([]);
+    await expect(client.disconnect()).resolves.toBeUndefined();
+  });
+
+  it("refuses a plain HTTP locator for any server but Day0's own component", async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const client = productionClient(config('http://docs.example.com/mcp'), {
+      resolveHostname: async (): Promise<string[]> => ['93.184.216.34'],
+    });
+    await expect(client.listTools()).rejects.toThrow('public HTTPS hostname');
+    expect(mastra.configs).toEqual([]);
+  });
+
+  it('connects to the address it checked with the session headers, not to a later answer', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    let answers = ['93.184.216.34'];
+    const dialled: unknown[] = [];
+    const sent: unknown[] = [];
+    const client = productionClient(config('https://docs.example.com/mcp'), {
+      resolveHostname: async (): Promise<string[]> => answers,
+      request: (_url, options, callback) => ({
+        on: (): void => undefined,
+        end: (): void => {
+          sent.push(options.headers);
+          const lookup = options.lookup as unknown as (
+            host: string,
+            opts: { all: boolean },
+            cb: (error: Error | null, addresses: unknown) => void,
+          ) => void;
+          lookup('docs.example.com', { all: true }, (_error, addresses): void => {
+            dialled.push(addresses);
+          });
+          const response = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+          callback(response as unknown as IncomingMessage);
+          response.end('{}');
+        },
+      }),
+    });
+    await client.listTools();
+    answers = ['127.0.0.1'];
+    const built = mastra.configs[0] as {
+      servers: Record<
+        string,
+        { allowedHosts: string[]; fetch: (url: URL, init?: RequestInit) => Promise<Response> }
+      >;
+    };
+    expect(built.servers.docs.allowedHosts).toEqual(['docs.example.com']);
+    await built.servers.docs.fetch(new URL('https://docs.example.com/mcp'), { method: 'POST' });
+    expect(dialled).toEqual([[{ address: '93.184.216.34', family: 4 }]]);
+    expect(JSON.stringify(sent)).toContain('Bearer docs-secret');
+  });
+
+  it("leaves Day0's own Notion component on the compose network unchecked", async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const client = productionClient(config('http://docs-notion-mcp:3000/mcp'), {
+      resolveHostname: async (): Promise<string[]> => {
+        throw new Error('the bundled component was resolved');
+      },
+    });
+    await expect(client.listTools()).resolves.toEqual({ docs_search: {} });
+    expect(mastra.configs).toHaveLength(1);
   });
 });

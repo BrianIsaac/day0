@@ -115,6 +115,21 @@ describe('documentation source validation', (): void => {
     ).not.toThrow();
   });
 
+  it("refuses a plain HTTP MCP locator except Day0's own component, before a secret is stored (M16)", (): void => {
+    const mcp = (locator: string) => (): unknown =>
+      validateLinkInput({ label: 'Docs', kind: 'mcp', locator, serverKind: 'confluence' });
+    expect(mcp('http://docs.example.com/mcp')).toThrow('must use HTTPS');
+    expect(mcp('https://docs.example.com/mcp')).not.toThrow();
+    expect(() =>
+      validateLinkInput({
+        label: 'Notion',
+        kind: 'mcp',
+        locator: 'http://docs-notion-mcp:3000/mcp',
+        serverKind: 'notion',
+      }),
+    ).not.toThrow();
+  });
+
   it('reads every owner source except the excluded ones, honouring legacy inclusion lists', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
