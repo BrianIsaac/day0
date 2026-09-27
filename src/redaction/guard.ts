@@ -75,6 +75,7 @@ const NAME_SHAPES: ReadonlySet<string> = new Set([
   'channel reference',
   'hostname',
   'dotted identifier',
+  'cjk words',
 ]);
 
 /**
@@ -126,6 +127,11 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
     pattern:
       /^(?:password|passwd|pwd|passcode|passphrase|pin|token|secret|key|api key|credential|credentials|login|username|user|account|bearer|basic|authorization)$/i,
   },
+  /**
+   * Chinese, Japanese or Korean words and nothing else: a label (`身份证号`,
+   * `手机号码`), never a value, unless a label assigns it.
+   */
+  { name: 'cjk words', pattern: /^[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]{2,}$/ },
   /** A provider prefix with nothing after it but a mode word: a placeholder, not a key. */
   {
     name: 'placeholder',
@@ -150,7 +156,7 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
  * abc123". The value is the last word; everything before it names the kind.
  */
 const LABEL_THEN_VALUE =
-  /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"，。]+)[`'"，。]?$/i;
+  /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60]+)[`'"]?(?:[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60]\S*)?$/i;
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
 /** A word of a runbook or of code: lowercase, Capitalised, snake_case or camelCase letters, no digit. */
 const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+)$/;
@@ -201,9 +207,18 @@ const USERNAME_DESIGNATOR =
 const IDENTIFIER_KEY =
   /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
 const IDENTIFIER_KEY_ASSIGNMENT = /\b(?:channel|method)[ \t]+key[ \t]*[:=][ \t]*[`'"]?$/i;
-const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
-/** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
-const TRAILING_PUNCTUATION = /[.,;:)\]}'"`]+$/;
+const LEADING_PUNCTUATION = /^[(\[{'"`（「『【《]+/;
+/**
+ * Sentence punctuation a model swallows, ASCII or full-width; ASCII `!` and `?`
+ * stay, a password may end in one.
+ */
+const TRAILING_PUNCTUATION = /[.,;:)\]}'"`，。；：、！？）」』】》]+$/;
+/** An ASCII value that runs straight on into CJK text: the value ends where the sentence starts. */
+const ASCII_BEFORE_CJK =
+  /^[\x21-\x7e]+(?=[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60])/;
+/** Letters only: the first word of a phrase when more words follow it on the line. */
+const LATIN_LETTERS = /^[A-Za-z]+$/;
+const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
 
 /**
  * Narrow a model's secret span to the value it means, or reject it.
@@ -299,6 +314,11 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   } else if (/\s/.test(value) && label !== 'private key' && !wrappedPassword) {
     return undefined;
   }
+  const cjkTail = ASCII_BEFORE_CJK.exec(value);
+  if (cjkTail) {
+    end = start + cjkTail[0].length;
+    value = text.slice(start, end);
+  }
   const padding = /^={1,2}(?![=A-Za-z0-9+/])/.exec(text.slice(end));
   if (
     padding &&
@@ -321,6 +341,17 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     !opaqueRunbookWord(value) &&
     !SECRET_ASSIGNMENT.test(before) &&
     !inCredentialColumn(text, start, end)
+  ) {
+    return undefined;
+  }
+  // "Login: Google Workspace SSO": an unquoted label value that is the first
+  // word of a phrase is the author's prose; a quote is how an author marks a
+  // secret that reads as a word.
+  if (
+    LATIN_LETTERS.test(value) &&
+    assignedAt(start) &&
+    !/[`'"]$/.test(before) &&
+    PHRASE_CONTINUES.test(text.slice(end).split('\n', 1)[0] ?? '')
   ) {
     return undefined;
   }

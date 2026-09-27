@@ -431,3 +431,47 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     }
   });
 });
+
+describe("the guard over Chinese text and an author's phrases", (): void => {
+  const narrowedValue = (
+    text: string,
+    span: { start: number; end: number },
+  ): string | undefined => {
+    const narrowed = guardSecretSpan(text, span, 'password');
+    return narrowed === undefined ? undefined : text.slice(narrowed.start, narrowed.end);
+  };
+
+  it('trims full-width punctuation from either end of a span', (): void => {
+    const text = 'token: abc123def456）。';
+    expect(narrowedValue(text, spanOf(text, 'abc123def456）。'))).toBe('abc123def456');
+    const quoted = '密钥：（abc123def456）';
+    expect(narrowedValue(quoted, spanOf(quoted, '（abc123def456）'))).toBe('abc123def456');
+  });
+
+  it('narrows a span that swallowed its label and the Chinese sentence after it to the value', (): void => {
+    for (const text of ['密码是hunter2请勿外传', '密码：hunter2x，请勿外传']) {
+      const value = text.includes('hunter2x') ? 'hunter2x' : 'hunter2';
+      expect(narrowedValue(text, { start: 0, end: text.length }), text).toBe(value);
+    }
+    const unlabelled = '令牌 abc123def456请勿外传';
+    expect(narrowedValue(unlabelled, spanOf(unlabelled, 'abc123def456请勿外传'))).toBe(
+      'abc123def456',
+    );
+  });
+
+  it('refuses the first word of an unquoted phrase a label assigns', (): void => {
+    const text = 'Login: Google Workspace SSO';
+    expect(narrowedValue(text, spanOf(text, 'Google'))).toBeUndefined();
+    const managed = 'Password: Managed by Okta';
+    expect(narrowedValue(managed, spanOf(managed, 'Managed'))).toBeUndefined();
+    const quoted = 'Password: "Summer" is the shared one';
+    expect(narrowedValue(quoted, spanOf(quoted, 'Summer'))).toBe('Summer');
+  });
+
+  it('rejects a label of Chinese words outside an assignment, whatever its length', (): void => {
+    for (const value of ['身份证号', '身份证号码', '手机号码', '用户名', '账号']) {
+      expect(guardReason(value), value).toBe('cjk words');
+    }
+    expect(guardReason('开门芝麻', { assigned: true })).toBeUndefined();
+  });
+});
