@@ -96,6 +96,8 @@ import {
   type ManagerNoteKind,
 } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
+import { appendEvent } from './eventLog';
+import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
@@ -544,7 +546,7 @@ async function recordListing(
     listedAt: now,
     ...(refused !== undefined ? { refused } : {}),
   });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: WORK_LISTED_EVENT,
     payload: { workItemId: row._id, tracker, ...(refused !== undefined ? { refused } : {}) },
@@ -685,7 +687,7 @@ async function refreshListedItem(
     const skipReason = `${WITHDRAWN_FROM_QUEUE_PREFIX}${leftQueue}`;
     await ctx.db.patch(existing._id, { ...changed, state: 'cancelled', skipReason });
     await releaseExternalClaim(ctx, existing._id, now);
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: existing.agentId,
       type: 'work.withdrawn',
       payload: { workItemId: existing._id, reason: skipReason, fromState: existing.state },
@@ -706,7 +708,7 @@ async function refreshListedItem(
       skipReason: undefined,
       evaluationClaimedAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: existing.agentId,
       type: 'work.returned',
       payload: { workItemId: existing._id, title: args.title },
@@ -784,7 +786,7 @@ export async function seedItemInTransaction(
     observedAt: askedAtOf({ askedAt, externalId: args.externalId }, Date.now()),
     createdAt: Date.now(),
   });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: args.agentId,
     type: 'work.discovered',
     payload: { workItemId: id, title: args.title, ...(tracker ? { tracker } : {}) },
@@ -925,7 +927,7 @@ export const recordScopeAdmission = internalMutation({
       scopeAdmission: { charterId: args.charterId, at, ...args.admission },
     });
     if (!args.admission.overruled?.length) return;
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.scope-skip-overruled',
       payload: { workItemId: args.workItemId, ...args.admission },
@@ -1064,7 +1066,7 @@ export async function reevaluatePendingInTransaction(
         ...(row.state === 'skipped' ? { scopeAdmission: undefined } : {}),
         reevaluation: reevaluationStamp(row, args.trigger, args.key, now),
       });
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: args.agentId,
         type: 'work.requeued',
         payload: {
@@ -1097,7 +1099,7 @@ export async function reevaluatePendingInTransaction(
     });
   }
   if (readmitted > 0) {
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'work.reevaluation',
       payload: { trigger: args.trigger, key: args.key, readmitted, examined },
@@ -1318,7 +1320,7 @@ async function logClaimRefused(
   row: Doc<'workItems'>,
   refused: { key: string; holder: ClaimHolder },
 ): Promise<void> {
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.claim-refused',
     payload: { workItemId: row._id, key: refused.key, holder: refused.holder },
@@ -2040,7 +2042,7 @@ async function logSatisfiedRequeue(
   waited: WaitingVerdict,
   now: number,
 ): Promise<void> {
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.requeued',
     payload: {
@@ -2269,7 +2271,7 @@ export async function applyVerdict(
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .order('desc')
     .first();
-  const evaluatedId = await ctx.db.insert('events', {
+  const evaluatedId = await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.evaluated',
     payload: {
@@ -2290,7 +2292,7 @@ export async function applyVerdict(
   }
   if (nextState === 'skipped') {
     // A skip ends the item: its terminal event, as every terminal transition writes one.
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.skipped',
       payload: { workItemId, ...(skipReason ? { reason: skipReason } : {}) },
@@ -2377,7 +2379,7 @@ export const beginPlanGroundingRead = internalMutation({
   handler: async (ctx, args): Promise<Id<'events'>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
-    return await ctx.db.insert('events', {
+    return await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.plan-grounding-read',
       payload: { workItemId: args.workItemId, action: args.action },
@@ -2479,14 +2481,14 @@ export const setPlan = internalMutation({
       ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.plan-drafted',
       payload: { workItemId: args.workItemId, plan },
       createdAt: Date.now(),
     });
     if (applied.length > 0) {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: row.agentId,
         type: 'work.corrections-applied',
         payload: {
@@ -2541,7 +2543,7 @@ export const decidePlan = internalMutation({
           : undefined;
     if (waived) {
       if (!args.recovery) {
-        await ctx.db.insert('events', {
+        await appendEvent(ctx, {
           agentId: row.agentId,
           type: 'work.plan-held',
           payload: { workItemId: args.workItemId, reason: 'skip-overruled', waived },
@@ -2556,7 +2558,7 @@ export const decidePlan = internalMutation({
       // The sweep re-runs this for an undecided row every lease; the drafting
       // call is the one that records why the plan waits.
       if (!args.recovery) {
-        await ctx.db.insert('events', {
+        await appendEvent(ctx, {
           agentId: row.agentId,
           type: 'work.plan-held',
           payload: {
@@ -2574,7 +2576,7 @@ export const decidePlan = internalMutation({
       return { approved: false };
     }
     await ctx.db.patch(args.workItemId, { state: 'plan-approved' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.plan-approved',
       payload: { workItemId: args.workItemId, by: 'autonomous' },
@@ -2686,7 +2688,7 @@ export const prepareDecisionRequest = internalMutation({
             ];
           })
         : [];
-    const requestRunId = await ctx.db.insert('events', {
+    const requestRunId = await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.decision-requesting',
       payload: {
@@ -2750,7 +2752,7 @@ async function supersedeDecisionRequest(
       decision: { ...decision, requestFailedAt: now, requestFailure: reason },
     });
   }
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.decision-request-resent',
     payload: { workItemId: row._id, decisionId: decision.id, kind: decision.kind, reason },
@@ -2924,7 +2926,7 @@ export const recordDecisionRequest = internalMutation({
     // The request is single-use whether or not it landed, so the feed must say why
     // no channel reply is coming; the dashboard still decides the parked row.
     if (failure) {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: row.agentId,
         type: 'work.decision-request-failed',
         payload: {
@@ -2972,7 +2974,7 @@ export const prepareDecisionNotice = internalMutation({
         candidate.managerDmChannelId === row.decision?.channel,
     );
     if (!agent || !surface) return { prepared: false as const };
-    const requestRunId = await ctx.db.insert('events', {
+    const requestRunId = await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.decision-notifying',
       payload: { workItemId: row._id, decisionId: row.decision.id },
@@ -3044,7 +3046,7 @@ export const prepareManagerReplyNotice = internalMutation({
         !!candidate.managerDmChannelId,
     );
     if (!workItem || !agent || !surface) return { prepared: false as const };
-    const requestRunId = await ctx.db.insert('events', {
+    const requestRunId = await appendEvent(ctx, {
       agentId: notice.agentId,
       type: 'work.decision-acknowledging',
       payload: {
@@ -3108,7 +3110,7 @@ async function resolveChannelBatch(
   },
 ) {
   if (batch.surfaceSlug !== surface.slug || batch.channel !== surface.managerDmChannelId) {
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'work.decision-ignored',
       payload: {
@@ -3188,7 +3190,7 @@ async function resolveChannelBatch(
   }
   const outcome = args.reply.verb === 'approve' ? 'approved' : 'rejected';
   await ctx.db.patch(batch._id, { decidedAt: Date.now(), outcome, decidedTs: args.messageTs });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: surface.agentId,
     type: 'work.decision-batch-decided',
     payload: { batchId: batch.id, outcome, decided, skipped, messageTs: args.messageTs },
@@ -3350,7 +3352,7 @@ async function approvePlanInTransaction(
     ...(answers.length > 0 ? { managerAnswers: answers } : {}),
     ...decidedPatch(row, 'plan', via, 'approved', messageTs),
   });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.plan-approved',
     payload: {
@@ -3446,7 +3448,7 @@ export const resendDecisionRequest = mutation({
         );
       }
       const kind: DecisionKind = row.state === 'plan-pending' ? 'plan' : 'actions';
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: row.agentId,
         type: 'work.decision-request-asked',
         payload: { workItemId: row._id, kind },
@@ -3575,7 +3577,7 @@ export const retryFailed = mutation({
     });
     // The note is also kept for the employee's later work of the same kind.
     if (feedback) await keepCorrectionInTransaction(ctx, row, 'retry-note', feedback);
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.retry',
       payload: {
@@ -3614,7 +3616,7 @@ export const reconcileFailed = mutation({
     const confirmedAt = Date.now();
     const providerReconciliation = { actor: identity.subject, confirmedAt, entries };
     await ctx.db.patch(args.workItemId, { providerReconciliation });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.provider-reconciled',
       payload: {
@@ -3664,7 +3666,7 @@ async function cancelPlanInTransaction(
     ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
   await releaseExternalClaim(ctx, row._id, Date.now());
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.cancelled',
     payload: { workItemId: row._id, reason: skipReason, decidedVia: via },
@@ -3776,7 +3778,7 @@ export const claimForExecution = internalMutation({
     if (skill.state !== 'registered' || skill.body === '') {
       return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
     }
-    const runId = await ctx.db.insert('events', {
+    const runId = await appendEvent(ctx, {
       agentId: item.agentId,
       type: 'work.execution-claimed',
       payload: {
@@ -3827,7 +3829,7 @@ export const claimForBaseline = internalMutation({
             : `workItem state is ${item.state}; expected discovered`,
       };
     }
-    const runId = await ctx.db.insert('events', {
+    const runId = await appendEvent(ctx, {
       agentId: item.agentId,
       type: 'work.execution-claimed',
       payload: { workItemId: args.workItemId, arm: 'baseline' },
@@ -3888,7 +3890,7 @@ export const prepareDependentPhase = internalMutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.dependent-authoring',
       payload: {
@@ -3931,7 +3933,7 @@ export const claimDependentAuthoring = internalMutation({
     if (row.applyAttemptId !== undefined) {
       return { claimed: false, reason: 'another dependent authoring turn already claimed the run' };
     }
-    const authoringAttemptId = await ctx.db.insert('events', {
+    const authoringAttemptId = await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.dependent-authoring-claimed',
       payload: { workItemId: args.workItemId, runId: args.runId },
@@ -4055,7 +4057,7 @@ export const setCompleted = internalMutation({
         : {}),
       managerAnswers: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.completed',
       payload: { workItemId: args.workItemId, output: args.output },
@@ -4161,7 +4163,7 @@ async function failInTransaction(
     applyClaimedAt: undefined,
     ...(args.output !== undefined ? { output: args.output } : {}),
   });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.failed',
     payload: {
@@ -4268,7 +4270,7 @@ export const prepareManagerNote = internalMutation({
     }
     const delivery = await managerDelivery(ctx, note.agentId);
     if (!delivery) return { prepared: false as const };
-    const requestRunId = await ctx.db.insert('events', {
+    const requestRunId = await appendEvent(ctx, {
       agentId: note.agentId,
       type: 'work.manager-note-sending',
       payload: { workItemId: note.workItemId, noteId: note._id, kind: note.kind },
@@ -4317,7 +4319,7 @@ export const recoverUnsentManagerNote = internalMutation({
       return { recovered: 'ignored' };
     }
     await ctx.db.patch(note._id, { failure: UNSENT_NOTE_REASON });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: note.agentId,
       type: 'work.manager-note-failed',
       payload: {
@@ -4347,7 +4349,7 @@ export const recordManagerNote = internalMutation({
       ...(failure ? { failure } : {}),
     });
     if (failure) {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: note.agentId,
         type: 'work.manager-note-failed',
         payload: {
@@ -4442,7 +4444,7 @@ export const prepareManagerDigest = internalMutation({
     if (notes.length === 0) return { prepared: false as const };
     const delivery = await managerDelivery(ctx, args.agentId);
     if (!delivery) return { prepared: false as const };
-    const digestId = await ctx.db.insert('events', {
+    const digestId = await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'work.manager-digest-sending',
       payload: { noteIds: notes.map((note) => note._id), count: notes.length },
@@ -4481,7 +4483,7 @@ export const recordManagerDigest = internalMutation({
       });
     }
     if (failure) {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: args.agentId,
         type: 'work.manager-digest-failed',
         payload: { noteIds: args.noteIds, reason: failure },
@@ -4738,7 +4740,7 @@ export const setActionsPending = internalMutation({
     const refusals = refusedReasonEntries(actionVerdicts, actions.length).map(
       ([index, reason]) => ({ index, reason }),
     );
-    const payload = {
+    const payload: WorkActionsAutoApplyingPayload = {
       workItemId: args.workItemId,
       runId: args.runId,
       actionCount: actions.length,
@@ -4760,7 +4762,7 @@ export const setActionsPending = internalMutation({
         applyAttemptId: undefined,
         applyClaimedAt: undefined,
       });
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: row.agentId,
         type: 'work.actions-auto-applying',
         payload,
@@ -4773,7 +4775,7 @@ export const setActionsPending = internalMutation({
     // one refused by the gate) has nothing to decide: parked, it would hold
     // the slot with both approve controls disabled and no request sent (P5-3).
     if (!dependent && heldIndexes.length === 0) {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: row.agentId,
         type: 'work.actions-pending',
         payload,
@@ -4798,7 +4800,7 @@ export const setActionsPending = internalMutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.actions-pending',
       payload,
@@ -4850,7 +4852,7 @@ export const setAwaitingApproval = internalMutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.actions-pending',
       payload: {
@@ -4975,7 +4977,7 @@ export const prepareDecisionBatch = internalMutation({
       members: args.members,
       requestedAt: Date.now(),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'work.decision-batch-issued',
       payload: { batchId: args.batchId, members: args.members },
@@ -5030,7 +5032,7 @@ async function approveActionsInTransaction(
     applyPhase: 'approved',
     ...decidedPatch(row, 'actions', via, 'approved', messageTs),
   });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.actions-approved',
     payload: {
@@ -5151,7 +5153,7 @@ async function rejectActionsInTransaction(
   if (feedback)
     await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
   await releaseItemClaim(ctx, args.workItemId, now);
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.actions-rejected',
     payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
@@ -5208,7 +5210,7 @@ export const resolveChannelDecision = internalMutation({
       return { status: 'ignored' as const, reason: 'predates the agent' };
     }
     const ignored = async (reason: string) => {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: surface.agentId,
         type: 'work.decision-ignored',
         payload: {
@@ -5272,7 +5274,7 @@ export const resolveChannelDecision = internalMutation({
         await ctx.db.patch(row._id, {
           decision: { ...row.decision, duplicateNotifiedAt: Date.now() },
         });
-        await ctx.db.insert('events', {
+        await appendEvent(ctx, {
           agentId: row.agentId,
           type: 'work.decision-duplicate',
           payload: {
@@ -5395,7 +5397,7 @@ export const claimApprovedActions = internalMutation({
     // A missing agent row is the apply action's failure to report (it fences
     // the run as outcome-unknown); the claim only needs the switch's value.
     const agent = await ctx.db.get(row.agentId);
-    const applyAttemptId = await ctx.db.insert('events', {
+    const applyAttemptId = await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.actions-applying',
       payload: {
@@ -5519,7 +5521,7 @@ export const recoverInterruptedApply = internalMutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.actions-interrupted',
       payload: {

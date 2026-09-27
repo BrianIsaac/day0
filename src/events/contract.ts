@@ -616,7 +616,8 @@ export interface WorkScopeSkipOverruledPayload extends WorkItemNamed {
 export interface WorkRequeuedPayload extends WorkItemNamed {
   readonly trigger?: RequeueTrigger;
   readonly key?: string;
-  readonly previousState?: 'skipped' | 'deferred' | 'needs-skill';
+  /** The parked state the row left. */
+  readonly previousState?: Doc<'workItems'>['state'];
   readonly surfaceId?: SurfaceId;
   readonly slug?: string;
   readonly previousMissingSurface?: string;
