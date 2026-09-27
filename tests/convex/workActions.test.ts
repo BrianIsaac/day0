@@ -583,7 +583,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                       args,
                       bearer: options.bearer ?? '',
                     });
-                    if (recorded.failMcpAfterRequest) {
+                    // A write the provider accepted before the socket closed; the
+                    // re-read before it answered.
+                    if (recorded.failMcpAfterRequest && tool !== 'get_issue') {
                       throw new Error('socket closed after provider accepted the request');
                     }
                     if (recorded.failedMcpTool === tool) {
@@ -1619,7 +1621,9 @@ describe('executing an approved plan through the gate', (): void => {
     ).resolves.toEqual({ ok: false, reason: 'dependent phase is not awaiting authoring' });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
 
-    const linearCalls = recorded.mcp.filter((call) => call.server === 'linear');
+    // The ticket is read again before the first write on it (Q11).
+    const [reread, ...linearCalls] = recorded.mcp.filter((call) => call.server === 'linear');
+    expect(reread?.tool).toBe('get_issue');
     expect(linearCalls.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
     expect(linearCalls[0].args).toMatchObject({
       issueId: 'iss-1',
@@ -1839,7 +1843,7 @@ describe('executing an approved plan through the gate', (): void => {
     expect((await readItem(harness, workItemId)).state).toBe('completed');
     expect(
       recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool),
-    ).toEqual(['save_comment', 'save_issue']);
+    ).toEqual(['get_issue', 'save_comment', 'save_issue']);
   });
 
   it('stops without a second decision when the manager left the prerequisite out, and withholds the closing comment', async (): Promise<void> => {
@@ -2199,6 +2203,7 @@ describe('executing an approved plan through the gate', (): void => {
     const done = await readItem(harness, workItemId);
     expect(done.state).toBe('completed');
     expect(recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool)).toEqual([
+      'get_issue',
       'save_comment',
       'save_issue',
     ]);
@@ -3002,6 +3007,7 @@ describe('executing an approved plan through the gate', (): void => {
     expect(ledger(row)[2].providerId).toBe('1787654400.000200');
     expect(ledger(row)[3].reason).toBe(HELD_NOT_APPROVED);
     expect(recorded.mcp).toEqual([
+      { server: 'linear', tool: 'get_issue', args: { id: 'iss-1' }, bearer: 'plain-cred-linear' },
       {
         server: 'linear',
         tool: 'save_comment',
@@ -3078,7 +3084,7 @@ describe('executing an approved plan through the gate', (): void => {
       held: true,
       reason: HELD_PUBLIC_POST,
     });
-    expect(recorded.mcp).toHaveLength(1);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'save_comment']);
     expect(recorded.http).toHaveLength(0);
   });
 
@@ -3100,7 +3106,8 @@ describe('executing an approved plan through the gate', (): void => {
       [true, false, undefined],
       [true, true, HELD_NOT_APPROVED],
     ]);
-    expect(recorded.mcp).toHaveLength(0);
+    // Re-read before the status change reached the comment-before-status rule; nothing was written.
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
     expect(recorded.http).toHaveLength(1);
   });
 
@@ -3194,7 +3201,7 @@ describe('executing an approved plan through the gate', (): void => {
       [true, true, 'no grant (boss:message)'],
       [true, true, HELD_NOT_APPROVED],
     ]);
-    expect(recorded.mcp).toHaveLength(1);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'save_comment']);
     expect(recorded.http).toHaveLength(0);
   });
 
@@ -3262,12 +3269,16 @@ describe('executing an approved plan through the gate', (): void => {
       ).resolves.toEqual({ ok: true });
       const row = await readItem(harness, workItemId);
       expect(row.state).toBe('completed');
-      expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
-      expect(recorded.mcp[0]!.args).toMatchObject({
+      expect(recorded.mcp.map((call) => call.tool)).toEqual([
+        'get_issue',
+        'save_comment',
+        'save_issue',
+      ]);
+      expect(recorded.mcp[1]!.args).toMatchObject({
         issueId: 'iss-1',
         body: expect.stringContaining('Prepared the close summary.'),
       });
-      expect(recorded.mcp[0]!.args).not.toHaveProperty('comment');
+      expect(recorded.mcp[1]!.args).not.toHaveProperty('comment');
       expect(ledger(row)[0]).toMatchObject({
         ok: true,
         authority: 'manager',
@@ -3600,7 +3611,7 @@ describe('executing an approved plan through the gate', (): void => {
       outcomeUnknown: true,
       reason: 'socket closed after provider accepted the request',
     });
-    expect(recorded.mcp).toHaveLength(1);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'save_comment']);
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
@@ -4298,7 +4309,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
       ok: true,
       authority: 'manager',
     });
-    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'save_comment']);
   });
 
   it('off: applies the reads and the DM, parks the comment and the public reply, then sends the reply in its thread once approved', async (): Promise<void> => {
@@ -4385,6 +4396,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     expect(recorded.mcp.map((call) => call.tool)).toEqual([
       'get_issue',
       'list_comments',
+      'get_issue',
       'save_comment',
     ]);
     expect(recorded.http.map((call) => call.body)).toEqual([
@@ -4500,6 +4512,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     ]);
     expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([
       ['get_issue', { id: 'iss-1' }],
+      ['get_issue', { id: 'iss-1' }],
       [
         'save_comment',
         { issueId: 'iss-1', body: expect.stringContaining('-- Priya (Day0) · run ') },
@@ -4611,7 +4624,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
       ok: false,
       reason: expect.stringContaining('not an automatic action'),
     });
-    expect(recorded.mcp).toHaveLength(0);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'not an automatic action' });
@@ -4644,7 +4657,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
       ok: false,
       reason: expect.stringContaining('no grant (linear:write)'),
     });
-    expect(recorded.mcp).toHaveLength(0);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'no grant (linear:write)' });
@@ -4723,7 +4736,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
 
     const result = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('agent not found') });
-    expect(recorded.mcp).toHaveLength(0);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'agent not found' });
@@ -6234,5 +6247,169 @@ describe('a question asked in the notes when no chat surface can carry the manag
     expect(pending.state).toBe('actions-pending');
     expect((pending.output as { actions: unknown[] }).actions).toEqual([comment, done]);
     expect(pending.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['held', 'held']);
+  });
+});
+
+describe('the re-read before the first write on a ticket (Q11)', (): void => {
+  const linearCall = (tool: string, toolArgs: Record<string, unknown>) => ({
+    tool: 'mcp.call' as const,
+    args: { surface: 'linear', tool, toolArgsJson: JSON.stringify(toolArgs) },
+  });
+  const closeOut = [
+    linearCall('save_comment', { issueId: 'iss-1', body: 'Close summary audited.' }),
+    linearCall('save_issue', { id: 'iss-1', state: 'Done' }),
+  ];
+  const asPlanned = {
+    assigned: false,
+    state: 'Todo',
+    stateType: 'unstarted',
+    doNotAutomate: false,
+  };
+
+  /** A plan-approved ticket at the apply of its writes, listed as the plan saw it. */
+  async function atFirstWrite(
+    harness: Harness,
+    landedWrites: unknown[] = [],
+  ): Promise<Id<'workItems'>> {
+    const { agentId, workItemId } = await seed(harness, 'real', undefined, {
+      autonomousActions: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.listed',
+        payload: { workItemId, tracker: asPlanned },
+        createdAt: 1,
+      });
+      const runId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(workItemId, {
+        state: 'executing',
+        executionRunId: runId,
+        pendingRunId: runId,
+        applyPhase: 'auto',
+        approvedIndexes: [0, 1],
+        actionVerdicts: [{ disposition: 'auto' as const }, { disposition: 'auto' as const }],
+        output: {
+          draft: 'Audited and closed.',
+          notes: '',
+          actions: closeOut,
+          ...(landedWrites.length > 0 ? { landedWrites } : {}),
+        },
+      });
+    });
+    return workItemId;
+  }
+
+  const linearTools = (): string[] =>
+    recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool);
+
+  it('withholds every write and sends nothing when the ticket changed hands since the plan', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      assignee: 'Ana Lim',
+      assigneeId: 'user-ana',
+      status: 'Todo',
+      statusType: 'unstarted',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(
+      "stopped: withheld before the first write: iss-1 changed since the plan was made: it changed hands: it is assigned and the key's owner could not be read to confirm it is Day0's. Nothing was sent.",
+    );
+    expect(linearTools()).toEqual(['get_issue']);
+    expect(ledger(stopped)).toEqual([
+      expect.objectContaining({
+        ok: true,
+        held: true,
+        reason: expect.stringContaining('changed hands'),
+      }),
+      expect.objectContaining({
+        ok: true,
+        held: true,
+        reason: expect.stringContaining('changed hands'),
+      }),
+    ]);
+  });
+
+  it('withholds when the state moved since the plan', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'In Progress',
+      statusType: 'started',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('its state moved from Todo to In Progress');
+    expect(linearTools()).toEqual(['get_issue']);
+  });
+
+  it('sends the writes after one re-read when the ticket is as the plan left it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'Todo',
+      statusType: 'unstarted',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
+    expect(recorded.mcp[0]?.args).toEqual({ id: 'iss-1' });
+  });
+
+  it('counts a state an earlier run of the item set as its own, not as a change', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness, [
+      {
+        action: linearCall('save_issue', { id: 'iss-1', state: 'In Progress' }),
+        applied: { tool: 'mcp.call', ok: true, providerId: 'iss-1', idempotencyKey: 'wi:first:0' },
+      },
+    ]);
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'In Progress',
+      statusType: 'started',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
+  });
+
+  it('withholds when the ticket cannot be re-read', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    recorded.failedMcpTool = 'get_issue';
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('iss-1 could not be re-read');
+    expect(stopped.skipReason).toContain('Nothing was sent.');
+    expect(linearTools()).toEqual(['get_issue']);
   });
 });

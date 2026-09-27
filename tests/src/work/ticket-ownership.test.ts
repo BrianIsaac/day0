@@ -83,7 +83,7 @@ describe('ticket ownership', () => {
       'it is labelled do-not-automate',
     );
     await expect(ticketChange({ ...todo, assigned: true }, context)).resolves.toBe(
-      'it is assigned to a person Day0 cannot identify by id or email',
+      'it changed hands: it is assigned to a person Day0 cannot identify by id or email',
     );
   });
 
@@ -120,6 +120,6 @@ describe('ticket ownership', () => {
         { ...todo, assigned: true, assigneeId: 'user-key' },
         { owner: ownerRead('unread').read },
       ),
-    ).resolves.toBe("it is assigned and the key's owner could not be read");
+    ).resolves.toBe("it is assigned and the key's owner could not be read to confirm it is Day0's");
   });
 });

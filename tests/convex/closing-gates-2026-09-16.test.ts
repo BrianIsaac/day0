@@ -121,6 +121,11 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                 if (tool === 'save_issue') return text(JSON.stringify({ id: 'lin-5', state: { name: 'Done' } }));
                 if (tool === 'browser_navigate') return text('- Page URL: http://looker-tile:8080/');
                 if (tool === 'browser_snapshot') return text(TILE_SNAPSHOT);
+                // The re-read before the first write on the ticket reads a record.
+                if (tool === 'get_issue') {
+                  const { id } = args as { id?: string };
+                  return text(JSON.stringify({ id, status: 'In Progress', statusType: 'started' }));
+                }
                 return text('ok');
               },
             },
@@ -339,8 +344,8 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const done = await readItem(t, workItemId);
     expect(done.state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
-    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(REVOPS_7_COMMENT);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect((recorded.mcp[1]!.args as { body: string }).body).toContain(REVOPS_7_COMMENT);
     expect((done.output as { planStepOutcomes: Array<{ status: string }> }).planStepOutcomes.map((row) => row.status)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied']);
   });
 
@@ -412,7 +417,7 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(t, workItemId)).state).toBe('completed');
     // The tile was not touched again: only the closing writes reached a provider.
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
 
   it('scrubs a stored credential value out of the refused closing set before the row keeps it', async (): Promise<void> => {
@@ -460,13 +465,13 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['auto', 'held']);
     expect(held.actionVerdicts?.[1]?.reason).toBe(HELD_WITHHELD_TRANSITION);
     // The comment landed on its own; the Done did not.
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment']]);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment']]);
     await t.withIdentity(OWNER).mutation(api.work.approveActions, {
       workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [1],
     });
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(t, workItemId)).state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
 
   it('accepts the run 3 REVOPS-7 closing set: the read-back step 3 conditions on is of the tile, and Linear is the write target', async (): Promise<void> => {
@@ -488,8 +493,8 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     const done = await readItem(t, workItemId);
     expect(done.state).toBe('completed');
     expect(done.skipReason).toBeUndefined();
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
-    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(RUN_3_REVOPS_7_COMMENT);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect((recorded.mcp[1]!.args as { body: string }).body).toContain(RUN_3_REVOPS_7_COMMENT);
     expect(recorded.http).toEqual([]);
     const output = done.output as { planStepOutcomes: Array<{ status: string }>; refusedClosing?: unknown };
     expect(output.planStepOutcomes.map((row) => row.status)).toEqual(['satisfied', 'satisfied', 'satisfied']);
@@ -507,7 +512,7 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const done = await readItem(t, workItemId);
     expect(done.state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
     expect(recorded.http).toEqual([]);
   });
 
@@ -527,8 +532,8 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const done = await readItem(t, workItemId);
     expect(done.state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment']]);
-    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(REVOPS_5_COMMENT);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment']]);
+    expect((recorded.mcp[1]!.args as { body: string }).body).toContain(REVOPS_5_COMMENT);
     expect(recorded.http).toEqual([]);
   });
 });
@@ -571,7 +576,7 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     // Phase one landed the refresh and the read; the closing phase landed the comment; the Done waits for the manager.
     // The browser adapter snapshots the page around each step of its own accord; the sequence is read without those.
     expect(recorded.mcp.map((call) => call.tool).filter((tool) => tool !== 'browser_snapshot')).toEqual([
-      'browser_navigate', 'browser_fill_form', 'browser_click', 'browser_fill_form', 'browser_click', 'list_issues', 'save_comment',
+      'browser_navigate', 'browser_fill_form', 'browser_click', 'browser_fill_form', 'browser_click', 'list_issues', 'get_issue', 'save_comment',
     ]);
     expect(recorded.mcp.some((call) => call.tool === 'browser_snapshot')).toBe(true);
     const comments = recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => (call.args as { body: string }).body);
@@ -601,8 +606,8 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     const done = await readItem(t, workItemId);
     expect(done.state).toBe('completed');
     expect(done.skipReason).toBeUndefined();
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
-    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(RUN_4_REVOPS_7_COMMENT);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect((recorded.mcp[1]!.args as { body: string }).body).toContain(RUN_4_REVOPS_7_COMMENT);
     expect((done.output as { refusedClosing?: unknown }).refusedClosing).toBeUndefined();
   });
 
@@ -643,15 +648,15 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     expect(held.state).toBe('actions-pending');
     expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['auto', 'held']);
     expect(held.actionVerdicts?.[1]?.reason).toBe(HELD_WITHHELD_TRANSITION);
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment']]);
-    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(RUN_4_REVOPS_5_COMMENT);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment']]);
+    expect((recorded.mcp[1]!.args as { body: string }).body).toContain(RUN_4_REVOPS_5_COMMENT);
     await t.withIdentity(OWNER).mutation(api.work.approveActions, {
       workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [1],
     });
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const done = await readItem(t, workItemId);
     expect(done.state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
 
   it('stops at the closing gate when the audit comment is withheld: the Done goes with it, nothing reaches Linear, and the retry resumes at the closing phase', async (): Promise<void> => {
@@ -708,6 +713,6 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     expect(recorded.model[0]!.user).toContain('All three standup deals are reconciled');
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(t, workItemId)).state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
 });

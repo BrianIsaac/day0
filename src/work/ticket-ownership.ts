@@ -214,9 +214,55 @@ export async function ticketChange(
     const same = samePerson(assignee, { id: baseline.assigneeId, email: baseline.assigneeEmail });
     if (same === true) return undefined;
   }
+  // Assigned since the listing, or with no listing to compare: it is the
+  // item's still only when it is assigned to the key's owner.
+  const moved = baseline === undefined ? '' : 'it changed hands: ';
   const owner = await context.owner();
-  if (owner === undefined) return "it is assigned and the key's owner could not be read";
+  if (owner === undefined) {
+    return `${moved}it is assigned and the key's owner could not be read to confirm it is Day0's`;
+  }
   const mine = samePerson(assignee, owner);
-  if (mine === undefined) return 'it is assigned to a person Day0 cannot identify by id or email';
-  return mine ? undefined : 'it changed hands: it is assigned to another person';
+  if (mine === undefined)
+    return `${moved}it is assigned to a person Day0 cannot identify by id or email`;
+  return mine ? undefined : `${moved}it is assigned to another person`;
+}
+
+/**
+ * The record an MCP read answered with, from its text: JSON, fenced or not,
+ * with the ticket or person nested under `issue` or `user` when it is.
+ *
+ * @param text - The first text block of the tool result.
+ * @param key - The key the record may be nested under.
+ * @returns The record, or undefined when the text holds none.
+ */
+export function recordFromText(
+  text: string,
+  key: 'issue' | 'user',
+): Record<string, unknown> | undefined {
+  const body = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Not JSON: a server that prints prose has given no record to compare.
+    return undefined;
+  }
+  const record = asRecord(parsed);
+  return asRecord(record?.[key]) ?? record;
+}
+
+/**
+ * Why a run's writes were withheld before the first of them, for the card.
+ *
+ * @param ticket - The ticket's id.
+ * @param finding - What changed, or why it could not be read.
+ * @param unread - Whether the ticket could not be read at all.
+ */
+export function withheldBeforeFirstWrite(ticket: string, finding: string, unread = false): string {
+  return unread
+    ? `withheld before the first write: ${ticket} could not be re-read (${finding}). Nothing was sent.`
+    : `withheld before the first write: ${ticket} changed since the plan was made: ${finding}. Nothing was sent.`;
 }

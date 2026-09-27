@@ -84,7 +84,7 @@ import {
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
-import { createMastraMcpClient } from '../src/surfaces/mcp';
+import { createMastraMcpClient, interpretToolResult, type McpToolLike } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { ledgerRunIds } from '../src/surfaces/browser-session';
 import { carriedReadIndexes, rereadStopReason, withRereads, type FailedReread } from '../src/surfaces/rereads';
@@ -109,11 +109,24 @@ import {
 } from '../src/work/corrections';
 import { droppedReadRefusal, gateRefusalStop, landedWork, WITHHELD_ON_STOP, withRefusedReadsDropped } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
-import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
+import {
+  landedWritesOf,
+  lastLandedState,
+  reusedFrom,
+  reusedLedger,
+} from '../src/work/landed-writes';
+import {
+  personKey,
+  recordFromText,
+  ticketChange,
+  ticketSnapshot,
+  withheldBeforeFirstWrite,
+  type PersonIdentity,
+} from '../src/work/ticket-ownership';
 import type { GroundingRead } from '../src/work/evidence-claims';
 import { carriedDeclaredReads, groundingReadSurfaces, noteReleasesRead } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
-import { redactTokenShapes } from '../src/surfaces/redact';
+import { redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import {
   grantRefusal,
   actionIntent,
@@ -2346,6 +2359,278 @@ function isRead(action: MockAction): boolean {
   return parsed.ok && actionIntent(parsed.action) === 'read';
 }
 
+/** The argument names a key-owner read takes, in the order they are tried. */
+const OWNER_READ_ARGUMENTS = ['query', 'id', 'userId', 'user'] as const;
+
+/** Whether an action is a write on one surface. */
+function isWriteOn(action: MockAction, slug: string): boolean {
+  const parsed = parseSurfaceAction(action);
+  return parsed.ok && parsed.action.surface === slug && actionIntent(parsed.action) === 'write';
+}
+
+/**
+ * Whether an earlier phase of this run sent a write on the surface: the
+ * re-read before that write stands for the run. A row an earlier run sent,
+ * carried into a resumed set, does not: a retry reads the ticket again.
+ */
+function sentEarlierThisRun(
+  output: LedgerOutput | DependentPendingOutput,
+  phase: 'auto' | 'approved',
+  slug: string,
+  run: { workItemId: Id<'workItems'>; runId: Id<'events'> },
+): boolean {
+  const thisRun = `${run.workItemId}:${run.runId}:`;
+  // Phase one of a two-phase run, and this set's automatic rows when the
+  // manager's approval is being applied.
+  const earlier = [
+    ...(isDependentPendingOutput(output)
+      ? [{ actions: output.initial.actions, applied: output.initial.applied }]
+      : []),
+    ...(phase === 'approved'
+      ? [{ actions: output.actions ?? [], applied: output.applied ?? [] }]
+      : []),
+  ];
+  return earlier.some(({ actions, applied }) =>
+    actions.some((action, index) => {
+      const entry = applied[index];
+      const sent =
+        entry?.ok === true &&
+        !entry.held &&
+        !entry.awaitingApproval &&
+        !reusedFrom(entry) &&
+        entry.idempotencyKey.startsWith(thisRun);
+      return sent && isWriteOn(action, slug);
+    }),
+  );
+}
+
+/**
+ * The key's owner, from the surface's own `get_user` with `me`, as intake
+ * asks it; undefined when the tool is not allowed or the answer names
+ * nobody by id or email. The caller withholds on undefined, which is how a
+ * failed read is reported: the card says the owner could not be read.
+ */
+async function rereadKeyOwner(
+  tools: Record<string, McpToolLike>,
+  surface: SurfaceRecord,
+): Promise<PersonIdentity | undefined> {
+  if (!surface.toolAllowlist?.includes('get_user')) return undefined;
+  const tool = tools[`${surface.slug}_get_user`];
+  const probed = surface.toolArguments?.find((entry) => entry.tool === 'get_user')?.arguments;
+  const argument = probed
+    ? OWNER_READ_ARGUMENTS.find((name) => probed.includes(name))
+    : OWNER_READ_ARGUMENTS[0];
+  if (!tool?.execute || !argument) return undefined;
+  try {
+    const result = interpretToolResult(await tool.execute({ [argument]: 'me' }, {}));
+    const user = result.isError ? undefined : recordFromText(result.text, 'user');
+    const owner: PersonIdentity = { id: personKey(user?.id), email: personKey(user?.email) };
+    return owner.id !== undefined || owner.email !== undefined ? owner : undefined;
+  } catch {
+    // Reported by the caller as an owner that could not be read.
+    return undefined;
+  }
+}
+
+/**
+ * Re-read the ticket a run works before the run's first write on it, and
+ * say why the writes are withheld when it is no longer the ticket the plan
+ * was made for (Q11): assigned to somebody else since, moved to another
+ * state by anyone but an earlier run of this item, labelled do-not-automate,
+ * or closed. A ticket that cannot be read is withheld too. Real mode only;
+ * the read is Day0's own check, made with the surface's credential like
+ * intake's, and is not a ledger row.
+ *
+ * @returns The card's reason, or undefined when the writes may go.
+ */
+async function ticketRereadRefusal(
+  ctx: ActionCtx,
+  args: {
+    item: Doc<'workItems'>;
+    surface: SurfaceRecord;
+    output: LedgerOutput | DependentPendingOutput;
+    surfaces: readonly SurfaceRecord[];
+  },
+): Promise<string | undefined> {
+  const { item, surface } = args;
+  const ticket = item.externalId;
+  const read = candidateRecordRead(rowToCandidate(item), args.surfaces, Date.now());
+  const call = read ? parseSurfaceAction(read.action) : undefined;
+  if (
+    !read ||
+    call?.ok !== true ||
+    call.action.kind !== 'mcp.call' ||
+    !surface.endpoint ||
+    !surface.credentialId
+  ) {
+    return withheldBeforeFirstWrite(
+      ticket,
+      `${surface.displayName} allows no single-record read`,
+      true,
+    );
+  }
+  const carried =
+    (isDependentPendingOutput(args.output)
+      ? args.output.initial.landedWrites
+      : args.output.landedWrites) ?? [];
+  let bearer = '';
+  try {
+    bearer = await decryptCredential(ctx, surface.credentialId);
+    const client = createMastraMcpClient({
+      serverName: surface.slug,
+      url: new URL(surface.endpoint),
+      bearer,
+    });
+    try {
+      const tools = await client.listTools();
+      const tool = tools[`${surface.slug}_${read.tool}`];
+      if (!tool?.execute)
+        return withheldBeforeFirstWrite(ticket, `the server exposes no ${read.tool}`, true);
+      const result = interpretToolResult(await tool.execute(call.action.toolArgs, {}));
+      const record = result.isError ? undefined : recordFromText(result.text, 'issue');
+      if (!record) {
+        return withheldBeforeFirstWrite(
+          ticket,
+          result.isError ? `${read.tool} failed` : `${read.tool} answered with no record`,
+          true,
+        );
+      }
+      const baseline = await ctx.runQuery(internal.work.listedSnapshot, {
+        workItemId: item._id,
+        before: item.planPendingAt ?? Date.now(),
+      });
+      const change = await ticketChange(ticketSnapshot(record), {
+        baseline: baseline ?? undefined,
+        ownState:
+          lastLandedState(carried, surface.slug, ticket) ??
+          (item.externalAlias
+            ? lastLandedState(carried, surface.slug, item.externalAlias)
+            : undefined),
+        owner: () => rereadKeyOwner(tools, surface),
+      });
+      return change === undefined ? undefined : withheldBeforeFirstWrite(ticket, change);
+    } finally {
+      await client.disconnect();
+    }
+  } catch (error) {
+    return withheldBeforeFirstWrite(
+      ticket,
+      safeFailureMessage(error, bearer, 'the read failed'),
+      true,
+    );
+  } finally {
+    bearer = '';
+  }
+}
+
+/** The re-read before a run's first write on its ticket, as a claim hold, and what it found. */
+interface TicketReread {
+  /** Asked before each write; re-reads at the first write on the ticket and holds every write after a change. */
+  readonly hold: ClaimHold;
+  /** The reason the writes were withheld, once the re-read found one. */
+  refusal(): string | undefined;
+}
+
+/**
+ * The re-read before the run's first write on the ticket it works (Q11),
+ * as a hold the registry asks before each write that passed its approval
+ * and grant checks. The first write on the ticket's surface re-reads it;
+ * when the ticket changed, that write and every write after it on any
+ * surface are held with the reason, and nothing more is sent. A write on
+ * another surface before it is not held. Undefined outside real mode, for
+ * an item that is not a ticket on an MCP kanban surface, and when an
+ * earlier phase of this run already sent a write on it.
+ */
+async function ticketReread(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+    output: LedgerOutput | DependentPendingOutput;
+    phase: 'auto' | 'approved';
+    /** The rows this auto phase parks for the manager: asked about, never sent here. */
+    deferredIndexes: readonly number[];
+    surfaces: readonly SurfaceRecord[];
+  },
+): Promise<TicketReread | undefined> {
+  if (SURFACE_MODE !== 'real') return undefined;
+  const item = await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId });
+  if (!item || item.sourceCategory !== 'ticket-queue') return undefined;
+  const surface = args.surfaces.find((row) => row.slug === item.sourceSystem);
+  if (!surface || surface.class !== 'kanban' || surface.path !== 'mcp') return undefined;
+  if (sentEarlierThisRun(args.output, args.phase, surface.slug, args)) return undefined;
+  // The registry asks about a parked row too; parking sends nothing, so it
+  // is not the first write. Rows are matched by their parsed payload.
+  const parked = new Set(
+    args.phase === 'auto'
+      ? args.deferredIndexes.flatMap((index) => {
+          const parsed = parseSurfaceAction(args.output.actions?.[index] ?? { tool: '', args: {} });
+          return parsed.ok ? [JSON.stringify(parsed.action)] : [];
+        })
+      : [],
+  );
+  let found: Promise<string | undefined> | undefined;
+  let refusal: string | undefined;
+  return {
+    hold: async (parsed) => {
+      if (
+        found === undefined &&
+        (parsed.surface !== surface.slug || parked.has(JSON.stringify(parsed)))
+      ) {
+        return undefined;
+      }
+      found ??= ticketRereadRefusal(ctx, {
+        item,
+        surface,
+        output: args.output,
+        surfaces: args.surfaces,
+      }).then((reason) => (refusal = reason));
+      return await found;
+    },
+    refusal: () => refusal,
+  };
+}
+
+/** Ask each hold in turn and take the first reason. */
+function firstHold(...holds: ReadonlyArray<ClaimHold | undefined>): ClaimHold {
+  return async (parsed, surface) => {
+    for (const hold of holds) {
+      const reason = hold ? await hold(parsed, surface) : undefined;
+      if (reason) return reason;
+    }
+    return undefined;
+  };
+}
+
+/**
+ * Stop a run whose ticket changed before its first write: the writes the
+ * re-read held carry the reason, nothing after it was sent, and the run
+ * fails, as stopped when nothing landed, so Retry stands.
+ */
+async function stopForChangedTicket(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+    output: LedgerOutput | DependentPendingOutput;
+    applied: AppliedAction[];
+    reason: string;
+    knownValues: readonly string[];
+  },
+): Promise<{ ok: false; reason: string }> {
+  const reason = scrubKnownValues(args.reason, args.knownValues);
+  const output = isDependentPendingOutput(args.output)
+    ? flattenedDependentOutput(args.output, args.applied)
+    : { ...args.output, applied: args.applied };
+  await ctx.runMutation(internal.work.setFailed, {
+    workItemId: args.workItemId,
+    runId: args.runId,
+    reason,
+    output: scrubKnownValues(output, args.knownValues),
+  });
+  return { ok: false, reason };
+}
+
 /**
  * Apply the approved actions of the current phase, with the run id the skill ran under.
  *
@@ -2395,6 +2680,14 @@ export const applyApprovedActions = internalAction({
         const entry = claim.phase === 'approved' ? output.applied?.[index] : undefined;
         return entry && !entry.awaitingApproval ? entry : resumedLedger[index];
       });
+      const reread = await ticketReread(ctx, {
+        workItemId: args.workItemId,
+        runId: claim.runId,
+        output,
+        phase: claim.phase,
+        deferredIndexes: claim.heldIndexes,
+        surfaces,
+      });
       const run = {
         agentId: claim.agentId,
         agentName: agent.name,
@@ -2425,19 +2718,35 @@ export const applyApprovedActions = internalAction({
           replyTarget: claim.replyTarget,
           ...(SURFACE_MODE === 'real'
             ? {
-                claimHold: heldByAnotherWorkItem(
-                  ctx,
-                  args.workItemId,
-                  // A closing set in its first round, whose executor's held list was kept.
-                  isDependentPendingOutput(output) && !output.initial.closingRound && output.authoredUnder
-                    ? { actions: output.actions, surfaces, authoredUnder: output.authoredUnder }
-                    : undefined,
+                claimHold: firstHold(
+                  reread?.hold,
+                  heldByAnotherWorkItem(
+                    ctx,
+                    args.workItemId,
+                    // A closing set in its first round, whose executor's held list was kept.
+                    isDependentPendingOutput(output) &&
+                      !output.initial.closingRound &&
+                      output.authoredUnder
+                      ? { actions: output.actions, surfaces, authoredUnder: output.authoredUnder }
+                      : undefined,
+                  ),
                 ),
               }
             : {}),
         }),
         output.argumentRepairs,
       );
+      const changed = reread?.refusal();
+      if (changed) {
+        return await stopForChangedTicket(ctx, {
+          workItemId: args.workItemId,
+          runId: claim.runId,
+          output,
+          applied,
+          reason: changed,
+          knownValues,
+        });
+      }
       if (
         SURFACE_MODE === 'real' &&
         claim.phase === 'auto' &&

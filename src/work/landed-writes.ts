@@ -229,6 +229,33 @@ function statusChange(
 }
 
 /**
+ * The last state an earlier run of the item set on a ticket, from the
+ * writes it carries; the re-read before apply counts that move as Day0's own.
+ *
+ * Args:
+ *   writes: The landed writes the row carries, oldest first.
+ *   surface: The ticket's surface.
+ *   ticket: The ticket's id.
+ *
+ * Returns:
+ *   The state, or undefined when no earlier run set one.
+ */
+export function lastLandedState(
+  writes: readonly LandedWrite[],
+  surface: string,
+  ticket: string,
+): string | undefined {
+  const ticketKey = `${surface}|status|${ticket.trim().toLowerCase()}`;
+  return writes
+    .flatMap((write) => {
+      const parsed = landed(write.applied) ? parsedWrite(write.action) : undefined;
+      const status = parsed ? statusChange(parsed) : undefined;
+      return status?.ticketKey === ticketKey ? [status.state] : [];
+    })
+    .at(-1);
+}
+
+/**
  * Whether the manager's note directs this state in so many words and nothing
  * just before the word declines it: "set it Done again" does, "do not move it
  * to Done yet" does not.
