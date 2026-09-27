@@ -25,9 +25,11 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  type ActionCtx,
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
+import { CREDENTIAL_RESEAL_MIGRATION, credentialKeyCounts } from './credentials';
 import { backfillAccessSetByPage, restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
@@ -54,10 +56,23 @@ export const MIGRATION_NAMES = [
   'surfaces-access-set-by',
   'agents-avatar-digest',
   'mirrors-rekey',
+  CREDENTIAL_RESEAL_MIGRATION,
 ] as const;
 
 /** One migration's name. */
 export type MigrationName = (typeof MIGRATION_NAMES)[number];
+
+/**
+ * A migration whose page runs in an action: the re-seal opens and seals
+ * values, which only the Node runtime can do. Its pages are recorded by
+ * `recordActionPage`; every other migration's page is one mutation.
+ */
+type ActionMigrationName = typeof CREDENTIAL_RESEAL_MIGRATION;
+
+/** Whether a migration's page runs in an action rather than a mutation. */
+function isActionMigration(name: MigrationName): name is ActionMigrationName {
+  return name === CREDENTIAL_RESEAL_MIGRATION;
+}
 
 /** What a migration does, the release that ships it and what the next release may then remove. */
 export interface MigrationDescription {
@@ -123,6 +138,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'moves each documentation mirror an earlier slug rule keyed onto its own slug, and deletes it where a sync already wrote the page there',
     thenRemoves: 'nothing: finishSync keeps every mirror on its own slug from here on',
   },
+  [CREDENTIAL_RESEAL_MIGRATION]: {
+    release: SCHEMA_STEP_RELEASE,
+    does: 're-seals every stored credential value bound to its owner under the current key and writes the key id; once it has finished, a row without a key id no longer opens unbound (Q15). A row the key cannot open is logged by id and left as it was, and counted as remaining',
+    thenRemoves: 'the unbound open of a row without a key id in openOwnedCredential',
+  },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
@@ -168,6 +188,10 @@ export interface MigrationProgress {
   readonly note?: string;
   /** Set when the migration had already finished before this call, so nothing ran. */
   readonly finishedEarlier?: true;
+  /** Rows still to migrate, counted live, where the migration can say. */
+  readonly remaining?: number;
+  /** Set when `remaining` is a floor: the count stopped at its read bound. */
+  readonly remainingAtLeast?: true;
 }
 
 /**
@@ -416,9 +440,38 @@ async function rekeyMirrors(ctx: MutationCtx, cursor: string | null): Promise<Mi
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
-/** Each migration's page, keyed by name, so a name with no page fails the typecheck. */
+/**
+ * Re-seal one page of credentials in the Node runtime (decision Q15, step
+ * 14). The action writes each page's rows itself; this reports the page.
+ */
+async function resealCredentials(ctx: ActionCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.runAction(internal.credentialCryptoActions.resealPage, { cursor });
+  return {
+    read: page.read,
+    changed: page.changed,
+    cursor: page.cursor,
+    isDone: page.isDone,
+    ...(page.keyId !== undefined
+      ? {
+          note: `values re-sealed bound to their owners under key ${page.keyId}; a row the key could not open was logged by id and left as it was`,
+        }
+      : {}),
+  };
+}
+
+/** Each action migration's page, keyed by name. */
+const ACTION_MIGRATION_PAGES: Readonly<
+  Record<ActionMigrationName, (ctx: ActionCtx, cursor: string | null) => Promise<MigrationPage>>
+> = {
+  [CREDENTIAL_RESEAL_MIGRATION]: resealCredentials,
+};
+
+/** Each mutation migration's page, keyed by name, so a name with no page fails the typecheck. */
 const MIGRATION_PAGES: Readonly<
-  Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
+  Record<
+    Exclude<MigrationName, ActionMigrationName>,
+    (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>
+  >
 > = {
   'agents-owner': adoptOwnerless,
   'credentials-sync-revoke': clearSyncRevokes,
@@ -457,39 +510,121 @@ function progressOf(
 }
 
 /**
- * Run the next page of one migration and record where it reached. Internal;
- * called by `runPending`. A finished migration reads nothing and writes
- * nothing.
+ * Write where a page left a migration: its cursor, its counts, and its
+ * completion when the page was the last.
+ */
+async function recordPage(
+  ctx: MutationCtx,
+  name: MigrationName,
+  row: Doc<'migrations'> | null,
+  page: MigrationPage,
+): Promise<MigrationProgress> {
+  const now = Date.now();
+  const reached = {
+    cursor: page.isDone ? undefined : page.cursor,
+    read: (row?.read ?? 0) + page.read,
+    changed: (row?.changed ?? 0) + page.changed,
+    completedAt: page.isDone ? now : undefined,
+    note: page.note ?? row?.note,
+  };
+  if (row === null) {
+    await ctx.db.insert('migrations', {
+      name,
+      release: MIGRATIONS[name].release,
+      startedAt: now,
+      ...reached,
+    });
+  } else {
+    await ctx.db.patch(row._id, reached);
+  }
+  return progressOf(name, reached);
+}
+
+/**
+ * Run the next page of one mutation migration and record where it reached.
+ * Internal; called by `runPending`. A finished migration reads nothing and
+ * writes nothing.
+ *
+ * @throws Error for an action migration, whose page runs through `runPending`.
  */
 export const runMigrationPage = internalMutation({
   args: { name: migrationName },
+  handler: async (ctx, args): Promise<MigrationProgress> => {
+    const { name } = args;
+    const row = await migrationRow(ctx, name);
+    if (row?.completedAt !== undefined) {
+      return { ...progressOf(name, row), finishedEarlier: true };
+    }
+    if (isActionMigration(name)) {
+      throw new Error(`${name} runs its pages in an action; run migrations:runPending`);
+    }
+    return await recordPage(ctx, name, row, await MIGRATION_PAGES[name](ctx, row?.cursor ?? null));
+  },
+});
+
+/** Where a migration's next page starts, for an action migration's page. Internal. */
+export const migrationStart = internalQuery({
+  args: { name: migrationName },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ cursor: string | null; progress: MigrationProgress; finished: boolean }> => {
+    const row = await migrationRow(ctx, args.name);
+    return {
+      cursor: row?.cursor ?? null,
+      progress: progressOf(args.name, row),
+      finished: row?.completedAt !== undefined,
+    };
+  },
+});
+
+/**
+ * Record an action migration's page. Internal; called by `runPending`.
+ *
+ * Written only if the migration is still where the page started: a second
+ * runner that got there first has recorded that page already, so this one's
+ * counts are dropped rather than added twice, and its caller reads on from
+ * the stored cursor.
+ */
+export const recordActionPage = internalMutation({
+  args: {
+    name: migrationName,
+    fromCursor: v.union(v.string(), v.null()),
+    page: v.object({
+      read: v.number(),
+      changed: v.number(),
+      cursor: v.string(),
+      isDone: v.boolean(),
+      note: v.optional(v.string()),
+    }),
+  },
   handler: async (ctx, args): Promise<MigrationProgress> => {
     const row = await migrationRow(ctx, args.name);
     if (row?.completedAt !== undefined) {
       return { ...progressOf(args.name, row), finishedEarlier: true };
     }
-    const page = await MIGRATION_PAGES[args.name](ctx, row?.cursor ?? null);
-    const now = Date.now();
-    const reached = {
-      cursor: page.isDone ? undefined : page.cursor,
-      read: (row?.read ?? 0) + page.read,
-      changed: (row?.changed ?? 0) + page.changed,
-      completedAt: page.isDone ? now : undefined,
-      note: page.note ?? row?.note,
-    };
-    if (row === null) {
-      await ctx.db.insert('migrations', {
-        name: args.name,
-        release: MIGRATIONS[args.name].release,
-        startedAt: now,
-        ...reached,
-      });
-    } else {
-      await ctx.db.patch(row._id, reached);
-    }
-    return progressOf(args.name, reached);
+    if ((row?.cursor ?? null) !== args.fromCursor) return progressOf(args.name, row);
+    return await recordPage(ctx, args.name, row, args.page);
   },
 });
+
+/**
+ * Run the next page of one migration, in whichever runtime its page needs,
+ * and record where it reached.
+ */
+async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<MigrationProgress> {
+  if (!isActionMigration(name)) {
+    return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
+  }
+  const start = await ctx.runQuery(internal.migrations.migrationStart, { name });
+  if (start.finished) return { ...start.progress, finishedEarlier: true };
+  const page = await ACTION_MIGRATION_PAGES[name](ctx, start.cursor);
+  return await ctx.runMutation(internal.migrations.recordActionPage, {
+    name,
+    fromCursor: start.cursor,
+    page,
+  });
+}
 
 /**
  * Run every unfinished migration to the end, in order, and say what each
@@ -506,12 +641,12 @@ export const runPending = internalAction({
     for (const [index, name] of MIGRATION_NAMES.entries()) {
       // One transaction per page, so no migration meets the per-transaction
       // read and write limits however many rows the deployment holds.
-      let progress = await ctx.runMutation(internal.migrations.runMigrationPage, { name });
+      let progress = await runNextPage(ctx, name);
       while (progress.completedAt === undefined) {
         if (Date.now() - startedAt > RUN_BUDGET_MS) {
           return { migrations, pending: MIGRATION_NAMES.slice(index) };
         }
-        progress = await ctx.runMutation(internal.migrations.runMigrationPage, { name });
+        progress = await runNextPage(ctx, name);
       }
       if (progress.finishedEarlier !== true) migrations.push(progress);
     }
@@ -550,12 +685,24 @@ export const status = internalQuery({
     migrations: MigrationProgress[];
     pending: MigrationName[];
   }> => {
-    const migrations = await Promise.all(
-      MIGRATION_NAMES.map(async (name) => progressOf(name, await migrationRow(ctx, name))),
-    );
+    const [counts, migrations] = await Promise.all([
+      credentialKeyCounts(ctx),
+      Promise.all(
+        MIGRATION_NAMES.map(async (name) => progressOf(name, await migrationRow(ctx, name))),
+      ),
+    ]);
     return {
       release: await latestRelease(ctx),
-      migrations,
+      migrations: migrations.map(
+        (progress): MigrationProgress =>
+          progress.name === CREDENTIAL_RESEAL_MIGRATION
+            ? {
+                ...progress,
+                remaining: counts.unkeyed,
+                ...(counts.atLeast ? { remainingAtLeast: true as const } : {}),
+              }
+            : progress,
+      ),
       pending: migrations.flatMap((row) => (row.completedAt === undefined ? [row.name] : [])),
     };
   },

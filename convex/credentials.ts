@@ -688,3 +688,136 @@ export const markSuspect = internalMutation({
     await ctx.db.patch(row._id, { status: 'suspect', statusReason: args.reason });
   },
 });
+
+/** Rows one page of a re-seal reads: each is opened and sealed again in the Node action. */
+export const RESEAL_PAGE = 50;
+
+/** A stored row as the re-seal reads it; only the Node action it goes to sees the ciphertext. */
+export interface ResealRow {
+  readonly _id: Id<'credentials'>;
+  readonly userId: string;
+  readonly ciphertext: string;
+  readonly iv: string;
+  readonly keyId?: string;
+}
+
+/**
+ * One page of every credential row, in table order, for the re-seal.
+ * Internal; read by `credentialCryptoActions.resealPage`, which never
+ * returns a value. Rows with no value (purged by a reset or an unlink) are
+ * read past, not returned.
+ */
+export const resealBatch = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    rows: ResealRow[];
+    read: number;
+    cursor: string;
+    isDone: boolean;
+    allowUnbound: boolean;
+  }> => {
+    const page = await ctx.db
+      .query('credentials')
+      .paginate({ cursor: args.cursor, numItems: RESEAL_PAGE });
+    return {
+      rows: page.page.flatMap((row): ResealRow[] =>
+        row.ciphertext === undefined || row.iv === undefined
+          ? []
+          : [
+              {
+                _id: row._id,
+                userId: row.userId,
+                ciphertext: row.ciphertext,
+                iv: row.iv,
+                ...(row.keyId !== undefined ? { keyId: row.keyId } : {}),
+              },
+            ],
+      ),
+      read: page.page.length,
+      cursor: page.continueCursor,
+      isDone: page.isDone,
+      allowUnbound: await unboundOpenAllowed(ctx),
+    };
+  },
+});
+
+/**
+ * Write the re-sealed values of one page. Internal; written by
+ * `credentialCryptoActions.resealPage`.
+ *
+ * A row is rewritten only while it still holds the ciphertext the action
+ * opened: a value a sync, a person or another re-seal wrote in between is
+ * newer and already carries its key id, so it is left as it is.
+ *
+ * @returns How many rows were rewritten.
+ */
+export const applyReseal = internalMutation({
+  args: {
+    rows: v.array(
+      v.object({
+        credentialId: v.id('credentials'),
+        fromCiphertext: v.string(),
+        ciphertext: v.string(),
+        iv: v.string(),
+        keyId: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    let applied = 0;
+    for (const resealed of args.rows) {
+      const row = await ctx.db.get(resealed.credentialId);
+      if (row?.ciphertext !== resealed.fromCiphertext) continue;
+      await ctx.db.patch(row._id, {
+        ciphertext: resealed.ciphertext,
+        iv: resealed.iv,
+        keyId: resealed.keyId,
+      });
+      applied += 1;
+    }
+    return applied;
+  },
+});
+
+/** The most rows a count of the credential table reads before it answers "at least". */
+const KEY_COUNT_SCAN_LIMIT = 4_000;
+
+/** How the stored values divide between keys, as far as a bounded read saw. */
+export interface CredentialKeyCounts {
+  /** Rows holding a value, by the id of the key that sealed them. */
+  readonly byKeyId: Readonly<Record<string, number>>;
+  /** Rows holding a value with no key id: sealed before the re-seal reached them. */
+  readonly unkeyed: number;
+  /** True when the table held more rows than the count read, so every figure is a floor. */
+  readonly atLeast: boolean;
+}
+
+/**
+ * Count the rows holding a value by the key that sealed them.
+ *
+ * @param ctx - A query or mutation context.
+ */
+export async function credentialKeyCounts(ctx: QueryCtx): Promise<CredentialKeyCounts> {
+  const rows = await ctx.db.query('credentials').take(KEY_COUNT_SCAN_LIMIT + 1);
+  const byKeyId: Record<string, number> = {};
+  let unkeyed = 0;
+  for (const row of rows.slice(0, KEY_COUNT_SCAN_LIMIT)) {
+    if (row.ciphertext === undefined) continue;
+    if (row.keyId === undefined) unkeyed += 1;
+    else byKeyId[row.keyId] = (byKeyId[row.keyId] ?? 0) + 1;
+  }
+  return { byKeyId, unkeyed, atLeast: rows.length > KEY_COUNT_SCAN_LIMIT };
+}
+
+/**
+ * The stored values counted by the key that sealed them. Internal; the key
+ * rotation reads it to confirm no row is left on the old key before it drops
+ * that key from the deployment.
+ */
+export const keyCounts = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<CredentialKeyCounts> => await credentialKeyCounts(ctx),
+});
