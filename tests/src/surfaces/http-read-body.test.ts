@@ -14,7 +14,10 @@ import { applySurfaceActions, type RealAdapterDeps } from '../../../src/surfaces
 import type { AdapterRun, SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 import { FAKE_BOT_TOKEN, startFakeSlack, type FakeSlack } from '../../fake-slack/spawn';
-import { OPS_REQUESTS_ASK, OPS_REQUESTS_ASK_ACTIONS } from '../../fixtures/priya-stopped-rows-2026-09-19';
+import {
+  OPS_REQUESTS_ASK,
+  OPS_REQUESTS_ASK_ACTIONS,
+} from '../../fixtures/priya-stopped-rows-2026-09-19';
 
 const now = Date.UTC(2026, 8, 19, 9);
 const ctx = {} as ActionCtx;
@@ -87,7 +90,8 @@ function request(
       surface,
       method,
       path,
-      headersJson: '{"Authorization":"Bearer {{secret}}","Content-Type":"application/json; charset=utf-8"}',
+      headersJson:
+        '{"Authorization":"Bearer {{secret}}","Content-Type":"application/json; charset=utf-8"}',
       ...(body ? { body: JSON.stringify(body) } : {}),
     },
   };
@@ -126,7 +130,10 @@ describe('a documented-API read carried by GET with a body (19 Sep fourth run, f
       path: '/conversations.replies',
       body: JSON.stringify({ channel: CHANNEL, thread_ts: THREAD }),
     });
-    expect(OPS_REQUESTS_ASK.applied[8]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
+    expect(OPS_REQUESTS_ASK.applied[8]).toMatchObject({
+      ok: false,
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
+    });
     expect(OPS_REQUESTS_ASK.skipReason).toContain('Refused: GET /conversations.replies on slack');
   });
 
@@ -146,9 +153,12 @@ describe('a documented-API read carried by GET with a body (19 Sep fourth run, f
     ['GET', '/conversations.list', { limit: 200, types: 'public_channel' }],
     ['GET', 'conversations.history', { channel: CHANNEL, limit: 50 }],
     ['HEAD', '/conversations.replies?limit=20', { channel: CHANNEL, ts: THREAD }],
-  ])('reads the documented read method under %s %s as a read whatever its body', (method, path, body): void => {
-    expect(actionIntent(parsed(request(method, path, body)))).toBe('read');
-  });
+  ])(
+    'reads the documented read method under %s %s as a read whatever its body',
+    (method, path, body): void => {
+      expect(actionIntent(parsed(request(method, path, body)))).toBe('read');
+    },
+  );
 
   it.each(['/conversations.info', '/users.info', '/chat.getPermalink'])(
     'reads an undocumented dotted method that leads with a read verb, %s, as a read under GET with a body',
@@ -175,34 +185,70 @@ describe('a documented-API read carried by GET with a body (19 Sep fourth run, f
     },
   );
 
-  it.each(['GET', 'HEAD', 'POST'])('keeps a read method whose body names a mutation a write under %s', (method): void => {
-    expect(actionIntent(parsed(request(method, '/conversations.history', { mark: 'read' })))).toBe('write');
-    expect(actionIntent(parsed(request(method, '/conversations.replies', { channel: CHANNEL, operation: 'delete' })))).toBe('write');
-    expect(actionIntent(parsed(request(method, '/issues.list', { action: 'archive' }, 'northstar')))).toBe('write');
-  });
+  it.each(['GET', 'HEAD', 'POST'])(
+    'keeps a read method whose body names a mutation a write under %s',
+    (method): void => {
+      expect(
+        actionIntent(parsed(request(method, '/conversations.history', { mark: 'read' }))),
+      ).toBe('write');
+      expect(
+        actionIntent(
+          parsed(
+            request(method, '/conversations.replies', { channel: CHANNEL, operation: 'delete' }),
+          ),
+        ),
+      ).toBe('write');
+      expect(
+        actionIntent(parsed(request(method, '/issues.list', { action: 'archive' }, 'northstar'))),
+      ).toBe('write');
+    },
+  );
 
   it('reads the body as it parses: an escaped or percent-encoded mutation is still a write', (): void => {
     const escaped: MockAction = {
       tool: 'http.request',
-      args: { surface: 'slack', method: 'GET', path: '/conversations.history', body: '{"op\\u0065ration":"d\\u0065lete"}' },
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/conversations.history',
+        body: '{"op\\u0065ration":"d\\u0065lete"}',
+      },
     };
     expect(parsed(escaped)).toMatchObject({ bodyJson: { operation: 'delete' } });
     expect(actionIntent(parsed(escaped))).toBe('write');
     const form: MockAction = {
       tool: 'http.request',
-      args: { surface: 'slack', method: 'GET', path: '/conversations.history', body: 'channel=C1&operation=%2564elete' },
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/conversations.history',
+        body: 'channel=C1&operation=%2564elete',
+      },
     };
     expect(actionIntent(parsed(form))).toBe('write');
   });
 
-  it.each(['PUT', 'PATCH', 'DELETE'])('keeps %s a write whatever the operation is called', (method): void => {
-    expect(actionIntent(parsed(request(method, '/conversations.replies', { channel: CHANNEL })))).toBe('write');
-  });
+  it.each(['PUT', 'PATCH', 'DELETE'])(
+    'keeps %s a write whatever the operation is called',
+    (method): void => {
+      expect(
+        actionIntent(parsed(request(method, '/conversations.replies', { channel: CHANNEL }))),
+      ).toBe('write');
+    },
+  );
 
   it('keeps a read method whose path or query smuggles a mutation a write, body or no body', (): void => {
-    expect(actionIntent(parsed(request('GET', '/conversations.history?operation=delete', { channel: CHANNEL })))).toBe('write');
-    expect(actionIntent(parsed(request('GET', '/conversations.list%2Fdelete', { limit: 1 })))).toBe('write');
-    expect(actionIntent(parsed(request('GET', '/chat.delete', { channel: CHANNEL })))).toBe('write');
+    expect(
+      actionIntent(
+        parsed(request('GET', '/conversations.history?operation=delete', { channel: CHANNEL })),
+      ),
+    ).toBe('write');
+    expect(actionIntent(parsed(request('GET', '/conversations.list%2Fdelete', { limit: 1 })))).toBe(
+      'write',
+    );
+    expect(actionIntent(parsed(request('GET', '/chat.delete', { channel: CHANNEL })))).toBe(
+      'write',
+    );
   });
 
   it('still refuses an unattributable write under the shared credential, and sends nothing', async (): Promise<void> => {
@@ -213,7 +259,12 @@ describe('a documented-API read carried by GET with a body (19 Sep fourth run, f
       [slack],
       run,
       [request('GET', '/conversations.open', { users: 'U0BTFHN6MKJ' })],
-      { deps: deps(sent), grants: new Set(['slack:read', 'slack:write']), approvedIndexes: new Set([0]), now },
+      {
+        deps: deps(sent),
+        grants: new Set(['slack:read', 'slack:write']),
+        approvedIndexes: new Set([0]),
+        now,
+      },
     );
     expect(applied[0]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
     expect(sent).toEqual([]);
@@ -239,14 +290,23 @@ describe("a documented read's JSON body parameters travel in the query (finding 
     expect(url.searchParams.get('channel')).toBe(CHANNEL);
     expect(url.searchParams.get('ts')).toBe(THREAD);
     expect(sent[0]).toMatchObject({ method: 'GET', body: undefined });
-    expect(Object.keys(sent[0]!.headers).map((name) => name.toLowerCase())).toEqual(['authorization']);
+    expect(Object.keys(sent[0]!.headers).map((name) => name.toLowerCase())).toEqual([
+      'authorization',
+    ]);
   });
 
   it('does the same for a documented read carried by POST, which Slack reads from the query too', async (): Promise<void> => {
     const sent: Sent[] = [];
-    await apply(request('POST', '/conversations.history', { channel: CHANNEL, limit: 50, inclusive: true }), sent);
+    await apply(
+      request('POST', '/conversations.history', { channel: CHANNEL, limit: 50, inclusive: true }),
+      sent,
+    );
     const url = new URL(sent[0]!.url);
-    expect(Object.fromEntries(url.searchParams)).toEqual({ channel: CHANNEL, limit: '50', inclusive: 'true' });
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      channel: CHANNEL,
+      limit: '50',
+      inclusive: 'true',
+    });
     expect(sent[0]).toMatchObject({ method: 'POST', body: undefined });
   });
 
@@ -277,20 +337,27 @@ describe("a documented read's JSON body parameters travel in the query (finding 
         surface: 'slack',
         method: 'GET',
         path: '/conversations.replies',
-        headersJson: '{"Authorization":"Bearer {{secret}}","Content-Type":"application/x-www-form-urlencoded"}',
+        headersJson:
+          '{"Authorization":"Bearer {{secret}}","Content-Type":"application/x-www-form-urlencoded"}',
         body: `channel=${CHANNEL}&ts=${THREAD}`,
       },
     };
     expect(actionIntent(parsed(form))).toBe('read');
     expect(await apply(form, sent)).toMatchObject({ ok: true });
-    expect(Object.fromEntries(new URL(sent[0]!.url).searchParams)).toEqual({ channel: CHANNEL, ts: THREAD });
+    expect(Object.fromEntries(new URL(sent[0]!.url).searchParams)).toEqual({
+      channel: CHANNEL,
+      ts: THREAD,
+    });
     expect(sent[0]).toMatchObject({ method: 'GET', body: undefined });
   });
 
   it('sends nothing the gate did not class: the request as sent is a read by the same rule', async (): Promise<void> => {
     const sent: Sent[] = [];
     await apply(refused, sent);
-    await apply(request('POST', '/conversations.list', { limit: 200, types: ['public_channel'] }), sent);
+    await apply(
+      request('POST', '/conversations.list', { limit: 200, types: ['public_channel'] }),
+      sent,
+    );
     for (const call of sent) {
       const url = new URL(call.url);
       const asSent = request(call.method, `${url.pathname.slice('/api'.length)}${url.search}`);
@@ -301,7 +368,10 @@ describe("a documented read's JSON body parameters travel in the query (finding 
 
   it('never puts the credential in a URL: a placeholder among the parameters is refused unsent', async (): Promise<void> => {
     const sent: Sent[] = [];
-    const row = await apply(request('GET', '/conversations.replies', { channel: CHANNEL, cursor: '{{secret}}' }), sent);
+    const row = await apply(
+      request('GET', '/conversations.replies', { channel: CHANNEL, cursor: '{{secret}}' }),
+      sent,
+    );
     expect(row).toMatchObject({ ok: false });
     expect(JSON.stringify(row)).not.toContain(FAKE_BOT_TOKEN);
     expect(sent).toEqual([]);
@@ -310,10 +380,16 @@ describe("a documented read's JSON body parameters travel in the query (finding 
   it('leaves a token argument behind: the bearer header is the only place one goes', async (): Promise<void> => {
     const sent: Sent[] = [];
     const pasted = ['xoxb', 'pasted', 'by', 'a', 'model'].join('-');
-    await apply(request('POST', '/conversations.history', { channel: CHANNEL, token: pasted }), sent);
+    await apply(
+      request('POST', '/conversations.history', { channel: CHANNEL, token: pasted }),
+      sent,
+    );
     expect(sent[0]!.url).toBe(`https://slack.com/api/conversations.history?channel=${CHANNEL}`);
     expect(sent[0]!.body).toBeUndefined();
-    await apply(request('GET', '/conversations.history', { channel: CHANNEL, token: '{{secret}}' }), sent);
+    await apply(
+      request('GET', '/conversations.history', { channel: CHANNEL, token: '{{secret}}' }),
+      sent,
+    );
     expect(sent[1]!.url).toBe(`https://slack.com/api/conversations.history?channel=${CHANNEL}`);
   });
 
@@ -343,23 +419,38 @@ describe('the read-back against the fake Slack, which reads parameters as Slack 
   });
 
   const throughFake = (sent: Sent[]): RealAdapterDeps =>
-    deps(sent, async (url, init) => fetch(new URL(`${url.pathname}${url.search}`, fake.base), init));
+    deps(sent, async (url, init) =>
+      fetch(new URL(`${url.pathname}${url.search}`, fake.base), init),
+    );
 
-  it.each(['GET', 'POST'])('lands the %s read-back whose parameters the model put in a JSON body', async (method): Promise<void> => {
-    const sent: Sent[] = [];
-    const applied = await applySurfaceActions(ctx, 'real', [slack], run, [request(method, '/conversations.replies', thread)], {
-      deps: throughFake(sent),
-      grants: new Set(['slack:read']),
-      now,
-    });
-    expect(applied[0]).toMatchObject({ ok: true });
-    expect(applied[0]?.effect).toContain('"messages"');
-  });
+  it.each(['GET', 'POST'])(
+    'lands the %s read-back whose parameters the model put in a JSON body',
+    async (method): Promise<void> => {
+      const sent: Sent[] = [];
+      const applied = await applySurfaceActions(
+        ctx,
+        'real',
+        [slack],
+        run,
+        [request(method, '/conversations.replies', thread)],
+        {
+          deps: throughFake(sent),
+          grants: new Set(['slack:read']),
+          now,
+        },
+      );
+      expect(applied[0]).toMatchObject({ ok: true });
+      expect(applied[0]?.effect).toContain('"messages"');
+    },
+  );
 
   it('is what Slack would have refused had the body gone as it was written', async (): Promise<void> => {
     const response = await fetch(`${fake.base}/api/conversations.replies`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${FAKE_BOT_TOKEN}`, 'content-type': 'application/json; charset=utf-8' },
+      headers: {
+        authorization: `Bearer ${FAKE_BOT_TOKEN}`,
+        'content-type': 'application/json; charset=utf-8',
+      },
       body: JSON.stringify(thread),
     });
     expect(await response.json()).toMatchObject({ ok: false, error: 'channel_not_found' });
