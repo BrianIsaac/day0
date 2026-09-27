@@ -3370,6 +3370,20 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
+  // A row that parked while no manager channel was connected was never asked;
+  // once a channel is, the card can ask (the sweep also does, a lease later).
+  const askableChannel =
+    !item.decision &&
+    (item.state === 'plan-pending' ||
+      (item.state === 'actions-pending' && item.approvedIndexes === undefined))
+      ? surfaces.find(
+          (surface) =>
+            surface.class === 'chat' &&
+            !!surface.managerDmChannelId &&
+            !!surface.managerUserId &&
+            verdictFor(surface, now) === 'connected',
+        )
+      : undefined;
   // A failed item whose run landed nothing and left nothing to decide is
   // shown as stopped: Retry stands, and the badge says no harm was done.
   const shownState = item.state === 'failed' && isStopped(item.skipReason) ? 'stopped' : item.state;
@@ -3397,6 +3411,21 @@ export function WorkItemCard({
 
       {decidedFrom ? (
         <p className="mt-1 text-[10px] text-[var(--color-muted)]">{decidedFrom}</p>
+      ) : null}
+
+      {askableChannel ? (
+        <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-muted)]">
+          <span>
+            {item.state === 'plan-pending' ? 'This plan was' : 'These actions were'} not asked on{' '}
+            {askableChannel.displayName} yet: they parked while no manager channel was connected.
+          </span>
+          <button
+            onClick={() => void onResendDecision()}
+            className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
+          >
+            Ask on {askableChannel.displayName}
+          </button>
+        </p>
       ) : null}
 
       {undelivered && item.decision ? (
@@ -4070,9 +4099,36 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
   );
 }
 
+/** A model call's report as the feed reads it: the stage, and how it ended. */
+function modelCallLabel(payload: unknown): string {
+  const report = (payload ?? {}) as {
+    stage?: unknown;
+    outcome?: unknown;
+    attempts?: unknown;
+    statusCode?: unknown;
+  };
+  const stage = typeof report.stage === 'string' ? ` · ${report.stage}` : '';
+  const outcome = typeof report.outcome === 'string' ? report.outcome : 'unknown';
+  const attempts =
+    outcome !== 'ok' && typeof report.attempts === 'number' && report.attempts > 1
+      ? ` after ${report.attempts} attempts`
+      : '';
+  const status = typeof report.statusCode === 'number' ? ` (HTTP ${report.statusCode})` : '';
+  return `model call${stage} · ${outcome}${attempts}${status}`;
+}
+
 export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): string {
   if (event.type === 'work.failed' && (event.payload as { stopped?: unknown })?.stopped === true) {
     return 'work.failed · stopped';
+  }
+  if (event.type === 'work.model-call') return modelCallLabel(event.payload);
+  if (event.type === 'work.scope-judgement-unavailable') {
+    const cause = (event.payload as { cause?: unknown } | undefined)?.cause;
+    return `scope judgement unavailable${typeof cause === 'string' ? ` (${cause})` : ''} · the item waits and is judged again`;
+  }
+  if (event.type === 'work.draft-resumed') {
+    const attempt = (event.payload as { attempt?: unknown } | undefined)?.attempt;
+    return `plan draft restarted after it died${typeof attempt === 'number' ? ` (restart ${attempt})` : ''}`;
   }
   if (event.type !== 'surface.charter-match-ambiguous') return event.type;
   const candidateSlugs = (event.payload as { candidateSlugs?: unknown }).candidateSlugs;

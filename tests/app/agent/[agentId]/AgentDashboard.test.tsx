@@ -9,6 +9,7 @@ vi.mock('convex/react', () => ({
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc } from '../../../../convex/_generated/dataModel';
+import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
   AmendCharterPanel,
@@ -1673,5 +1674,69 @@ describe('the card agrees with the server (P6-6)', (): void => {
     );
     expect(markup).toContain('>Retry</button>');
     expect(markup).toContain('Retry evaluates this item again from the start');
+  });
+});
+
+describe('what an outage leaves on the card (P7-18)', (): void => {
+  it('labels the model-call and restart events in words', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.model-call',
+        payload: { stage: 'draft', outcome: 'failed', attempts: 5, statusCode: 503 },
+      }),
+    ).toBe('model call · draft · failed after 5 attempts (HTTP 503)');
+    expect(
+      eventLabel({ type: 'work.model-call', payload: { stage: 'evaluation', outcome: 'ok', attempts: 1 } }),
+    ).toBe('model call · evaluation · ok');
+    expect(eventLabel({ type: 'work.scope-judgement-unavailable', payload: { cause: 'timeout' } })).toBe(
+      'scope judgement unavailable (timeout) · the item waits and is judged again',
+    );
+    expect(eventLabel({ type: 'work.draft-resumed', payload: { attempt: 2 } })).toBe(
+      'plan draft restarted after it died (restart 2)',
+    );
+  });
+
+  it('offers to ask on the chat surface for a parked row that was never asked', (): void => {
+    const item = {
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'plan-pending',
+      title: 'Close REVOPS-5',
+      contentSummary: 'Add the audit note and close the ticket.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'REVOPS-5',
+      observedAt: 1,
+      contentRefs: [],
+    } as unknown as Doc<'workItems'>;
+    const slack = {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+    } as unknown as SurfaceRecord;
+    const render = (surfaces: SurfaceRecord[]): string =>
+      renderToStaticMarkup(
+        <WorkItemCard
+          item={item}
+          surfaces={surfaces}
+          autonomousActions={false}
+          onApprovePlan={(): void => undefined}
+          onCancelPlan={(): void => undefined}
+          onRetryFailed={(): void => undefined}
+          onReconcileFailed={async (): Promise<void> => undefined}
+          onApproveActions={async (): Promise<void> => undefined}
+          onRejectActions={async (): Promise<void> => undefined}
+          onResendDecision={async (): Promise<void> => undefined}
+        />,
+      );
+    expect(render([slack])).toContain('not asked on Slack yet');
+    expect(render([slack])).toContain('Ask on Slack');
+    expect(render([])).not.toContain('Ask on');
   });
 });
