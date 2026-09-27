@@ -24,6 +24,8 @@ describe('the private-host allowlist', (): void => {
       '*',
       '.',
       '*.corp',
+      '.0.0.1',
+      '.168.1.1',
     ]) {
       expect(() => privateHostAllowlist(entry), entry).toThrow('DAY0_PRIVATE_HOSTS');
     }

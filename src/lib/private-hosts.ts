@@ -58,7 +58,8 @@ export function privateHostAllowlist(value: string | undefined): PrivateHostAllo
           'dials (loopback, link-local, multicast or unspecified), listed or not.',
       );
     }
-    if (suffix !== undefined && HOST_NAME.test(suffix)) {
+    // A suffix whose last label is a number would match IP literals by pattern.
+    if (suffix !== undefined && HOST_NAME.test(suffix) && !/(?:^|\.)\d+$/.test(suffix)) {
       suffixes.push(`.${suffix}`);
     } else if (suffix === undefined && (isIP(key) !== 0 || HOST_NAME.test(key))) {
       names.push(key);
