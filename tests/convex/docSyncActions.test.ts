@@ -143,6 +143,7 @@ describe('documentation sync action helpers', (): void => {
     for (const ref of [
       'https://wiki.example/runbooks/refunds',
       'https://wiki.example/space/How-To/refunds?version=2',
+      'https://wiki.example/how-to/',
       'finance/playbooks/refunds.md',
     ]) {
       expect(categoryForPage({ ...page, ref }), ref).toBe('how-to-guide');

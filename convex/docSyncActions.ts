@@ -64,7 +64,7 @@ const PROCEDURE_TITLE = /how[- ]to|runbook|playbook/i;
  * A URL reference is read by its path alone, so a query or a fragment that
  * happens to carry `/how-to/` files nothing (review m33); a relative
  * reference (a folder or git path) is its own path. The last segment is the
- * page itself, not a directory.
+ * page itself, not a directory, unless the path ends in `/`.
  */
 function directoriesOf(ref: string): string[] {
   let path = ref;
@@ -75,7 +75,8 @@ function directoriesOf(ref: string): string[] {
       // Not a URL after all: read the reference as the path it spells.
     }
   }
-  return path.split('/').filter(Boolean).slice(0, -1);
+  const segments = path.split('/').filter(Boolean);
+  return path.endsWith('/') ? segments : segments.slice(0, -1);
 }
 
 /**
