@@ -529,6 +529,7 @@ describe('the compose file is pinned to digests', (): void => {
       'model',
       'playwright-mcp',
       'redactor',
+      'redactor-volumes',
       'sandbox',
     ]);
     for (const image of images) {

@@ -24,7 +24,8 @@ describe('the stamp the start script keeps', (): void => {
   it('reads the file the start script writes, at the path it writes it', (): void => {
     expect(START_SCRIPT).toContain(`STAMP="$VENV/${STAMP_FILE}"`);
     expect(START_SCRIPT).toContain('sha256sum "$REQUIREMENTS"');
-    expect(START_SCRIPT).toContain('cuda) REQUIREMENTS=/opt/day0/requirements-cuda.txt');
+    expect(START_SCRIPT).toContain('APP="${REDACTOR_APP_DIR:-/opt/day0}"');
+    expect(START_SCRIPT).toContain('cuda) REQUIREMENTS="$APP/requirements-cuda.txt"');
     const command = venvStampCommand('day0-x_redactor_venv', 'node:22-alpine@sha256:abc');
     expect(command).toEqual([
       'run',
