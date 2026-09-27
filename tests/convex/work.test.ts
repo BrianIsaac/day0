@@ -3554,9 +3554,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
         leftQueue: 'the ticket is completed',
       }),
     ).resolves.toBeNull();
-    expect(await harness.run(async (ctx) => await ctx.db.query('workItems').collect())).toEqual(
-      [],
-    );
+    expect(await harness.run(async (ctx) => await ctx.db.query('workItems').collect())).toEqual([]);
   });
 
   it('keeps each changed listing of the ticket and gives the apply the one the plan was made under', async (): Promise<void> => {
@@ -3586,7 +3584,18 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
           .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.listed'))
           .collect(),
     );
-    expect(listings).toHaveLength(2);
+    // The first listing rides on the discovery; the unchanged second adds nothing.
+    expect(listings).toHaveLength(1);
+    const discovered = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.discovered'))
+          .collect(),
+    );
+    expect(discovered.map((event) => (event.payload as { tracker?: unknown }).tracker)).toEqual([
+      todo,
+    ]);
     await expect(
       harness.query(internal.work.listedSnapshot, { workItemId, before: planMadeAt }),
     ).resolves.toEqual({ planned: todo, acknowledged: null });
@@ -3611,16 +3620,25 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
   it("keeps one listing for an unchanged ticket whatever order its fields were stored in, and finds it behind other tickets' listings", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);
-    const tracker = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
-    const workItemId = await harness.mutation(internal.work.seedItem, { ...listed(agentId), tracker });
+    const tracker = {
+      assigned: false,
+      state: 'Todo',
+      stateType: 'unstarted',
+      doNotAutomate: false,
+    };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker,
+    });
     await harness.run(async (ctx) => {
       const [listing] = await ctx.db
         .query('events')
-        .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.listed'))
+        .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.discovered'))
         .collect();
       // As a backend that sorts an object's fields would hand it back.
       await ctx.db.patch(listing!._id, {
         payload: {
+          title: 'Reconcile the September pipeline',
           tracker: { doNotAutomate: false, stateType: 'unstarted', state: 'Todo', assigned: false },
           workItemId,
         },
@@ -3643,7 +3661,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
           .collect()
       ).filter((event) => (event.payload as { workItemId: unknown }).workItemId === workItemId),
     );
-    expect(mine).toHaveLength(1);
+    expect(mine).toEqual([]);
     await expect(
       harness.query(internal.work.listedSnapshot, { workItemId, before: Date.now() }),
     ).resolves.toMatchObject({ planned: { state: 'Todo' } });
@@ -3667,7 +3685,10 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     const planned = await harness.run(async (ctx) => (await ctx.db.get(workItemId))!);
     expect(planned).toMatchObject({ state: 'plan-pending', title: 'Renamed on the tracker' });
     await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'completed' }));
-    await harness.mutation(internal.work.withdrawListedItem, { ...relisted, title: 'Renamed again' });
+    await harness.mutation(internal.work.withdrawListedItem, {
+      ...relisted,
+      title: 'Renamed again',
+    });
     const finished = await harness.run(async (ctx) => (await ctx.db.get(workItemId))!);
     expect(finished).toMatchObject({ state: 'completed', title: 'Renamed on the tracker' });
   });

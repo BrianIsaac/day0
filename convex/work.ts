@@ -376,15 +376,20 @@ async function listedSnapshotAt(
   row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
   before: number,
 ): Promise<TicketSnapshot | undefined> {
-  const listing = await ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', WORK_LISTED_EVENT))
-    .order('desc')
-    .filter((q) =>
-      q.and(q.eq(q.field('payload.workItemId'), row._id), q.lte(q.field('createdAt'), before)),
-    )
-    .first();
-  return (listing?.payload as { tracker?: TicketSnapshot } | undefined)?.tracker;
+  // A later listing is its own event; the first rides on the discovery.
+  for (const type of [WORK_LISTED_EVENT, 'work.discovered']) {
+    const listing = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
+      .order('desc')
+      .filter((q) =>
+        q.and(q.eq(q.field('payload.workItemId'), row._id), q.lte(q.field('createdAt'), before)),
+      )
+      .first();
+    const tracker = (listing?.payload as { tracker?: TicketSnapshot } | undefined)?.tracker;
+    if (tracker !== undefined) return tracker;
+  }
+  return undefined;
 }
 
 /** The snapshot fields, in one order, so two snapshots compare by value. */
@@ -405,7 +410,8 @@ function sameSnapshot(left: TicketSnapshot, right: TicketSnapshot): boolean {
 /**
  * Keep the ticket as this listing showed it, when it differs from the last
  * listing kept, so the re-read before apply can tell what changed since the
- * plan was made.
+ * plan was made. The first listing is kept on the discovery event, so the
+ * live feed gains a row only when a ticket changes.
  */
 async function recordListing(
   ctx: MutationCtx,
@@ -638,10 +644,9 @@ export async function seedItemInTransaction(
   await ctx.db.insert('events', {
     agentId: args.agentId,
     type: 'work.discovered',
-    payload: { workItemId: id, title: args.title },
+    payload: { workItemId: id, title: args.title, ...(tracker ? { tracker } : {}) },
     createdAt: Date.now(),
   });
-  await recordListing(ctx, { _id: id, agentId: args.agentId }, tracker);
   await scheduleNextStep(ctx, {
     _id: id,
     agentId: args.agentId,
