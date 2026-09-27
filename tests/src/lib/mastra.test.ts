@@ -587,3 +587,76 @@ describe('the structured-output mode on the report', (): void => {
     expect(JSON.stringify(reports)).not.toContain(secretToken);
   });
 });
+
+describe('the bill on the report', (): void => {
+  it("puts the provider's token usage on each call's report, the attempt with no object included", async (): Promise<void> => {
+    vi.spyOn(console, 'log').mockImplementation((): void => {});
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        finishReason: 'stop',
+        text: 'Sure! Here is prose.',
+        totalUsage: { inputTokens: 1_200, outputTokens: 40, totalTokens: 1_240 },
+      })
+      .mockResolvedValueOnce({
+        object: { ok: true },
+        finishReason: 'stop',
+        usage: {
+          inputTokens: 1_500,
+          outputTokens: 60,
+          totalTokens: 1_560,
+          cachedInputTokens: 1_024,
+        },
+      });
+    const agent = { name: 'day0-metered', generate } as unknown as Agent;
+
+    const { reports } = await collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }));
+
+    expect(
+      reports.map(({ inputTokens, outputTokens, cachedInputTokens }) => ({
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+      })),
+    ).toEqual([
+      { inputTokens: 1_200, outputTokens: 40, cachedInputTokens: undefined },
+      { inputTokens: 1_500, outputTokens: 60, cachedInputTokens: 1_024 },
+    ]);
+  });
+
+  it('leaves the token fields off when the provider reported no usage', async (): Promise<void> => {
+    const generate = vi.fn().mockResolvedValue({ text: 'done' });
+    const agent = { name: 'day0-unmetered-provider', generate } as unknown as Agent;
+
+    const { reports } = await collect(() => agentText({ agent, user: SECRET_PROMPT }));
+
+    expect(reports[0]).not.toHaveProperty('inputTokens');
+    expect(reports[0]).not.toHaveProperty('outputTokens');
+  });
+
+  it('logs the report of a call no loop step observes, and nothing of the prompt', async (): Promise<void> => {
+    const output = vi.spyOn(console, 'log').mockImplementation((): void => {});
+    const generate = vi.fn().mockResolvedValue({
+      text: 'done',
+      usage: { inputTokens: 900, outputTokens: 12, totalTokens: 912 },
+    });
+    const agent = { name: 'day0-orientation', generate } as unknown as Agent;
+
+    await agentText({ agent, user: SECRET_PROMPT });
+
+    const lines = output.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        level: 'info',
+        msg: 'model-call',
+        agent: 'day0-orientation',
+        outcome: 'ok',
+        inputTokens: 900,
+        outputTokens: 12,
+      }),
+    );
+    expect(JSON.stringify(lines)).not.toContain(secretToken);
+  });
+});

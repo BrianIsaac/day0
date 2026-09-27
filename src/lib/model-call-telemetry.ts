@@ -44,6 +44,12 @@ export interface ModelCallReport {
   providerCalls?: number;
   /** How a structured call asked for its object: the schema on the wire, or in the prompt. */
   structuredMode?: StructuredMode;
+  /** Input tokens the provider billed across the call's attempts, when it reported usage. */
+  inputTokens?: number;
+  /** Output tokens, likewise; reasoning tokens are part of these. */
+  outputTokens?: number;
+  /** The part of `inputTokens` the provider served from its prompt cache, when it said. */
+  cachedInputTokens?: number;
   /** On the prompt-rung call that followed a native attempt which produced no object. */
   fellBack?: true;
   /**
@@ -87,6 +93,11 @@ export interface ModelCallFacts {
   readonly startedAt: number;
   /** Requests the provider client counted, or 0 when it did not. */
   readonly providerCalls: number;
+  /** Token usage the generations reported, when any did. */
+  readonly usage?: Pick<
+    ProviderRequestCounter,
+    'inputTokens' | 'outputTokens' | 'cachedInputTokens'
+  >;
   /** What the last attempt threw, when the call failed. */
   readonly failure?: { readonly error: unknown };
   readonly structured?: StructuredCallFacts;
@@ -129,9 +140,12 @@ export async function observeModelCalls<T>(
   return await requiredObserverScopes.run(true, () => modelCallObservers.run(observer, fn));
 }
 
-/** A live count of the provider requests one model call has sent. */
+/** A live count of the provider requests one model call has sent, and what they cost. */
 export interface ProviderRequestCounter {
   count: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
 }
 
 /**
@@ -174,6 +188,36 @@ export function countProviderRequest(): void {
   if (counter) counter.count += 1;
 }
 
+/** A token count from a provider's usage object, when it is one. */
+function tokens(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * Add one generation's token usage to the model call in progress.
+ *
+ * Reads the generation's `totalUsage` (every step of a tool-calling run) or
+ * else its `usage`, in the AI SDK's shape; a generation that reported none
+ * adds nothing, so a report never shows a count the provider did not give.
+ *
+ * @param generation - What the model SDK's generate call returned.
+ */
+export function countModelUsage(generation: unknown): void {
+  const counter = providerRequestCounts.getStore();
+  if (!counter || !generation || typeof generation !== 'object') return;
+  const source = generation as { totalUsage?: unknown; usage?: unknown };
+  const usage = (source.totalUsage ?? source.usage) as
+    | { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown }
+    | undefined;
+  if (!usage || typeof usage !== 'object') return;
+  const input = tokens(usage.inputTokens);
+  const output = tokens(usage.outputTokens);
+  const cached = tokens(usage.cachedInputTokens);
+  if (input !== undefined) counter.inputTokens = (counter.inputTokens ?? 0) + input;
+  if (output !== undefined) counter.outputTokens = (counter.outputTokens ?? 0) + output;
+  if (cached !== undefined) counter.cachedInputTokens = (counter.cachedInputTokens ?? 0) + cached;
+}
+
 /**
  * The error classes a report may name: the product's own typed failures,
  * whose names carry no provider or model text. Anything else is `Error`.
@@ -195,6 +239,11 @@ function reportFor(facts: ModelCallFacts): ModelCallReport {
     durationMs: Date.now() - facts.startedAt,
     outcome: 'ok',
     ...(facts.providerCalls > 0 ? { providerCalls: facts.providerCalls } : {}),
+    ...(facts.usage?.inputTokens !== undefined ? { inputTokens: facts.usage.inputTokens } : {}),
+    ...(facts.usage?.outputTokens !== undefined ? { outputTokens: facts.usage.outputTokens } : {}),
+    ...(facts.usage?.cachedInputTokens !== undefined
+      ? { cachedInputTokens: facts.usage.cachedInputTokens }
+      : {}),
     ...(structured ? { structuredMode: structured.mode } : {}),
     ...(structured?.fellBack ? { fellBack: true as const } : {}),
     ...(structured?.demotes && facts.failure === undefined ? { demoted: true as const } : {}),
@@ -211,7 +260,12 @@ function reportFor(facts: ModelCallFacts): ModelCallReport {
 }
 
 /**
- * Report one completed call to the enclosing step's observer, if there is one.
+ * Report one completed call to the enclosing step's observer, or to the log.
+ *
+ * A loop step's observer puts the report on the item's ledger. A call no
+ * step observes (charter synthesis, orientation, discovery, good habits, the
+ * chat) is metered in the function log instead, as one `model-call` line, so
+ * no model call goes unrecorded.
  *
  * @param facts - What the retry wrapper knows about the call.
  * @throws Error when a step required an observer and none is installed.
@@ -221,6 +275,7 @@ export async function reportModelCall(facts: ModelCallFacts): Promise<void> {
   if (!observer) {
     if (requiredObserverScopes.getStore())
       throw new Error('model-call observer missing in an observed scope');
+    log.info('model-call', { ...reportFor(facts) });
     return;
   }
   try {

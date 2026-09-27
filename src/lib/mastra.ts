@@ -6,7 +6,9 @@ import { languageModel, MODEL, modelProviderClient } from './openai';
 import { log } from './logger';
 import {
   countingProviderRequests,
+  countModelUsage,
   reportModelCall,
+  type ProviderRequestCounter,
   type StructuredCallFacts,
   type StructuredMode,
 } from './model-call-telemetry';
@@ -117,7 +119,7 @@ async function withRetry<T>(
   const startedAt = Date.now();
   // The counter spans every attempt, so one report says how many requests
   // this call put on the provider, the SDK's own retries included.
-  const counter = { count: 0 };
+  const counter: ProviderRequestCounter = { count: 0 };
   return await countingProviderRequests(counter, async (): Promise<T> => {
     let lastErr: unknown;
     for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
@@ -128,6 +130,7 @@ async function withRetry<T>(
           attempts: attempt + 1,
           startedAt,
           providerCalls: counter.count,
+          usage: counter,
           structured: call.structured,
         });
         return value;
@@ -139,6 +142,7 @@ async function withRetry<T>(
             attempts: attempt + 1,
             startedAt,
             providerCalls: counter.count,
+            usage: counter,
             failure: { error: err },
             structured: call.structured,
           });
@@ -523,6 +527,8 @@ async function generateObjectOnce<T>(
     }
     throw asModerationRefusal(args.agent.name, err);
   }
+  // Billed whatever the reply turns out to hold.
+  countModelUsage(response);
   const resultError = (response as { error?: unknown }).error;
   if (timedOut()) throw timeoutError(resultError);
   if (resultError !== undefined && resultError !== null) {
@@ -603,6 +609,7 @@ export async function agentText(
     } catch (err) {
       throw asModerationRefusal(args.agent.name, err);
     }
+    countModelUsage(response);
     const text = replyText(response);
     assertCompleteReply(
       args.agent.name,
