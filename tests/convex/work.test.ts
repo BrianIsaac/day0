@@ -4508,6 +4508,17 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     vi.useRealTimers();
   });
 
+  it('dates an ask the provider gives no time for by when intake read it, not by when the seed landed', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 8, 28, 9, 7));
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const polledAt = Date.UTC(2026, 8, 28, 9, 0);
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), observedAt: polledAt });
+    expect((await onlyRow(harness)).observedAt).toBe(polledAt);
+    vi.useRealTimers();
+  });
+
   it('updates the title, summary and owner the tracker now shows instead of keeping the first read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);

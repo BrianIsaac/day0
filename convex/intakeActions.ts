@@ -100,10 +100,20 @@ interface IntakeRecord {
   polledAt?: number;
 }
 
+/** A listed item as intake reads it: the candidate and, when the provider says, when it was asked. */
+export interface IntakeCandidate extends WorkCandidate {
+  /** When the item was raised, by the provider's clock (a Linear issue's `createdAt`). */
+  askedAt?: number;
+}
+
 interface IntakeSeed extends Omit<WorkCandidate, 'observedAt'> {
   agentId: Id<'agents'>;
   /** The ticket as this listing showed it, kept for the re-read before apply. */
   tracker?: TicketSnapshot;
+  /** When the item was raised, by the provider's clock; a chat ask's is its message `ts`. */
+  askedAt?: number;
+  /** When intake read it: the poll's start. */
+  observedAt: number;
 }
 
 interface IntakeDecisionReply {
@@ -759,7 +769,7 @@ export function linearCandidate(
   issue: Record<string, unknown>,
   surface: Doc<'surfaces'>,
   observedAt: number,
-): WorkCandidate | undefined {
+): IntakeCandidate | undefined {
   const id = typeof issue.id === 'string' ? issue.id : undefined;
   const title = typeof issue.title === 'string' ? issue.title.trim() : '';
   const url = typeof issue.url === 'string' ? issue.url : undefined;
@@ -786,6 +796,7 @@ export function linearCandidate(
   const alias = [issue.uuid, issue.identifier].find(
     (name): name is string => typeof name === 'string' && name.trim() !== '' && name !== id,
   );
+  const createdAt = typeof issue.createdAt === 'string' ? Date.parse(issue.createdAt) : NaN;
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: surface.slug,
@@ -795,6 +806,7 @@ export function linearCandidate(
     contentSummary: description.slice(0, 4_000),
     contentRefs: [url],
     observedAt: new Date(observedAt),
+    ...(Number.isNaN(createdAt) ? {} : { askedAt: createdAt }),
     priority,
     requesterLabel: requester ?? owner,
     ...(owner === undefined ? {} : { owner }),
@@ -900,13 +912,13 @@ export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
 
 /** A ticket intake refused on this poll, and why it left the queue. */
 interface WithdrawnTicket {
-  readonly candidate: WorkCandidate;
+  readonly candidate: IntakeCandidate;
   readonly leftQueue: string;
 }
 
 /** What one Linear poll found. */
 interface LinearPoll {
-  readonly candidates: readonly WorkCandidate[];
+  readonly candidates: readonly IntakeCandidate[];
   readonly withdrawn: readonly WithdrawnTicket[];
   /** Each listed ticket as the ownership rule read it, by external id. */
   readonly trackers: ReadonlyMap<string, TicketSnapshot>;
@@ -1700,21 +1712,26 @@ async function pollChat(
 async function seedCandidate(
   runtime: IntakeRuntime,
   agentId: Id<'agents'>,
-  candidate: WorkCandidate,
+  candidate: IntakeCandidate,
   trackers: ReadonlyMap<string, TicketSnapshot> = new Map(),
 ): Promise<void> {
   await runtime.seed(seedOf(agentId, candidate, trackers));
 }
 
-/** The seed a candidate makes for one agent, with the ticket as it was listed. */
+/**
+ * The seed a candidate makes for one agent, with the ticket as it was listed,
+ * when it was raised and when this poll read it.
+ */
 function seedOf(
   agentId: Id<'agents'>,
-  candidate: WorkCandidate,
+  candidate: IntakeCandidate,
   trackers: ReadonlyMap<string, TicketSnapshot>,
 ): IntakeSeed {
   const tracker = trackers.get(candidate.externalId);
   return {
     ...(tracker ? { tracker } : {}),
+    ...(candidate.askedAt === undefined ? {} : { askedAt: candidate.askedAt }),
+    observedAt: candidate.observedAt.getTime(),
     agentId,
     sourceCategory: candidate.sourceCategory,
     sourceSystem: candidate.sourceSystem,

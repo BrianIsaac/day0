@@ -67,6 +67,8 @@ interface RecordedIntake {
 interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
   agentId: Id<'agents'>;
   tracker?: TicketSnapshot;
+  askedAt?: number;
+  observedAt: number;
 }
 
 interface RuntimeHarness {
@@ -1272,6 +1274,7 @@ describe('real surface intake', (): void => {
       title: 'Same external issue',
       contentSummary: 'Visible to two different agents.',
       contentRefs: [],
+      observedAt: 1,
     };
 
     await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-one') });
@@ -3567,6 +3570,65 @@ describe('the read grant (Q7, N2)', (): void => {
     expect(await skipReason()).toBe(
       'read scope jira:read is not granted; intake reads nothing here until the manager grants it again',
     );
+  });
+});
+
+describe('the ask time intake passes (U12, A9)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it("passes a Linear issue's createdAt as the ask time and the poll's start as when it was read", async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-linear');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId,
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const harness = runtimeHarness(
+      [linear],
+      [pageRow('onboarding.md', 'Onboarding', ONBOARDING), pageRow('linear.md', 'Linear', LINEAR)],
+      new Map([[String(credentialId), 'linear-test-value']]),
+    );
+    const polledAt = Date.parse('2026-08-26T03:00:00.000Z');
+    const issue = (identifier: string, createdAt?: string): Record<string, unknown> => ({
+      id: identifier,
+      title: `Issue ${identifier}`,
+      url: `https://linear.app/day0/issue/${identifier}`,
+      updatedAt: '2026-08-26T02:00:00.000Z',
+      project: { name: 'Q3 close' },
+      ...(createdAt === undefined ? {} : { createdAt }),
+    });
+    const makeMcpClient = () => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: { surface: { list_issues: { inputSchema: { properties: { limit: {} } } } } },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (): Promise<unknown> => ({
+          issues: [issue('REVOPS-1', '2026-08-20T09:30:00.000Z'), issue('REVOPS-2')],
+        }),
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => polledAt,
+      makeMcpClient,
+    });
+
+    const seeds = [...harness.seeds.values()];
+    expect(
+      seeds.map(({ externalId, askedAt, observedAt }) => ({ externalId, askedAt, observedAt })),
+    ).toEqual([
+      {
+        externalId: 'REVOPS-1',
+        askedAt: Date.parse('2026-08-20T09:30:00.000Z'),
+        observedAt: polledAt,
+      },
+      { externalId: 'REVOPS-2', askedAt: undefined, observedAt: polledAt },
+    ]);
   });
 });
 
