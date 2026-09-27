@@ -3883,60 +3883,73 @@ export const setFailed = internalMutation({
     // record for a failure the winner already wrote.
     const terminal = ['completed', 'failed', 'cancelled', 'skipped'];
     if (terminal.includes(row.state)) return;
-    // A run that landed nothing and left nothing to decide stopped: the
-    // record says so, Retry stands, and nothing pages the manager for it.
-    const surfaces = (
-      await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
-        .collect()
-    ).map(toSurfaceRecord);
-    const landed = landedWork(args.output, surfaces);
-    const stopped = args.stopped ?? landed.length === 0;
-    const reason = stopped ? stoppedReason(args.reason) : args.reason;
-    await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
-    await ctx.db.patch(args.workItemId, {
-      state: 'failed',
-      skipReason: reason,
-      pendingRunId: undefined,
-      approvedIndexes: undefined,
-      actionVerdicts: undefined,
-      applyPhase: undefined,
-      executionRunId: undefined,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-      ...(args.output !== undefined ? { output: args.output } : {}),
-    });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.failed',
-      payload: {
-        workItemId: args.workItemId,
-        reason,
-        ...(stopped || isStopped(reason) ? { stopped: true } : {}),
-        ...(args.output !== undefined ? { output: args.output } : {}),
-      },
-      createdAt: Date.now(),
-    });
-    await scheduleNextStep(ctx, { ...row, state: 'failed' });
-    if (args.stopped === false) return;
-    if (stopped) {
-      await queueManagerNote(ctx, row, 'stopped', (agentName) =>
-        stoppedNoteText({ agentName, title: row.title, reason: stopDetail(reason) }),
-      );
-    } else {
-      await queueManagerNote(ctx, row, 'landed', (agentName) =>
-        landedNoteText({
-          agentName,
-          title: row.title,
-          rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
-          outcome: 'failed',
-          reason: stopDetail(reason),
-        }),
-      );
-    }
+    await failInTransaction(ctx, row, args);
   },
 });
+
+/**
+ * Fail one row that is not in an end state, in the caller's transaction.
+ *
+ * A run that landed nothing and left nothing to decide stopped: the record
+ * says so, Retry stands, and nothing pages the manager for it. `setFailed`
+ * and the recoveries that end a row whose step died share it.
+ */
+async function failInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  args: { reason: string; output?: unknown; stopped?: boolean },
+): Promise<void> {
+  const surfaces = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+      .collect()
+  ).map(toSurfaceRecord);
+  const landed = landedWork(args.output, surfaces);
+  const stopped = args.stopped ?? landed.length === 0;
+  const reason = stopped ? stoppedReason(args.reason) : args.reason;
+  await settleWriteTargetClaims(ctx, row._id, Date.now());
+  await ctx.db.patch(row._id, {
+    state: 'failed',
+    skipReason: reason,
+    pendingRunId: undefined,
+    approvedIndexes: undefined,
+    actionVerdicts: undefined,
+    applyPhase: undefined,
+    executionRunId: undefined,
+    applyAttemptId: undefined,
+    applyClaimedAt: undefined,
+    ...(args.output !== undefined ? { output: args.output } : {}),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.failed',
+    payload: {
+      workItemId: row._id,
+      reason,
+      ...(stopped || isStopped(reason) ? { stopped: true } : {}),
+      ...(args.output !== undefined ? { output: args.output } : {}),
+    },
+    createdAt: Date.now(),
+  });
+  await scheduleNextStep(ctx, { ...row, state: 'failed' });
+  if (args.stopped === false) return;
+  if (stopped) {
+    await queueManagerNote(ctx, row, 'stopped', (agentName) =>
+      stoppedNoteText({ agentName, title: row.title, reason: stopDetail(reason) }),
+    );
+  } else {
+    await queueManagerNote(ctx, row, 'landed', (agentName) =>
+      landedNoteText({
+        agentName,
+        title: row.title,
+        rows: landedNoteRows(args.output, surfaces, replyTargetFor(row)),
+        outcome: 'failed',
+        reason: stopDetail(reason),
+      }),
+    );
+  }
+}
 
 /**
  * Keep a note for the manager about a finished run, and send it when the
