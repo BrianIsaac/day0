@@ -608,7 +608,10 @@ export class McpReader implements DocSourceReader {
       await search.execute!(
         {
           cloudId,
-          cql: 'type=page ORDER BY lastmodified DESC',
+          // Oldest first: a page edited mid-walk moves to the end, where the
+          // walk still reaches it, instead of ahead of the cursor, where the
+          // walk would miss it and the final batch would delete it.
+          cql: 'type=page ORDER BY lastmodified ASC',
           limit,
           ...(cursor ? { cursor } : {}),
         },

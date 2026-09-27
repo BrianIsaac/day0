@@ -354,6 +354,16 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     });
   const secret = 'contract-value';
 
+  it('walks Confluence oldest first, so a page edited mid-walk moves behind the cursor, not ahead of it', async (): Promise<void> => {
+    const calls: Array<Record<string, unknown>> = [];
+    const batch = await confluence(
+      { _links: { next: '/wiki/rest/api/search?cursor=abc&limit=10' } },
+      calls,
+    ).listPageBatch(sourceOf('confluence'), secret, undefined, 10);
+    expect(calls[0]?.cql).toBe('type=page ORDER BY lastmodified ASC');
+    expect(batch.nextCursor).toBe('abc');
+  });
+
   it('ends a Confluence walk only when no next page is named', async (): Promise<void> => {
     await expect(
       confluence({}).listPageBatch(sourceOf('confluence'), secret, undefined, 10),
