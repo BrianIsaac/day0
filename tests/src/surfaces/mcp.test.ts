@@ -1260,7 +1260,9 @@ describe('signing a new browser in again for a run', (): void => {
     });
     const steps = [
       browser('browser_navigate', { url: 'http://looker-tile:8080/' }),
-      browser('browser_fill_form', { fields: [{ name: 'Email', value: '{{secret}}' }] }),
+      browser('browser_fill_form', {
+        fields: [{ name: 'Email', value: 'revops@kestrel.example' }],
+      }),
       browser('browser_click', { element: 'Next' }),
       browser('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
       browser('browser_click', { element: 'Sign in' }),

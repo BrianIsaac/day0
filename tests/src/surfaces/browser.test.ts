@@ -523,7 +523,7 @@ describe('where a browser action may carry the credential', (): void => {
     expect(
       secretPlacementRefusal(
         'browser_fill_form',
-        { fields: [{ name: 'E-mail', value: '{{secret}}' }] },
+        { fields: [{ name: 'API key', value: '{{secret}}' }] },
         'tile',
       ),
     ).toBeUndefined();
@@ -537,6 +537,23 @@ describe('where a browser action may carry the credential', (): void => {
         'tile',
       ),
     ).toContain('fields.0.name');
+  });
+
+  // A user name or e-mail box shows what is typed into it, so the password
+  // would sit on the page in clear text for anyone who reads it (P8-5).
+  it('refuses the credential in a user name or e-mail field', (): void => {
+    for (const name of ['Username', 'User name', 'E-mail', 'Email address']) {
+      expect(
+        secretPlacementRefusal(
+          'browser_fill_form',
+          { fields: [{ name, value: '{{secret}}' }] },
+          'tile',
+        ),
+      ).toContain('typed only into a credential field');
+    }
+    expect(
+      secretPlacementRefusal('browser_type', { element: 'Username', text: '{{secret}}' }, 'tile'),
+    ).toContain('text of browser_type is not one');
   });
 
   it('refuses once the page resolved a password name to a control that is not a text box', (): void => {

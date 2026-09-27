@@ -356,9 +356,15 @@ export function withResolvedRefs(
 /** `{{secret}}`, or its qualified form `{{secret:<slug>}}`. */
 const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
 
-/** The names a login form gives the fields a credential is typed into. */
-const CREDENTIAL_FIELD =
-  /^(?:user ?name|e-?mail(?: address)?|password|passcode|access code|secret|api key|token)$/i;
+/**
+ * The names a login form gives the field the credential is typed into.
+ *
+ * A user name or e-mail box is not one: it shows what is typed into it, so the
+ * credential would sit on the page in clear text. The accessibility snapshot
+ * does not say an input is `type=password`, so the field's name is what marks
+ * it, and `credentialSlots` also requires the page to offer a text box.
+ */
+const CREDENTIAL_FIELD = /^(?:password|passcode|access code|secret|api key|token)$/i;
 
 /** Whether any string anywhere in a tool-argument tree names the credential. */
 export function carriesSecretPlaceholder(value: unknown): boolean {
