@@ -155,7 +155,7 @@ describe('the company bed pages', (): void => {
     }
   });
 
-  it.fails('sends every question the employee asks to the manager DM, on every page that says where one goes', (): void => { // the two page edits wait on the wave 2 bed pane's span re-record, which turns this into `it`
+  it.fails('sends every question an employee asks to the manager DM (fails until the bed pane re-records the spans)', (): void => {
     const elsewhere = [...folderPages, ...notionPages].flatMap((bedPage) =>
       bedPage.markdown
         .split(/\n\s*\n|\n- /)
