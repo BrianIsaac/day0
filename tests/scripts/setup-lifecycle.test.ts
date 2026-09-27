@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FEATHERLESS_SETTINGS,
   parseSetupArguments,
@@ -28,6 +28,7 @@ import {
 import {
   cleanupCheckouts,
   harness,
+  IDENTITY_SETTINGS,
   ran,
   realRoute,
   SYNTHETIC_KEY,
@@ -516,6 +517,7 @@ describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void =
   it('leaves the old functions on the old env when the push is refused, and never restarts', async (): Promise<void> => {
     const h = configured({
       services: ['backend'],
+      deploymentTables: ['agents'],
       failing: [{ match: 'convex dev --once', status: 1, stderr: 'Schema validation failed' }],
     });
     expect(await runCommand(verb('resume'), h.io)).toBe(1);
@@ -534,6 +536,95 @@ describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void =
     );
     expect(ran(h)).not.toContain('down -v');
     expect(h.volumes).toContain(`${PROJECT}_convex_data`);
+  });
+});
+
+/** The identity settings a completed `sync:env` leaves on the deployment. */
+const SYNCED_SETTINGS = {
+  NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+  DEV_NO_AUTH_JWKS: 'data:text/plain;base64,generated-jwks',
+};
+
+/**
+ * Evaluate `convex/auth.config.ts` as a push does, once per candidate set of
+ * deployment settings, and answer the harness's push from those verdicts. A
+ * push against settings not evaluated here fails the test.
+ */
+async function authConfigJudge(
+  candidates: readonly Record<string, string>[],
+): Promise<(settings: Readonly<Record<string, string>>) => string | undefined> {
+  const key = (settings: Readonly<Record<string, string>>): string =>
+    JSON.stringify(Object.entries(settings).sort(([a], [b]) => a.localeCompare(b)));
+  const verdicts = new Map<string, string | undefined>();
+  for (const candidate of candidates) {
+    for (const name of [...IDENTITY_SETTINGS, 'VERCEL', 'NEXT_PUBLIC_VERCEL_ENV']) {
+      vi.stubEnv(name, candidate[name] ?? '');
+    }
+    vi.resetModules();
+    try {
+      await import('../../convex/auth.config');
+      verdicts.set(key(candidate), undefined);
+    } catch (error) {
+      verdicts.set(key(candidate), error instanceof Error ? error.message : String(error));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+  return (settings) => {
+    const found = key(settings);
+    if (!verdicts.has(found)) throw new Error(`the auth config was not evaluated for ${found}`);
+    return verdicts.get(found);
+  };
+}
+
+describe('a rerun over a volume nothing was pushed to', (): void => {
+  it('refuses a push to a deployment with no identity provider, as the real auth config does', async (): Promise<void> => {
+    const judge = await authConfigJudge([{}, SYNCED_SETTINGS]);
+    expect(judge({})).toContain('no identity provider configured');
+    expect(judge(SYNCED_SETTINGS)).toBeUndefined();
+  });
+
+  it('completes on the second run after the first stopped before its push', async (): Promise<void> => {
+    const failing = [{ match: 'generate_admin_key.sh', status: 1, stderr: 'backend not ready' }];
+    const h = harness({
+      volumes: [...OTHERS],
+      services: ['backend'],
+      failing,
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      authConfig: await authConfigJudge([{}, SYNCED_SETTINGS]),
+    });
+    expect(await runSetup(realRoute(), h.io)).toBe(1);
+    expect(ran(h)).not.toContain('convex dev --once');
+
+    // Compose made the project's volumes at the first run's `up`.
+    h.volumes.push(...OWN_VOLUMES);
+    failing.length = 0;
+    h.commands.length = 0;
+    h.output.length = 0;
+    expect(await runSetup(realRoute(), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('npx convex data')).toBeLessThan(at('run sync:env'));
+    expect(at('run sync:env')).toBeLessThan(at('convex dev --once'));
+    expect(at('convex dev --once')).toBeLessThan(at('migrations:runPending'));
+    const printed = h.output.join('\n');
+    expect(printed).toContain('a new volume, starting at 0.3.0');
+    expect(printed).toContain('nothing was ever pushed here, so the env goes first');
+  });
+
+  it('names pnpm sync:env when the auth config refuses the push', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentTables: ['agents'],
+      authConfig: await authConfigJudge([{}]),
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('InvalidAuthConfig');
+    expect(printed).toContain(
+      "The deployment's env names no identity provider, so its auth config refused the push. " +
+        '`pnpm sync:env` puts the one in .env.local on the deployment',
+    );
   });
 });
 

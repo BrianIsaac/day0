@@ -1135,12 +1135,18 @@ export interface SequenceInput {
   /** Real mode: the company bed's pages copied in, then its check. */
   company?: boolean;
   /**
-   * Whether the data volume already holds a deployment. Its functions are then
-   * pushed before the env, so a push the new schema refuses leaves the old
-   * functions with the old env; a new volume takes the env first, because the
-   * auth config is read from the deployment's env at the first push.
+   * Whether the data volume is reused, so the release its rows are at is
+   * checked before anything is pushed. A deployment with rows then takes its
+   * functions before the env, so a push the new schema refuses leaves the old
+   * functions with the old env.
    */
   existing?: boolean;
+  /**
+   * Whether that check found no tables: nothing was ever pushed, so the env
+   * goes first as on a new volume. The auth config is read from the
+   * deployment's env at the push and refuses one with no identity provider.
+   */
+  empty?: boolean;
 }
 
 /**
@@ -1170,8 +1176,9 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
     ...(real ? ['redactor:up'] : []),
     'admin-key',
-    ...(input.existing
-      ? ['release:check', 'convex dev --once', 'migrations', 'release:stamp', 'sync:env']
+    ...(input.existing ? ['release:check'] : []),
+    ...(input.existing && !input.empty
+      ? ['convex dev --once', 'migrations', 'release:stamp', 'sync:env']
       : ['sync:env', 'convex dev --once', 'migrations', 'release:stamp']),
     'convex:restart',
     'check:setup',
@@ -1702,7 +1709,8 @@ export function planLines(input: PlanInput): string[] {
       lines.push('     (only when the file has no key or the backend refuses the one it has)');
     }
     if (step === 'release:check') {
-      lines.push('     (refuses to skip a release, or to push older functions over newer rows)');
+      lines.push('     (refuses to skip a release, or to push older functions over newer rows;');
+      lines.push('     a deployment with no tables yet takes the env before the push)');
     }
     if (step === 'redactor:up' && input.redactor) lines.push(`     ${input.redactor.reason}`);
   });
@@ -2324,6 +2332,25 @@ function adoptDeploymentCredentialKey(
   return undefined;
 }
 
+/**
+ * What to do about a push the deployment's auth config refused, or nothing
+ * for any other refusal. The config is read from the deployment's env at the
+ * push, so the way out is the env, not another push.
+ *
+ * @param output - The push's own output.
+ * @param mode - The setup mode, for the command to run again.
+ * @returns Lines to print after the failure.
+ */
+export function pushRefusalAdvice(output: string, mode: SetupMode): string[] {
+  if (!/InvalidAuthConfig|no identity provider configured/.test(output)) return [];
+  return [
+    '',
+    "The deployment's env names no identity provider, so its auth config refused the push. " +
+      `\`pnpm sync:env\` puts the one in ${ENV_FILE} on the deployment (\`pnpm dev:no-auth-key\` ` +
+      `writes the local issuer's keys if the file has none); then run \`${entryCommand(mode)}\` again.`,
+  ];
+}
+
 /** One failed step, printed with the state it leaves behind and how to resume. */
 function reportFailure(
   io: SetupIo,
@@ -2794,10 +2821,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     const profiles = real ? REAL_MODE_PROFILES : [];
     const warm = real && options.warmFrom !== undefined;
-    // A deployment with rows takes its functions before its env and is
-    // checked against its release first; --reset leaves a new volume.
+    // A reused volume is checked against its release first; --reset leaves a
+    // new volume. Whether it has rows, and so takes its functions before its
+    // env, is the check's answer, not the volume's existence: a first run
+    // stopped before its push leaves a volume with nothing in it.
     const existingDeployment = decision === 'rerun' && !options.reset;
-    const steps = sequenceSteps(route, {
+    const sequence: SequenceInput = {
       mode: options.mode,
       warm,
       sandbox: options.sandbox,
@@ -2805,7 +2834,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       pull,
       company: options.company,
       existing: existingDeployment,
-    });
+    };
+    let steps = sequenceSteps(route, sequence);
+    let deploymentHasRows = existingDeployment;
     const head = io.run('git', ['rev-parse', '--short=12', 'HEAD'], { timeoutMs: 30_000 });
     const commit =
       head.status === 0 && /^[0-9a-f]{7,40}$/.test(head.stdout.trim())
@@ -2938,17 +2969,19 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const runStep = (
       name: string,
       label: string,
-      extra: RunOptions = {},
+      extra: RunOptions & { onFailure?: (result: RunResult) => void } = {},
     ): RunResult | undefined => {
+      const { onFailure, ...runOptions } = extra;
       let last: RunResult | undefined;
       for (const planned of stepCommands(name, context)) {
         last = step(io, steps, name, label, planned.command, planned.args, {
           ...streamed,
-          ...extra,
-          env: { ...environment, ...(extra.env ?? {}), ...(planned.env ?? {}) },
+          ...runOptions,
+          env: { ...environment, ...(runOptions.env ?? {}), ...(planned.env ?? {}) },
         });
         if (last.status !== 0) {
           reportFailure(io, label, last, resolvedProject, options.mode);
+          onFailure?.(last);
           return undefined;
         }
       }
@@ -3183,6 +3216,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         return 1;
       }
       io.log(`    ${verdict.note}`);
+      if (verdict.from === undefined) {
+        deploymentHasRows = false;
+        steps = sequenceSteps(route, { ...sequence, empty: true });
+        io.log('    nothing was ever pushed here, so the env goes first, as on a new volume');
+      }
     }
     if (options.adoptCredentialKey) {
       const unread = adoptDeploymentCredentialKey(io, environment, envPath);
@@ -3194,15 +3232,28 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const pushFunctions = (): boolean => {
-      if (!runStep('convex dev --once', 'npx convex dev --once')) {
-        if (existingDeployment) {
+      // Captured rather than streamed, so an auth config refusal can be named.
+      const pushed = runStep('convex dev --once', 'npx convex dev --once', {
+        inherit: false,
+        onFailure: (result: RunResult): void => {
+          for (const line of pushRefusalAdvice(`${result.stdout}${result.stderr}`, options.mode)) {
+            io.log(line);
+          }
+        },
+      });
+      if (pushed) {
+        for (const line of `${pushed.stdout}${pushed.stderr}`.split('\n')) {
+          if (line.trim() !== '') io.log(`    ${line.trimEnd()}`);
+        }
+      } else {
+        if (deploymentHasRows) {
           io.log(
             '    The push was refused before anything changed: the old functions keep serving ' +
               'with the env they had, and no migration has run.',
           );
         }
-        return false;
       }
+      if (!pushed) return false;
       const corrections = publicUrlCorrections(readEnvValues(envPath), ports);
       if (Object.keys(corrections).length > 0) {
         writeEnvValues(envPath, corrections);
@@ -3261,7 +3312,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     // Functions before env on a deployment with rows, so a refused push
     // leaves the old functions on the old env; the restart only once every
     // step before it succeeded.
-    if (existingDeployment) {
+    if (deploymentHasRows) {
       if (!pushFunctions() || !runMigrations() || !stampRelease()) return 1;
       if (!runStep('sync:env', 'pnpm sync:env')) return 1;
     } else {

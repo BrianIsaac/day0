@@ -161,7 +161,24 @@ export interface HarnessOptions {
   migrationReports?: string[];
   /** What `npx convex env list` prints when the admin key is accepted. */
   deploymentEnv?: string;
+  /**
+   * The deployment's auth config, judged at every push against the identity
+   * settings the fake deployment holds: why it refuses, or undefined when it
+   * accepts. Absent means every push is accepted.
+   */
+  authConfig?: (deploymentSettings: Readonly<Record<string, string>>) => string | undefined;
+  /** The identity settings the deployment already holds, as a past `sync:env` left them. */
+  deploymentSettings?: Record<string, string>;
 }
+
+/** The settings the auth config reads, which `sync:env` copies from `.env.local` to the deployment. */
+export const IDENTITY_SETTINGS = [
+  'NEXT_PUBLIC_DEV_NO_AUTH',
+  'DEV_NO_AUTH_JWKS',
+  'DAY0_OIDC_ISSUER',
+  'DAY0_OIDC_AUDIENCE',
+  'CLERK_JWT_ISSUER_DOMAIN',
+] as const;
 
 /**
  * A setup environment that records every effect instead of causing one.
@@ -187,6 +204,7 @@ export function harness(options: HarnessOptions = {}): Harness {
   let minted = 0;
   let clock = 0;
   let broughtUp = false;
+  let deploymentSettings: Record<string, string> = { ...(options.deploymentSettings ?? {}) };
 
   const run = (command: string, args: readonly string[], runOptions?: RunOptions): RunResult => {
     const joined = [command, ...args].join(' ');
@@ -360,7 +378,25 @@ export function harness(options: HarnessOptions = {}): Harness {
       }
       return { status: 0, stdout: 'Wrote keys\n', stderr: '' };
     }
+    if (joined.includes('run sync:env')) {
+      const values = readEnvValues(join(directory, '.env.local'));
+      deploymentSettings = Object.fromEntries(
+        IDENTITY_SETTINGS.filter((name) => (values[name] ?? '') !== '').map((name) => [
+          name,
+          values[name]!,
+        ]),
+      );
+      return { status: 0, stdout: '', stderr: '' };
+    }
     if (joined.includes('convex dev --once')) {
+      const refusal = options.authConfig?.(deploymentSettings);
+      if (refusal !== undefined) {
+        return {
+          status: 1,
+          stdout: '',
+          stderr: `Error: Unable to push deployment config to ${readEnvValues(join(directory, '.env.local')).CONVEX_SELF_HOSTED_URL ?? 'the backend'}\nInvalidAuthConfig: ${refusal}\n`,
+        };
+      }
       writeEnvValues(join(directory, '.env.local'), {
         NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:3211',
       });
