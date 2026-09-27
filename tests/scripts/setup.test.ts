@@ -380,6 +380,101 @@ describe('prerequisites', (): void => {
   });
 });
 
+describe('a Docker daemon this user cannot reach', (): void => {
+  const everything = {
+    node: 'v22.19.0',
+    pnpm: '9.15.0',
+    docker: 'Docker version 29.8.0',
+    compose: 'Docker Compose version v5.5.1',
+    ports: [],
+  };
+
+  it('asks the daemon, not only the client, and names the fix for each refusal', (): void => {
+    const stopped = prerequisiteReport({
+      ...everything,
+      daemon: {
+        ok: false,
+        detail:
+          'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?',
+      },
+    }).find((item) => item.name === 'Docker daemon');
+    expect(stopped).toMatchObject({ ok: false, blocking: true });
+    expect(stopped?.detail).toContain('Cannot connect to the Docker daemon');
+    expect(stopped?.fix).toContain('sudo systemctl start docker');
+    const outside = prerequisiteReport({
+      ...everything,
+      daemon: {
+        ok: false,
+        detail: 'permission denied while trying to connect to the Docker daemon socket',
+      },
+    }).find((item) => item.name === 'Docker daemon');
+    expect(outside?.fix).toContain('sudo usermod -aG docker "$USER"');
+    expect(
+      prerequisiteReport({
+        ...everything,
+        daemon: { ok: true, detail: '29.8.0', arch: 'x86_64' },
+      }).every((item) => item.ok),
+    ).toBe(true);
+  });
+
+  it('names the Compose plugin when `docker compose` did not answer', (): void => {
+    const compose = prerequisiteReport({
+      ...everything,
+      compose: undefined,
+      composeFailure: "docker: 'compose' is not a docker command.",
+    }).find((item) => item.name === 'Compose v2');
+    expect(compose?.detail).toBe(
+      "`docker compose version` did not answer: docker: 'compose' is not a docker command.",
+    );
+    expect(compose?.fix).toContain('docker-compose-plugin');
+  });
+
+  it('reports the daemon on a dry run, keeps its words, and exits non-zero after the plan', async (): Promise<void> => {
+    const h = harness({
+      answers: ['synthetic-key'],
+      failing: [
+        {
+          match: 'docker info',
+          status: 1,
+          stderr:
+            'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n',
+        },
+        {
+          match: 'docker volume ls',
+          status: 1,
+          stderr:
+            'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n',
+        },
+      ],
+    });
+    expect(await runSetup(keyRoute({ dryRun: true }), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'GAP   Docker daemon: Cannot connect to the Docker daemon at unix:///var/run/docker.sock.',
+    );
+    expect(printed).toContain('sudo systemctl start docker');
+    expect(printed).toContain('This dry run found 1 thing(s) to fix above');
+    expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
+  });
+
+  it("keeps Docker's own words when it cannot inventory volumes", async (): Promise<void> => {
+    const h = harness({
+      answers: ['synthetic-key'],
+      failing: [
+        {
+          match: 'docker volume ls',
+          status: 1,
+          stderr: 'permission denied while trying to connect\n',
+        },
+      ],
+    });
+    expect(await runSetup(keyRoute(), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      'error: Docker could not inventory volumes, so no installation can be safely selected: permission denied while trying to connect',
+    );
+  });
+});
+
 describe('refusing anything that is not this machine', (): void => {
   it('refuses to run as part of a hosted build', (): void => {
     expect(buildEnvironmentRefusal({ VERCEL: '1' })).toContain('Vercel');

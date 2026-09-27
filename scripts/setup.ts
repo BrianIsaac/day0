@@ -433,12 +433,27 @@ export interface PrerequisiteResult {
   blocking: boolean;
 }
 
+/** What the Docker daemon itself said, as against the client's `--version`. */
+export interface DaemonAnswer {
+  ok: boolean;
+  /** The server version, or the first line the refusal printed. */
+  detail: string;
+  /** The architecture the daemon runs containers on (`x86_64`, `aarch64`). */
+  arch?: string;
+}
+
 export interface PrerequisiteObservations {
   /** What `node --version` printed, or undefined when it could not be run. */
   node?: string;
   pnpm?: string;
   docker?: string;
+  /** What `docker info` answered; the client answers without a daemon. */
+  daemon?: DaemonAnswer;
   compose?: string;
+  /** The first line `docker compose version` printed when it failed. */
+  composeFailure?: string;
+  /** Real mode adds the redactor, whose wheel locks name one architecture. */
+  mode?: SetupMode;
   ports: readonly {
     name: string;
     port: number;
@@ -487,16 +502,32 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
     blocking: true,
     name: 'Docker',
     ok: observed.docker !== undefined,
-    detail: observed.docker?.trim() ?? 'the daemon did not answer',
-    fix: 'Start Docker Desktop, or the `docker` service, and try again.',
+    detail: observed.docker?.trim() ?? 'not on the path',
+    fix: 'Install Docker Desktop, or Docker Engine and its Compose plugin.',
   });
+  if (observed.docker !== undefined && observed.daemon !== undefined) {
+    results.push({
+      blocking: true,
+      name: 'Docker daemon',
+      ok: observed.daemon.ok,
+      detail: observed.daemon.detail,
+      fix: /permission denied/i.test(observed.daemon.detail)
+        ? 'This user may not reach the daemon. Add yourself to the docker group and log in again: `sudo usermod -aG docker "$USER"`.'
+        : 'Start Docker Desktop, or the service: `sudo systemctl start docker`.',
+    });
+  }
   const compose = majorVersion(observed.compose);
   results.push({
     blocking: true,
     name: 'Compose v2',
     ok: compose !== undefined && compose >= REQUIRED_COMPOSE_MAJOR,
-    detail: observed.compose?.trim() ?? '`docker compose version` did not answer',
-    fix: 'Compose v2 ships with current Docker; `docker-compose` v1 is not enough.',
+    detail:
+      observed.compose?.trim() ??
+      `\`docker compose version\` did not answer${observed.composeFailure ? `: ${observed.composeFailure}` : ''}`,
+    fix:
+      observed.compose === undefined
+        ? 'Install the Compose v2 plugin: Docker Desktop carries it; on Linux, the docker-compose-plugin package.'
+        : 'Compose v2 ships with current Docker; the old `docker-compose` v1 is not enough.',
   });
   for (const port of observed.ports) {
     results.push({
@@ -2122,7 +2153,13 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     const volumes = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
     if (volumes.status !== 0 && !options.dryRun) {
-      io.log('error: Docker could not inventory volumes; no installation can be safely selected.');
+      io.log(
+        'error: Docker could not inventory volumes, so no installation can be safely selected: ' +
+          `${firstLine(volumes.stderr) || `exit ${volumes.status ?? 'unknown'}`}`,
+      );
+      io.log(
+        '       `docker info` says whether the daemon is running and whether this user may reach it.',
+      );
       return 1;
     }
     let existingVolumes = volumes.stdout.split('\n').map((name) => name.trim());
@@ -2194,15 +2231,20 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       blocking: false,
       fix: `\`pnpm dev\` serves on ${ports.app} and the unlock URL names it. Free that port before you run it, or move it: \`--app-port <n>\`; the setup below is unaffected.`,
     });
+    const compose = io.run('docker', ['compose', 'version'], { timeoutMs: 30_000 });
     const prerequisites = prerequisiteReport({
       node: versionOf(io, 'node', ['--version']),
       pnpm: versionOf(io, 'pnpm', ['--version']),
       docker: versionOf(io, 'docker', ['--version']),
-      compose: versionOf(io, 'docker', ['compose', 'version']),
+      daemon: daemonAnswer(io),
+      compose: compose.status === 0 ? compose.stdout.trim() : undefined,
+      composeFailure: compose.status === 0 ? undefined : firstLine(compose.stderr),
+      mode: options.mode,
       ports: portResults,
       entry: entryCommand(options.mode),
     });
-    if (!printPrerequisites(io, prerequisites) && !options.dryRun) return 1;
+    const prerequisitesMet = printPrerequisites(io, prerequisites);
+    if (!prerequisitesMet && !options.dryRun) return 1;
     if (ownStackRunning) {
       io.log(
         `  ok    ${resolvedProject} is already running here, so its ports are its own` +
@@ -2475,6 +2517,14 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         asksKey,
       })) {
         io.log(line);
+      }
+      if (!prerequisitesMet) {
+        const gaps = prerequisites.filter((result) => !result.ok && result.blocking).length;
+        io.log('');
+        io.log(
+          `This dry run found ${gaps} thing(s) to fix above; a real run stops there, before it writes or starts anything.`,
+        );
+        return 1;
       }
       return 0;
     }
@@ -3290,6 +3340,46 @@ function numberFrom(value: string | undefined, fallback: number): number {
 }
 
 /** What a tool prints for its version, or undefined when it is not there. */
+/** The first non-blank line of a tool's output, trimmed. */
+function firstLine(text: string): string {
+  return (
+    text
+      .split('\n')
+      .map((line: string): string => line.trim())
+      .find((line: string): boolean => line !== '') ?? ''
+  );
+}
+
+/**
+ * Ask the Docker daemon itself whether it answers this user. The client's
+ * `--version` answers with no daemon at all, so it cannot tell a stopped
+ * daemon or a user outside the docker group from a working one.
+ *
+ * Args:
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   The server version and architecture, or the daemon's own refusal.
+ */
+function daemonAnswer(io: SetupIo): DaemonAnswer {
+  const probe = io.run('docker', ['info', '--format', '{{.ServerVersion}} {{.Architecture}}'], {
+    timeoutMs: 30_000,
+  });
+  if (probe.status !== 0) {
+    return {
+      ok: false,
+      detail:
+        firstLine(probe.stderr) || `\`docker info\` exited ${probe.status ?? 'without a status'}`,
+    };
+  }
+  const [version, arch] = probe.stdout.trim().split(/\s+/);
+  return {
+    ok: true,
+    detail: version ? `server ${version}` : 'answered',
+    ...(arch ? { arch } : {}),
+  };
+}
+
 function versionOf(io: SetupIo, command: string, args: readonly string[]): string | undefined {
   const result = io.run(command, args, { timeoutMs: 30_000 });
   return result.status === 0 ? result.stdout.trim() : undefined;
