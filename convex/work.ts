@@ -2242,12 +2242,33 @@ export async function applyVerdict(
       ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
   });
+  // The newest charter row is the active one: the verdict names the version
+  // it was reached under, so the trail says which rules decided (Q14).
+  const charter = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .order('desc')
+    .first();
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.evaluated',
-    payload: { workItemId, decision, verdict: effective },
+    payload: {
+      workItemId,
+      decision,
+      verdict: effective,
+      ...(charter ? { charterId: charter._id, charterVersion: charter.version } : {}),
+    },
     createdAt: Date.now(),
   });
+  if (nextState === 'skipped') {
+    // A skip ends the item: its terminal event, as every terminal transition writes one.
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.skipped',
+      payload: { workItemId, ...(skipReason ? { reason: skipReason } : {}) },
+      createdAt: Date.now(),
+    });
+  }
   if (readmission) {
     await logSatisfiedRequeue(
       ctx,
@@ -3529,6 +3550,8 @@ export const claimForExecution = internalMutation({
         skillId: args.skillId,
         ...(skill.registeredAt !== undefined ? { skillRegisteredAt: skill.registeredAt } : {}),
         skillBodyHash: skillBodyHash(skill.body),
+        // The item the skill was made for: a run for any other item is a reuse (A9).
+        ...(skill.proposedFor !== undefined ? { proposedFor: skill.proposedFor } : {}),
       },
       createdAt: Date.now(),
     });

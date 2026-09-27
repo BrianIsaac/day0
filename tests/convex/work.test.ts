@@ -4103,6 +4103,39 @@ describe('the execution claim and the skill body it runs', (): void => {
     expect(row.skillId).toBeUndefined();
   });
 
+  it('records the item the skill was made for, so a run for another item counts as a reuse', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, {
+      state: 'registered',
+      body: 'Comment, then close.',
+    });
+    const madeFor = await harness.run(async (ctx) => {
+      const skill = await ctx.db.get(skillId);
+      const other = await ctx.db.insert('workItems', {
+        agentId: skill!.agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'The item the skill was authored for',
+        contentSummary: 'Earlier work.',
+        contentRefs: [],
+        state: 'completed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(skillId, { proposedFor: other });
+      return other;
+    });
+
+    await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+
+    const row = await readItem(harness, workItemId);
+    const [event] = (await eventsOfType(harness, row.agentId, 'work.execution-claimed')).filter(
+      (entry) => entry._id === row.executionRunId,
+    );
+    expect(event?.payload).toMatchObject({ workItemId, skillId, proposedFor: madeFor });
+  });
+
   it('records the registration and the hash of the body the run claimed', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, skillId } = await seedApproved(harness, {
@@ -4206,5 +4239,58 @@ describe('the apply dead-man switch (P9-1)', (): void => {
       state: 'failed',
       skipReason: INTERRUPTED_APPLY_REASON,
     });
+  });
+});
+
+describe('the evaluation’s record (step 29)', (): void => {
+  it('names the charter the verdict was reached under and writes a terminal event for a skip', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId, workItemId } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('charters', { agentId, version: '1.0', body: {}, approved: true, createdAt: 1 });
+      const charterId = await ctx.db.insert('charters', { agentId, version: '1.1', body: {}, approved: true, createdAt: 2 });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-11',
+        title: 'Northstar renewal',
+        contentSummary: 'Out of scope.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      return { agentId, charterId, workItemId };
+    });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'skip', reason: 'outside the charter' },
+    });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(events.find((event) => event.type === 'work.evaluated')?.payload).toMatchObject({
+      workItemId,
+      decision: 'skip',
+      charterId,
+      charterVersion: '1.1',
+    });
+    expect(events.find((event) => event.type === 'work.skipped')?.payload).toEqual({
+      workItemId,
+      reason: 'outside the charter',
+    });
+    vi.useRealTimers();
   });
 });
