@@ -18,10 +18,12 @@ import {
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
-import { reevaluatePendingInTransaction } from './work';
+import { surfaceSlug } from '../src/surfaces/slug';
+import { reevaluatePendingInTransaction, resendDecisionsAfterManagerChange } from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
+import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -62,22 +64,10 @@ function withProbeAttempt(surface: Doc<'surfaces'>, attempt: ProbeAttempt): Prob
 }
 
 /**
- * Convert a declared system name to its stable per-agent key.
- *
- * Args:
- *   name: Manager-provided system name.
- *
- * Returns:
- *   A lowercase URL-safe surface slug.
+ * Convert a declared system name to its stable per-agent key: the one slug
+ * the planner, the evaluator and the corrections compute from the same name.
  */
-export function surfaceSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'system'
-  );
-}
+export { surfaceSlug };
 
 /**
  * Whether a surface is the charter-only row an earlier build minted for this mention.
@@ -1084,6 +1074,10 @@ export const recordProbeRetry = internalMutation({
  * closes the gate; the next probe, finding the row no longer connected,
  * descends. Establishing a connection still walks the whole ladder at once,
  * because a freshly approved row is never `connected`.
+ *
+ * A failed manager lookup never descends either: the route answered, and the
+ * person it looked up is what changed. The failure is recorded on the same
+ * rung, and changing the manager (`agents.setBossEmail`) re-probes it (Q6).
  */
 export const demoteAfterProbeFailure = internalMutation({
   args: {
@@ -1099,7 +1093,8 @@ export const demoteAfterProbeFailure = internalMutation({
       surface.probeGeneration !== args.generation ||
       !['approved', 'ungranted', 'listed-dead'].includes(surface.verdict) ||
       surface.managerApprovedAt === undefined ||
-      surface.itApprovedAt === undefined
+      surface.itApprovedAt === undefined ||
+      isManagerLookupFailure(args.reason)
     ) {
       return null;
     }
@@ -1308,7 +1303,10 @@ function frozenTools(
  * here: a row still being evaluated from a read taken before this write is
  * caught where its verdict lands (`applyVerdict`), under this write's key.
  * No probe widens a stored tool list, a renewal's included (`frozenTools`);
- * the connected event names any tool it withheld.
+ * the connected event names any tool it withheld. A probe that resolves a
+ * different manager than the row held writes `manager.changed` (Q6), so the
+ * ledger shows who the approver became and when, and any open request
+ * delivered to another DM is sent again to this one.
  */
 export const recordConnected = internalMutation({
   args: {
@@ -1332,6 +1330,10 @@ export const recordConnected = internalMutation({
       return false;
     }
     const transitioned = surface.verdict !== 'connected';
+    const managerChanged =
+      surface.managerUserId !== undefined &&
+      args.managerUserId !== undefined &&
+      surface.managerUserId !== args.managerUserId;
     const tools = frozenTools(surface, args);
     await ctx.db.patch(surface._id, {
       verdict: 'connected',
@@ -1363,6 +1365,20 @@ export const recordConnected = internalMutation({
           : { surfaceId: surface._id },
       createdAt: args.verifiedAt,
     });
+    if (managerChanged) {
+      await ctx.db.insert('events', {
+        agentId: surface.agentId,
+        type: 'manager.changed',
+        payload: {
+          surfaceId: surface._id,
+          via: 'probe',
+          previousManagerUserId: surface.managerUserId,
+          managerUserId: args.managerUserId,
+        },
+        createdAt: args.verifiedAt,
+      });
+    }
+    await resendDecisionsAfterManagerChange(ctx, surface, args.managerDmChannelId);
     if (transitioned) {
       const readScope = `${surface.slug}:read`;
       if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {

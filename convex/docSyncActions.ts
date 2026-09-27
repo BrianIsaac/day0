@@ -8,9 +8,14 @@ import { readerFor } from '../src/docs/readers';
 import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef, redactCredentials } from '../src/docs/redaction';
-import { spanModelFromEnv, type SpanModel } from '../src/redaction/client';
+import {
+  RedactorUnavailableError,
+  spanModelFromEnv,
+  type SpanModel,
+} from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
+import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 
 export const SYNC_BATCH_SIZE = 25;
@@ -22,24 +27,30 @@ export interface PersistedBatch {
   redactions: number;
 }
 
+/** A directory an author keeps procedures in: `runbooks/`, `how-to/`, `playbooks/`. */
+const PROCEDURE_DIRECTORY = /(?:^|\/)(?:runbooks?|how-?tos?|playbooks?)\//i;
+const PROCEDURE_TITLE = /how[- ]to|runbook|playbook/i;
+
 /**
- * Classify a page for the existing Docs tab and executor prompt.
+ * Classify a page for the Docs tab and the executor prompt, by its path or its title.
  *
- * Args:
- *   page: Normalised documentation page.
+ * A page kept under a procedures directory (`runbooks/`, `how-to/`,
+ * `playbooks/`) is a how-to whatever its title says, so a checklist in
+ * `runbooks/` reaches the executor as a procedure; otherwise the title or
+ * the first `# ` heading decides, as before. The path is the author's own
+ * filing, and a folder reader's title falls back to the file name.
  *
- * Returns:
- *   Existing mock-document category.
+ * @param page - The page's reference (when the reader gives one), title and Markdown.
+ * @returns The page's category.
  */
 export function categoryForPage(
-  page: Pick<DocPage, 'title' | 'markdown'>,
+  page: Pick<DocPage, 'title' | 'markdown'> & { readonly ref?: string },
 ): 'team-doc' | 'how-to-guide' {
+  if (page.ref !== undefined && PROCEDURE_DIRECTORY.test(page.ref)) return 'how-to-guide';
   const firstHeading = page.markdown
     .split('\n')
     .find((line: string): boolean => /^#\s+/.test(line));
-  return /how[- ]to|runbook|playbook/i.test(`${page.title}\n${firstHeading || ''}`)
-    ? 'how-to-guide'
-    : 'team-doc';
+  return PROCEDURE_TITLE.test(`${page.title}\n${firstHeading || ''}`) ? 'how-to-guide' : 'team-doc';
 }
 
 /**
@@ -54,7 +65,11 @@ export function categoryForPage(
  * Returns:
  *   Bounded error text without credential material.
  */
-export function safeSyncError(error: unknown, secret?: string, known: readonly string[] = []): string {
+export function safeSyncError(
+  error: unknown,
+  secret?: string,
+  known: readonly string[] = [],
+): string {
   const message = error instanceof Error ? error.message : String(error);
   return redactSecret(message, secret ?? '', known).slice(0, 500);
 }
@@ -231,7 +246,14 @@ export const syncBatch = internalAction({
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
       });
-      const persisted = await persistPageBatch(ctx, source, batch.pages, agents, spanModelFromEnv(), known);
+      const persisted = await persistPageBatch(
+        ctx,
+        source,
+        batch.pages,
+        agents,
+        spanModelFromEnv(),
+        known,
+      );
       if (batch.nextCursor) {
         if (batch.nextCursor === args.cursor) {
           throw new Error('Documentation reader repeated its continuation cursor.');
@@ -268,6 +290,9 @@ export const syncBatch = internalAction({
           sourceId: source._id,
           runId: args.runId,
         });
+        await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
+          sourceId: source._id,
+        });
       }
       return {
         ok: completed.completed,
@@ -276,7 +301,15 @@ export const syncBatch = internalAction({
         complete: true,
       };
     } catch (error) {
-      const reason = safeSyncError(error, secret, known);
+      // A read cut off mid-batch is recorded as the transient it is, with its cause.
+      // A stopped redaction component is a person's to start, not a transient.
+      const reason = safeSyncError(
+        error instanceof RedactorUnavailableError
+          ? error
+          : (interruptedReadError(error, 'The documentation read') ?? error),
+        secret,
+        known,
+      );
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: source._id,
         runId: args.runId,

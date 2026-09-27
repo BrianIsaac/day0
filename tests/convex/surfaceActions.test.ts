@@ -25,6 +25,7 @@ import {
   type ToolDefinition,
 } from '../../convex/surfaceActions';
 import { actionIntent } from '../../src/surfaces/policy';
+import { probeDocumentedApi, type ApiConnector } from '../../src/surfaces/http';
 import {
   BROWSER_DRIVER_ABSENT,
   BROWSER_DRIVER_ABSENT_REASON,
@@ -546,19 +547,6 @@ describe('surface probe action state', (): void => {
 
   it.each([
     {
-      label: 'an unsupported documented API',
-      surface: {
-        class: 'chat',
-        path: 'documented-api',
-        endpoint: 'https://graph.microsoft.com/v1.0/',
-        displayName: 'Microsoft Teams',
-      },
-      probeMcp: vi.fn(),
-      expectedVerdict: 'ungranted',
-      expectedReason:
-        'limitation of this Day0 deployment, not evidence that Microsoft Teams is unavailable',
-    },
-    {
       label: 'a live MCP server refusing its credential',
       surface: {
         class: 'kanban',
@@ -1054,6 +1042,185 @@ describe('surface probe action state', (): void => {
     ).rejects.toThrow('forbidden');
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface?.probeGeneration).toBeUndefined();
+  });
+});
+
+describe('probing a documented API that is not Slack', (): void => {
+  const TRACKER = 'https://tracker.example.com/api/v2/';
+  const TRACKER_PAGE = [
+    '# Tracker',
+    '',
+    'The team tracker has a REST API at `https://tracker.example.com/api/v2/`, key in',
+    '`X-Api-Key: {{secret}}`.',
+    '',
+    '- `GET /issues` lists the open issues.',
+    '- `POST /comments` adds a comment.',
+  ].join('\n');
+  // Another system's page on the same agent: its operations are not the tracker's.
+  const BILLING_PAGE = ['# Billing', '', '- `GET /invoices` and `DELETE /accounts`.'].join('\n');
+
+  /** A connector that skips DNS and answers every request from `respond`. */
+  function connector(respond: () => Response): { connect: ApiConnector; urls: string[] } {
+    const urls: string[] = [];
+    return {
+      urls,
+      connect: async (endpoint: string) => ({
+        url: new URL(endpoint),
+        fetch: async (input: URL): Promise<Response> => {
+          urls.push(input.href);
+          return respond();
+        },
+      }),
+    };
+  }
+
+  async function probe(
+    partial: Record<string, unknown>,
+    pages: ReadonlyArray<{ markdown: string; title?: string }>,
+    connect: ApiConnector,
+  ): Promise<{
+    outcome: Awaited<ReturnType<typeof runSurfaceProbe>>;
+    connected: Array<Record<string, unknown>>;
+    failures: Array<Record<string, unknown>>;
+    probeSlack: ReturnType<typeof vi.fn>;
+  }> {
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      verdict: 'approved',
+      path: 'documented-api',
+      credentialId: 'test-credential-id',
+      credentialLanded: false,
+      managerApprovedAt: 2,
+      itApprovedAt: 3,
+      whereFound: [],
+      createdAt: 1,
+      ...partial,
+      pathCandidates: [{ path: 'documented-api', endpoint: partial.endpoint }],
+    };
+    const connected: Array<Record<string, unknown>> = [];
+    const failures: Array<Record<string, unknown>> = [];
+    const probeSlack = vi.fn();
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: async (
+          _reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
+          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if ('verifiedAt' in args) {
+            connected.push(args);
+            return true;
+          }
+          if ('verdict' in args) {
+            failures.push(args);
+            return true;
+          }
+          if ('retryAfterMs' in args) return true;
+          return null;
+        },
+        runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
+          'surfaceId' in args
+            ? {
+                surface: { ...surface, probeGeneration: 1 },
+                agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+              }
+            : pages,
+        runAction: fakeRunAction('tracker-key'),
+      } as unknown as ActionCtx,
+      surfaceId,
+      {
+        probeBrowser: vi.fn(),
+        probeMcp: vi.fn(),
+        probeSlack,
+        probeApi: (endpoint, credential, documentation) =>
+          probeDocumentedApi(endpoint, credential, documentation, connect),
+        now: (): number => 1_000,
+        wait: async (): Promise<void> => undefined,
+      },
+    );
+    return { outcome, connected, failures, probeSlack };
+  }
+
+  it('connects a tracker with the operations its own page documents', async (): Promise<void> => {
+    const tracker = connector(() => Response.json([{ id: 'TRK-1' }]));
+    const { outcome, connected, probeSlack } = await probe(
+      { slug: 'tracker', displayName: 'Tracker', class: 'kanban', endpoint: TRACKER },
+      [{ markdown: TRACKER_PAGE }, { markdown: BILLING_PAGE }],
+      tracker.connect,
+    );
+    expect(outcome).toEqual({
+      verdict: 'connected',
+      toolAllowlist: ['issues', 'comments'],
+      channelsNotJoined: [],
+      managerDmReady: false,
+    });
+    expect(connected).toEqual([
+      expect.objectContaining({ toolAllowlist: ['issues', 'comments'], toolArguments: [] }),
+    ]);
+    expect(tracker.urls).toEqual(['https://tracker.example.com/api/v2/issues']);
+    expect(probeSlack).not.toHaveBeenCalled();
+  });
+
+  it('records a refused key as ungranted, not as a dead system', async (): Promise<void> => {
+    const tracker = connector(() => new Response('{"error":"bad key"}', { status: 401 }));
+    const { outcome, failures } = await probe(
+      { slug: 'tracker', displayName: 'Tracker', class: 'kanban', endpoint: TRACKER },
+      [{ markdown: TRACKER_PAGE }],
+      tracker.connect,
+    );
+    expect(outcome).toMatchObject({
+      verdict: 'ungranted',
+      reason: expect.stringContaining('HTTP 401'),
+    });
+    expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
+  });
+
+  it('says a page that names no operation is a limitation of Day0', async (): Promise<void> => {
+    const tracker = connector(() => Response.json({}));
+    const { outcome, failures } = await probe(
+      { slug: 'tracker', displayName: 'Tracker', class: 'kanban', endpoint: TRACKER },
+      [{ markdown: '# Tracker\n\nIt has a REST API.' }],
+      tracker.connect,
+    );
+    expect(outcome).toMatchObject({
+      verdict: 'ungranted',
+      reason: expect.stringContaining('not evidence that the system is unavailable'),
+    });
+    expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
+    expect(tracker.urls).toEqual([]);
+  });
+
+  // Chat intake reads every documented-API chat surface through Slack's Web
+  // API with the surface's key (`intakeActions.ts` `slackGet`), so connecting
+  // another chat system here would send its key to slack.com on the next poll.
+  it('does not connect a chat API that is not Slack, however well its page is documented', async (): Promise<void> => {
+    const graph = connector(() => Response.json({ id: 'me' }));
+    const { outcome, failures } = await probe(
+      {
+        slug: 'teams',
+        displayName: 'Microsoft Teams',
+        class: 'chat',
+        endpoint: 'https://graph.microsoft.com/v1.0/',
+      },
+      [
+        {
+          markdown:
+            '# Microsoft Teams\n\n- `GET /me` reads the signed-in user.\n- `POST /chats` starts a chat.',
+        },
+      ],
+      graph.connect,
+    );
+    expect(outcome).toMatchObject({
+      verdict: 'ungranted',
+      reason: expect.stringContaining(
+        'limitation of this Day0 deployment, not evidence that Microsoft Teams is unavailable',
+      ),
+    });
+    expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
+    expect(graph.urls).toEqual([]);
   });
 });
 

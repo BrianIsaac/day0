@@ -317,6 +317,16 @@ const LIST_FIELDS = ['willDo', 'willNotDo', 'escalationTriggers'] as const;
 const BOUNDING_FIELDS = ['willNotDo', 'escalationTriggers'] as const;
 
 /**
+ * Whether a clause still says something: a letter or a digit in any script.
+ *
+ * A strike that leaves only punctuation has emptied the clause; one that
+ * leaves Chinese, or any other non-Latin wording, has not (N8).
+ */
+function hasWording(clause: string): boolean {
+  return /[\p{L}\p{N}]/u.test(clause);
+}
+
+/**
  * Whether a strike removes each bounding clause that carries the constraint, whole.
  *
  * A derived candidate-property constraint is one word this module found in
@@ -482,7 +492,7 @@ function withoutClauses<T extends ClauseCharter>(
   const boundaries = { ...charter.proposedBoundaries };
   boundaries.willDo = charter.proposedBoundaries.willDo
     .map((clause: string): string => withoutPhrases(clause, phrases))
-    .filter((clause: string): boolean => /[A-Za-z0-9]/.test(clause));
+    .filter((clause: string): boolean => hasWording(clause));
   for (const field of BOUNDING_FIELDS) {
     boundaries[field] = charter.proposedBoundaries[field].filter(
       (clause: string): boolean => !carries(clause),
@@ -490,9 +500,7 @@ function withoutClauses<T extends ClauseCharter>(
   }
   return {
     ...charter,
-    proposedFunction: /[A-Za-z0-9]/.test(proposedFunction)
-      ? proposedFunction
-      : charter.proposedFunction,
+    proposedFunction: hasWording(proposedFunction) ? proposedFunction : charter.proposedFunction,
     proposedBoundaries: boundaries,
   };
 }
@@ -637,7 +645,7 @@ export function withoutClauseWording<T extends ClauseCharter>(
   for (const clause of charter.proposedBoundaries.willNotDo) {
     if (!phrases.some((phrase) => wordingPresent(phrase, [clause]))) continue;
     const remaining = withoutPhrases(clause, phrases);
-    if (remaining !== clause && /[A-Za-z0-9]/.test(remaining)) {
+    if (remaining !== clause && hasWording(remaining)) {
       throw new Error(
         'strike or edit the whole will-not-do clause; removing only part could change its boundary',
       );
@@ -646,13 +654,11 @@ export function withoutClauseWording<T extends ClauseCharter>(
   const list = (clauses: readonly string[]): string[] =>
     clauses
       .map((clause: string): string => withoutPhrases(clause, phrases))
-      .filter((clause: string): boolean => /[A-Za-z0-9]/.test(clause));
+      .filter((clause: string): boolean => hasWording(clause));
   const proposedFunction = withoutPhrases(charter.proposedFunction, phrases);
   return {
     ...charter,
-    proposedFunction: /[A-Za-z0-9]/.test(proposedFunction)
-      ? proposedFunction
-      : charter.proposedFunction,
+    proposedFunction: hasWording(proposedFunction) ? proposedFunction : charter.proposedFunction,
     proposedBoundaries: {
       willDo: list(charter.proposedBoundaries.willDo),
       willNotDo: list(charter.proposedBoundaries.willNotDo),

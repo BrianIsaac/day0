@@ -1,0 +1,24 @@
+{
+  "company": {
+    "employees": 1,
+    "charter": { "timesToFirstApprovedMs": [66924] },
+    "decisions": {
+      "requested": 2,
+      "approved": 2,
+      "rejected": 0,
+      "partiallyApproved": 0,
+      "medianLatencyMs": 48211,
+      "p90LatencyMs": 48662,
+      "byVia": { "dashboard": { "decided": 2 }, "channel": { "decided": 0 } }
+    },
+    "actions": {
+      "autoApplied": 25,
+      "approved": 1,
+      "held": 1,
+      "refused": 0,
+      "rejected": 0,
+      "blockedAfterRevocation": null
+    },
+    "auditTrail": { "complete": 26, "total": 26, "fraction": 1 }
+  }
+}

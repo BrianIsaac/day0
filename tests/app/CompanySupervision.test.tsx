@@ -48,6 +48,7 @@ function agentMetrics(overrides: {
     },
     actions: {
       autoApplied,
+      automatic: { reads: 0, managerMessages: 0, writes: autoApplied },
       sessionRestores: overrides.sessionRestores ?? 0,
       held,
       approved: approvedActions,
@@ -60,6 +61,19 @@ function agentMetrics(overrides: {
     skills: { approved: 0, rejected: 0 },
     autonomyChanges: 0,
     auditTrail: { complete, total, fraction: total > 0 ? complete / total : null },
+    pilot: {
+      skillReuse: { runs: 0, reused: 0, rate: null },
+      cycleTime: {
+        ended: 0,
+        medianToEndMs: null,
+        completed: 0,
+        medianToCompletionMs: null,
+        p90ToCompletionMs: null,
+      },
+      reorientation: { answered: 0, amended: 0, rate: null },
+      hoursSaved: { estimatedItems: 0, hours: null },
+      retrieval: { tokens: null, recall: null },
+    },
   };
 }
 
@@ -113,6 +127,7 @@ const FIGURES: OwnerMetrics = {
     skills: { approved: 0, rejected: 0 },
     autonomyChanges: 0,
     auditTrail: { complete: 36, total: 38, fraction: 36 / 38 },
+    pilot: priya.pilot,
   },
   excludedAgents: 2,
   omittedEmployees: 0,

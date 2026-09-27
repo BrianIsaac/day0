@@ -1,4 +1,5 @@
 import TurndownService from 'turndown';
+import { fetchWithBackoff, PROVIDER_BACKOFF, type BackoffPolicy } from '../../lib/transport-error';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
@@ -68,6 +69,13 @@ export function htmlPageTitle(html: string, fallback: string): string {
 
 /** Reader for an explicit allowlist of web documentation pages. */
 export class UrlsReader implements DocSourceReader {
+  private readonly backoff: BackoffPolicy;
+
+  /** @param backoff - How a rate-limited or failed page read is tried again. */
+  constructor(backoff: BackoffPolicy = PROVIDER_BACKOFF) {
+    this.backoff = backoff;
+  }
+
   /**
    * Fetch a bounded range of listed pages.
    *
@@ -123,10 +131,15 @@ export class UrlsReader implements DocSourceReader {
   private async fetchPages(source: DocSourceRecord, urls: URL[]): Promise<DocPage[]> {
     const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
     const pages: DocPage[] = [];
+    // Read through the global fetch at call time, one timeout per try.
+    const read = fetchWithBackoff(
+      (input: URL, init?: RequestInit): Promise<Response> => fetch(input, init),
+      20_000,
+      this.backoff,
+    );
     for (const url of urls) {
-      const response = await fetch(url, {
+      const response = await read(url, {
         headers: { Accept: 'text/markdown, text/html;q=0.9, text/plain;q=0.8' },
-        signal: AbortSignal.timeout(20_000),
       });
       if (!response.ok) throw new Error(`${url.href} returned HTTP ${response.status}.`);
       const declaredLength = Number(response.headers.get('content-length') || 0);

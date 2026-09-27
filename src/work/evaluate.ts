@@ -26,7 +26,7 @@ import {
 
 /**
  * Layer-2 evaluator. Lifted from Protean's `src/work/evaluate.ts`.
- * Same criterion sequence — scope, connection, permission, ownership,
+ * Same criterion sequence: scope, connection, permission, ownership,
  * value, risk (informational), capacity. The three differences for Day0:
  *
  *   1. The DB lookups (permission grants, existing claims, open-claim

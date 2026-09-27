@@ -1,14 +1,15 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
+import { FolderReader } from '../../src/docs/readers/folder';
+import { RedactorUnavailableError } from '../../src/redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -23,6 +24,9 @@ import {
 import type { DocPage } from '../../src/docs/types';
 import { encrypt, openOwnedCredential as openSpy } from '../../src/lib/credential-crypto';
 import { ownerValuesRef } from '../../src/redaction/known-values';
+import { temporaryDirectories } from '../setup/temporary-directories';
+
+const temporary = temporaryDirectories();
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -35,7 +39,6 @@ afterAll(async (): Promise<void> => {
   delete process.env.DAY0_REDACTOR_URL;
   await redactorDouble?.close();
 });
-
 
 vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/lib/credential-crypto')>();
@@ -95,6 +98,20 @@ describe('documentation sync action helpers', (): void => {
     expect(categoryForPage({ title: 'Ticketing', markdown: '# Runbook for tickets\nBody' })).toBe(
       'how-to-guide',
     );
+    for (const ref of [
+      'revops/runbooks/q3-close-checklist.md',
+      'how-to/billing.md',
+      'playbooks/incident.md',
+      'Runbook/refunds.md',
+    ]) {
+      expect(
+        categoryForPage({ ref, title: 'Q3 close checklist', markdown: '# Q3 close checklist' }),
+        ref,
+      ).toBe('how-to-guide');
+    }
+    expect(
+      categoryForPage({ ref: 'revops/handbook.md', title: 'Handbook', markdown: '# Handbook' }),
+    ).toBe('team-doc');
     expect(categoryForPage({ title: 'Team overview', markdown: '# Team overview' })).toBe(
       'team-doc',
     );
@@ -104,9 +121,11 @@ describe('documentation sync action helpers', (): void => {
   it('redacts explicit and recognisable credential values from errors', (): void => {
     expect(safeSyncError(new Error('failed token-value'), 'token-value')).toBe('failed <redacted>');
     expect(safeSyncError(new Error(`failed xox${'b'}-contract-value`))).toBe('failed <redacted>');
-    expect(safeSyncError(new Error(`failed ${token(['secret'], '_', 'contract-value-0123456789abcdefghijklmnop')}`))).toBe(
-      'failed <redacted>',
-    );
+    expect(
+      safeSyncError(
+        new Error(`failed ${token(['secret'], '_', 'contract-value-0123456789abcdefghijklmnop')}`),
+      ),
+    ).toBe('failed <redacted>');
   });
 
   it('stores raw values only in credential actions and persists markers everywhere else', async (): Promise<void> => {
@@ -147,7 +166,10 @@ describe('documentation sync action helpers', (): void => {
     const actionCalls: unknown[] = [];
     const mutationCalls: unknown[] = [];
     const ctx = {
-      runAction: async (reference: unknown, args: unknown): Promise<Id<'credentials'> | string[]> => {
+      runAction: async (
+        reference: unknown,
+        args: unknown,
+      ): Promise<Id<'credentials'> | string[]> => {
         // The boundary asks for the owner's stored values first; this owner has none.
         if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return [];
         actionCalls.push(args);
@@ -197,7 +219,7 @@ describe('documentation sync batching', (): void => {
    *   The fixture root and the runtime-built token it hides on page 30.
    */
   async function sixtyPages(): Promise<{ root: string; value: string }> {
-    const root = await mkdtemp(join(tmpdir(), 'day0-sync-batch-'));
+    const root = temporary('day0-sync-batch-');
     await mkdir(join(root, 'many'));
     const value = token(['lin', 'api'], '_', 'batch-contract-0123456789abcdef');
     for (let index = 1; index <= 60; index += 1) {
@@ -328,8 +350,53 @@ describe('documentation sync batching', (): void => {
     expect(source).not.toHaveProperty('activeSyncId');
   });
 
+  it('records a read cut off mid-sync as a transient with its cause', async (): Promise<void> => {
+    const { root } = await sixtyPages();
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockRejectedValueOnce(
+      new Error('fetch failed', {
+        cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+      }),
+    );
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const source = await harness.query(internal.docSources.getInternal, { sourceId });
+    expect(source?.lastError).toBe(
+      'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again.',
+    );
+  });
+
+  it('records a stopped redaction component as itself, not as a transient read', async (): Promise<void> => {
+    const { root } = await sixtyPages();
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockRejectedValueOnce(
+      new RedactorUnavailableError(
+        'redaction component unreachable at redactor:8000: read ECONNRESET',
+      ),
+    );
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    const source = await harness.query(internal.docSources.getInternal, { sourceId });
+    expect(source?.lastError).toBe(
+      'redaction component unreachable at redactor:8000: read ECONNRESET',
+    );
+  });
+
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {
-    const root = await mkdtemp(join(tmpdir(), 'day0-sync-known-'));
+    const root = temporary('day0-sync-known-');
     await mkdir(join(root, 'few'));
     const stored = ['Sunny-Day-42', 'Winter2026!'];
     for (let index = 1; index <= 3; index += 1) {
@@ -361,7 +428,9 @@ describe('documentation sync batching', (): void => {
       locator: 'few',
     });
     vi.mocked(openSpy).mockClear();
-    await expect(harness.action(internal.docSyncActions.syncSource, { sourceId })).resolves.toMatchObject({
+    await expect(
+      harness.action(internal.docSyncActions.syncSource, { sourceId }),
+    ).resolves.toMatchObject({
       ok: true,
       pages: 3,
       complete: true,

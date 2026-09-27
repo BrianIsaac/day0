@@ -75,7 +75,7 @@ import {
   run3RefreshPlan,
   run3RefreshPrerequisiteLedger,
   run3RefreshPrerequisites,
-} from './fixtures/closing-gates-2026-09-16';
+} from '../fixtures/closing-gates-2026-09-16';
 import {
   run4AuditNoteClosing,
   run4AuditNoteOutcomes,
@@ -93,7 +93,7 @@ import {
   run4TileSequence,
   RUN_4_LIST_ISSUES_EFFECT,
   RUN_4_TILE_READ_BACK,
-} from './fixtures/plan-obligations-2026-09-16';
+} from '../fixtures/plan-obligations-2026-09-16';
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
 import {
   FIN_1_ITEM,
@@ -4840,11 +4840,13 @@ describe('the autonomous-actions switch through the gate', (): void => {
 
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
 
+    // The one reply was refused at hold time, so nothing is left to decide:
+    // the run stops naming the refusal rather than parking with no control.
     const row = await readItem(harness, workItemId);
-    expect(row.state).toBe('actions-pending');
-    expect(row.actionVerdicts).toEqual([
-      { disposition: 'refused', reason: 'chat reply does not match the work item reply target' },
-    ]);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toContain(
+      "Day0's gate refused every action (chat reply does not match the work item reply target)",
+    );
     expect(recorded.http).toHaveLength(0);
   });
 

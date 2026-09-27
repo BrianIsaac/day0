@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -8,6 +7,9 @@ import {
   rotationQuestion,
   storedCredentialCount,
 } from '../../scripts/rotate-credential-key';
+import { temporaryDirectories } from '../setup/temporary-directories';
+
+const temporary = temporaryDirectories();
 
 const SCRIPT = resolve('scripts/rotate-credential-key.ts');
 const TSX = resolve('node_modules/.bin/tsx');
@@ -24,7 +26,7 @@ function rotate(
   input: string,
   stored: number,
 ): { status: number | null; output: string; calls: string[]; key: string | undefined } {
-  const cwd = mkdtempSync(join(tmpdir(), 'day0-rotate-'));
+  const cwd = temporary('day0-rotate-');
   writeFileSync(join(cwd, '.env.local'), `${SELF_HOSTED}DAY0_CREDENTIAL_KEY=${OLD_KEY}\n`, 'utf8');
   const bin = join(cwd, 'bin');
   mkdirSync(bin);

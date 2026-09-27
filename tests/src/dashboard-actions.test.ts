@@ -409,6 +409,7 @@ const completeMetrics: AgentMetrics = {
   },
   actions: {
     autoApplied: 4,
+    automatic: { reads: 2, managerMessages: 0, writes: 2 },
     sessionRestores: 0,
     held: 2,
     approved: 2,
@@ -421,6 +422,19 @@ const completeMetrics: AgentMetrics = {
   skills: { approved: 3, rejected: 0 },
   autonomyChanges: 1,
   auditTrail: { complete: 11, total: 11, fraction: 1 },
+  pilot: {
+    skillReuse: { runs: 0, reused: 0, rate: null },
+    cycleTime: {
+      ended: 0,
+      medianToEndMs: null,
+      completed: 0,
+      medianToCompletionMs: null,
+      p90ToCompletionMs: null,
+    },
+    reorientation: { answered: 0, amended: 0, rate: null },
+    hoursSaved: { estimatedItems: 0, hours: null },
+    retrieval: { tokens: null, recall: null },
+  },
 };
 
 describe('the supervision metrics card', (): void => {
@@ -467,6 +481,10 @@ describe('the supervision metrics card', (): void => {
         rejected: 0,
         medianLatencyMs: null,
         p90LatencyMs: null,
+        byVia: {
+          dashboard: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+          channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+        },
       },
       actions: {
         ...completeMetrics.actions,

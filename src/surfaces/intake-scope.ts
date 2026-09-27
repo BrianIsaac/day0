@@ -1,4 +1,5 @@
 import { containsTokenShape } from './redact';
+import { structuralSystemCandidates } from '../docs/system-discovery';
 
 /**
  * The queues one employee reads on a work-bearing surface.
@@ -38,12 +39,15 @@ export interface ScopeDescription {
   text: string;
 }
 
-/** The stored shape of `surfaces.intakeScope`. */
-export interface IntakeScope {
-  team?: ScopeValue;
-  project?: ScopeValue;
-  projects?: ScopeValue[];
-  channels?: ScopeValue[];
+/**
+ * The stored shape of `surfaces.intakeScope`; a row's own value type (its
+ * source as a document id) is kept by the functions that return a scope.
+ */
+export interface IntakeScope<V extends ScopeValue = ScopeValue> {
+  team?: V;
+  project?: V;
+  projects?: V[];
+  channels?: V[];
   notes?: string[];
 }
 
@@ -71,7 +75,8 @@ const FIELD_GRAMMARS: Record<Exclude<ScopeField, 'channel'>, readonly RegExp[]> 
 const CHANNELS_LABEL = /^\s*(?:[-*+]\s+)?Channels?\s*:/i;
 const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-const FORBIDDEN_QUEUE_LINE = /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
+const FORBIDDEN_QUEUE_LINE =
+  /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+/;
 const HEADING = /^\s{0,3}#{1,6}\s/;
 const MAX_NOTE_VALUE = 80;
@@ -170,7 +175,8 @@ export function scopeCandidates(
       for (const field of fields) {
         if (field === 'channel') {
           if (!CHANNELS_LABEL.test(line)) continue;
-          for (const match of line.matchAll(CHANNEL_NAME)) add(candidates, field, match[1], page, quote);
+          for (const match of line.matchAll(CHANNEL_NAME))
+            add(candidates, field, match[1], page, quote);
           continue;
         }
         for (const grammar of FIELD_GRAMMARS[field]) {
@@ -223,7 +229,9 @@ export function channelDescriptions(
     read.add(page);
     const mentions = channels
       .filter((item): boolean => item.ref === page.ref && item.sourceId === page.sourceId)
-      .map((item): RegExp => new RegExp(`(?<![a-z0-9_-])#${escaped(item.value)}(?![a-z0-9_-])`, 'i'));
+      .map(
+        (item): RegExp => new RegExp(`(?<![a-z0-9_-])#${escaped(item.value)}(?![a-z0-9_-])`, 'i'),
+      );
     for (const passage of passages(page.markdown)) {
       if (CHANNELS_LABEL.test(passage) || containsTokenShape(passage)) continue;
       if (!mentions.some((mention): boolean => mention.test(passage))) continue;
@@ -312,7 +320,11 @@ export function groundScopePicks(
     if (field === 'project') {
       const first = scope.project;
       if (!first) scope.project = kept;
-      else if (first.value !== value && first.ref === kept.ref && first.sourceId === kept.sourceId) {
+      else if (
+        first.value !== value &&
+        first.ref === kept.ref &&
+        first.sourceId === kept.sourceId
+      ) {
         if (!projects.some((project): boolean => project.value === value)) projects.push(kept);
       } else if (first.value !== value) {
         notes.push(
@@ -395,7 +407,65 @@ export function sentenceScopePicks(
     .map(({ number }): ScopePick => ({ candidate: number }));
 }
 
-/** Keep candidate lines under the handbook identified by the charter's role and queue words. */
+/** Words too common in a role to say which team it belongs to. */
+const ROLE_STOP_WORDS: ReadonlySet<string> = new Set([
+  'about',
+  'after',
+  'before',
+  'their',
+  'these',
+  'those',
+  'would',
+  'could',
+  'should',
+  'coordinator',
+  'manager',
+  'employee',
+]);
+
+/** The top directory of a page reference, or the reference itself at the top. */
+function scopeRoot(ref: string): string {
+  return ref.includes('/') ? ref.split('/')[0]! : ref;
+}
+
+/**
+ * The words of a role that can say which team it belongs to.
+ *
+ * A documented system's name is dropped: "record in Linear and post in Slack"
+ * names the tools every team shares, and the revops runbook headings name
+ * them too, so they would tie a logistics role with revenue operations.
+ */
+function roleWordsFor(role: string | undefined, pages: readonly ScopePage[]): string[] {
+  const systemWords = new Set(
+    structuralSystemCandidates(
+      pages.map((page) => ({
+        ref: page.ref,
+        title: /^#\s+(.+)$/m.exec(page.markdown)?.[1] ?? page.ref,
+        markdown: page.markdown,
+      })),
+    ).flatMap((system): string[] => system.name.toLowerCase().match(/[a-z0-9]+/g) ?? []),
+  );
+  return [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
+    .filter((word): boolean => word.length >= 5 && !ROLE_STOP_WORDS.has(word))
+    .filter((word): boolean => !systemWords.has(word))
+    .map((word): string => (word.length >= 6 ? word.replace(/s$/, '') : word));
+}
+
+/**
+ * Keep candidate lines under the handbook identified by the charter's role and queue words.
+ *
+ * Roles are matched against whole teams, not single pages: each top
+ * directory is scored by the role words its own name and its handbook-level
+ * headings carry, then by the words its runbooks carry, then by the queue
+ * values the manager's sentences name. A tie between two teams returns
+ * nothing, so intake never guesses between two handbooks.
+ *
+ * @param pages - Every synced page the candidates were read from.
+ * @param candidates - Every documented queue line for the surface.
+ * @param role - The charter's role for the employee.
+ * @param sentences - The manager's sentences about the system.
+ * @returns The candidates under the one team the role names, or none.
+ */
 export function roleScopeCandidates(
   pages: readonly ScopePage[],
   candidates: readonly ScopeCandidate[],
@@ -404,30 +474,34 @@ export function roleScopeCandidates(
 ): ScopeCandidate[] {
   const refs = [...new Set(candidates.map((candidate): string => candidate.ref))];
   if (refs.length <= 1) return [...candidates];
-  const namedByRef = new Map<string, Set<string>>();
+  const namedByRoot = new Map<string, Set<string>>();
   for (const pick of sentenceScopePicks(sentences, candidates)) {
     const named = candidates[pick.candidate - 1];
-    const values = namedByRef.get(named.ref) ?? new Set<string>();
+    const values = namedByRoot.get(scopeRoot(named.ref)) ?? new Set<string>();
     values.add(`${named.field}\0${named.value}`);
-    namedByRef.set(named.ref, values);
+    namedByRoot.set(scopeRoot(named.ref), values);
   }
-  const roleWords = [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
-    .filter((word): boolean => word.length >= 5 && !['about', 'after', 'before', 'their', 'these', 'those', 'would', 'could', 'should', 'coordinator', 'manager', 'employee'].includes(word));
-  const scores = refs.map((ref) => {
-    const page = pages.find((candidate): boolean => candidate.ref === ref);
-    const heading = /^#\s+(.+)$/m.exec(page?.markdown ?? '')?.[1] ?? '';
-    const identity = `${ref} ${heading}`.toLowerCase();
-    const roleHits = roleWords.filter((word): boolean => identity.includes(word)).length;
-    return { ref, score: roleHits * 1_000 + (namedByRef.get(ref)?.size ?? 0) };
+  const roleWords = roleWordsFor(role, pages);
+  const identity = (page: ScopePage): string =>
+    `${page.ref} ${/^#\s+(.+)$/m.exec(page.markdown)?.[1] ?? ''}`.toLowerCase();
+  const hits = (text: string): number =>
+    roleWords.filter((word): boolean => text.includes(word)).length;
+  const scores = [...new Set(refs.map(scopeRoot))].map((root) => {
+    const own = pages.filter((page): boolean => scopeRoot(page.ref) === root);
+    const handbook = own.filter((page): boolean => page.ref.split('/').length <= 2);
+    const runbooks = own.filter((page): boolean => page.ref.split('/').length > 2);
+    const primary = hits(`${root} ${handbook.map(identity).join(' ')}`);
+    const secondary = hits(runbooks.map(identity).join(' '));
+    return {
+      root,
+      score: primary * 1_000_000 + secondary * 1_000 + (namedByRoot.get(root)?.size ?? 0),
+    };
   });
   const highest = Math.max(...scores.map((item): number => item.score));
   if (highest === 0) return [];
   const top = scores.filter((item): boolean => item.score === highest);
-  const root = (ref: string): string => ref.includes('/') ? ref.split('/')[0] : ref;
-  const roots = new Set(top.map((item): string => root(item.ref)));
-  if (roots.size !== 1) return [];
-  const selected = root(top[0].ref);
-  return candidates.filter((candidate): boolean => root(candidate.ref) === selected);
+  if (top.length !== 1) return [];
+  return candidates.filter((candidate): boolean => scopeRoot(candidate.ref) === top[0]!.root);
 }
 
 /**
@@ -448,9 +522,12 @@ export function approvedLinearScope(scope: IntakeScope): {
     ...(scope.team ? { team: scope.team.value } : {}),
     ...(scope.project ? { project: scope.project.value } : {}),
     ...(scope.projects?.length
-      ? { projects: [scope.project?.value, ...scope.projects.map((project) => project.value)].filter(
-          (project): project is string => project !== undefined,
-        ) }
+      ? {
+          projects: [
+            scope.project?.value,
+            ...scope.projects.map((project) => project.value),
+          ].filter((project): project is string => project !== undefined),
+        }
       : {}),
   };
 }
@@ -561,11 +638,115 @@ function distinctLines(values: readonly ScopeValue[]): ScopeValue[] {
   });
 }
 
+/** The approved scope as it stands after reading the pages again. */
+export interface RestatedScope<V extends ScopeValue = ScopeValue> {
+  /** The scope with every still-stated value pointing at the line that states it now. */
+  readonly scope: IntakeScope<V>;
+  /** The values no page of their source states any more, in scope order. */
+  readonly drift: V[];
+}
+
+/**
+ * Read an approved scope against the pages as they are now, by value.
+ *
+ * A value stands while its own page still states it for the same field,
+ * through the same grammar orientation read it by (a "do not use" line
+ * states nothing), or, when its page is gone, while a page of the same team
+ * (or one stating the whole scope) does. So renaming or moving the page,
+ * reflowing the line, fixing a typo beside the value or adding a channel to
+ * the line changes nothing intake reads, and the value is re-pointed at the
+ * line that states it now; a value its page stopped stating has drifted,
+ * even when another team's page names it.
+ *
+ * @param scope - The approved scope.
+ * @param pages - The current pages.
+ * @param sourceId - When given, only values from this source are judged; the rest are kept as they are.
+ */
+export function restatedScope<V extends ScopeValue>(
+  scope: IntakeScope<V>,
+  pages: readonly ScopePage[],
+  sourceId?: string,
+): RestatedScope<V> {
+  const entries: Array<{ field: ScopeField; value: V }> = [
+    ...(scope.team ? [{ field: 'team' as const, value: scope.team }] : []),
+    ...(scope.project ? [{ field: 'project' as const, value: scope.project }] : []),
+    ...(scope.projects ?? []).map((value) => ({ field: 'project' as const, value })),
+    ...(scope.channels ?? []).map((value) => ({ field: 'channel' as const, value })),
+  ];
+  const stated = new Map(
+    entries.map(({ field, value }) => {
+      const own = pages.filter(
+        (page): boolean =>
+          value.sourceId === undefined ||
+          page.sourceId === undefined ||
+          page.sourceId === value.sourceId,
+      );
+      const lines = scopeCandidates(own, [field]).filter(
+        (candidate): boolean => candidate.value === value.value,
+      );
+      return [value, lines] as const;
+    }),
+  );
+  // A renamed handbook still states the whole scope, so the values follow it
+  // together rather than scattering to other teams' pages that share one.
+  const statedOn = new Map<string, number>();
+  for (const lines of stated.values()) {
+    for (const ref of new Set(lines.map((line): string => line.ref))) {
+      statedOn.set(ref, (statedOn.get(ref) ?? 0) + 1);
+    }
+  }
+  const drift: V[] = [];
+  const restate = (value: V): V => {
+    if (sourceId !== undefined && value.sourceId !== sourceId) return value;
+    const lines = stated.get(value) ?? [];
+    const own = lines.find((candidate): boolean => candidate.ref === value.ref);
+    // The value's own page still exists and no longer states it: that is a
+    // change the manager approves, whatever another page says. Only a page
+    // that is gone (a rename or a move) is followed, and only to a page of
+    // the same team or one that states the whole approved scope.
+    const pageRemains = pages.some(
+      (page): boolean =>
+        page.ref === value.ref &&
+        (value.sourceId === undefined ||
+          page.sourceId === undefined ||
+          page.sourceId === value.sourceId),
+    );
+    const moved = pageRemains
+      ? undefined
+      : [...lines]
+          .filter(
+            (candidate): boolean =>
+              scopeRoot(candidate.ref) === scopeRoot(value.ref) ||
+              statedOn.get(candidate.ref) === entries.length,
+          )
+          .sort(
+            (left, right): number => (statedOn.get(right.ref) ?? 0) - (statedOn.get(left.ref) ?? 0),
+          )[0];
+    const line = own ?? moved;
+    if (!line) {
+      drift.push(value);
+      return value;
+    }
+    return { ...value, ref: line.ref, quote: line.quote };
+  };
+  const restated: IntakeScope<V> = {
+    ...scope,
+    ...(scope.team ? { team: restate(scope.team) } : {}),
+    ...(scope.project ? { project: restate(scope.project) } : {}),
+    ...(scope.projects ? { projects: scope.projects.map(restate) } : {}),
+    ...(scope.channels ? { channels: scope.channels.map(restate) } : {}),
+  };
+  return { scope: restated, drift };
+}
+
 /**
  * The approved values whose page line is no longer on their page.
  *
  * Intake keeps reading what was approved; this is what the card shows so a
  * changed page is re-proposed and approved rather than silently followed.
+ * It compares lines because the card reads the scope as stored: a sync that
+ * finds the value still stated re-points the stored line (`restatedScope`),
+ * after which this finds nothing.
  *
  * Args:
  *   scope: The approved scope.

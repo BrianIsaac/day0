@@ -1,12 +1,19 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { assertOwnsAgent } from './ownership';
 import { seedItemInTransaction, workItemSeedFields } from './work';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { isTerminalWorkState } from '../src/evaluation/states';
+import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
 
-function requireMockMode(): void {
+/**
+ * Refuse a harness call outside mock mode or on a deployment that names no bed.
+ *
+ * @throws ConvexError naming the flag when the deployment is not a bed (N9).
+ */
+function requireEvaluationBed(what: string): void {
   if (SURFACE_MODE !== 'mock') throw new Error('evaluation harness requires mock mode');
+  if (evaluationBedName() === undefined) throw new ConvexError(evaluationBedRefusal(what));
 }
 
 const originatingTicketFields = {
@@ -33,7 +40,7 @@ export const seedTasks = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    requireMockMode();
+    requireEvaluationBed('evaluation.seedTasks');
     await assertOwnsAgent(ctx, args.agentId);
     if (args.tasks.length === 0 || args.tasks.length > 50) {
       throw new Error('evaluation task batch must contain between 1 and 50 tasks');
@@ -74,7 +81,7 @@ export const seedTasks = mutation({
 export const timeoutTask = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ timedOut: boolean }> => {
-    requireMockMode();
+    requireEvaluationBed('evaluation.timeoutTask');
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     await assertOwnsAgent(ctx, row.agentId);
@@ -106,7 +113,7 @@ export const timeoutTask = mutation({
 export const failSkillAuthoringAttempts = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ failed: boolean }> => {
-    requireMockMode();
+    requireEvaluationBed('evaluation.failSkillAuthoringAttempts');
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     await assertOwnsAgent(ctx, row.agentId);
@@ -138,7 +145,7 @@ export const failSkillAuthoringAttempts = mutation({
 export const snapshot = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
-    requireMockMode();
+    requireEvaluationBed('evaluation.snapshot');
     await assertOwnsAgent(ctx, args.agentId);
     const [workItems, events, spreadsheets, slackMessages, tweetReplies, tickets] =
       await Promise.all([

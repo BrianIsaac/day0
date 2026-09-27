@@ -1,10 +1,17 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { hasHostTool } from '../setup/host-tools';
+import { temporaryDirectories } from '../setup/temporary-directories';
 
-const SCRIPT = resolve('scripts/sync-convex-env.sh');
+const temporary = temporaryDirectories();
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
+const SCRIPT = join(ROOT, 'scripts/sync-convex-env.sh');
 
 /**
  * Run the sync script against a fake `npx` that records every Convex CLI call.
@@ -22,7 +29,7 @@ function runSync(
   storedCredentials = '',
   pushed = false,
 ): { status: number | null; calls: string[]; stderr: string; deployment: string[] } {
-  const directory = mkdtempSync(join(tmpdir(), 'day0-sync-env-'));
+  const directory = temporary('day0-sync-env-');
   const envFile = join(directory, '.env.local');
   const log = join(directory, 'calls.log');
   const state = join(directory, 'deployment.env');
@@ -77,7 +84,7 @@ function runSync(
   return { status: result.status, calls, stderr: result.stderr, deployment };
 }
 
-describe('sync-convex-env.sh', (): void => {
+describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): void => {
   it('sets model knobs and removes stale knobs when the local settings are cleared', (): void => {
     const configured = runSync([], 'OPENAI_MAX_OUTPUT_TOKENS=32768\nOPENAI_REASONING_EFFORT=low\n');
     expect(configured.status).toBe(0);

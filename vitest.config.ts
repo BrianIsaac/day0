@@ -13,6 +13,11 @@ export default defineConfig({
   },
   test: {
     passWithNoTests: true,
+    // One zone for every run, the runner's and a developer's alike, so a
+    // test that formats a time reads the same text everywhere. UTC, because
+    // the pinned backend image runs in it; code that needs another zone names
+    // it (`src/lib/zone.ts`).
+    env: { TZ: 'UTC' },
     projects: [
       {
         test: {

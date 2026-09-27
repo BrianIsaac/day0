@@ -6,6 +6,7 @@
  * label means; the policy does.
  */
 import { REDACTOR_TIMEOUT_MS } from './policy';
+import { fetchWithBackoff, type BackoffPolicy } from '../lib/transport-error';
 
 export interface ModelSpan {
   start: number;
@@ -31,6 +32,13 @@ export class RedactorUnavailableError extends Error {
 export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
 
 /**
+ * One more try for a reset connection or a 503, inside the same deadline: the
+ * component is on the compose network, so a second try is cheap and a longer
+ * wait would only spend the sync's budget.
+ */
+export const REDACTOR_BACKOFF: BackoffPolicy = { attempts: 2, baseMs: 250, maxWaitMs: 1_000 };
+
+/**
  * The HTTP client for the `redactor` compose service.
  *
  * A non-2xx reply, a body that is not the expected shape, a network error and
@@ -41,11 +49,13 @@ export class HttpSpanModel implements SpanModel {
   readonly name: string;
   private readonly endpoint: URL;
 
+  // Four parameters, beyond the soft three: the last two are test seams with defaults.
   constructor(
     baseUrl: string,
     private readonly fetchImpl: FetchLike = (input: URL, init: RequestInit): Promise<Response> =>
       fetch(input, init),
     private readonly timeoutMs: number = REDACTOR_TIMEOUT_MS,
+    private readonly backoff: BackoffPolicy = REDACTOR_BACKOFF,
   ) {
     this.endpoint = new URL('/v1/spans', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
     this.name = `redactor@${this.endpoint.host}`;
@@ -71,9 +81,14 @@ export class HttpSpanModel implements SpanModel {
     threshold: number,
     signal: AbortSignal,
   ): Promise<ModelSpan[]> {
+    const send = fetchWithBackoff(
+      (input: URL, init?: RequestInit): Promise<Response> => this.fetchImpl(input, init ?? {}),
+      undefined,
+      this.backoff,
+    );
     let response: Response;
     try {
-      response = await this.fetchImpl(this.endpoint, {
+      response = await send(this.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text, labels, threshold }),
@@ -81,7 +96,9 @@ export class HttpSpanModel implements SpanModel {
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      throw new RedactorUnavailableError(`redaction component unreachable at ${this.endpoint.host}: ${reason}`);
+      throw new RedactorUnavailableError(
+        `redaction component unreachable at ${this.endpoint.host}: ${reason}`,
+      );
     }
     if (!response.ok) {
       throw new RedactorUnavailableError(`redaction component answered HTTP ${response.status}`);
@@ -90,7 +107,9 @@ export class HttpSpanModel implements SpanModel {
     try {
       body = await response.json();
     } catch {
-      throw new RedactorUnavailableError('redaction component answered with a body that is not JSON');
+      throw new RedactorUnavailableError(
+        'redaction component answered with a body that is not JSON',
+      );
     }
     const spans = (body as { spans?: unknown } | null)?.spans;
     if (!Array.isArray(spans)) {
@@ -107,7 +126,8 @@ export class HttpSpanModel implements SpanModel {
         !Number.isInteger(span.start) ||
         !Number.isInteger(span.end) ||
         !Number.isFinite(span.score) ||
-        span.score < 0 || span.score > 1 ||
+        span.score < 0 ||
+        span.score > 1 ||
         !labels.includes(span.label) ||
         span.start < 0 ||
         span.end > text.length ||
@@ -134,7 +154,9 @@ export class HttpSpanModel implements SpanModel {
  * Returns:
  *   A client, or undefined when nothing is configured.
  */
-export function spanModelFromEnv(url: string | undefined = process.env.DAY0_REDACTOR_URL): SpanModel | undefined {
+export function spanModelFromEnv(
+  url: string | undefined = process.env.DAY0_REDACTOR_URL,
+): SpanModel | undefined {
   const trimmed = url?.trim();
   if (!trimmed) return undefined;
   return new HttpSpanModel(trimmed);

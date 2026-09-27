@@ -10,8 +10,8 @@
  * login (Looker tile): \`…\``, the second half of `login: user / pass`) are
  * secrets wherever they occur, whatever a model thinks. The last one is a
  * grammar and not a guess only because the label is the line's own word for
- * it; a value that names a reference, a placeholder or a plain lowercase word
- * is left to the model. One personal-data format sits beside them: a
+ * it; a value that names a reference, a placeholder, a plain word or an
+ * unquoted phrase is left to the model. One personal-data format sits beside them: a
  * national identifier whose check letter verifies (the Singapore NRIC and
  * FIN), which no context keeps. The grammar is synchronous and
  * dependency-free, which is why it is also the floor applied where no model
@@ -20,7 +20,7 @@
  * every rule that judged a value by how random it looked.
  */
 
-import { guardReason } from './guard';
+import { PLAIN_WORD, QUOTE_PAIRS, guardReason, sampleValueReason } from './guard';
 
 export type StructuralLabel =
   | 'connection password'
@@ -80,35 +80,70 @@ export const PROVIDER_LABELS: ReadonlySet<string> = new Set(
  * stay in the clear: they are the address the runbook needs, and only the
  * password is the credential.
  */
-export const CONNECTION_PASSWORD = /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<>]*:([^\s/@`'"<>]+)@/gi;
-const PEM_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----\s*([\s\S]*?)\s*-----END [A-Z ]*PRIVATE KEY-----/g;
-const JSON_WEB_TOKEN = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g;
+export const CONNECTION_PASSWORD =
+  /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<>]*:([^\s/@`'"<>]+)@/gi;
+const PEM_BLOCK =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----\s*([\s\S]*?)\s*-----END [A-Z ]*PRIVATE KEY-----/g;
+const JSON_WEB_TOKEN =
+  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g;
 /**
+ * Every bare value below stops at CJK text and full-width punctuation, which no
+ * token or password written without quotes carries, so the Chinese sentence
+ * after a value (`Bearer abc123，然后调用`, `密码：abc123然后登录`) is never
+ * stored as part of it.
+ *
  * The value after an `Authorization` scheme word. Eight characters keeps
  * "Bearer header." in prose out; a placeholder (`Bearer <token>`,
  * `Bearer {{secret}}`, `Bearer YOUR_TOKEN`) is left as the safe form it is.
  */
-const AUTHORIZATION_VALUE = /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+([^\s,;"'`<>\\]+)/gi;
-const HEADER_VALUE = /\b(?:Bearer|Basic)\s+([^\s,;"'`<>\\]{8,})/g;
+const AUTHORIZATION_VALUE =
+  /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/gi;
+const HEADER_VALUE = /\b(?:Bearer|Basic)\s+([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]{8,})/g;
 /** A named credential header: `X-Api-Key: value`, `Api-Key: value`, `X-Auth-Token: value`. */
-const CREDENTIAL_HEADER = /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\]{8,})/gi;
+const CREDENTIAL_HEADER =
+  /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]{8,})/gi;
 /** curl's `-u user:password` and `--user user:password`. */
-const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"']+)/g;
+const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"'　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/g;
+/**
+ * What a bare labelled value is made of: no whitespace, ASCII quote, comma,
+ * semicolon or closing parenthesis, and no CJK or full-width character.
+ */
+const BARE_VALUE_CHARACTER = '[^\\s`\'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]';
 /**
  * A line that assigns a value to a password-class label. The label must sit
  * directly before the separator (an optional parenthetical allowed), so
  * "password policy: rotate quarterly" is prose and "PIN for the phone: 0419"
- * is the model's to find. A quoted value is taken whole; a bare value stops
- * at whitespace and closing punctuation, and is not taken when it starts a
- * `user / password` pair, which `LOGIN_PAIR` reads instead.
+ * is the model's to find. A value between any pair of `QUOTE_PAIRS` is taken
+ * whole, one capture group per pair in the table's order; a bare value (the
+ * group after them) stops at whitespace and closing punctuation, ASCII or
+ * full-width, never gives back a character to let the rest of the pattern
+ * match (so `login: Admin / pass` cannot store `Admi`), and is not taken when
+ * it starts a `user / password` pair, which `LOGIN_PAIR` reads instead.
  */
-const LABELLED_PASSWORD =
-  /(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)(?:[ \t]*\([^)\n]{0,60}\))?[ \t]*[:=：][ \t]*(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|([^\s`'",;)]+)(?![ \t]*\/[ \t]*[^\s/]))/gi;
+const LABELLED_PASSWORD = new RegExp(
+  '(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)' +
+    '(?:[ \\t]*\\([^)\\n]{0,60}\\))?[ \\t]*[:=：][ \\t]*' +
+    `(?:${QUOTE_PAIRS.map(([open, close]): string => `${open}([^${close}\\n]+)${close}`).join('|')}` +
+    `|(${BARE_VALUE_CHARACTER}+)(?!${BARE_VALUE_CHARACTER})(?![ \\t]*\\/[ \\t]*[^\\s/]))`,
+  'gi',
+);
 /** `login: user / password`, `credentials: user/password`: the second half is the secret. */
 const LOGIN_PAIR =
-  /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)]+)/gi;
-/** A bare value that is only lowercase letters is a word before it is a password. */
-const LOWERCASE_WORD = /^[a-z]+$/;
+  /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/gi;
+/**
+ * Whether an unquoted value after a password-class label is the author's
+ * prose rather than a password: "Login: Google Workspace SSO", "Password:
+ * Summer". Only a plain word is: a letters-only value with capitals inside
+ * (`Password: HqZwTrPx for the ops account`) is a password with words after
+ * it. A CJK phrase ("密码：请联系IT管理员") never reaches here, because a bare
+ * value stops at the first CJK character. A quoted value is the author's own
+ * marking of the secret and is never refused here.
+ *
+ * @param value - The bare value, trailing punctuation shed.
+ */
+function bareValueIsProse(value: string): boolean {
+  return PLAIN_WORD.test(value);
+}
 /** A Singapore NRIC or FIN: a series letter, seven digits and a check letter. */
 const NATIONAL_ID = /(?<![A-Za-z0-9])([STFGM])(\d{7})([A-Z])(?![A-Za-z0-9])/g;
 const NATIONAL_ID_WEIGHTS = [2, 7, 6, 5, 4, 3, 2];
@@ -136,7 +171,8 @@ export function nationalIdVerifies(series: string, digits: string, check: string
   const rule = NATIONAL_ID_CHECK[series];
   if (!rule) return false;
   const sum = [...digits].reduce(
-    (total: number, digit: string, index: number): number => total + Number(digit) * NATIONAL_ID_WEIGHTS[index]!,
+    (total: number, digit: string, index: number): number =>
+      total + Number(digit) * NATIONAL_ID_WEIGHTS[index]!,
     rule.offset,
   );
   return rule.letters[sum % 11] === check;
@@ -164,7 +200,12 @@ export function structuralSpans(text: string): StructuralSpan[] {
   for (const match of text.matchAll(CONNECTION_PASSWORD)) {
     if (match.index === undefined || REFERENCE_START.test(match[2])) continue;
     const start = match.index + match[0].lastIndexOf(`${match[2]}@`);
-    spans.push({ start, end: start + match[2].length, label: 'connection password', kind: 'secret' });
+    spans.push({
+      start,
+      end: start + match[2].length,
+      label: 'connection password',
+      kind: 'secret',
+    });
   }
   for (const match of text.matchAll(PEM_BLOCK)) {
     if (match.index === undefined || !match[1]) continue;
@@ -173,10 +214,15 @@ export function structuralSpans(text: string): StructuralSpan[] {
   }
   for (const match of text.matchAll(JSON_WEB_TOKEN)) {
     if (match.index === undefined) continue;
-    spans.push({ start: match.index, end: match.index + match[0].length, label: 'json web token', kind: 'secret' });
+    spans.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      label: 'json web token',
+      kind: 'secret',
+    });
   }
   for (const match of text.matchAll(PROVIDER_PREFIX)) {
-    if (match.index === undefined) continue;
+    if (match.index === undefined || sampleValueReason(match[0])) continue;
     const group = match.slice(1).findIndex((value): boolean => value !== undefined);
     const label = PROVIDER_SHAPES[Math.max(group, 0)].label;
     spans.push({ start: match.index, end: match.index + match[0].length, label, kind: 'secret' });
@@ -185,7 +231,13 @@ export function structuralSpans(text: string): StructuralSpan[] {
     for (const match of text.matchAll(pattern)) {
       if (match.index === undefined) continue;
       const value = match[1].replace(TRAILING_PUNCTUATION, '');
-      if (REFERENCE_START.test(value) || UPPER_NAME.test(value) || value.startsWith('<credential:')) continue;
+      if (
+        REFERENCE_START.test(value) ||
+        UPPER_NAME.test(value) ||
+        value.startsWith('<credential:') ||
+        sampleValueReason(value)
+      )
+        continue;
       const start = match.index + match[0].lastIndexOf(match[1]);
       spans.push({ start, end: start + value.length, label: 'header value', kind: 'secret' });
     }
@@ -193,22 +245,35 @@ export function structuralSpans(text: string): StructuralSpan[] {
   for (const match of text.matchAll(LOGIN_PAIR)) {
     if (match.index === undefined) continue;
     const value = match[2].replace(PASSWORD_TRAILING, '');
+    // The second half of `user / pass` is a password by its position, so no word test applies.
     if (!value || guardReason(value, { assigned: true })) continue;
     const start = match.index + match[0].lastIndexOf(match[2]);
     spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }
   for (const match of text.matchAll(LABELLED_PASSWORD)) {
     if (match.index === undefined) continue;
-    const quoted = match[1] ?? match[2] ?? match[3];
-    const raw = quoted ?? match[4] ?? '';
+    const quoted = match
+      .slice(1, QUOTE_PAIRS.length + 1)
+      .find((group: string | undefined): boolean => group !== undefined);
+    const raw = quoted ?? match[QUOTE_PAIRS.length + 1] ?? '';
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
-    if (!value || guardReason(value, { assigned: true }) || (quoted === undefined && LOWERCASE_WORD.test(value))) continue;
+    if (
+      !value ||
+      guardReason(value, { assigned: true, quoted: quoted !== undefined }) ||
+      (quoted === undefined && bareValueIsProse(value))
+    )
+      continue;
     const start = match.index + match[0].lastIndexOf(raw);
     spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }
   for (const match of text.matchAll(NATIONAL_ID)) {
     if (match.index === undefined || !nationalIdVerifies(match[1], match[2], match[3])) continue;
-    spans.push({ start: match.index, end: match.index + match[0].length, label: 'national id', kind: 'id-number' });
+    spans.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      label: 'national id',
+      kind: 'id-number',
+    });
   }
   return mergeSpans(spans);
 }

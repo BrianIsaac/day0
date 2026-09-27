@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   LINEAR_TOKEN_PLACEHOLDER,
@@ -24,6 +26,9 @@ import {
   ScriptedSpanModel,
   UnreachableSpanModel,
 } from '../../fixtures/redaction-double';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const model = new RecordedSpanModel();
 const options = { model };
@@ -297,7 +302,7 @@ it('keeps a word-shaped value in every credential assignment form a runbook uses
 });
 
 it('does not store manifest scopes even when every scope and a dotted prefix are flagged', async () => {
-  const markdown = readFileSync('tests/fixtures/slack-manifest-scopes.md', 'utf8');
+  const markdown = readFileSync(join(ROOT, 'tests/fixtures/slack-manifest-scopes.md'), 'utf8');
   const model = new ScriptedSpanModel((text) =>
     [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].flatMap((match) => {
       const span = {

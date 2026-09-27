@@ -12,6 +12,9 @@ import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../sr
 import { storedCredentialGuardReason } from './credentialCryptoActions';
 import { browserTitleMarker } from '../src/surfaces/browser';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
+import type { PrivateHostAllowlist } from '../src/lib/private-hosts';
 import {
   channelDescriptions,
   groundScopePicks,
@@ -147,6 +150,14 @@ export interface DocumentedEndpoints {
   webUi?: string;
   /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
   insecure?: string;
+  /** The first MCP endpoint the probe's address rule refuses, with the probe's own reason. */
+  refusedMcp?: RefusedMcpEndpoint;
+}
+
+/** A documented MCP endpoint orientation did not admit because the probe would refuse it. */
+export interface RefusedMcpEndpoint {
+  readonly endpoint: string;
+  readonly reason: string;
 }
 
 export interface SurfacePathCandidate {
@@ -291,11 +302,7 @@ export function evidenceQuote(
  * Returns:
  *   True when the first Markdown heading or the provider page title names the system.
  */
-export function isDedicatedSystemPage(
-  markdown: string,
-  system: string,
-  title?: string,
-): boolean {
+export function isDedicatedSystemPage(markdown: string, system: string, title?: string): boolean {
   const heading = /^#\s+(.+)$/m.exec(markdown)?.[1];
   return (
     (heading !== undefined && namesSystem(heading, system)) ||
@@ -389,6 +396,23 @@ function markerBelongsToSystem(page: CredentialPage, label: string, system: stri
 }
 
 /**
+ * Order pages so the system's own page is read first.
+ *
+ * A login documented on the system's page and again on a runbook that uses
+ * it is stored under two labels; the system's page (a heading that is the
+ * system's name, then a page under `systems/`) is the one the author keeps,
+ * so its marker is the one bound, whatever order the reader listed them in.
+ */
+function systemPageFirst(pages: readonly CredentialPage[], system: string): CredentialPage[] {
+  const rank = (page: CredentialPage): number => {
+    const heading = /^#\s+(.+)$/m.exec(page.markdown)?.[1]?.trim().toLowerCase();
+    if (heading === system.trim().toLowerCase()) return 0;
+    return /(?:^|\/)systems\//.test(page.ref) ? 1 : 2;
+  };
+  return [...pages].sort((left, right): number => rank(left) - rank(right));
+}
+
+/**
  * Extract credential metadata from pages whose values were redacted at sync.
  *
  * A stored marker is the only evidence of a value. OAuth and other location
@@ -406,7 +430,7 @@ export function extractCredentialFinding(
   pages: readonly CredentialPage[],
   system: string,
 ): CredentialFinding {
-  for (const page of pages) {
+  for (const page of systemPageFirst(pages, system)) {
     const scoped = relevantSystemText(page.markdown, system, page.title);
     for (const match of scoped.matchAll(CREDENTIAL_MARKER)) {
       const label = match[1]?.trim();
@@ -481,11 +505,7 @@ export function extractCredentialFinding(
  * Returns:
  *   True only when relevant text explicitly denies an approved connection.
  */
-export function explicitlyDeniesSurface(
-  markdown: string,
-  system: string,
-  title?: string,
-): boolean {
+export function explicitlyDeniesSurface(markdown: string, system: string, title?: string): boolean {
   if (isDedicatedSystemPage(markdown, system, title)) return NO_SURFACE_PATTERN.test(markdown);
   const pattern = systemNamePattern(system);
   return markdown
@@ -658,23 +678,73 @@ export function isCredentialSafeEndpoint(url: string): boolean {
 /**
  * Group attributed URLs by the kind of surface they document.
  *
- * Args:
- *   urls: URLs attributed to one system.
- *
- * Returns:
- *   The first MCP endpoint, the first API base, the first other URL, and
- *   the first plaintext public endpoint refused as an MCP or API base.
+ * @param urls - URLs attributed to one system.
+ * @param privateHosts - The operator's private-host allowlist; the environment's when omitted.
+ * @returns The first MCP endpoint the probe would admit, the first API base, the first other
+ *   URL, the first plaintext public endpoint refused as an MCP or API base, and the first MCP
+ *   endpoint the probe's address rule refuses when none is admitted.
  */
-export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
+export function documentedEndpoints(
+  urls: string[],
+  privateHosts?: PrivateHostAllowlist,
+): DocumentedEndpoints {
   const safe = urls.filter(isCredentialSafeEndpoint);
   const insecure = urls.find(
     (url: string): boolean =>
       !isCredentialSafeEndpoint(url) && (MCP_SEGMENT.test(url) || API_BASE.test(url)),
   );
-  const mcp = safe.find((url: string): boolean => MCP_SEGMENT.test(url));
+  const judged = safe
+    .filter((url: string): boolean => MCP_SEGMENT.test(url))
+    .map((endpoint: string) => ({ endpoint, reason: mcpEndpointRefusal(endpoint, privateHosts) }));
+  const mcp = judged.find(({ reason }): boolean => reason === undefined)?.endpoint;
+  const refused = mcp === undefined ? judged[0] : undefined;
+  const refusedMcp =
+    refused?.reason === undefined
+      ? undefined
+      : { endpoint: refused.endpoint, reason: refused.reason };
   const api = safe.find((url: string): boolean => url !== mcp && API_BASE.test(url));
-  const webUi = urls.find((url: string): boolean => url !== mcp && url !== api);
-  return { mcp, api, webUi, insecure };
+  // No page on a refused MCP host is a web UI either: the browser rung would
+  // reach the same unlisted host the probe refused.
+  const refusedHosts = new Set(
+    judged
+      .filter(({ reason }): boolean => reason !== undefined)
+      .map(({ endpoint }) => hostnameOf(endpoint)),
+  );
+  const webUi = urls.find(
+    (url: string): boolean => url !== mcp && url !== api && !refusedHosts.has(hostnameOf(url)),
+  );
+  return { mcp, api, webUi, insecure, refusedMcp };
+}
+
+/** A URL's lower-case hostname, or the empty string for one that does not parse. */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    // Not a URL: it names no host, so it matches no refused one.
+    return '';
+  }
+}
+
+/**
+ * Hold an MCP endpoint to the probe's own address rule before proposing it.
+ *
+ * The probe and every MCP client admit a private host only when
+ * `DAY0_PRIVATE_HOSTS` lists it, and only over https; orientation applies the
+ * same function so it never proposes an endpoint the probe will refuse.
+ *
+ * @param url - A documented MCP endpoint.
+ * @param privateHosts - The operator's allowlist; the environment's when omitted.
+ * @returns The probe's refusal message, or `undefined` when the probe would admit the endpoint.
+ */
+function mcpEndpointRefusal(url: string, privateHosts?: PrivateHostAllowlist): string | undefined {
+  try {
+    approvedMcpEndpoint(url, privateHosts);
+    return undefined;
+  } catch (error) {
+    if (error instanceof McpAddressRefusal) return error.message;
+    throw error;
+  }
 }
 
 /**
@@ -1023,10 +1093,10 @@ async function orientIntakeScope(
   const fields = scopeFieldsFor(surface.class);
   if (fields.length === 0) return undefined;
   const scopePages = pages.map((page) => ({
-      sourceId: String(page.sourceId),
-      ref: page.ref,
-      markdown: page.markdown,
-    }));
+    sourceId: String(page.sourceId),
+    ref: page.ref,
+    markdown: page.markdown,
+  }));
   const candidates = scopeCandidates(scopePages, fields);
   if (candidates.length === 0) {
     const what = fields.includes('channel') ? 'a channel' : 'a team or project';
@@ -1037,7 +1107,9 @@ async function orientIntakeScope(
     .map((item): string => item.quote);
   const roleCandidates = roleScopeCandidates(scopePages, candidates, role, sentences);
   if (roleCandidates.length === 0) {
-    return { notes: [`No queue line could be tied to this role's handbook for ${surface.displayName}.`] };
+    return {
+      notes: [`No queue line could be tied to this role's handbook for ${surface.displayName}.`],
+    };
   }
   const drafted = await pick({
     system: surface.displayName,
@@ -1253,7 +1325,9 @@ async function resolveStoredCredential(
       const reason = row.kind === 'location' ? undefined : storedCredentialGuardReason(row);
       if (reason) {
         await ctx.runMutation(internal.credentials.markSuspect, {
-          credentialId: row._id, ciphertext: row.ciphertext, reason,
+          credentialId: row._id,
+          ciphertext: row.ciphertext,
+          reason,
         });
         continue;
       }
@@ -1320,6 +1394,57 @@ export interface OrientationRequest {
   requested?: boolean;
 }
 
+/** What the linked pages say about one system, read the same way wherever it is read. */
+export interface SurfaceDocumentation {
+  /** Pages that name the system. */
+  readonly matches: Doc<'docPages'>[];
+  /** The text of those pages that concerns the system, token shapes redacted. */
+  readonly relevantText: string;
+  readonly endpoints: DocumentedEndpoints;
+  /** Whether the pages record no surface for the system at all. */
+  readonly absent: boolean;
+}
+
+/**
+ * Read what the linked pages say about one system.
+ *
+ * `absent` is orientation's own decision, so the check that re-opens an
+ * absent system after a page changes is the one that closed it: no page
+ * names the system, or a page denies a surface and attributes no address of
+ * any kind. A page that says "no API" while documenting the web UI staff use
+ * has recorded a surface, and it is the one the browser floor exists for.
+ *
+ * @param pages - Every page the agent reads.
+ * @param surface - The system's name and slug.
+ */
+export function surfaceDocumentation(
+  pages: readonly Doc<'docPages'>[],
+  surface: Pick<Doc<'surfaces'>, 'displayName' | 'slug'>,
+): SurfaceDocumentation {
+  const matches = pages.filter((page: Doc<'docPages'>): boolean =>
+    namesSystem(`${page.title}\n${page.markdown}`, surface.displayName),
+  );
+  const relevantText = redactTokenShapes(
+    matches
+      .map((page: Doc<'docPages'>): string =>
+        relevantSystemText(page.markdown, surface.displayName, page.title),
+      )
+      .join('\n\n'),
+  );
+  const endpoints = documentedEndpoints(
+    withoutDocumentationUrls(
+      attributedUrls(relevantText, surface.displayName, surface.slug),
+      pages,
+    ),
+  );
+  const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
+    explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
+  );
+  const absent =
+    matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api && !endpoints.webUi);
+  return { matches, relevantText, endpoints, absent };
+}
+
 /** Collaborators a test can replace to drive one orientation run. */
 export interface OrientationDependencies {
   draft: typeof draftOrientation;
@@ -1381,35 +1506,9 @@ export async function orientSurface(
   const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
     agentId: surface.agentId,
   });
-  const matches = pages.filter((page: Doc<'docPages'>): boolean =>
-    namesSystem(`${page.title}\n${page.markdown}`, surface.displayName),
-  );
+  const { matches, relevantText, endpoints, absent } = surfaceDocumentation(pages, surface);
   const evidence: Evidence[] = selectEvidence(matches, surface.displayName, surface.slug);
-  const relevantText = redactTokenShapes(
-    matches
-      .map((page: Doc<'docPages'>): string =>
-        relevantSystemText(page.markdown, surface.displayName, page.title),
-      )
-      .join('\n\n'),
-  );
-  const endpoints = documentedEndpoints(
-    withoutDocumentationUrls(
-      attributedUrls(relevantText, surface.displayName, surface.slug),
-      pages,
-    ),
-  );
-  const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
-    explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
-  );
-  // A page that says "no API" while documenting the web UI staff use has
-  // recorded a surface, and it is the one the browser floor exists for.
-  // `absent` means no surface is recorded at all, never "no API" - reading it
-  // the other way would make the floor unreachable from exactly the pages that
-  // describe it. A denial with no attributed address of any kind is still absent.
-  if (
-    matches.length === 0 ||
-    (explicitNone && !endpoints.mcp && !endpoints.api && !endpoints.webUi)
-  ) {
+  if (absent) {
     const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {
       surfaceId: surface._id,
       searched: [surface.displayName, surface.class],
@@ -1435,12 +1534,7 @@ export async function orientSurface(
       : extractedCredential;
   const hasBrowserLogin = isBrowserLoginCredential(credential);
   const hasProbeMarker = browserTitleMarker(relevantText) !== undefined;
-  const pathCandidates = connectionLadder(
-    draft.path,
-    endpoints,
-    hasBrowserLogin,
-    hasProbeMarker,
-  );
+  const pathCandidates = connectionLadder(draft.path, endpoints, hasBrowserLogin, hasProbeMarker);
   const selected: { path: OrientationPath; endpoint?: string } = pathCandidates[0] ?? {
     path: 'escalate',
   };
@@ -1469,6 +1563,11 @@ export async function orientSurface(
   if (endpoints.insecure) {
     openQuestions.push(
       `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,
+    );
+  }
+  if (endpoints.refusedMcp) {
+    openQuestions.push(
+      `The documented MCP endpoint ${endpoints.refusedMcp.endpoint} was not admitted: ${endpoints.refusedMcp.reason}`,
     );
   }
   if (registrySuggestion) {
@@ -1544,9 +1643,12 @@ export async function orientSurface(
     endpoint,
     credentialId: stored?.credentialId,
     credentialKind: stored?.kind,
-    credentialLocation: credential.found === 'value'
-      ? stored ? undefined : 'Ask the system administrator to land a valid credential; the stored marker could not be resolved.'
-      : credential.summary,
+    credentialLocation:
+      credential.found === 'value'
+        ? stored
+          ? undefined
+          : 'Ask the system administrator to land a valid credential; the stored marker could not be resolved.'
+        : credential.summary,
     expiresInDays: draft.expiresInDays,
     intakeScope,
   });
@@ -1581,7 +1683,66 @@ export const orientOne = internalAction({
 });
 
 /**
+ * Re-open every `absent` system of one agent whose linked pages now record a surface.
+ *
+ * The check is orientation's own (`surfaceDocumentation`), so a page that
+ * still says nothing, or still denies the system, leaves it absent and
+ * nothing loops.
+ *
+ * @returns How many surfaces were re-opened, each with its orientation job placed.
+ */
+async function reopenDocumentedAbsences(
+  ctx: OrientationCtx,
+  agentId: Id<'agents'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<number> {
+  const absent = surfaces.filter((surface): boolean => surface.verdict === 'absent');
+  if (absent.length === 0) return 0;
+  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+    agentId,
+  });
+  let reopened = 0;
+  for (const surface of absent) {
+    if (surfaceDocumentation(pages, surface).absent) continue;
+    const done: boolean = await ctx.runMutation(internal.surfaceReopen.reopenAbsent, {
+      surfaceId: surface._id,
+      reason: `A linked page now records ${surface.displayName}; orientation runs again.`,
+    });
+    if (done) reopened += 1;
+  }
+  return reopened;
+}
+
+/**
+ * Re-orient the absent systems a newly synced source now documents.
+ *
+ * Internal: scheduled when a documentation sync completes, so the author's
+ * first page about a system the charter named, or the removal of a denial,
+ * reaches orientation without a manager's re-run. Real mode only: mock
+ * surfaces are seeded, not oriented.
+ */
+export const reorientAbsent = internalAction({
+  args: { sourceId: v.id('docSources') },
+  handler: async (ctx, args): Promise<{ reopened: number }> => {
+    if (SURFACE_MODE !== 'real') return { reopened: 0 };
+    const agents: Doc<'agents'>[] = await ctx.runQuery(internal.docSources.agentsForSource, args);
+    let reopened = 0;
+    for (const agent of agents) {
+      const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
+        internal.orientationData.surfacesForAgent,
+        { agentId: agent._id },
+      );
+      reopened += await reopenDocumentedAbsences(ctx, agent._id, surfaces);
+    }
+    return { reopened };
+  },
+});
+
+/**
  * Schedule one isolated orientation action per declared surface.
+ *
+ * An `absent` surface whose linked pages now record a surface is re-opened
+ * and oriented too, so the manager's re-run reaches it.
  *
  * Args:
  *   agentId: Agent whose declared systems should be oriented.
@@ -1596,6 +1757,7 @@ export const run = internalAction({
       internal.orientationData.surfacesForAgent,
       args,
     );
+    const reopened = await reopenDocumentedAbsences(ctx, args.agentId, surfaces);
     const charter = await ctx.runQuery(internal.orientationData.charterForOrientation, args);
     const namesSystems = charterNamesWorkSystems(charter?.namedSystems);
     // A system the charter does not name waits for the manager's Propose;
@@ -1604,7 +1766,7 @@ export const run = internalAction({
       (surface: Doc<'surfaces'>): boolean =>
         surface.verdict === 'declared' && !awaitsManagerProposal(surface, namesSystems),
     );
-    let scheduled = 0;
+    let scheduled = reopened;
     for (const surface of declared) {
       const claimed: boolean = await ctx.runMutation(internal.surfaces.scheduleOrientation, {
         surfaceId: surface._id,

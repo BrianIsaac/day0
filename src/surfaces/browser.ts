@@ -1,4 +1,5 @@
 import { isTransportUnreachable } from '../lib/transport-error';
+import type { ActionIntent } from './policy';
 import { injectSecret } from './secrets';
 
 /**
@@ -75,6 +76,23 @@ export interface SnapshotElement {
 const ROLE_WORDS = /\b(button|textbox|field|input|link|checkbox|combobox|box|control|element)\b/gi;
 
 /**
+ * The attributes the driver prints after a node's role or name, in whatever
+ * order it sees fit: `[level=1] [ref=e7] [cursor=pointer]`.
+ */
+const SNAPSHOT_ATTRIBUTES = '((?:[ \\t]*\\[[^\\]\\n]*\\])*)';
+/** A named node, `- button "Sign in" [ref=e15]`; the name may carry escaped quotes. */
+const NAMED_NODE = new RegExp(
+  `^\\s*-\\s+([a-z]+)\\s+"((?:[^"\\\\]|\\\\.)*)"${SNAPSHOT_ATTRIBUTES}`,
+  'i',
+);
+/** An unnamed node whose text follows its attributes, `- generic [ref=e5]: Looker`. */
+const LABELLED_NODE = new RegExp(
+  `^\\s*-\\s+([a-z]+)${SNAPSHOT_ATTRIBUTES}[ \\t]*:[ \\t]*(.+)$`,
+  'i',
+);
+const REF_ATTRIBUTE = /\[ref=([^\]]+)\]/;
+
+/**
  * Read the addressable elements out of one driver snapshot.
  *
  * The driver renders an accessibility tree as indented YAML-ish lines, each
@@ -92,31 +110,34 @@ const ROLE_WORDS = /\b(button|textbox|field|input|link|checkbox|combobox|box|con
 export function parseSnapshotRefs(snapshot: string): SnapshotElement[] {
   const elements: SnapshotElement[] = [];
   for (const line of snapshot.split(/\r?\n/)) {
-    // The ref is found on its own rather than in sequence with the name,
-    // because the driver puts other attributes in between as it sees fit
-    // (`heading "Sign in" [level=1] [ref=e7]`).
-    const ref = /\[ref=([^\]]+)\]/.exec(line);
-    if (!ref) continue;
-    const named = /^\s*-\s+([a-z]+)\s+"([^"]*)"/i.exec(line);
+    // The ref is read only from the driver's attributes after the role or
+    // the quoted name, never from the name or the text a node carries: an
+    // element named "Q3 plan [ref=e7]" is page content, and its own ref is
+    // the one the driver printed after it.
+    const named = NAMED_NODE.exec(line);
     if (named) {
-      elements.push({ name: named[2].trim(), ref: ref[1], role: named[1].toLowerCase() });
+      const ref = REF_ATTRIBUTE.exec(named[3]);
+      if (ref) {
+        elements.push({
+          name: named[2].replace(/\\(.)/g, '$1').trim(),
+          ref: ref[1],
+          role: named[1].toLowerCase(),
+        });
+      }
       continue;
     }
-    // An unnamed node whose text follows the ref, e.g. `- generic [ref=e5]: Looker`.
-    const labelled = /^\s*-\s+([a-z]+)\b[^:]*:\s*(.+)$/i.exec(line);
-    if (labelled) {
-      elements.push({
-        name: labelled[2].trim(),
-        ref: ref[1],
-        role: labelled[1].toLowerCase(),
-      });
+    const labelled = LABELLED_NODE.exec(line);
+    const ref = labelled ? REF_ATTRIBUTE.exec(labelled[2]) : null;
+    if (labelled && ref) {
+      elements.push({ name: labelled[3].trim(), ref: ref[1], role: labelled[1].toLowerCase() });
     }
   }
   return elements;
 }
 
 /**
- * Roles a person can actually act on.
+ * Roles a person can actually act on: the ARIA widget roles a click or a
+ * keystroke reaches.
  *
  * A page routinely gives a field and its label the same accessible name, so a
  * skill writing "Username" would otherwise be ambiguous between the two. It is
@@ -135,15 +156,33 @@ const INTERACTIVE_ROLES = new Set([
   'switch',
   'option',
   'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'tab',
+  'treeitem',
+  'gridcell',
 ]);
 
-/** Narrow a set of equally-matching elements to the one that can be acted on. */
-function preferInteractive(candidates: readonly SnapshotElement[]): SnapshotElement | undefined {
-  if (candidates.length === 1) return candidates[0];
+/**
+ * Narrow a set of equally-matching elements to the one the action means.
+ *
+ * A write acts on a control, so only an element a person can act on answers
+ * it: after a redesign relabels a sign-in button, the heading that still says
+ * "Sign in" is not the button, and clicking it would report a sign-in that
+ * never happened. A read may name anything on the page, so a lone element of
+ * any role answers it.
+ */
+function preferInteractive(
+  candidates: readonly SnapshotElement[],
+  intent: ActionIntent,
+): SnapshotElement | undefined {
   const interactive = candidates.filter((element: SnapshotElement): boolean =>
     INTERACTIVE_ROLES.has(element.role),
   );
-  return interactive.length === 1 ? interactive[0] : undefined;
+  if (interactive.length === 1) return interactive[0];
+  return intent === 'read' && interactive.length === 0 && candidates.length === 1
+    ? candidates[0]
+    : undefined;
 }
 
 function normaliseDescription(value: string): string {
@@ -182,16 +221,19 @@ function containsWords(outer: string, inner: string): boolean {
  * brand mark named "L" is not "Pipeline coverage", and a lone label inside a
  * longer description is not the control the description means.
  *
- * Args:
- *   snapshot: The text a `browser_snapshot` call returned.
- *   description: What the action called the element.
+ * A write resolves only to an interactive element, at every tier; a read may
+ * resolve to a lone element of any role.
  *
- * Returns:
- *   The matching element, or undefined when none matches unambiguously.
+ * @param snapshot - The text a `browser_snapshot` call returned.
+ * @param description - What the action called the element.
+ * @param intent - Whether the action reads or writes; a caller that does not
+ *   say is held to the write rule.
+ * @returns The matching element, or undefined when none matches unambiguously.
  */
 export function resolveElementRef(
   snapshot: string,
   description: string,
+  intent: ActionIntent = 'write',
 ): SnapshotElement | undefined {
   const elements = parseSnapshotRefs(snapshot).filter(
     (element: SnapshotElement): boolean => element.name !== '',
@@ -204,12 +246,14 @@ export function resolveElementRef(
 
   const exact = preferInteractive(
     elements.filter((e: SnapshotElement): boolean => e.name.toLowerCase() === wanted),
+    intent,
   );
   if (exact) return exact;
   const normalised = preferInteractive(
     elements.filter(
       (e: SnapshotElement): boolean => normaliseDescription(e.name) === loose && canUseShortName(e),
     ),
+    intent,
   );
   if (normalised) return normalised;
   return preferInteractive(
@@ -221,6 +265,7 @@ export function resolveElementRef(
         (INTERACTIVE_ROLES.has(e.role) && containsWords(loose, name))
       );
     }),
+    intent,
   );
 }
 
@@ -330,9 +375,15 @@ export function withResolvedRefs(
 /** `{{secret}}`, or its qualified form `{{secret:<slug>}}`. */
 const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
 
-/** The names a login form gives the fields a credential is typed into. */
-const CREDENTIAL_FIELD =
-  /^(?:user ?name|e-?mail(?: address)?|password|passcode|access code|secret|api key|token)$/i;
+/**
+ * The names a login form gives the field the credential is typed into.
+ *
+ * A user name or e-mail box is not one: it shows what is typed into it, so the
+ * credential would sit on the page in clear text. The accessibility snapshot
+ * does not say an input is `type=password`, so the field's name is what marks
+ * it, and `credentialSlots` also requires the page to offer a text box.
+ */
+const CREDENTIAL_FIELD = /^(?:password|passcode|access code|secret|api key|token)$/i;
 
 /** Whether any string anywhere in a tool-argument tree names the credential. */
 export function carriesSecretPlaceholder(value: unknown): boolean {
@@ -403,7 +454,8 @@ function isCredentialField(description: unknown): boolean {
  * `browser_fill_form` field that is one. Nothing else - not a URL, not an
  * element's name, not a comment box - may carry it. Once the elements are
  * resolved, the element the page actually offered must be a credential field
- * too, so a description that loosely matched "Password notes" does not count.
+ * too, so a description that loosely matched "Password notes" does not count,
+ * and it must be a text box, so a button or link named "Password" does not.
  */
 function credentialSlots(
   tool: string,
@@ -412,7 +464,8 @@ function credentialSlots(
 ): Set<string> {
   const slots = new Set<string>();
   const onPage = (index: number): boolean =>
-    resolved === undefined || isCredentialField(resolved[index]?.name);
+    resolved === undefined ||
+    (resolved[index]?.role === 'textbox' && isCredentialField(resolved[index]?.name));
   if (tool === 'browser_type' && isCredentialField(toolArgs.element) && onPage(0)) {
     slots.add('text');
   }

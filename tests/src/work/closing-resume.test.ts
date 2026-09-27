@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { closingResume, resumedClosingLedger } from '../../../src/work/closing-resume';
 import type { ExecutionPlan } from '../../../src/work/types';
-import { refreshPlan, run3RefreshObligations, run3RefreshPlan } from '../../convex/fixtures/closing-gates-2026-09-16';
+import { refreshPlan, run3RefreshObligations, run3RefreshPlan } from '../../fixtures/closing-gates-2026-09-16';
 
 /** A plan that declares a read of the tile, a read of Linear and a promised close: what the gate and the resume selector read. */
 const plan: ExecutionPlan = {

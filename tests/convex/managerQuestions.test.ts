@@ -102,6 +102,18 @@ async function eventTypes(harness: Harness, agentId: Id<'agents'>): Promise<stri
   return events.map((event) => event.type);
 }
 
+/** The payloads of every answer the agent's questions received, oldest first. */
+async function answeredEvents(harness: Harness, agentId: Id<'agents'>): Promise<unknown[]> {
+  const events = await harness.run(
+    async (ctx) =>
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'charter.question-answered'))
+        .collect(),
+  );
+  return events.map((event) => event.payload);
+}
+
 describe('the question record', (): void => {
   it('is validated on write: a record without the context the planning pane reads is refused', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -261,6 +273,9 @@ describe('answering a question', (): void => {
     });
     expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toEqual([]);
     expect(await eventTypes(harness, agentId)).toContain('charter.amended');
+    expect(await answeredEvents(harness, agentId)).toEqual([
+      { questionId: asked!._id, via: 'dashboard', amended: true, charterId: result.amendedCharterId },
+    ]);
   });
 
   it('refuses a second answer, a stranger and an empty answer', async (): Promise<void> => {
@@ -305,5 +320,9 @@ describe('answering a question', (): void => {
     const [answered] = await questions(harness, agentId);
     expect(answered?.answer).toMatchObject({ text: 'Priya.', via: 'dashboard' });
     expect(answered?.answer?.amendedCharterId).toBeUndefined();
+    // An answer that changed nothing is still a reorientation the manager answered (A9).
+    expect(await answeredEvents(harness, agentId)).toEqual([
+      { questionId: asked!._id, via: 'dashboard', amended: false },
+    ]);
   });
 });

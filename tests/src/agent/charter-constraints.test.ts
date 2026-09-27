@@ -467,6 +467,78 @@ describe('striking a derived constraint', (): void => {
   });
 });
 
+describe('striking in a Chinese charter', (): void => {
+  /** The run-through charter with a Chinese clause in each list. */
+  function mixedCharter(constraints: CharterConstraint[]): Charter {
+    const charter = runThrough(constraints);
+    charter.proposedBoundaries = {
+      willDo: [...charter.proposedBoundaries.willDo, '处理飞书里的审批请求。'],
+      willNotDo: [...charter.proposedBoundaries.willNotDo, '不要在公开频道发帖。'],
+      escalationTriggers: [
+        ...charter.proposedBoundaries.escalationTriggers,
+        '客户投诉时通知经理。',
+      ],
+    };
+    return charter;
+  }
+
+  it('keeps every Chinese clause when a phrase strike removes English wording', (): void => {
+    const prioritised: CharterConstraint = {
+      kind: 'candidate-property',
+      quote: 'Tickets have a priority.',
+      wording: ['prioritized'],
+      origin: 'synthesis',
+      struck: true,
+    };
+    const result = effectiveCharter(mixedCharter([prioritised]));
+    expect(result.proposedBoundaries.willDo).toContain('处理飞书里的审批请求。');
+    expect(result.proposedBoundaries.willNotDo).toContain('不要在公开频道发帖。');
+    expect(result.proposedBoundaries.escalationTriggers).toContain('客户投诉时通知经理。');
+  });
+
+  it('keeps every Chinese clause when a derived strike drops English clauses whole', (): void => {
+    const ownership: CharterConstraint = {
+      kind: 'candidate-property',
+      quote: 'Tickets have an owner.',
+      wording: ['owned'],
+      origin: 'derived',
+      struck: true,
+    };
+    const result = effectiveCharter(mixedCharter([ownership]));
+    expect(result.proposedBoundaries.willDo).toContain('处理飞书里的审批请求。');
+    expect(result.proposedBoundaries.willNotDo).toContain('不要在公开频道发帖。');
+  });
+
+  it('still drops a clause the strike leaves as punctuation alone', (): void => {
+    const draft: CharterConstraint = {
+      kind: 'candidate-property',
+      quote: 'Draft first.',
+      wording: ['Draft replies to asks in #revops-asks'],
+      origin: 'synthesis',
+      struck: true,
+    };
+    const result = effectiveCharter(mixedCharter([draft]));
+    expect(result.proposedBoundaries.willDo).toEqual([
+      'Handle owned, prioritized Linear tickets in the Q3 close project.',
+      '处理飞书里的审批请求。',
+    ]);
+  });
+
+  it('refuses to strike part of a Chinese will-not-do clause', (): void => {
+    const charter = runThrough([]);
+    charter.proposedBoundaries.willNotDo = ['不要改动 Northstar CRM 的记录。'];
+    const crm: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Stay out of Northstar CRM.',
+      wording: ['Northstar CRM'],
+      origin: 'synthesis',
+    };
+    expect(() => withoutConstraints(charter, [crm])).toThrow(
+      'strike or edit the whole will-not-do clause',
+    );
+  });
+});
+
 describe('assertEditKeepsBoundaries', (): void => {
   const ruled = {
     proposedFunction: 'RevOps.',

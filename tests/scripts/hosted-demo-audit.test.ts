@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { hasHostTools } from '../setup/host-tools';
 import { auditExports } from '../../scripts/hosted-demo-audit';
 
 const temporary: string[] = [];
@@ -96,28 +97,31 @@ describe('offline hosted export audit', () => {
     });
   });
 
-  it('reads a Convex ZIP in place, including table metadata and stored-file hashes', () => {
-    const tables = {
-      _tables: [{ name: 'agents', id: 10001 }],
-      agents: [{ _id: 'agent-a', value: { $integer: 'AQAAAAAAAAA=' } }],
-      _storage: [{ _id: 'file-a', size: 6 }],
-    };
-    const before = fixture(tables);
-    const after = fixture(tables);
-    for (const path of [before, after]) {
-      writeFileSync(join(path, '_storage', 'file-a.txt'), 'before');
-      writeFileSync(join(path, 'agents', 'generated_schema.jsonl'), '"uniform"\n');
-    }
-    writeFileSync(join(after, '_storage', 'file-a.txt'), 'after!');
-    const archive = join(fixture({}), 'sample export; literal.zip');
-    execFileSync('zip', ['-q', '-r', archive, '_tables', 'agents', '_storage'], { cwd: before });
-    expect(auditExports(archive, before).equal).toBe(true);
-    const report = auditExports(archive, after);
-    expect(report.equal).toBe(false);
-    expect(report.tables._tables.beforeCount).toBe(1);
-    expect(report.files.modified).toEqual(['_storage/file-a.txt']);
-    expect(report.files.before['_storage/file-a.txt']).toMatch(/^[a-f0-9]{64}$/);
-  });
+  it.skipIf(!hasHostTools('zip', 'unzip'))(
+    'reads a Convex ZIP in place, including table metadata and stored-file hashes (needs zip and unzip)',
+    () => {
+      const tables = {
+        _tables: [{ name: 'agents', id: 10001 }],
+        agents: [{ _id: 'agent-a', value: { $integer: 'AQAAAAAAAAA=' } }],
+        _storage: [{ _id: 'file-a', size: 6 }],
+      };
+      const before = fixture(tables);
+      const after = fixture(tables);
+      for (const path of [before, after]) {
+        writeFileSync(join(path, '_storage', 'file-a.txt'), 'before');
+        writeFileSync(join(path, 'agents', 'generated_schema.jsonl'), '"uniform"\n');
+      }
+      writeFileSync(join(after, '_storage', 'file-a.txt'), 'after!');
+      const archive = join(fixture({}), 'sample export; literal.zip');
+      execFileSync('zip', ['-q', '-r', archive, '_tables', 'agents', '_storage'], { cwd: before });
+      expect(auditExports(archive, before).equal).toBe(true);
+      const report = auditExports(archive, after);
+      expect(report.equal).toBe(false);
+      expect(report.tables._tables.beforeCount).toBe(1);
+      expect(report.files.modified).toEqual(['_storage/file-a.txt']);
+      expect(report.files.before['_storage/file-a.txt']).toMatch(/^[a-f0-9]{64}$/);
+    },
+  );
 
   it.each([
     [

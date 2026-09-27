@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   CURATED_MODELS,
@@ -15,6 +16,9 @@ import {
 } from '../../scripts/models';
 import { hardwareLine, readEnvValues, runSetup, sequenceSteps } from '../../scripts/setup';
 import { cleanupCheckouts, harness, ran, realRoute } from './setup-harness';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 afterEach(cleanupCheckouts);
 
@@ -46,7 +50,7 @@ describe('the curated list', (): void => {
     expect(CURATED_MODELS[0].tested).toContain('local evaluation bed');
     expect(CURATED_MODELS[0].downloadLabel).toContain('5.2 GB');
     // The tested note lives in scripts/models.ts and nowhere else in the setup.
-    expect(readFileSync('scripts/setup.ts', 'utf8')).not.toContain('local evaluation bed');
+    expect(readFileSync(join(ROOT, 'scripts/setup.ts'), 'utf8')).not.toContain('local evaluation bed');
   });
 });
 

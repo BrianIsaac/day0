@@ -47,6 +47,7 @@ import type * as skillActions from "../skillActions.js";
 import type * as skills from "../skills.js";
 import type * as slackProvisionActions from "../slackProvisionActions.js";
 import type * as surfaceActions from "../surfaceActions.js";
+import type * as surfaceReopen from "../surfaceReopen.js";
 import type * as surfaces from "../surfaces.js";
 import type * as voice from "../voice.js";
 import type * as work from "../work.js";
@@ -100,6 +101,7 @@ declare const fullApi: ApiFromModules<{
   skills: typeof skills;
   slackProvisionActions: typeof slackProvisionActions;
   surfaceActions: typeof surfaceActions;
+  surfaceReopen: typeof surfaceReopen;
   surfaces: typeof surfaces;
   voice: typeof voice;
   work: typeof work;

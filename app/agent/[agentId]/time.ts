@@ -1,15 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { deploymentZone, formatStamp } from '@/lib/zone';
 
 /**
  * One clock for the page.
  *
  * The Slack panel rendered local time and the event feed rendered UTC, so the
  * same event was stamped 03:12 in one panel and 19:12 in the other. Everything
- * that shows a time now reads from here, and here means the viewer's own zone:
- * the mock environment is meant to read like the tools it stands in for, and
- * those show a reader their own morning rather than the deployment's.
+ * that shows a time now reads from here, and every stamp carries its date: a
+ * time with no date cannot be placed once the page spans more than a day.
+ *
+ * The zone is the agent's (decision N12: set at deploy, editable on the card),
+ * so the manager and anyone they share the page with read the agent's day.
+ * A caller that has no agent row to hand passes nothing, and the stamp is in
+ * the viewer's own zone, still with its date.
  *
  * The feed is the one place that says how long ago instead of when, because a
  * live feed is read for recency and a running clock beside a running list is
@@ -17,18 +22,17 @@ import { useEffect, useState } from 'react';
  * same zone as every other stamp on the page.
  */
 
-/** Wall-clock time in the viewer's zone: what a Slack message is stamped with. */
-export function clockTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+/**
+ * An instant with its date and time, in the agent's zone when given and the
+ * viewer's otherwise: `28 Sep 2026, 14:05`.
+ */
+export function clockTime(ms: number, zone?: string): string {
+  return formatStamp(ms, zone ?? deploymentZone());
 }
 
 /** The same instant, to the second, for a tooltip. */
-export function clockTimeWithSeconds(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+export function clockTimeWithSeconds(ms: number, zone?: string): string {
+  return formatStamp(ms, zone ?? deploymentZone(), { seconds: true });
 }
 
 /** How long ago, in the shortest form that stays honest. */

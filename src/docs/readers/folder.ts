@@ -2,18 +2,29 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 
+/** An opening or closing code fence: three or more backticks or tildes. */
+const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+
 /**
- * Read the first level-one Markdown heading.
+ * Read the first level-one Markdown heading outside a fenced code block.
  *
- * Args:
- *   markdown: Markdown page body.
- *   fallback: Title used when the page has no level-one heading.
+ * A `# ` line inside a fence is a shell comment or an example page, not the
+ * page's heading, so it never names the page.
  *
- * Returns:
- *   Page title without trailing heading markers.
+ * @param markdown - Markdown page body.
+ * @param fallback - Title used when the page has no level-one heading.
+ * @returns Page title without trailing heading markers.
  */
 export function markdownPageTitle(markdown: string, fallback: string): string {
+  let fence: string | undefined;
   for (const line of markdown.split('\n')) {
+    const marker = CODE_FENCE.exec(line)?.[1];
+    if (marker !== undefined) {
+      if (fence === undefined) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
+      continue;
+    }
+    if (fence !== undefined) continue;
     const match = /^#\s+(.+?)\s*$/.exec(line);
     if (match) return match[1].replace(/\s+#+$/, '').trim();
   }

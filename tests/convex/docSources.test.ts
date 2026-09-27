@@ -696,6 +696,71 @@ describe('documentation sources in real mode', (): void => {
     ).rejects.toThrow('re-run orientation');
   });
 
+  it('keeps a connected card connected when its queue page is renamed or the line is reflowed, and re-points its quote', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          credentialLanded: true,
+          whereFound: [],
+          createdAt: 1,
+          managerApprovedAt: 2,
+          itApprovedAt: 3,
+          probeGeneration: 4,
+          managerDmChannelId: 'D1',
+          intakeScope: {
+            channels: [
+              {
+                value: 'finance-close',
+                sourceId,
+                ref: 'page.md',
+                quote: '- Channels: #finance-close',
+              },
+            ],
+          },
+        }),
+    );
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'finance/team.md',
+      title: 'Finance handbook',
+      markdown: '- Channels:  #finance-close,  #ops-requests',
+      updatedAt: 3,
+    });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId,
+      refs: ['finance/team.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      verdict: 'connected',
+      probeGeneration: 4,
+      managerApprovedAt: 2,
+      managerDmChannelId: 'D1',
+    });
+    expect(surface?.intakeScope?.channels).toEqual([
+      {
+        value: 'finance-close',
+        sourceId,
+        ref: 'finance/team.md',
+        quote: '- Channels:  #finance-close,  #ops-requests',
+      },
+    ]);
+  });
+
   it('skips a source mid-sync and restarts one whose generation stopped progressing', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

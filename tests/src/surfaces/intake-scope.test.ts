@@ -9,6 +9,7 @@ import {
   presentScopeDrift,
   roleScopeCandidates,
   scopeCandidates,
+  restatedScope,
   scopeDrift,
   scopeFieldsFor,
   sentenceScopePicks,
@@ -16,7 +17,7 @@ import {
   type ScopeField,
   type ScopePage,
 } from '../../../src/surfaces/intake-scope';
-import { companyPage } from '../../fixtures/company-bed';
+import { companyPage, companyPages } from '../../fixtures/company-bed';
 
 const REVOPS = companyPage('revops/handbook.md');
 const FINANCE = companyPage('finance/handbook.md');
@@ -150,43 +151,76 @@ describe('intake scope candidates', (): void => {
   });
 
   it('ties a manager-requested card to the role handbook even without a system sentence', (): void => {
-    const all = [...pages('revops-first'), {
-      ref: 'logistics/handbook.md', markdown: companyPage('logistics/handbook.md').markdown,
-    }];
+    const all = [
+      ...pages('revops-first'),
+      {
+        ref: 'logistics/handbook.md',
+        markdown: companyPage('logistics/handbook.md').markdown,
+      },
+    ];
     const candidates = scopeCandidates(all, ['channel']);
-    expect(roleScopeCandidates(all, candidates, 'Close coordinator', [])
-      .map((candidate): string => candidate.ref)).toEqual([
-        'finance/handbook.md', 'finance/handbook.md',
-      ]);
-    expect(roleScopeCandidates(all, candidates, 'Logistics desk', [])
-      .map((candidate): string => candidate.value)).toEqual([
-        'logistics-desk', 'ops-requests',
-      ]);
+    expect(
+      roleScopeCandidates(all, candidates, 'Close coordinator', []).map(
+        (candidate): string => candidate.ref,
+      ),
+    ).toEqual(['finance/handbook.md', 'finance/handbook.md']);
+    expect(
+      roleScopeCandidates(all, candidates, 'Logistics desk', []).map(
+        (candidate): string => candidate.value,
+      ),
+    ).toEqual(['logistics-desk', 'ops-requests']);
     expect(roleScopeCandidates(all, candidates, 'Assistant', [])).toEqual([]);
-    expect(roleScopeCandidates(
-      all, candidates, 'Close coordinator', ['Do not read #revops-asks; that is RevOps work.'],
-    ).map((candidate): string => candidate.ref)).toEqual([
-      'finance/handbook.md', 'finance/handbook.md',
-    ]);
+    expect(
+      roleScopeCandidates(all, candidates, 'Close coordinator', [
+        'Do not read #revops-asks; that is RevOps work.',
+      ]).map((candidate): string => candidate.ref),
+    ).toEqual(['finance/handbook.md', 'finance/handbook.md']);
+  });
+
+  it('ties each role to its own handbook over all thirteen company pages, whatever tools it names', (): void => {
+    const folder = companyPages()
+      .filter((page): boolean => page.source === 'folder')
+      .map((page) => ({ ref: page.ref, markdown: page.markdown }));
+    expect(folder).toHaveLength(13);
+    const roots = (role: string, fields: ScopeField[]): string[] => [
+      ...new Set(
+        roleScopeCandidates(folder, scopeCandidates(folder, fields), role, []).map(
+          (candidate): string => candidate.ref.split('/')[0]!,
+        ),
+      ),
+    ];
+    for (const fields of [['team', 'project'], ['channel']] as ScopeField[][]) {
+      expect(roots('Logistics exceptions: record in Linear and post in Slack', fields)).toEqual([
+        'logistics',
+      ]);
+      expect(roots('Shipment exceptions analyst posting Slack updates', fields)).toEqual([
+        'logistics',
+      ]);
+      expect(roots('Close coordinator', fields)).toEqual(['finance']);
+      expect(roots('Revenue operations analyst', fields)).toEqual(['revops']);
+      expect(roots('Assistant', fields)).toEqual([]);
+    }
   });
 
   it('ignores quoted runbook examples and another team’s channels mentioned in prose', (): void => {
     const candidates = scopeCandidates(
-      [{
-        ref: 'finance/handbook.md',
-        markdown: [
-          '# Finance close handbook',
-          '- Team: `FIN`',
-          '- Project: `September close`',
-          '- Channels: #finance-close, #ops-requests',
-          'The RevOps team uses Channels: #revops-asks; finance does not monitor it.',
-          '```markdown',
-          '- Team: `REVOPS`',
-          '- Project: `Q3 close`',
-          '- Channels: #revops-asks',
-          '```',
-        ].join('\n'),
-      }],
+      [
+        {
+          ref: 'finance/handbook.md',
+          markdown: [
+            '# Finance close handbook',
+            '- Team: `FIN`',
+            '- Project: `September close`',
+            '- Channels: #finance-close, #ops-requests',
+            'The RevOps team uses Channels: #revops-asks; finance does not monitor it.',
+            '```markdown',
+            '- Team: `REVOPS`',
+            '- Project: `Q3 close`',
+            '- Channels: #revops-asks',
+            '```',
+          ].join('\n'),
+        },
+      ],
       ['team', 'project', 'channel'],
     );
     expect(candidates.map(({ field, value }) => [field, value])).toEqual([
@@ -202,7 +236,10 @@ describe('intake scope candidates', (): void => {
     // handbook; both state `September close`, and a model that picks every
     // number keeps whichever is offered first.
     const runbook = companyPage('finance/runbooks/close-status-note.md');
-    for (const synced of [[runbook, FINANCE], [FINANCE, runbook]]) {
+    for (const synced of [
+      [runbook, FINANCE],
+      [FINANCE, runbook],
+    ]) {
       const candidates = scopeCandidates(synced.map(folderPage), ['team', 'project']);
       expect(candidates.map(({ field, value, ref }) => [field, value, ref])).toEqual([
         ['team', 'FIN', 'finance/handbook.md'],
@@ -228,7 +265,10 @@ describe('intake scope candidates', (): void => {
       ref: 'operations/handbook.md',
       markdown: 'Team identifier `OPS`',
     };
-    for (const synced of [[sourceA, sourceB], [sourceB, sourceA]]) {
+    for (const synced of [
+      [sourceA, sourceB],
+      [sourceB, sourceA],
+    ]) {
       expect(scopeCandidates(synced, ['team'])).toEqual([
         {
           field: 'team',
@@ -249,15 +289,20 @@ describe('intake scope candidates', (): void => {
   });
 
   it('does not turn a forbidden foreign project in a role handbook into a queue', (): void => {
-    const candidates = scopeCandidates([{
-      ref: 'finance/handbook.md',
-      markdown: [
-        '# Finance close handbook',
-        '- Team: `FIN`',
-        '- Project: `September close`',
-        'Do not read project `Q3 close`; that belongs to RevOps.',
-      ].join('\n'),
-    }], ['team', 'project']);
+    const candidates = scopeCandidates(
+      [
+        {
+          ref: 'finance/handbook.md',
+          markdown: [
+            '# Finance close handbook',
+            '- Team: `FIN`',
+            '- Project: `September close`',
+            'Do not read project `Q3 close`; that belongs to RevOps.',
+          ].join('\n'),
+        },
+      ],
+      ['team', 'project'],
+    );
 
     expect(valuesOn(candidates, 'project', 'finance/handbook.md')).toEqual(['September close']);
   });
@@ -346,13 +391,18 @@ describe('grounding a pick on its candidate', (): void => {
 
   it('keeps two projects stated by one role handbook on the same approved card', (): void => {
     const candidates = scopeCandidates(
-      [{
-        ref: 'finance/handbook.md',
-        markdown: '- Team: `FIN`\n- Project: `September close`\n- Project: `October close`',
-      }],
+      [
+        {
+          ref: 'finance/handbook.md',
+          markdown: '- Team: `FIN`\n- Project: `September close`\n- Project: `October close`',
+        },
+      ],
       ['team', 'project'],
     );
-    const scope = groundScopePicks([{ candidate: 1 }, { candidate: 2 }, { candidate: 3 }], candidates);
+    const scope = groundScopePicks(
+      [{ candidate: 1 }, { candidate: 2 }, { candidate: 3 }],
+      candidates,
+    );
     expect(approvedLinearScope(scope)).toEqual({
       team: 'FIN',
       project: 'September close',
@@ -385,14 +435,15 @@ describe('grounding a pick on its candidate', (): void => {
 describe("what a channel's page says about it", (): void => {
   const all = [REVOPS, FINANCE, LOGISTICS].map(folderPage);
   const offered = (root: string): ScopeCandidate[] =>
-    scopeCandidates(all, ['channel']).filter((candidate): boolean => candidate.ref.startsWith(root));
+    scopeCandidates(all, ['channel']).filter((candidate): boolean =>
+      candidate.ref.startsWith(root),
+    );
 
   it('gives the paragraph describing the offered channels, whole, from their own page only', (): void => {
     expect(channelDescriptions(all, offered('finance/'))).toEqual([
       {
         ref: 'finance/handbook.md',
-        text:
-          "`#finance-close` is the team channel, where the rest of the company asks how the close is going; `#ops-requests` is the company's shared request channel. Drafts, questions and escalations go to the manager DM.",
+        text: "`#finance-close` is the team channel, where the rest of the company asks how the close is going; `#ops-requests` is the company's shared request channel. Drafts, questions and escalations go to the manager DM.",
       },
       {
         ref: 'finance/handbook.md',
@@ -402,8 +453,7 @@ describe("what a channel's page says about it", (): void => {
     const logistics = channelDescriptions(all, offered('logistics/'));
     expect(logistics[0]).toEqual({
       ref: 'logistics/handbook.md',
-      text:
-        "`#logistics-desk` is the desk's channel, where the warehouse and the account team raise and follow exceptions; `#ops-requests` is the company's shared request channel. Questions for the desk lead, drafts and escalations go to the manager DM.",
+      text: "`#logistics-desk` is the desk's channel, where the warehouse and the account team raise and follow exceptions; `#ops-requests` is the company's shared request channel. Questions for the desk lead, drafts and escalations go to the manager DM.",
     });
     expect(logistics.every((item): boolean => item.ref === 'logistics/handbook.md')).toBe(true);
     expect(channelDescriptions(all, offered('revops/'))[0].text).toContain(
@@ -430,7 +480,10 @@ describe("what a channel's page says about it", (): void => {
         '',
         `#ops-desk takes requests. ${'It is busy. '.repeat(80)}`,
         '',
-        ...Array.from({ length: 12 }, (_item, index): string => `Note ${index}: ask in #ops-chat.\n`),
+        ...Array.from(
+          { length: 12 },
+          (_item, index): string => `Note ${index}: ask in #ops-chat.\n`,
+        ),
       ].join('\n'),
     };
     const descriptions = channelDescriptions([page], scopeCandidates([page], ['channel']));
@@ -615,7 +668,10 @@ describe('a pick names its candidate by number', (): void => {
     const candidates = scopeCandidates([folderPage(REVOPS), runbook], ['project']);
     const other = numberOf(candidates, 'project', 'Pipeline review', runbook.ref);
     const scope = groundScopePicks(
-      [{ candidate: numberOf(candidates, 'project', 'Q3 close', 'revops/handbook.md') }, { candidate: other }],
+      [
+        { candidate: numberOf(candidates, 'project', 'Q3 close', 'revops/handbook.md') },
+        { candidate: other },
+      ],
       candidates,
     );
     expect(approvedLinearScope(scope)).toEqual({ project: 'Q3 close' });
@@ -713,6 +769,70 @@ describe('the scope an approved card reads', (): void => {
         edited.filter((page): boolean => page.ref !== 'finance/handbook.md'),
       ),
     ).toHaveLength(4);
+  });
+
+  it('compares values, not lines: a rename or a reflowed line is no drift, a removed value is', (): void => {
+    const handbook = 'finance/handbook.md';
+    const renamed = pages('revops-first').map(
+      (page): ScopePage => (page.ref === handbook ? { ...page, ref: 'finance/team.md' } : page),
+    );
+    const restated = restatedScope(finance, renamed);
+    expect(restated.drift).toEqual([]);
+    expect(restated.scope.team?.ref).toBe('finance/team.md');
+    expect(restated.scope.channels?.map((channel) => channel.ref)).toEqual([
+      'finance/team.md',
+      'finance/team.md',
+    ]);
+    const reflowed = pages('revops-first').map(
+      (page): ScopePage =>
+        page.ref === handbook
+          ? {
+              ...page,
+              markdown: page.markdown.replace(
+                '- Channels: #finance-close, #ops-requests',
+                '- Channels:   #finance-close ,  #ops-requests, #finance-desk',
+              ),
+            }
+          : page,
+    );
+    expect(restatedScope(finance, reflowed).drift).toEqual([]);
+    expect(restatedScope(finance, reflowed).scope.channels?.[0]?.quote).toBe(
+      '- Channels:   #finance-close ,  #ops-requests, #finance-desk',
+    );
+    const removed = pages('revops-first').map(
+      (page): ScopePage =>
+        page.ref === handbook
+          ? {
+              ...page,
+              markdown: page.markdown.replace(
+                '- Channels: #finance-close, #ops-requests',
+                '- Channels: #ops-requests',
+              ),
+            }
+          : page,
+    );
+    expect(restatedScope(finance, removed).drift).toEqual([finance.channels![0]]);
+    // Another team's handbook stating `#ops-requests` does not carry finance's value.
+    expect(
+      restatedScope(
+        finance,
+        pages('revops-first').filter((page): boolean => page.ref !== handbook),
+      ).drift,
+    ).toEqual([finance.team, finance.project, finance.channels![0], finance.channels![1]]);
+    // The value's own page stops stating it: drift, though another team's page names it.
+    const movedAway = pages('revops-first').map(
+      (page): ScopePage =>
+        page.ref === handbook
+          ? {
+              ...page,
+              markdown: page.markdown.replace(
+                '- Channels: #finance-close, #ops-requests',
+                '- Channels: #finance-close',
+              ),
+            }
+          : page,
+    );
+    expect(restatedScope(finance, movedAway).drift).toEqual([finance.channels![1]]);
   });
 
   it('says which changed values intake still reads, and how to take the page as it is now', (): void => {

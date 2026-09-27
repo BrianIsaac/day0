@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 20
     env:
       NEXT_TELEMETRY_DISABLED: '1'
+      # The zone every step runs in, as vitest.config.ts pins it for the suite.
+      TZ: UTC
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

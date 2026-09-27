@@ -11,10 +11,26 @@ import {
 import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../../surfaces/mcp-address';
 import type { McpConnection } from '../../surfaces/mcp';
-import { isTransportUnreachable } from '../../lib/transport-error';
+import {
+  fetchWithBackoff,
+  interruptedReadError,
+  PROVIDER_BACKOFF,
+  TransientProviderError,
+  transportFailureKind,
+  withBackoff,
+  type BackoffPolicy,
+} from '../../lib/transport-error';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
 const SERVER_NAME = 'docs';
+
+/**
+ * A batch is tried once more, five seconds later: its transport already
+ * waits out an HTTP 429, so this covers a read cut off mid-batch and a rate
+ * limit the server reports inside a tool result, without re-reading a whole
+ * batch into a limit again and again.
+ */
+const BATCH_BACKOFF: BackoffPolicy = { attempts: 2, baseMs: 5_000, maxWaitMs: 30_000 };
 
 interface McpTool {
   execute?: (input: Record<string, unknown>, context: Record<string, never>) => Promise<unknown>;
@@ -118,22 +134,31 @@ export function sessionBoundFetch(
  * one exception is Day0's own Notion component, reached by its service name
  * on the compose network, which no public check could pass.
  *
+ * A request the server answers with a 429 or a 5xx is tried again under the
+ * provider backoff, keeping the client's own signal.
+ *
  * @param config - The session's endpoint and credential headers.
  * @param connection - The resolver and transport; a test supplies its own.
+ * @param backoff - How a rate-limited request waits; a test records the waits.
  * @returns A client that connects on first use.
  */
 export function productionClient(
   config: McpConnectionConfig,
   connection: McpConnection = { resolveHostname },
+  backoff: BackoffPolicy = PROVIDER_BACKOFF,
 ): McpClientLike {
   let created: Promise<{ client: McpClientLike; session: SessionBoundFetch }> | undefined;
   const create = async (): Promise<{ client: McpClientLike; session: SessionBoundFetch }> => {
-    const transport: SessionTransport = config.bundled
-      ? fetch
-      : pinnedFetch(
-          await checkMcpAddress(config.url, connection.resolveHostname),
-          connection.request,
-        );
+    const transport: SessionTransport = fetchWithBackoff(
+      config.bundled
+        ? (input: string | URL, init?: RequestInit): Promise<Response> => fetch(input, init)
+        : pinnedFetch(
+            await checkMcpAddress(config.url, connection.resolveHostname),
+            connection.request,
+          ),
+      undefined,
+      backoff,
+    );
     const session = sessionBoundFetch(config, transport);
     const client = createSecretMcpClient({
       id: config.id,
@@ -355,10 +380,59 @@ function providerValue(result: unknown): unknown {
     const payload = value as Record<string, unknown>;
     if (payload.status === 'error' || payload.object === 'error') {
       const code = typeof payload.code === 'string' ? ` (${payload.code})` : '';
+      // Notion answers a rate limit or an outage inside the tool result, not as HTTP.
+      const status = typeof payload.status === 'number' ? payload.status : undefined;
+      if (payload.code === 'rate_limited' || status === 429 || (status ?? 0) >= 500) {
+        throw new TransientProviderError(`Documentation provider returned an error${code}.`, {
+          status,
+        });
+      }
       throw new Error(`Documentation provider returned an error${code}.`);
     }
   }
   return value;
+}
+
+/**
+ * Say what a failed batch means once its retries are spent.
+ *
+ * The component's preflight has already answered, so only a connection that
+ * nobody answers means day0's Notion component has stopped; a read that was
+ * timed out or reset is a transient, recorded with its cause so the source's
+ * last error says what happened rather than that nothing is running.
+ */
+function batchFailure(source: DocSourceRecord, error: unknown): unknown {
+  const kind = transportFailureKind(error);
+  if (kind === 'refused' && componentFor(source) === DOCS_NOTION_SERVICE) {
+    return new Error(NOTION_DRIVER_ABSENT_REASON, { cause: error });
+  }
+  return interruptedReadError(error, 'The documentation read') ?? error;
+}
+
+/**
+ * The refusal for a reply Day0 cannot read as a list of pages.
+ *
+ * A walk that took such a reply as "no pages" would complete, and completing
+ * deletes every stored page the walk did not list, supersedes their
+ * credentials and demotes the surfaces bound to them.
+ */
+function unrecognisedReply(provider: string, missing: string): string {
+  return `${provider} answered without ${missing}, in a shape Day0 does not recognise; the sync stops here rather than delete the pages it could not list.`;
+}
+
+/** The page list a provider reply carries under `key`, refused when it is not a list. */
+function pageList(payload: Record<string, unknown>, key: string, provider: string): unknown[] {
+  const list = payload[key];
+  if (!Array.isArray(list)) throw new Error(unrecognisedReply(provider, `a ${key} list`));
+  return list;
+}
+
+/** One listed item as an object, refused when it is not one. */
+function listedItem(value: unknown, provider: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(unrecognisedReply(provider, 'an item object'));
+  }
+  return value as Record<string, unknown>;
 }
 
 /** Return an object-shaped provider payload. */
@@ -504,10 +578,12 @@ export class McpReader implements DocSourceReader {
    * Args:
    *   clientFactory: Builds one credential-bound session.
    *   reach: How a bundled component's presence is checked before a sync.
+   *   backoff: How a transient failure of one batch is retried.
    */
   constructor(
     private readonly clientFactory: McpClientFactory = productionClient,
     private readonly reach?: ReachFetch,
+    private readonly backoff: BackoffPolicy = BATCH_BACKOFF,
   ) {}
 
   /**
@@ -557,6 +633,24 @@ export class McpReader implements DocSourceReader {
     // component is not running, rather than letting a transport error reach
     // `lastError` where the reader can only guess what a human should do.
     await assertDocsComponentReachable(source, this.reach);
+    try {
+      // A batch only reads, so a transient failure is retried from the same cursor.
+      return await withBackoff(
+        () => this.readBatchOnce(source, secret, cursor, limit),
+        this.backoff,
+      );
+    } catch (error) {
+      throw batchFailure(source, error);
+    }
+  }
+
+  /** Read one batch in one credential-bound session. */
+  private async readBatchOnce(
+    source: DocSourceRecord,
+    secret: string,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<DocPageBatch> {
     const client = this.clientFactory(connectionConfig(source, secret));
     try {
       if (source.serverKind === 'notion') {
@@ -569,11 +663,6 @@ export class McpReader implements DocSourceReader {
         return await this.readDriveBatch(client, source, cursor, limit);
       }
       return await this.readConfluenceBatch(client, source, cursor, Math.min(limit, 10));
-    } catch (error) {
-      if (componentFor(source) === DOCS_NOTION_SERVICE && isTransportUnreachable(error)) {
-        throw new Error(NOTION_DRIVER_ABSENT_REASON);
-      }
-      throw error;
     } finally {
       await client.disconnect();
     }
@@ -600,12 +689,12 @@ export class McpReader implements DocSourceReader {
         {},
       ),
     );
-    const files = Array.isArray(searchResult.files) ? searchResult.files : [];
+    const files = pageList(searchResult, 'files', 'Google Drive');
     const pages: DocPage[] = [];
     for (const value of files) {
-      if (!value || typeof value !== 'object') continue;
-      const file = value as Record<string, unknown>;
-      if (typeof file.id !== 'string') continue;
+      const file = listedItem(value, 'Google Drive');
+      if (typeof file.id !== 'string')
+        throw new Error(unrecognisedReply('Google Drive', 'a file id'));
       const content = providerPayload(
         await read.execute!({ fileId: file.id, includeComments: false }, {}),
       );
@@ -672,17 +761,16 @@ export class McpReader implements DocSourceReader {
         {},
       ),
     );
-    const results = Array.isArray(searchResult.results) ? searchResult.results : [];
+    const results = pageList(searchResult, 'results', 'Confluence');
     const pages: DocPage[] = [];
     for (const value of results) {
-      if (!value || typeof value !== 'object') continue;
-      const result = value as Record<string, unknown>;
+      const result = listedItem(value, 'Confluence');
       const content =
         result.content && typeof result.content === 'object' && !Array.isArray(result.content)
           ? (result.content as Record<string, unknown>)
           : result;
       const pageId = typeof content.id === 'string' ? content.id : undefined;
-      if (!pageId) continue;
+      if (!pageId) throw new Error(unrecognisedReply('Confluence', 'a page id'));
       const retrieved = providerValue(
         await retrieve.execute!({ cloudId, pageId, contentFormat: 'markdown' }, {}),
       );
@@ -736,12 +824,11 @@ export class McpReader implements DocSourceReader {
         {},
       ),
     );
-    const results = Array.isArray(searchResult.results) ? searchResult.results : [];
+    const results = pageList(searchResult, 'results', 'Notion');
     const pages: DocPage[] = [];
     for (const value of results) {
-      if (!value || typeof value !== 'object') continue;
-      const result = value as Record<string, unknown>;
-      if (typeof result.id !== 'string') continue;
+      const result = listedItem(value, 'Notion');
+      if (typeof result.id !== 'string') throw new Error(unrecognisedReply('Notion', 'a page id'));
       const retrieved = providerPayload(
         await retrieve.execute!({ page_id: result.id, include_transcript: false }, {}),
       );

@@ -98,7 +98,7 @@ describe('the plan card line for an applied correction', (): void => {
       <AppliedCorrectionsLine ids={['c1']} corrections={[kept]} workItemId={'w2' as Id<'workItems'>} />,
     );
     expect(markup.replace(/<[^>]+>/g, '')).toMatch(
-      /Applies the manager&#x27;s correction from Exception: SH-4471 held at customs \(\d{2}:\d{2}[^)]*\): ‘Use the Delay notice B template/,
+      /Applies the manager&#x27;s correction from Exception: SH-4471 held at customs \(\d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2}\): ‘Use the Delay notice B template/,
     );
   });
 

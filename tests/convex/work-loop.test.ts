@@ -9,7 +9,12 @@ import type { ExecutionOutput } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import { STEP_LEASE_MS } from '../../convex/workLoop';
+import {
+  AWAITING_CHARTER,
+  EXECUTION_STALL_MS,
+  MAX_DRAFT_RESUMES,
+  STEP_LEASE_MS,
+} from '../../convex/workLoop';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -914,5 +919,214 @@ describe('checking for new work on demand', (): void => {
     await expect(
       mock.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId: mockAgent }),
     ).rejects.toThrow(/real-mode/);
+  });
+});
+
+describe('what an outage leaves (P7-18)', (): void => {
+  /** The scheduled jobs of one function, with their arguments. */
+  async function scheduledCalls(harness: Harness, name: string): Promise<unknown[]> {
+    return (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    )
+      .filter((row) => row.name === name)
+      .map((row) => row.args[0]);
+  }
+
+  /** Leave a claimed row as a draft that claimed it and died a lease ago would. */
+  async function killDraft(harness: Harness, workItemId: Id<'workItems'>): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'claimed',
+        verdict: { decision: 'claim', value: 1, risk: 0, requiredPermissions: [] },
+        draftClaimedAt: Date.now() - STEP_LEASE_MS - 1,
+      });
+    });
+  }
+
+  it('resumes a draft that keeps dying a bounded number of times, then stops the row for Retry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-41');
+    for (let attempt = 1; attempt <= MAX_DRAFT_RESUMES; attempt += 1) {
+      await killDraft(harness, workItemId);
+      await harness.mutation(internal.work.resumeStalledSteps, {});
+    }
+    expect(await scheduledCalls(harness, 'workActions:draftPlanInternal')).toHaveLength(
+      MAX_DRAFT_RESUMES,
+    );
+    expect((await eventsOf(harness, 'work.draft-resumed')).map((event) => event.payload)).toEqual(
+      Array.from({ length: MAX_DRAFT_RESUMES }, (_, index) => ({
+        workItemId,
+        attempt: index + 1,
+      })),
+    );
+
+    await killDraft(harness, workItemId);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledCalls(harness, 'workActions:draftPlanInternal')).toHaveLength(
+      MAX_DRAFT_RESUMES,
+    );
+    expect(await scheduledCalls(harness, 'work:setFailed')).toEqual([
+      {
+        workItemId,
+        reason: `the plan draft died ${MAX_DRAFT_RESUMES + 1} times without an answer; Retry drafts it again`,
+        stopped: true,
+      },
+    ]);
+  });
+
+  it('counts the dead drafts again from the manager\'s last Retry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-42');
+    for (let attempt = 1; attempt <= MAX_DRAFT_RESUMES; attempt += 1) {
+      await killDraft(harness, workItemId);
+      await harness.mutation(internal.work.resumeStalledSteps, {});
+    }
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.retry',
+        payload: { workItemId, resumeState: 'claimed', fromState: 'failed' },
+        createdAt: Date.now() + 1,
+      });
+    });
+    vi.advanceTimersByTime(10);
+    await killDraft(harness, workItemId);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledCalls(harness, 'work:setFailed')).toEqual([]);
+    expect((await eventsOf(harness, 'work.draft-resumed')).at(-1)?.payload).toEqual({
+      workItemId,
+      attempt: 1,
+    });
+  });
+
+  it('asks for an action decision parked while no manager channel existed, once one is back', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-43');
+    const slack = await harness.run(async (ctx) => {
+      const pendingRunId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: Date.now() - STEP_LEASE_MS - 1,
+      });
+      await ctx.db.patch(workItemId, {
+        state: 'actions-pending',
+        pendingRunId,
+        executionRunId: pendingRunId,
+        output: managerDm,
+      });
+      const row = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!row) throw new Error('slack surface missing');
+      await ctx.db.patch(row._id, { verdict: 'listed-dead' });
+      return row._id;
+    });
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([]);
+
+    await harness.run(async (ctx) => await ctx.db.patch(slack, { verdict: 'connected' }));
+    // A set with nothing held has nothing to ask about, and is not asked every sweep.
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(workItemId, { actionVerdicts: [{ disposition: 'refused', reason: 'x' }] }),
+    );
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([]);
+
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { actionVerdicts: undefined }));
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([
+      { workItemId, kind: 'actions' },
+    ]);
+  });
+});
+
+describe('a closing phase whose authoring never claimed the run (P5-1)', (): void => {
+  it('is handed to its recovery, not stopped as if nothing landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-44');
+    const runId = await harness.run(async (ctx) => {
+      const claim = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: Date.now() - EXECUTION_STALL_MS - 1,
+      });
+      await ctx.db.patch(workItemId, {
+        state: 'executing',
+        executionRunId: claim,
+        output: { ...managerDm, phase: 'dependent-authoring', applied: [{ tool: 'http.request', ok: true }] },
+      });
+      return claim;
+    });
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    const jobs = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).map((job) => ({ name: job.name, args: job.args[0] }));
+    expect(jobs).toContainEqual({ name: 'work:recoverDependentAuthoring', args: { workItemId, runId } });
+    expect(jobs.map((job) => job.name)).not.toContain('work:setFailed');
+  });
+});
+
+describe('queued work while the charter is not approved (step 4)', (): void => {
+  it('parks each waiting row with an event instead of an evaluation that throws, and the approval brings it back', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      const charter = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      if (!charter) throw new Error('charter missing');
+      await ctx.db.patch(charter._id, { approved: false, approvedAt: undefined });
+    });
+    const first = await insertDiscovered(harness, agentId, 'REVOPS-51');
+    const second = await insertDiscovered(harness, agentId, 'REVOPS-52');
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    for (const workItemId of [first, second]) {
+      expect(await readItem(harness, workItemId)).toMatchObject({
+        state: 'deferred',
+        verdict: { decision: 'defer', reason: AWAITING_CHARTER },
+      });
+    }
+    expect((await eventsOf(harness, 'work.waiting-for-charter')).map((event) => event.payload)).toEqual([
+      { workItemId: first },
+      { workItemId: second },
+    ]);
+    expect(await scheduledNames(harness)).not.toContain('workActions:evaluateWorkItemInternal');
+
+    await harness.run(async (ctx) => {
+      const charter = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      if (!charter) throw new Error('charter missing');
+      await ctx.db.patch(charter._id, { approved: true, approvedAt: Date.now() });
+    });
+    await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter-approved',
+    });
+    expect((await readItem(harness, first)).state).toBe('discovered');
+    expect((await readItem(harness, second)).state).toBe('discovered');
   });
 });

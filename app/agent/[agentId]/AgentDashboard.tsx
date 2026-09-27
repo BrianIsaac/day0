@@ -8,6 +8,7 @@ import {
 import Link from 'next/link';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
+import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
@@ -43,6 +44,7 @@ import {
   HELD_WHILE_SUPERVISED_NOTE,
   SUPERVISED_LABEL,
 } from '../../../src/work/autonomy';
+import { isManagerLookupFailure } from '../../../src/surfaces/manager-lookup';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
@@ -62,11 +64,17 @@ import { SYSTEM_CLASSES, type SystemClass } from '../../../src/agent/system-clas
 import { managerOpenQuestions, synthesisNotes } from '../../../src/agent/manager-questions';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import {
+  OUTCOME_UNKNOWN_REASON,
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
-import type { ArgumentRepairAttempt, MockAction, PlanObligations } from '../../../src/work/types';
+import type {
+  ArgumentRepairAttempt,
+  CharterClauseRef,
+  MockAction,
+  PlanObligations,
+} from '../../../src/work/types';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '../../../src/work/obligations';
 import { clockTime, clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
@@ -213,7 +221,15 @@ export function AgentDashboard({ agentId }: Props) {
 
   return (
     <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
-      <DashboardHeader agent={agent} charter={charter ?? null} />
+      <DashboardHeader
+        agent={agent}
+        charter={charter ?? null}
+        managerLookupFailure={
+          (surfaceRows ?? []).find(
+            (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
+          )?.reason
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 space-y-4">
@@ -477,15 +493,130 @@ export function NotificationModeControl({
   );
 }
 
+/**
+ * Who the agent reports to, and the control that changes it (Q6).
+ *
+ * The address is the one the chat surface looks up to find the manager's DM,
+ * so a manager who left, or whose account Slack no longer finds, is replaced
+ * here rather than by a reset. When a chat surface failed on that lookup the
+ * line says so, because the card beside it would otherwise blame the credential.
+ */
+export function ManagerLine({
+  bossEmail,
+  lookupFailure,
+  onChange,
+}: {
+  bossEmail: string;
+  /** The stored reason of a chat surface whose probe could not find the manager. */
+  lookupFailure?: string;
+  onChange: (bossEmail: string) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(bossEmail);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = (): void => {
+    setBusy(true);
+    setError(null);
+    onChange(draft)
+      .then(() => setEditing(false))
+      .catch((err: unknown) =>
+        setError(
+          err instanceof ConvexError
+            ? String(err.data)
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        ),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div>
+      {editing ? (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+        >
+          <label className="text-2xl font-semibold tracking-tight" htmlFor="manager-email">
+            Agent reporting to
+          </label>
+          <input
+            id="manager-email"
+            type="email"
+            value={draft}
+            disabled={busy}
+            onChange={(event) => setDraft(event.target.value)}
+            className="font-mono text-sm px-2 py-1 rounded border border-[var(--color-border)] bg-transparent"
+          />
+          <button
+            type="submit"
+            disabled={busy || draft.trim() === ''}
+            className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-50"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setEditing(false);
+              setDraft(bossEmail);
+              setError(null);
+            }}
+            className="text-xs px-2 py-1 rounded border border-[var(--color-border)]"
+          >
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Agent reporting to <span className="font-mono text-[var(--color-accent)]">{bossEmail}</span>{' '}
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(bossEmail);
+              setEditing(true);
+            }}
+            className="align-middle text-xs font-normal px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-muted)]"
+          >
+            Change manager
+          </button>
+        </h1>
+      )}
+      {editing ? (
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
+          Decisions waiting in the previous manager&apos;s DM are sent again to the new one once
+          the chat surface finds them.
+        </p>
+      ) : null}
+      {lookupFailure && !editing ? (
+        <p className="mt-1 text-xs text-[var(--color-warn)]">
+          The chat surface could not find this manager: {lookupFailure.replace(/\.$/, '')}. The
+          credential still works; change the manager to someone the workspace knows.
+        </p>
+      ) : null}
+      {error ? <p className="mt-1 text-xs text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 export function DashboardHeader({
   agent,
   charter,
+  managerLookupFailure,
 }: {
   agent: Doc<'agents'>;
   /** What the page is showing, which outranks the row when the two disagree. */
   charter: Doc<'charters'> | null;
+  /** A chat surface's failure reason when its probe could not find the manager. */
+  managerLookupFailure?: string;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
+  const setBossEmail = useMutation(api.agents.setBossEmail);
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
@@ -515,9 +646,11 @@ export function DashboardHeader({
           <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1">
             Day0
           </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Agent reporting to <span className="font-mono text-[var(--color-accent)]">{agent.bossEmail}</span>
-          </h1>
+          <ManagerLine
+            bossEmail={agent.bossEmail}
+            lookupFailure={managerLookupFailure}
+            onChange={(bossEmail) => setBossEmail({ agentId: agent._id, bossEmail })}
+          />
         </div>
         <div className="flex items-center gap-2">
           <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
@@ -640,6 +773,8 @@ export interface CharterCardBody {
   shortTermGoals: { day30: string; day60: string; day90: string };
   proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
   namedCollaborators: Array<{ name: string; topic: string }>;
+  /** Whose lane the employee stays out of; the scope check reads these. */
+  adjacentRoles?: Array<{ who: string; staysOutOfTheirLaneBy: string }>;
   namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
   priorityReading: string[];
   openQuestions: string[];
@@ -707,7 +842,13 @@ export function ConstraintList({
           >
             <div className="flex-1 min-w-0">
               <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
-                &ldquo;{constraint.quote}&rdquo;
+                {/* A derived rule's quote is the clause itself, not a sentence
+                    the manager said, so it is not printed as a quotation. */}
+                {constraint.origin === 'derived' ? (
+                  constraint.quote
+                ) : (
+                  <>&ldquo;{constraint.quote}&rdquo;</>
+                )}
               </p>
               <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
                 {CONSTRAINT_KIND_LABEL[constraint.kind]}
@@ -722,9 +863,11 @@ export function ConstraintList({
                     ))}
                   </>
                 ) : (
-                  ' · no clause carries it'
+                  ' · not verified: no clause carries these words, so striking it changes nothing'
                 )}
-                {constraint.origin === 'derived' ? ' · found by checking the clauses' : ''}
+                {constraint.origin === 'derived'
+                  ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
+                  : ''}
                 {constraint.origin === 'manager' ? ' · added by you' : ''}
                 {constraint.struck ? ' · struck' : ''}
               </p>
@@ -779,7 +922,6 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
   const requestChanges = useMutation(api.charters.requestChanges);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
   const amend = useMutation(api.charters.amend);
-  const postApproval = useAction(api.onboarding.postCharterApproval);
   const [posting, setPosting] = useState(false);
   const [amendError, setAmendError] = useState<string | null>(null);
   const [strikeError, setStrikeError] = useState<string | null>(null);
@@ -798,24 +940,36 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
     try {
       await amend({ agentId: charter.agentId, changes: [change] });
       return true;
-    } catch (error) {
-      setAmendError((error as Error).message ?? 'The amendment was refused.');
+    } catch (error: unknown) {
+      // The refusal's own words travel as the ConvexError's data; any other
+      // failure's text is stripped by the backend in production.
+      setAmendError(
+        error instanceof ConvexError
+          ? String(error.data)
+          : error instanceof Error
+            ? error.message
+            : 'The amendment was refused.',
+      );
       return false;
     }
   }
 
-  async function onApprove() {
+  // The approval seeds the work the charter implies on the server, in the
+  // same transaction, so nothing here waits on or retries it.
+  function onApprove(): void {
     setPosting(true);
     setStrikeError(null);
-    const result = await approve({ charterId: charter._id });
-    if (!result.ok) {
-      setStrikeError(result.reason);
-      setPosting(false);
-      return;
-    }
-    // Seed the work the approved charter implies: orientation in real mode,
-    // the generated work items in mock mode.
-    postApproval({ agentId: charter.agentId, charterId: charter._id }).catch(() => {});
+    approve({ charterId: charter._id })
+      .then((result) => {
+        if (!result.ok) {
+          setStrikeError(result.reason);
+          setPosting(false);
+        }
+      })
+      .catch((err: unknown) => {
+        setStrikeError(err instanceof Error ? err.message : 'The approval was not recorded.');
+        setPosting(false);
+      });
   }
 
   return (
@@ -851,6 +1005,12 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             <BoundaryList
               label="Collaborators"
               items={body.namedCollaborators.map((c) => `${c.name} — ${c.topic}`)}
+            />
+            <BoundaryList
+              label="Adjacent roles (work in their lane is out of scope)"
+              items={(body.adjacentRoles ?? []).map(
+                (role) => `${role.who} - ${role.staysOutOfTheirLaneBy}`,
+              )}
             />
             <BoundaryList label="Priority reading" items={body.priorityReading} />
             <BoundaryList label="Open questions" items={managerOpenQuestions(body)} />
@@ -975,6 +1135,20 @@ function AddLine({
   );
 }
 
+/** A sentence that forbids: the manager's "never", "don't", "no …" and the like. */
+const PROHIBITION = /^\s*no\b|\b(?:never|not|don['\u2019]t|doesn['\u2019]t|won['\u2019]t|mustn['\u2019]t|avoid|stop|without|forbidden|off-limits)\b/i;
+
+/**
+ * The clause list a new rule goes under until the manager picks one.
+ *
+ * A rule is more often a limit than a licence, and a prohibition filed under
+ * "will do" admits work through the overlap gate, so a prohibition, and a
+ * rule not typed yet, default to "will not do" (P8-9).
+ */
+export function defaultRuleClause(quote: string): ListClauseField {
+  return quote.trim() === '' || PROHIBITION.test(quote) ? 'willNotDo' : 'willDo';
+}
+
 /**
  * Amend an approved charter from the card: each Save, Answer, Add or Remove
  * is one typed change and one new version. The list of versions below the
@@ -993,11 +1167,13 @@ export function AmendCharterPanel({
 }) {
   const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
   const now = useNow();
-  const [rule, setRule] = useState<{ quote: string; kind: CharterConstraint['kind']; clause: ListClauseField }>({
-    quote: '',
-    kind: 'candidate-property',
-    clause: 'willDo',
-  });
+  const [rule, setRule] = useState<{
+    quote: string;
+    kind: CharterConstraint['kind'];
+    /** The list the manager picked; until then the rule follows `defaultRuleClause`. */
+    clause?: ListClauseField;
+  }>({ quote: '', kind: 'candidate-property' });
+  const ruleClause = rule.clause ?? defaultRuleClause(rule.quote);
   const [system, setSystem] = useState<{ name: string; class: SystemClass; whereMentioned: string }>({
     name: '',
     class: 'other',
@@ -1086,7 +1262,7 @@ export function AmendCharterPanel({
             </select>
             <select
               className={AMEND_INPUT}
-              value={rule.clause}
+              value={ruleClause}
               onChange={(e) => setRule({ ...rule, clause: e.target.value as ListClauseField })}
             >
               {LIST_CLAUSE_FIELDS.map((field) => (
@@ -1102,15 +1278,54 @@ export function AmendCharterPanel({
                 if (
                   await onAmend({
                     kind: 'add-constraint',
-                    constraint: { kind: rule.kind, quote: rule.quote, clause: rule.clause },
+                    constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
                   })
                 ) {
-                  setRule({ ...rule, quote: '' });
+                  setRule({ quote: '', kind: rule.kind });
                 }
               }}
             >
               Add rule
             </button>
+          </div>
+        </div>
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+            Adjacent roles (work in their lane is out of scope)
+          </div>
+          <div className="space-y-1">
+            {(body.adjacentRoles ?? []).map((role, index) => (
+              <div key={`${index}:${role.who}`} className="flex items-center gap-1">
+                <span className="flex-1 min-w-0 text-[var(--color-fg)]">
+                  {role.who} - {role.staysOutOfTheirLaneBy}
+                </span>
+                <button
+                  className={AMEND_BUTTON}
+                  onClick={() =>
+                    // onAmend never rejects: a refusal is shown on the panel.
+                    void onAmend({
+                      kind: 'edit-adjacent-role',
+                      index,
+                      role: { who: '', staysOutOfTheirLaneBy: '' },
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <AddLine
+              placeholder="Role - how I stay out of their lane"
+              label="Add"
+              onAdd={(text) => {
+                const [who, ...rest] = text.split(' - ');
+                return onAmend({
+                  kind: 'edit-adjacent-role',
+                  index: (body.adjacentRoles ?? []).length,
+                  role: { who: who ?? '', staysOutOfTheirLaneBy: rest.join(' - ') },
+                });
+              }}
+            />
           </div>
         </div>
         <div>
@@ -1733,9 +1948,11 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 }
 
 // What needs the manager first: literal actions awaiting approval, then plans,
-// then skills. A failed or stopped run waits on the manager's Retry, so it sits
-// above the skipped rows, which wait on nobody.
-const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'failed', 'skipped', 'cancelled', 'deferred'];
+// then skills, then deferrals, which wait on a grant or a connection the manager
+// gives and which the roster counts as needing them. A failed or stopped run
+// waits on the manager's Retry, so it sits above the skipped rows, which wait
+// on nobody.
+const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'deferred', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'failed', 'skipped', 'cancelled'];
 
 /**
  * The work queue in the order the page lists it.
@@ -1942,7 +2159,16 @@ interface PlanStepOutcomeRow {
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   evidence: string;
   basis?: 'manager-feedback';
+  /** The charter clause the closing phase decided this step under. */
+  charterClause?: CharterClauseRef;
 }
+
+/** How a clause list reads inside a sentence on the ledger. */
+const CLAUSE_FIELD_PHRASE: Record<CharterClauseRef['field'], string> = {
+  willDo: 'will do',
+  willNotDo: 'will not do',
+  escalationTriggers: 'escalation trigger',
+};
 
 /** A run's persisted output as the card reads it, in either of its two phases. */
 interface RunOutput {
@@ -2381,6 +2607,13 @@ export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow
             {`Step ${outcome.step} · ${outcome.status}${
               outcome.basis === 'manager-feedback' ? ' by manager feedback' : ''
             } - ${outcome.evidence}`}
+            {outcome.charterClause ? (
+              <span className="block pl-3">
+                {'under the charter clause \u201c'}
+                {outcome.charterClause.text}
+                {`\u201d (${CLAUSE_FIELD_PHRASE[outcome.charterClause.field]}, charter v${outcome.charterClause.charterVersion})`}
+              </span>
+            ) : null}
           </li>
         ))}
       </ol>
@@ -2547,10 +2780,25 @@ export function cancelPlanRequest(
   return { workItemId, ...(reason?.trim() ? { reason } : {}) };
 }
 
+/**
+ * The row-level reason a failed item's card shows.
+ *
+ * A stop's own wording ("nothing landed") counts the run's writes the way the
+ * stop decision does; the Retry gate counts every landed write, the manager's
+ * DM included. Where the two disagree the card follows the gate, because the
+ * gate is what the manager meets next.
+ */
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
-  output?: { refusedClosing?: unknown; openQuestion?: unknown; initial?: { openQuestion?: unknown } | null } | null;
+  output?: {
+    refusedClosing?: unknown;
+    openQuestion?: unknown;
+    actions?: unknown;
+    applied?: unknown;
+    initial?: { openQuestion?: unknown; actions?: unknown; applied?: unknown } | null;
+  } | null;
+  providerReconciliation?: { confirmedAt: number };
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
@@ -2561,14 +2809,26 @@ export function failedItemReason(item: {
     return `stopped at a step Day0's gate refused: ${stopDetail(item.skipReason).slice(GATE_REFUSAL_STOP.length)}`;
   }
   if (item.skipReason && isStopped(item.skipReason)) {
+    const landed = retryRequiresProviderReconciliation(item.output, item.skipReason);
+    const unconfirmed = landed && !item.providerReconciliation;
     // A stop at the closing gate keeps the landed prerequisites and the
     // refused set on the row; Retry resumes at the closing phase.
     if (item.output?.refusedClosing) {
-      return `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`;
+      return unconfirmed
+        ? `stopped at the closing gate; the prerequisites landed, so confirm them below and Retry resumes there: ${stopDetail(item.skipReason)}`
+        : `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`;
     }
     // The run asked its question and withheld the writes that wait on the answer.
-    return item.output?.openQuestion || item.output?.initial?.openQuestion
-      ? `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${stopDetail(item.skipReason)}`
+    if (item.output?.openQuestion || item.output?.initial?.openQuestion) {
+      return unconfirmed
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${stopDetail(item.skipReason)}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${stopDetail(item.skipReason)}`;
+    }
+    if (unconfirmed) {
+      return `stopped after a write landed or may have; confirm the provider below before Retry: ${stopDetail(item.skipReason)}`;
+    }
+    return landed
+      ? `stopped, a write landed before it stopped and nothing is left to decide: ${stopDetail(item.skipReason)}`
       : `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
@@ -3126,7 +3386,13 @@ export function WorkItemCard({
 }) {
   const now = useNow();
   const verdict = item.verdict as
-    | { decision: string; reason?: string; suggestedSkillName?: string; missingSurface?: string }
+    | {
+        decision: string;
+        reason?: string;
+        suggestedSkillName?: string;
+        missingSurface?: string;
+        missingPermissions?: string[];
+      }
     | undefined;
   const plan = item.plan as
     | {
@@ -3150,7 +3416,14 @@ export function WorkItemCard({
   // row the provider failed, whose outcome someone may have to check.
   const unlandedActions = appliedActions.filter((a) => !a.ok && !a.held);
   const refusedActions = unlandedActions.filter((a) => isSurfaceTool(a.tool) && isGateRefusal(a.reason));
-  const failedActions = unlandedActions.filter((a) => !refusedActions.includes(a));
+  // A row whose response was lost, or one an interrupted apply could not
+  // account for, may have landed: it is not listed as never reaching anything.
+  const unknownActions = unlandedActions.filter(
+    (a) => !refusedActions.includes(a) && (a.outcomeUnknown === true || a.reason === OUTCOME_UNKNOWN_REASON),
+  );
+  const failedActions = unlandedActions.filter(
+    (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
+  );
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(item.planPendingAt, landedAutonomously > 0, autonomyChanges);
@@ -3200,6 +3473,34 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
+  const [askError, setAskError] = useState<string | null>(null);
+  // Resend and Ask share one mutation; its refusal is the card's to show.
+  const askAgain = (): void => {
+    setAskError(null);
+    onResendDecision().catch((err: unknown) =>
+      setAskError(
+        err instanceof ConvexError
+          ? String(err.data)
+          : err instanceof Error
+            ? err.message
+            : 'The request was not sent.',
+      ),
+    );
+  };
+  // A row that parked while no manager channel was connected was never asked;
+  // once a channel is, the card can ask (the sweep also does, a lease later).
+  const askableChannel =
+    !item.decision &&
+    (item.state === 'plan-pending' ||
+      (item.state === 'actions-pending' && item.approvedIndexes === undefined))
+      ? surfaces.find(
+          (surface) =>
+            surface.class === 'chat' &&
+            !!surface.managerDmChannelId &&
+            !!surface.managerUserId &&
+            verdictFor(surface, now) === 'connected',
+        )
+      : undefined;
   // A failed item whose run landed nothing and left nothing to decide is
   // shown as stopped: Retry stands, and the badge says no harm was done.
   const shownState = item.state === 'failed' && isStopped(item.skipReason) ? 'stopped' : item.state;
@@ -3229,6 +3530,22 @@ export function WorkItemCard({
         <p className="mt-1 text-[10px] text-[var(--color-muted)]">{decidedFrom}</p>
       ) : null}
 
+      {askableChannel ? (
+        <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-muted)]">
+          <span>
+            {item.state === 'plan-pending' ? 'This plan was' : 'These actions were'} not asked on{' '}
+            {askableChannel.displayName} yet: they parked while no manager channel was connected.
+          </span>
+          <button
+            onClick={askAgain}
+            className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
+          >
+            Ask on {askableChannel.displayName}
+          </button>
+        </p>
+      ) : null}
+      {askError ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{askError}</p> : null}
+
       {undelivered && item.decision ? (
         <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-warn)]">
           <span>
@@ -3236,7 +3553,7 @@ export function WorkItemCard({
             {undelivered === 'request not delivered' ? '' : ` (${undelivered})`}
           </span>
           <button
-            onClick={() => void onResendDecision()}
+            onClick={askAgain}
             className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
           >
             Resend
@@ -3261,6 +3578,16 @@ export function WorkItemCard({
               <a href="#surfaces" className="text-[var(--color-accent)] underline">
                 Surfaces tab
               </a>
+            </span>
+          ) : verdict.decision === 'defer' && verdict.reason === 'awaiting-charter' ? (
+            <span className="text-[var(--color-fg)]">
+              defer - waiting for you to approve the charter; it is evaluated once you do
+            </span>
+          ) : verdict.decision === 'defer' &&
+            verdict.reason === 'awaiting-permission' &&
+            verdict.missingPermissions?.length ? (
+            <span className="text-[var(--color-fg)]">
+              defer - awaiting-permission: needs {verdict.missingPermissions.join(', ')}
             </span>
           ) : heldByColleague ? (
             <span className="text-[var(--color-fg)]">
@@ -3485,7 +3812,24 @@ export function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' || item.state === 'completed' || skipWaivable || cancelledPlan ? (
+      {unknownActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+          <p className="text-[var(--color-warn)] font-medium mb-1">
+            {unknownActions.length} {unknownActions.length === 1 ? 'action' : 'actions'} with an unknown
+            outcome · may have landed
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-warn)]">
+            {unknownActions.map((a, i) => (
+              <li key={i}>
+                {a.tool} - {a.reason ?? 'the response was lost'}
+                <PhaseLabel phase={a.phase} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {item.state === 'failed' || item.state === 'completed' || skipWaivable || item.state === 'cancelled' ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
@@ -3541,6 +3885,12 @@ export function WorkItemCard({
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry with a note sends this finished work back; the note reaches the agent as your
               direction, and its writes are held again unless autonomous actions are on.
+            </p>
+          ) : null}
+          {item.state === 'cancelled' && !cancelledPlan ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry evaluates this item again from the start; if it still needs a skill, a new
+              proposal comes to you.
             </p>
           ) : null}
           {cancelledPlan ? (
@@ -3815,15 +4165,21 @@ function metricValue(value: string | undefined): string {
 }
 
 export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) {
-  const humanDecisions = metrics
-    ? metrics.decisions.requested === 0
+  // A decision made on the dashboard is a decision whether or not a chat
+  // surface was ever asked, so "not yet" means no decision at all (P6-9).
+  const decisions = metrics?.decisions;
+  const decided = decisions
+    ? decisions.approved + decisions.rejected + decisions.partiallyApproved
+    : 0;
+  const humanDecisions = decisions
+    ? decided === 0
       ? 'not yet'
-      : `${metrics.decisions.approved} / ${metrics.decisions.rejected}`
+      : `${decisions.approved} / ${decisions.rejected}`
     : undefined;
-  const decidedFrom = metrics
-    ? metrics.decisions.requested === 0
+  const decidedFrom = decisions
+    ? decisions.byVia.dashboard.decided + decisions.byVia.channel.decided === 0
       ? 'not yet'
-      : `${metrics.decisions.byVia.dashboard.decided} / ${metrics.decisions.byVia.channel.decided}`
+      : `${decisions.byVia.dashboard.decided} / ${decisions.byVia.channel.decided}`
     : undefined;
   const blocked = metrics
     ? metrics.actions.blockedAfterRevocation === null
@@ -3859,7 +4215,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       </dl>
       {metrics ? (
         <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
-          {metrics.decisions.requested} decisions requested - {metrics.decisions.partiallyApproved}{' '}
+          {metrics.decisions.requested} asked on a chat surface - {metrics.decisions.partiallyApproved}{' '}
           partial - {metrics.actions.autoApplied} actions automatic - {metrics.actions.held} held -{' '}
           {metrics.actions.refused} refused
           {metrics.actions.sessionRestores > 0
@@ -3871,9 +4227,41 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
   );
 }
 
+/** A model call's report as the feed reads it: the stage, and how it ended. */
+function modelCallLabel(payload: unknown): string {
+  const report = (payload ?? {}) as {
+    stage?: unknown;
+    outcome?: unknown;
+    attempts?: unknown;
+    statusCode?: unknown;
+  };
+  const stage = typeof report.stage === 'string' ? ` · ${report.stage}` : '';
+  const outcome = typeof report.outcome === 'string' ? report.outcome : 'unknown';
+  const attempts =
+    outcome !== 'ok' && typeof report.attempts === 'number' && report.attempts > 1
+      ? ` after ${report.attempts} attempts`
+      : '';
+  const status = typeof report.statusCode === 'number' ? ` (HTTP ${report.statusCode})` : '';
+  return `model call${stage} · ${outcome}${attempts}${status}`;
+}
+
 export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): string {
   if (event.type === 'work.failed' && (event.payload as { stopped?: unknown })?.stopped === true) {
     return 'work.failed · stopped';
+  }
+  if (event.type === 'work.model-call') return modelCallLabel(event.payload);
+  if (event.type === 'work.scope-judgement-unavailable') {
+    const cause = (event.payload as { cause?: unknown } | undefined)?.cause;
+    return `scope judgement unavailable${typeof cause === 'string' ? ` (${cause})` : ''} · the item waits and is judged again`;
+  }
+  if (event.type === 'charter.seeding-failed') {
+    const payload = (event.payload ?? {}) as { reason?: unknown; retrying?: unknown };
+    const reason = typeof payload.reason === 'string' ? `: ${payload.reason}` : '';
+    return `seeding the approved charter failed${reason}${payload.retrying === true ? ' · trying again' : ' · gave up'}`;
+  }
+  if (event.type === 'work.draft-resumed') {
+    const attempt = (event.payload as { attempt?: unknown } | undefined)?.attempt;
+    return `plan draft restarted after it died${typeof attempt === 'number' ? ` (restart ${attempt})` : ''}`;
   }
   if (event.type !== 'surface.charter-match-ambiguous') return event.type;
   const candidateSlugs = (event.payload as { candidateSlugs?: unknown }).candidateSlugs;

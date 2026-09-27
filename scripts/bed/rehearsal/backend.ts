@@ -4,6 +4,7 @@
  * every wait and check is written against.
  */
 import { browserSequenceOf, type WorkItemView } from './checks';
+import { assembleTrace } from '../../../src/export/trace';
 
 export interface AgentRow {
   _id: string;
@@ -122,7 +123,12 @@ export async function connectBackend(
   return {
     reader,
     exportForAgent: async (id) =>
-      await client.action(api.exportActions.exportForAgent, { agentId: agentId(id) }),
+      await assembleTrace(id, {
+        head: async () =>
+          await client.action(api.exportActions.exportForAgent, { agentId: agentId(id) }),
+        page: async ({ page }) =>
+          await client.action(api.exportActions.exportPage, { agentId: agentId(id), ...page }),
+      }),
   };
 }
 

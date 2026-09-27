@@ -3,7 +3,7 @@
 import { v } from 'convex/values';
 import { z } from 'zod';
 import { action, internalAction, type ActionCtx } from './_generated/server';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import {
   synthesiseCharter,
   withoutAgentQuotedEvidence,
@@ -20,7 +20,6 @@ import type { Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { assertOwnsAgentAction } from './ownership';
 import type { WorkspaceFile } from './charters';
-import { readSurfaceSnapshot } from '../src/surfaces/registry';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
@@ -37,7 +36,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
  *   - `recoverFinalisation` — the deployment finishing a call neither client
  *     will come back for. Internal, and scheduled by the database rather
  *     than called by anybody.
- *   - `postCharterApproval` - runs after the boss clicks Approve. Seeds the
+ *   - `postCharterApproval` - scheduled by `charters.approve`. Seeds the
  *     work the approved charter implies; makes no web-research call and
  *     needs no search key.
  *
@@ -567,64 +566,113 @@ export const recoverFinalisation = internalAction({
   },
 });
 
+/** How many times the seeding of an approved charter is tried before it stops for the feed. */
+export const CHARTER_SEEDING_ATTEMPTS = 3;
+
+/** The wait before the next try, times the attempt that failed. */
+export const CHARTER_SEEDING_RETRY_MS = 60_000;
+
 /**
- * Seed the work an approved charter implies. Public; the caller must own the
- * agent (`assertOwnsAgentAction`). In real mode it declares the charter's named
- * systems as surfaces and runs orientation; in mock mode it seeds the
- * generated work items and logs `work.charter-derived`. It makes no
+ * Seed the work an approved charter implies. Internal: `charters.approve`
+ * schedules it in the approval's transaction. In real mode it declares the
+ * charter's named systems as surfaces and runs orientation; in mock mode it
+ * seeds the generated work items and logs `work.charter-derived`. It makes no
  * web-research call and needs no search key, so approval completes on a
  * machine without one (decision N19).
+ *
+ * A charter that is no longer the agent's latest approved one is not seeded.
+ * A failure is recorded as `charter.seeding-failed` with its reason and tried
+ * again after a wait, up to `CHARTER_SEEDING_ATTEMPTS`, so the queue never
+ * sits on "no work seeded yet" with nothing saying why.
  */
-export const postCharterApproval = action({
-  args: { agentId: v.id('agents'), charterId: v.id('charters') },
-  handler: async (ctx, args): Promise<{ workItemsGenerated: number }> => {
-    await assertOwnsAgentAction(ctx, args.agentId);
-    const charter = await ctx.runQuery(api.charters.latest, { agentId: args.agentId });
-    if (!charter) throw new Error('postCharterApproval: no charter');
-    const charterBody = charter.body as Charter;
-    const role = extractRole(charterBody);
-
-    // Real mode: the named systems become declared surfaces and orientation
-    // files one evidence-backed card per system from the linked docs. Mock
-    // mode never reaches this branch, so the hosted demo keeps its five
-    // synthetic surfaces and files no absence cards.
-    if (SURFACE_MODE === 'real') {
-      await ctx.runMutation(internal.surfaces.seedFromCharter, {
+export const postCharterApproval = internalAction({
+  args: {
+    agentId: v.id('agents'),
+    charterId: v.id('charters'),
+    attempt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ workItemsGenerated: number } | { failed: string }> => {
+    const attempt = args.attempt ?? 1;
+    try {
+      return await seedApprovedCharter(ctx, args.agentId, args.charterId);
+    } catch (err: unknown) {
+      const reason = (err instanceof Error ? err.message : String(err)).slice(0, 240);
+      const retrying = attempt < CHARTER_SEEDING_ATTEMPTS;
+      await ctx.runMutation(internal.events.log, {
         agentId: args.agentId,
-        namedSystems: charterBody.namedSystems ?? [],
+        type: 'charter.seeding-failed',
+        payload: { charterId: args.charterId, attempt, reason, retrying },
       });
-      await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
-      return { workItemsGenerated: 0 };
+      if (retrying) {
+        await ctx.scheduler.runAfter(
+          CHARTER_SEEDING_RETRY_MS * attempt,
+          internal.onboarding.postCharterApproval,
+          { agentId: args.agentId, charterId: args.charterId, attempt: attempt + 1 },
+        );
+      }
+      return { failed: reason };
     }
-
-    // Generate role-specific work items grounded in BOTH the charter AND
-    // the agent's actual mock environment. The work-generator LLM sees
-    // real surface slugs (channels, spreadsheets, docs, tweets, tickets)
-    // and emits contentRefs the executor can later mutate against real
-    // rows. No hardcoded slugs in the prompt.
-    const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
-    const generated = await generateWorkItemsFromCharter(charterBody, mockEnv);
-    let workItemsGenerated = 0;
-    for (const item of generated) {
-      await ctx.runMutation(internal.work.seedItem, {
-        agentId: args.agentId,
-        sourceCategory: item.sourceCategory,
-        sourceSystem: item.sourceSystem,
-        externalId: item.externalId,
-        title: item.title,
-        contentSummary: item.contentSummary,
-        contentRefs: item.contentRefs,
-        priority: item.priority,
-        requesterLabel: item.requesterLabel,
-      });
-      workItemsGenerated += 1;
-    }
-    await ctx.runMutation(internal.events.log, {
-      agentId: args.agentId,
-      type: 'work.charter-derived',
-      payload: { count: workItemsGenerated, role },
-    });
-
-    return { workItemsGenerated };
   },
 });
+
+/**
+ * The seeding itself, for `postCharterApproval`.
+ *
+ * Returns:
+ *   How many work items mock mode generated; real mode generates none.
+ */
+async function seedApprovedCharter(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  charterId: Id<'charters'>,
+): Promise<{ workItemsGenerated: number }> {
+  const charter = await ctx.runQuery(internal.charters.latestInternal, { agentId });
+  if (!charter || charter._id !== charterId || !charter.approved) {
+    return { workItemsGenerated: 0 };
+  }
+  const charterBody = charter.body as Charter;
+  const role = extractRole(charterBody);
+
+  // Real mode: the named systems become declared surfaces and orientation
+  // files one evidence-backed card per system from the linked docs. Mock
+  // mode never reaches this branch, so the hosted demo keeps its five
+  // synthetic surfaces and files no absence cards.
+  if (SURFACE_MODE === 'real') {
+    await ctx.runMutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: charterBody.namedSystems ?? [],
+    });
+    await ctx.runAction(internal.orientationActions.run, { agentId });
+    return { workItemsGenerated: 0 };
+  }
+
+  // Generate role-specific work items grounded in BOTH the charter AND
+  // the agent's actual mock environment. The work-generator LLM sees
+  // real surface slugs (channels, spreadsheets, docs, tweets, tickets)
+  // and emits contentRefs the executor can later mutate against real
+  // rows. No hardcoded slugs in the prompt.
+  const mockEnv = await ctx.runQuery(internal.mock.snapshotInternal, { agentId });
+  const generated = await generateWorkItemsFromCharter(charterBody, mockEnv);
+  let workItemsGenerated = 0;
+  for (const item of generated) {
+    await ctx.runMutation(internal.work.seedItem, {
+      agentId,
+      sourceCategory: item.sourceCategory,
+      sourceSystem: item.sourceSystem,
+      externalId: item.externalId,
+      title: item.title,
+      contentSummary: item.contentSummary,
+      contentRefs: item.contentRefs,
+      priority: item.priority,
+      requesterLabel: item.requesterLabel,
+    });
+    workItemsGenerated += 1;
+  }
+  await ctx.runMutation(internal.events.log, {
+    agentId,
+    type: 'work.charter-derived',
+    payload: { count: workItemsGenerated, role },
+  });
+
+  return { workItemsGenerated };
+}

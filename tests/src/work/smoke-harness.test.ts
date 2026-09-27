@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { hasHostTool } from '../../setup/host-tools';
 import { verdictFor } from '../../../src/lib/skill-sandbox';
 import { bindSkillInputs, CANDIDATE_BOUND_TARGET_INPUTS, REPLY_SURFACE_INPUT } from '../../../src/work/skill-inputs';
 import {
@@ -104,7 +105,7 @@ const CASES = [
   ']',
 ];
 
-describe('the real-mode smoke harness', (): void => {
+describe.skipIf(!hasHostTool('python3'))('the real-mode smoke harness (needs python3)', (): void => {
   it('embeds the author source without letting any character end the string it sits in', (): void => {
     const hostile = 'x = """\nprint(\'"""\')\n\\u0000 ${`\u2028';
     const program = harnessedSmokeTest(hostile, { ...CONTRACT, body: hostile });

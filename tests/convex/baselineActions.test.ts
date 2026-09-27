@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -53,9 +53,14 @@ vi.mock('../../src/lib/mastra', () => ({
   },
 }));
 
+beforeEach((): void => {
+  vi.stubEnv('DAY0_EVALUATION_BED', 'test-bed');
+});
+
 afterEach((): void => {
   model.calls = 0;
   model.run = undefined;
+  vi.unstubAllEnvs();
   restoreSurfaceMode();
 });
 
@@ -83,6 +88,28 @@ async function seedWork(
 }
 
 describe('ordinary-agent comparison arm', (): void => {
+  it('refuses to deploy or execute on a mock deployment that names no bed', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    vi.stubEnv('DAY0_EVALUATION_BED', '');
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.action(api.baselineActions.deployBaseline, { bossEmail: 'boss@day0.local' }),
+    ).rejects.toThrow('baselineActions.deployBaseline runs only on an evaluation bed');
+    const agentId = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+      arm: 'baseline',
+    });
+    const workItemId = await seedWork(harness, agentId, 'EVAL-NO-BED');
+    await expect(owner.action(api.baselineActions.executeTask, { workItemId })).rejects.toThrow(
+      'DAY0_EVALUATION_BED',
+    );
+    expect(model.calls).toBe(0);
+    const agents = await harness.run(async (ctx) => await ctx.db.query('agents').collect());
+    expect(agents.map((agent) => agent._id)).toEqual([agentId]);
+  });
+
   it('deploys an active baseline with a stub charter, the mock-office scopes only, and no skill or generated work', async (): Promise<void> => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseSurfaceAction, type ParsedSurfaceAction } from '../../../src/surfaces/policy';
 import type { MockAction } from '../../../src/work/types';
@@ -17,6 +18,9 @@ import {
   type ClaimKeySurface,
   type HeldExternalItem,
 } from '../../../src/work/claim-key';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const linear: ClaimKeySurface = {
   slug: 'linear',
@@ -227,8 +231,8 @@ describe('withheldByClaimReason', (): void => {
  */
 describe('a documented page field of a browser-driven surface', (): void => {
   const SLUG = 'looker-pipeline-tile';
-  const runbook = readFileSync(join(process.cwd(), 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'), 'utf8');
-  const system = readFileSync(join(process.cwd(), 'bed/company/folder/systems/looker-pipeline-tile.md'), 'utf8');
+  const runbook = readFileSync(join(ROOT, 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'), 'utf8');
+  const system = readFileSync(join(ROOT, 'bed/company/folder/systems/looker-pipeline-tile.md'), 'utf8');
   const tileSurface: ClaimKeySurface = { slug: SLUG, class: 'analytics', path: 'browser-driven', endpoint: 'http://looker-tile:8080/' };
   const tile = (tool: string, toolArgs: Record<string, unknown>): MockAction => ({
     tool: 'mcp.call', args: { surface: SLUG, tool, toolArgsJson: JSON.stringify(toolArgs) },

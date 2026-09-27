@@ -1287,10 +1287,12 @@ describe('a long wait behind one skill (P9-1)', (): void => {
   it('rejection cancels a long wait in batches, within the transaction limits', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
+    // Each cancelled row writes itself and its work.cancelled event: a batch
+    // of 25 fits in 60 writes, and the sixty rows at once (120) would not.
     const harness = convexTest({
       schema: contractSchema(),
       modules: allConvexModules(),
-      transactionLimits: { documentsWritten: 40 },
+      transactionLimits: { documentsWritten: 60 },
     });
     const { skillId, rows } = await seedLongWait(harness, 'proposed', 60);
 

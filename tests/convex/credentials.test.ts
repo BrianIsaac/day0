@@ -1,8 +1,7 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +15,9 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
 import { decrypt as decryptCredential, openOwnedCredential } from '../../src/lib/credential-crypto';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
+import { temporaryDirectories } from '../setup/temporary-directories';
+
+const temporary = temporaryDirectories();
 
 /** The Linear writes the MCP transport received, with the bearer it was opened with. */
 const mcpCalls = vi.hoisted(() => [] as Array<{ bearer?: string; tool: string }>);
@@ -527,7 +529,7 @@ describe('a page whose count of values changes (P10-1)', (): void => {
       // Scheduled discovery never runs: the clock is fake and never advanced.
       vi.useFakeTimers();
       try {
-        const root = await mkdtemp(join(tmpdir(), 'day0-credential-refs-'));
+        const root = temporary('day0-credential-refs-');
         vi.stubEnv('DAY0_DOCS_ROOT', root);
         vi.stubEnv('DAY0_REDACTOR_URL', redactor?.url ?? '');
         const linear = ['lin', 'api', 'refs-contract-0123456789abcdef'].join('_');

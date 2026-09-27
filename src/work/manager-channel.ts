@@ -54,27 +54,48 @@ export type DecisionReply =
   | { verb: 'reject'; id: string; reason: string };
 
 /**
- * Parse only the bounded command prefix; trailing reject text is inert audit prose.
+ * The longest manager reason kept in full, from the card or from chat alike.
+ * `convex/work.ts` re-exports it; a chat rejection used to be cut at 200.
+ */
+export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
+
+/**
+ * The longest message a decision request sends. Slack renders about 3,000
+ * characters of a text message before it collapses it behind "Show more",
+ * which on a phone hides the reply line.
+ */
+export const MANAGER_MESSAGE_MAX_CHARS = 3_000;
+
+/** What may follow an approve and still leave it an approval: a courtesy, nothing more. */
+const APPROVE_COURTESY = /^(?:thanks|thank you|thx|ty|cheers|please|pls|go ahead|ok|okay|sure)$/i;
+
+/**
+ * Parse only the bounded command prefix; trailing reject text is the reason.
  *
  * The request shows the command in quotes (Reply “approve ab3xyz”), and a manager
- * who copies it, wraps it in a code span or ends it with a full stop has still
- * given the command. Those wrappers are stripped; prose before the verb or after
- * an approve is not a command.
+ * who copies it, wraps it in a code span, bold or italics, quotes it, mentions
+ * the app first, writes "approved", puts a colon after the verb or ends it with
+ * a full stop or a comma has still given the command. Prose before the verb is
+ * not a command, and neither is an approve followed by anything but a courtesy:
+ * "approve ab3xyz but not the Done" must not approve everything (P5-9).
  */
 export function parseDecisionReply(text: string): DecisionReply | undefined {
   const flat = text
     .replace(/\s+/g, ' ')
-    .replace(/^[\s"'“”‘’`]+/, '')
-    .replace(/[\s"'“”‘’`.!]+$/, '')
+    .replace(/^(?:\s|<@[A-Z0-9]+>|>|&gt;)+/i, '')
+    .replace(/^[\s"'“”‘’`*_]+/, '')
+    .replace(/[\s"'“”‘’`*_.!,;:)]+$/, '')
     .trim();
-  const match = /^(approve|reject)\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:\s+(.*))?$/i.exec(
-    flat,
-  );
+  const match =
+    /^(approve|reject)(?:e?d)?\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:[\s,;:]+(.*))?$/i.exec(
+      flat,
+    );
   if (!match) return undefined;
   const verb = match[1].toLowerCase() as 'approve' | 'reject';
   const id = match[2].toLowerCase();
-  if (verb === 'approve') return { verb, id };
-  return { verb, id, reason: (match[3] ?? '').slice(0, 200) };
+  const rest = (match[3] ?? '').replace(/[\s.!,;:]+$/, '').trim();
+  if (verb === 'approve') return rest === '' || APPROVE_COURTESY.test(rest) ? { verb, id } : undefined;
+  return { verb, id, reason: rest.slice(0, MANAGER_FEEDBACK_MAX_CHARS) };
 }
 
 /**
@@ -165,29 +186,80 @@ export function decisionRequestText(args: {
   closingPhase?: boolean;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
-  let detail: string;
+  const reply = `Reply “approve ${args.id}” or “reject ${args.id} <reason>”.`;
+  let listHeading: string;
+  let lines: string[];
+  let noun: string;
+  let scope: string | undefined;
   if (args.kind === 'plan') {
-    const plan = (args.plan ?? {}) as { summary?: unknown };
-    detail = `Plan: ${oneLine(plan.summary, 'The drafted plan is available in day0.')}`;
+    listHeading = planHeading(args.plan);
+    lines = planLines(args.plan);
+    noun = 'plan steps';
   } else {
     const actions = args.actions ?? [];
     const held = args.heldIndexes ?? [];
-    const lines = held.map(
-      (index, position) =>
-        `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
-    );
-    const heading = args.closingPhase
+    listHeading = args.closingPhase
       ? 'Closing actions, written from the results of the actions already applied in this run:'
       : 'Held actions:';
-    detail = `${heading}\n${lines.join('\n') || '1. Review the held actions in day0.'}`;
+    lines = held.map(
+      (index, position) => `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
+    );
+    if (lines.length === 0) lines = ['1. Review the held actions in day0.'];
+    noun = 'held actions';
+    // A Slack approval approves every held index; the card can approve some.
+    if (held.length > 1) {
+      const covers = held.length === 2 ? 'both actions' : `all ${held.length} actions`;
+      scope = `“approve ${args.id}” applies ${covers} listed; to approve only some, decide in day0.`;
+    }
   }
+  const frame = (shown: readonly string[], omitted: number): string =>
+    [
+      heading,
+      '',
+      listHeading,
+      ...shown,
+      ...(omitted > 0 ? [`…and ${omitted} more ${noun}; the full list is in day0.`] : []),
+      '',
+      reply,
+      ...(scope ? [scope] : []),
+    ].join('\n');
+  let shown = lines.length;
+  while (shown > 1 && frame(lines.slice(0, shown), lines.length - shown).length > MANAGER_MESSAGE_MAX_CHARS) {
+    shown -= 1;
+  }
+  return frame(lines.slice(0, shown), lines.length - shown);
+}
+
+/** The first line of a plan request: its summary, or where to read the plan. */
+function planHeading(plan: unknown): string {
+  const summary = (plan ?? {}) as { summary?: unknown };
+  return `Plan: ${oneLine(summary.summary, 'The drafted plan is available in day0.')}`;
+}
+
+/** The longest plan step or note a request quotes before it clips. */
+const PLAN_LINE_MAX_CHARS = 300;
+
+/**
+ * What a plan request says beyond the summary: the steps, the risk and the
+ * reversibility, each only when the plan has it (P5-8).
+ */
+function planLines(plan: unknown): string[] {
+  const body = (plan ?? {}) as { steps?: unknown; riskNotes?: unknown; reversibility?: unknown };
+  const clip = (line: string): string =>
+    line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
+  const steps = Array.isArray(body.steps)
+    ? body.steps.flatMap((step): string[] => {
+        const line = oneLine(step, '');
+        return line ? [line] : [];
+      })
+    : [];
+  const risk = oneLine(body.riskNotes, '');
+  const reversibility = oneLine(body.reversibility, '');
   return [
-    heading,
-    '',
-    detail,
-    '',
-    `Reply “approve ${args.id}” or “reject ${args.id} <reason>”.`,
-  ].join('\n');
+    ...(steps.length > 0 ? ['Steps:', ...steps.map((step, index) => clip(`${index + 1}. ${step}`))] : []),
+    ...(risk ? [clip(`Risk: ${risk}`)] : []),
+    ...(reversibility ? [clip(`Reversibility: ${reversibility}`)] : []),
+  ];
 }
 
 /**

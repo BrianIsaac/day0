@@ -10,11 +10,33 @@ interface Service {
   readonly security_opt?: readonly string[];
   readonly pids_limit?: number;
   readonly mem_limit?: string;
+  readonly user?: string;
+  readonly read_only?: boolean;
+  readonly cap_add?: readonly string[];
+  readonly network_mode?: string;
+  readonly volumes?: readonly string[];
+  readonly command?: readonly string[];
+  readonly depends_on?: Record<string, { readonly condition: string }>;
 }
 
 const COMPOSE = parse(readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8')) as {
   services: Record<string, Service>;
+  volumes: Record<string, unknown>;
 };
+
+/** One `NAME=value` entry of a service's environment. */
+function envValue(service: Service, name: string): string | undefined {
+  return service.environment?.find((entry) => entry.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
+/** The container path each named volume of a service is mounted at. */
+function namedMounts(service: Service): Record<string, string> {
+  return Object.fromEntries(
+    (service.volumes ?? [])
+      .filter((entry) => !entry.startsWith('.'))
+      .map((entry) => entry.split(':') as [string, string]),
+  );
+}
 
 /** The host address variable each published port of a service is bound through. */
 function bindVariables(service: Service): string[] {
@@ -51,6 +73,38 @@ describe('docker-compose.yml redactor', (): void => {
     expect(redactor.security_opt).toEqual(['no-new-privileges:true']);
     expect(redactor.pids_limit).toBeGreaterThan(0);
     expect(redactor.mem_limit).toMatch(/^\d+[mg]$/);
+  });
+
+  it('runs as an unprivileged uid on a read-only root filesystem', (): void => {
+    expect(redactor.user).toMatch(/^[1-9]\d*:[1-9]\d*$/);
+    expect(redactor.read_only).toBe(true);
+    expect(redactor.cap_add).toBeUndefined();
+  });
+
+  it('writes its scratch, its caches and its home to a volume, not the root filesystem', (): void => {
+    const scratch = namedMounts(redactor).redactor_tmp;
+    expect(scratch).toBeDefined();
+    expect(COMPOSE.volumes).toHaveProperty('redactor_tmp');
+    expect(envValue(redactor, 'TMPDIR')).toBe(scratch);
+    for (const name of ['HF_HOME', 'XDG_CACHE_HOME', 'HOME']) {
+      expect(envValue(redactor, name), name).toMatch(new RegExp(`^${scratch}/`));
+    }
+  });
+
+  it('starts only after a networkless root step hands its volumes to its uid', (): void => {
+    const volumes = COMPOSE.services['redactor-volumes']!;
+    expect(redactor.depends_on).toEqual({
+      'redactor-volumes': { condition: 'service_completed_successfully' },
+    });
+    expect(volumes.command).toEqual(['/opt/day0/start.sh', '--own-volumes']);
+    expect(envValue(volumes, 'REDACTOR_OWNER')).toBe(redactor.user);
+    expect(volumes.network_mode).toBe('none');
+    expect(volumes.read_only).toBe(true);
+    expect(volumes.cap_drop).toEqual(['ALL']);
+    expect(volumes.cap_add).toEqual(['CHOWN', 'DAC_READ_SEARCH']);
+    expect(volumes.security_opt).toEqual(['no-new-privileges:true']);
+    expect(namedMounts(volumes)).toEqual(namedMounts(redactor));
+    expect(envValue(volumes, 'TMPDIR')).toBe(envValue(redactor, 'TMPDIR'));
   });
 
   it('passes a Hugging Face and a PyPI mirror through when the operator sets one', (): void => {

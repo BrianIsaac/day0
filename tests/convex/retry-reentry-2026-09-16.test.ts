@@ -25,7 +25,7 @@ import {
   run3RetryPhaseOne,
   run3TwoCommentClosing,
   run3TwoCommentPhaseOne,
-} from './fixtures/retry-reentry-2026-09-16';
+} from '../fixtures/retry-reentry-2026-09-16';
 import { landedWritesOf } from '../../src/work/landed-writes';
 import { providerReconciliationEntries } from '../../src/work/reconciliation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -346,7 +346,8 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     // The retry's phase one signed in and read again: an earlier run's browser
     // writes are not "already landed" for a new session, whatever their payload.
     const retryCalls = recorded.mcp.slice(recorded.mcp.findIndex((call) => call.tool === 'save_comment') + 1).map((call) => call.tool);
-    expect(retryCalls).toEqual(['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_snapshot', 'browser_click', 'browser_snapshot', 'list_issues', 'get_issue', 'save_issue']);
+    // The click is followed by the snapshot that reads where it left the page (P6-16).
+    expect(retryCalls).toEqual(['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_snapshot', 'browser_click', 'browser_snapshot', 'browser_snapshot', 'list_issues', 'get_issue', 'save_issue']);
     expect(rows.slice(0, 5).map((row) => row.reason ?? '')).toEqual(['', '', '', '', '']);
 
     // The retry went back through phase one, then authored the closing set: both prompts name the landed comment.
