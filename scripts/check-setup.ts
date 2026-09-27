@@ -50,6 +50,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { customerOidcIssuer, type CustomerOidcIssuer } from '../src/lib/customer-oidc';
+import { PRIVATE_HOSTS_VAR, privateHostAllowlist } from '../src/lib/private-hosts';
+import { DEPLOYMENT_PROFILES } from '../src/lib/surface-mode';
 import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
 import {
@@ -120,6 +122,12 @@ const WATCHED = [
   'DAY0_PROFILE',
   'DAY0_OIDC_ISSUER',
   'DAY0_OIDC_AUDIENCE',
+  'DAY0_PRIVATE_HOSTS',
+  'CONVEX_BIND_ADDR',
+  'CONVEX_DASHBOARD_BIND_ADDR',
+  'MODEL_BIND_ADDR',
+  'FAKE_SLACK_BIND_ADDR',
+  'DAY0_APP_HOST',
   'OPENAI_API_KEY',
   'OPENAI_BASE_URL',
   'CONVEX_OPENAI_BASE_URL',
@@ -225,9 +233,16 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
       ? dialFromBackend(projectName, backendUrl)
       : undefined;
 
+  const migrations =
+    selfHosted && services?.includes('backend')
+      ? migrationsSection(readMigrationStatus(v))
+      : undefined;
+  const settings = settingsSection(v);
   const sections: Section[] = [
     backendSection(v),
+    ...(migrations ? [migrations] : []),
     authSection(v),
+    ...(settings ? [settings] : []),
     surfacesSection(v, services),
     componentsSection(v, projectName, services),
     modelSection(v, selfHosted, modelDial),
@@ -452,6 +467,167 @@ function storedCredentialCount(values: Values): number | undefined {
   if (probe.status !== 0) return undefined;
   const count = Number.parseInt((probe.stdout || '').trim(), 10);
   return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}
+
+/** What `migrations:status` says, as far as the checker reports it. */
+export interface MigrationStatusRead {
+  /** The release the rows are stamped at, or undefined before the first stamp. */
+  readonly release?: string;
+  /** Each migration that has changed rows, and how many: the legacy rows it converted. */
+  readonly converted: ReadonlyArray<{ readonly name: string; readonly changed: number }>;
+  /** The migrations that have not finished. */
+  readonly pending: readonly string[];
+}
+
+/**
+ * Read the JSON `npx convex run migrations:status` prints.
+ *
+ * @param stdout - The command's output.
+ * @throws Error when the output is not the status the function returns.
+ */
+export function parseMigrationStatus(stdout: string): MigrationStatusRead {
+  const parsed = JSON.parse(stdout) as {
+    release?: { release?: unknown } | null;
+    migrations?: unknown;
+    pending?: unknown;
+  } | null;
+  if (!Array.isArray(parsed?.migrations) || !Array.isArray(parsed.pending)) {
+    throw new Error('migrations:status printed no migrations and pending lists');
+  }
+  const release = parsed.release?.release;
+  return {
+    ...(typeof release === 'string' ? { release } : {}),
+    converted: (parsed.migrations as Array<{ name?: unknown; changed?: unknown }>).flatMap((row) =>
+      typeof row.name === 'string' && typeof row.changed === 'number' && row.changed > 0
+        ? [{ name: row.name, changed: row.changed }]
+        : [],
+    ),
+    pending: parsed.pending.filter((name): name is string => typeof name === 'string'),
+  };
+}
+
+/**
+ * Ask the backend, in one call, where its migrations are.
+ *
+ * @param values - Resolved deployment environment.
+ * @returns The status, why it could not be read, or undefined with no admin key to ask with.
+ */
+function readMigrationStatus(values: Values): MigrationStatusRead | { error: string } | undefined {
+  if (!values.CONVEX_SELF_HOSTED_URL || !values.CONVEX_SELF_HOSTED_ADMIN_KEY) return undefined;
+  const probe = spawnSync(
+    'npx',
+    ['convex', 'run', '--typecheck', 'disable', '--codegen', 'disable', 'migrations:status', '{}'],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...values } },
+  );
+  const firstLine = (text: string | null | undefined): string =>
+    (text ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
+  if (probe.status !== 0) {
+    return { error: firstLine(probe.stderr) || firstLine(probe.stdout) || `exit ${probe.status}` };
+  }
+  try {
+    return parseMigrationStatus(probe.stdout ?? '');
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Report the upgrade's migrations: the legacy rows each converted, and any
+ * still pending, which the release stamp waits for.
+ *
+ * @param read - What `migrations:status` answered, or undefined when it was not asked.
+ */
+export function migrationsSection(
+  read: MigrationStatusRead | { error: string } | undefined,
+): Section | undefined {
+  if (read === undefined) return undefined;
+  if ('error' in read) {
+    return {
+      title: 'Migrations: could not be read',
+      status: 'warn',
+      lines: [
+        `\`npx convex run migrations:status\` failed: ${read.error}`,
+        'A deployment whose functions were never pushed has none to read yet.',
+      ],
+    };
+  }
+  const converted =
+    read.converted.length === 0
+      ? 'No legacy row needed converting.'
+      : `Legacy rows converted: ${read.converted.map((row) => `${row.name} ${row.changed}`).join(', ')}.`;
+  if (read.pending.length > 0) {
+    return {
+      title: `Migrations: ${read.pending.length} pending`,
+      status: 'warn',
+      lines: [
+        `Still to run: ${read.pending.join(', ')}. The release is not stamped until they finish.`,
+        converted,
+        'Run `npx convex run migrations:runPending` until nothing is pending, then the setup',
+        'again, which stamps the release.',
+      ],
+    };
+  }
+  return {
+    title: 'Migrations: every one has run',
+    status: 'ok',
+    lines: [
+      read.release === undefined
+        ? 'The rows carry no release stamp yet; the setup writes one after the migrations.'
+        : `The rows are at ${read.release}.`,
+      converted,
+    ],
+  };
+}
+
+/** The host variables that publish a port, each loopback unless set, and what it publishes. */
+const BIND_VARIABLES: ReadonlyArray<readonly [string, string]> = [
+  ['CONVEX_BIND_ADDR', "the backend's API"],
+  ['CONVEX_DASHBOARD_BIND_ADDR', 'the Convex dashboard'],
+  ['MODEL_BIND_ADDR', "the bundled model's API, which asks for no key"],
+  ['FAKE_SLACK_BIND_ADDR', 'the Slack double'],
+  ['DAY0_APP_HOST', 'the app'],
+];
+
+/**
+ * Settings that start but deserve a second look: a profile that names none, a
+ * port published on every interface, and a private-host list the backend
+ * refuses. Warned, never refused (review D9): each can be meant.
+ *
+ * @param v - Resolved values.
+ * @returns The section, or undefined when there is nothing to say.
+ */
+export function settingsSection(v: Values): Section | undefined {
+  const lines: string[] = [];
+  const profile = (v.DAY0_PROFILE ?? '').trim();
+  if (profile !== '' && !DEPLOYMENT_PROFILES.some((known) => known === profile)) {
+    lines.push(
+      `DAY0_PROFILE=${profile} names no profile, so every module that reads it throws at import,`,
+      `the app's and the backend's. Set it to ${DEPLOYMENT_PROFILES.join(' or ')}, or leave it empty.`,
+    );
+  }
+  for (const [name, what] of BIND_VARIABLES) {
+    const value = (v[name] ?? '').trim();
+    if (value === '0.0.0.0' || value === '::' || value === '[::]') {
+      lines.push(
+        `${name}=${value} publishes ${what} on every interface, so anyone on this network`,
+        'can reach it. Leave it empty or 127.0.0.1 unless another machine must.',
+      );
+    }
+  }
+  try {
+    privateHostAllowlist(v[PRIVATE_HOSTS_VAR]);
+  } catch (error) {
+    lines.push(
+      `${PRIVATE_HOSTS_VAR} is refused as it stands, and with it every credentialed MCP client`,
+      `and every repository on a listed host: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return lines.length === 0
+    ? undefined
+    : { title: 'Settings worth a second look', status: 'warn', lines };
 }
 
 /**
@@ -830,9 +1006,11 @@ function customerIssuerSection(v: Values): Section | undefined {
     };
   }
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
+  // A warning until the app's own sign-in uses the issuer (review M12): the
+  // backend accepts its tokens, and no browser can get one yet.
   return {
     title: noAuth ? 'Auth: customer OIDC issuer and the local key' : 'Auth: customer OIDC issuer',
-    status: noAuth ? 'ok' : 'warn',
+    status: 'warn',
     lines: [
       `Issuer ${issuer.issuer}, audience ${issuer.audience}.`,
       noAuth
@@ -840,15 +1018,15 @@ function customerIssuerSection(v: Values): Section | undefined {
         : "The backend accepts this issuer's tokens; Clerk keys, if any, are ignored beside it.",
       'Both values must be on the deployment as well, where the auth config reads them at',
       'push: `pnpm sync:env` puts them there, the audience before the issuer.',
-      customerLocal
-        ? 'DAY0_PROFILE=customer-local: real mode runs for the people it signs in, under `next start`.'
-        : 'DAY0_PROFILE is not customer-local, so real mode still needs the local key under `next dev`.',
-      ...(noAuth
-        ? []
-        : [
-            "The app's own sign-in does not use this issuer yet, so until it does nobody signs",
-            'in through the browser; the local key is the way in meanwhile.',
-          ]),
+      noAuth
+        ? 'The local key runs only under `next dev`; `next start` refuses to start with it on.'
+        : customerLocal
+          ? 'DAY0_PROFILE=customer-local: real mode runs for the people it signs in, under `next start`.'
+          : 'DAY0_PROFILE is not customer-local, so real mode still needs the local key under `next dev`.',
+      "The app's own sign-in does not use this issuer yet, so until it does nobody signs in",
+      noAuth
+        ? 'through the browser with it; the local key is the way in meanwhile.'
+        : 'through the browser, and with the local key off there is no other way in.',
     ],
   };
 }

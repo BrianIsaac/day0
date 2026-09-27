@@ -11,8 +11,11 @@ import {
   egressHosts,
   handbookTwinDriftLine,
   main,
+  migrationsSection,
   modelSection,
   modeAndRouteLine,
+  parseMigrationStatus,
+  settingsSection,
   setupReport,
   setupRoute,
 } from '../../scripts/check-setup';
@@ -391,7 +394,11 @@ describe('the auth section', (): void => {
       DEV_NO_AUTH_JWKS: 'data:x',
     });
     expect(section.title).toBe('Auth: customer OIDC issuer and the local key');
-    expect(section.status).toBe('ok');
+    // Warned, not refused, until the app signs people in through the issuer (review M12, D9).
+    expect(section.status).toBe('warn');
+    const lines = section.lines.join(' ');
+    expect(lines).not.toContain('real mode runs for the people it signs in, under `next start`');
+    expect(lines).toContain('`next start` refuses to start with it on');
   });
 
   it('still reports a local key that is on without its values, issuer or not', (): void => {
@@ -429,5 +436,75 @@ describe('the auth section', (): void => {
     const section = authSection({});
     expect(section.status).toBe('gap');
     expect(section.lines.join(' ')).toContain('DAY0_OIDC_ISSUER');
+  });
+});
+
+describe('the migrations section', (): void => {
+  const STATUS = JSON.stringify({
+    release: { release: '0.4.0', recordedAt: 1 },
+    migrations: [
+      { name: 'agents-owner', release: '0.4.0', read: 2, changed: 2, completedAt: 1 },
+      { name: 'skills-sandbox-id', release: '0.4.0', read: 9, changed: 0, completedAt: 1 },
+      { name: 'surfaces-access-clock', release: '0.4.0', read: 3, changed: 3, completedAt: 1 },
+    ],
+    pending: [],
+  });
+
+  it('reads the legacy rows each migration converted out of one status call', (): void => {
+    expect(parseMigrationStatus(STATUS)).toEqual({
+      release: '0.4.0',
+      converted: [
+        { name: 'agents-owner', changed: 2 },
+        { name: 'surfaces-access-clock', changed: 3 },
+      ],
+      pending: [],
+    });
+    const section = migrationsSection(parseMigrationStatus(STATUS));
+    expect(section?.status).toBe('ok');
+    expect(section?.lines).toEqual([
+      'The rows are at 0.4.0.',
+      'Legacy rows converted: agents-owner 2, surfaces-access-clock 3.',
+    ]);
+  });
+
+  it('warns while a migration is pending, and names the command that finishes it', (): void => {
+    const section = migrationsSection({ converted: [], pending: ['surfaces-access-clock'] });
+    expect(section?.status).toBe('warn');
+    expect(section?.title).toBe('Migrations: 1 pending');
+    expect(section?.lines.join(' ')).toContain('npx convex run migrations:runPending');
+  });
+
+  it('warns when the status cannot be read, and says nothing when it was not asked', (): void => {
+    expect(migrationsSection({ error: 'Could not find function' })?.status).toBe('warn');
+    expect(migrationsSection(undefined)).toBeUndefined();
+    expect(() => parseMigrationStatus('{"release":null}')).toThrow('no migrations');
+    expect(() => parseMigrationStatus('null')).toThrow('no migrations');
+  });
+});
+
+describe('the settings worth a second look', (): void => {
+  it('says nothing about an ordinary file', (): void => {
+    expect(
+      settingsSection({
+        DAY0_PROFILE: 'customer-local',
+        CONVEX_BIND_ADDR: '127.0.0.1',
+        DAY0_PRIVATE_HOSTS: '.corp.internal',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('warns on a misspelt profile, a port on every interface and a refused private-host list, and refuses none', (): void => {
+    const section = settingsSection({
+      DAY0_PROFILE: 'customer-lcoal',
+      MODEL_BIND_ADDR: '0.0.0.0',
+      DAY0_APP_HOST: '0.0.0.0',
+      DAY0_PRIVATE_HOSTS: 'git.corp.internal localhost',
+    });
+    expect(section?.status).toBe('warn');
+    const lines = section?.lines.join(' ') ?? '';
+    expect(lines).toContain('DAY0_PROFILE=customer-lcoal names no profile');
+    expect(lines).toContain("MODEL_BIND_ADDR=0.0.0.0 publishes the bundled model's API");
+    expect(lines).toContain('DAY0_APP_HOST=0.0.0.0 publishes the app');
+    expect(lines).toContain('DAY0_PRIVATE_HOSTS is refused as it stands');
   });
 });
