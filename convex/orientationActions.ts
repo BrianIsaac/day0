@@ -395,6 +395,23 @@ function markerBelongsToSystem(page: CredentialPage, label: string, system: stri
 }
 
 /**
+ * Order pages so the system's own page is read first.
+ *
+ * A login documented on the system's page and again on a runbook that uses
+ * it is stored under two labels; the system's page (a heading that is the
+ * system's name, then a page under `systems/`) is the one the author keeps,
+ * so its marker is the one bound, whatever order the reader listed them in.
+ */
+function systemPageFirst(pages: readonly CredentialPage[], system: string): CredentialPage[] {
+  const rank = (page: CredentialPage): number => {
+    const heading = /^#\s+(.+)$/m.exec(page.markdown)?.[1]?.trim().toLowerCase();
+    if (heading === system.trim().toLowerCase()) return 0;
+    return /(?:^|\/)systems\//.test(page.ref) ? 1 : 2;
+  };
+  return [...pages].sort((left, right): number => rank(left) - rank(right));
+}
+
+/**
  * Extract credential metadata from pages whose values were redacted at sync.
  *
  * A stored marker is the only evidence of a value. OAuth and other location
@@ -412,7 +429,7 @@ export function extractCredentialFinding(
   pages: readonly CredentialPage[],
   system: string,
 ): CredentialFinding {
-  for (const page of pages) {
+  for (const page of systemPageFirst(pages, system)) {
     const scoped = relevantSystemText(page.markdown, system, page.title);
     for (const match of scoped.matchAll(CREDENTIAL_MARKER)) {
       const label = match[1]?.trim();

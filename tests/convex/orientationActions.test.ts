@@ -575,6 +575,17 @@ describe('credential extraction', (): void => {
     });
   });
 
+  it('takes a login documented on a runbook and on its system page from the system page', (): void => {
+    const pages = [
+      'revops/runbooks/how-to-refresh-the-tile.md',
+      'systems/looker-pipeline-tile.md',
+    ].map((ref) => ({ sourceId: 'folder', ...companyPage(ref) }));
+    expect(extractCredentialFinding(pages, 'Looker pipeline tile')).toMatchObject({
+      found: 'value',
+      evidenceRef: 'systems/looker-pipeline-tile.md',
+    });
+  });
+
   it('never carries a value that escaped redaction into a location finding', (): void => {
     const value = ['lin', 'api', 'ReviewValue0123456789'].join('_');
     const page = {
