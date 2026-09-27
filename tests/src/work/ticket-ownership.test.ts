@@ -227,6 +227,11 @@ describe('ticket ownership', () => {
     await expect(
       ticketChange(inReview, { baseline: todo, acknowledged: inReview, owner: owner.read }),
     ).resolves.toBeUndefined();
+    // A listing with no state type is no closed type: a Retry still clears the move.
+    const untyped = { ...inReview, stateType: undefined };
+    await expect(
+      ticketChange(untyped, { baseline: todo, acknowledged: untyped, owner: owner.read }),
+    ).resolves.toBeUndefined();
   });
 
   it('says nothing was sent only when the run sent nothing before the re-read held it (review M3)', () => {

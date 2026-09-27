@@ -210,12 +210,11 @@ export async function ticketChange(
     return `it is labelled ${DO_NOT_AUTOMATE_LABEL}`;
   }
   const own = context.ownStates ?? [];
-  // An acknowledged state with no type may be a close; only a typed open one is excused.
-  const acknowledgedOpen =
-    context.acknowledged?.stateType !== undefined &&
-    !isClosedStateType(context.acknowledged.stateType)
-      ? context.acknowledged.state
-      : undefined;
+  // A closed type is never excused; a close the listing printed without a type is
+  // still caught below when the read shows its type.
+  const acknowledgedOpen = isClosedStateType(context.acknowledged?.stateType)
+    ? undefined
+    : context.acknowledged?.state;
   const accepted = [baseline?.state, acknowledgedOpen, ...own].filter(
     (state): state is string => state !== undefined,
   );
@@ -292,7 +291,7 @@ export function recordFromText(
  * @returns The reason, or undefined when the record can be compared.
  */
 export function ticketRecordRefusal(
-  record: Record<string, unknown>,
+  record: Readonly<Record<string, unknown>>,
   ticketIds: readonly string[],
 ): string | undefined {
   const ours = new Set(ticketIds.flatMap((id) => personKey(id) ?? []));
