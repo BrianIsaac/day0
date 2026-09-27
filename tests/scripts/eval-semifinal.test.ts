@@ -162,6 +162,7 @@ import {
   MAX_SKILL_AUTHORING_ATTEMPTS,
   runRegrade,
   SKILL_AUTHORING_ATTEMPTS_EXHAUSTED,
+  terminalTimestamp,
   type ActiveTask,
   type HarnessContext,
 } from '../../scripts/eval-semifinal';
@@ -650,5 +651,41 @@ describe('read-only evidence re-grading', (): void => {
       }),
     ).rejects.toThrow('backend does not hold recorded work item work-1 for day0-r1');
     await expect(readFile(outPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('the terminal time of a task', (): void => {
+  const item = (overrides: Partial<Doc<'workItems'>>): Doc<'workItems'> =>
+    ({ _id: 'work-1', state: 'failed', ...overrides }) as Doc<'workItems'>;
+  const snapshot = (events: Array<{ type: string; payload: unknown; createdAt: number }>) =>
+    ({ events }) as unknown as Parameters<typeof terminalTimestamp>[0];
+
+  it('ends a rejected or interrupted apply at its own ledger event, not the poll time', (): void => {
+    for (const type of ['work.actions-rejected', 'work.actions-interrupted']) {
+      expect(
+        terminalTimestamp(
+          snapshot([
+            { type: 'work.actions-pending', payload: { workItemId: 'work-1' }, createdAt: 3_000 },
+            { type, payload: { workItemId: 'work-1' }, createdAt: 5_000 },
+          ]),
+          item({}),
+        ),
+        type,
+      ).toBe(5_000);
+    }
+  });
+
+  it('ends a row cancelled by a skill rejection at the rejection of its own proposal', (): void => {
+    const rejection = (skillId: string) => ({
+      type: 'skill.rejected',
+      payload: { skillId, name: 'update-ticket' },
+      createdAt: 7_000,
+    });
+    const cancelled = item({
+      state: 'cancelled',
+      proposedSkillId: 'skill-1' as Doc<'workItems'>['proposedSkillId'],
+    });
+    expect(terminalTimestamp(snapshot([rejection('skill-1')]), cancelled)).toBe(7_000);
+    expect(terminalTimestamp(snapshot([rejection('skill-2')]), cancelled)).toBeNull();
   });
 });

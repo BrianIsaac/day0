@@ -519,17 +519,42 @@ function eventWorkItemId(event: RawSnapshot['events'][number]): string | undefin
   return typeof value === 'string' ? value : undefined;
 }
 
-function terminalTimestamp(raw: RawSnapshot, item: Doc<'workItems'>): number | null {
+/** Events that end a work item: its own terminal events and the two ways an apply ends it. */
+const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'work.completed',
+  'work.failed',
+  'work.cancelled',
+  'work.actions-rejected',
+  'work.actions-interrupted',
+]);
+
+function endsWorkItem(event: RawSnapshot['events'][number], item: Doc<'workItems'>): boolean {
+  if (eventWorkItemId(event) === item._id) {
+    return (
+      TERMINAL_EVENT_TYPES.has(event.type) ||
+      ((item.state === 'skipped' || item.state === 'deferred') && event.type === 'work.evaluated')
+    );
+  }
+  // A skill rejection cancels every row waiting on the proposal; its event names the skill only.
+  const skillId = (event.payload as { skillId?: unknown } | undefined)?.skillId;
+  return (
+    item.state === 'cancelled' &&
+    event.type === 'skill.rejected' &&
+    item.proposedSkillId !== undefined &&
+    skillId === item.proposedSkillId
+  );
+}
+
+/**
+ * When a terminal work item ended, from the ledger event that ended it.
+ *
+ * @returns The latest such event's time, or null when the item is not terminal
+ *   or no event records its end, in which case the caller uses the poll time.
+ */
+export function terminalTimestamp(raw: RawSnapshot, item: Doc<'workItems'>): number | null {
   if (!isTerminalWorkState(item.state)) return null;
-  const terminalTypes = new Set(['work.completed', 'work.failed', 'work.cancelled']);
   const candidates = raw.events
-    .filter(
-      (event) =>
-        eventWorkItemId(event) === item._id &&
-        (terminalTypes.has(event.type) ||
-          ((item.state === 'skipped' || item.state === 'deferred') &&
-            event.type === 'work.evaluated')),
-    )
+    .filter((event) => endsWorkItem(event, item))
     .map((event) => event.createdAt);
   return candidates.length === 0 ? null : Math.max(...candidates);
 }
