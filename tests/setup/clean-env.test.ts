@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { inheritedProductVariables } from './clean-env';
 
@@ -9,6 +12,11 @@ const MODEL_SHELL = {
   OLLAMA_HOST: '127.0.0.1:11434',
   OPENAI_MODEL: 'qwen3:8b',
 };
+
+/** The part of vitest's JSON report the nested run is judged on. */
+interface NestedReport {
+  readonly testResults: ReadonlyArray<{ readonly name: string; readonly status: string }>;
+}
 
 describe('the suite environment', (): void => {
   it('names every product variable a shell carries and keeps the rest', (): void => {
@@ -44,19 +52,39 @@ describe('the suite environment', (): void => {
 
   it('passes the model-address tests from a shell that exports a local model', (): void => {
     // The two files that read the model address at import, run as the gate runs them.
-    const run = spawnSync(
-      process.execPath,
-      [
-        'node_modules/vitest/vitest.mjs',
-        'run',
-        '--project',
-        'node',
-        'tests/src/evaluation/harness-parity.test.ts',
-        'tests/src/lib/mastra-temperature.test.ts',
-      ],
-      { env: { ...process.env, ...MODEL_SHELL }, encoding: 'utf8', timeout: 60_000 },
-    );
-    expect(run.stdout + run.stderr).toMatch(/Test Files {2}2 passed/);
-    expect(run.status).toBe(0);
+    // The outcome is read from the JSON report, not the console summary: the
+    // summary is coloured on a CI runner and plain under a coding agent. The
+    // console output stays as the message a failure prints.
+    const reportDir = mkdtempSync(join(tmpdir(), 'clean-env-'));
+    const reportFile = join(reportDir, 'report.json');
+    try {
+      const run = spawnSync(
+        process.execPath,
+        [
+          'node_modules/vitest/vitest.mjs',
+          'run',
+          '--project',
+          'node',
+          '--reporter=default',
+          '--reporter=json',
+          `--outputFile.json=${reportFile}`,
+          'tests/src/evaluation/harness-parity.test.ts',
+          'tests/src/lib/mastra-temperature.test.ts',
+        ],
+        { env: { ...process.env, ...MODEL_SHELL }, encoding: 'utf8', timeout: 60_000 },
+      );
+      expect(run.status, run.stdout + run.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportFile, 'utf8')) as NestedReport;
+      expect(
+        report.testResults
+          .map((file) => [relative(process.cwd(), file.name), file.status])
+          .sort(([left], [right]) => left.localeCompare(right)),
+      ).toEqual([
+        ['tests/src/evaluation/harness-parity.test.ts', 'passed'],
+        ['tests/src/lib/mastra-temperature.test.ts', 'passed'],
+      ]);
+    } finally {
+      rmSync(reportDir, { recursive: true, force: true });
+    }
   }, 70_000);
 });
