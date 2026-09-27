@@ -18,6 +18,7 @@ import {
   DashboardHeader,
   DraftDetails,
   ManagerLine,
+  MetricsCard,
   PendingActions,
   PlanApprovalForm,
   PlanExecutionLedger,
@@ -1738,5 +1739,46 @@ describe('what an outage leaves on the card (P7-18)', (): void => {
     expect(render([slack])).toContain('not asked on Slack yet');
     expect(render([slack])).toContain('Ask on Slack');
     expect(render([])).not.toContain('Ask on');
+  });
+});
+
+describe('dashboard decisions on the supervision card (P6-9)', (): void => {
+  it('counts decisions made on the dashboard when nothing was asked on a chat surface', (): void => {
+    const metrics = {
+      charter: { timeToFirstDraftedMs: 1, timeToFirstApprovedMs: 2, revisions: 0, requestChanges: 0 },
+      decisions: {
+        requested: 0,
+        approved: 2,
+        rejected: 1,
+        partiallyApproved: 0,
+        cancelled: 0,
+        medianLatencyMs: 60_000,
+        p90LatencyMs: 60_000,
+        byVia: {
+          dashboard: { decided: 3, medianLatencyMs: 60_000, p90LatencyMs: 60_000 },
+          channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+        },
+      },
+      actions: {
+        autoApplied: 0,
+        sessionRestores: 0,
+        held: 3,
+        approved: 2,
+        rejected: 1,
+        refused: 0,
+        blockedAfterRevocation: null,
+        firstBlockAfterRevocationMs: null,
+      },
+      surfaces: { approved: 0, rejected: 0, absent: 0 },
+      skills: { approved: 0, rejected: 0 },
+      autonomyChanges: 0,
+      auditTrail: { complete: 3, total: 3, fraction: 1 },
+    } as unknown as Parameters<typeof MetricsCard>[0]['metrics'];
+    const markup = renderToStaticMarkup(<MetricsCard metrics={metrics} />);
+    expect(markup).toContain('2 / 1');
+    expect(markup).toContain('3 / 0');
+    expect(markup).toContain('0 asked on a chat surface');
+    // Only the revocation row has no evidence yet.
+    expect(markup.match(/not yet/g)).toHaveLength(1);
   });
 });

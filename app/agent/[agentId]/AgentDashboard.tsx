@@ -4046,15 +4046,21 @@ function metricValue(value: string | undefined): string {
 }
 
 export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) {
-  const humanDecisions = metrics
-    ? metrics.decisions.requested === 0
+  // A decision made on the dashboard is a decision whether or not a chat
+  // surface was ever asked, so "not yet" means no decision at all (P6-9).
+  const decisions = metrics?.decisions;
+  const decided = decisions
+    ? decisions.approved + decisions.rejected + decisions.partiallyApproved
+    : 0;
+  const humanDecisions = decisions
+    ? decided === 0
       ? 'not yet'
-      : `${metrics.decisions.approved} / ${metrics.decisions.rejected}`
+      : `${decisions.approved} / ${decisions.rejected}`
     : undefined;
-  const decidedFrom = metrics
-    ? metrics.decisions.requested === 0
+  const decidedFrom = decisions
+    ? decisions.byVia.dashboard.decided + decisions.byVia.channel.decided === 0
       ? 'not yet'
-      : `${metrics.decisions.byVia.dashboard.decided} / ${metrics.decisions.byVia.channel.decided}`
+      : `${decisions.byVia.dashboard.decided} / ${decisions.byVia.channel.decided}`
     : undefined;
   const blocked = metrics
     ? metrics.actions.blockedAfterRevocation === null
@@ -4090,7 +4096,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       </dl>
       {metrics ? (
         <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
-          {metrics.decisions.requested} decisions requested - {metrics.decisions.partiallyApproved}{' '}
+          {metrics.decisions.requested} asked on a chat surface - {metrics.decisions.partiallyApproved}{' '}
           partial - {metrics.actions.autoApplied} actions automatic - {metrics.actions.held} held -{' '}
           {metrics.actions.refused} refused
           {metrics.actions.sessionRestores > 0

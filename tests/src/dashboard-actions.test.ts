@@ -467,6 +467,10 @@ describe('the supervision metrics card', (): void => {
         rejected: 0,
         medianLatencyMs: null,
         p90LatencyMs: null,
+        byVia: {
+          dashboard: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+          channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+        },
       },
       actions: {
         ...completeMetrics.actions,
