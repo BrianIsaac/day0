@@ -94,6 +94,20 @@ describe('documentation sync action helpers', (): void => {
     expect(categoryForPage({ title: 'Ticketing', markdown: '# Runbook for tickets\nBody' })).toBe(
       'how-to-guide',
     );
+    for (const ref of [
+      'revops/runbooks/q3-close-checklist.md',
+      'how-to/billing.md',
+      'playbooks/incident.md',
+      'Runbook/refunds.md',
+    ]) {
+      expect(
+        categoryForPage({ ref, title: 'Q3 close checklist', markdown: '# Q3 close checklist' }),
+        ref,
+      ).toBe('how-to-guide');
+    }
+    expect(
+      categoryForPage({ ref: 'revops/handbook.md', title: 'Handbook', markdown: '# Handbook' }),
+    ).toBe('team-doc');
     expect(categoryForPage({ title: 'Team overview', markdown: '# Team overview' })).toBe(
       'team-doc',
     );

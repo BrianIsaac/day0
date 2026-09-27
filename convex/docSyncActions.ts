@@ -22,24 +22,30 @@ export interface PersistedBatch {
   redactions: number;
 }
 
+/** A directory an author keeps procedures in: `runbooks/`, `how-to/`, `playbooks/`. */
+const PROCEDURE_DIRECTORY = /(?:^|\/)(?:runbooks?|how-?tos?|playbooks?)\//i;
+const PROCEDURE_TITLE = /how[- ]to|runbook|playbook/i;
+
 /**
- * Classify a page for the existing Docs tab and executor prompt.
+ * Classify a page for the Docs tab and the executor prompt, by its path or its title.
  *
- * Args:
- *   page: Normalised documentation page.
+ * A page kept under a procedures directory (`runbooks/`, `how-to/`,
+ * `playbooks/`) is a how-to whatever its title says, so a checklist in
+ * `runbooks/` reaches the executor as a procedure; otherwise the title or
+ * the first `# ` heading decides, as before. The path is the author's own
+ * filing, and a folder reader's title falls back to the file name.
  *
- * Returns:
- *   Existing mock-document category.
+ * @param page - The page's reference (when the reader gives one), title and Markdown.
+ * @returns The page's category.
  */
 export function categoryForPage(
-  page: Pick<DocPage, 'title' | 'markdown'>,
+  page: Pick<DocPage, 'title' | 'markdown'> & { readonly ref?: string },
 ): 'team-doc' | 'how-to-guide' {
+  if (page.ref !== undefined && PROCEDURE_DIRECTORY.test(page.ref)) return 'how-to-guide';
   const firstHeading = page.markdown
     .split('\n')
     .find((line: string): boolean => /^#\s+/.test(line));
-  return /how[- ]to|runbook|playbook/i.test(`${page.title}\n${firstHeading || ''}`)
-    ? 'how-to-guide'
-    : 'team-doc';
+  return PROCEDURE_TITLE.test(`${page.title}\n${firstHeading || ''}`) ? 'how-to-guide' : 'team-doc';
 }
 
 /**
