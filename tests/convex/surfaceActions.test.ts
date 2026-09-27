@@ -1242,7 +1242,9 @@ describe('the hourly re-probe sweep', (): void => {
 
   it('ends what has ended, gives a week of notice, and re-probes the rest', async (): Promise<void> => {
     useSurfaceMode('real');
-    vi.useFakeTimers({ toFake: ['Date'] });
+    // The sweep schedules its probes with `runAfter(0)`; with real timers they
+    // would run under the assertions below. They are asserted, never run.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(NOW);
     const { internal: liveInternal } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
