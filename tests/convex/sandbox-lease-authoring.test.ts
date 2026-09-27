@@ -8,6 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { holdSandboxLease } from '../../convex/skillActions';
+import { SANDBOX_LEASE_RETRY_MS } from '../../convex/sandboxLease';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -329,6 +330,8 @@ describe('an authoring run and the verification sandbox lease', (): void => {
   });
 
   it('waits for the holder rather than queueing on the socket, and records the wait', async (): Promise<void> => {
+    // The run's retry sleeps on the faked clock, so the test moves it instead of waiting on it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const harness = convexTest(schema, allConvexModules());
     const waiting = await seedApprovedSkill(harness, 'Priya');
     recorded.outputs.push({ body: reusableBody, smokeTest });
@@ -359,12 +362,10 @@ describe('an authoring run and the verification sandbox lease', (): void => {
       (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
         (event) => event.type === 'skill.sandbox-waiting',
       );
-    const deadline = Date.now() + 15_000;
-    let waitingEvents = await waitingEventsNow();
-    while (waitingEvents.length === 0 && !settled && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      waitingEvents = await waitingEventsNow();
-    }
+    await vi.waitFor(async (): Promise<void> => {
+      expect(await waitingEventsNow()).toHaveLength(1);
+    });
+    const waitingEvents = await waitingEventsNow();
     expect(settled).toBe(false);
     expect(recorded.sandboxRuns).toBe(0);
     expect(waitingEvents).toHaveLength(1);
@@ -374,8 +375,9 @@ describe('an authoring run and the verification sandbox lease', (): void => {
       skillId: holderSkillId,
       runId: holderRunId,
     });
+    await vi.advanceTimersByTimeAsync(SANDBOX_LEASE_RETRY_MS);
     await expect(run).resolves.toEqual({ ok: true });
     expect(recorded.sandboxRuns).toBe(1);
     expect((await readSkill(harness, waiting)).state).toBe('registered');
-  }, 30_000);
+  });
 });

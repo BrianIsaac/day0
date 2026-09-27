@@ -2466,10 +2466,11 @@ describe('executing an approved plan through the gate', (): void => {
     expect(members.map((member) => member.approvedIndexes)).toEqual([[0, 1, 3], [0, 1, 3]]);
     recorded.mcp.length = 0;
 
-    // The batch schedules one apply per member; let those start and finish
-    // rather than racing them by hand.
+    // The batch schedules one apply per member; they start on the faked clock
+    // and finish, rather than being raced by hand or waited for on the real one.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, { members });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    vi.advanceTimersByTime(0);
     await harness.finishInProgressScheduledFunctions();
 
     const done = await Promise.all([readItem(harness, first), readItem(harness, second)]);
