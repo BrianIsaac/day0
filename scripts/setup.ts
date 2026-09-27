@@ -62,7 +62,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
@@ -81,7 +81,12 @@ import {
   unreachableFix,
 } from './model-reach';
 import { writePrivateEnv } from './private-env';
-import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
+import {
+  credentialKeyToAdopt,
+  PROTECTED_PROJECTS,
+  PROTECTED_VOLUMES,
+  upsertEnvText,
+} from './demo-bed';
 import {
   defaultModel,
   manifestListingCommand,
@@ -106,6 +111,15 @@ import {
 import { companyHandSteps, loadBedSpec } from './bed/spec';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './rehearsal/docker';
 import { setupRoute } from './setup-route';
+import {
+  checkoutReleases,
+  listsReleaseTable,
+  parseReleaseStamp,
+  RELEASE_STAMP_ARGUMENTS,
+  TABLE_LISTING_ARGUMENTS,
+  upgradeVerdict,
+  type UpgradeVerdict,
+} from './releases';
 
 const ENV_FILE = '.env.local';
 const ENV_EXAMPLE = '.env.example';
@@ -131,8 +145,21 @@ export type SetupRoute = 'key' | 'local' | 'endpoint' | 'featherless';
 /** What verifies an authored skill: the bundled networkless container, or Daytona. */
 export type SandboxChoice = 'local' | 'daytona';
 
-/** The lifecycle verbs: stop for the day, come back, or throw the project away. */
-export type SetupCommand = 'stop' | 'resume' | 'clear';
+/**
+ * The lifecycle verbs: stop for the day, come back, throw the project away,
+ * copy its data out, put a copy back, or upgrade to the checkout's release.
+ */
+export type SetupCommand = 'stop' | 'resume' | 'clear' | 'backup' | 'restore' | 'upgrade';
+
+/** The verbs, as the command line spells them. */
+const SETUP_COMMANDS: readonly SetupCommand[] = [
+  'stop',
+  'resume',
+  'clear',
+  'backup',
+  'restore',
+  'upgrade',
+];
 
 /**
  * Projects whose volumes are only ever copied from (`--warm-from`). They are
@@ -217,6 +244,16 @@ export interface SetupOptions {
   adopt?: boolean;
   /** `clear`: remove `.env.local` as well. */
   purgeEnv: boolean;
+  /** `backup` and `upgrade`: the directory the backup is written into, outside the checkout. */
+  backupTo?: string;
+  /** `restore`: the backup to put back. */
+  restoreFrom?: string;
+  /**
+   * Set by `restore`, never on the command line: adopt the restored
+   * deployment's credential key before the env sync, so the credentials it
+   * stores stay readable.
+   */
+  adoptCredentialKey?: boolean;
   /** Take the default answer to every question that has one. */
   assumeYes: boolean;
   /** Print usage and do nothing. */
@@ -265,7 +302,8 @@ export interface SetupIo {
 export class SetupCancelled extends Error {}
 
 const USAGE = `Usage: pnpm setup:local [options]
-       pnpm setup:local stop | resume | clear [options]
+       pnpm setup:local stop | resume | clear | backup | upgrade [options]
+       pnpm setup:local restore <backup.tar.gz> [options]
 
   --mode <mock|real>            mock (default here): the seeded office, for the
                                 evaluation harness and the hosted demo's workspace;
@@ -301,6 +339,8 @@ const USAGE = `Usage: pnpm setup:local [options]
   --adopt                       re-adopt the installation of a checkout that moved here:
                                 its containers are recreated, its volumes are kept
   --purge-env                   clear: remove .env.local as well
+  --to <dir>                    backup and upgrade: where the backup goes (default
+                                ~/day0-backups/<project>; never inside the checkout)
   --yes                         take the default answer wherever there is one
   --help                        print this
 
@@ -312,6 +352,13 @@ Stop for the day, come back, or throw it away (the project is read from .env.loc
   ./setup.sh stop                         containers down, every volume and .env.local kept
   ./setup.sh resume                       the same project, ports, admin key and model; no pull
   ./setup.sh clear                        containers, volumes and network removed; .env.local kept
+
+Keep a copy, put it back, or move to the checkout's release:
+  ./setup.sh backup                       the data volume to ~/day0-backups/<project>, with a checksum
+  ./setup.sh restore <backup.tar.gz>      replace the data volume with a backup, adopt its credential
+                                          key, then resume; asks first unless --yes
+  ./setup.sh upgrade                      after a git pull: a backup, pnpm install, then resume, which
+                                          refuses to skip a release and runs the migrations
 
 The Convex-cloud-plus-Clerk route is not automated here; it needs accounts and
 a dashboard task. README.md has it, linked from the end of a successful run.`;
@@ -377,11 +424,18 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.purgeEnv = true;
     } else if (argument === '--company') {
       options.company = true;
-    } else if (argument === 'stop' || argument === 'resume' || argument === 'clear') {
+    } else if ((SETUP_COMMANDS as readonly string[]).includes(argument)) {
       if (options.command !== undefined && options.command !== argument) {
         throw new Error(`"${options.command}" and "${argument}" are two commands; give one.`);
       }
-      options.command = argument;
+      options.command = argument as SetupCommand;
+    } else if (options.command === 'restore' && !argument.startsWith('-')) {
+      if (options.restoreFrom !== undefined) {
+        throw new Error(`restore takes one backup; "${options.restoreFrom}" is already named.`);
+      }
+      options.restoreFrom = argument;
+    } else if (argument === '--to') {
+      options.backupTo = take();
     } else if (argument === '--mode') {
       options.mode = oneOf('--mode', take(), ['mock', 'real'] as const);
     } else if (argument === '--route') {
@@ -1075,6 +1129,13 @@ export interface SequenceInput {
   pull?: boolean;
   /** Real mode: the company bed's pages copied in, then its check. */
   company?: boolean;
+  /**
+   * Whether the data volume already holds a deployment. Its functions are then
+   * pushed before the env, so a push the new schema refuses leaves the old
+   * functions with the old env; a new volume takes the env first, because the
+   * auth config is read from the deployment's env at the first push.
+   */
+  existing?: boolean;
 }
 
 /**
@@ -1104,9 +1165,11 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
     ...(real ? ['redactor:up'] : []),
     'admin-key',
-    'sync:env',
-    'convex dev --once',
+    ...(input.existing
+      ? ['release:check', 'convex dev --once', 'migrations', 'sync:env']
+      : ['sync:env', 'convex dev --once', 'migrations']),
     'convex:restart',
+    'release:stamp',
     'check:setup',
     ...(real && input.company ? ['bed:company docs', 'bed:company check'] : []),
   ];
@@ -1479,6 +1542,10 @@ export interface StepContext {
   project: string;
   /** The pinned node image the volume copy runs in. */
   image?: string;
+  /** The release this checkout stamps once the upgrade completes. */
+  release?: string;
+  /** The commit it was pushed from, when git could say. */
+  commit?: string;
 }
 
 export interface PlannedCommand {
@@ -1534,8 +1601,19 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
       ];
     case 'sync:env':
       return [{ command: 'pnpm', args: ['run', 'sync:env'] }];
+    case 'release:check':
+      return [
+        { command: 'npx', args: [...TABLE_LISTING_ARGUMENTS] },
+        { command: 'npx', args: [...RELEASE_STAMP_ARGUMENTS] },
+      ];
     case 'convex dev --once':
       return [{ command: 'npx', args: ['convex', 'dev', '--once'] }];
+    case 'migrations':
+      return [{ command: 'npx', args: [...MIGRATIONS_ARGUMENTS] }];
+    case 'release:stamp':
+      return [
+        { command: 'npx', args: releaseStampArguments(context.release ?? '', context.commit) },
+      ];
     case 'convex:restart':
       return [{ command: 'pnpm', args: ['run', 'convex:restart'] }];
     case 'check:setup':
@@ -1551,6 +1629,84 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
     default:
       throw new Error(`no command for step "${step}"`);
   }
+}
+
+/** The Convex CLI arguments that run every migration still pending (`convex/migrations.ts`). */
+export const MIGRATIONS_ARGUMENTS: readonly string[] = ['convex', 'run', 'migrations:runPending'];
+
+/** How many `runPending` calls the setup makes before it says the migrations did not finish. */
+const MIGRATION_CALLS = 12;
+
+/**
+ * The Convex CLI arguments that stamp the release once the upgrade is done.
+ *
+ * Args:
+ *   release: The checkout's release.
+ *   commit: The commit the functions were pushed from, when known.
+ *
+ * Returns:
+ *   Arguments for `npx`.
+ */
+export function releaseStampArguments(release: string, commit?: string): string[] {
+  return [
+    'convex',
+    'run',
+    'migrations:recordRelease',
+    JSON.stringify({ release, ...(commit !== undefined ? { commit } : {}) }),
+  ];
+}
+
+/** What one `migrations:runPending` call reports. */
+export interface MigrationReport {
+  migrations: { name: string; read: number; changed: number }[];
+  pending: string[];
+}
+
+/**
+ * The report `npx convex run migrations:runPending` printed.
+ *
+ * Args:
+ *   stdout: The CLI's output: the function's return value as JSON.
+ *
+ * Returns:
+ *   The report.
+ *
+ * Raises:
+ *   Error: When the output holds no report.
+ */
+export function parseMigrationReport(stdout: string): MigrationReport {
+  const start = stdout.indexOf('{');
+  const end = stdout.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('migrations:runPending printed no report');
+  const parsed = JSON.parse(stdout.slice(start, end + 1)) as Partial<MigrationReport>;
+  if (!Array.isArray(parsed.migrations) || !Array.isArray(parsed.pending)) {
+    throw new Error('migrations:runPending printed something other than its report');
+  }
+  return { migrations: parsed.migrations, pending: parsed.pending };
+}
+
+/**
+ * The lines the setup prints for a migration report: what each migration
+ * changed, and the ownerless agents it could not give to anyone.
+ *
+ * Args:
+ *   report: One call's report.
+ *
+ * Returns:
+ *   Lines to print, none when nothing changed.
+ */
+export function migrationLines(report: MigrationReport): string[] {
+  const lines = report.migrations
+    .filter((migration) => migration.changed > 0)
+    .map((migration) => `migrated ${migration.name}: ${migration.changed} row(s) changed`);
+  const owners = report.migrations.find((migration) => migration.name === 'agents-owner');
+  if (owners !== undefined && owners.read > owners.changed) {
+    lines.push(
+      `${owners.read - owners.changed} agent(s) with no owner were left as they are: this ` +
+        'deployment has more than one owner, so none is theirs by default',
+    );
+  }
+  return lines;
 }
 
 export interface PlanInput {
@@ -1615,6 +1771,9 @@ export function planLines(input: PlanInput): string[] {
     });
     if (step === 'admin-key') {
       lines.push('     (only when the file has no key or the backend refuses the one it has)');
+    }
+    if (step === 'release:check') {
+      lines.push('     (refuses to skip a release, or to push older functions over newer rows)');
     }
     if (step === 'redactor:up' && input.redactor) lines.push(`     ${input.redactor.reason}`);
   });
@@ -2171,6 +2330,99 @@ function onlyOwedCompanyTokenGaps(output: string): boolean {
   return names.every((name) => name !== undefined) && new Set(names).size === names.length;
 }
 
+/**
+ * Read the deployment's release stamp and decide whether this checkout may be
+ * pushed over its rows. Runs before any push, with the Convex CLI's `data`
+ * command, because the functions that could answer are about to be replaced.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   environment: The child environment naming the deployment.
+ *   checkout: This checkout's release and the releases it records.
+ *
+ * Returns:
+ *   The verdict; a deployment that cannot be read is refused.
+ */
+function releaseCheck(
+  io: SetupIo,
+  environment: Record<string, string>,
+  checkout: { release: string; releases: string[] },
+): UpgradeVerdict {
+  const refused = (what: string, result: RunResult): UpgradeVerdict => ({
+    allowed: false,
+    reason: `${what}: ${firstLine(result.stderr) || firstLine(result.stdout) || `exit ${result.status ?? 'unknown'}`}`,
+  });
+  const tables = io.run('npx', [...TABLE_LISTING_ARGUMENTS], {
+    env: environment,
+    timeoutMs: 120_000,
+  });
+  if (tables.status !== 0) return refused("the deployment's tables could not be listed", tables);
+  let stored: string | undefined;
+  if (listsReleaseTable(tables.stdout)) {
+    const read = io.run('npx', [...RELEASE_STAMP_ARGUMENTS], {
+      env: environment,
+      timeoutMs: 120_000,
+    });
+    if (read.status !== 0) return refused('the release stamp could not be read', read);
+    try {
+      stored = parseReleaseStamp(read.stdout)?.release;
+    } catch (error) {
+      return { allowed: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  return upgradeVerdict({
+    stored,
+    fresh: false,
+    checkout: checkout.release,
+    releases: checkout.releases,
+  });
+}
+
+/**
+ * Write the restored deployment's credential key into the env file, so the
+ * sync that follows pushes it back unchanged and every credential the
+ * restored rows hold stays readable.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   environment: The child environment naming the deployment.
+ *   envPath: The env file.
+ *
+ * Returns:
+ *   Undefined once adopted or already the same, else why it could not be read.
+ */
+function adoptDeploymentCredentialKey(
+  io: SetupIo,
+  environment: Record<string, string>,
+  envPath: string,
+): string | undefined {
+  const listed = io.run('npx', ['convex', 'env', 'list'], {
+    env: environment,
+    timeoutMs: 120_000,
+  });
+  if (listed.status !== 0) {
+    return `the restored deployment's env could not be read: ${firstLine(listed.stderr) || `exit ${listed.status ?? 'unknown'}`}`;
+  }
+  const deploymentKey = /^DAY0_CREDENTIAL_KEY=(.*)$/m.exec(listed.stdout)?.[1]?.trim();
+  const adopted = credentialKeyToAdopt(
+    readEnvValues(envPath).DAY0_CREDENTIAL_KEY ?? '',
+    deploymentKey,
+  );
+  if (adopted !== undefined) {
+    writeEnvValues(envPath, { DAY0_CREDENTIAL_KEY: adopted });
+    io.log(
+      `    adopted the restored deployment's DAY0_CREDENTIAL_KEY into ${ENV_FILE}: the credentials it stores stay readable`,
+    );
+  } else {
+    io.log(
+      deploymentKey
+        ? `    ${ENV_FILE} already holds the restored deployment's DAY0_CREDENTIAL_KEY`
+        : "    the restored deployment holds no DAY0_CREDENTIAL_KEY, so the file's is kept",
+    );
+  }
+  return undefined;
+}
+
 /** One failed step, printed with the state it leaves behind and how to resume. */
 function reportFailure(
   io: SetupIo,
@@ -2230,6 +2482,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       !existsSync(join(io.cwd, 'docker-compose.yml'))
     ) {
       io.log(`error: run this from the repository root; ${io.cwd} is not a Day0 checkout.`);
+      return 1;
+    }
+    const checkoutRelease = checkoutReleases(io.cwd);
+    if ('reason' in checkoutRelease) {
+      io.log(`error: this checkout's release cannot be read: ${checkoutRelease.reason}.`);
       return 1;
     }
 
@@ -2636,6 +2893,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     const profiles = real ? REAL_MODE_PROFILES : [];
     const warm = real && options.warmFrom !== undefined;
+    // A deployment with rows takes its functions before its env and is
+    // checked against its release first; --reset leaves a new volume.
+    const existingDeployment = decision === 'rerun' && !options.reset;
     const steps = sequenceSteps(route, {
       mode: options.mode,
       warm,
@@ -2643,7 +2903,13 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       reset: options.reset,
       pull,
       company: options.company,
+      existing: existingDeployment,
     });
+    const head = io.run('git', ['rev-parse', '--short=12', 'HEAD'], { timeoutMs: 30_000 });
+    const commit =
+      head.status === 0 && /^[0-9a-f]{7,40}$/.test(head.stdout.trim())
+        ? head.stdout.trim()
+        : undefined;
     const context: StepContext = {
       mode: options.mode,
       route,
@@ -2654,6 +2920,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       image: warm
         ? pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'))
         : undefined,
+      release: checkoutRelease.release,
+      ...(commit !== undefined ? { commit } : {}),
     };
     const venvVolume = `${resolvedProject}_${REDACTOR_VOLUME_SUFFIXES[0]}`;
     // The clone module refuses a protected project on either side; better
@@ -2693,6 +2961,17 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         return 1;
       }
       return 0;
+    }
+
+    if (options.reset && decision === 'rerun' && !options.assumeYes) {
+      const answer = await io.ask(
+        `--reset removes ${resolvedProject} and its volumes, and with them every agent, ` +
+          `credential and run it holds; \`${verbCommand('backup', options.mode)}\` keeps a copy first. ` +
+          'Remove them? [y/N] ',
+      );
+      if (!['y', 'yes'].includes(answer.trim().toLowerCase())) {
+        throw new SetupCancelled('--reset was declined');
+      }
     }
 
     if (createsEnv) {
@@ -2991,19 +3270,106 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     io.log('    URL, admin key and Compose service are the same backend');
 
-    if (!runStep('sync:env', 'pnpm sync:env')) return 1;
-    if (!runStep('convex dev --once', 'npx convex dev --once')) return 1;
-    const corrections = publicUrlCorrections(readEnvValues(envPath), ports);
-    if (Object.keys(corrections).length > 0) {
-      writeEnvValues(envPath, corrections);
+    if (existingDeployment) {
       io.log(
-        `    the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's ` +
-          'own container ports; put back the host addresses this installation publishes',
+        `[${steps.indexOf('release:check') + 1}/${steps.length}] the release this deployment's rows are at`,
       );
+      const verdict = releaseCheck(io, environment, checkoutRelease);
+      if (!verdict.allowed) {
+        io.log('');
+        io.log(`error: nothing was pushed, because ${verdict.reason}`);
+        io.log('       The deployment keeps its functions, its env and its rows as they were.');
+        return 1;
+      }
+      io.log(`    ${verdict.note}`);
+    }
+    if (options.adoptCredentialKey) {
+      const unread = adoptDeploymentCredentialKey(io, environment, envPath);
+      if (unread !== undefined) {
+        io.log('');
+        io.log(`error: nothing was pushed, because ${unread}.`);
+        return 1;
+      }
+    }
+
+    const pushFunctions = (): boolean => {
+      if (!runStep('convex dev --once', 'npx convex dev --once')) {
+        if (existingDeployment) {
+          io.log(
+            '    The push was refused before anything changed: the old functions keep serving ' +
+              'with the env they had, and no migration has run.',
+          );
+        }
+        return false;
+      }
+      const corrections = publicUrlCorrections(readEnvValues(envPath), ports);
+      if (Object.keys(corrections).length > 0) {
+        writeEnvValues(envPath, corrections);
+        io.log(
+          `    the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's ` +
+            'own container ports; put back the host addresses this installation publishes',
+        );
+      }
+      return true;
+    };
+    const runMigrations = (): boolean => {
+      for (let call = 0; call < MIGRATION_CALLS; call += 1) {
+        const result = runStep('migrations', 'npx convex run migrations:runPending', {
+          inherit: false,
+          timeoutMs: 900_000,
+        });
+        if (!result) return false;
+        let report: MigrationReport;
+        try {
+          report = parseMigrationReport(result.stdout);
+        } catch (error) {
+          reportFailure(
+            io,
+            'npx convex run migrations:runPending',
+            { ...result, stderr: error instanceof Error ? error.message : String(error) },
+            resolvedProject,
+            options.mode,
+          );
+          return false;
+        }
+        for (const line of migrationLines(report)) io.log(`    ${line}`);
+        if (report.pending.length === 0) return true;
+      }
+      io.log('');
+      io.log(
+        `error: the migrations had not finished after ${MIGRATION_CALLS} calls. Each call resumes ` +
+          'where the last stopped: run `npx convex run migrations:runPending` until nothing is pending, ' +
+          `then \`${entryCommand(options.mode)}\` again.`,
+      );
+      return false;
+    };
+
+    // Functions before env on a deployment with rows, so a refused push
+    // leaves the old functions on the old env; the restart only once every
+    // step before it succeeded.
+    if (existingDeployment) {
+      if (!pushFunctions() || !runMigrations()) return 1;
+      if (!runStep('sync:env', 'pnpm sync:env')) return 1;
+    } else {
+      if (!runStep('sync:env', 'pnpm sync:env')) return 1;
+      if (!pushFunctions() || !runMigrations()) return 1;
     }
 
     if (!runStep('convex:restart', 'pnpm convex:restart')) return 1;
     await io.waitForBackend(ports.backend, 180_000);
+    if (
+      !runStep(
+        'release:stamp',
+        `npx convex run migrations:recordRelease (${checkoutRelease.release})`,
+        {
+          inherit: false,
+          timeoutMs: 120_000,
+        },
+      )
+    ) {
+      return 1;
+    }
+    io.log(`    the deployment's rows are at ${checkoutRelease.release}`);
 
     if (real && redactor) {
       const health = await waitForRedactor(
@@ -3436,6 +3802,449 @@ export async function runClear(options: SetupOptions, io: SetupIo): Promise<numb
   }
 }
 
+/** The directory backups go to when `--to` names none: outside every checkout. */
+export const BACKUP_DIRECTORY_NAME = 'day0-backups';
+
+/**
+ * Where a backup of a project is written.
+ *
+ * Args:
+ *   named: `--to`, when given.
+ *   home: The user's home directory, when known.
+ *   project: Compose project name.
+ *   cwd: The directory a relative `--to` is read against.
+ *
+ * Returns:
+ *   An absolute directory, or undefined when neither `--to` nor a home says where.
+ */
+export function backupDirectory(
+  named: string | undefined,
+  home: string | undefined,
+  project: string,
+  cwd: string,
+): string | undefined {
+  if (named !== undefined && named.trim() !== '') return resolve(cwd, named);
+  return home ? join(home, BACKUP_DIRECTORY_NAME, project) : undefined;
+}
+
+/**
+ * Whether a path is the checkout or inside it. A backup there would go with
+ * the checkout it is meant to outlive, and a `git clean` would take it.
+ *
+ * Args:
+ *   path: An absolute path.
+ *   checkoutRoot: The checkout, resolved.
+ */
+export function insideCheckout(path: string, checkoutRoot: string): boolean {
+  const root = resolve(checkoutRoot);
+  const target = resolve(path);
+  return target === root || target.startsWith(`${root}${sep}`);
+}
+
+/**
+ * The file name a backup of a project takes at a moment, sortable by time.
+ *
+ * Args:
+ *   project: Compose project name.
+ *   now: When it is taken.
+ */
+export function backupFileName(project: string, now: Date): string {
+  const stamp = now
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z');
+  return `${project}-${stamp}.tar.gz`;
+}
+
+/**
+ * The `docker` arguments that tar a quiescent volume into a directory, owned
+ * by the user and readable only by them: the data volume holds the
+ * deployment's env, the credential key among it.
+ *
+ * Args:
+ *   volume: The volume, mounted read-only.
+ *   directory: The host directory the tar is written into.
+ *   name: The tar's file name.
+ *   image: The pinned node image the tar runs in.
+ *   owner: `uid:gid` the file is handed to.
+ */
+export function volumeBackupArguments(
+  volume: string,
+  directory: string,
+  name: string,
+  image: string,
+  owner: string,
+): string[] {
+  return [
+    'run',
+    '--rm',
+    '-v',
+    `${volume}:/from:ro`,
+    '-v',
+    `${directory}:/to`,
+    image,
+    'sh',
+    '-c',
+    `tar czf /to/${name} -C /from . && chown ${owner} /to/${name} && chmod 600 /to/${name}`,
+  ];
+}
+
+/**
+ * The `docker` arguments that untar a backup into an empty volume.
+ *
+ * Args:
+ *   directory: The host directory holding the backup, mounted read-only.
+ *   name: The backup's file name.
+ *   volume: The volume it is written into.
+ *   image: The pinned node image the untar runs in.
+ */
+export function volumeRestoreArguments(
+  directory: string,
+  name: string,
+  volume: string,
+  image: string,
+): string[] {
+  return [
+    'run',
+    '--rm',
+    '-v',
+    `${directory}:/from:ro`,
+    '-v',
+    `${volume}:/to`,
+    image,
+    'tar',
+    'xzf',
+    `/from/${name}`,
+    '-C',
+    '/to',
+  ];
+}
+
+/** What a backup records beside its tar, so a restore can say what it is putting back. */
+export interface BackupManifest {
+  readonly project: string;
+  readonly volume: string;
+  readonly createdAt: string;
+  readonly sha256: string;
+  /** The release the deployment's rows were stamped at, when the backend could say. */
+  readonly release?: string;
+  /** The checkout that took it: its release and commit. */
+  readonly checkoutRelease: string;
+  readonly commit?: string;
+}
+
+/** The env values that point Slack at the test double, which a restore refuses. */
+export const TEST_PROFILE_KEYS: readonly string[] = [
+  'DAY0_TEST_SLACK_API_URL',
+  'DAY0_TEST_SLACK_AUTHORIZE_URL',
+];
+
+/**
+ * Copy the project's data volume out of the checkout, with a checksum and a
+ * manifest beside it. The backend is stopped for the copy, because a tar of a
+ * live database is not a backup, and started again after.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   0 when the backup is written, 1 otherwise.
+ */
+export async function runBackup(options: SetupOptions, io: SetupIo): Promise<number> {
+  try {
+    const target = lifecycleTarget(io, options, 'backup');
+    if (typeof target === 'string') {
+      io.log(`error: ${target}`);
+      return 1;
+    }
+    const { project, environment, checkoutRoot } = target;
+    const volume = projectVolumes(project)[0]!;
+    if (!labelledVolumes(io, project).includes(volume)) {
+      io.log(`error: ${project} has no ${volume} volume, so there is nothing to back up.`);
+      return 1;
+    }
+    const directory = backupDirectory(options.backupTo, io.environment.HOME, project, io.cwd);
+    if (directory === undefined) {
+      io.log(
+        'error: there is no home directory to put the backup under; name one with --to <dir>.',
+      );
+      return 1;
+    }
+    if (insideCheckout(directory, checkoutRoot)) {
+      io.log(
+        `error: ${directory} is inside this checkout. A backup there goes with the checkout it is ` +
+          `meant to outlive; name a directory outside ${checkoutRoot} with --to <dir>.`,
+      );
+      return 1;
+    }
+    const name = backupFileName(project, new Date(io.now?.() ?? Date.now()));
+    const image = pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
+    const owner = `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
+    const tar = volumeBackupArguments(volume, directory, name, image, owner);
+    io.log(`Backing up ${volume} to ${join(directory, name)}.`);
+    if (options.dryRun) {
+      io.log('');
+      io.log('Would run, with the backend stopped for the copy and started again after:');
+      io.log(`  docker ${tar.join(' ')}`);
+      io.log('');
+      io.log('Nothing was written.');
+      return 0;
+    }
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (insideCheckout(realpathSync(directory), checkoutRoot)) {
+      io.log(`error: ${directory} resolves into this checkout; name another with --to <dir>.`);
+      return 1;
+    }
+    const running = (runningServices(io, project) ?? []).includes('backend');
+    let release: string | undefined;
+    if (running) {
+      const tables = io.run('npx', [...TABLE_LISTING_ARGUMENTS], {
+        env: environment,
+        timeoutMs: 120_000,
+      });
+      if (tables.status === 0 && listsReleaseTable(tables.stdout)) {
+        const read = io.run('npx', [...RELEASE_STAMP_ARGUMENTS], {
+          env: environment,
+          timeoutMs: 120_000,
+        });
+        // The stamp only labels the backup, so a stamp that cannot be read is left out.
+        release = read.status === 0 ? parseReleaseStamp(read.stdout)?.release : undefined;
+      }
+      const stopped = io.run('docker', composeArguments(['stop', 'backend']), {
+        env: environment,
+        timeoutMs: 300_000,
+      });
+      if (stopped.status !== 0) {
+        io.log(
+          `error: the backend could not be stopped for the copy: ${firstLine(stopped.stderr)}`,
+        );
+        return 1;
+      }
+    }
+    let copied: RunResult;
+    try {
+      copied = io.run('docker', tar, { env: environment, inherit: true, timeoutMs: 3_600_000 });
+    } finally {
+      if (running) {
+        const restarted = io.run('docker', composeArguments(['start', 'backend']), {
+          env: environment,
+          timeoutMs: 300_000,
+        });
+        if (restarted.status !== 0) {
+          io.log(
+            `note: the backend did not start again (${firstLine(restarted.stderr)}); ` +
+              `\`${verbCommand('resume', options.mode)}\` brings it back.`,
+          );
+        }
+      }
+    }
+    const file = join(directory, name);
+    if (copied.status !== 0 || !existsSync(file)) {
+      io.log(`error: the copy failed (status ${copied.status}); nothing usable was written.`);
+      return 1;
+    }
+    const digest = createHash('sha256').update(readFileSync(file)).digest('hex');
+    const checkout = checkoutReleases(io.cwd);
+    const head = io.run('git', ['rev-parse', '--short=12', 'HEAD'], { timeoutMs: 30_000 });
+    const manifest: BackupManifest = {
+      project,
+      volume,
+      createdAt: new Date(io.now?.() ?? Date.now()).toISOString(),
+      sha256: digest,
+      checkoutRelease: 'reason' in checkout ? 'unknown' : checkout.release,
+      ...(release !== undefined ? { release } : {}),
+      ...(head.status === 0 && head.stdout.trim() !== '' ? { commit: head.stdout.trim() } : {}),
+    };
+    writeFileSync(`${file}.sha256`, `${digest}  ${name}\n`, { encoding: 'utf8', mode: 0o600 });
+    writeFileSync(`${file}.json`, `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    io.log(`Wrote ${file} (sha256 ${digest}), with ${name}.sha256 and ${name}.json beside it.`);
+    io.log(
+      '  It holds the deployment env, DAY0_CREDENTIAL_KEY among it, and every row: keep it where ' +
+        'you keep secrets. It is readable only by you.',
+    );
+    io.log(`  Put it back with \`${verbCommand('restore', options.mode)} ${file}\`.`);
+    return 0;
+  } catch (error) {
+    io.log(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
+/**
+ * Put a backup back: check it against its checksum, replace the project's
+ * data volume with it, then resume, adopting the restored deployment's
+ * credential key so what it stores stays readable. Refused while the env file
+ * points Slack at the test double: that is the demo bed's restore, not this.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   What the resume returns, 130 when the reader declined, 1 otherwise.
+ */
+export async function runRestore(options: SetupOptions, io: SetupIo): Promise<number> {
+  try {
+    if (options.restoreFrom === undefined) {
+      io.log(
+        `error: restore needs the backup: \`${verbCommand('restore', options.mode)} <file>\`.`,
+      );
+      return 1;
+    }
+    const target = lifecycleTarget(io, options, 'restore');
+    if (typeof target === 'string') {
+      io.log(`error: ${target}`);
+      return 1;
+    }
+    const { project, existing, environment } = target;
+    const testValues = TEST_PROFILE_KEYS.filter((key) => (existing[key] ?? '').trim() !== '');
+    if (testValues.length > 0) {
+      io.log(
+        `error: ${ENV_FILE} sets ${testValues.join(' and ')}, which point Slack at the test double. ` +
+          'A restore brings a real deployment back and never runs on the test profile: empty ' +
+          'them first, or restore a demo snapshot with `pnpm demo:bed restore`.',
+      );
+      return 1;
+    }
+    const file = resolve(io.cwd, options.restoreFrom);
+    if (!existsSync(file)) {
+      io.log(`error: ${file} does not exist.`);
+      return 1;
+    }
+    const sidecar = `${file}.sha256`;
+    if (!existsSync(sidecar)) {
+      io.log(`error: ${sidecar} is missing, so the backup cannot be checked; nothing was changed.`);
+      return 1;
+    }
+    const expected = readFileSync(sidecar, 'utf8').trim().split(/\s+/)[0];
+    const actual = createHash('sha256').update(readFileSync(file)).digest('hex');
+    if (expected !== actual) {
+      io.log(
+        `error: ${file} does not match its checksum (${expected}, read ${actual}); nothing was changed.`,
+      );
+      return 1;
+    }
+    const manifestPath = `${file}.json`;
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Partial<BackupManifest>;
+      io.log(
+        `Backup of ${manifest.project ?? 'an unnamed project'} taken ${manifest.createdAt ?? 'at an unrecorded time'}` +
+          `${manifest.release ? `, rows at ${manifest.release}` : ''}` +
+          `${manifest.commit ? `, from commit ${manifest.commit}` : ''}.`,
+      );
+    }
+    const volume = projectVolumes(project)[0]!;
+    const image = pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
+    const untar = volumeRestoreArguments(dirname(file), basename(file), volume, image);
+    if (options.dryRun) {
+      io.log('');
+      io.log('Would run:');
+      io.log(`  docker ${stopArguments().join(' ')}`);
+      io.log(`  docker volume rm ${volume}`);
+      io.log(`  docker volume create ${volume}`);
+      io.log(`  docker ${untar.join(' ')}`);
+      io.log(`  ${verbCommand('resume', options.mode)}, adopting the restored credential key`);
+      io.log('');
+      io.log('Nothing was changed.');
+      return 0;
+    }
+    if (!options.assumeYes) {
+      const answer = await io.ask(
+        `Replace ${volume} with ${basename(file)}? Every row it holds now is lost; ` +
+          `\`${verbCommand('backup', options.mode)}\` keeps a copy first. [y/N] `,
+      );
+      if (!['y', 'yes'].includes(answer.trim().toLowerCase())) {
+        throw new SetupCancelled('restore was declined');
+      }
+    }
+    const steps: [string, string[]][] = [
+      ['taking the project down', stopArguments()],
+      ...(labelledVolumes(io, project).includes(volume)
+        ? ([[`removing ${volume}`, ['volume', 'rm', volume]]] as [string, string[]][])
+        : []),
+      [
+        `creating ${volume}`,
+        [
+          'volume',
+          'create',
+          '--label',
+          `com.docker.compose.project=${project}`,
+          '--label',
+          'com.docker.compose.volume=convex_data',
+          volume,
+        ],
+      ],
+      [`restoring ${basename(file)}`, untar],
+    ];
+    for (const [what, args] of steps) {
+      const result = io.run('docker', args, {
+        env: environment,
+        inherit: true,
+        timeoutMs: 3_600_000,
+      });
+      if (result.status !== 0) {
+        io.log(`error: ${what} failed (status ${result.status}); its output is above.`);
+        return 1;
+      }
+    }
+    io.log(`Restored ${basename(file)} into ${volume}. Resuming on it.`);
+    io.log('');
+    return await runResume(
+      { ...options, command: 'resume', restoreFrom: undefined, adoptCredentialKey: true },
+      io,
+    );
+  } catch (error) {
+    if (error instanceof SetupCancelled) {
+      io.log('');
+      io.log('Cancelled. Nothing was changed.');
+      return 130;
+    }
+    io.log(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
+/**
+ * Upgrade to this checkout's release, after a `git pull`: a backup first,
+ * then the dependencies the new lockfile names, then the resume, which checks
+ * the release stamp before it pushes, runs the migrations and stamps the new
+ * release.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   What the resume returns, or the backup's or the install's failure.
+ */
+export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<number> {
+  const backedUp = await runBackup({ ...options, command: 'backup' }, io);
+  if (backedUp !== 0) {
+    io.log('The upgrade stops here: nothing is installed or pushed without a backup.');
+    return backedUp;
+  }
+  if (options.dryRun) {
+    io.log('  pnpm install --frozen-lockfile');
+    return await runResume({ ...options, command: 'resume' }, io);
+  }
+  io.log('');
+  io.log('Installing the dependencies this checkout names (pnpm install --frozen-lockfile).');
+  const installed = io.run('pnpm', ['install', '--frozen-lockfile'], {
+    inherit: true,
+    timeoutMs: 1_800_000,
+  });
+  if (installed.status !== 0) {
+    io.log(`error: pnpm install failed (status ${installed.status}); nothing was pushed.`);
+    return 1;
+  }
+  io.log('');
+  return await runResume({ ...options, command: 'resume' }, io);
+}
+
 /**
  * Run the verb the command line named, or the setup itself.
  *
@@ -3454,7 +4263,13 @@ export async function runCommand(options: SetupOptions, io: SetupIo): Promise<nu
       return runResume(options, io);
     case 'clear':
       return runClear(options, io);
-    default:
+    case 'backup':
+      return runBackup(options, io);
+    case 'restore':
+      return runRestore(options, io);
+    case 'upgrade':
+      return runUpgrade(options, io);
+    case undefined:
       return runSetup(options, io);
   }
 }
