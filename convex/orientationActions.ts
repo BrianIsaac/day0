@@ -1876,14 +1876,17 @@ async function charterNamesSystemsFor(
  *
  * Internal: scheduled when a documentation sync completes, so the author's
  * first page about a system the charter named, or the removal of a denial,
- * reaches orientation without a manager's re-run. Real mode only: mock
+ * reaches orientation without a manager's re-run. `pagesRemoved` is what the
+ * sync deleted: when it deleted any, the pages of every source are read. Real mode only: mock
  * surfaces are seeded, not oriented.
  */
 export const reorientAbsent = internalAction({
-  args: { sourceId: v.id('docSources') },
+  args: { sourceId: v.id('docSources'), pagesRemoved: v.optional(v.number()) },
   handler: async (ctx, args): Promise<{ reopened: number }> => {
     if (SURFACE_MODE !== 'real') return { reopened: 0 };
-    const agents: Doc<'agents'>[] = await ctx.runQuery(internal.docSources.agentsForSource, args);
+    const agents: Doc<'agents'>[] = await ctx.runQuery(internal.docSources.agentsForSource, {
+      sourceId: args.sourceId,
+    });
     let reopened = 0;
     for (const agent of agents) {
       const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
@@ -1898,7 +1901,9 @@ export const reorientAbsent = internalAction({
           agent._id,
           absent,
           await charterNamesSystemsFor(ctx, agent._id),
-          args.sourceId,
+          // A page the sync removed may have held the only denial of a system
+          // another source names, so every source can have changed the absence.
+          (args.pagesRemoved ?? 0) > 0 ? undefined : args.sourceId,
         )
       ).reopened;
     }

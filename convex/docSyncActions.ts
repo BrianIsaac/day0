@@ -550,6 +550,7 @@ async function finishGeneration(
     });
     await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
       sourceId: source._id,
+      pagesRemoved,
     });
   }
   return {

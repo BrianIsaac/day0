@@ -1144,6 +1144,60 @@ describe('orientation run', (): void => {
     );
   });
 
+  it('re-opens a system another source names once the sync removed the only page denying it (adversarial pass on m30)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'escalate';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId: named } = await seedOrientation(
+      harness,
+      { 'billing.md': '# Billing\n\nFoo is where finance keeps the invoices.' },
+      [{ name: 'Foo', class: 'other' }],
+    );
+    const { denying, fooId } = await harness.run(async (ctx) => {
+      const denying = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Policies',
+        kind: 'folder',
+        locator: 'policies',
+        status: 'synced',
+        createdAt: 2,
+        updatedAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId: denying,
+        ref: 'foo.md',
+        title: 'Foo',
+        markdown: '# Foo\n\nNo approved API or MCP server is recorded for Foo.',
+        updatedAt: 1,
+      });
+      const foo = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .first();
+      await ctx.db.patch(foo!._id, { verdict: 'absent' });
+      return { denying, fooId: foo!._id };
+    });
+    void named;
+    // The policy source's sync removes its denial page.
+    await harness.run(async (ctx) => {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', denying))
+        .first();
+      await ctx.db.delete(page!._id);
+    });
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId: denying }),
+    ).resolves.toEqual({ reopened: 0 });
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, {
+        sourceId: denying,
+        pagesRemoved: 1,
+      }),
+    ).resolves.toEqual({ reopened: 1 });
+    expect((await harness.run(async (ctx) => await ctx.db.get(fooId)))?.verdict).toBe('declared');
+  });
+
   it('leaves an absent system absent while its page still denies a surface', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'escalate';
