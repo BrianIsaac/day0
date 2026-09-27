@@ -256,9 +256,19 @@ const MAX_LINKED_RUNBOOK_CHARS = 20_000;
 
 /** Where one linked page's text begins in the author prompt. */
 const PAGE_OPENING = (ref: string): string => `<<<page ${ref}>>>`;
-/** Where it ends; a page's own copy of this line is replaced so it cannot end early. */
+/** Where it ends. */
 const PAGE_CLOSING = '<<<end page>>>';
-const PAGE_CLOSING_REMOVED = '[page marker removed]';
+
+/**
+ * Page text with every run of three or more angle brackets spaced apart, so
+ * nothing a page, its title or its reference says can open or close a frame,
+ * whatever its case or spacing.
+ *
+ * @param text - Text from a page.
+ */
+function withoutPageMarkers(text: string): string {
+  return text.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
+}
 
 /**
  * The linked pages for the target surface, each inside its markers.
@@ -297,11 +307,13 @@ function linkedRunbookExcerpts(
   const excerpts: string[] = [];
   for (const page of relevant) {
     if (remaining <= 0) break;
-    const opening = `${PAGE_OPENING(page.ref)}\n### ${page.title}\n`;
-    const markdown = page.markdown
-      .replaceAll(PAGE_CLOSING, PAGE_CLOSING_REMOVED)
-      .slice(0, Math.max(0, remaining - opening.length));
-    const excerpt = `${opening}${markdown}\n${PAGE_CLOSING}`;
+    const opening = `${PAGE_OPENING(withoutPageMarkers(page.ref))}\n### ${withoutPageMarkers(page.title)}\n`;
+    const closing = `\n${PAGE_CLOSING}`;
+    const markdown = withoutPageMarkers(page.markdown).slice(
+      0,
+      Math.max(0, remaining - opening.length - closing.length),
+    );
+    const excerpt = `${opening}${markdown}${closing}`;
     excerpts.push(excerpt);
     remaining -= excerpt.length;
   }
