@@ -187,13 +187,13 @@ describe('the company bed pages', (): void => {
 });
 
 describe('the asks a restored bed reads', (): void => {
-  it('says in both README languages that a bed restored from a snapshot reads the asks posted since', (): void => {
+  it('says in both README languages that a stopped or restored bed reads the asks posted since', (): void => {
     const readme = readFileSync(resolve('README.md'), 'utf8');
     expect(readme).toContain(
-      "A deployment restored from a snapshot is the exception: it resumes from the snapshot's last poll and reads every mention posted since",
+      'A deployment that was stopped, or restored from a snapshot, is the exception: it resumes from its last poll and reads every mention posted since',
     );
     expect(readme).toContain(
-      '从快照恢复的部署是例外：它从快照的最后一次轮询继续，会读取此后发布的每条提及',
+      '停止过的部署或从快照恢复的部署是例外：它从自己的最后一次轮询继续，会读取此后发布的每条提及',
     );
     expect(readFileSync(join(BED, 'slack-asks.md'), 'utf8')).toContain(
       "it resumes from the snapshot's last\n  poll, so it reads every mention posted since",
