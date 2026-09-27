@@ -32,6 +32,37 @@ import { AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT } from '../src/work/types';
 export const STEP_LEASE_MS = 10 * 60 * 1000;
 export const EXECUTION_STALL_MS = STEP_LEASE_MS + 2 * 60 * 1000;
 
+/**
+ * How many times the sweep restarts a draft that claimed its row and died.
+ *
+ * A draft that throws on a transport or provider failure keeps its claim, and
+ * each restart repeats the grounding read and the model call. During an
+ * outage that would go on for as long as the outage; after this many the row
+ * stops for the manager's Retry instead.
+ */
+export const MAX_DRAFT_RESUMES = 3;
+
+/** The event each restart of a dead draft writes; the cap is counted from it. */
+const DRAFT_RESUMED = 'work.draft-resumed';
+
+/**
+ * A connected chat surface the manager can be asked through and answered from.
+ *
+ * The DM channel alone is not enough: intake reads replies only from a
+ * surface whose probe also recorded the manager's provider user id, so a
+ * request sent without it would ask for a reply nobody reads.
+ */
+export function isManagerChannel(surface: Doc<'surfaces'>): boolean {
+  return (
+    surface.class === 'chat' &&
+    surface.verdict === 'connected' &&
+    surface.credentialLanded &&
+    !!surface.credentialId &&
+    !!surface.managerDmChannelId &&
+    !!surface.managerUserId
+  );
+}
+
 /** A step the loop claims on the row before spending a model call on it. */
 export type LoopStep = 'evaluation' | 'draft';
 
@@ -412,6 +443,66 @@ export async function scheduleNextStep(ctx: MutationCtx, row: LoopRow): Promise<
 /** Rows of one state read per employee in one sweep; the rest wait for the next. */
 const SWEEP_BATCH = 100;
 
+/** Recent events of one type read to count a row's restarts or find its last Retry. */
+const RESUME_HISTORY = 200;
+
+/**
+ * How many times the sweep already restarted this row's dead draft since the
+ * manager last retried it.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The claimed row.
+ *
+ * Returns:
+ *   The restarts counted from the row's latest `work.retry`, or all of them.
+ */
+async function draftResumesSinceRetry(ctx: MutationCtx, row: Doc<'workItems'>): Promise<number> {
+  const forRow = async (type: string): Promise<Doc<'events'>[]> =>
+    (
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
+        .order('desc')
+        .take(RESUME_HISTORY)
+    ).filter((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
+  const [resumes, retries] = await Promise.all([forRow(DRAFT_RESUMED), forRow('work.retry')]);
+  const since = retries[0]?.createdAt ?? Number.NEGATIVE_INFINITY;
+  return resumes.filter((event) => event.createdAt > since).length;
+}
+
+/**
+ * Restart a draft that died holding its claim, or stop the row once the
+ * restarts are spent.
+ *
+ * A row whose draft never claimed it is only waiting in the scheduler and is
+ * restarted without counting.
+ *
+ * Returns:
+ *   True when a step was scheduled.
+ */
+async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number): Promise<boolean> {
+  if (row.draftClaimedAt !== undefined) {
+    const resumed = await draftResumesSinceRetry(ctx, row);
+    if (resumed >= MAX_DRAFT_RESUMES) {
+      await ctx.scheduler.runAfter(0, internal.work.setFailed, {
+        workItemId: row._id,
+        reason: `the plan draft died ${resumed + 1} times without an answer; Retry drafts it again`,
+        stopped: true,
+      });
+      return true;
+    }
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: DRAFT_RESUMED,
+      payload: { workItemId: row._id, attempt: resumed + 1 },
+      createdAt: now,
+    });
+  }
+  await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, { workItemId: row._id });
+  return true;
+}
+
 /**
  * Reschedule every step the loop lost, for every employee.
  *
@@ -442,7 +533,7 @@ export async function resumeStalledStepsInTransaction(
   let rescheduled = 0;
   for (const agent of await ctx.db.query('agents').collect()) {
     const ready = async (
-      state: 'claimed' | 'plan-approved' | 'plan-pending' | 'executing',
+      state: 'claimed' | 'plan-approved' | 'plan-pending' | 'executing' | 'actions-pending',
       eligible: (row: Doc<'workItems'>) => boolean | Promise<boolean>,
     ) => {
       const rows: Doc<'workItems'>[] = [];
@@ -457,10 +548,7 @@ export async function resumeStalledStepsInTransaction(
     };
     for (const row of await ready('claimed', (row) =>
       row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now))) {
-      await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, {
-        workItemId: row._id,
-      });
-      rescheduled += 1;
+      if (await resumeDraft(ctx, row, now)) rescheduled += 1;
     }
     for (const row of await ready('plan-approved', () => true)) {
       await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
@@ -491,6 +579,28 @@ export async function resumeStalledStepsInTransaction(
         onlyIfStalled: true,
       });
       rescheduled += 1;
+    }
+    // A held set parked while no manager channel existed was never asked
+    // about; once a channel is back the request goes out. `prepareDecisionRequest`
+    // claims it, so a request already on its way is not doubled.
+    const channel = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+        .collect()
+    ).some(isManagerChannel);
+    if (channel) {
+      for (const row of await ready('actions-pending', async (row) => {
+        if (row.decision || row.approvedIndexes !== undefined || !row.pendingRunId) return false;
+        const parked = await ctx.db.get(row.pendingRunId);
+        return !!parked && now - parked.createdAt >= STEP_LEASE_MS;
+      })) {
+        await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
+          workItemId: row._id,
+          kind: 'actions',
+        });
+        rescheduled += 1;
+      }
     }
     const next = await nextRowForFreeSlot(ctx, agent._id, now);
     if (next) {

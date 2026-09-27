@@ -22,6 +22,7 @@ import {
 import {
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
+  isManagerChannel,
   OPEN_WORK_STATES,
   openSlotCount,
   resumeStalledStepsInTransaction,
@@ -104,24 +105,6 @@ function managerText(text: string | undefined): string {
   return (text ?? '').replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
 }
 export { INTERRUPTED_APPLY_REASON };
-
-/**
- * A connected chat surface the manager can be asked through and answered from.
- *
- * The DM channel alone is not enough: intake reads replies only from a
- * surface whose probe also recorded the manager's provider user id, so a
- * request sent without it would ask for a reply nobody reads.
- */
-function isManagerChannel(surface: Doc<'surfaces'>): boolean {
-  return (
-    surface.class === 'chat' &&
-    surface.verdict === 'connected' &&
-    surface.credentialLanded &&
-    !!surface.credentialId &&
-    !!surface.managerDmChannelId &&
-    !!surface.managerUserId
-  );
-}
 
 /** Avoid scheduling an outbound action when no connected manager channel can claim it. */
 async function scheduleDecisionRequest(
