@@ -69,7 +69,12 @@ import {
   retryRequiresProviderReconciliation,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
-import type { ArgumentRepairAttempt, MockAction, PlanObligations } from '../../../src/work/types';
+import type {
+  ArgumentRepairAttempt,
+  CharterClauseRef,
+  MockAction,
+  PlanObligations,
+} from '../../../src/work/types';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '../../../src/work/obligations';
 import { clockTime, clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
@@ -768,6 +773,8 @@ export interface CharterCardBody {
   shortTermGoals: { day30: string; day60: string; day90: string };
   proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
   namedCollaborators: Array<{ name: string; topic: string }>;
+  /** Whose lane the employee stays out of; the scope check reads these. */
+  adjacentRoles?: Array<{ who: string; staysOutOfTheirLaneBy: string }>;
   namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
   priorityReading: string[];
   openQuestions: string[];
@@ -835,7 +842,13 @@ export function ConstraintList({
           >
             <div className="flex-1 min-w-0">
               <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
-                &ldquo;{constraint.quote}&rdquo;
+                {/* A derived rule's quote is the clause itself, not a sentence
+                    the manager said, so it is not printed as a quotation. */}
+                {constraint.origin === 'derived' ? (
+                  constraint.quote
+                ) : (
+                  <>&ldquo;{constraint.quote}&rdquo;</>
+                )}
               </p>
               <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
                 {CONSTRAINT_KIND_LABEL[constraint.kind]}
@@ -850,9 +863,11 @@ export function ConstraintList({
                     ))}
                   </>
                 ) : (
-                  ' · no clause carries it'
+                  ' · not verified: no clause carries these words, so striking it changes nothing'
                 )}
-                {constraint.origin === 'derived' ? ' · found by checking the clauses' : ''}
+                {constraint.origin === 'derived'
+                  ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
+                  : ''}
                 {constraint.origin === 'manager' ? ' · added by you' : ''}
                 {constraint.struck ? ' · struck' : ''}
               </p>
@@ -925,8 +940,16 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
     try {
       await amend({ agentId: charter.agentId, changes: [change] });
       return true;
-    } catch (error) {
-      setAmendError((error as Error).message ?? 'The amendment was refused.');
+    } catch (error: unknown) {
+      // The refusal's own words travel as the ConvexError's data; any other
+      // failure's text is stripped by the backend in production.
+      setAmendError(
+        error instanceof ConvexError
+          ? String(error.data)
+          : error instanceof Error
+            ? error.message
+            : 'The amendment was refused.',
+      );
       return false;
     }
   }
@@ -982,6 +1005,12 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             <BoundaryList
               label="Collaborators"
               items={body.namedCollaborators.map((c) => `${c.name} — ${c.topic}`)}
+            />
+            <BoundaryList
+              label="Adjacent roles (work in their lane is out of scope)"
+              items={(body.adjacentRoles ?? []).map(
+                (role) => `${role.who} - ${role.staysOutOfTheirLaneBy}`,
+              )}
             />
             <BoundaryList label="Priority reading" items={body.priorityReading} />
             <BoundaryList label="Open questions" items={managerOpenQuestions(body)} />
@@ -1106,6 +1135,20 @@ function AddLine({
   );
 }
 
+/** A sentence that forbids: the manager's "never", "don't", "no …" and the like. */
+const PROHIBITION = /^\s*no\b|\b(?:never|not|don['\u2019]t|doesn['\u2019]t|won['\u2019]t|mustn['\u2019]t|avoid|stop|without|forbidden|off-limits)\b/i;
+
+/**
+ * The clause list a new rule goes under until the manager picks one.
+ *
+ * A rule is more often a limit than a licence, and a prohibition filed under
+ * "will do" admits work through the overlap gate, so a prohibition, and a
+ * rule not typed yet, default to "will not do" (P8-9).
+ */
+export function defaultRuleClause(quote: string): ListClauseField {
+  return quote.trim() === '' || PROHIBITION.test(quote) ? 'willNotDo' : 'willDo';
+}
+
 /**
  * Amend an approved charter from the card: each Save, Answer, Add or Remove
  * is one typed change and one new version. The list of versions below the
@@ -1124,11 +1167,13 @@ export function AmendCharterPanel({
 }) {
   const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
   const now = useNow();
-  const [rule, setRule] = useState<{ quote: string; kind: CharterConstraint['kind']; clause: ListClauseField }>({
-    quote: '',
-    kind: 'candidate-property',
-    clause: 'willDo',
-  });
+  const [rule, setRule] = useState<{
+    quote: string;
+    kind: CharterConstraint['kind'];
+    /** The list the manager picked; until then the rule follows `defaultRuleClause`. */
+    clause?: ListClauseField;
+  }>({ quote: '', kind: 'candidate-property' });
+  const ruleClause = rule.clause ?? defaultRuleClause(rule.quote);
   const [system, setSystem] = useState<{ name: string; class: SystemClass; whereMentioned: string }>({
     name: '',
     class: 'other',
@@ -1217,7 +1262,7 @@ export function AmendCharterPanel({
             </select>
             <select
               className={AMEND_INPUT}
-              value={rule.clause}
+              value={ruleClause}
               onChange={(e) => setRule({ ...rule, clause: e.target.value as ListClauseField })}
             >
               {LIST_CLAUSE_FIELDS.map((field) => (
@@ -1233,15 +1278,53 @@ export function AmendCharterPanel({
                 if (
                   await onAmend({
                     kind: 'add-constraint',
-                    constraint: { kind: rule.kind, quote: rule.quote, clause: rule.clause },
+                    constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
                   })
                 ) {
-                  setRule({ ...rule, quote: '' });
+                  setRule({ quote: '', kind: rule.kind });
                 }
               }}
             >
               Add rule
             </button>
+          </div>
+        </div>
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+            Adjacent roles (work in their lane is out of scope)
+          </div>
+          <div className="space-y-1">
+            {(body.adjacentRoles ?? []).map((role, index) => (
+              <div key={`${index}:${role.who}`} className="flex items-center gap-1">
+                <span className="flex-1 min-w-0 text-[var(--color-fg)]">
+                  {role.who} - {role.staysOutOfTheirLaneBy}
+                </span>
+                <button
+                  className={AMEND_BUTTON}
+                  onClick={() =>
+                    void onAmend({
+                      kind: 'edit-adjacent-role',
+                      index,
+                      role: { who: '', staysOutOfTheirLaneBy: '' },
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <AddLine
+              placeholder="Role - how I stay out of their lane"
+              label="Add"
+              onAdd={(text) => {
+                const [who, ...rest] = text.split(' - ');
+                return onAmend({
+                  kind: 'edit-adjacent-role',
+                  index: (body.adjacentRoles ?? []).length,
+                  role: { who: who ?? '', staysOutOfTheirLaneBy: rest.join(' - ') },
+                });
+              }}
+            />
           </div>
         </div>
         <div>
@@ -2075,7 +2158,16 @@ interface PlanStepOutcomeRow {
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   evidence: string;
   basis?: 'manager-feedback';
+  /** The charter clause the closing phase decided this step under. */
+  charterClause?: CharterClauseRef;
 }
+
+/** How a clause list reads inside a sentence on the ledger. */
+const CLAUSE_FIELD_PHRASE: Record<CharterClauseRef['field'], string> = {
+  willDo: 'will do',
+  willNotDo: 'will not do',
+  escalationTriggers: 'escalation trigger',
+};
 
 /** A run's persisted output as the card reads it, in either of its two phases. */
 interface RunOutput {
@@ -2514,6 +2606,13 @@ export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow
             {`Step ${outcome.step} · ${outcome.status}${
               outcome.basis === 'manager-feedback' ? ' by manager feedback' : ''
             } - ${outcome.evidence}`}
+            {outcome.charterClause ? (
+              <span className="block pl-3">
+                {'under the charter clause \u201c'}
+                {outcome.charterClause.text}
+                {`\u201d (${CLAUSE_FIELD_PHRASE[outcome.charterClause.field]}, charter v${outcome.charterClause.charterVersion})`}
+              </span>
+            ) : null}
           </li>
         ))}
       </ol>
@@ -3463,6 +3562,10 @@ export function WorkItemCard({
               <a href="#surfaces" className="text-[var(--color-accent)] underline">
                 Surfaces tab
               </a>
+            </span>
+          ) : verdict.decision === 'defer' && verdict.reason === 'awaiting-charter' ? (
+            <span className="text-[var(--color-fg)]">
+              defer - waiting for you to approve the charter; it is evaluated once you do
             </span>
           ) : verdict.decision === 'defer' &&
             verdict.reason === 'awaiting-permission' &&
