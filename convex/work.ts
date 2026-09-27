@@ -2700,20 +2700,22 @@ export const MANAGER_CHANGED_RESEND_REASON = 'the manager changed; the request w
 /**
  * Send the open decision requests delivered to a previous manager again.
  *
- * A probe that resolves a different manager moves the surface's DM; a code
- * the previous manager holds would be refused if they answered and never
- * reaches the new one. Each such request is marked failed and re-sent on the
- * surface's new DM with a fresh code, like an undelivered one.
+ * A probe that resolves the manager's DM finds the manager it has now. A
+ * request delivered on this surface to any other DM, the previous manager's,
+ * holds a code nobody here will answer: the old manager is refused and the
+ * new one never saw it. That is so whether the previous manager is still on
+ * the row or a failed lookup wiped them first. Each such request is marked
+ * failed and re-sent on the new DM with a fresh code, like an undelivered one.
  *
- * @param previousChannel - The DM channel the requests were delivered to.
+ * @param currentChannel - The DM channel the probe just resolved.
  * @returns How many requests were re-sent.
  */
 export async function resendDecisionsAfterManagerChange(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
-  previousChannel: string | undefined,
+  currentChannel: string | undefined,
 ): Promise<number> {
-  if (surface.class !== 'chat' || previousChannel === undefined) return 0;
+  if (surface.class !== 'chat' || currentChannel === undefined) return 0;
   const parked = await Promise.all(
     (['plan-pending', 'actions-pending'] as const).map(
       async (state) =>
@@ -2730,7 +2732,7 @@ export async function resendDecisionsAfterManagerChange(
       !decision.decidedAt &&
       !decision.requestFailedAt &&
       decision.surfaceSlug === surface.slug &&
-      decision.channel === previousChannel &&
+      decision.channel !== currentChannel &&
       row.state === (decision.kind === 'plan' ? 'plan-pending' : 'actions-pending');
     return open && decision ? [{ row, decision }] : [];
   });

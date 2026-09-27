@@ -759,6 +759,56 @@ describe('manager channel request claims', (): void => {
     });
   });
 
+  it('re-sends to the new manager after the old one\'s lookup failed and wiped the DM', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787746453.000100',
+    });
+    const slackId = await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!row) throw new Error('slack surface missing');
+      return row._id;
+    });
+    const failed = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
+    if (!failed) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId: slackId,
+      generation: failed.generation,
+      verdict: 'ungranted',
+      reason: 'the manager email boss@day0.local resolves to a deactivated Slack user.',
+    });
+    const reconnect = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
+    if (!reconnect) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: slackId,
+      generation: reconnect.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0SUCCESSOR',
+      managerUserId: 'USUCCESSOR',
+      verifiedAt: Date.now(),
+    });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      requestFailure: MANAGER_CHANGED_RESEND_REASON,
+    });
+    expect(await scheduledFunctionNames(harness)).toContain('managerChannelActions:requestDecision');
+  });
+
   it('claims an action decision only when the parked run has held rows', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

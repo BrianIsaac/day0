@@ -1316,7 +1316,8 @@ function frozenTools(
  * No probe widens a stored tool list, a renewal's included (`frozenTools`);
  * the connected event names any tool it withheld. A probe that resolves a
  * different manager than the row held writes `manager.changed` (Q6), so the
- * ledger shows who the approver became and when.
+ * ledger shows who the approver became and when, and any open request
+ * delivered to another DM is sent again to this one.
  */
 export const recordConnected = internalMutation({
   args: {
@@ -1387,8 +1388,8 @@ export const recordConnected = internalMutation({
         },
         createdAt: args.verifiedAt,
       });
-      await resendDecisionsAfterManagerChange(ctx, surface, surface.managerDmChannelId);
     }
+    await resendDecisionsAfterManagerChange(ctx, surface, args.managerDmChannelId);
     if (transitioned) {
       const readScope = `${surface.slug}:read`;
       if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {
