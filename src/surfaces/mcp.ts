@@ -11,7 +11,6 @@ import {
   TOOL_NOT_ALLOWED,
   type ParsedMcpCall,
 } from './policy';
-import { injectSecret } from './secrets';
 import { redactOutcome } from './redact';
 import type { SpanModel } from '../redaction/client';
 import type { MCPClient } from '@mastra/mcp';
@@ -26,6 +25,7 @@ import {
 import {
   browserComponent,
   browserPageUrl,
+  carriesSecretPlaceholder,
   BROWSER_DRIVER_ABSENT_REASON,
   elementDescriptions,
   isDriverUnreachable,
@@ -34,7 +34,9 @@ import {
   needsElementRef,
   refFieldFor,
   resolveElementRef,
+  secretPlacementRefusal,
   withResolvedRefs,
+  withSecretTyped,
   withinDocumentedSurface,
   type SnapshotElement,
 } from './browser';
@@ -98,40 +100,13 @@ export interface McpAdapterDeps {
 }
 
 /**
- * Replace `{{secret}}` placeholders anywhere in an MCP tool's arguments.
- *
- * `http.request` has always substituted the surface's credential into headers
- * and bodies. An MCP tool needs the same rule for the same reason: on the
- * browser floor the credential is typed into a form field, so it travels as a
- * tool argument rather than a header, and a skill must be able to name it
- * without ever holding it. `injectSecret` refuses a placeholder naming another
- * surface, so an action cannot borrow a credential it is not the target of.
- *
- * Args:
- *   value: A tool-argument tree as the skill supplied it.
- *   secret: The decrypted credential for the action's target surface.
- *   slug: That surface's slug, for the qualified placeholder form.
- *
- * Returns:
- *   The same tree with every placeholder resolved.
+ * Why an MCP call naming `{{secret}}` is refused. An MCP server receives the
+ * surface's credential as its bearer, so no argument ever needs it; one that
+ * asks for it is either a confused skill or a ticket steering the agent into
+ * posting its own credential.
  */
-export function injectSecretsDeep(value: unknown, secret: string, slug: string): unknown {
-  if (typeof value === 'string') return injectSecret(value, secret, slug);
-  if (Array.isArray(value)) {
-    return value.map((entry: unknown): unknown => injectSecretsDeep(entry, secret, slug));
-  }
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(
-        ([key, entry]: [string, unknown]): [string, unknown] => [
-          key,
-          injectSecretsDeep(entry, secret, slug),
-        ],
-      ),
-    );
-  }
-  return value;
-}
+export const MCP_SECRET_ARGUMENT_REFUSAL =
+  'an MCP server receives the credential as its bearer, so {{secret}} in a tool argument is never substituted and the call was not sent';
 
 /** What the adapter reads out of a tool result, whichever shape the server used. */
 export interface InterpretedToolResult {
@@ -455,10 +430,13 @@ export class McpAdapter implements SurfaceAdapter {
    *   client: The run's live browser session.
    *   slug: The surface slug, for the namespaced tool name.
    *   toolName: The browser tool being called.
-   *   toolArgs: Its arguments, secrets already injected.
+   *   toolArgs: Its arguments, placeholders not yet substituted.
+   *   argumentNames: The driver's argument names for the tool, which name the ref field.
+   *   pageBound: When set, the documented address the current page must be within.
    *
    * Returns:
-   *   The arguments with refs filled in, or why an element could not be found.
+   *   The arguments with refs filled in and the elements they name, or why an
+   *   element could not be found or the page is not the surface's.
    */
   private async resolveRefs(
     client: McpClientLike,
@@ -466,8 +444,8 @@ export class McpAdapter implements SurfaceAdapter {
     toolName: string,
     toolArgs: Record<string, unknown>,
     argumentNames: readonly string[] | undefined,
-    replayEndpoint?: string,
-  ): Promise<{ toolArgs: Record<string, unknown> } | { reason: string }> {
+    pageBound?: string,
+  ): Promise<{ toolArgs: Record<string, unknown>; refs: SnapshotElement[] } | { reason: string }> {
     const descriptions = elementDescriptions(toolName, toolArgs);
     if (descriptions.length === 0) {
       return { reason: `${toolName} names no element to act on` };
@@ -478,11 +456,11 @@ export class McpAdapter implements SurfaceAdapter {
     }
     const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
     if (snapshot.isError) return { reason: 'browser_snapshot failed before element resolution' };
-    if (replayEndpoint) {
+    if (pageBound) {
       const page = browserPageUrl(snapshot.text);
       if (!page) return { reason: 'the browser driver reported no current page URL' };
-      if (!withinDocumentedSurface(page, replayEndpoint)) {
-        return { reason: `the page is outside the approved surface (${replayEndpoint})` };
+      if (!withinDocumentedSurface(page, pageBound)) {
+        return { reason: `the page is outside the approved surface (${pageBound})` };
       }
     }
     const refs: SnapshotElement[] = [];
@@ -502,6 +480,7 @@ export class McpAdapter implements SurfaceAdapter {
     }
     return {
       toolArgs: withResolvedRefs(toolName, toolArgs, refs, refFieldFor(argumentNames)),
+      refs,
     };
   }
 
@@ -696,6 +675,17 @@ export class McpAdapter implements SurfaceAdapter {
       const outside = navigationRefusal(call.tool, call.toolArgs, surface.endpoint);
       if (outside) return { tool: action.tool, ok: false, reason: outside, idempotencyKey };
     }
+    const carriesSecret = carriesSecretPlaceholder(call.toolArgs);
+    if (carriesSecret) {
+      const refusal = !browserDriven
+        ? MCP_SECRET_ARGUMENT_REFUSAL
+        : !surface.credentialId
+          ? 'the surface has no credential to type'
+          : !surface.endpoint
+            ? 'the surface has no documented address to check the page against'
+            : secretPlacementRefusal(call.tool, call.toolArgs, surface.slug);
+      if (refusal) return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
+    }
     if (!surface.credentialId && !browserDriven) {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }
@@ -732,9 +722,7 @@ export class McpAdapter implements SurfaceAdapter {
           };
         }
         writeAttempted = actionIntent(call) === 'write';
-        let toolArgs = bearer
-          ? (injectSecretsDeep(call.toolArgs, bearer, surface.slug) as Record<string, unknown>)
-          : call.toolArgs;
+        let toolArgs = call.toolArgs;
         if (browserDriven && needsElementRef(call.tool)) {
           const resolved = await this.resolveRefs(
             client,
@@ -762,6 +750,18 @@ export class McpAdapter implements SurfaceAdapter {
             };
           }
           toolArgs = resolved.toolArgs;
+          if (carriesSecret) {
+            const misplaced = secretPlacementRefusal(
+              call.tool,
+              toolArgs,
+              surface.slug,
+              resolved.refs,
+            );
+            if (misplaced) {
+              return { tool: action.tool, ok: false, reason: misplaced, idempotencyKey };
+            }
+            toolArgs = withSecretTyped(call.tool, toolArgs, resolved.refs, bearer, surface.slug);
+          }
         }
         const finalAuthorityRefusal = await this.transportRefusal(action, surface, replay);
         if (finalAuthorityRefusal) {

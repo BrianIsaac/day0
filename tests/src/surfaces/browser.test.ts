@@ -9,6 +9,7 @@ import {
   browserPageUrl,
   browserPageTitle,
   browserTitleMarker,
+  carriesSecretPlaceholder,
   DEFAULT_BROWSER_MCP_URL,
   elementDescriptions,
   navigationRefusal,
@@ -19,8 +20,11 @@ import {
   presentBrowserComponent,
   refFieldFor,
   resolveElementRef,
+  secretPlacementRefusal,
   withinDocumentedSurface,
   withResolvedRefs,
+  withSecretTyped,
+  type SnapshotElement,
 } from '../../../src/surfaces/browser';
 import { dashboardPage, SIGN_IN_PAGE } from '../../fixtures/browser-phase-split-2026-09-16';
 
@@ -423,5 +427,93 @@ describe('putting resolved refs back into an action', (): void => {
     expect(withResolvedRefs('browser_navigate', { url: 'http://x/' }, [])).toEqual({
       url: 'http://x/',
     });
+  });
+});
+
+describe('where a browser action may carry the credential', (): void => {
+  const password: SnapshotElement = { name: 'Password', ref: 'e14', role: 'textbox' };
+  const notes: SnapshotElement = { name: 'Password notes', ref: 'e30', role: 'textbox' };
+
+  it('finds a placeholder anywhere in an argument tree', (): void => {
+    expect(carriesSecretPlaceholder({ fields: [{ value: '{{ secret }}' }] })).toBe(true);
+    expect(carriesSecretPlaceholder({ url: 'http://x/?t={{secret:tile}}' })).toBe(true);
+    expect(carriesSecretPlaceholder({ text: '{{quarter}}' })).toBe(false);
+  });
+
+  it('admits the credential in a credential field typing slot only', (): void => {
+    expect(
+      secretPlacementRefusal(
+        'browser_type',
+        { element: 'Password field', text: '{{secret}}' },
+        'tile',
+      ),
+    ).toBeUndefined();
+    expect(
+      secretPlacementRefusal(
+        'browser_fill_form',
+        { fields: [{ name: 'E-mail', value: '{{secret}}' }] },
+        'tile',
+      ),
+    ).toBeUndefined();
+    expect(
+      secretPlacementRefusal('browser_type', { element: 'Comment', text: '{{secret}}' }, 'tile'),
+    ).toContain('text of browser_type is not one');
+    expect(
+      secretPlacementRefusal(
+        'browser_fill_form',
+        { fields: [{ name: '{{secret}}', value: 'x' }] },
+        'tile',
+      ),
+    ).toContain('fields.0.name');
+  });
+
+  it("refuses a placeholder naming another surface's credential", (): void => {
+    expect(
+      secretPlacementRefusal(
+        'browser_fill_form',
+        { fields: [{ name: 'Password', value: '{{secret:linear}}' }] },
+        'tile',
+      ),
+    ).toContain('names another surface');
+  });
+
+  it('refuses once the page resolved the field to something that is not a credential field', (): void => {
+    const toolArgs = { fields: [{ name: 'Password', value: '{{secret}}' }] };
+    expect(
+      secretPlacementRefusal('browser_fill_form', toolArgs, 'tile', [password]),
+    ).toBeUndefined();
+    expect(secretPlacementRefusal('browser_fill_form', toolArgs, 'tile', [notes])).toContain(
+      'typed only into a credential field',
+    );
+  });
+
+  it('types the credential into the admitted slots and nowhere else', (): void => {
+    const typed = withSecretTyped(
+      'browser_fill_form',
+      {
+        fields: [
+          { name: 'Username', target: 'e11', value: 'revops' },
+          { name: 'Password', target: 'e14', value: '{{secret}}' },
+        ],
+      },
+      [{ name: 'Username', ref: 'e11', role: 'textbox' }, password],
+      'tile-password',
+      'tile',
+    );
+    expect(typed).toEqual({
+      fields: [
+        { name: 'Username', target: 'e11', value: 'revops' },
+        { name: 'Password', target: 'e14', value: 'tile-password' },
+      ],
+    });
+    expect(
+      withSecretTyped(
+        'browser_type',
+        { element: 'Password', text: '{{secret}}' },
+        [password],
+        's',
+        'tile',
+      ),
+    ).toEqual({ element: 'Password', text: 's' });
   });
 });

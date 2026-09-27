@@ -1,4 +1,5 @@
 import { isTransportUnreachable } from '../lib/transport-error';
+import { injectSecret } from './secrets';
 
 /**
  * The browser floor: what it may drive, and where it may drive it.
@@ -322,6 +323,165 @@ export function withResolvedRefs(
         name: String(record.name ?? found.name),
         type,
       };
+    }),
+  };
+}
+
+/** `{{secret}}`, or its qualified form `{{secret:<slug>}}`. */
+const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
+
+/** The names a login form gives the fields a credential is typed into. */
+const CREDENTIAL_FIELD =
+  /^(?:user ?name|e-?mail(?: address)?|password|passcode|access code|secret|api key|token)$/i;
+
+/** Whether any string anywhere in a tool-argument tree names the credential. */
+export function carriesSecretPlaceholder(value: unknown): boolean {
+  if (typeof value === 'string') return SECRET_PLACEHOLDER.test(value);
+  if (Array.isArray(value)) return value.some(carriesSecretPlaceholder);
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(carriesSecretPlaceholder);
+  }
+  return false;
+}
+
+/** Whether a field or element description names a credential field. */
+function isCredentialField(description: unknown): boolean {
+  return (
+    typeof description === 'string' && CREDENTIAL_FIELD.test(normaliseDescription(description))
+  );
+}
+
+/**
+ * The typing slots in one browser action where the credential belongs: the
+ * text of a `browser_type` into a credential field, and the value of each
+ * `browser_fill_form` field that is one. Nothing else - not a URL, not an
+ * element's name, not a comment box - may carry it. Once the elements are
+ * resolved, the element the page actually offered must be a credential field
+ * too, so a description that loosely matched "Password notes" does not count.
+ */
+function credentialSlots(
+  tool: string,
+  toolArgs: Record<string, unknown>,
+  resolved?: readonly SnapshotElement[],
+): Set<string> {
+  const slots = new Set<string>();
+  const onPage = (index: number): boolean =>
+    resolved === undefined || isCredentialField(resolved[index]?.name);
+  if (tool === 'browser_type' && isCredentialField(toolArgs.element) && onPage(0)) {
+    slots.add('text');
+  }
+  if (tool === 'browser_fill_form' && Array.isArray(toolArgs.fields)) {
+    toolArgs.fields.forEach((field: unknown, index: number): void => {
+      const record = field && typeof field === 'object' ? (field as Record<string, unknown>) : {};
+      if (isCredentialField(record.name ?? record.element) && onPage(index)) {
+        slots.add(`fields.${index}.value`);
+      }
+    });
+  }
+  return slots;
+}
+
+/** The surfaces named by every qualified `{{secret:<slug>}}` in an argument tree. */
+function placeholderSurfaces(value: unknown, found: string[]): string[] {
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(/\{\{\s*secret[:.]([A-Za-z0-9_-]+)\s*\}\}/g))
+      found.push(match[1]);
+  } else if (Array.isArray(value)) {
+    for (const entry of value) placeholderSurfaces(entry, found);
+  } else if (value && typeof value === 'object') {
+    for (const entry of Object.values(value as Record<string, unknown>))
+      placeholderSurfaces(entry, found);
+  }
+  return found;
+}
+
+/** Every dotted path in an argument tree whose string names the credential. */
+function placeholderPaths(value: unknown, path: string, found: string[]): string[] {
+  if (typeof value === 'string') {
+    if (SECRET_PLACEHOLDER.test(value)) found.push(path);
+  } else if (Array.isArray(value)) {
+    value.forEach((entry: unknown, index: number): void => {
+      placeholderPaths(entry, path ? `${path}.${index}` : String(index), found);
+    });
+  } else if (value && typeof value === 'object') {
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      placeholderPaths(entry, path ? `${path}.${key}` : key, found);
+    }
+  }
+  return found;
+}
+
+/**
+ * Why a browser action may not carry the credential where it asks to, or
+ * undefined when every `{{secret}}` it names sits in a credential field's
+ * typing slot.
+ *
+ * A skill's arguments can be steered by what a colleague wrote in a ticket;
+ * a placeholder in a comment field or a URL would type the surface's password
+ * into the page for anyone to read. So the credential goes only where a login
+ * form takes it.
+ *
+ * @param tool - The browser tool being called.
+ * @param toolArgs - Its arguments as the skill emitted them, or with refs resolved.
+ * @param slug - The action's target surface; a qualified placeholder must name it.
+ * @param resolved - The elements the page offered for this action, once resolved.
+ */
+export function secretPlacementRefusal(
+  tool: string,
+  toolArgs: Record<string, unknown>,
+  slug: string,
+  resolved?: readonly SnapshotElement[],
+): string | undefined {
+  const named = placeholderSurfaces(toolArgs, []).find(
+    (surface: string): boolean => surface !== slug,
+  );
+  if (named !== undefined) {
+    return `{{secret:${named}}} names another surface's credential, which is never sent to ${slug}`;
+  }
+  const slots = credentialSlots(tool, toolArgs, resolved);
+  const misplaced = placeholderPaths(toolArgs, '', []).filter(
+    (path: string): boolean => !slots.has(path),
+  );
+  if (misplaced.length === 0) return undefined;
+  return (
+    `{{secret}} is typed only into a credential field (${misplaced.join(', ')} of ${tool} ` +
+    'is not one), so the credential was not sent'
+  );
+}
+
+/**
+ * Type the credential into the slots `secretPlacementRefusal` admitted for the
+ * resolved elements; every other string is left exactly as it was.
+ *
+ * @param tool - The browser tool being called.
+ * @param toolArgs - Its arguments, refs already resolved.
+ * @param resolved - The elements the page offered for this action.
+ * @param secret - The surface's decrypted credential.
+ * @param slug - The surface's slug, for the qualified placeholder.
+ * @throws SecretTemplateError when a slot names another surface's secret.
+ */
+export function withSecretTyped(
+  tool: string,
+  toolArgs: Record<string, unknown>,
+  resolved: readonly SnapshotElement[],
+  secret: string,
+  slug: string,
+): Record<string, unknown> {
+  const slots = credentialSlots(tool, toolArgs, resolved);
+  if (tool === 'browser_type') {
+    return slots.has('text') && typeof toolArgs.text === 'string'
+      ? { ...toolArgs, text: injectSecret(toolArgs.text, secret, slug) }
+      : toolArgs;
+  }
+  if (tool !== 'browser_fill_form' || !Array.isArray(toolArgs.fields)) return toolArgs;
+  return {
+    ...toolArgs,
+    fields: toolArgs.fields.map((field: unknown, index: number): unknown => {
+      if (!field || typeof field !== 'object') return field;
+      const record = field as Record<string, unknown>;
+      return slots.has(`fields.${index}.value`) && typeof record.value === 'string'
+        ? { ...record, value: injectSecret(record.value, secret, slug) }
+        : record;
     }),
   };
 }

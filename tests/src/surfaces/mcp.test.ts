@@ -8,6 +8,7 @@ import {
   EFFECT_LENGTH,
   interpretToolResult,
   McpAdapter,
+  MCP_SECRET_ARGUMENT_REFUSAL,
   providerErrorMessage,
   type McpClientLike,
   type McpClientOptions,
@@ -803,7 +804,9 @@ describe('the browser floor across one run', (): void => {
         const make = (tool: string) => ({
           execute: async (args: unknown): Promise<unknown> => {
             calls.push({ tool, args });
-            if (tool === 'browser_navigate') context.page = snapshot;
+            if (tool === 'browser_navigate') {
+              context.page = `### Page\n- Page URL: http://looker-tile:8080/\n### Snapshot\n${snapshot}`;
+            }
             return {
               content: [
                 {
@@ -1374,5 +1377,169 @@ describe('an empty validation report', (): void => {
     expect(outcome.ok).toBe(true);
     expect(outcome.providerId).toBe('iss-1');
     expect(outcome.effect).toContain('REVOPS-7');
+  });
+});
+
+describe('where the credential is substituted', (): void => {
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: [...BROWSER_TOOLS],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+  const SECRET = 'pipeline-tile-local';
+
+  function call(tool: string, toolArgs: unknown): MockAction {
+    return {
+      tool: 'mcp.call',
+      args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: JSON.stringify(toolArgs) },
+    } as MockAction;
+  }
+
+  /**
+   * A driver whose current page the test sets: what `browser_snapshot` reports
+   * is whatever the last action left the browser on, as a real one would.
+   */
+  function driverOn(page: { url: string; elements: string }) {
+    const calls: Array<{ tool: string; args: unknown }> = [];
+    const adapter = new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => SECRET,
+      createClient: (): McpClientLike => ({
+        listTools: async () =>
+          Object.fromEntries(
+            BROWSER_TOOLS.map((tool: string) => [
+              `looker-pipeline-tile_${tool}`,
+              {
+                execute: async (args: unknown): Promise<unknown> => {
+                  calls.push({ tool, args });
+                  const text =
+                    tool === 'browser_snapshot'
+                      ? `### Page\n- Page URL: ${page.url}\n### Snapshot\n${page.elements}`
+                      : 'ok';
+                  return { content: [{ type: 'text', text }] };
+                },
+              },
+            ]),
+          ),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+    });
+    return { adapter, calls };
+  }
+
+  const LOGIN = '- textbox "Username" [ref=e11]\n- textbox "Password" [ref=e14]';
+
+  it('types the credential into a password field on the surface', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({ url: 'http://looker-tile:8080/login', elements: LOGIN });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_type', { element: 'Password', text: '{{secret}}' }),
+      0,
+      'k',
+    );
+    expect(applied.ok).toBe(true);
+    expect(calls[1]).toEqual({
+      tool: 'browser_type',
+      args: { element: 'Password', target: 'e14', text: SECRET },
+    });
+  });
+
+  it('refuses the credential in a field that is not a credential field', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({
+      url: 'http://looker-tile:8080/',
+      elements: '- textbox "Pipeline coverage" [ref=e21]',
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '{{secret}}' }] }),
+      0,
+      'k',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('typed only into a credential field'),
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses when the element the page offered is not a credential field', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({
+      url: 'http://looker-tile:8080/',
+      elements: '- textbox "Password notes" [ref=e30]',
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
+      0,
+      'k',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('typed only into a credential field'),
+    });
+    expect(calls.map((entry) => entry.tool)).toEqual(['browser_snapshot']);
+  });
+
+  it('refuses the credential in a navigation address', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({ url: 'http://looker-tile:8080/', elements: LOGIN });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/?token={{secret}}' }),
+      0,
+      'k',
+    );
+    expect(applied.ok).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it('leaves other double-brace text in a typed value as it was written', async (): Promise<void> => {
+    const { adapter, calls } = driverOn({
+      url: 'http://looker-tile:8080/',
+      elements: '- textbox "Pipeline coverage" [ref=e21]',
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', {
+        fields: [{ name: 'Pipeline coverage', value: '{{quarter}} 74%' }],
+      }),
+      0,
+      'k',
+    );
+    expect(applied.ok).toBe(true);
+    expect(calls[1].args).toMatchObject({ fields: [{ value: '{{quarter}} 74%' }] });
+  });
+
+  it('never substitutes the credential into an MCP tool argument', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+    });
+    const leak: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Here it is: {{secret}}' }),
+      },
+    };
+    const applied = await adapter(client).apply(ctx, run, leak, 0, 'k');
+    expect(applied).toMatchObject({ ok: false, reason: MCP_SECRET_ARGUMENT_REFUSAL });
+    expect(client.executions).toEqual([]);
+    expect(client.options).toEqual([]);
   });
 });
