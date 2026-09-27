@@ -6,6 +6,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { plainErrorMessage } from '@/lib/plain-error';
+import { REPOSITORY_URL } from '@/setup/quickstart';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -26,6 +27,9 @@ export function locatorForSourceKind(kind: SourceKind): string {
 export function linkFormAfterLink(): { label: string; locator: string } {
   return { label: '', locator: '' };
 }
+
+/** The author guide to the page shapes day0 reads, as the repository publishes it. */
+export const AUTHOR_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/running/documentation.md`;
 
 /**
  * The secret a link sends for a source kind (E-74).
@@ -300,7 +304,19 @@ export function DocumentationPage(): React.ReactNode {
           </section>
 
           <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
-            <h2 className="font-semibold mb-4">Link a documentation location</h2>
+            <h2 className="font-semibold">Link a documentation location</h2>
+            <p className="text-xs text-[var(--color-muted)] mt-1 mb-4">
+              Write pages in the shapes{' '}
+              <a
+                href={AUTHOR_GUIDE_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="underline text-[var(--color-accent)]"
+              >
+                the documentation author guide
+              </a>{' '}
+              describes, so day0 finds each system, address, credential and intake queue on them.
+            </p>
             <form onSubmit={onSubmit} className="grid gap-3">
               <select
                 value={kind}

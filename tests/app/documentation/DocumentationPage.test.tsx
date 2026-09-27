@@ -20,6 +20,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import {
+  AUTHOR_GUIDE_URL,
   DocumentationPage,
   ReaderSecretField,
   SourceKindHelp,
@@ -149,5 +150,16 @@ describe('a reader secret for a private repository or wiki (E-74)', (): void => 
     const markup = renderToStaticMarkup(<DocumentationPage />);
     expect(markup).toContain('>Rotate<');
     expect(markup).toContain('>Revoke<');
+  });
+});
+
+describe('the author guide', (): void => {
+  it('links the guide to the page shapes day0 reads from the link form', (): void => {
+    const markup = renderToStaticMarkup(<DocumentationPage />);
+    expect(AUTHOR_GUIDE_URL).toBe(
+      'https://github.com/BrianIsaac/day0/blob/main/docs/running/documentation.md',
+    );
+    expect(markup).toContain(`href="${AUTHOR_GUIDE_URL}"`);
+    expect(markup).toContain('the documentation author guide');
   });
 });
