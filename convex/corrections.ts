@@ -199,13 +199,16 @@ export async function markCorrectionsAppliedInTransaction(
   ids: readonly unknown[],
 ): Promise<Id<'corrections'>[]> {
   const kept: Id<'corrections'>[] = [];
-  const shared = await sharedTicketCorrectionId(ctx, row);
+  let shared: { id?: Id<'corrections'> } | undefined;
   for (const raw of ids) {
     const id = typeof raw === 'string' ? ctx.db.normalizeId('corrections', raw) : null;
     if (!id || kept.includes(id)) continue;
     const correction = await ctx.db.get(id);
     if (!correction || correction.retiredAt !== undefined) continue;
-    if (correction.agentId !== row.agentId && correction._id !== shared) continue;
+    if (correction.agentId !== row.agentId) {
+      shared ??= { id: await sharedTicketCorrectionId(ctx, row) };
+      if (correction._id !== shared.id) continue;
+    }
     if (!correction.appliedTo.includes(row._id)) {
       await ctx.db.patch(id, { appliedTo: [...correction.appliedTo, row._id] });
     }
@@ -282,20 +285,17 @@ export const forPlan = internalQuery({
   },
   handler: async (ctx, args): Promise<Doc<'corrections'>[]> => {
     const rows: Doc<'corrections'>[] = [];
-    let shared: Id<'corrections'> | undefined;
-    let sharedRead = false;
+    let shared: { id?: Id<'corrections'> } | undefined;
     for (const raw of args.ids) {
       const id = ctx.db.normalizeId('corrections', raw);
       const row = id ? await ctx.db.get(id) : null;
       if (!row) continue;
-      if (row.agentId !== args.agentId && args.workItemId) {
-        if (!sharedRead) {
-          shared = await sharedTicketCorrectionId(ctx, await ctx.db.get(args.workItemId));
-          sharedRead = true;
-        }
-        if (row._id !== shared) continue;
-      } else if (row.agentId !== args.agentId) {
-        continue;
+      if (row.agentId !== args.agentId) {
+        if (!args.workItemId) continue;
+        shared ??= {
+          id: await sharedTicketCorrectionId(ctx, await ctx.db.get(args.workItemId)),
+        };
+        if (row._id !== shared.id) continue;
       }
       rows.push(row);
     }
