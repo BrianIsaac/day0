@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { SURFACE_MODE } from '@/lib/surface-mode';
 import './globals.css';
+import { DocumentationLink } from './DocumentationLink';
 import { HeaderAccount } from './HeaderAccount';
 import { Providers } from './providers';
 import { WhipCursor } from './WhipCursor';
@@ -39,17 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </span>
             </Link>
             <div className="flex items-center gap-4">
-              {/* Protected, so a signed-out visitor's prefetch of it is a
-                  bounce to Clerk's hosted sign-in from every public page. */}
-              {SURFACE_MODE === 'real' ? (
-                <Link
-                  href="/documentation"
-                  prefetch={false}
-                  className="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-                >
-                  Documentation
-                </Link>
-              ) : null}
+              <DocumentationLink />
               <HeaderAccount />
             </div>
           </header>
