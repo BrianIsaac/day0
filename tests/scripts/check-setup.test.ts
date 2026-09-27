@@ -325,3 +325,24 @@ describe('the support report', (): void => {
     ]);
   });
 });
+
+describe('the support report without an env file', (): void => {
+  afterEach((): void => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it('still prints one JSON document, saying the file is missing', (): void => {
+    const printed: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: string): void => {
+      printed.push(line);
+    });
+    vi.spyOn(console, 'error').mockImplementation((): void => undefined);
+    const missing = join(import.meta.dirname, 'no-such-dir', '.env.local');
+    expect(main(missing, { report: true })).toBe(1);
+    expect(JSON.parse(printed.join('\n'))).toMatchObject({
+      kind: 'day0-setup-report',
+      error: `${missing} not found`,
+    });
+  });
+});

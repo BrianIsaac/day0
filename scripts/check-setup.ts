@@ -9,8 +9,10 @@
  * `--report` prints one JSON document instead, the support bundle remote
  * support works from (A12): tool versions, the pinned images and whether each
  * runs, the digests of the redactor's locks and model manifest, every outbound
- * host the configuration names, and each section's status. No value from the
- * env file and no line a section explains itself with goes into it.
+ * host the configuration names, and each section's status. No key and no
+ * line a section explains itself with goes into it; the model, Daytona and
+ * Clerk addresses appear as hostnames only, since an egress list is made of
+ * them.
  *
  * It answers the question a reader actually has after following the README -
  * "did I set this up correctly?" - and the honest answer is not one boolean.
@@ -194,6 +196,15 @@ export function modeAndRouteLine(values: Values): string {
  */
 export function main(envFile: string = ENV_FILE, options: { report?: boolean } = {}): number {
   if (!existsSync(envFile)) {
+    if (options.report) {
+      console.log(
+        JSON.stringify(
+          { kind: 'day0-setup-report', version: 1, error: `${envFile} not found` },
+          null,
+          2,
+        ),
+      );
+    }
     console.error(`error: ${envFile} not found. Copy .env.example to ${envFile} first.`);
     process.exitCode = 1;
     return 1;
@@ -1284,7 +1295,8 @@ export function composeImages(compose: string): ComposeImage[] {
 /**
  * Assemble the support report from what the checks found. Each section keeps
  * its title and status and drops its lines, which quote addresses and names
- * from the env file; no value from the file is carried at all.
+ * from the env file; the only thing the file contributes is the hostnames in
+ * the egress list, never a key, a path or a whole address.
  *
  * Args:
  *   inputs: The resolved values, the sections, and what the machine reported.
