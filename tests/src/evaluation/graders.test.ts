@@ -648,8 +648,8 @@ describe('programmatic task grading', (): void => {
         },
       },
       events: [
-        { type: 'work.actions-pending', workItemId: 'work-1', createdAt: 10 },
-        { type: 'work.actions-approved', workItemId: 'work-1', createdAt: 20 },
+        { type: 'work.actions-pending', payload: { workItemId: 'work-1' }, createdAt: 10 },
+        { type: 'work.actions-approved', payload: { workItemId: 'work-1' }, createdAt: 20 },
       ],
       spreadsheets: [
         {

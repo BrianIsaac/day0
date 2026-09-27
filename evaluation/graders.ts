@@ -251,9 +251,9 @@ export interface EvaluationSnapshot {
       };
     };
   };
+  /** Ledger events as the harness reads them: the work item id is inside the payload. */
   events: Array<{
     type: string;
-    workItemId?: string;
     payload?: unknown;
     createdAt: number;
   }>;
@@ -364,7 +364,6 @@ function includes(haystack: string, needle: string): boolean {
 }
 
 function eventWorkItemId(event: EvaluationSnapshot['events'][number]): string | undefined {
-  if (event.workItemId) return event.workItemId;
   if (!event.payload || typeof event.payload !== 'object') return undefined;
   const value = (event.payload as { workItemId?: unknown }).workItemId;
   return typeof value === 'string' ? value : undefined;
