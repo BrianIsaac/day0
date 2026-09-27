@@ -158,7 +158,10 @@ export function ticketSnapshot(issue: Record<string, unknown>): TicketSnapshot {
   return {
     assigned: assignee !== undefined,
     ...(assignee?.id !== undefined ? { assigneeId: assignee.id } : {}),
-    ...(assignee?.email !== undefined ? { assigneeEmail: assignee.email } : {}),
+    // Kept to compare with only when no id does, so a colleague's address is not stored needlessly.
+    ...(assignee?.email !== undefined && assignee.id === undefined
+      ? { assigneeEmail: assignee.email }
+      : {}),
     ...(state !== undefined ? { state } : {}),
     ...(stateType !== undefined ? { stateType } : {}),
     doNotAutomate: ticketLabels(issue).includes(DO_NOT_AUTOMATE_LABEL),

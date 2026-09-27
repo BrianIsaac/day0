@@ -67,6 +67,10 @@ describe('ticket ownership', () => {
       doNotAutomate: true,
     });
     expect(ticketSnapshot({ state: { name: 'Todo', type: 'unstarted' } })).toEqual(todo);
+    // A colleague's address is kept only when no id identifies them.
+    expect(
+      ticketSnapshot({ assignee: { id: 'user-ana', email: 'ana@kestrel.test' }, status: 'Todo' }),
+    ).toEqual({ assigned: true, assigneeId: 'user-ana', state: 'Todo', doNotAutomate: false });
   });
 
   it('names a change of hands, of state or a label since the listing the plan was made under', async () => {
