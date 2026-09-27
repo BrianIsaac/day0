@@ -38,3 +38,48 @@ describe('span response validation', () => {
     expect(result).toMatchObject({ text: '<redacted>', degraded: 'structural-only' });
   });
 });
+
+describe('one more try for the redaction component', () => {
+  const span = { start: 0, end: 7, label: 'password', score: 0.9 };
+  const noWait = {
+    attempts: 2,
+    baseMs: 0,
+    maxWaitMs: 1_000,
+    sleep: async (): Promise<void> => undefined,
+  };
+
+  it('reads the spans after a reset connection or a 503', async () => {
+    for (const first of [
+      async (): Promise<Response> => {
+        throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+      },
+      async (): Promise<Response> => new Response('busy', { status: 503 }),
+    ]) {
+      let calls = 0;
+      const model = new HttpSpanModel(
+        'http://redactor:8000',
+        async (): Promise<Response> =>
+          (calls += 1) === 1 ? await first() : Response.json({ spans: [span] }),
+        1_000,
+        noWait,
+      );
+      await expect(model.spans('hunter2', ['password'], 0.4)).resolves.toEqual([span]);
+      expect(calls).toBe(2);
+    }
+  });
+
+  it('does not try a refused body again', async () => {
+    let calls = 0;
+    const model = new HttpSpanModel(
+      'http://redactor:8000',
+      async (): Promise<Response> => {
+        calls += 1;
+        return new Response('too large', { status: 413 });
+      },
+      1_000,
+      noWait,
+    );
+    await expect(model.spans('hunter2', ['password'], 0.4)).rejects.toThrow('HTTP 413');
+    expect(calls).toBe(1);
+  });
+});

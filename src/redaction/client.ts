@@ -6,6 +6,7 @@
  * label means; the policy does.
  */
 import { REDACTOR_TIMEOUT_MS } from './policy';
+import { fetchWithBackoff, type BackoffPolicy } from '../lib/transport-error';
 
 export interface ModelSpan {
   start: number;
@@ -31,6 +32,13 @@ export class RedactorUnavailableError extends Error {
 export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
 
 /**
+ * One more try for a reset connection or a 503, inside the same deadline: the
+ * component is on the compose network, so a second try is cheap and a longer
+ * wait would only spend the sync's budget.
+ */
+export const REDACTOR_BACKOFF: BackoffPolicy = { attempts: 2, baseMs: 250, maxWaitMs: 1_000 };
+
+/**
  * The HTTP client for the `redactor` compose service.
  *
  * A non-2xx reply, a body that is not the expected shape, a network error and
@@ -41,11 +49,13 @@ export class HttpSpanModel implements SpanModel {
   readonly name: string;
   private readonly endpoint: URL;
 
+  // Four parameters, beyond the soft three: the last two are test seams with defaults.
   constructor(
     baseUrl: string,
     private readonly fetchImpl: FetchLike = (input: URL, init: RequestInit): Promise<Response> =>
       fetch(input, init),
     private readonly timeoutMs: number = REDACTOR_TIMEOUT_MS,
+    private readonly backoff: BackoffPolicy = REDACTOR_BACKOFF,
   ) {
     this.endpoint = new URL('/v1/spans', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
     this.name = `redactor@${this.endpoint.host}`;
@@ -71,9 +81,14 @@ export class HttpSpanModel implements SpanModel {
     threshold: number,
     signal: AbortSignal,
   ): Promise<ModelSpan[]> {
+    const send = fetchWithBackoff(
+      (input: URL, init?: RequestInit): Promise<Response> => this.fetchImpl(input, init ?? {}),
+      undefined,
+      this.backoff,
+    );
     let response: Response;
     try {
-      response = await this.fetchImpl(this.endpoint, {
+      response = await send(this.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text, labels, threshold }),
