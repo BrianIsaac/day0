@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { paginationOptsValidator, type PaginationResult } from 'convex/server';
 import {
   action,
   internalMutation,
@@ -6,6 +7,7 @@ import {
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
@@ -18,11 +20,13 @@ import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { reconcileDocumentedSystems } from './surfaces';
 import { purgeCredential } from './credentials';
-import { restatedScope } from '../src/surfaces/intake-scope';
+import type { IntakeScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import { unreadPagesLine, withUnreadPages } from '../src/docs/sync-record';
+import { cardPageRefs } from '../src/docs/card-pages';
+import type { MigrationName } from './migrations';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -38,15 +42,68 @@ const serverKind = v.union(
   v.literal('generic'),
 );
 
-const sourceStatus = v.union(
-  v.literal('linking'),
-  v.literal('synced'),
-  v.literal('error'),
-  v.literal('credential-not-landed'),
-);
-
 /** The listed pages a batch could not read, each kept at its last stored version (P5-11). */
 const unreadPages = v.optional(v.array(v.object({ ref: v.string(), reason: v.string() })));
+
+/**
+ * The cursor a run holds once it has read every page and is finishing: its
+ * stale pages and mirrors are being removed and its intake scopes re-read.
+ * No reader emits it (their cursors are offsets and provider tokens, never
+ * with a NUL), so a run resumed at it resumes the finishing, not a read.
+ */
+export const FINISHING_CURSOR = '\u0000finishing';
+
+/**
+ * One page of a paged read over a source's pages or mirrors: few enough rows
+ * and bytes that one read stays well inside a transaction's limits whatever
+ * the pages hold (a page body can be up to 768 KiB).
+ */
+export const PAGED_READ = { numItems: 100, maximumBytesRead: 4 * 1024 * 1024 } as const;
+
+/** Convex's bound on an array's length, and so on the pages one generation can record. */
+export const MAX_GENERATION_PAGES = 8_192;
+
+/** How long a finished run is kept for the record before the run history is pruned. */
+export const RUN_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The most runs one pruning pass deletes; a run can be large, since it lists its pages. */
+const RUN_PRUNE_BATCH = 8;
+
+/**
+ * The migration that reads completed runs by their completion time
+ * (`credentials-sync-revoke`): completed runs are kept for it until it has run.
+ */
+const RUNS_READ_BY_MIGRATION: MigrationName = 'credentials-sync-revoke';
+
+/** The most pages the surface cards are sent, and the most bytes they are read up to. */
+const CARD_PAGE_LIMIT = 100;
+const CARD_PAGE_BYTES = 8 * 1024 * 1024;
+
+/** The most surfaces of one employee the cards' page list is drawn from. */
+const CARD_SURFACE_LIMIT = 1_000;
+
+/** Why a run that a newer one replaced before it finished ended. */
+const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
+
+/**
+ * How many pages a source holds, from its run record rather than its pages.
+ *
+ * Counting the pages would read every page body (C-15). The last completed
+ * run's summary counts what it kept; before a sync has completed, the newest
+ * run's recorded refs are the pages it has stored so far.
+ */
+async function storedPageCount(ctx: QueryCtx, source: Doc<'docSources'>): Promise<number> {
+  const completed = source.lastCompletedSyncId
+    ? await ctx.db.get(source.lastCompletedSyncId)
+    : null;
+  if (completed) return completed.summary?.pagesKept ?? completed.refs.length;
+  const newest = await ctx.db
+    .query('docSyncRuns')
+    .withIndex('by_source', (index) => index.eq('sourceId', source._id))
+    .order('desc')
+    .first();
+  return newest?.refs.length ?? 0;
+}
 
 export interface LinkInput {
   label: string;
@@ -140,7 +197,10 @@ export function agentReadsSource(agent: Doc<'agents'>, sourceId: Id<'docSources'
 }
 
 /**
- * Purge credentials and remove sync generations associated with one source.
+ * Purge the credentials and discovered systems of one source being removed.
+ *
+ * Its pages, mirrors and runs are deleted in pages afterwards
+ * (`deleteSourceRows`), since a whole source's rows can outgrow one transaction.
  *
  * Args:
  *   ctx: Convex mutation context.
@@ -167,18 +227,14 @@ async function retireSourceState(ctx: MutationCtx, source: Doc<'docSources'>): P
     .withIndex('by_user_source_ref', (index) =>
       index.eq('userId', source.userId).eq('source.sourceId', source._id),
     )
-    .collect();
+    .take(1_001);
+  if (discovered.length > 1_000) throw new Error('Source exceeds 1,000 credentials.');
   const credentialIds = new Set<Id<'credentials'>>(discovered.map((row) => row._id));
   if (source.credentialId) credentialIds.add(source.credentialId);
   for (const credentialId of credentialIds) {
     const credential = await ctx.db.get(credentialId);
     if (credential) await purgeCredential(ctx, credential, now);
   }
-  const runs = await ctx.db
-    .query('docSyncRuns')
-    .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-    .collect();
-  for (const run of runs) await ctx.db.delete(run._id);
   const systemDiscoveries = await ctx.db
     .query('docSystemDiscoveries')
     .withIndex('by_source', (index) => index.eq('sourceId', source._id))
@@ -189,7 +245,12 @@ async function retireSourceState(ctx: MutationCtx, source: Doc<'docSources'>): P
   for (const discovery of systemDiscoveries) await ctx.db.delete(discovery._id);
 }
 
-/** List documentation sources owned by the signed-in caller. */
+/**
+ * List documentation sources owned by the signed-in caller, each with its page count.
+ *
+ * Public, for the signed-in owner; reads the owner's sources and each one's
+ * run record, never its pages.
+ */
 export const listMine = query({
   args: {},
   handler: async (ctx) => {
@@ -199,13 +260,10 @@ export const listMine = query({
       .withIndex('by_user', (index) => index.eq('userId', identity.subject))
       .collect();
     return await Promise.all(
-      sources.map(async (source) => {
-        const pages = await ctx.db
-          .query('docPages')
-          .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-          .collect();
-        return { ...source, pageCount: pages.length };
-      }),
+      sources.map(async (source) => ({
+        ...source,
+        pageCount: await storedPageCount(ctx, source),
+      })),
     );
   },
 });
@@ -348,54 +406,116 @@ export const resync = mutation({
   },
 });
 
-/** Unlink an owned source and remove its pages and per-agent mirrors; real mode only. */
+/**
+ * Unlink an owned source; real mode only.
+ *
+ * Public, for the source's owner. Deletes the source, purges its credentials
+ * and discovered systems, and schedules its pages, mirrors and runs for
+ * deletion in pages (`deleteSourceRows`), since a whole source's rows can
+ * outgrow one transaction. No reader reaches a page of a deleted source: the
+ * readers list pages by the employee's sources.
+ */
 export const unlink = mutation({
   args: { sourceId: v.id('docSources') },
-  handler: async (ctx, args): Promise<{ pages: number; mirrors: number }> => {
+  handler: async (ctx, args): Promise<null> => {
     assertRealMode('Documentation unlinking');
     const identity = await getCallerOrThrow(ctx);
     const source = await ctx.db.get(args.sourceId);
     if (!source || source.userId !== identity.subject)
       throw new Error('Documentation source not found.');
-    const pages = await ctx.db
-      .query('docPages')
-      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .collect();
-    const mirrors = await ctx.db
-      .query('mockDocs')
-      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .collect();
-    await retireSourceState(ctx, source);
-    await Promise.all([...pages, ...mirrors].map(async (row) => await ctx.db.delete(row._id)));
-    await ctx.db.delete(source._id);
-    return { pages: pages.length, mirrors: mirrors.length };
+    await removeSource(ctx, source);
+    return null;
   },
 });
 
-/** Return documentation pages inherited by one owned agent. */
+/** Remove one source now and its rows in scheduled pages. */
+async function removeSource(ctx: MutationCtx, source: Doc<'docSources'>): Promise<void> {
+  await retireSourceState(ctx, source);
+  await ctx.db.delete(source._id);
+  await ctx.scheduler.runAfter(0, internal.docSources.deleteSourceRows, { sourceId: source._id });
+}
+
+/** The tables a removed source leaves rows in, in the order they are deleted. */
+const SOURCE_ROW_TABLES = ['mockDocs', 'docPages', 'docSyncRuns'] as const;
+
+/**
+ * Delete one bounded page of a removed source's rows in one table, and schedule the next.
+ *
+ * Internal; scheduled by `unlink` and a full reset, starting at the mirrors,
+ * which an employee reads directly. A table done hands on to the next, until
+ * every table is empty.
+ */
+export const deleteSourceRows = internalMutation({
+  args: {
+    sourceId: v.id('docSources'),
+    table: v.optional(v.union(...SOURCE_ROW_TABLES.map((table) => v.literal(table)))),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    const table = args.table ?? SOURCE_ROW_TABLES[0];
+    const page = await ctx.db
+      .query(table)
+      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
+      .paginate({ ...PAGED_READ, cursor: null });
+    for (const row of page.page) await ctx.db.delete(row._id);
+    const next = page.isDone ? SOURCE_ROW_TABLES[SOURCE_ROW_TABLES.indexOf(table) + 1] : table;
+    if (next !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.docSources.deleteSourceRows, {
+        sourceId: args.sourceId,
+        table: next,
+      });
+    }
+    return page.page.length;
+  },
+});
+
+/**
+ * Return the documentation pages one owned agent's surface cards read.
+ *
+ * Public, owner-guarded. The cards need the page each approved intake value
+ * quotes and the pages that evidence each system, never the corpus
+ * (`cardPageRefs`); each is read by its reference, up to a hundred pages and
+ * eight mebibytes, and returned in the order the employee's sources and
+ * their pages were created, as the cards read the documented order.
+ */
 export const pagesForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const sources = await ctx.db
-      .query('docSources')
-      .withIndex('by_user', (index) => index.eq('userId', agent.userId!))
-      .collect();
-    const selected = sources.filter((source) => agentReadsSource(agent, source._id));
-    const groups = await Promise.all(
-      selected.map(async (source) => {
-        const pages = await ctx.db
-          .query('docPages')
-          .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-          .collect();
-        return pages.map((page) => ({
-          ...page,
-          sourceLabel: source.label,
-          sourceKind: source.kind,
-        }));
-      }),
+    const sources = (
+      await ctx.db
+        .query('docSources')
+        .withIndex('by_user', (index) => index.eq('userId', agent.userId!))
+        .collect()
+    ).filter((source) => agentReadsSource(agent, source._id));
+    const byId = new Map(sources.map((source, index) => [String(source._id), { source, index }]));
+    const surfaces = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
+      .take(CARD_SURFACE_LIMIT);
+    const refs = cardPageRefs(surfaces, new Set(byId.keys()), CARD_PAGE_LIMIT);
+    const encoder = new TextEncoder();
+    const pages: Array<Doc<'docPages'> & { sourceLabel: string; sourceKind: string }> = [];
+    let bytes = 0;
+    for (const { sourceId, ref } of refs) {
+      if (bytes >= CARD_PAGE_BYTES) break;
+      const owner = byId.get(sourceId);
+      if (!owner) continue;
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (index) =>
+          index.eq('sourceId', owner.source._id).eq('ref', ref),
+        )
+        .unique();
+      if (!page) continue;
+      bytes += encoder.encode(page.markdown).length;
+      pages.push({ ...page, sourceLabel: owner.source.label, sourceKind: owner.source.kind });
+    }
+    return pages.sort(
+      (left, right): number =>
+        (byId.get(String(left.sourceId))?.index ?? 0) -
+          (byId.get(String(right.sourceId))?.index ?? 0) ||
+        left._creationTime - right._creationTime,
     );
-    return groups.flat();
   },
 });
 
@@ -527,31 +647,40 @@ export const getInternal = internalQuery({
 export const STALE_SYNC_MS = 30 * 60 * 1000;
 
 /**
- * List sources eligible for periodic resync; empty outside real mode so the
- * cron is inert. A source mid-sync is skipped so the cron never races a
- * continuation, unless it stopped progressing long enough ago to be
- * abandoned, in which case `beginSync` supersedes the dead generation.
+ * List one page of the sources eligible for periodic resync; empty outside
+ * real mode so the cron is inert. A source mid-sync is skipped so the cron
+ * never races a continuation, unless it stopped progressing long enough ago
+ * to be abandoned, in which case `beginSync` takes over the dead generation.
+ * Internal; the periodic sync walks the pages.
  */
 export const listSyncable = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    if (SURFACE_MODE !== 'real') return [];
-    const sources = await ctx.db.query('docSources').collect();
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args): Promise<PaginationResult<Doc<'docSources'>>> => {
+    if (SURFACE_MODE !== 'real') return { page: [], isDone: true, continueCursor: '' };
+    const result = await ctx.db.query('docSources').paginate(args.paginationOpts);
     const now = Date.now();
-    return sources.filter(
-      (source) => source.status !== 'linking' || now - source.updatedAt > STALE_SYNC_MS,
-    );
+    return {
+      ...result,
+      page: result.page.filter(
+        (source) => source.status !== 'linking' || now - source.updatedAt > STALE_SYNC_MS,
+      ),
+    };
   },
 });
 
-/** List all pages stored for one source. */
+/**
+ * List one bounded page of the pages stored for one source (`PAGED_READ`).
+ *
+ * Internal; the deploy mirror, the finishing sync and the re-orientation
+ * walk a source through it instead of reading it whole (C-15).
+ */
 export const pagesForSourceInternal = internalQuery({
-  args: { sourceId: v.id('docSources') },
-  handler: async (ctx, args) =>
+  args: { sourceId: v.id('docSources'), paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args): Promise<PaginationResult<Doc<'docPages'>>> =>
     await ctx.db
       .query('docPages')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-      .collect(),
+      .paginate({ ...args.paginationOpts, ...PAGED_READ }),
 });
 
 /** List owner agents that inherit a source. */
@@ -617,8 +746,48 @@ export const beginSync = internalMutation({
   },
 });
 
-/** Why a run that a newer one replaced before it finished ended. */
-const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
+/**
+ * Delete a source's oldest finished runs, a few at a time.
+ *
+ * Internal; each sync calls it once after its run begins. A run finished
+ * over `RUN_HISTORY_MS` ago is deleted unless the source still points at it
+ * (running, last completed, last discovered); a completed one is kept while
+ * the migration that reads completed runs by their completion time has not
+ * run. A run lists its pages, so a pass reads at most `RUN_PRUNE_BATCH`.
+ *
+ * @returns How many runs were deleted.
+ */
+export const pruneRunHistory = internalMutation({
+  args: { sourceId: v.id('docSources') },
+  handler: async (ctx, args): Promise<number> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (!source) return 0;
+    const cutoff = Date.now() - RUN_HISTORY_MS;
+    const pointedAt = new Set(
+      [source.activeSyncId, source.lastCompletedSyncId, source.lastDiscoverySyncId].filter(
+        (id): id is Id<'docSyncRuns'> => id !== undefined,
+      ),
+    );
+    const migration = await ctx.db
+      .query('migrations')
+      .withIndex('by_name', (index) => index.eq('name', RUNS_READ_BY_MIGRATION))
+      .first();
+    const completedMayGo = migration?.completedAt !== undefined;
+    const old = await ctx.db
+      .query('docSyncRuns')
+      .withIndex('by_source_completed_at', (index) =>
+        index.eq('sourceId', source._id).gte('completedAt', 0).lt('completedAt', cutoff),
+      )
+      .take(RUN_PRUNE_BATCH);
+    let deleted = 0;
+    for (const run of old) {
+      if (pointedAt.has(run._id) || (run.state === 'completed' && !completedMayGo)) continue;
+      await ctx.db.delete(run._id);
+      deleted += 1;
+    }
+    return deleted;
+  },
+});
 
 /** Read a generation and source for one Node-action batch. */
 export const syncContext = internalQuery({
@@ -637,6 +806,21 @@ export const syncContext = internalQuery({
     return { source, run };
   },
 });
+
+/**
+ * A generation's page refs with a batch's added, within what one run can record.
+ *
+ * @throws Error naming the bound when the source lists more pages than one run records.
+ */
+function generationRefs(recorded: readonly string[], batch: readonly string[]): string[] {
+  const refs = [...recorded, ...batch];
+  if (refs.length > MAX_GENERATION_PAGES) {
+    throw new Error(
+      `This source lists more than ${MAX_GENERATION_PAGES.toLocaleString('en-GB')} pages, the most one sync can record; split it into smaller sources.`,
+    );
+  }
+  return refs;
+}
 
 /**
  * Record one non-final batch and advance its provider-safe cursor.
@@ -668,9 +852,10 @@ export const recordSyncBatch = internalMutation({
     ) {
       return false;
     }
+    const refs = generationRefs(run.refs, args.refs);
     await ctx.db.patch(run._id, {
       cursor: args.nextCursor,
-      refs: [...run.refs, ...args.refs],
+      refs,
       credentialRefs: [...run.credentialRefs, ...args.credentialRefs],
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
@@ -681,12 +866,250 @@ export const recordSyncBatch = internalMutation({
   },
 });
 
+/** The fence of a run that has read every page and is finishing. */
+async function finishingRun(
+  ctx: QueryCtx,
+  sourceId: Id<'docSources'>,
+  runId: Id<'docSyncRuns'>,
+): Promise<{ source: Doc<'docSources'>; run: Doc<'docSyncRuns'> } | null> {
+  const [source, run] = await Promise.all([ctx.db.get(sourceId), ctx.db.get(runId)]);
+  if (
+    !source ||
+    !run ||
+    source.activeSyncId !== run._id ||
+    run.state !== 'running' ||
+    run.cursor !== FINISHING_CURSOR
+  ) {
+    return null;
+  }
+  return { source, run };
+}
+
+/** What one pruning page did, and where the next one starts. */
+interface PrunedPage {
+  readonly kept: number;
+  readonly removed: number;
+  readonly continueCursor: string;
+  readonly isDone: boolean;
+}
+
+/** The result of a pruning page for a run that is no longer the finishing one. */
+const NOT_FINISHING: PrunedPage = { kept: 0, removed: 0, continueCursor: '', isDone: true };
+
 /**
- * Complete the final batch, delete stale mirrors and publish one synced state.
+ * Delete one bounded page of the stored pages a finishing generation did not list.
  *
- * A page the generation could not read is in its refs, so it keeps its last
- * stored version, mirror and credentials; the run's reason names it and the
- * source's line says so until a sync reads it (P5-11).
+ * Internal; the finishing sync walks the source's pages with it. A page the
+ * generation listed but could not read is in its refs and is kept (P5-11).
+ */
+export const prunePages = internalMutation({
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<PrunedPage> => {
+    const finishing = await finishingRun(ctx, args.sourceId, args.runId);
+    if (!finishing) return NOT_FINISHING;
+    const current = new Set(finishing.run.refs);
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
+      .paginate({ ...PAGED_READ, cursor: args.cursor });
+    let removed = 0;
+    for (const row of page.page) {
+      if (current.has(row.ref)) continue;
+      await ctx.db.delete(row._id);
+      removed += 1;
+    }
+    return {
+      kept: page.page.length - removed,
+      removed,
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    };
+  },
+});
+
+/**
+ * Delete one bounded page of the per-agent mirrors a finishing generation does not keep.
+ *
+ * Internal. A mirror is kept only for a listed page and only under the slug
+ * `mirroredDocSlug` gives it now: one an earlier slug rule keyed (a
+ * non-ASCII reference before v0.5.0) is a second copy beside the one this
+ * sync wrote (review M20).
+ */
+export const pruneMirrors = internalMutation({
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<PrunedPage> => {
+    const finishing = await finishingRun(ctx, args.sourceId, args.runId);
+    if (!finishing) return NOT_FINISHING;
+    const current = new Set(finishing.run.refs);
+    const page = await ctx.db
+      .query('mockDocs')
+      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
+      .paginate({ ...PAGED_READ, cursor: args.cursor });
+    let removed = 0;
+    for (const mirror of page.page) {
+      if (
+        mirror.sourceRef &&
+        current.has(mirror.sourceRef) &&
+        mirror.slug === mirroredDocSlug(args.sourceId, mirror.sourceRef)
+      ) {
+        continue;
+      }
+      await ctx.db.delete(mirror._id);
+      removed += 1;
+    }
+    return {
+      kept: page.page.length - removed,
+      removed,
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    };
+  },
+});
+
+/** The verdicts under which an approved or proposed intake scope is re-read after a sync. */
+const SCOPED_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
+  'proposed',
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+]);
+
+/** One surface's intake scope as a finishing sync reads it. */
+export interface ScopedSurface {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly intakeScope: IntakeScope<{
+    value: string;
+    sourceId?: Id<'docSources'>;
+    ref: string;
+    quote: string;
+  }>;
+}
+
+/**
+ * List the intake scopes of the employees reading a source, for the finishing sync to re-read.
+ *
+ * Internal; real mode reads it. Bounded as the employees and their surfaces are.
+ */
+export const scopedSurfaces = internalQuery({
+  args: { sourceId: v.id('docSources') },
+  handler: async (ctx, args): Promise<ScopedSurface[]> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (!source) return [];
+    const agents = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (index) => index.eq('userId', source.userId))
+      .take(101);
+    if (agents.length > 100) throw new Error('Documentation source exceeds 100 agents.');
+    const scoped: ScopedSurface[] = [];
+    for (const agent of agents) {
+      if (!agentReadsSource(agent, source._id)) continue;
+      const surfaces = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
+        .take(1_001);
+      if (surfaces.length > 1_000) throw new Error('Agent exceeds 1,000 surfaces.');
+      for (const surface of surfaces) {
+        if (surface.intakeScope && SCOPED_VERDICTS.has(surface.verdict)) {
+          scoped.push({ surfaceId: surface._id, intakeScope: surface.intakeScope });
+        }
+      }
+    }
+    return scoped;
+  },
+});
+
+/**
+ * Apply what a finishing sync found when it re-read one surface's approved intake scope.
+ *
+ * Internal. Values are compared by value, not by line (`restatedScope`): a
+ * rename, a move or a reflowed line re-points the approved quote; a value
+ * its page stopped stating returns an approved card to the manager. Nothing
+ * is written when the run is no longer the finishing one, or when the
+ * surface's scope changed since the sync read it (the next sync reads it again).
+ *
+ * @returns `repointed`, `reapproval` or `unchanged`.
+ */
+export const applyRestatedScope = internalMutation({
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    surfaceId: v.id('surfaces'),
+    read: v.any(),
+    restated: v.any(),
+    drifted: v.boolean(),
+  },
+  handler: async (ctx, args): Promise<'repointed' | 'reapproval' | 'unchanged'> => {
+    if (!(await finishingRun(ctx, args.sourceId, args.runId))) return 'unchanged';
+    const surface = await ctx.db.get(args.surfaceId);
+    if (
+      !surface?.intakeScope ||
+      !SCOPED_VERDICTS.has(surface.verdict) ||
+      JSON.stringify(surface.intakeScope) !== JSON.stringify(args.read)
+    ) {
+      return 'unchanged';
+    }
+    if (!args.drifted) {
+      if (JSON.stringify(args.restated) === JSON.stringify(surface.intakeScope)) return 'unchanged';
+      await ctx.db.patch(surface._id, { intakeScope: surface.intakeScope && args.restated });
+      return 'repointed';
+    }
+    if (
+      surface.verdict === 'proposed' &&
+      surface.managerApprovedAt === undefined &&
+      surface.itApprovedAt === undefined
+    ) {
+      return 'unchanged';
+    }
+    await ctx.db.patch(surface._id, {
+      verdict: 'proposed',
+      reason:
+        'A documented intake queue changed. Reject this card and re-run orientation before approval.',
+      managerApprovedAt: undefined,
+      itApprovedAt: undefined,
+      probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      toolAllowlist: undefined,
+      approvedToolAllowlist: undefined,
+      toolAllowlistApprovedAt: undefined,
+      toolArguments: undefined,
+      lastVerifiedAt: undefined,
+      providerIdentityId: undefined,
+      providerWorkspaceId: undefined,
+      managerDmChannelId: undefined,
+      managerUserId: undefined,
+      managerName: undefined,
+      channelsNotJoined: undefined,
+      lastPolledAt: undefined,
+    });
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'surface.scope-reapproval-required',
+      payload: { surfaceId: surface._id, sourceId: args.sourceId },
+      createdAt: Date.now(),
+    });
+    return 'reapproval';
+  },
+});
+
+/**
+ * Complete a generation: supersede the credentials it no longer found and publish one synced state.
+ *
+ * Internal. The sync action calls it last, once the generation has read every
+ * page (its cursor is `FINISHING_CURSOR`) and removed the pages and mirrors
+ * it did not list and re-read the intake scopes, passing what those steps
+ * counted as `pruned`; a caller that finishes a run from its last read batch
+ * passes that batch instead. A page the generation could not read is in its
+ * refs, so it keeps its last stored version, mirror and credentials; the
+ * run's reason names it and the source's line says so until a sync reads it
+ * (P5-11).
  */
 export const finishSync = internalMutation({
   args: {
@@ -698,6 +1121,14 @@ export const finishSync = internalMutation({
     pageCount: v.number(),
     redactionCount: v.number(),
     unread: unreadPages,
+    pruned: v.optional(
+      v.object({
+        pagesKept: v.number(),
+        pagesRemoved: v.number(),
+        mirrorsRemoved: v.number(),
+        surfacesToReapprove: v.number(),
+      }),
+    ),
   },
   handler: async (
     ctx,
@@ -713,108 +1144,8 @@ export const finishSync = internalMutation({
     ) {
       return { completed: false, pages: 0, redactions: 0 };
     }
-    const refs = [...run.refs, ...args.refs];
-    const current = new Set(refs);
+    const refs = generationRefs(run.refs, args.refs);
     const currentCredentialRefs = new Set([...run.credentialRefs, ...args.credentialRefs]);
-    const pages = await ctx.db
-      .query('docPages')
-      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .collect();
-    const mirrors = await ctx.db
-      .query('mockDocs')
-      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .collect();
-    let pagesRemoved = 0;
-    for (const page of pages) {
-      if (current.has(page.ref)) continue;
-      await ctx.db.delete(page._id);
-      pagesRemoved += 1;
-    }
-    let mirrorsRemoved = 0;
-    for (const mirror of mirrors) {
-      // A mirror an earlier slug rule keyed (a non-ASCII reference before
-      // v0.5.0) is a second copy beside the one this sync wrote (review M20).
-      if (
-        mirror.sourceRef &&
-        current.has(mirror.sourceRef) &&
-        mirror.slug === mirroredDocSlug(source._id, mirror.sourceRef)
-      ) {
-        continue;
-      }
-      await ctx.db.delete(mirror._id);
-      mirrorsRemoved += 1;
-    }
-    let surfacesToReapprove = 0;
-    let credentialsSuperseded = 0;
-    if (SURFACE_MODE === 'real') {
-      const currentScopePages = pages
-        .filter((page) => current.has(page.ref))
-        .map((page) => ({ sourceId: source._id, ref: page.ref, markdown: page.markdown }));
-      const agents = await ctx.db
-        .query('agents')
-        .withIndex('by_userId', (index) => index.eq('userId', source.userId))
-        .take(101);
-      if (agents.length > 100) throw new Error('Documentation source exceeds 100 agents.');
-      for (const agent of agents) {
-        if (!agentReadsSource(agent, source._id)) continue;
-        const surfaces = await ctx.db
-          .query('surfaces')
-          .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
-          .take(1_001);
-        if (surfaces.length > 1_000) throw new Error('Agent exceeds 1,000 surfaces.');
-        for (const surface of surfaces) {
-          if (
-            !surface.intakeScope ||
-            !['proposed', 'approved', 'connected', 'ungranted', 'listed-dead'].includes(
-              surface.verdict,
-            )
-          )
-            continue;
-          // Compared by value: a rename, a move or a reflowed line re-points the
-          // approved quote; only a value no page of this source states demotes.
-          const restated = restatedScope(surface.intakeScope, currentScopePages, source._id);
-          const changed = restated.drift.length > 0;
-          if (!changed && JSON.stringify(restated.scope) !== JSON.stringify(surface.intakeScope)) {
-            await ctx.db.patch(surface._id, { intakeScope: restated.scope });
-            continue;
-          }
-          if (
-            !changed ||
-            (surface.verdict === 'proposed' &&
-              surface.managerApprovedAt === undefined &&
-              surface.itApprovedAt === undefined)
-          )
-            continue;
-          await ctx.db.patch(surface._id, {
-            verdict: 'proposed',
-            reason:
-              'A documented intake queue changed. Reject this card and re-run orientation before approval.',
-            managerApprovedAt: undefined,
-            itApprovedAt: undefined,
-            probeGeneration: (surface.probeGeneration ?? 0) + 1,
-            toolAllowlist: undefined,
-            approvedToolAllowlist: undefined,
-            toolAllowlistApprovedAt: undefined,
-            toolArguments: undefined,
-            lastVerifiedAt: undefined,
-            providerIdentityId: undefined,
-            providerWorkspaceId: undefined,
-            managerDmChannelId: undefined,
-            managerUserId: undefined,
-            managerName: undefined,
-            channelsNotJoined: undefined,
-            lastPolledAt: undefined,
-          });
-          surfacesToReapprove += 1;
-          await appendEvent(ctx, {
-            agentId: surface.agentId,
-            type: 'surface.scope-reapproval-required',
-            payload: { surfaceId: surface._id, sourceId: source._id },
-            createdAt: Date.now(),
-          });
-        }
-      }
-    }
     const credentials = await ctx.db
       .query('credentials')
       .withIndex('by_user_source_ref', (index) =>
@@ -822,66 +1153,22 @@ export const finishSync = internalMutation({
       )
       .take(1_001);
     if (credentials.length > 1_000) throw new Error('Source exceeds 1,000 credentials.');
+    let credentialsSuperseded = 0;
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
-      // Superseded, not revoked: the status alone keeps the value out of every
-      // decrypt and exact-value list, and the same value returning on a later
-      // sync revives the row (`credentials.store`). Only a person's revoke
-      // stamps `revokedAt`, so a sync never undoes one and never makes one.
-      await ctx.db.patch(credential._id, {
-        status: 'superseded',
-        statusReason: 'No longer detected in synced documentation.',
-      });
+      await supersedeCredential(ctx, credential);
       credentialsSuperseded += 1;
-      const surfaces = await ctx.db
-        .query('surfaces')
-        .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
-        .take(1_001);
-      if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
-      for (const surface of surfaces) {
-        const request = surface.request as { credential?: Record<string, unknown> } | undefined;
-        const location =
-          surface.credentialLocation ??
-          'Ask the system administrator to land a valid credential using the linked documentation.';
-        await ctx.db.patch(surface._id, {
-          credentialId: undefined,
-          credentialKind: undefined,
-          credentialLocation: location,
-          credentialLanded: false,
-          request: request
-            ? {
-                ...request,
-                credential: {
-                  ...request.credential,
-                  found: 'location',
-                  location,
-                  governanceFinding: undefined,
-                },
-              }
-            : undefined,
-          verdict: ['connected', 'approved', 'listed-dead'].includes(surface.verdict)
-            ? 'ungranted'
-            : surface.verdict,
-          reason:
-            'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
-          // A probe that already decrypted the retired value cannot reconnect this surface.
-          probeGeneration: (surface.probeGeneration ?? 0) + 1,
-          toolAllowlist: undefined,
-          toolArguments: undefined,
-          lastVerifiedAt: undefined,
-          providerIdentityId: undefined,
-          providerWorkspaceId: undefined,
-          managerDmChannelId: undefined,
-          managerUserId: undefined,
-          managerName: undefined,
-          channelsNotJoined: undefined,
-        });
-      }
     }
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
     const unreadRecord = withUnreadPages(run.reason, args.unread ?? []);
+    const pruned = args.pruned ?? {
+      pagesKept: refs.length,
+      pagesRemoved: 0,
+      mirrorsRemoved: 0,
+      surfacesToReapprove: 0,
+    };
     const now = Date.now();
     await ctx.db.patch(run._id, {
       cursor: undefined,
@@ -892,13 +1179,7 @@ export const finishSync = internalMutation({
       state: 'completed',
       completedAt: now,
       reason: unreadRecord,
-      summary: {
-        pagesKept: pages.length - pagesRemoved,
-        pagesRemoved,
-        mirrorsRemoved,
-        credentialsSuperseded,
-        surfacesToReapprove,
-      },
+      summary: { ...pruned, credentialsSuperseded },
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
@@ -911,6 +1192,68 @@ export const finishSync = internalMutation({
     return { completed: true, pages: pageCount, redactions: redactionCount };
   },
 });
+
+/**
+ * Supersede one page-derived credential no page of its source states any more,
+ * and send every surface bound to it back to landing a credential.
+ */
+async function supersedeCredential(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+): Promise<void> {
+  // Superseded, not revoked: the status alone keeps the value out of every
+  // decrypt and exact-value list, and the same value returning on a later
+  // sync revives the row (`credentials.store`). Only a person's revoke
+  // stamps `revokedAt`, so a sync never undoes one and never makes one.
+  await ctx.db.patch(credential._id, {
+    status: 'superseded',
+    statusReason: 'No longer detected in synced documentation.',
+  });
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
+    .take(1_001);
+  if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
+  for (const surface of surfaces) {
+    const request = surface.request as { credential?: Record<string, unknown> } | undefined;
+    const location =
+      surface.credentialLocation ??
+      'Ask the system administrator to land a valid credential using the linked documentation.';
+    await ctx.db.patch(surface._id, {
+      credentialId: undefined,
+      credentialKind: undefined,
+      credentialLocation: location,
+      credentialLanded: false,
+      request: request
+        ? {
+            ...request,
+            credential: {
+              ...request.credential,
+              found: 'location',
+              location,
+              governanceFinding: undefined,
+            },
+          }
+        : undefined,
+      verdict: ['connected', 'approved', 'listed-dead'].includes(surface.verdict)
+        ? 'ungranted'
+        : surface.verdict,
+      reason:
+        'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
+      // A probe that already decrypted the retired value cannot reconnect this surface.
+      probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      toolAllowlist: undefined,
+      toolArguments: undefined,
+      lastVerifiedAt: undefined,
+      providerIdentityId: undefined,
+      providerWorkspaceId: undefined,
+      managerDmChannelId: undefined,
+      managerUserId: undefined,
+      managerName: undefined,
+      channelsNotJoined: undefined,
+    });
+  }
+}
 
 /** Mark only the currently active generation as failed. */
 export const failSync = internalMutation({
@@ -941,10 +1284,6 @@ export const syncReport = internalQuery({
   handler: async (ctx, args) => {
     const source = await ctx.db.get(args.sourceId);
     if (!source) return null;
-    const pages = await ctx.db
-      .query('docPages')
-      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .collect();
     const latest = await ctx.db
       .query('docSyncRuns')
       .withIndex('by_source', (index) => index.eq('sourceId', source._id))
@@ -952,7 +1291,7 @@ export const syncReport = internalQuery({
       .first();
     return {
       status: source.status,
-      pageCount: pages.length,
+      pageCount: await storedPageCount(ctx, source),
       redactionCount: latest?.redactionCount ?? 0,
       running: source.activeSyncId !== undefined,
       lastError: source.lastError,
@@ -993,55 +1332,24 @@ export const upsertPage = internalMutation({
       updatedAt: args.updatedAt,
     };
     if (existing) {
-      await ctx.db.patch(existing._id, page);
+      // An unchanged page is not written again, so every subscriber to the
+      // page is not woken on each fifteen-minute sync (P5-18).
+      const unchanged =
+        existing.title === page.title &&
+        existing.url === page.url &&
+        existing.markdown === page.markdown;
+      if (!unchanged) await ctx.db.patch(existing._id, page);
       return existing._id;
     }
     return await ctx.db.insert('docPages', { sourceId: args.sourceId, ref: args.ref, ...page });
   },
 });
 
-/** Delete stale source pages and their per-agent mirrors after a complete sync. */
-export const deleteMissingPages = internalMutation({
-  args: { sourceId: v.id('docSources'), currentRefs: v.array(v.string()) },
-  handler: async (ctx, args): Promise<{ pages: number; mirrors: number }> => {
-    const current = new Set(args.currentRefs);
-    const pages = (
-      await ctx.db
-        .query('docPages')
-        .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-        .collect()
-    ).filter((page) => !current.has(page.ref));
-    const mirrors = (
-      await ctx.db
-        .query('mockDocs')
-        .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-        .collect()
-    ).filter((page) => !page.sourceRef || !current.has(page.sourceRef));
-    await Promise.all([...pages, ...mirrors].map(async (row) => await ctx.db.delete(row._id)));
-    return { pages: pages.length, mirrors: mirrors.length };
-  },
-});
-
-/** Persist a source sync state without exposing credential material. */
-export const setStatus = internalMutation({
-  args: {
-    sourceId: v.id('docSources'),
-    status: sourceStatus,
-    lastError: v.optional(v.string()),
-    lastSyncAt: v.optional(v.number()),
-  },
-  handler: async (ctx, args): Promise<void> => {
-    await ctx.db.patch(args.sourceId, {
-      status: args.status,
-      lastError: args.lastError,
-      lastSyncAt: args.lastSyncAt,
-      updatedAt: Date.now(),
-    });
-  },
-});
-
 /**
  * Delete all documentation owned by one caller during an explicit full reset.
+ *
+ * Each source goes now, with its credentials and discovered systems; its
+ * pages, mirrors and runs are deleted in scheduled pages (`deleteSourceRows`).
  *
  * Args:
  *   ctx: Convex mutation context.
@@ -1055,18 +1363,6 @@ export async function deleteOwnedDocumentation(ctx: MutationCtx, userId: string)
     .query('docSources')
     .withIndex('by_user', (index) => index.eq('userId', userId))
     .collect();
-  for (const source of sources) {
-    const pages = await ctx.db
-      .query('docPages')
-      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .collect();
-    const mirrors = await ctx.db
-      .query('mockDocs')
-      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
-      .collect();
-    await retireSourceState(ctx, source);
-    for (const row of [...pages, ...mirrors]) await ctx.db.delete(row._id);
-    await ctx.db.delete(source._id);
-  }
+  for (const source of sources) await removeSource(ctx, source);
   return sources.length;
 }

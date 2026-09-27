@@ -1,6 +1,7 @@
 'use node';
 
 import { v } from 'convex/values';
+import type { PaginationResult } from 'convex/server';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -18,6 +19,14 @@ import { redactSecret } from '../src/surfaces/redact';
 import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 import type { UnreadPage } from '../src/docs/readers/batch';
+import {
+  intakeScopeValues,
+  restatedScope,
+  type IntakeScope,
+  type ScopePage,
+} from '../src/surfaces/intake-scope';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { FINISHING_CURSOR, PAGED_READ } from './docSources';
 
 export const SYNC_BATCH_SIZE = 25;
 
@@ -289,19 +298,19 @@ async function keptUnreadPages(
   return { refs: unread.map((page): string => page.ref), credentialRefs };
 }
 
+/** What one sync step reports to its caller. */
+interface SyncResult {
+  ok: boolean;
+  pages: number;
+  redactions: number;
+  complete: boolean;
+  reason?: string;
+}
+
 /** Start a fenced source sync and execute its first bounded batch. */
 export const syncSource = internalAction({
   args: { sourceId: v.id('docSources') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    ok: boolean;
-    pages: number;
-    redactions: number;
-    complete: boolean;
-    reason?: string;
-  }> => {
+  handler: async (ctx, args): Promise<SyncResult> => {
     const source = await ctx.runQuery(internal.docSources.getInternal, {
       sourceId: args.sourceId,
     });
@@ -309,6 +318,7 @@ export const syncSource = internalAction({
       return { ok: false, pages: 0, redactions: 0, complete: true, reason: 'source not found' };
     }
     const runId = await ctx.runMutation(internal.docSources.beginSync, { sourceId: source._id });
+    await ctx.runMutation(internal.docSources.pruneRunHistory, { sourceId: source._id });
     return await ctx.runAction(internal.docSyncActions.syncBatch, {
       sourceId: source._id,
       runId,
@@ -316,23 +326,19 @@ export const syncSource = internalAction({
   },
 });
 
-/** Read and persist at most 25 pages, then schedule a secret-free continuation. */
+/**
+ * Read and persist at most 25 pages, then schedule a secret-free continuation.
+ *
+ * After the last batch the run holds `FINISHING_CURSOR` and the same action
+ * finishes it; a batch scheduled at that cursor only finishes.
+ */
 export const syncBatch = internalAction({
   args: {
     sourceId: v.id('docSources'),
     runId: v.id('docSyncRuns'),
     cursor: v.optional(v.string()),
   },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    ok: boolean;
-    pages: number;
-    redactions: number;
-    complete: boolean;
-    reason?: string;
-  }> => {
+  handler: async (ctx, args): Promise<SyncResult> => {
     const context = await ctx.runQuery(internal.docSources.syncContext, {
       sourceId: args.sourceId,
       runId: args.runId,
@@ -342,6 +348,7 @@ export const syncBatch = internalAction({
     let secret: string | undefined;
     let known: readonly string[] = [];
     try {
+      if (args.cursor === FINISHING_CURSOR) return await finishGeneration(ctx, source, args.runId);
       known = await ownerKnownValues(ctx, source.userId);
       if (source.kind === 'mcp') {
         if (!source.credentialId) throw new Error('Documentation credential is not landed.');
@@ -357,6 +364,9 @@ export const syncBatch = internalAction({
       );
       if (batch.pages.length + batch.unread.length > SYNC_BATCH_SIZE) {
         throw new Error('Documentation reader exceeded the 25-page action limit.');
+      }
+      if (batch.nextCursor === FINISHING_CURSOR) {
+        throw new Error('Documentation reader returned a continuation Day0 reserves.');
       }
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
@@ -381,54 +391,30 @@ export const syncBatch = internalAction({
         ...persisted.unread,
       ];
       const kept = await keptUnreadPages(ctx, source, unread);
-      const recordedBatch = {
+      if (batch.nextCursor !== undefined && batch.nextCursor === args.cursor) {
+        throw new Error('Documentation reader repeated its continuation cursor.');
+      }
+      const nextCursor = batch.nextCursor ?? FINISHING_CURSOR;
+      const recorded = await ctx.runMutation(internal.docSources.recordSyncBatch, {
+        sourceId: source._id,
+        runId: args.runId,
+        currentCursor: args.cursor,
+        nextCursor,
         refs: [...persisted.refs, ...kept.refs],
         credentialRefs: [...persisted.credentialRefs, ...kept.credentialRefs],
         pageCount: persisted.pages,
         redactionCount: persisted.redactions,
         unread,
-      };
-      if (batch.nextCursor) {
-        if (batch.nextCursor === args.cursor) {
-          throw new Error('Documentation reader repeated its continuation cursor.');
-        }
-        const recorded = await ctx.runMutation(internal.docSources.recordSyncBatch, {
-          sourceId: source._id,
-          runId: args.runId,
-          currentCursor: args.cursor,
-          nextCursor: batch.nextCursor,
-          ...recordedBatch,
-        });
-        const counts = { pages: persisted.pages, redactions: persisted.redactions };
-        if (!recorded) return { ok: false, ...counts, complete: true };
-        await ctx.scheduler.runAfter(0, internal.docSyncActions.syncBatch, {
-          sourceId: source._id,
-          runId: args.runId,
-          cursor: batch.nextCursor,
-        });
-        return { ok: true, ...counts, complete: false };
-      }
-      const completed = await ctx.runMutation(internal.docSources.finishSync, {
+      });
+      const counts = { pages: persisted.pages, redactions: persisted.redactions };
+      if (!recorded) return { ok: false, ...counts, complete: true };
+      if (nextCursor === FINISHING_CURSOR) return await finishGeneration(ctx, source, args.runId);
+      await ctx.scheduler.runAfter(0, internal.docSyncActions.syncBatch, {
         sourceId: source._id,
         runId: args.runId,
-        currentCursor: args.cursor,
-        ...recordedBatch,
+        cursor: nextCursor,
       });
-      if (completed.completed) {
-        await ctx.scheduler.runAfter(0, internal.documentationDiscoveryActions.discoverSource, {
-          sourceId: source._id,
-          runId: args.runId,
-        });
-        await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
-          sourceId: source._id,
-        });
-      }
-      return {
-        ok: completed.completed,
-        pages: completed.pages,
-        redactions: completed.redactions,
-        complete: true,
-      };
+      return { ok: true, ...counts, complete: false };
     } catch (error) {
       // A read cut off mid-batch is recorded as the transient it is, with its cause.
       // A stopped redaction component is a person's to start, not a transient.
@@ -450,7 +436,145 @@ export const syncBatch = internalAction({
   },
 });
 
-/** Mirror already-synced inherited sources for a newly deployed agent. */
+/** What walking one finishing step over a source's rows counted. */
+interface PruneTotals {
+  kept: number;
+  removed: number;
+}
+
+/**
+ * Finish a generation that has read every page, one bounded transaction at a time.
+ *
+ * The stored pages and mirrors it did not list are removed in pages, the
+ * employees' intake scopes are re-read against the pages as they now stand
+ * (real mode), and `finishSync` supersedes the credentials no page states and
+ * publishes the synced state with what each step counted. Each step is fenced
+ * on the run, so a newer sync stops it; a finish cut off part-way resumes at
+ * `FINISHING_CURSOR`. A completed generation schedules discovery and the
+ * re-orientation of the absent systems its pages may now document.
+ */
+async function finishGeneration(
+  ctx: ActionCtx,
+  source: Doc<'docSources'>,
+  runId: Id<'docSyncRuns'>,
+): Promise<SyncResult> {
+  const pages = await pruneWhole(ctx, internal.docSources.prunePages, source._id, runId);
+  const mirrors = await pruneWhole(ctx, internal.docSources.pruneMirrors, source._id, runId);
+  const surfacesToReapprove =
+    SURFACE_MODE === 'real' ? await restateScopes(ctx, source._id, runId) : 0;
+  const completed = await ctx.runMutation(internal.docSources.finishSync, {
+    sourceId: source._id,
+    runId,
+    currentCursor: FINISHING_CURSOR,
+    refs: [],
+    credentialRefs: [],
+    pageCount: 0,
+    redactionCount: 0,
+    pruned: {
+      pagesKept: pages.kept,
+      pagesRemoved: pages.removed,
+      mirrorsRemoved: mirrors.removed,
+      surfacesToReapprove,
+    },
+  });
+  if (completed.completed) {
+    await ctx.scheduler.runAfter(0, internal.documentationDiscoveryActions.discoverSource, {
+      sourceId: source._id,
+      runId,
+    });
+    await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
+      sourceId: source._id,
+    });
+  }
+  return {
+    ok: completed.completed,
+    pages: completed.pages,
+    redactions: completed.redactions,
+    complete: true,
+  };
+}
+
+/** Walk one pruning step over the whole source, a bounded page per transaction. */
+async function pruneWhole(
+  ctx: ActionCtx,
+  step: typeof internal.docSources.prunePages | typeof internal.docSources.pruneMirrors,
+  sourceId: Id<'docSources'>,
+  runId: Id<'docSyncRuns'>,
+): Promise<PruneTotals> {
+  const totals: PruneTotals = { kept: 0, removed: 0 };
+  let cursor: string | null = null;
+  for (;;) {
+    const page: { kept: number; removed: number; continueCursor: string; isDone: boolean } =
+      await ctx.runMutation(step, { sourceId, runId, cursor });
+    totals.kept += page.kept;
+    totals.removed += page.removed;
+    if (page.isDone) return totals;
+    cursor = page.continueCursor;
+  }
+}
+
+/**
+ * Re-read every approved intake scope quoting this source against its pages as they now stand.
+ *
+ * Only the pages that could state an approved value are held in memory (a
+ * page states a value only by containing it); every page's ref is kept, so a
+ * value whose page remains and stopped stating it drifts, and one whose page
+ * is gone may follow it within its team (`restatedScope`).
+ *
+ * @returns How many cards the changed pages returned to the manager.
+ */
+async function restateScopes(
+  ctx: ActionCtx,
+  sourceId: Id<'docSources'>,
+  runId: Id<'docSyncRuns'>,
+): Promise<number> {
+  const scoped = await ctx.runQuery(internal.docSources.scopedSurfaces, { sourceId });
+  const values = scoped.flatMap((surface) =>
+    intakeScopeValues(surface.intakeScope as IntakeScope)
+      .filter((value): boolean => value.sourceId === sourceId)
+      .map((value): string => value.value.toLowerCase()),
+  );
+  if (values.length === 0) return 0;
+  const pages: ScopePage[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const page: PaginationResult<Doc<'docPages'>> = await ctx.runQuery(
+      internal.docSources.pagesForSourceInternal,
+      { sourceId, paginationOpts: { numItems: PAGED_READ.numItems, cursor } },
+    );
+    for (const row of page.page) {
+      const text = row.markdown.toLowerCase();
+      const statesValue = values.some((value): boolean => text.includes(value));
+      pages.push({ sourceId, ref: row.ref, markdown: statesValue ? row.markdown : '' });
+    }
+    if (page.isDone) break;
+    cursor = page.continueCursor;
+  }
+  let reapprovals = 0;
+  for (const surface of scoped) {
+    const restated = restatedScope(surface.intakeScope, pages, sourceId);
+    const drifted = restated.drift.length > 0;
+    if (!drifted && JSON.stringify(restated.scope) === JSON.stringify(surface.intakeScope)) {
+      continue;
+    }
+    const outcome = await ctx.runMutation(internal.docSources.applyRestatedScope, {
+      sourceId,
+      runId,
+      surfaceId: surface.surfaceId,
+      read: surface.intakeScope,
+      restated: restated.scope,
+      drifted,
+    });
+    if (outcome === 'reapproval') reapprovals += 1;
+  }
+  return reapprovals;
+}
+
+/**
+ * Mirror already-synced inherited sources for a newly deployed agent.
+ *
+ * Each source is read a bounded page at a time and mirrored as it is read.
+ */
 export const mirrorForAgent = internalAction({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ pages: number }> => {
@@ -459,25 +583,31 @@ export const mirrorForAgent = internalAction({
     });
     let count = 0;
     for (const source of sources) {
-      const pages = await ctx.runQuery(internal.docSources.pagesForSourceInternal, {
-        sourceId: source._id,
-      });
-      const normalised = pages.map(
-        (page): DocPage => ({
-          sourceId: source._id,
-          ref: page.ref,
-          title: page.title,
-          url: page.url,
-          markdown: page.markdown,
-          updatedAt: page.updatedAt,
-        }),
-      );
-      await mirrorPages(ctx, args.agentId, source, normalised);
+      let cursor: string | null = null;
+      for (;;) {
+        const page: PaginationResult<Doc<'docPages'>> = await ctx.runQuery(
+          internal.docSources.pagesForSourceInternal,
+          { sourceId: source._id, paginationOpts: { numItems: PAGED_READ.numItems, cursor } },
+        );
+        const normalised = page.page.map(
+          (row): DocPage => ({
+            sourceId: source._id,
+            ref: row.ref,
+            title: row.title,
+            url: row.url,
+            markdown: row.markdown,
+            updatedAt: row.updatedAt,
+          }),
+        );
+        await mirrorPages(ctx, args.agentId, source, normalised);
+        count += normalised.length;
+        if (page.isDone) break;
+        cursor = page.continueCursor;
+      }
       await ctx.runMutation(internal.documentationDiscovery.seedForAgent, {
         agentId: args.agentId,
         sourceId: source._id,
       });
-      count += pages.length;
     }
     return { pages: count };
   },
@@ -487,14 +617,23 @@ export const mirrorForAgent = internalAction({
 export const syncAll = internalAction({
   args: {},
   handler: async (ctx): Promise<{ sources: number; passed: number }> => {
-    const sources = await ctx.runQuery(internal.docSources.listSyncable, {});
+    let started = 0;
     let passed = 0;
-    for (const source of sources) {
-      const result = await ctx.runAction(internal.docSyncActions.syncSource, {
-        sourceId: source._id,
-      });
-      if (result.ok) passed += 1;
+    let cursor: string | null = null;
+    for (;;) {
+      const page: PaginationResult<Doc<'docSources'>> = await ctx.runQuery(
+        internal.docSources.listSyncable,
+        { paginationOpts: { numItems: 100, cursor } },
+      );
+      for (const source of page.page) {
+        const result = await ctx.runAction(internal.docSyncActions.syncSource, {
+          sourceId: source._id,
+        });
+        started += 1;
+        if (result.ok) passed += 1;
+      }
+      if (page.isDone) return { sources: started, passed };
+      cursor = page.continueCursor;
     }
-    return { sources: sources.length, passed };
   },
 });

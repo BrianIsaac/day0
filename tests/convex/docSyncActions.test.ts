@@ -320,7 +320,12 @@ describe('documentation sync batching', (): void => {
     expect(runs[0]).toMatchObject({ state: 'completed', pageCount: 60, refs: expect.any(Array) });
     expect(runs[0].refs).toHaveLength(60);
     expect(JSON.stringify(runs)).not.toContain(value);
-    const pages = await harness.query(internal.docSources.pagesForSourceInternal, { sourceId });
+    const pages = (
+      await harness.query(internal.docSources.pagesForSourceInternal, {
+        sourceId,
+        paginationOpts: { numItems: 100, cursor: null },
+      })
+    ).page;
     expect(pages).toHaveLength(60);
     expect(JSON.stringify(pages)).not.toContain(value);
     expect(pages.find((page) => page.ref === 'page-30.md')?.markdown).toContain(
@@ -537,7 +542,12 @@ describe('documentation sync batching', (): void => {
     // One open per stored row for the whole batch: the list is resolved
     // once and handed to every page.
     expect(vi.mocked(openSpy)).toHaveBeenCalledTimes(stored.length);
-    const pages = await harness.query(internal.docSources.pagesForSourceInternal, { sourceId });
+    const pages = (
+      await harness.query(internal.docSources.pagesForSourceInternal, {
+        sourceId,
+        paginationOpts: { numItems: 100, cursor: null },
+      })
+    ).page;
     expect(pages).toHaveLength(3);
     for (const value of stored) expect(JSON.stringify(pages)).not.toContain(value);
     expect(pages.every((page) => page.markdown.includes('<credential: '))).toBe(true);
