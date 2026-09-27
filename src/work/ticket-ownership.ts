@@ -191,9 +191,9 @@ function sameState(left: string, right: string): boolean {
  *
  * @param now - The ticket as it reads now.
  * @param context - The plan's listing, the listing the manager's last
- *   Retry saw (its open state only counts), the states Day0 set on the ticket (names, or types when a run
- *   set one by type), and the key's owner, read only when an assignee has
- *   to be compared with it.
+ *   Retry saw (its open state only counts), the states Day0 set on the
+ *   ticket (names, or types when a run set one by type), and the key's
+ *   owner, read only when an assignee has to be compared with it.
  * @returns The named change, or undefined.
  */
 export async function ticketChange(
