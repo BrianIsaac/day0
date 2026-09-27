@@ -152,13 +152,21 @@ export interface DocumentedEndpoints {
   /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
   insecure?: string;
   /** The first MCP endpoint the probe's address rule refuses, with the probe's own reason. */
-  refusedMcp?: RefusedMcpEndpoint;
+  refusedMcp?: RefusedEndpoint;
+  /** The first API base the probe's address rule refuses, with the probe's own reason. */
+  refusedApi?: RefusedEndpoint;
 }
 
-/** A documented MCP endpoint orientation did not admit because the probe would refuse it. */
-export interface RefusedMcpEndpoint {
+/** A documented MCP or API endpoint orientation did not admit because the probe would refuse it. */
+export interface RefusedEndpoint {
   readonly endpoint: string;
   readonly reason: string;
+}
+
+/** One documented endpoint of a rung, and the probe's refusal of it, if any. */
+interface JudgedEndpoint {
+  readonly endpoint: string;
+  readonly reason: string | undefined;
 }
 
 export interface SurfacePathCandidate {
@@ -679,42 +687,71 @@ export function isCredentialSafeEndpoint(url: string): boolean {
 /**
  * Group attributed URLs by the kind of surface they document.
  *
+ * The MCP and documented-API rungs are both held to the probe's one address
+ * rule (`approvedMcpEndpoint`, which the HTTP rung's client applies too): an
+ * https address on a public host, or on a host `DAY0_PRIVATE_HOSTS` lists
+ * (review m27). A host the rule refused, or a plaintext public MCP or API
+ * address, is never the web UI either, because the browser rung would reach
+ * the same host and send the login over the same hop (review m28).
+ *
  * @param urls - URLs attributed to one system.
  * @param privateHosts - The operator's private-host allowlist; the environment's when omitted.
- * @returns The first MCP endpoint the probe would admit, the first API base, the first other
- *   URL, the first plaintext public endpoint refused as an MCP or API base, and the first MCP
- *   endpoint the probe's address rule refuses when none is admitted.
+ * @returns The first MCP endpoint and the first API base the probe would admit, the first
+ *   other URL on a host nothing refused, the first plaintext public endpoint refused as an
+ *   MCP or API base, and the first MCP endpoint and API base the probe's address rule refuses
+ *   when none of their kind is admitted.
  */
 export function documentedEndpoints(
   urls: string[],
   privateHosts?: PrivateHostAllowlist,
 ): DocumentedEndpoints {
-  const safe = urls.filter(isCredentialSafeEndpoint);
-  const insecure = urls.find(
-    (url: string): boolean =>
-      !isCredentialSafeEndpoint(url) && (MCP_SEGMENT.test(url) || API_BASE.test(url)),
+  const documentsRung = (url: string): boolean => MCP_SEGMENT.test(url) || API_BASE.test(url);
+  const plaintextPublic = urls.filter(
+    (url: string): boolean => !isCredentialSafeEndpoint(url) && documentsRung(url),
   );
-  const judged = safe
-    .filter((url: string): boolean => MCP_SEGMENT.test(url))
-    .map((endpoint: string) => ({ endpoint, reason: mcpEndpointRefusal(endpoint, privateHosts) }));
-  const mcp = judged.find(({ reason }): boolean => reason === undefined)?.endpoint;
-  const refused = mcp === undefined ? judged[0] : undefined;
-  const refusedMcp =
-    refused?.reason === undefined
-      ? undefined
-      : { endpoint: refused.endpoint, reason: refused.reason };
-  const api = safe.find((url: string): boolean => url !== mcp && API_BASE.test(url));
-  // No page on a refused MCP host is a web UI either: the browser rung would
-  // reach the same unlisted host the probe refused.
+  const judge = (candidates: readonly string[]): JudgedEndpoint[] =>
+    candidates
+      .filter(isCredentialSafeEndpoint)
+      .map((endpoint: string) => ({
+        endpoint,
+        reason: probeAddressRefusal(endpoint, privateHosts),
+      }));
+  const judgedMcp = judge(urls.filter((url: string): boolean => MCP_SEGMENT.test(url)));
+  const mcp = firstAdmitted(judgedMcp);
+  const judgedApi = judge(urls.filter((url: string): boolean => url !== mcp && API_BASE.test(url)));
+  const api = firstAdmitted(judgedApi);
   const refusedHosts = new Set(
-    judged
-      .filter(({ reason }): boolean => reason !== undefined)
-      .map(({ endpoint }) => hostnameOf(endpoint)),
+    [
+      ...[...judgedMcp, ...judgedApi]
+        .filter(({ reason }): boolean => reason !== undefined)
+        .map(({ endpoint }) => endpoint),
+      ...plaintextPublic,
+    ].map(hostnameOf),
   );
   const webUi = urls.find(
     (url: string): boolean => url !== mcp && url !== api && !refusedHosts.has(hostnameOf(url)),
   );
-  return { mcp, api, webUi, insecure, refusedMcp };
+  return {
+    mcp,
+    api,
+    webUi,
+    insecure: plaintextPublic[0],
+    refusedMcp: mcp === undefined ? firstRefused(judgedMcp) : undefined,
+    refusedApi: api === undefined ? firstRefused(judgedApi) : undefined,
+  };
+}
+
+/** The first endpoint the probe would admit. */
+function firstAdmitted(judged: readonly JudgedEndpoint[]): string | undefined {
+  return judged.find(({ reason }): boolean => reason === undefined)?.endpoint;
+}
+
+/** The first endpoint the probe refused, with its reason. */
+function firstRefused(judged: readonly JudgedEndpoint[]): RefusedEndpoint | undefined {
+  const refused = judged.find(({ reason }): boolean => reason !== undefined);
+  return refused?.reason === undefined
+    ? undefined
+    : { endpoint: refused.endpoint, reason: refused.reason };
 }
 
 /** A URL's lower-case hostname, or the empty string for one that does not parse. */
@@ -728,17 +765,18 @@ function hostnameOf(url: string): string {
 }
 
 /**
- * Hold an MCP endpoint to the probe's own address rule before proposing it.
+ * Hold an MCP endpoint or an API base to the probe's own address rule before proposing it.
  *
- * The probe and every MCP client admit a private host only when
- * `DAY0_PRIVATE_HOSTS` lists it, and only over https; orientation applies the
- * same function so it never proposes an endpoint the probe will refuse.
+ * The probe and every MCP and documented-API client admit a private host
+ * only when `DAY0_PRIVATE_HOSTS` lists it, and only over https; orientation
+ * applies the same function so it never proposes an endpoint the probe will
+ * refuse.
  *
- * @param url - A documented MCP endpoint.
+ * @param url - A documented MCP endpoint or API base.
  * @param privateHosts - The operator's allowlist; the environment's when omitted.
  * @returns The probe's refusal message, or `undefined` when the probe would admit the endpoint.
  */
-function mcpEndpointRefusal(url: string, privateHosts?: PrivateHostAllowlist): string | undefined {
+function probeAddressRefusal(url: string, privateHosts?: PrivateHostAllowlist): string | undefined {
   try {
     approvedMcpEndpoint(url, privateHosts);
     return undefined;
@@ -1569,6 +1607,11 @@ export async function orientSurface(
   if (endpoints.refusedMcp) {
     openQuestions.push(
       `The documented MCP endpoint ${endpoints.refusedMcp.endpoint} was not admitted: ${endpoints.refusedMcp.reason}`,
+    );
+  }
+  if (endpoints.refusedApi) {
+    openQuestions.push(
+      `The documented API ${endpoints.refusedApi.endpoint} was not admitted: ${endpoints.refusedApi.reason}`,
     );
   }
   if (registrySuggestion) {

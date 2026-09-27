@@ -675,10 +675,12 @@ describe('URL attribution', (): void => {
     expect(isCredentialSafeEndpoint('http://playwright-mcp:8931/mcp')).toBe(true);
     expect(isCredentialSafeEndpoint('http://api.example.com/v1')).toBe(false);
     expect(isCredentialSafeEndpoint('not a url')).toBe(false);
+    // A plaintext public MCP or API address is not a web UI either: the browser
+    // rung would send the login over the same plaintext hop (review m28).
     expect(documentedEndpoints(['http://api.example.com/v1'])).toEqual({
       mcp: undefined,
       api: undefined,
-      webUi: 'http://api.example.com/v1',
+      webUi: undefined,
       insecure: 'http://api.example.com/v1',
     });
     expect(
@@ -686,9 +688,44 @@ describe('URL attribution', (): void => {
     ).toEqual({
       mcp: undefined,
       api: 'https://api.example.com/v1',
-      webUi: 'http://mcp.evil.example/mcp',
+      webUi: undefined,
       insecure: 'http://mcp.evil.example/mcp',
     });
+    expect(
+      documentedEndpoints([
+        'http://mcp.evil.example/mcp',
+        'http://mcp.evil.example/login',
+        'https://app.example.com/login',
+      ]).webUi,
+    ).toBe('https://app.example.com/login');
+  });
+
+  it('holds a documented API to the probe address rule the MCP rung is held to (review m27)', (): void => {
+    const unlisted = documentedEndpoints(
+      ['https://tracker.corp.internal/api/v2/', 'https://tracker.corp.internal/login'],
+      privateHostAllowlist(''),
+    );
+    expect(unlisted.api).toBeUndefined();
+    expect(unlisted.refusedApi?.endpoint).toBe('https://tracker.corp.internal/api/v2/');
+    expect(unlisted.refusedApi?.reason).toContain('DAY0_PRIVATE_HOSTS');
+    expect(unlisted.webUi).toBeUndefined();
+    expect(
+      documentedEndpoints(
+        ['https://tracker.corp.internal/api/v2/'],
+        privateHostAllowlist('tracker.corp.internal'),
+      ),
+    ).toEqual({
+      mcp: undefined,
+      api: 'https://tracker.corp.internal/api/v2/',
+      webUi: undefined,
+      insecure: undefined,
+      refusedMcp: undefined,
+      refusedApi: undefined,
+    });
+    // Listed but plaintext: the documented-API probe sends its key over https only.
+    expect(
+      documentedEndpoints(['http://tracker:8080/api/v2'], privateHostAllowlist('tracker')).api,
+    ).toBeUndefined();
   });
 
   it('admits a private MCP endpoint only when DAY0_PRIVATE_HOSTS lists its host', (): void => {
@@ -1078,6 +1115,47 @@ describe('orientation run', (): void => {
     expect((ledger.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
       'plaintext http on a public host',
     );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('proposes a private documented API only when DAY0_PRIVATE_HOSTS lists its host (review m27)', async (): Promise<void> => {
+    const fetchMock = stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const page = {
+      'tracker.md':
+        '# Tracker\n\nTracker has a documented API at https://tracker.corp.internal/api/v2/.',
+    };
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    try {
+      const harness = convexTest(schema, orientationModules());
+      const { agentId } = await seedOrientation(harness, page, [
+        { name: 'Tracker', class: 'other' },
+      ]);
+      await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+      const tracker = (await surfacesBySlug(harness, agentId)).tracker;
+      expect(tracker).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+      expect(tracker.endpoint).toBeUndefined();
+      expect((tracker.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
+        'The documented API https://tracker.corp.internal/api/v2/ was not admitted',
+      );
+
+      vi.stubEnv('DAY0_PRIVATE_HOSTS', 'tracker.corp.internal');
+      const listedHarness = convexTest(schema, orientationModules());
+      const listed = await seedOrientation(listedHarness, page, [
+        { name: 'Tracker', class: 'other' },
+      ]);
+      await expect(orientDeclared(listedHarness, listed.agentId)).resolves.toEqual({
+        proposed: 1,
+        absent: 0,
+      });
+      expect((await surfacesBySlug(listedHarness, listed.agentId)).tracker).toMatchObject({
+        verdict: 'proposed',
+        path: 'documented-api',
+        endpoint: 'https://tracker.corp.internal/api/v2/',
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
