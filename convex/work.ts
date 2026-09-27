@@ -730,10 +730,12 @@ async function listedRow(
 ): Promise<Doc<'workItems'> | null> {
   return await ctx.db
     .query('workItems')
-    .withIndex('by_extId', (q) =>
-      q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
+    .withIndex('by_agent_extId', (q) =>
+      q
+        .eq('agentId', args.agentId)
+        .eq('sourceSystem', args.sourceSystem)
+        .eq('externalId', args.externalId),
     )
-    .filter((q) => q.eq(q.field('agentId'), args.agentId))
     .first();
 }
 
@@ -5659,10 +5661,12 @@ async function findExistingClaimImpl(
 ): Promise<{ state: Doc<'workItems'>['state'] } | null> {
   const row = await ctx.db
     .query('workItems')
-    .withIndex('by_extId', (q) =>
-      q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
+    .withIndex('by_agent_extId', (q) =>
+      q
+        .eq('agentId', args.agentId)
+        .eq('sourceSystem', args.sourceSystem)
+        .eq('externalId', args.externalId),
     )
-    .filter((q) => q.eq(q.field('agentId'), args.agentId))
     .first();
   if (!row) return null;
   if (!OPEN_CLAIM_STATES.has(row.state)) return null;

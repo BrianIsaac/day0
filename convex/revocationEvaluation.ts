@@ -260,10 +260,13 @@ export const seedTrial = mutation({
     if (!TRIAL_ID.test(args.trialId)) {
       throw new Error('invalid revocation evaluation trial id');
     }
+    // A trial belongs to the evaluation agent that ran it; the driver follows
+    // it by the work item id this returns, so the id is unique per agent.
     const existing = await ctx.db
       .query('workItems')
-      .withIndex('by_extId', (q) =>
+      .withIndex('by_agent_extId', (q) =>
         q
+          .eq('agentId', args.agentId)
           .eq('sourceSystem', 'slack')
           .eq('externalId', `${TRIAL_EXTERNAL_ID_PREFIX}${args.trialId}`),
       )

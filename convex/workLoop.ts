@@ -242,16 +242,16 @@ export const seededItems = internalQuery({
   handler: async (ctx, args): Promise<string[]> => {
     const seeded: string[] = [];
     for (const externalId of new Set(args.externalIds)) {
-      for await (const row of ctx.db
+      const row = await ctx.db
         .query('workItems')
-        .withIndex('by_extId', (q) =>
-          q.eq('sourceSystem', args.sourceSystem).eq('externalId', externalId),
-        )) {
-        if (row.agentId === args.agentId) {
-          seeded.push(externalId);
-          break;
-        }
-      }
+        .withIndex('by_agent_extId', (q) =>
+          q
+            .eq('agentId', args.agentId)
+            .eq('sourceSystem', args.sourceSystem)
+            .eq('externalId', externalId),
+        )
+        .first();
+      if (row) seeded.push(externalId);
     }
     return seeded;
   },

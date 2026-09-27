@@ -771,7 +771,8 @@ export default defineSchema({
       'decision.channel',
     ])
     .index('by_skill', ['skillId'])
-    .index('by_extId', ['sourceSystem', 'externalId'])
+    /** One employee's row for a provider item: intake's idempotency key. */
+    .index('by_agent_extId', ['agentId', 'sourceSystem', 'externalId'])
     /** Every work item discovered from one provider item, across employees, by either of its names. */
     .index('by_claim_key', ['externalClaimKey'])
     .index('by_claim_alias', ['externalClaimAlias'])
