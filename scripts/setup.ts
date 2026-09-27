@@ -3388,7 +3388,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         return 1;
       }
       io.log('');
-      io.log("The company bed's hand steps, once per workspace:");
+      io.log("The company bed's hand steps, once per workspace (step 2's asks each sitting):");
       for (const line of companyHandSteps(loadBedSpec(io.cwd))) {
         // A hanging indent, so each numbered step reads as one block.
         const wrapped = wrapIndented(line, '     ');

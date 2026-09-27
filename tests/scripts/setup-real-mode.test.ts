@@ -867,7 +867,7 @@ describe('--company', (): void => {
     expect(check).toBeGreaterThan(docs);
     const printed = h.output.join('\n');
     expect(printed).toContain('[12/13] pnpm exec tsx scripts/bed/company.ts docs');
-    expect(printed).toContain("The company bed's hand steps, once per workspace:");
+    expect(printed).toContain("The company bed's hand steps, once per workspace (step 2's asks each sitting):");
     expect(printed).toContain('\n  1. Linear, as a workspace admin: the teams REVOPS');
     const flat = printed.replace(/\s+/g, ' ');
     expect(flat).toContain(

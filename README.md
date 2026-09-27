@@ -468,9 +468,10 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 ```
 
 The length is 1 to 365 days from now. An ended card is probed again at once, and
-keeps the tools it was approved with. An upgrade to 0.4.0 restarts every approved
-card's clock at 90 days from the upgrade, since the older code started it at the
-proposal.
+keeps the tools its last connection stored. An upgrade to 0.4.0 restarts the clock
+of every approved card still open at 90 days from the upgrade, since the older code
+started it at the proposal; a card the older code had already ended stays ended
+until you renew it.
 
 ### The documentation is yours
 
@@ -535,10 +536,10 @@ The bed is maintainers' tooling rather than a product command, so it has no `pnp
 
 That is the ordinary real-mode setup followed by `pnpm exec tsx scripts/bed/company.ts docs`, which copies the thirteen pages into `docs-local/` and removes the setup's placeholder page (it never overwrites a page it did not write unless you pass `--replace`), then the hand steps, then its `check`.
 
-The hand steps are done once per workspace, by you, because they are admin acts in accounts only you hold:
+The hand steps are done once per workspace (the asks of step 2 each sitting), by you, because they are admin acts in accounts only you hold:
 
 1. **Linear**, as a workspace admin: teams `REVOPS` (project `Q3 close`), `FIN` "Finance close" (project `September close`) and `LOG` "Logistics desk" (project `Shipment exceptions`), each with the workflow states `Todo`, `In Progress` and `Done`. Archive or move out any older ticket in those three projects: intake reads every ticket in a documented project, and `check` lists each one that is not the bed's.
-2. **Slack**: the public channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests` (intake reads public channels only), and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. The three asks of `bed/company/slack-asks.md` are posted by you during each sitting, as yourself, once the employees are deployed: a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting. A one-task-each sitting posts only the `#ops-requests` ask, which is that sitting's revenue operations task.
+2. **Slack**: the public channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests` (intake reads public channels only), and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. The three asks of `bed/company/slack-asks.md` are posted by you during each sitting, as yourself, once the employees are deployed: a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting. A one-task-each sitting posts only the `#ops-requests` ask, which is that sitting's revenue operations task. During a sitting, keep any other mention of the bot out of these channels: every employee deployed before it would read it as work.
 3. **Notion**: the two pages in `bed/company/notion/`, pasted under one parent page shared with your integration, with the Linear key in place of the placeholder ([`bed/company/notion/README.md`](bed/company/notion/README.md)).
 4. **`.env.local`**: `DAY0_BED_LINEAR_API_KEY`, `DAY0_BED_SLACK_BOT_TOKEN` and `DAY0_BED_NOTION_TOKEN`. Only `scripts/bed/company.ts` reads them, and it prints none of them.
 
@@ -1510,7 +1511,7 @@ npx convex data surfaces --format jsonl          # 卡片的 _id
 npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identity '{"subject":"dev-no-auth|local-boss"}'
 ```
 
-时长为自现在起 1 到 365 天。已结束的卡片会立即重新探测，并保留批准时的工具列表。升级到 0.4.0 时，每张已批准卡片的期限都会从升级时刻重新计为 90 天，因为旧代码是从提议时刻开始计时的。
+时长为自现在起 1 到 365 天。已结束的卡片会立即重新探测，并保留其最近一次连接存储的工具列表。升级到 0.4.0 时，每张仍在有效期内的已批准卡片的期限都会从升级时刻重新计为 90 天，因为旧代码是从提议时刻开始计时的；旧代码已经结束的卡片仍保持结束状态，直到你为它续期。
 
 #### 文档由你提供
 
@@ -1576,10 +1577,10 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
 这就是普通的 real-mode 安装，之后执行 `pnpm exec tsx scripts/bed/company.ts docs`：把十三个页面复制进 `docs-local/`，并删除 setup 的占位页面（除非传入 `--replace`，否则它绝不覆盖不是它写入的页面）；然后打印手工步骤，并运行它的 `check`。
 
-手工步骤每个 workspace 只做一次，由你完成，因为它们是只有你持有的账户中的管理员操作：
+手工步骤每个 workspace 只做一次（第 2 步的请求每次演示都要发布），由你完成，因为它们是只有你持有的账户中的管理员操作：
 
 1. **Linear**，以 workspace 管理员身份：team `REVOPS`（project `Q3 close`）、`FIN` "Finance close"（project `September close`）和 `LOG` "Logistics desk"（project `Shipment exceptions`），每个 team 都有 `Todo`、`In Progress`、`Done` 三个工作流状态。把这三个 project 中较早的工单归档或移出：intake 会读取文档所记录 project 中的每一张工单，`check` 会列出每一张不属于演示环境的工单。
-2. **Slack**：公开频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`（intake 只读取公开频道），以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。`bed/company/slack-asks.md` 中的三条请求由你在每次演示中以本人身份发布，且要在员工部署完成之后：部署不会读取早于其员工的任何提及，因此上一次演示留下的请求不会被读取，也无需删除。每名员工一项任务的演示只发布 `#ops-requests` 中的那一条，它就是该演示中 revenue operations 的任务。
+2. **Slack**：公开频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`（intake 只读取公开频道），以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。`bed/company/slack-asks.md` 中的三条请求由你在每次演示中以本人身份发布，且要在员工部署完成之后：部署不会读取早于其员工的任何提及，因此上一次演示留下的请求不会被读取，也无需删除。每名员工一项任务的演示只发布 `#ops-requests` 中的那一条，它就是该演示中 revenue operations 的任务。演示期间，不要在这些频道中发布其他提及 bot 的消息：在它之前部署的每名员工都会把它当作工作读取。
 3. **Notion**：把 `bed/company/notion/` 下的两个页面粘贴到一个与你的 integration 共享的父页面之下，并把占位符换成 Linear key（见 [`bed/company/notion/README.md`](bed/company/notion/README.md)）。
 4. **`.env.local`**：`DAY0_BED_LINEAR_API_KEY`、`DAY0_BED_SLACK_BOT_TOKEN` 和 `DAY0_BED_NOTION_TOKEN`。只有 `scripts/bed/company.ts` 读取它们，且不会打印其中任何一个。
 
