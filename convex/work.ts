@@ -1,6 +1,6 @@
 import { closingResume } from '../src/work/closing-resume';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -2634,6 +2634,10 @@ async function supersedeDecisionRequest(
   });
 }
 
+/** What the manager's note says ended a run whose apply was interrupted. */
+const INTERRUPTED_NOTE_REASON =
+  'the apply was interrupted, so what it sent is not known; check each change marked below';
+
 /** Why a request delivered to the previous manager is sent again. */
 export const MANAGER_CHANGED_RESEND_REASON = 'the manager changed; the request went to the previous one';
 
@@ -3250,11 +3254,46 @@ export const approvePlan = mutation({
  * Refuses a request still in flight, so a slow send is not doubled, and a
  * delivered one, so the code the manager holds keeps working.
  */
+/**
+ * Ask the manager on the chat surface again, from the card.
+ *
+ * Public, owner-guarded. An undelivered request is superseded with a fresh
+ * code. A parked row that was never asked, because it parked while no manager
+ * channel was connected, is asked now once one is (P7-18). A delivered request
+ * is never replaced: the manager holds its code.
+ */
 export const resendDecisionRequest = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     const decision = row.decision;
+    const neverAsked =
+      !decision &&
+      (row.state === 'plan-pending' ||
+        (row.state === 'actions-pending' && row.approvedIndexes === undefined));
+    if (neverAsked) {
+      const surfaces = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect();
+      if (!surfaces.some(isManagerChannel)) {
+        throw new ConvexError(
+          'No manager chat channel is connected, so there is nowhere to ask; decide here instead.',
+        );
+      }
+      const kind: DecisionKind = row.state === 'plan-pending' ? 'plan' : 'actions';
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.decision-request-asked',
+        payload: { workItemId: row._id, kind },
+        createdAt: Date.now(),
+      });
+      await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
+        workItemId: row._id,
+        kind,
+      });
+      return { ok: true };
+    }
     const expectedState = decision?.kind === 'plan' ? 'plan-pending' : 'actions-pending';
     if (!decision || decision.decidedAt || row.state !== expectedState) {
       throw new Error('There is no open decision request to resend.');
@@ -3982,6 +4021,12 @@ export const prepareManagerNote = internalMutation({
       createdAt: Date.now(),
     });
     await ctx.db.patch(note._id, { claimedAt: Date.now() });
+    // The send's dead-man's switch, in the same transaction as the claim.
+    await ctx.scheduler.runAfter(
+      DECISION_REQUEST_RECOVERY_MS,
+      internal.work.recoverUnsentManagerNote,
+      { noteId: note._id },
+    );
     return {
       prepared: true as const,
       ...delivery,
@@ -3989,6 +4034,46 @@ export const prepareManagerNote = internalMutation({
       workItemId: note.workItemId,
       text: note.text,
     };
+  },
+});
+
+/** Why a claimed per-run note is recorded as not delivered. */
+export const UNSENT_NOTE_REASON = 'the send stopped before Slack answered; the note was not delivered';
+
+/**
+ * A per-run note's dead-man's switch, armed with its claim.
+ *
+ * A send that died between the claim and the record left the note claimed
+ * for good, and nothing said so (P7-18). It is recorded as not delivered,
+ * with the event the feed shows; it is not re-sent, because the message may
+ * have landed and a second one would be a duplicate the manager has to read.
+ */
+export const recoverUnsentManagerNote = internalMutation({
+  args: { noteId: v.id('managerNotes') },
+  handler: async (ctx, args): Promise<{ recovered: 'marked-undelivered' | 'ignored' }> => {
+    const note = await ctx.db.get(args.noteId);
+    if (
+      !note ||
+      note.claimedAt === undefined ||
+      note.providerTs !== undefined ||
+      note.failure !== undefined ||
+      note.digestId !== undefined
+    ) {
+      return { recovered: 'ignored' };
+    }
+    await ctx.db.patch(note._id, { failure: UNSENT_NOTE_REASON });
+    await ctx.db.insert('events', {
+      agentId: note.agentId,
+      type: 'work.manager-note-failed',
+      payload: {
+        workItemId: note.workItemId,
+        noteId: note._id,
+        kind: note.kind,
+        reason: UNSENT_NOTE_REASON,
+      },
+      createdAt: Date.now(),
+    });
+    return { recovered: 'marked-undelivered' };
   },
 });
 
@@ -5108,6 +5193,23 @@ export const recoverInterruptedApply = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleNextStep(ctx, { ...row, state: 'failed' });
+    // The manager approved these writes and would otherwise hear nothing; the
+    // note names every row whose outcome is now theirs to check.
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect()
+    ).map(toSurfaceRecord);
+    await queueManagerNote(ctx, row, 'landed', (agentName) =>
+      landedNoteText({
+        agentName,
+        title: row.title,
+        rows: landedNoteRows({ ...output, applied }, surfaces, replyTargetFor(row)),
+        outcome: 'failed',
+        reason: INTERRUPTED_NOTE_REASON,
+      }),
+    );
     return { recovered: 'outcome-unknown' };
   },
 });

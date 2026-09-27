@@ -11,6 +11,7 @@ import {
   MANAGER_CHANGED_RESEND_REASON,
   PLAN_CANCELLED_REASON,
   REEVALUATION_BATCH,
+  UNSENT_NOTE_REASON,
 } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
@@ -4285,5 +4286,103 @@ describe('the apply dead-man switch (P9-1)', (): void => {
       state: 'failed',
       skipReason: INTERRUPTED_APPLY_REASON,
     });
+  });
+});
+
+describe('what an outage leaves for the manager (P7-18)', (): void => {
+  it('asks on the chat surface from the card for a parked row that was never asked', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    expect(await scheduledFunctionNames(harness)).toContain('managerChannelActions:requestDecision');
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-asked')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([{ workItemId, kind: 'plan' }]);
+  });
+
+  it('says there is nowhere to ask while no manager channel is connected', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
+    ).rejects.toThrow('No manager chat channel is connected');
+  });
+
+  it('tells the manager an interrupted apply left outcomes to check', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'actions-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        pendingRunId: runId,
+        executionRunId: runId,
+        output: pendingOutput,
+        actionVerdicts: [
+          { disposition: 'held', reason: HELD_MUTATION },
+          { disposition: 'held', reason: HELD_MUTATION },
+        ],
+      });
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, 1],
+    });
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.work.recoverInterruptedApply, {
+      workItemId,
+      pendingRunId: runId,
+      phase: 'approved',
+    });
+    const notes = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({ workItemId, kind: 'landed' });
+    expect(notes[0].text).toContain('the apply was interrupted');
+    expect(notes[0].text).toContain('(outcome unknown)');
+  });
+
+  it('marks a note whose send died mid-flight as not delivered', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'completed', undefined, {
+      withSlack: true,
+    });
+    const noteId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerNotes', {
+          agentId,
+          workItemId,
+          kind: 'landed',
+          text: 'Priya finished the close summary.',
+          createdAt: 1,
+        }),
+    );
+    await expect(harness.mutation(internal.work.prepareManagerNote, { noteId })).resolves.toMatchObject({
+      prepared: true,
+    });
+    expect(await scheduledFunctionNames(harness)).toContain('work:recoverUnsentManagerNote');
+    await expect(
+      harness.mutation(internal.work.recoverUnsentManagerNote, { noteId }),
+    ).resolves.toEqual({ recovered: 'marked-undelivered' });
+    const note = await harness.run(async (ctx) => await ctx.db.get(noteId));
+    expect(note?.failure).toBe(UNSENT_NOTE_REASON);
+    expect(
+      (await eventsOfType(harness, agentId, 'work.manager-note-failed')).map((event) => event.payload),
+    ).toEqual([{ workItemId, noteId, kind: 'landed', reason: UNSENT_NOTE_REASON }]);
+    // A delivered note is left alone.
+    await harness.mutation(internal.work.recordManagerNote, { noteId, ts: '1.0' });
+    await expect(
+      harness.mutation(internal.work.recoverUnsentManagerNote, { noteId }),
+    ).resolves.toEqual({ recovered: 'ignored' });
   });
 });
