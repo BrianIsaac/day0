@@ -1996,7 +1996,18 @@ async function up(options: DemoBedOptions): Promise<void> {
   }
   values = readEnvFile();
 
-  log("[5/10] What the volume's deployment already carries");
+  log("[5/10] The volume's release, and what its deployment already carries");
+  // Read before anything on the deployment changes, so a refusal leaves it as it was.
+  const checkout = checkoutReleases(process.cwd());
+  if ('reason' in checkout) {
+    throw new Error(`this checkout's release cannot be read: ${checkout.reason}.`);
+  }
+  const verdict = readReleaseVerdict(
+    (args) => run('npx', args, { env: bedEnvironment(options, values), timeoutMs: 120_000 }),
+    checkout,
+  );
+  if (!verdict.allowed) throw new Error(`nothing was changed, because ${verdict.reason}`);
+  log(`      release: ${verdict.note}`);
   const deployment = deploymentEnv(bedEnvironment(options, values));
   const adopt = credentialKeyToAdopt(
     values.DAY0_CREDENTIAL_KEY ?? '',
@@ -2029,55 +2040,65 @@ async function up(options: DemoBedOptions): Promise<void> {
   if (!adopt && stale.length === 0) log('      nothing to adopt or clear');
   const pushEnv = bedEnvironment(options, values);
 
-  const checkout = checkoutReleases(process.cwd());
-  if ('reason' in checkout) {
-    throw new Error(`this checkout's release cannot be read: ${checkout.reason}.`);
-  }
-  const verdict = readReleaseVerdict(
-    (args) => run('npx', args, { env: pushEnv, timeoutMs: 120_000 }),
-    checkout,
-  );
-  if (!verdict.allowed) throw new Error(`nothing was pushed, because ${verdict.reason}`);
-  log(`      release: ${verdict.note}`);
-
-  log('[6/10] Deployment env: ./scripts/sync-convex-env.sh');
-  must(
-    run('bash', ['scripts/sync-convex-env.sh', ENV_FILE], { env: pushEnv, inherit: true }),
-    'sync:env',
-  );
-
-  log('[7/10] Functions: convex dev --once');
-  const pushStartedAt = Date.now();
-  must(
-    run('pnpm', ['exec', 'convex', 'dev', '--once', '--typecheck', 'disable'], {
-      env: pushEnv,
-      inherit: true,
-    }),
-    'convex dev --once',
-  );
-  log(`      pushed in ${elapsed(pushStartedAt)}`);
-  for (let call = 0; ; call += 1) {
-    if (call === 12) {
-      throw new Error(
-        'the migrations had not finished after 12 calls; run ' +
-          '`npx convex run migrations:runPending` until nothing is pending.',
+  const syncEnv = (step: number): void => {
+    log(`[${step}/10] Deployment env: ./scripts/sync-convex-env.sh`);
+    must(
+      run('bash', ['scripts/sync-convex-env.sh', ENV_FILE], { env: pushEnv, inherit: true }),
+      'sync:env',
+    );
+  };
+  const pushFunctions = (step: number): void => {
+    log(`[${step}/10] Functions: convex dev --once, then the migrations and the release stamp`);
+    const pushStartedAt = Date.now();
+    must(
+      run('pnpm', ['exec', 'convex', 'dev', '--once', '--typecheck', 'disable'], {
+        env: pushEnv,
+        inherit: true,
+      }),
+      'convex dev --once',
+    );
+    log(`      pushed in ${elapsed(pushStartedAt)}`);
+    for (let call = 0; ; call += 1) {
+      if (call === 12) {
+        throw new Error(
+          'the migrations had not finished after 12 calls; run ' +
+            '`npx convex run migrations:runPending` until nothing is pending.',
+        );
+      }
+      const migrated = must(
+        run('npx', [...MIGRATIONS_ARGUMENTS], { env: pushEnv, timeoutMs: 900_000 }),
+        'migrations',
+      );
+      const report = parseMigrationReport(migrated.stdout);
+      for (const line of migrationLines(report)) log(`      ${line}`);
+      if (report.pending.length === 0) break;
+    }
+    const corrections = publicUrlCorrections(readEnvFile(), ports);
+    if (Object.keys(corrections).length > 0) {
+      writeEnvValues(corrections);
+      log(
+        `      the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's own ` +
+          'container ports; put back the host addresses this bed publishes',
       );
     }
-    const migrated = must(
-      run('npx', [...MIGRATIONS_ARGUMENTS], { env: pushEnv, timeoutMs: 900_000 }),
-      'migrations',
+    must(
+      run('npx', releaseStampArguments(checkout.release, checkoutCommit()), {
+        env: pushEnv,
+        timeoutMs: 120_000,
+      }),
+      'migrations:recordRelease',
     );
-    const report = parseMigrationReport(migrated.stdout);
-    for (const line of migrationLines(report)) log(`      ${line}`);
-    if (report.pending.length === 0) break;
-  }
-  const corrections = publicUrlCorrections(readEnvFile(), ports);
-  if (Object.keys(corrections).length > 0) {
-    writeEnvValues(corrections);
-    log(
-      `      the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's own ` +
-        'container ports; put back the host addresses this bed publishes',
-    );
+    log(`      the volume's rows are at ${checkout.release}`);
+  };
+  // A volume with rows takes the setup's upgrade order, functions before env,
+  // so a push the schema refuses leaves the old functions on the old env; a
+  // new one takes the env first, which the auth config reads at the first push.
+  if (verdict.from === undefined) {
+    syncEnv(6);
+    pushFunctions(7);
+  } else {
+    pushFunctions(6);
+    syncEnv(7);
   }
 
   log('[8/10] Restart the backend so the pushed env is what the modules read');
@@ -2089,15 +2110,6 @@ async function up(options: DemoBedOptions): Promise<void> {
     'restart',
   );
   await waitForBackend(ports.backend);
-  must(
-    run('npx', releaseStampArguments(checkout.release, checkoutCommit()), {
-      env: pushEnv,
-      timeoutMs: 120_000,
-    }),
-    'migrations:recordRelease',
-  );
-  log(`      the volume's rows are at ${checkout.release}`);
-
   log('[9/10] The redactor reports healthy, or real-mode documentation sync fails closed');
   if (options.profiles.includes('redactor')) {
     const redactorStartedAt = Date.now();
