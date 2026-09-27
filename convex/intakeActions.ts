@@ -330,12 +330,17 @@ const LINEAR_ISSUE_FIELDS = [
 
 /**
  * The fields that let the person-ticket rule see each fact it reads (Q11):
- * who the ticket is assigned to, its labels, and its workflow state type.
+ * who the ticket is assigned to, by id, since a printed name identifies
+ * nobody; its labels; and its workflow state type, which a status name
+ * alone does not carry.
  */
-const PERSON_TICKET_FIELDS: ReadonlyArray<{ fact: string; fields: readonly string[] }> = [
-  { fact: 'an assignee', fields: ['assignee', 'assigneeId'] },
+const PERSON_TICKET_FIELDS: ReadonlyArray<{
+  readonly fact: string;
+  readonly fields: readonly string[];
+}> = [
+  { fact: 'an assignee', fields: ['assigneeId'] },
   { fact: 'a label', fields: ['labels'] },
-  { fact: 'a state type', fields: ['statusType', 'status', 'state'] },
+  { fact: 'a state type', fields: ['statusType', 'state'] },
 ];
 
 /**
@@ -570,6 +575,9 @@ const OWNER_UNREAD = "the ticket is assigned and the key's owner could not be re
 /** Why a ticket assigned to somebody Day0 can name but not identify is left alone. */
 const ASSIGNEE_UNIDENTIFIED =
   'the ticket is assigned to a person named without an id or email Day0 can compare';
+
+/** The refusals that say nothing about whose ticket it is: they hold the checkpoint, never withdraw. */
+const HELD_REFUSALS: ReadonlySet<string> = new Set([OWNER_UNREAD, ASSIGNEE_UNIDENTIFIED]);
 
 /**
  * Why intake leaves a Linear ticket alone, by the kanban's own primitives
@@ -979,9 +987,11 @@ async function pollLinear(
           const refusal = linearIntakeRefusal(issue, owner);
           if (refusal !== undefined) {
             leftAlone.set(refusal, (leftAlone.get(refusal) ?? 0) + 1);
-            // An unread owner says nothing about the ticket, so its row stays.
-            const left =
-              refusal === OWNER_UNREAD ? undefined : linearCandidate(issue, surface, observedAt);
+            // An unread owner or an unidentified assignee says nothing about
+            // whose ticket it is, so its row stays and the window is read again.
+            const left = HELD_REFUSALS.has(refusal)
+              ? undefined
+              : linearCandidate(issue, surface, observedAt);
             if (left && !candidateIds.has(left.externalId)) {
               withdrawn.push({ candidate: left, leftQueue: refusal });
               trackers.set(left.externalId, ticketSnapshot(issue));
@@ -1029,15 +1039,20 @@ async function pollLinear(
       });
     }
     const unread = leftAlone.get(OWNER_UNREAD) ?? 0;
-    return unread === 0
+    const unidentified = leftAlone.get(ASSIGNEE_UNIDENTIFIED) ?? 0;
+    const held = [
+      ...(unread > 0 ? [`${unread} because the key's owner could not be read`] : []),
+      ...(unidentified > 0
+        ? [`${unidentified} because the assignee could not be identified by id or email`]
+        : []),
+    ];
+    return held.length === 0
       ? { candidates, withdrawn, trackers }
       : {
           candidates,
           withdrawn,
           trackers,
-          holdCheckpoint:
-            `${unread} assigned ticket(s) left alone because the key's owner could not be read; ` +
-            'the checkpoint is held so the next poll reads them again.',
+          holdCheckpoint: `${unread + unidentified} assigned ticket(s) left alone, ${held.join(' and ')}; the checkpoint is held so the next poll reads them again.`,
         };
   } finally {
     await client.disconnect();

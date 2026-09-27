@@ -2624,9 +2624,12 @@ describe('each employee reads its own approved queues', (): void => {
       expect(records[0]?.skipReason).toContain("the key's owner could not be read");
 
       records.length = 0;
-      await seededFrom([ticket('FIN-1'), ticket('FIN-2', { assignee: 'Ana Lim' })], {
-        owner: KEY_OWNER,
-      });
+      await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' })],
+        {
+          owner: KEY_OWNER,
+        },
+      );
       expect(records[0]?.polledAt).toBe(POLL_AT);
 
       const unanswered = await seededFrom(
@@ -2651,6 +2654,34 @@ describe('each employee reads its own approved queues', (): void => {
         { owner: KEY_OWNER },
       );
       expect(seeded).toEqual(['FIN-3', 'FIN-5']);
+    });
+
+    it('holds the checkpoint for an assignee it can name but not identify, and withdraws no row for it', async (): Promise<void> => {
+      records.length = 0;
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient(
+          [ticket('FIN-1'), ticket('FIN-2', { assignee: 'Kestrel Ops' })],
+          {
+            owner: KEY_OWNER,
+          },
+        ),
+      });
+      expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual(['FIN-1']);
+      expect(harness.withdrawn).toEqual([]);
+      expect(harness.records[0]?.polledAt).toBeUndefined();
+      expect(harness.records[0]?.skipReason).toContain('could not be identified by id or email');
     });
 
     it('holds the checkpoint when the key owner answers with a name alone', async (): Promise<void> => {
@@ -2777,6 +2808,20 @@ describe('each employee reads its own approved queues', (): void => {
           {},
         ).unselectable,
       ).toEqual(['an assignee', 'a label', 'a state type']);
+      // A printed name identifies nobody and a status name carries no type.
+      expect(
+        linearListArguments(
+          {
+            properties: {
+              fields: {
+                type: 'array',
+                items: { type: 'string', enum: ['id', 'assignee', 'labels', 'status'] },
+              },
+            },
+          },
+          {},
+        ).unselectable,
+      ).toEqual(['an assignee', 'a state type']);
       expect(
         linearListArguments(
           {
