@@ -6,6 +6,7 @@ import {
   composeRunningServices,
   docSourceDependency,
   main,
+  modelSection,
   modeAndRouteLine,
   setupRoute,
 } from '../../scripts/check-setup';
@@ -135,5 +136,62 @@ describe('exit status without an early exit', (): void => {
   it('never calls process.exit, which drops buffered output on a pipe', (): void => {
     const source = readFileSync(join(import.meta.dirname, '../../scripts/check-setup.ts'), 'utf8');
     expect(source).not.toMatch(/process\.exit\(/);
+  });
+});
+
+describe('the model address the backend container calls', (): void => {
+  const endpoint = {
+    CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3210',
+    COMPOSE_PROJECT_NAME: 'day0-bed',
+    OPENAI_BASE_URL: 'http://172.18.0.5:11434/v1',
+    CONVEX_OPENAI_BASE_URL: 'http://172.18.0.5:11434/v1',
+  };
+
+  it("fails an address the host reaches and the backend container cannot, with curl's words and the fix", (): void => {
+    const section = modelSection(endpoint, true, {
+      reach: 'unreachable',
+      detail: 'curl: (28) Connection timed out after 10002 milliseconds',
+    });
+    expect(section.status).toBe('gap');
+    const text = section.lines.join('\n');
+    expect(text).toContain(
+      'The backend container could not reach http://172.18.0.5:11434/v1: curl: (28) Connection timed out',
+    );
+    expect(text).toContain('http://host.docker.internal:11434/v1');
+  });
+
+  it('passes an address the backend container reached, whatever the HTTP status', (): void => {
+    const section = modelSection(endpoint, true, { reach: 'reached', detail: 'HTTP 401' });
+    expect(section.status).toBe('ok');
+    expect(section.lines.join('\n')).toContain(
+      'The backend container reached http://172.18.0.5:11434/v1 (HTTP 401).',
+    );
+  });
+
+  it('says when the address could not be dialled at all, without failing', (): void => {
+    const notRunning = modelSection(endpoint, true, undefined);
+    expect(notRunning.status).toBe('warn');
+    expect(notRunning.lines.join('\n')).toContain('the backend is not running, so');
+    const unknown = modelSection(endpoint, true, {
+      reach: 'unknown',
+      detail: 'service "backend" is not running',
+    });
+    expect(unknown.status).toBe('warn');
+  });
+
+  it('names the port the reader gave when a loopback address has to become host.docker.internal', (): void => {
+    const section = modelSection(
+      {
+        ...endpoint,
+        OPENAI_BASE_URL: 'http://127.0.0.1:8080/v1',
+        CONVEX_OPENAI_BASE_URL: 'http://127.0.0.1:8080/v1',
+      },
+      true,
+      undefined,
+    );
+    expect(section.status).toBe('gap');
+    expect(section.lines.join('\n')).toContain(
+      'http://host.docker.internal:8080/v1 for a server on this host',
+    );
   });
 });

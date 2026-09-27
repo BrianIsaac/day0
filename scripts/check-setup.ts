@@ -13,9 +13,12 @@
  * each is reported separately and only the states that are *wrong* fail the
  * command.
  *
- * Two things this does not do. It never calls a provider: no key here is spent
- * establishing that it exists. And it cannot see the ElevenLabs dashboard, so
- * the dynamic variables an agent must declare are printed to check by eye
+ * Two things this does not do. It never calls a provider with a key: no key
+ * here is spent establishing that it exists. The one address it dials is the
+ * model's, from inside the backend container and with no key, because an
+ * address this machine reaches may still be one the container cannot, and
+ * only the container can say so. And it cannot see the ElevenLabs dashboard,
+ * so the dynamic variables an agent must declare are printed to check by eye
  * rather than guessed at.
  *
  * It does ask Docker one question, because one of the five is not a variable.
@@ -37,6 +40,12 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
+import {
+  containerDialArguments,
+  readContainerDial,
+  unreachableFix,
+  type ModelDial,
+} from './model-reach';
 import { isLoopback, setupRoute } from './setup-route';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
@@ -180,13 +189,18 @@ export function main(envFile: string = ENV_FILE): number {
   // Asked once and shared: every section that cares about a container reads the
   // same answer, and asking Docker is the slowest thing here.
   const services = composeRunningServices(projectName);
+  const backendUrl = v.CONVEX_OPENAI_BASE_URL || v.OPENAI_BASE_URL;
+  const modelDial =
+    selfHosted && backendUrl && !isLoopback(backendUrl) && services?.includes('backend')
+      ? dialFromBackend(projectName, backendUrl)
+      : undefined;
 
   const sections: Section[] = [
     backendSection(v),
     authSection(v),
     surfacesSection(v, services),
     componentsSection(v, projectName, services),
-    modelSection(v, selfHosted),
+    modelSection(v, selfHosted, modelDial),
     sandboxSection(v, projectName),
     voiceSection(v),
     finalisationSection(v),
@@ -771,13 +785,28 @@ function authSection(v: Values): Section {
 }
 
 /**
+ * Report the model layer: which address each side calls, and whether the
+ * backend container can reach its own.
+ *
  * The model layer takes any OpenAI-compatible endpoint, so "no key" is a
  * complete setup rather than a missing one - but only if a base URL says so.
  * The self-hosted trap gets its own check: charter synthesis runs as a Convex
  * Node action, inside the backend container, where a loopback address is the
- * container itself and never the model server on your desk.
+ * container itself and never the model server on your desk, and where an
+ * address on another Docker bridge answers the host and not the container.
+ * The second is only visible by dialling from inside the container, so the
+ * caller does that and hands the answer in.
+ *
+ * Args:
+ *   v: Resolved values.
+ *   selfHosted: Whether the backend is the self-hosted container.
+ *   dial: What dialling the backend's address from inside it found; undefined
+ *     when the backend was not running to dial from.
+ *
+ * Returns:
+ *   The section.
  */
-function modelSection(v: Values, selfHosted: boolean): Section {
+export function modelSection(v: Values, selfHosted: boolean, dial?: ModelDial): Section {
   const backendUrl = v.CONVEX_OPENAI_BASE_URL || v.OPENAI_BASE_URL;
   const lines: string[] = [];
   let status: Status = 'ok';
@@ -813,10 +842,34 @@ function modelSection(v: Values, selfHosted: boolean): Section {
       'so it will fail while the browser-side chat works - the confusing half.',
       'Set CONVEX_OPENAI_BASE_URL to an address that resolves inside the container:',
       'http://model:11434/v1 for the bundled model service (`pnpm model:up`), or',
-      'http://host.docker.internal:11434/v1 for a server on this host.',
+      `${onDockerHost(backendUrl)} for a server on this host.`,
     );
-  } else if (selfHosted && v.CONVEX_OPENAI_BASE_URL) {
-    lines.push(`The backend container calls ${v.CONVEX_OPENAI_BASE_URL} for the same endpoint.`);
+  } else if (selfHosted && backendUrl) {
+    if (v.CONVEX_OPENAI_BASE_URL) {
+      lines.push(`The backend container calls ${v.CONVEX_OPENAI_BASE_URL} for the same endpoint.`);
+    }
+    if (dial === undefined) {
+      status = 'warn';
+      lines.push(
+        `the backend is not running, so ${backendUrl} was not dialled from inside it.`,
+        'Run this again once it is: an address this machine reaches may still be one the container cannot.',
+      );
+    } else if (dial.reach === 'reached') {
+      lines.push(`The backend container reached ${backendUrl} (${dial.detail}).`);
+    } else if (dial.reach === 'unreachable') {
+      status = 'gap';
+      lines.push(
+        `The backend container could not reach ${backendUrl}: ${dial.detail}.`,
+        'The 1:1 runs from this machine and the charter, synthesised inside the container, never arrives.',
+        ...unreachableFix(backendUrl, v.COMPOSE_PROJECT_NAME || 'day0'),
+        'Then re-run `pnpm sync:env` and `pnpm convex:restart`.',
+      );
+    } else {
+      status = 'warn';
+      lines.push(
+        `${backendUrl} could not be dialled from inside the backend container: ${dial.detail}.`,
+      );
+    }
   } else if (selfHosted && !backendUrl) {
     lines.push(
       'The backend container calls api.openai.com as well - one address that means',
@@ -825,6 +878,40 @@ function modelSection(v: Values, selfHosted: boolean): Section {
   }
 
   return { title: titleFor(status, 'Model'), status, lines };
+}
+
+/** The same port and path on the host, as a container reaches it. */
+function onDockerHost(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const port = parsed.port === '' ? '' : `:${parsed.port}`;
+    return `${parsed.protocol}//host.docker.internal${port}${parsed.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return 'http://host.docker.internal:<port>/v1';
+  }
+}
+
+/**
+ * Dial the backend's model address from inside the running backend container.
+ *
+ * Args:
+ *   projectName: Explicit Compose project name.
+ *   baseUrl: The address the backend calls.
+ *
+ * Returns:
+ *   What the dial found.
+ */
+function dialFromBackend(projectName: string, baseUrl: string): ModelDial {
+  const probe = spawnSync(
+    'docker',
+    ['compose', '-p', projectName, '--env-file', ENV_FILE, ...containerDialArguments(baseUrl)],
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  return readContainerDial({
+    status: probe.status,
+    stdout: probe.stdout ?? '',
+    stderr: probe.stderr ?? '',
+  });
 }
 
 /** What Docker says about the bundled sandbox service, or that it could not be asked. */
