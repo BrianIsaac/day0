@@ -4,8 +4,9 @@ This page is for the person who writes the team's handbook: the pages day0 reads
 any work. day0 reads ordinary Markdown, and most of a page is read as context. A few shapes are
 read as instructions: they decide which systems an employee is offered, how it connects to each,
 which credential it may bind, which queue it reads, and which pages it treats as procedures. This
-page lists those shapes. Every example below is run through the code that reads it by
-`tests/src/docs/author-guide.test.ts`, so an example that stops working fails the gate.
+page lists those shapes. The examples below are run through the code that reads them by
+`tests/src/docs/author-guide.test.ts`, so an example that stops working fails the gate; the
+documented-API example is checked that way once day0 reads that grammar.
 
 ## Which pages are read
 
@@ -161,9 +162,10 @@ state on these lines. Values go in backticks, channels start with `#`.
 
 - A line that says not to use, read, poll, work or monitor something states nothing, whatever it
   names.
-- Renaming or moving the page, reflowing the line or adding a channel to it keeps an approved
-  card connected, as long as the approved value is still stated on a page of the same source.
-  Removing an approved value from every page returns the card to the manager for approval.
+- Reflowing the line or adding a channel to it keeps an approved card connected. So does
+  renaming or moving the page within the team's directory, or anywhere when the new page states
+  the whole approved queue. Removing an approved value from its page returns the card to the
+  manager for approval, even when another team's page names the same value.
 - A card is tied to one team's handbook by the employee's role: keep each team's pages under a
   directory named for the team, with its handbook at the top.
 

@@ -649,12 +649,14 @@ export interface RestatedScope<V extends ScopeValue = ScopeValue> {
 /**
  * Read an approved scope against the pages as they are now, by value.
  *
- * A value stands while any page of its source still states it for the same
- * field, through the same grammar orientation read it by (a "do not use"
- * line states nothing). So renaming or moving the page, reflowing the line,
- * fixing a typo beside the value or adding a channel to the line changes
- * nothing intake reads, and the value is re-pointed at the line that states
- * it now; only a value no page states any more has drifted.
+ * A value stands while its own page still states it for the same field,
+ * through the same grammar orientation read it by (a "do not use" line
+ * states nothing), or, when its page is gone, while a page of the same team
+ * (or one stating the whole scope) does. So renaming or moving the page,
+ * reflowing the line, fixing a typo beside the value or adding a channel to
+ * the line changes nothing intake reads, and the value is re-pointed at the
+ * line that states it now; a value its page stopped stating has drifted,
+ * even when another team's page names it.
  *
  * @param scope - The approved scope.
  * @param pages - The current pages.
@@ -697,11 +699,30 @@ export function restatedScope<V extends ScopeValue>(
   const restate = (value: V): V => {
     if (sourceId !== undefined && value.sourceId !== sourceId) return value;
     const lines = stated.get(value) ?? [];
-    const line =
-      lines.find((candidate): boolean => candidate.ref === value.ref) ??
-      [...lines].sort(
-        (left, right): number => (statedOn.get(right.ref) ?? 0) - (statedOn.get(left.ref) ?? 0),
-      )[0];
+    const own = lines.find((candidate): boolean => candidate.ref === value.ref);
+    // The value's own page still exists and no longer states it: that is a
+    // change the manager approves, whatever another page says. Only a page
+    // that is gone (a rename or a move) is followed, and only to a page of
+    // the same team or one that states the whole approved scope.
+    const pageRemains = pages.some(
+      (page): boolean =>
+        page.ref === value.ref &&
+        (value.sourceId === undefined ||
+          page.sourceId === undefined ||
+          page.sourceId === value.sourceId),
+    );
+    const moved = pageRemains
+      ? undefined
+      : [...lines]
+          .filter(
+            (candidate): boolean =>
+              scopeRoot(candidate.ref) === scopeRoot(value.ref) ||
+              statedOn.get(candidate.ref) === entries.length,
+          )
+          .sort(
+            (left, right): number => (statedOn.get(right.ref) ?? 0) - (statedOn.get(left.ref) ?? 0),
+          )[0];
+    const line = own ?? moved;
     if (!line) {
       drift.push(value);
       return value;

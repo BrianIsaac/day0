@@ -812,13 +812,27 @@ describe('the scope an approved card reads', (): void => {
           : page,
     );
     expect(restatedScope(finance, removed).drift).toEqual([finance.channels![0]]);
-    // `#ops-requests` is still stated on the revops handbook, so intake reads the same queue.
+    // Another team's handbook stating `#ops-requests` does not carry finance's value.
     expect(
       restatedScope(
         finance,
         pages('revops-first').filter((page): boolean => page.ref !== handbook),
       ).drift,
-    ).toEqual([finance.team, finance.project, finance.channels![0]]);
+    ).toEqual([finance.team, finance.project, finance.channels![0], finance.channels![1]]);
+    // The value's own page stops stating it: drift, though another team's page names it.
+    const movedAway = pages('revops-first').map(
+      (page): ScopePage =>
+        page.ref === handbook
+          ? {
+              ...page,
+              markdown: page.markdown.replace(
+                '- Channels: #finance-close, #ops-requests',
+                '- Channels: #finance-close',
+              ),
+            }
+          : page,
+    );
+    expect(restatedScope(finance, movedAway).drift).toEqual([finance.channels![1]]);
   });
 
   it('says which changed values intake still reads, and how to take the page as it is now', (): void => {
