@@ -5,7 +5,9 @@ import {
   ticketAssignee,
   ticketChange,
   ticketRecordRefusal,
+  ticketRereadStopReason,
   ticketSnapshot,
+  withheldBeforeFirstWrite,
   type PersonIdentity,
   type TicketSnapshot,
 } from '../../../src/work/ticket-ownership';
@@ -225,5 +227,21 @@ describe('ticket ownership', () => {
     await expect(
       ticketChange(inReview, { baseline: todo, acknowledged: inReview, owner: owner.read }),
     ).resolves.toBeUndefined();
+  });
+
+  it('says nothing was sent only when the run sent nothing before the re-read held it (review M3)', () => {
+    const withheld = withheldBeforeFirstWrite('iss-1', 'it is labelled do-not-automate');
+    expect(withheld).toBe(
+      'withheld before the first write: iss-1 changed since the plan was made: it is labelled do-not-automate.',
+    );
+    expect(ticketRereadStopReason(withheld, [])).toBe(`${withheld} Nothing was sent.`);
+    expect(
+      ticketRereadStopReason(withheld, [
+        'http.request slack · POST /chat.postMessage',
+        'mcp.call notion · update_page',
+      ]),
+    ).toBe(
+      `${withheld} Sent before the re-read: http.request slack · POST /chat.postMessage; mcp.call notion · update_page.`,
+    );
   });
 });

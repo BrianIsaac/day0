@@ -308,7 +308,8 @@ export function ticketRecordRefusal(
 }
 
 /**
- * Why a run's writes were withheld before the first of them, for the card.
+ * Why a run's writes were withheld before the first of them on the ticket,
+ * for each held row on the card.
  *
  * @param ticket - The ticket's id.
  * @param finding - What changed, or why it could not be read.
@@ -316,6 +317,20 @@ export function ticketRecordRefusal(
  */
 export function withheldBeforeFirstWrite(ticket: string, finding: string, unread = false): string {
   return unread
-    ? `withheld before the first write: ${ticket} could not be re-read (${finding}). Nothing was sent.`
-    : `withheld before the first write: ${ticket} changed since the plan was made: ${finding}. Nothing was sent.`;
+    ? `withheld before the first write: ${ticket} could not be re-read (${finding}).`
+    : `withheld before the first write: ${ticket} changed since the plan was made: ${finding}.`;
+}
+
+/**
+ * The reason a run the re-read stopped records, saying what it sent first:
+ * a write on another surface, or in an earlier phase, is not held by the
+ * re-read and may have gone before it (review M3).
+ *
+ * @param withheld - The re-read's reason, from `withheldBeforeFirstWrite`.
+ * @param sent - What this run sent before the stop, one name per write.
+ */
+export function ticketRereadStopReason(withheld: string, sent: readonly string[]): string {
+  return sent.length === 0
+    ? `${withheld} Nothing was sent.`
+    : `${withheld} Sent before the re-read: ${sent.join('; ')}.`;
 }

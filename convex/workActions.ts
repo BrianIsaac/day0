@@ -127,6 +127,7 @@ import {
   recordFromText,
   ticketChange,
   ticketRecordRefusal,
+  ticketRereadStopReason,
   ticketSnapshot,
   withheldBeforeFirstWrite,
   type PersonIdentity,
@@ -134,6 +135,7 @@ import {
 import type { GroundingRead } from '../src/work/evidence-claims';
 import { carriedDeclaredReads, groundingReadSurfaces, noteReleasesRead } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
+import { ledgerPhases, providerReconciliationEntries } from '../src/work/reconciliation';
 import { redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import {
   grantRefusal,
@@ -2833,10 +2835,28 @@ function firstHold(...holds: ReadonlyArray<ClaimHold | undefined>): ClaimHold {
 }
 
 /**
+ * What this run sent, named for the card: its own writes that landed or
+ * whose outcome is unknown, in every phase, and never a row reused from an
+ * earlier run, which sent nothing now.
+ */
+function sentThisRun(output: unknown, run: { workItemId: string; runId: string }): string[] {
+  const key = `${run.workItemId}:${run.runId}:`;
+  const phases = ledgerPhases(output);
+  return providerReconciliationEntries(output).flatMap((entry): string[] => {
+    const phase = phases.find((candidate) => candidate.phase === entry.phase);
+    const applied = phase?.applied[entry.actionIndex] as AppliedAction | undefined;
+    if (!entry.idempotencyKey?.startsWith(key) || (applied && isReusedRow(applied))) return [];
+    const action = phase?.actions[entry.actionIndex];
+    const name = action ? actionName(action) : entry.tool;
+    return [entry.outcome === 'landed' ? name : `${name} (outcome unknown)`];
+  });
+}
+
+/**
  * Stop a run whose ticket changed before its first write: the writes the
  * re-read held, and any parked for the manager, carry the reason, nothing
  * after it was sent, and the run fails, as stopped when nothing landed, so
- * Retry stands.
+ * Retry stands. The recorded reason says what the run sent before the hold.
  */
 async function stopForChangedTicket(
   ctx: ActionCtx,
@@ -2849,16 +2869,20 @@ async function stopForChangedTicket(
     knownValues: readonly string[];
   },
 ): Promise<{ ok: false; reason: string }> {
-  const reason = scrubKnownValues(args.reason, args.knownValues);
+  const held = scrubKnownValues(args.reason, args.knownValues);
   // A row parked for the manager before the re-read is withheld with the
   // rest: approving it could not send it.
   // A read the gate refused is accounted for as a finished run's ledger does.
   const applied = withRefusedReadsDropped(args.output.actions ?? [], args.applied).map((entry) =>
-    entry.awaitingApproval ? { ...entry, awaitingApproval: undefined, reason } : entry,
+    entry.awaitingApproval ? { ...entry, awaitingApproval: undefined, reason: held } : entry,
   );
   const output = isDependentPendingOutput(args.output)
     ? flattenedDependentOutput(args.output, applied)
     : { ...args.output, applied };
+  const reason = scrubKnownValues(
+    ticketRereadStopReason(held, sentThisRun(output, args)),
+    args.knownValues,
+  );
   await ctx.runMutation(internal.work.setFailed, {
     workItemId: args.workItemId,
     runId: args.runId,

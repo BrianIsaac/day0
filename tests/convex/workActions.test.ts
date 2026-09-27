@@ -7075,6 +7075,44 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     expect(linearTools()).toEqual(['get_issue']);
   });
 
+  it('says what another surface was sent before the re-read held the ticket writes, not that nothing was (review M3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    const post = skillOutput.actions[3]!;
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        approvedIndexes: [0, 1, 2],
+        actionVerdicts: [
+          { disposition: 'auto' as const },
+          { disposition: 'auto' as const },
+          { disposition: 'auto' as const },
+        ],
+        output: { draft: 'Audited and closed.', notes: '', actions: [post, ...closeOut] },
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'In Progress',
+      statusType: 'started',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(recorded.http.filter((call) => call.url.endsWith('/chat.postMessage'))).toHaveLength(1);
+    expect(linearTools()).toEqual(['get_issue']);
+    expect(stopped.skipReason).toBe(
+      'withheld before the first write: iss-1 changed since the plan was made: its state moved from Todo to In Progress. Sent before the re-read: http.request slack · POST /chat.postMessage.',
+    );
+    expect(ledger(stopped)[1]).toMatchObject({
+      held: true,
+      reason:
+        'withheld before the first write: iss-1 changed since the plan was made: its state moved from Todo to In Progress.',
+    });
+  });
+
   it("drops a read the gate refused from a run the re-read stopped, as a finished run's ledger does", async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
