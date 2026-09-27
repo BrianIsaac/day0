@@ -24,6 +24,13 @@ outcomes.
   reproducible without retaining model-produced values.
 - [Onboarding transcript](onboarding/day0.json) - the fixed 1:1 replayed for day0.
 - `results/<timestamp>/semifinal.json` and `.md` - one directory per invocation.
+  Since 27 September 2026 each JSON carries the task definitions it was graded
+  against, a resume is refused when they differ from the task file, and a report
+  reads adherence from those definitions, never from the current task file.
+  Evidence recorded earlier is read against
+  [`tasks/semifinal-2026-09-02.json`](tasks/semifinal-2026-09-02.json), the task
+  file as it stood from `045683b` (2 September 2026), which every harness-v2
+  evidence file was graded against.
 
 ## Harness v2
 

@@ -1,6 +1,7 @@
 import {
   loadEvaluationTasksSync,
   MANAGER_REPORT_DESTINATION,
+  parseEvaluationTaskDefinitions,
   type EvaluationArm,
   type EvaluationGrade,
   type EvaluationTask,
@@ -86,6 +87,12 @@ export interface EvaluationEvidence {
     approvalDelayMs: number;
     pollIntervalMs: number;
     noLlmJudge: true;
+    /**
+     * The task definitions the rows were graded against. Absent on evidence
+     * recorded before 27 September 2026, which is read against
+     * `LEGACY_TASK_DEFINITIONS`.
+     */
+    taskDefinitions?: EvaluationTask[];
     onboardingTranscriptProvenance: string;
     onboardingTranscriptPath?: string;
     postCharterApprovalSkipped?: boolean;
@@ -216,7 +223,30 @@ function taskRows(
   return evidence.runs.flatMap((run) => run.tasks.map((task) => ({ ...task, run })));
 }
 
-const TASKS_BY_ID = new Map(loadEvaluationTasksSync().map((task) => [task.id, task]));
+/**
+ * The task definitions every evidence file without embedded definitions was
+ * graded against: the task file as it stood from `045683b` (2 September 2026)
+ * until 27 September 2026. Every tracked evidence file from
+ * `2026-08-30T07-05-50Z` on agrees with it on every field adherence reads.
+ */
+const LEGACY_TASK_DEFINITIONS: readonly EvaluationTask[] = loadEvaluationTasksSync(
+  new URL('./tasks/semifinal-2026-09-02.json', import.meta.url),
+);
+
+/**
+ * The task definitions an evidence file was graded against, by task id.
+ *
+ * A report never reads the current task file: a re-render of frozen evidence
+ * must not recompute adherence under definitions it was not graded against.
+ */
+export function evidenceTaskDefinitions(
+  evidence: EvaluationEvidence,
+): ReadonlyMap<string, EvaluationTask> {
+  const embedded = evidence.configuration.taskDefinitions;
+  const definitions =
+    embedded === undefined ? LEGACY_TASK_DEFINITIONS : parseEvaluationTaskDefinitions(embedded);
+  return new Map(definitions.map((task) => [task.id, task]));
+}
 
 export interface ProcedureAdherence {
   applicable: boolean;
@@ -312,7 +342,7 @@ function procedureAdherence(
 /** Compare the task-prescribed trails with ledger facts, independent of the run outcome. */
 export function documentedProcedureAdherence(
   row: EvaluationTaskResult,
-  task = TASKS_BY_ID.get(row.taskId),
+  task: EvaluationTask | undefined,
 ): ProcedureAdherence {
   return procedureAdherence(row, task, true);
 }
@@ -320,20 +350,26 @@ export function documentedProcedureAdherence(
 /** The superseded outcome-conditioned denominator, retained only for evidence continuity. */
 export function legacyDocumentedProcedureAdherence(
   row: EvaluationTaskResult,
-  task = TASKS_BY_ID.get(row.taskId),
+  task: EvaluationTask | undefined,
 ): ProcedureAdherence {
   return procedureAdherence(row, task, row.terminalState === 'completed');
 }
 
+type AdherenceRule = (
+  row: EvaluationTaskResult,
+  task: EvaluationTask | undefined,
+) => ProcedureAdherence;
+
 function perTaskProcedureOutcomes(
   evidence: EvaluationEvidence,
   arm: EvaluationArm,
-  adherence: (row: EvaluationTaskResult) => ProcedureAdherence = documentedProcedureAdherence,
+  tasks: ReadonlyMap<string, EvaluationTask>,
+  adherence: AdherenceRule,
 ): Map<string, { passes: number; runs: number }> {
   const outcomes = new Map<string, { passes: number; runs: number }>();
   for (const run of evidence.runs.filter((row) => row.arm === arm)) {
     for (const task of run.tasks) {
-      const result = adherence(task);
+      const result = adherence(task, tasks.get(task.taskId));
       if (!result.applicable) continue;
       const row = outcomes.get(task.taskId) ?? { passes: 0, runs: 0 };
       row.runs += 1;
@@ -417,6 +453,11 @@ export function renderEvaluationReport(
   options: { renderedAtCommit?: string } = {},
 ): string {
   const rows = taskRows(evidence);
+  const tasks = evidenceTaskDefinitions(evidence);
+  const adherenceOf = (row: EvaluationTaskResult): ProcedureAdherence =>
+    documentedProcedureAdherence(row, tasks.get(row.taskId));
+  const legacyAdherenceOf = (row: EvaluationTaskResult): ProcedureAdherence =>
+    legacyDocumentedProcedureAdherence(row, tasks.get(row.taskId));
   const arms: EvaluationArm[] = ['day0', 'baseline'];
   const categories: EvaluationTask['category'][] = [
     'docs-grounded-read',
@@ -440,14 +481,19 @@ export function renderEvaluationReport(
   for (const arm of arms) {
     const armRows = rows.filter((row) => row.run.arm === arm);
     const perTask = [...outcomesByArm.get(arm)!.values()];
-    const procedurePerTask = [...perTaskProcedureOutcomes(evidence, arm).values()];
-    const procedureRows = armRows.filter((row) => documentedProcedureAdherence(row).applicable);
-    const legacyProcedurePerTask = [
-      ...perTaskProcedureOutcomes(evidence, arm, legacyDocumentedProcedureAdherence).values(),
+    const procedurePerTask = [
+      ...perTaskProcedureOutcomes(evidence, arm, tasks, documentedProcedureAdherence).values(),
     ];
-    const legacyProcedureRows = armRows.filter(
-      (row) => legacyDocumentedProcedureAdherence(row).applicable,
-    );
+    const procedureRows = armRows.filter((row) => adherenceOf(row).applicable);
+    const legacyProcedurePerTask = [
+      ...perTaskProcedureOutcomes(
+        evidence,
+        arm,
+        tasks,
+        legacyDocumentedProcedureAdherence,
+      ).values(),
+    ];
+    const legacyProcedureRows = armRows.filter((row) => legacyAdherenceOf(row).applicable);
     summary.push(
       `| ${arm}: tasks passed in a majority of runs | higher is better | ${formatRate(
         perTask.filter(passedByMajority).length,
@@ -468,7 +514,7 @@ export function renderEvaluationReport(
         `${arm}: documented-procedure adherence per run (a priori task denominator)`,
         'higher is better',
         procedureRows,
-        (row) => documentedProcedureAdherence(row).satisfied,
+        (row) => adherenceOf(row).satisfied,
       ),
     );
     summary.push(
@@ -482,7 +528,7 @@ export function renderEvaluationReport(
         `${arm}: legacy documented-procedure adherence per run (outcome-conditioned; continuity only)`,
         'higher is better',
         legacyProcedureRows,
-        (row) => legacyDocumentedProcedureAdherence(row).satisfied,
+        (row) => legacyAdherenceOf(row).satisfied,
       ),
     );
     summary.push(
@@ -560,7 +606,7 @@ export function renderEvaluationReport(
   });
 
   const detail = rows.map((row) => {
-    const adherence = documentedProcedureAdherence(row);
+    const adherence = adherenceOf(row);
     const procedure = adherence.applicable
       ? `${adherence.satisfied ? 'yes' : 'no'} (${adherence.observed.join(' + ') || 'none'} / ${adherence.prescribed.join(' + ')})`
       : 'not prescribed';
@@ -582,7 +628,7 @@ export function renderEvaluationReport(
     ? `\n\nRe-graded from run ${evidence.regradedFrom.generatedAt} (commit \`${evidence.regradedFrom.commit}\`) with graders at commit \`${evidence.regradedFrom.gradedAtCommit}\`; no model calls were made.`
     : '';
   const rerenderLine = options.renderedAtCommit
-    ? `\n\nRe-rendered from the unchanged evidence JSON at commit \`${options.renderedAtCommit}\`. The documented-procedure adherence rows were computed from the recorded ledger facts retained in that JSON. Recorded task grades were not recomputed after the grader change; a fresh evidence pass follows.`
+    ? `\n\nRe-rendered from the unchanged evidence JSON at commit \`${options.renderedAtCommit}\`. The documented-procedure adherence rows were computed from the recorded ledger facts retained in that JSON, ${evidence.configuration.taskDefinitions === undefined ? 'read against the task definitions of 2 September 2026 (`045683b`) because this evidence predates embedded definitions' : 'read against the task definitions it carries'}. Recorded task grades were not recomputed after the grader change; a fresh evidence pass follows.`
     : '';
 
   return `# Semi-final controlled comparison

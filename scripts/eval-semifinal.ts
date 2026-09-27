@@ -56,7 +56,8 @@ const onboardingFixtureSchema = z.object({
   transcript: z.string().min(1),
 });
 
-interface CliOptions {
+/** One invocation's command-line settings. */
+export interface CliOptions {
   arms: EvaluationArm[];
   runs: number;
   taskSelectors: string[];
@@ -241,8 +242,13 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function assertResumeCompatible(
-  evidence: EvidenceWithProgress,
+/**
+ * Refuse to resume evidence recorded under different code, options or task definitions.
+ *
+ * @throws when any recorded setting differs from this invocation's.
+ */
+export function assertResumeCompatible(
+  evidence: EvaluationEvidence,
   options: CliOptions,
   tasks: EvaluationTask[],
   commit: string,
@@ -268,7 +274,8 @@ function assertResumeCompatible(
     !sameStrings(
       config.taskIds,
       tasks.map((task) => task.id),
-    )
+    ) ||
+    JSON.stringify(config.taskDefinitions) !== JSON.stringify(tasks)
   ) {
     throw new Error(
       `the existing evidence at ${options.out} was created with different code or options; choose another --out`,
@@ -306,6 +313,7 @@ async function loadOrCreateEvidence(
       arms: options.arms,
       requestedRuns: options.runs,
       taskIds: tasks.map((task) => task.id),
+      taskDefinitions: tasks,
       taskTimeoutMs,
       approvalDelayMs: options.approvalDelayMs,
       pollIntervalMs: options.pollIntervalMs,
@@ -967,6 +975,9 @@ export async function runRegrade(
 
   const sourceGeneratedAt = parsed.generatedAt;
   const evidence = structuredClone(parsed) as EvidenceWithProgress;
+  evidence.configuration.taskDefinitions = evidence.configuration.taskIds.flatMap(
+    (taskId) => tasksById.get(taskId) ?? [],
+  );
   for (const run of evidence.runs) {
     if (run.tasks.length === 0) continue;
     const raw = snapshots.get(run.id)!;

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   documentedProcedureAdherence,
+  evidenceTaskDefinitions,
   formatRate,
   legacyDocumentedProcedureAdherence,
   renderEvaluationReport,
@@ -167,12 +168,16 @@ describe('evaluation evidence report', (): void => {
     const report = renderEvaluationReport(input);
 
     expect(report).toContain('| Model id |');
-    expect(report).toContain('| Output budget (tokens) | not set / provider-managed | not set / provider-managed |');
+    expect(report).toContain(
+      '| Output budget (tokens) | not set / provider-managed | not set / provider-managed |',
+    );
     expect(report).toContain('| Per-call abort deadline (ms) | 300000 | 300000 |');
     expect(report).toContain('| Skill sandbox backend | local | local |');
     expect(report).toContain('| Effective temperature after provider warnings |');
     expect(report).toContain('| Provider warnings |');
-    expect(report).toContain('| Ollama version | not set / provider-managed | not set / provider-managed |');
+    expect(report).toContain(
+      '| Ollama version | not set / provider-managed | not set / provider-managed |',
+    );
     expect(report).toContain('| onboardingPipeline | runtime charter, loaded documents');
     expect(report).toContain('| executionTurn | one governed structured executor turn');
     expect(report).toContain('overload\\|service_unavailable');
@@ -402,8 +407,11 @@ function twoRunEvidence(): EvaluationEvidence {
 
 describe('documented procedure adherence', (): void => {
   it('requires every applicable trail for a completed ticket-queue task', (): void => {
-    const row = twoRunEvidence().runs[0]!.tasks[1]!;
-    expect(documentedProcedureAdherence(row)).toEqual({
+    const input = twoRunEvidence();
+    const row = input.runs[0]!.tasks[1]!;
+    expect(
+      documentedProcedureAdherence(row, evidenceTaskDefinitions(input).get(row.taskId)),
+    ).toEqual({
       applicable: true,
       satisfied: false,
       prescribed: ['manager-report', 'originating-ticket-note'],
@@ -426,18 +434,63 @@ describe('documented procedure adherence', (): void => {
       },
     };
 
-    expect(documentedProcedureAdherence(row)).toEqual({
+    const task = evidenceTaskDefinitions(twoRunEvidence()).get(row.taskId);
+    expect(documentedProcedureAdherence(row, task)).toEqual({
       applicable: true,
       satisfied: false,
       prescribed: ['manager-report'],
       observed: [],
     });
-    expect(legacyDocumentedProcedureAdherence(row)).toEqual({
+    expect(legacyDocumentedProcedureAdherence(row, task)).toEqual({
       applicable: false,
       satisfied: false,
       prescribed: [],
       observed: [],
     });
+  });
+});
+
+describe('the task definitions a report reads', (): void => {
+  it('reads adherence from the definitions the evidence carries, not a task file', (): void => {
+    const input = twoRunEvidence();
+    const frozen = [...evidenceTaskDefinitions(input).values()];
+    const carried = {
+      ...input,
+      configuration: {
+        ...input.configuration,
+        taskDefinitions: frozen.map((task) =>
+          task.id === 'write-pipeline-row'
+            ? { ...task, seed: { ...task.seed, sourceCategory: 'spreadsheet inbox' } }
+            : task,
+        ),
+      },
+    };
+    const row = carried.runs[0]!.tasks[1]!;
+    expect(
+      documentedProcedureAdherence(row, evidenceTaskDefinitions(carried).get(row.taskId)),
+    ).toMatchObject({ satisfied: true, prescribed: ['manager-report'] });
+    const adherenceRow = (report: string): string | undefined =>
+      report
+        .split('\n')
+        .find((line) =>
+          line.startsWith('| day0: documented-procedure adherence per run (a priori'),
+        );
+    expect(adherenceRow(renderEvaluationReport(carried))).toContain('(4/4;');
+    expect(adherenceRow(renderEvaluationReport(input))).toContain('(2/4;');
+  });
+
+  it('refuses carried definitions that do not match the task schema', (): void => {
+    const input = twoRunEvidence();
+    const broken = {
+      ...input,
+      configuration: {
+        ...input.configuration,
+        taskDefinitions: [{ id: 'docs-team-cadence' }] as unknown as NonNullable<
+          EvaluationEvidence['configuration']['taskDefinitions']
+        >,
+      },
+    };
+    expect(() => renderEvaluationReport(broken)).toThrow();
   });
 });
 

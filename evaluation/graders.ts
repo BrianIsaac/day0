@@ -320,7 +320,16 @@ export function loadEvaluationTasksSync(
 }
 
 function parseEvaluationTasks(source: string): EvaluationTask[] {
-  const parsed = z.array(evaluationTaskSchema).parse(JSON.parse(source));
+  return parseEvaluationTaskDefinitions(JSON.parse(source));
+}
+
+/**
+ * Validate task definitions read from a task file or carried in an evidence file.
+ *
+ * @throws when a definition does not match the schema or an id or external id repeats.
+ */
+export function parseEvaluationTaskDefinitions(value: unknown): EvaluationTask[] {
+  const parsed = z.array(evaluationTaskSchema).parse(value);
   const ids = parsed.map((task) => task.id);
   const externalIds = parsed.map((task) => task.seed.externalId);
   if (new Set(ids).size !== ids.length) throw new Error('evaluation task ids must be unique');

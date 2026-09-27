@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { loadEvaluationTasks } from '../../evaluation/graders';
+import { loadEvaluationTasks, type EvaluationTask } from '../../evaluation/graders';
+import type { EvaluationEvidence } from '../../evaluation/report';
+import {
+  evaluationHarnessParameters,
+  INTENTIONAL_ARM_DIFFERENCES,
+} from '../../src/evaluation/harness-parity';
+import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../../src/lib/mastra';
+import { MODEL } from '../../src/lib/openai';
 import {
   assertLocalEvaluationSandbox,
+  assertResumeCompatible,
+  EVALUATION_HARNESS_VERSION,
   evaluationTaskTiming,
   isFatalEvaluationInfrastructureError,
   parseCliOptions,
@@ -94,6 +103,51 @@ describe('semi-final evaluation CLI', (): void => {
       timedOut: false,
       deadlineOverrunMs: 0,
     });
+  });
+
+  it('refuses to resume evidence whose task definitions differ from the task file', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const options = parseCliOptions(['--out', 'evaluation/results/resume/semifinal.json']);
+    const taskTimeoutMs = Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs]));
+    const recorded = (taskDefinitions: EvaluationTask[]): EvaluationEvidence => ({
+      schemaVersion: 1,
+      experiment: 'day0-semifinal-controlled-comparison',
+      generatedAt: '2026-09-27T00:00:00.000Z',
+      configuration: {
+        harnessVersion: EVALUATION_HARNESS_VERSION,
+        commit: 'resume-commit',
+        model: MODEL,
+        skillSandboxBackend: 'local',
+        skillAuthoringMaxAttempts: MAX_SKILL_AUTHORING_ATTEMPTS,
+        temperature: MODEL_TEMPERATURE,
+        modelCallTimeoutMs: MODEL_CALL_TIMEOUT_MS,
+        surfaceMode: 'mock',
+        arms: options.arms,
+        requestedRuns: options.runs,
+        taskIds: tasks.map((task) => task.id),
+        taskDefinitions,
+        taskTimeoutMs,
+        approvalDelayMs: options.approvalDelayMs,
+        pollIntervalMs: options.pollIntervalMs,
+        noLlmJudge: true,
+        onboardingTranscriptProvenance: 'fixture',
+        harnessParameters: evaluationHarnessParameters(taskTimeoutMs),
+        intentionalArmDifferences: INTENTIONAL_ARM_DIFFERENCES,
+      },
+      runs: [],
+    });
+
+    expect(() =>
+      assertResumeCompatible(recorded(tasks), options, tasks, 'resume-commit'),
+    ).not.toThrow();
+    const edited = tasks.map((task, index) =>
+      index === 0
+        ? { ...task, grader: { ...task.grader, exactCheck: `${task.grader.exactCheck} Edited.` } }
+        : task,
+    );
+    expect(() => assertResumeCompatible(recorded(edited), options, tasks, 'resume-commit')).toThrow(
+      'was created with different code or options',
+    );
   });
 });
 
@@ -566,6 +620,9 @@ describe('read-only evidence re-grading', (): void => {
         },
       },
     });
+    expect(evidence.configuration.taskDefinitions).toEqual(
+      (await loadEvaluationTasks()).filter((task) => task.id === 'docs-salesforce-escalation'),
+    );
     expect(await readFile(sourcePath, 'utf8')).toBe(original);
     expect(await readFile(outPath.replace(/\.json$/, '.md'), 'utf8')).toContain(
       'Re-graded from run 2026-08-30T02:14:46.000Z (commit `run-commit`) with graders at commit `grader-commit`; no model calls were made.',
