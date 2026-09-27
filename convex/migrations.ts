@@ -110,8 +110,14 @@ const migrationName = v.union(...MIGRATION_NAMES.map((name) => v.literal(name)))
 /** Rows one page of a migration reads. */
 const MIGRATION_PAGE = 100;
 
-/** Events one page of the listing copy reads; event payloads are the largest rows. */
-const EVENT_PAGE = 50;
+/**
+ * Events one page of the listing copy reads. Event payloads are the largest
+ * rows (a run's output rides on them), so the page is small enough that ten
+ * documents at the 1 MiB document ceiling stay inside the 16 MiB read limit.
+ * A byte bound on the page is not used: a page it cuts short may leave rows
+ * unread, and a migration must not skip one.
+ */
+const EVENT_PAGE = 10;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
