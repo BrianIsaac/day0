@@ -37,7 +37,7 @@ import {
   type CheckResult,
 } from './checks';
 import type { UndoLedger } from '../../lib/cleanup';
-import type { Dashboard } from './driver';
+import { TAKE_IT_ANYWAY, type Dashboard } from './driver';
 import { bedEnvValues, envRefusal, secretsRefusal, type RehearsalSecrets } from './env';
 import { deleteComment, readComments, type LinearClient } from '../../lib/linear';
 import type { SlackClient } from '../../lib/slack';
@@ -521,7 +521,7 @@ const intake: Phase = {
 
 /**
  * Bring the ticket to a drafted plan whatever the evaluator did with it: a
- * quality-fit skip is retried from its card, a competing claim has its plan
+ * quality-fit skip is taken anyway from its card, a competing claim has its plan
  * cancelled, a skill proposal is approved and its registration awaited.
  */
 async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
@@ -536,10 +536,10 @@ async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
     if (item.state === 'skipped') {
       const kind = skipKind(item);
       if (kind === 'out-of-scope') throw new StopRun(`${TICKET} skipped as out of scope: "${item.skipReason}"`);
-      if (kind === 'quality-fit' && !acted.has('retry')) {
-        acted.add('retry');
-        ctx.log(`${TICKET} skipped by the quality-fit filter; Retry from its card`);
-        await dashboard.retry(title);
+      if (kind === 'quality-fit' && !acted.has('take-anyway')) {
+        acted.add('take-anyway');
+        ctx.log(`${TICKET} skipped by the quality-fit filter; ${TAKE_IT_ANYWAY} from its card`);
+        await dashboard.takeAnyway(title);
         return undefined;
       }
       throw new StopRun(`${TICKET} skipped: "${item.skipReason}"`);

@@ -36,8 +36,8 @@ export interface Dashboard {
   approvePlan(title: string): Promise<void>;
   /** Approve every held action on a work item card. */
   approveAll(title: string): Promise<void>;
-  /** Retry a skipped, failed or completed item, with a note when given. */
-  retry(title: string, note?: string): Promise<void>;
+  /** Hand a skipped item back to the agent from its card, waiving the skip. */
+  takeAnyway(title: string): Promise<void>;
   /** Cancel the plan on another item's card. */
   cancelPlan(title: string): Promise<void>;
   /** Return to the agent page's work queue. */
@@ -54,6 +54,8 @@ export const REPLY_PLACEHOLDER = 'type your reply…';
 export const COMPLETE_LINE = 'conversation complete';
 /** The control a failed turn (empty, cut off, or a stream error) offers in the 1:1. */
 export const ASK_AGAIN = 'Ask again';
+/** The control a skipped card offers in place of Retry, for a skip the manager may waive. */
+export const TAKE_IT_ANYWAY = 'Take it anyway';
 /** How many failed turns one wait asks again before the 1:1 is judged stuck. */
 const MAX_ASK_AGAIN = 3;
 
@@ -224,11 +226,9 @@ export class PlaywrightDashboard implements Dashboard {
     await this.workCard(title).getByRole('button', { name: 'Approve all' }).click();
   }
 
-  async retry(title: string, note?: string): Promise<void> {
+  async takeAnyway(title: string): Promise<void> {
     await this.showAgent();
-    const card = this.workCard(title);
-    if (note !== undefined) await card.getByLabel('note for the retry').fill(note);
-    await card.getByRole('button', { name: 'Retry', exact: true }).click();
+    await this.workCard(title).getByRole('button', { name: TAKE_IT_ANYWAY, exact: true }).click();
   }
 
   async cancelPlan(title: string): Promise<void> {

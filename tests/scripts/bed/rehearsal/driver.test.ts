@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { agentIdFromUrl, ASK_AGAIN, COMPLETE_LINE, REPLY_PLACEHOLDER } from '../../../../scripts/bed/rehearsal/driver';
+import {
+  agentIdFromUrl,
+  ASK_AGAIN,
+  COMPLETE_LINE,
+  REPLY_PLACEHOLDER,
+  TAKE_IT_ANYWAY,
+} from '../../../../scripts/bed/rehearsal/driver';
 
 const DASHBOARD = readFileSync('app/agent/[agentId]/AgentDashboard.tsx', 'utf8');
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
@@ -27,6 +33,13 @@ describe('the dashboard driver', (): void => {
     expect(wait.indexOf('name: ASK_AGAIN')).toBeLessThan(wait.indexOf('composer.isEnabled()'));
   });
 
+  it('hands a skipped ticket back with the control a skipped card renders, not a Retry it no longer has', (): void => {
+    expect(DASHBOARD).toContain(`export const TAKE_IT_ANYWAY = '${TAKE_IT_ANYWAY}';`);
+    const takeAnyway = DRIVER.slice(DRIVER.indexOf('async takeAnyway'), DRIVER.indexOf('async cancelPlan'));
+    expect(takeAnyway).toContain('name: TAKE_IT_ANYWAY, exact: true');
+    expect(DRIVER).not.toContain("name: 'Retry', exact: true");
+  });
+
   it("clicks the dashboard's own control texts, so a copy change here fails before a run does", (): void => {
     expect(CHAT).toContain(`'${REPLY_PLACEHOLDER}'`);
     expect(CHAT).toContain(COMPLETE_LINE);
@@ -35,7 +48,6 @@ describe('the dashboard driver', (): void => {
       [DASHBOARD, 'Approve · author and verify'],
       [DASHBOARD, 'Approve plan'],
       [DASHBOARD, 'Approve all'],
-      [DASHBOARD, 'aria-label="note for the retry"'],
       [SURFACES, 'Approve as manager'],
       [SURFACES, 'Approve as IT'],
       [SURFACES, 'id={`surface-${surface.slug}`}'],
@@ -58,7 +70,6 @@ describe('the dashboard driver', (): void => {
       "'Location label'",
       "'Link location'",
       "'worker 1'",
-      "'note for the retry'",
     ]) {
       expect(DRIVER).toContain(selector);
     }
