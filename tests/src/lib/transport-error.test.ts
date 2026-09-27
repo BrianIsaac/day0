@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fetchWithBackoff,
   interruptedReadError,
   isTransportUnreachable,
   PROVIDER_BACKOFF,
@@ -134,5 +135,38 @@ describe('an interrupted read', (): void => {
     expect(interruptedReadError(limited)).toBe(limited);
     expect(interruptedReadError(new Error('connect ECONNREFUSED 10.0.0.1:3000'))).toBeUndefined();
     expect(interruptedReadError(new Error('HTTP 401'))).toBeUndefined();
+  });
+});
+
+describe('a fetch with one bounded backoff', (): void => {
+  it('waits the Retry-After of a 429 with a fresh timeout per try, and returns the answer', async (): Promise<void> => {
+    const signals: Array<AbortSignal | null | undefined> = [];
+    const waits: number[] = [];
+    let calls = 0;
+    const fetcher = fetchWithBackoff(
+      async (_input, init): Promise<Response> => {
+        signals.push(init?.signal);
+        calls += 1;
+        return calls === 1
+          ? new Response('{}', { status: 429, headers: { 'Retry-After': '1' } })
+          : new Response('{"ok":true}', { status: 200 });
+      },
+      10_000,
+      { ...PROVIDER_BACKOFF, sleep: async (ms): Promise<void> => void waits.push(ms) },
+    );
+    const response = await fetcher('https://slack.com/api/conversations.history');
+    expect(response.status).toBe(200);
+    expect(waits).toEqual([1_000]);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).not.toBe(signals[1]);
+  });
+
+  it('returns the last 429 once the tries are spent', async (): Promise<void> => {
+    const fetcher = fetchWithBackoff(
+      async (): Promise<Response> => new Response('{}', { status: 429 }),
+      10_000,
+      { ...PROVIDER_BACKOFF, sleep: async (): Promise<void> => undefined },
+    );
+    expect((await fetcher('https://slack.com/api/x')).status).toBe(429);
   });
 });

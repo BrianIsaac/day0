@@ -257,3 +257,45 @@ export async function withBackoff<T>(
     }
   }
 }
+
+/** A fetch, as the readers and intake take one. */
+export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Wrap a fetch so each request gets its own timeout and one bounded backoff.
+ *
+ * A 429 or a 5xx is tried again after the wait the answer names, and a read
+ * cut off in flight is tried again after the backoff's own wait; each try has
+ * a fresh timeout, because a signal shared across tries would already have
+ * fired when the provider's wait ends. When the tries are spent the last
+ * answer is returned as it came, so the caller words the failure as before.
+ *
+ * @param fetcher - The underlying fetch.
+ * @param timeoutMs - How long one try may take.
+ * @param policy - Tries and waits.
+ * @param now - The clock, for an HTTP-date `Retry-After`.
+ */
+export function fetchWithBackoff(
+  fetcher: Fetcher,
+  timeoutMs: number,
+  policy: BackoffPolicy = PROVIDER_BACKOFF,
+  now: () => number = Date.now,
+): Fetcher {
+  return async (input, init): Promise<Response> => {
+    let last: Response | undefined;
+    try {
+      return await withBackoff(async (): Promise<Response> => {
+        const response = await fetcher(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+        const transient = transientFromResponse(response, 'The provider', now());
+        if (transient) {
+          last = response;
+          throw transient;
+        }
+        return response;
+      }, policy);
+    } catch (error) {
+      if (error instanceof TransientProviderError && last !== undefined) return last;
+      throw error;
+    }
+  };
+}
