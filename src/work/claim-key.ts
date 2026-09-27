@@ -99,7 +99,12 @@ export function providerItemKey(
   if (mode !== 'real') return undefined;
   const origin = httpOrigin(surface?.endpoint);
   if (origin && isLinearHost(origin.hostname)) return `linear:${item.externalId}`;
-  if (origin && isSlackHost(origin.hostname) && surface?.class === 'chat' && surface.providerWorkspaceId) {
+  if (
+    origin &&
+    isSlackHost(origin.hostname) &&
+    surface?.class === 'chat' &&
+    surface.providerWorkspaceId
+  ) {
     return `slack:${surface.providerWorkspaceId}:${item.externalId}`;
   }
   if (origin) return `${origin.origin}|${item.externalId}`;
@@ -129,15 +134,23 @@ export function browserFieldId(name: string): string {
 function formFieldNames(toolArgs: unknown): string[] {
   const fields = (toolArgs as { fields?: unknown } | undefined)?.fields;
   if (!Array.isArray(fields)) return [];
-  const rows = fields.filter((field): field is Record<string, unknown> => !!field && typeof field === 'object' && !Array.isArray(field));
+  const rows = fields.filter(
+    (field): field is Record<string, unknown> =>
+      !!field && typeof field === 'object' && !Array.isArray(field),
+  );
   if (rows.some((row) => typeof row.value === 'string' && SECRET_VALUE.test(row.value))) return [];
-  return rows.flatMap((row) => (typeof row.name === 'string' && row.name.trim() !== '' ? [row.name.trim()] : []));
+  return rows.flatMap((row) =>
+    typeof row.name === 'string' && row.name.trim() !== '' ? [row.name.trim()] : [],
+  );
 }
 
 /** The page fields a browser action fills: a form's fields, never the sign-in form's. */
 function browserFieldIds(parsed: ParsedSurfaceAction): string[] {
   if (parsed.kind !== 'mcp.call' || parsed.tool !== 'browser_fill_form') return [];
-  return [...new Set(formFieldNames(parsed.toolArgs).map(browserFieldId))].slice(0, WRITE_TARGET_LIMIT);
+  return [...new Set(formFieldNames(parsed.toolArgs).map(browserFieldId))].slice(
+    0,
+    WRITE_TARGET_LIMIT,
+  );
 }
 
 /** A page field a browser-driven surface's documentation says is written. */
@@ -165,7 +178,10 @@ const DOCUMENTED_FIELD_LIMIT = 8;
  * Returns:
  *   The documented field labels, each once, in the order the pages print them.
  */
-export function documentedBrowserFields(pages: ReadonlyArray<{ body: string }>, slug: string): string[] {
+export function documentedBrowserFields(
+  pages: ReadonlyArray<{ body: string }>,
+  slug: string,
+): string[] {
   const names = new Map<string, string>();
   for (const page of pages) {
     for (const block of page.body.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)) {
@@ -175,15 +191,23 @@ export function documentedBrowserFields(pages: ReadonlyArray<{ body: string }>, 
       } catch {
         continue;
       }
-      const args = (shape as { args?: { surface?: unknown; tool?: unknown; toolArgsJson?: unknown } } | null)?.args;
-      if (args?.surface !== slug || args.tool !== 'browser_fill_form' || typeof args.toolArgsJson !== 'string') continue;
+      const args = (
+        shape as { args?: { surface?: unknown; tool?: unknown; toolArgsJson?: unknown } } | null
+      )?.args;
+      if (
+        args?.surface !== slug ||
+        args.tool !== 'browser_fill_form' ||
+        typeof args.toolArgsJson !== 'string'
+      )
+        continue;
       let toolArgs: unknown;
       try {
         toolArgs = JSON.parse(args.toolArgsJson);
       } catch {
         continue;
       }
-      for (const name of formFieldNames(toolArgs)) if (!names.has(browserFieldId(name))) names.set(browserFieldId(name), name);
+      for (const name of formFieldNames(toolArgs))
+        if (!names.has(browserFieldId(name))) names.set(browserFieldId(name), name);
     }
   }
   return [...names.values()].slice(0, DOCUMENTED_FIELD_LIMIT);
@@ -213,10 +237,19 @@ export function plannedWriteTargets(
   surfaces: ReadonlyArray<{ slug: string; path?: string }>,
   pages: ReadonlyArray<{ body: string }>,
 ): BrowserWriteTarget[] {
-  const written = new Set((obligations?.steps ?? []).filter((step) => step.kind === 'write').flatMap((step) => step.writes));
+  const written = new Set(
+    (obligations?.steps ?? [])
+      .filter((step) => step.kind === 'write')
+      .flatMap((step) => step.writes),
+  );
   return surfaces
     .filter((surface) => surface.path === BROWSER_DRIVEN && written.has(surface.slug))
-    .flatMap((surface) => documentedBrowserFields(pages, surface.slug).map((field) => ({ surfaceSlug: surface.slug, field })));
+    .flatMap((surface) =>
+      documentedBrowserFields(pages, surface.slug).map((field) => ({
+        surfaceSlug: surface.slug,
+        field,
+      })),
+    );
 }
 
 /** The most external ids one write is checked under; each is one indexed read. */
@@ -246,7 +279,8 @@ function httpTicketReferences(parsed: ParsedHttpRequest): string[] {
   const read = (value: unknown, depth: number): void => {
     if (!value || typeof value !== 'object' || Array.isArray(value) || depth > BODY_DEPTH) return;
     for (const [key, inner] of Object.entries(value)) {
-      if (typeof inner === 'string' && inner.trim() !== '' && ISSUE_KEYS.includes(key)) named.push(inner.trim());
+      if (typeof inner === 'string' && inner.trim() !== '' && ISSUE_KEYS.includes(key))
+        named.push(inner.trim());
       else read(inner, depth + 1);
     }
   };
@@ -272,15 +306,21 @@ function httpTicketReferences(parsed: ParsedHttpRequest): string[] {
  *   The external ids, each once and at most `WRITE_TARGET_LIMIT`; empty when
  *   the action addresses none.
  */
-export function writeTargetIds(parsed: ParsedSurfaceAction, surface: { class: string; path?: string }): string[] {
+export function writeTargetIds(
+  parsed: ParsedSurfaceAction,
+  surface: { class: string; path?: string },
+): string[] {
   if (actionIntent(parsed) !== 'write') return [];
   if (surface.path === BROWSER_DRIVEN) return browserFieldIds(parsed);
   if (surface.class === 'chat') {
     const [channel, thread] = (messageTarget(parsed) ?? '').split('/');
     return channel && thread ? [`${channel}:${thread}`] : [];
   }
-  const references = parsed.kind === 'mcp.call' ? targetIssueReferences(parsed) : httpTicketReferences(parsed);
-  return [...new Set(references.flatMap((ref) => [ref, ref.toUpperCase(), ref.toLowerCase()]))].slice(0, WRITE_TARGET_LIMIT);
+  const references =
+    parsed.kind === 'mcp.call' ? targetIssueReferences(parsed) : httpTicketReferences(parsed);
+  return [
+    ...new Set(references.flatMap((ref) => [ref, ref.toUpperCase(), ref.toLowerCase()])),
+  ].slice(0, WRITE_TARGET_LIMIT);
 }
 
 /** The work item holding an external item a write addresses, as the ledger names it. */
@@ -381,8 +421,13 @@ const HELD_TITLE_CHARS = 120;
  */
 export function heldElsewhereRows(items: readonly HeldExternalItem[] | undefined): string[] {
   return (items ?? []).slice(0, HELD_ELSEWHERE_LIMIT).map((item, index): string => {
-    const title = item.title.length > HELD_TITLE_CHARS ? `${item.title.slice(0, HELD_TITLE_CHARS)} ...` : item.title;
-    const names = item.externalAlias ? `${item.externalId} (also ${item.externalAlias})` : item.externalId;
+    const title =
+      item.title.length > HELD_TITLE_CHARS
+        ? `${item.title.slice(0, HELD_TITLE_CHARS)} ...`
+        : item.title;
+    const names = item.externalAlias
+      ? `${item.externalId} (also ${item.externalAlias})`
+      : item.externalId;
     const who = item.sameEmployee ? 'this employee' : item.holderName;
     const state = item.unclaimed ? `${item.state}, not claimed yet` : item.state;
     const finished = item.state === 'completed' || item.state === 'failed';
@@ -393,8 +438,12 @@ export function heldElsewhereRows(items: readonly HeldExternalItem[] | undefined
     }
     const landed = item.landedComment
       ? `landed comment ${item.landedComment}`
-      : finished ? 'no comment landed' : 'nothing landed yet';
-    return redactTokenShapes(`  ${index}. ${item.sourceSystem} · ${names} · ${who} · "${title}" (${state}) · ${landed}`);
+      : finished
+        ? 'no comment landed'
+        : 'nothing landed yet';
+    return redactTokenShapes(
+      `  ${index}. ${item.sourceSystem} · ${names} · ${who} · "${title}" (${state}) · ${landed}`,
+    );
   });
 }
 
@@ -422,7 +471,9 @@ export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefine
     ...rows,
     'Do not author a comment, a state change or a thread reply addressed to an item listed here: it is withheld and never sent. When this work asks for something that belongs on one, say in your reply that the item has its own work item, with whom, and that it will be posted there; when a comment has landed, cite it by its id instead of posting another.',
     ...(items.slice(0, rows.length).some((item) => item.pageField)
-      ? ['A page field listed here is filled and saved by its holder alone: a fill or a Save from this work is withheld and never sent. Open the page, sign in and read it (navigate, the sign-in form, the snapshot), and cite the figure and the audit line you read; say in your reply which work item refreshes the field, and never that this work did.']
+      ? [
+          'A page field listed here is filled and saved by its holder alone: a fill or a Save from this work is withheld and never sent. Open the page, sign in and read it (navigate, the sign-in form, the snapshot), and cite the figure and the audit line you read; say in your reply which work item refreshes the field, and never that this work did.',
+        ]
       : []),
   ];
 }
@@ -474,15 +525,24 @@ export function heldItemOfBlockedStep(
   const words = plan.steps[outcome.step - 1];
   if (words === undefined) return undefined;
   const declared = planObligations(plan)?.steps[outcome.step - 1];
-  if (declared && declared.kind !== 'write' && declared.kind !== 'conditional-write') return undefined;
+  if (declared && declared.kind !== 'write' && declared.kind !== 'conditional-write')
+    return undefined;
   return held.find((item): boolean => {
     if (item.pageField) return false;
     const names = [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])];
-    if (declared && !(declared.writes ?? []).some((slug) => slug.toLowerCase() === item.sourceSystem.toLowerCase())) {
+    if (
+      declared &&
+      !(declared.writes ?? []).some(
+        (slug) => slug.toLowerCase() === item.sourceSystem.toLowerCase(),
+      )
+    ) {
       return false;
     }
     const tickets = words.match(TICKET_ID) ?? [];
-    if (tickets.length > 0 && !tickets.some((ticket) => names.some((name) => name.toLowerCase() === ticket.toLowerCase()))) {
+    if (
+      tickets.length > 0 &&
+      !tickets.some((ticket) => names.some((name) => name.toLowerCase() === ticket.toLowerCase()))
+    ) {
       return false;
     }
     return names.some((name) => namesWhole(words, name) || namesWhole(outcome.evidence, name));
@@ -501,7 +561,9 @@ export interface HeldItemReplyFinding {
 function parsedOn(
   action: MockAction,
   surfaces: ReadonlyArray<{ slug: string; class: string; path?: string }>,
-): { parsed: ParsedSurfaceAction; surface: { slug: string; class: string; path?: string } } | undefined {
+):
+  | { parsed: ParsedSurfaceAction; surface: { slug: string; class: string; path?: string } }
+  | undefined {
   if (!isSurfaceTool(action.tool)) return undefined;
   const result = parseSurfaceAction(action);
   if (!result.ok) return undefined;
@@ -515,11 +577,15 @@ function sentMessages(
   held: readonly HeldExternalItem[],
   surfaces: ReadonlyArray<{ slug: string; class: string; path?: string }>,
 ): number[] {
-  const heldNames = new Set(held.flatMap((item) => [item.externalId, item.externalAlias ?? item.externalId]));
+  const heldNames = new Set(
+    held.flatMap((item) => [item.externalId, item.externalAlias ?? item.externalId]),
+  );
   return actions.flatMap((action, index): number[] => {
     const on = parsedOn(action, surfaces);
     if (!on || on.surface.class !== 'chat' || actionIntent(on.parsed) !== 'write') return [];
-    return writeTargetIds(on.parsed, on.surface).some((target) => heldNames.has(target)) ? [] : [index];
+    return writeTargetIds(on.parsed, on.surface).some((target) => heldNames.has(target))
+      ? []
+      : [index];
   });
 }
 
@@ -552,7 +618,9 @@ export function heldItemReplyFindings(
   alreadyOwed: readonly HeldExternalItem[] = [],
 ): HeldItemReplyFinding[] {
   if (!held || held.length === 0) return [];
-  const messages = sentMessages(actions, held, surfaces).flatMap((index) => messageTexts(actions[index]!));
+  const messages = sentMessages(actions, held, surfaces).flatMap((index) =>
+    messageTexts(actions[index]!),
+  );
   if (messages.length === 0) return [];
   const written = new Set<string>();
   for (const action of actions) {
@@ -561,44 +629,56 @@ export function heldItemReplyFindings(
     for (const target of writeTargetIds(on.parsed, on.surface)) written.add(target.toLowerCase());
   }
   return held.slice(0, HELD_ELSEWHERE_LIMIT).flatMap((item): HeldItemReplyFinding[] => {
-    const names = [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])].map((name) => name.toLowerCase());
+    const names = [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])].map(
+      (name) => name.toLowerCase(),
+    );
     if (!alreadyOwed.includes(item) && !names.some((name) => written.has(name))) return [];
     const said = messages.some((text) => {
       const lower = text.toLowerCase();
       if (!names.some((name) => lower.includes(name))) return false;
-      return lower.includes('work item') || (item.landedComment !== undefined && lower.includes(item.landedComment.toLowerCase()));
+      return (
+        lower.includes('work item') ||
+        (item.landedComment !== undefined && lower.includes(item.landedComment.toLowerCase()))
+      );
     });
     if (said) return [];
     const who = item.sameEmployee ? 'this employee' : item.holderName;
-    const title = item.title.length > HELD_TITLE_CHARS ? `${item.title.slice(0, HELD_TITLE_CHARS)} ...` : item.title;
+    const title =
+      item.title.length > HELD_TITLE_CHARS
+        ? `${item.title.slice(0, HELD_TITLE_CHARS)} ...`
+        : item.title;
     if (item.pageField) {
       const field = `"${item.externalId}" on ${item.sourceSystem}`;
-      return [{
-        item,
-        issue: redactTokenShapes(
-          `this set fills ${field}, and the reply does not say whose work that is: the field is written by the work item of ${who}, "${title}" (${item.state}), so a fill or a Save from here is withheld and never sent. Read the page and cite what you read; in the chat reply, name "${item.externalId}" and say its own work item refreshes it; never say this work refreshed it.`,
-        ),
-        sentence: redactTokenShapes(
-          `${item.externalId} on ${item.sourceSystem} is refreshed by its own work item${item.sameEmployee ? '' : ` with ${item.holderName}`} ("${title}"); it was not written from this request.`,
-        ),
-      }];
+      return [
+        {
+          item,
+          issue: redactTokenShapes(
+            `this set fills ${field}, and the reply does not say whose work that is: the field is written by the work item of ${who}, "${title}" (${item.state}), so a fill or a Save from here is withheld and never sent. Read the page and cite what you read; in the chat reply, name "${item.externalId}" and say its own work item refreshes it; never say this work refreshed it.`,
+          ),
+          sentence: redactTokenShapes(
+            `${item.externalId} on ${item.sourceSystem} is refreshed by its own work item${item.sameEmployee ? '' : ` with ${item.holderName}`} ("${title}"); it was not written from this request.`,
+          ),
+        },
+      ];
     }
     const where = item.landedComment
       ? `cite comment ${item.landedComment}, which that work item landed on ${item.externalId}, instead of reporting a note of your own`
       : `say that ${item.externalId} has its own work item and that what was asked for will be posted there`;
-    return [{
-      item,
-      issue: redactTokenShapes(
-        `this set writes to ${item.externalId}, and the reply does not say where it is: ${item.externalId} has its own work item with ${who}, "${title}" (${item.state}), so a write to it from here is withheld and never sent. In the chat reply, ${where}; never say this work posted it.`,
-      ),
-      sentence: redactTokenShapes(
-        `${item.externalId} has its own work item${item.sameEmployee ? '' : ` with ${item.holderName}`} ("${title}"); ${
-          item.landedComment
-            ? `it is posted there as comment ${item.landedComment}.`
-            : `what this request asked for on ${item.externalId} will be posted there.`
-        }`,
-      ),
-    }];
+    return [
+      {
+        item,
+        issue: redactTokenShapes(
+          `this set writes to ${item.externalId}, and the reply does not say where it is: ${item.externalId} has its own work item with ${who}, "${title}" (${item.state}), so a write to it from here is withheld and never sent. In the chat reply, ${where}; never say this work posted it.`,
+        ),
+        sentence: redactTokenShapes(
+          `${item.externalId} has its own work item${item.sameEmployee ? '' : ` with ${item.holderName}`} ("${title}"); ${
+            item.landedComment
+              ? `it is posted there as comment ${item.landedComment}.`
+              : `what this request asked for on ${item.externalId} will be posted there.`
+          }`,
+        ),
+      },
+    ];
   });
 }
 
@@ -616,7 +696,13 @@ function withMessageAppended(action: MockAction, sentence: string): MockAction |
   const entry = Object.entries(record).find(([, value]) => value === text);
   if (!entry) return undefined;
   const next = JSON.stringify({ ...record, [entry[0]]: `${text}\n\n${sentence}` });
-  return { ...action, args: { ...action.args, ...(action.tool === 'http.request' ? { body: next } : { toolArgsJson: next }) } };
+  return {
+    ...action,
+    args: {
+      ...action.args,
+      ...(action.tool === 'http.request' ? { body: next } : { toolArgsJson: next }),
+    },
+  };
 }
 
 /**
@@ -641,8 +727,14 @@ export function withHeldItemsSaid(
   replyTarget?: { channel: string; threadTs?: string },
 ): MockAction[] {
   if (findings.length === 0) return [...actions];
-  const candidates = sentMessages(actions, findings.map((finding) => finding.item), surfaces);
-  const thread = replyTarget?.threadTs ? `${replyTarget.channel}/${replyTarget.threadTs}` : undefined;
+  const candidates = sentMessages(
+    actions,
+    findings.map((finding) => finding.item),
+    surfaces,
+  );
+  const thread = replyTarget?.threadTs
+    ? `${replyTarget.channel}/${replyTarget.threadTs}`
+    : undefined;
   const ordered = [
     ...candidates.filter((index) => {
       const on = parsedOn(actions[index]!, surfaces);
@@ -708,7 +800,12 @@ export function isReplyStep(
 export function answersTheAsker(action: MockAction, reply: AskReplyTarget): boolean {
   if (!isSurfaceTool(action.tool)) return false;
   const result = parseSurfaceAction(action);
-  if (!result.ok || result.action.surface !== reply.surface || actionIntent(result.action) !== 'write') return false;
+  if (
+    !result.ok ||
+    result.action.surface !== reply.surface ||
+    actionIntent(result.action) !== 'write'
+  )
+    return false;
   const place = reply.threadTs ? `${reply.channel}/${reply.threadTs}` : reply.channel;
   return messageTarget(result.action) === place;
 }
@@ -730,7 +827,9 @@ export const WITHHELD_WITH_CLAIMED_WRITE_PREFIX = 'withheld with the write it re
  *   The reason, carrying the holder's line.
  */
 export function withheldWithClaimedWriteReason(claimReason: string): string {
-  const holder = claimReason.startsWith(WITHHELD_BY_CLAIM_PREFIX) ? claimReason.slice(WITHHELD_BY_CLAIM_PREFIX.length) : claimReason;
+  const holder = claimReason.startsWith(WITHHELD_BY_CLAIM_PREFIX)
+    ? claimReason.slice(WITHHELD_BY_CLAIM_PREFIX.length)
+    : claimReason;
   return `${WITHHELD_WITH_CLAIMED_WRITE_PREFIX}this set was authored before another work item held what it writes (${holder}), so a message written beside that write is not sent as it stands; the closing set is authored once more from what landed`;
 }
 
@@ -743,7 +842,9 @@ export function withheldWithClaimedWriteReason(claimReason: string): string {
  * Returns:
  *   True for a held row carrying that line.
  */
-export function withheldWithClaimedWrite(row: { held?: boolean; reason?: string } | undefined): boolean {
+export function withheldWithClaimedWrite(
+  row: { held?: boolean; reason?: string } | undefined,
+): boolean {
   return row?.held === true && row.reason?.startsWith(WITHHELD_WITH_CLAIMED_WRITE_PREFIX) === true;
 }
 
@@ -774,8 +875,11 @@ export function listedHeldItem<T extends ListedHeldItem>(
 ): T | undefined {
   const wanted = new Set(targets.map((target) => target.toLowerCase()));
   return listed.find((item) => {
-    if (item.pageField) return surface.path === BROWSER_DRIVEN && wanted.has(browserFieldId(item.externalId));
-    return [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])].some((name) => wanted.has(name.toLowerCase()));
+    if (item.pageField)
+      return surface.path === BROWSER_DRIVEN && wanted.has(browserFieldId(item.externalId));
+    return [item.externalId, ...(item.externalAlias ? [item.externalAlias] : [])].some((name) =>
+      wanted.has(name.toLowerCase()),
+    );
   });
 }
 
@@ -800,7 +904,9 @@ export function heldItemsOfWithheldRows(
   const found = actions.flatMap((action, index): HeldExternalItem[] => {
     if (!withheldByClaim(applied[index])) return [];
     const on = parsedOn(action, surfaces);
-    const item = on ? listedHeldItem(held, writeTargetIds(on.parsed, on.surface), on.surface) : undefined;
+    const item = on
+      ? listedHeldItem(held, writeTargetIds(on.parsed, on.surface), on.surface)
+      : undefined;
     return item ? [item] : [];
   });
   return found.filter((item, at) => found.indexOf(item) === at);

@@ -411,7 +411,11 @@ async function charterAwaitsApproval(ctx: MutationCtx, agentId: Id<'agents'>): P
  * Returns:
  *   How many rows were parked.
  */
-async function parkForCharter(ctx: MutationCtx, agentId: Id<'agents'>, now: number): Promise<number> {
+async function parkForCharter(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
   let parked = 0;
   for (const row of await queueWindow(ctx, agentId)) {
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
@@ -612,8 +616,10 @@ export async function resumeStalledStepsInTransaction(
       }
       return rows;
     };
-    for (const row of await ready('claimed', (row) =>
-      row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now))) {
+    for (const row of await ready(
+      'claimed',
+      (row) => row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now),
+    )) {
       if (await resumeDraft(ctx, row, now)) rescheduled += 1;
     }
     for (const row of await ready('plan-approved', () => true)) {
@@ -622,9 +628,12 @@ export async function resumeStalledStepsInTransaction(
       });
       rescheduled += 1;
     }
-    for (const row of await ready('plan-pending', (row) =>
-      !row.decision &&
-      (row.planPendingAt === undefined || now - row.planPendingAt >= STEP_LEASE_MS))) {
+    for (const row of await ready(
+      'plan-pending',
+      (row) =>
+        !row.decision &&
+        (row.planPendingAt === undefined || now - row.planPendingAt >= STEP_LEASE_MS),
+    )) {
       await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
         workItemId: row._id,
         recovery: true,
@@ -632,15 +641,24 @@ export async function resumeStalledStepsInTransaction(
       rescheduled += 1;
     }
     for (const row of await ready('executing', async (row) => {
-      if (!row.executionRunId || row.pendingRunId || row.applyAttemptId ||
-          row.applyClaimedAt || row.applyPhase) return false;
+      if (
+        !row.executionRunId ||
+        row.pendingRunId ||
+        row.applyAttemptId ||
+        row.applyClaimedAt ||
+        row.applyPhase
+      )
+        return false;
       const claim = await ctx.db.get(row.executionRunId);
       return !!claim && now - claim.createdAt >= EXECUTION_STALL_MS;
     })) {
       // A closing phase whose authoring never claimed the run keeps its
       // landed prerequisites: it is failed so Retry resumes it, not as a stop.
       const runId = row.executionRunId;
-      if (runId && (row.output as { phase?: unknown } | undefined)?.phase === 'dependent-authoring') {
+      if (
+        runId &&
+        (row.output as { phase?: unknown } | undefined)?.phase === 'dependent-authoring'
+      ) {
         await ctx.scheduler.runAfter(0, internal.work.recoverDependentAuthoring, {
           workItemId: row._id,
           runId,
@@ -742,9 +760,13 @@ export const checkForNewWork = mutation({
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .collect()
-    ).filter((surface) => surface.verdict === 'connected' && WORK_SURFACE_CLASSES.has(surface.class));
+    ).filter(
+      (surface) => surface.verdict === 'connected' && WORK_SURFACE_CLASSES.has(surface.class),
+    );
     for (const surface of surfaces) {
-      await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, { surfaceId: surface._id });
+      await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, {
+        surfaceId: surface._id,
+      });
     }
     // The work already here is checked too: a row parked on a connection, a
     // grant or a skill that has since landed goes back to be evaluated.

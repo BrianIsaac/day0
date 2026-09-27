@@ -40,7 +40,9 @@ const TRIAL_EXTERNAL_ID_PREFIX = 'EVAL-';
  * Returns:
  *   True for a trial row.
  */
-export function isRevocationTrialRow(row: Pick<Doc<'workItems'>, 'sourceSystem' | 'externalId'>): boolean {
+export function isRevocationTrialRow(
+  row: Pick<Doc<'workItems'>, 'sourceSystem' | 'externalId'>,
+): boolean {
   return (
     row.sourceSystem === 'slack' &&
     row.externalId.startsWith(TRIAL_EXTERNAL_ID_PREFIX) &&
@@ -93,9 +95,7 @@ export const installSurfaceCards = internalMutation({
       whereFound: effectiveSlackEvidence,
       path: 'documented-api' as const,
       fallbackPath: 'escalate' as const,
-      pathCandidates: [
-        { path: 'documented-api' as const, endpoint: 'https://slack.com/api/' },
-      ],
+      pathCandidates: [{ path: 'documented-api' as const, endpoint: 'https://slack.com/api/' }],
       endpoint: 'https://slack.com/api/',
       credentialId: args.slackCredentialId,
       credentialKind: 'oauth' as const,
@@ -119,7 +119,8 @@ export const installSurfaceCards = internalMutation({
         openQuestions: [],
       },
     };
-    const slack = existingSlack?._id ??
+    const slack =
+      existingSlack?._id ??
       (await ctx.db.insert('surfaces', {
         agentId: args.agentId,
         slug: 'slack',
@@ -143,9 +144,7 @@ export const installSurfaceCards = internalMutation({
       whereFound: effectiveTileEvidence,
       path: 'browser-driven' as const,
       fallbackPath: 'escalate' as const,
-      pathCandidates: [
-        { path: 'browser-driven' as const, endpoint: 'http://looker-tile:8080/' },
-      ],
+      pathCandidates: [{ path: 'browser-driven' as const, endpoint: 'http://looker-tile:8080/' }],
       endpoint: 'http://looker-tile:8080/',
       credentialLanded: false,
       request: {
@@ -167,7 +166,8 @@ export const installSurfaceCards = internalMutation({
         openQuestions: [],
       },
     };
-    const tile = existingTile?._id ??
+    const tile =
+      existingTile?._id ??
       (await ctx.db.insert('surfaces', {
         agentId: args.agentId,
         slug: 'looker-pipeline-tile',
@@ -262,7 +262,9 @@ export const seedTrial = mutation({
     const existing = await ctx.db
       .query('workItems')
       .withIndex('by_extId', (q) =>
-        q.eq('sourceSystem', 'slack').eq('externalId', `${TRIAL_EXTERNAL_ID_PREFIX}${args.trialId}`),
+        q
+          .eq('sourceSystem', 'slack')
+          .eq('externalId', `${TRIAL_EXTERNAL_ID_PREFIX}${args.trialId}`),
       )
       .first();
     if (existing) throw new Error(`trial ${args.trialId} already exists`);

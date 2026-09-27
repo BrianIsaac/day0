@@ -75,10 +75,7 @@ import {
   MANAGER_FEEDBACK_MAX_CHARS,
   undeliveredDecisionReason,
 } from '../src/work/manager-channel';
-import {
-  browserComponentRefusal,
-  withBrowserComponentState,
-} from '../src/surfaces/browser';
+import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { skillBodyHash } from '../src/work/skill-body';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
@@ -1120,7 +1117,9 @@ export const reevaluatePending = internalMutation({
     trigger: reevaluationTriggerValidator,
     key: v.string(),
     surfaceId: v.optional(v.id('surfaces')),
-    after: v.optional(v.object({ skipped: v.optional(v.number()), deferred: v.optional(v.number()) })),
+    after: v.optional(
+      v.object({ skipped: v.optional(v.number()), deferred: v.optional(v.number()) }),
+    ),
   },
   handler: async (ctx, args): Promise<ReevaluatePendingResult> =>
     await reevaluatePendingInTransaction(ctx, args),
@@ -1136,7 +1135,10 @@ export interface ClaimHolder {
 }
 
 /** A holder in one of these states no longer holds its item. */
-const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['cancelled', 'skipped']);
+const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'cancelled',
+  'skipped',
+]);
 
 /**
  * A row in one of these states that never claimed its item will not write it:
@@ -1182,7 +1184,9 @@ async function externalClaimScope(
     ? undefined
     : await ctx.db
         .query('surfaces')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', row.sourceSystem))
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', row.agentId).eq('slug', row.sourceSystem),
+        )
         .first();
   const key = row.externalClaimKey ?? providerItemKey(surface ?? undefined, row, SURFACE_MODE);
   return key === undefined ? undefined : { userId: agent.userId, key };
@@ -1401,7 +1405,9 @@ function landedCommentOn(holding: Doc<'workItems'>): string | undefined {
       return (
         parsed.ok &&
         isAuditComment(parsed.action) &&
-        writeTargetIds(parsed.action, { class: 'kanban' }).some((target) => held.has(target.toUpperCase()))
+        writeTargetIds(parsed.action, { class: 'kanban' }).some((target) =>
+          held.has(target.toUpperCase()),
+        )
       );
     })
     .map((write) => write.applied.providerId)
@@ -1469,8 +1475,13 @@ export const writeClaimHolder = internalQuery({
       };
     };
     for (const target of args.targets) {
-      const key = providerItemKey(surface, { sourceSystem: surface.slug, externalId: target }, SURFACE_MODE);
-      if (key === undefined || row.externalClaimKey === key || row.externalClaimAlias === key) continue;
+      const key = providerItemKey(
+        surface,
+        { sourceSystem: surface.slug, externalId: target },
+        SURFACE_MODE,
+      );
+      if (key === undefined || row.externalClaimKey === key || row.externalClaimAlias === key)
+        continue;
       const live = await ctx.db
         .query('externalClaims')
         .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
@@ -1507,7 +1518,8 @@ export const writeClaimHolder = internalQuery({
           .filter((q) => q.eq(q.field('releasedAt'), undefined))
           .first();
         if (claimed) {
-          if (!RELEASED_HOLDER_STATES.has(holding.state)) return await holderOf(target, holding, false);
+          if (!RELEASED_HOLDER_STATES.has(holding.state))
+            return await holderOf(target, holding, false);
         } else if (!NEVER_CLAIMED_DEAD_STATES.has(holding.state)) {
           waiting ??= holding;
         }
@@ -1535,7 +1547,11 @@ export const writeClaimHolder = internalQuery({
  *   False only for a settled write-target claim and a row created after it settled.
  */
 function holdsAgainst(claim: Doc<'externalClaims'>, row: Doc<'workItems'>): boolean {
-  return claim.writeTarget === undefined || claim.settledAt === undefined || row._creationTime < claim.settledAt;
+  return (
+    claim.writeTarget === undefined ||
+    claim.settledAt === undefined ||
+    row._creationTime < claim.settledAt
+  );
 }
 
 /** The most write targets one work item takes; a surface documents a handful of fields. */
@@ -1579,7 +1595,9 @@ export const takeWriteTargetClaims = internalMutation({
     for (const target of args.targets.slice(0, WRITE_TARGET_CLAIMS)) {
       const surface = await ctx.db
         .query('surfaces')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', target.surfaceSlug))
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', row.agentId).eq('slug', target.surfaceSlug),
+        )
         .first();
       if (!surface || surface.path !== 'browser-driven') continue;
       const key = providerItemKey(
@@ -1596,7 +1614,8 @@ export const takeWriteTargetClaims = internalMutation({
       let taken = false;
       for (const claim of live) {
         if (claim.workItemId === row._id) {
-          if (claim.settledAt !== undefined) await ctx.db.patch(claim._id, { settledAt: undefined });
+          if (claim.settledAt !== undefined)
+            await ctx.db.patch(claim._id, { settledAt: undefined });
           held.push(key);
           taken = true;
           continue;
@@ -1634,7 +1653,11 @@ export const takeWriteTargetClaims = internalMutation({
  *   workItemId: The work item that finished.
  *   now: The time it finished.
  */
-async function settleWriteTargetClaims(ctx: MutationCtx, workItemId: Id<'workItems'>, now: number): Promise<void> {
+async function settleWriteTargetClaims(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  now: number,
+): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
   const held = await ctx.db
     .query('externalClaims')
@@ -1671,7 +1694,11 @@ const WRITE_TARGET_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new S
   'failed',
 ]);
 /** States in which a row has not taken its claim yet. */
-const UNCLAIMED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['discovered', 'deferred', 'needs-skill']);
+const UNCLAIMED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'discovered',
+  'deferred',
+  'needs-skill',
+]);
 /** The most employees of one owner read for the list, the asking one first. */
 const HELD_ELSEWHERE_EMPLOYEES = 16;
 
@@ -1782,7 +1809,11 @@ export const itemsHeldElsewhere = internalQuery({
  *   claim: The live claim.
  *   now: The release time.
  */
-async function releaseClaim(ctx: MutationCtx, claim: Doc<'externalClaims'>, now: number): Promise<void> {
+async function releaseClaim(
+  ctx: MutationCtx,
+  claim: Doc<'externalClaims'>,
+  now: number,
+): Promise<void> {
   await ctx.db.patch(claim._id, { releasedAt: now });
   const employees = await ctx.db
     .query('agents')
@@ -2308,7 +2339,9 @@ export const recoverUnproposedSkill = internalMutation({
     const latest = (
       await ctx.db
         .query('events')
-        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', 'work.evaluated'))
+        .withIndex('by_agent_type', (q) =>
+          q.eq('agentId', row.agentId).eq('type', 'work.evaluated'),
+        )
         .order('desc')
         .take(REEVALUATION_BATCH)
     ).find((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
@@ -2392,15 +2425,22 @@ export const planGroundingReads = internalQuery({
     // reach simply has none to cite.
     const newestFirst = ctx.db
       .query('events')
-      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId).gt('_creationTime', row._creationTime))
+      .withIndex('by_agent', (q) =>
+        q.eq('agentId', row.agentId).gt('_creationTime', row._creationTime),
+      )
       .order('desc');
     let scanned = 0;
     for await (const event of newestFirst) {
       scanned += 1;
       if (scanned > GROUNDING_READ_SCAN_LIMIT) break;
       if (event.type !== 'work.plan-grounding-read') continue;
-      const { workItemId, action, applied } = event.payload as { workItemId?: string; action?: unknown; applied?: unknown };
-      if (workItemId === args.workItemId && action !== undefined && applied != null) return [{ action, applied }];
+      const { workItemId, action, applied } = event.payload as {
+        workItemId?: string;
+        action?: unknown;
+        applied?: unknown;
+      };
+      if (workItemId === args.workItemId && action !== undefined && applied != null)
+        return [{ action, applied }];
     }
     return [];
   },
@@ -2569,7 +2609,8 @@ export const prepareDecisionRequest = internalMutation({
     if (row.state !== expectedState) {
       return { prepared: false as const, reason: `work item is ${row.state}` };
     }
-    const live = row.decision?.kind === args.kind && !row.decision.decidedAt ? row.decision : undefined;
+    const live =
+      row.decision?.kind === args.kind && !row.decision.decidedAt ? row.decision : undefined;
     // A delivered code is replaced only once it was marked failed, which only
     // a change of manager does to a delivered request: the old one went to a
     // DM nobody reads for this agent any more.
@@ -2735,7 +2776,8 @@ const INTERRUPTED_NOTE_REASON =
   'the apply was interrupted, so what it sent is not known; check each change marked below';
 
 /** Why a request delivered to the previous manager is sent again. */
-export const MANAGER_CHANGED_RESEND_REASON = 'the manager changed; the request went to the previous one';
+export const MANAGER_CHANGED_RESEND_REASON =
+  'the manager changed; the request went to the previous one';
 
 /**
  * Send the open decision requests delivered to a previous manager again.
@@ -3067,7 +3109,11 @@ async function resolveChannelBatch(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
   batch: Doc<'decisionBatches'>,
-  args: { userId: string; messageTs: string; reply: { verb: 'approve' | 'reject'; id: string; reason?: string } },
+  args: {
+    userId: string;
+    messageTs: string;
+    reply: { verb: 'approve' | 'reject'; id: string; reason?: string };
+  },
 ) {
   if (batch.surfaceSlug !== surface.slug || batch.channel !== surface.managerDmChannelId) {
     await ctx.db.insert('events', {
@@ -3085,7 +3131,8 @@ async function resolveChannelBatch(
   }
   const anchor = batch.members[0]?.workItemId;
   if (batch.decidedAt) {
-    if (batch.decidedTs === args.messageTs) return { status: 'already-decided' as const, notified: false };
+    if (batch.decidedTs === args.messageTs)
+      return { status: 'already-decided' as const, notified: false };
     const notified = anchor
       ? await queueManagerReplyNotice(ctx, {
           surfaceId: surface._id,
@@ -3108,7 +3155,10 @@ async function resolveChannelBatch(
       continue;
     }
     if (decision.decidedAt) {
-      skipped.push({ decisionId: member.decisionId, reason: `already ${decision.outcome ?? 'decided'}` });
+      skipped.push({
+        decisionId: member.decisionId,
+        reason: `already ${decision.outcome ?? 'decided'}`,
+      });
       continue;
     }
     if (
@@ -3133,7 +3183,11 @@ async function resolveChannelBatch(
       await rejectActionsInTransaction(
         ctx,
         item,
-        { workItemId: item._id, pendingRunId: member.pendingRunId, reason: args.reply.reason ?? '' },
+        {
+          workItemId: item._id,
+          pendingRunId: member.pendingRunId,
+          reason: args.reply.reason ?? '',
+        },
         'channel',
         args.messageTs,
       );
@@ -3311,7 +3365,12 @@ async function approvePlanInTransaction(
       workItemId: row._id,
       decidedVia: via,
       ...(answers.length > 0
-        ? { answered: answers.map((entry) => ({ question: entry.question, questionId: entry.questionId })) }
+        ? {
+            answered: answers.map((entry) => ({
+              question: entry.question,
+              questionId: entry.questionId,
+            })),
+          }
         : {}),
     },
     createdAt: Date.now(),
@@ -3449,11 +3508,12 @@ export const retryFailed = mutation({
     // A cancelled plan is one the manager turned down: Retry drafts a new plan
     // that goes back to them, and never runs the rejected one.
     const redraft = row.state === 'cancelled' && row.plan !== undefined;
-    const next: Doc<'workItems'>['state'] = row.plan && !redraft
-      ? 'plan-approved'
-      : verdict?.decision === 'claim'
-        ? 'claimed'
-        : 'discovered';
+    const next: Doc<'workItems'>['state'] =
+      row.plan && !redraft
+        ? 'plan-approved'
+        : verdict?.decision === 'claim'
+          ? 'claimed'
+          : 'discovered';
     if (next !== 'discovered') await retakeExternalClaim(ctx, row);
     // Retrying a skip is the manager overruling the agent's judgement: a
     // quality-fit skip says the work is worth doing, an out-of-scope skip says
@@ -3467,17 +3527,32 @@ export const retryFailed = mutation({
       : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
         ? 'scope'
         : undefined;
-    const resume = SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
-      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason && stopDetail(row.skipReason), (await ctx.db
-          .query('surfaces').withIndex('by_agent', q => q.eq('agentId', row.agentId)).take(100))
-          .map(toSurfaceRecord)
-          .filter((surface) => verdictFor(surface, Date.now()) === 'connected'))
-      : undefined;
+    const resume =
+      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
+        ? closingResume(
+            row.output,
+            row.plan as ExecutionPlan,
+            row.skipReason && stopDetail(row.skipReason),
+            (
+              await ctx.db
+                .query('surfaces')
+                .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+                .take(100)
+            )
+              .map(toSurfaceRecord)
+              .filter((surface) => verdictFor(surface, Date.now()) === 'connected'),
+          )
+        : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
       ...(resume ? { output: resume } : {}),
       ...(redraft
-        ? { plan: undefined, decision: undefined, planPendingAt: undefined, managerAnswers: undefined }
+        ? {
+            plan: undefined,
+            decision: undefined,
+            planPendingAt: undefined,
+            managerAnswers: undefined,
+          }
         : {}),
       skipReason: undefined,
       executionRunId: undefined,
@@ -3743,9 +3818,7 @@ export const claimForBaseline = internalMutation({
   handler: async (
     ctx,
     args,
-  ): Promise<
-    { claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }
-  > => {
+  ): Promise<{ claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }> => {
     const item = await ctx.db.get(args.workItemId);
     if (!item) throw new Error('workItem not found');
     const agent = await ctx.db.get(item.agentId);
@@ -4041,8 +4114,15 @@ export const setFailed = internalMutation({
     // another scheduled caller claimed after the failing caller read the row.
     if (!args.runId && row.executionRunId) return;
     if (args.onlyIfStalled) {
-      if (row.state !== 'executing' || !args.runId || row.pendingRunId ||
-          row.applyAttemptId || row.applyClaimedAt || row.applyPhase) return;
+      if (
+        row.state !== 'executing' ||
+        !args.runId ||
+        row.pendingRunId ||
+        row.applyAttemptId ||
+        row.applyClaimedAt ||
+        row.applyPhase
+      )
+        return;
       const claim = await ctx.db.get(args.runId);
       if (!claim || Date.now() - claim.createdAt < EXECUTION_STALL_MS) return;
     }
@@ -4220,7 +4300,8 @@ export const prepareManagerNote = internalMutation({
 });
 
 /** Why a claimed per-run note is recorded as not delivered. */
-export const UNSENT_NOTE_REASON = 'the send stopped before Slack answered; the note was not delivered';
+export const UNSENT_NOTE_REASON =
+  'the send stopped before Slack answered; the note was not delivered';
 
 /**
  * A per-run note's dead-man's switch, armed with its claim.
@@ -4277,7 +4358,12 @@ export const recordManagerNote = internalMutation({
       await ctx.db.insert('events', {
         agentId: note.agentId,
         type: 'work.manager-note-failed',
-        payload: { workItemId: note.workItemId, noteId: note._id, kind: note.kind, reason: failure },
+        payload: {
+          workItemId: note.workItemId,
+          noteId: note._id,
+          kind: note.kind,
+          reason: failure,
+        },
         createdAt: Date.now(),
       });
     }
@@ -4434,7 +4520,11 @@ async function reviewHeldActions(
   row: Doc<'workItems'>,
   actions: MockAction[],
   planStepOutcomes: readonly PlanStepOutcome[] | undefined,
-): Promise<{ verdicts: ActionVerdict[]; autonomousActions: boolean; transitionDirectedByNote: boolean }> {
+): Promise<{
+  verdicts: ActionVerdict[];
+  autonomousActions: boolean;
+  transitionDirectedByNote: boolean;
+}> {
   const [agent, surfaceRows, grantRows] = await Promise.all([
     ctx.db.get(row.agentId),
     ctx.db
@@ -4640,7 +4730,11 @@ export const setActionsPending = internalMutation({
     }
     const actions = (args.output as { actions?: unknown[] }).actions;
     if (!Array.isArray(actions)) throw new Error('output.actions must be a list');
-    const { verdicts: actionVerdicts, autonomousActions, transitionDirectedByNote } = await reviewHeldActions(
+    const {
+      verdicts: actionVerdicts,
+      autonomousActions,
+      transitionDirectedByNote,
+    } = await reviewHeldActions(
       ctx,
       row,
       actions as MockAction[],
@@ -4829,7 +4923,10 @@ export const approveActionsBatch = mutation({
   handler: async (
     ctx,
     args,
-  ): Promise<{ ok: true; approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> }> => {
+  ): Promise<{
+    ok: true;
+    approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }>;
+  }> => {
     if (args.members.length === 0) throw new Error('a batch approves at least one item');
     const seen = new Set<string>();
     const approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> = [];
@@ -4863,11 +4960,14 @@ export const prepareDecisionBatch = internalMutation({
     if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.batchId)) {
       throw new Error('batch id is not a six-character random token');
     }
-    if (args.members.length < 2) return { prepared: false, reason: 'a batch names at least two decisions' };
+    if (args.members.length < 2)
+      return { prepared: false, reason: 'a batch names at least two decisions' };
     const [itemCollision, batchCollision] = await Promise.all([
       ctx.db
         .query('workItems')
-        .withIndex('by_agent_decision', (q) => q.eq('agentId', args.agentId).eq('decision.id', args.batchId))
+        .withIndex('by_agent_decision', (q) =>
+          q.eq('agentId', args.agentId).eq('decision.id', args.batchId),
+        )
         .first(),
       ctx.db
         .query('decisionBatches')
@@ -5056,7 +5156,8 @@ async function rejectActionsInTransaction(
     applyClaimedAt: undefined,
     ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
   });
-  if (feedback) await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
+  if (feedback)
+    await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
   await releaseItemClaim(ctx, args.workItemId, now);
   await ctx.db.insert('events', {
     agentId: row.agentId,

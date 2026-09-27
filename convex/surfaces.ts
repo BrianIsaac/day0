@@ -330,10 +330,11 @@ export async function retireCharterSystem(
     const evidence = surface.discoveryEvidence ?? [];
     if (!evidence.some((item): boolean => item.kind === 'charter' && item.current)) continue;
     await ctx.db.patch(surface._id, {
-      discoveryEvidence: evidence.map((item): DiscoveryEvidence =>
-        item.kind === 'charter' && item.current
-          ? { ...item, current: false, lastSeenAt: args.now }
-          : item,
+      discoveryEvidence: evidence.map(
+        (item): DiscoveryEvidence =>
+          item.kind === 'charter' && item.current
+            ? { ...item, current: false, lastSeenAt: args.now }
+            : item,
       ),
     });
     retired += 1;
@@ -381,7 +382,8 @@ export async function reconcileDocumentedSystems(
       );
     const direct = bySlug.get(system.slug);
     const matches = surfaces.filter(sameIdentity);
-    const existing = direct && sameIdentity(direct) ? direct : matches.length === 1 ? matches[0] : undefined;
+    const existing =
+      direct && sameIdentity(direct) ? direct : matches.length === 1 ? matches[0] : undefined;
     const host = stableSlug(identity.hosts[0] ?? '');
     const slug = existing?.slug ?? (direct ? `${system.slug}-${host || 'system'}` : system.slug);
     const prior = resolved.get(slug);
@@ -623,11 +625,9 @@ export async function scheduleOrientationFor(
     const job = await ctx.db.system.get(surface.orientationJobId);
     if (job && (job.state.kind === 'pending' || job.state.kind === 'inProgress')) return false;
   }
-  const orientationJobId = await ctx.scheduler.runAfter(
-    0,
-    internal.orientationActions.orientOne,
-    { surfaceId: surface._id },
-  );
+  const orientationJobId = await ctx.scheduler.runAfter(0, internal.orientationActions.orientOne, {
+    surfaceId: surface._id,
+  });
   await ctx.db.patch(surface._id, { orientationJobId });
   return true;
 }
@@ -1197,9 +1197,7 @@ async function requeueDeferredWork(
         workItemId: item._id,
         surfaceId: surface._id,
         slug: surface.slug,
-        ...(verdict.missingSurface
-          ? { previousMissingSurface: verdict.missingSurface }
-          : {}),
+        ...(verdict.missingSurface ? { previousMissingSurface: verdict.missingSurface } : {}),
       },
       createdAt: now,
     });
@@ -1219,8 +1217,7 @@ async function requeueWorkAwaitingAlias(
   return await requeueDeferredWork(
     ctx,
     surface,
-    (verdict) =>
-      verdict.reason === 'awaiting-connection' && verdict.missingSurface === aliasSlug,
+    (verdict) => verdict.reason === 'awaiting-connection' && verdict.missingSurface === aliasSlug,
     now,
   );
 }
@@ -1772,12 +1769,16 @@ export const approve = mutation({
     }
     for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
       if (!value.sourceId) continue;
-      const page = await ctx.db.query('docPages')
+      const page = await ctx.db
+        .query('docPages')
         .withIndex('by_source_ref', (index) =>
-          index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref))
+          index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref),
+        )
         .unique();
       if (!page?.markdown.split(/\r?\n/).some((line) => line.trim() === value.quote)) {
-        throw new Error('A documented intake queue changed; reject this card and re-run orientation before approval.');
+        throw new Error(
+          'A documented intake queue changed; reject this card and re-run orientation before approval.',
+        );
       }
     }
     if (surface.path === 'browser-driven') {

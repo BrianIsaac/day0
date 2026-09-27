@@ -4,7 +4,11 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 import { amendCharterInTransaction, type AmendmentVia } from './charters';
 import type { Charter } from '../src/agent/charter';
-import { managerOpenQuestions, questionKey, sharedContentWords } from '../src/agent/manager-questions';
+import {
+  managerOpenQuestions,
+  questionKey,
+  sharedContentWords,
+} from '../src/agent/manager-questions';
 
 /**
  * Questions for the manager: the charter's open questions, asked once each
@@ -127,12 +131,17 @@ export async function answerQuestionInTransaction(
     .withIndex('by_agent', (q) => q.eq('agentId', record.agentId))
     .order('desc')
     .first();
-  const stillOpen = managerOpenQuestions((latest?.body as Charter | undefined) ?? { openQuestions: [] }).some(
-    (question: string): boolean => questionKey(question) === record.key,
-  );
+  const stillOpen = managerOpenQuestions(
+    (latest?.body as Charter | undefined) ?? { openQuestions: [] },
+  ).some((question: string): boolean => questionKey(question) === record.key);
   const currentBody = latest?.body as Charter | undefined;
-  const priorAnswer = currentBody?.answeredQuestions?.find((entry) => questionKey(entry.question) === record.key);
-  if (!latest?.approved || (!stillOpen && priorAnswer?.answer.replace(/\s+/g, ' ').trim() !== answer)) {
+  const priorAnswer = currentBody?.answeredQuestions?.find(
+    (entry) => questionKey(entry.question) === record.key,
+  );
+  if (
+    !latest?.approved ||
+    (!stillOpen && priorAnswer?.answer.replace(/\s+/g, ' ').trim() !== answer)
+  ) {
     throw new Error('that question is no longer open on the current charter; refresh the plan');
   }
   let amendedCharterId: Id<'charters'> | null = null;
@@ -191,10 +200,14 @@ export const openForAgent = query({
       .query('managerQuestions')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .collect();
-    const charter = await ctx.db.query('charters')
-      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId)).order('desc').first();
-    const open = new Set(charter?.approved
-      ? managerOpenQuestions(charter.body as Charter).map(questionKey) : []);
+    const charter = await ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+      .order('desc')
+      .first();
+    const open = new Set(
+      charter?.approved ? managerOpenQuestions(charter.body as Charter).map(questionKey) : [],
+    );
     return rows.filter((row) => !row.answer && open.has(row.key));
   },
 });

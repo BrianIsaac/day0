@@ -158,7 +158,11 @@ export function parseManifestCreate(payload: Record<string, unknown>): {
   const credentials = payload.credentials as Record<string, unknown> | undefined;
   const clientId = credentials?.client_id;
   const clientSecret = credentials?.client_secret;
-  if (typeof appId !== 'string' || typeof clientId !== 'string' || typeof clientSecret !== 'string') {
+  if (
+    typeof appId !== 'string' ||
+    typeof clientId !== 'string' ||
+    typeof clientSecret !== 'string'
+  ) {
     throw new Error('Slack apps.manifest.create returned no app credentials.');
   }
   return { appId, clientId, clientSecret };
@@ -523,11 +527,7 @@ export async function runCompleteInstall(
     });
     return { ok: true, agentId: claim.agentId, surfaceSlug: claim.slug };
   } catch (error) {
-    const reason = safeFailureMessage(
-      error,
-      clientSecret,
-      'The install could not be completed.',
-    );
+    const reason = safeFailureMessage(error, clientSecret, 'The install could not be completed.');
     await ctx.runMutation(internal.surfaces.recordInstallFailure, {
       surfaceId: surfaceRef,
       reason,

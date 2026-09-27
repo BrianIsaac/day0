@@ -34,13 +34,34 @@ export const snapshotInternal = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<MockSurfaceSnapshot> => {
     const [docs, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
-      ctx.db.query('mockDocs').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
-      ctx.db.query('mockSpreadsheets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
-      ctx.db.query('mockSpreadsheetRows').withIndex('by_agent_sheet_tab', (q) => q.eq('agentId', args.agentId)).collect(),
-      ctx.db.query('mockSlackChannels').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
-      ctx.db.query('mockSlackMessages').withIndex('by_agent_channel', (q) => q.eq('agentId', args.agentId)).collect(),
-      ctx.db.query('mockTweets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
-      ctx.db.query('mockTickets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db
+        .query('mockDocs')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('mockSpreadsheets')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('mockSpreadsheetRows')
+        .withIndex('by_agent_sheet_tab', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('mockSlackChannels')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('mockSlackMessages')
+        .withIndex('by_agent_channel', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('mockTweets')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('mockTickets')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
+        .collect(),
     ]);
     return {
       howToGuides: docs
