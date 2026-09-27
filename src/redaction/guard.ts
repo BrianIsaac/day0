@@ -22,6 +22,32 @@ export interface NeverASecret {
   pattern: RegExp;
 }
 
+/**
+ * The quotation marks an author wraps a value in, as opening and closing
+ * pairs: ASCII, the Latin curly quotes, the CJK corner brackets and the
+ * full-width marks. `密码：“开门芝麻”` and `Password: “Open Sesame”` quote their
+ * value as surely as `Password: "Summer"` does, so the structural floor takes
+ * a value between any pair whole and the guard reads any opening mark as the
+ * quote before an assigned value.
+ */
+export const QUOTE_PAIRS: readonly (readonly [open: string, close: string])[] = [
+  ['`', '`'],
+  ['"', '"'],
+  ["'", "'"],
+  ['“', '”'],
+  ['‘', '’'],
+  ['「', '」'],
+  ['『', '』'],
+  ['＂', '＂'],
+  ['＇', '＇'],
+];
+/** Every opening mark of `QUOTE_PAIRS`, as the body of a character class. */
+const QUOTE_OPENERS = [...new Set(QUOTE_PAIRS.map(([open]): string => open))].join('');
+/** Every closing mark of `QUOTE_PAIRS`, as the body of a character class. */
+const QUOTE_CLOSERS = [...new Set(QUOTE_PAIRS.map(([, close]): string => close))].join('');
+/** An opening quote mark directly before the value. */
+const OPENING_QUOTE_BEFORE = new RegExp(`[${QUOTE_OPENERS}]$`);
+
 const PERMISSION_SCOPE = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_.-]*$/;
 /**
  * A Slack channel reference: a hash, then the lowercase letters, digits,
@@ -67,6 +93,12 @@ function isPermissionScope(value: string): boolean {
 export interface GuardContext {
   /** The value sits under an explicit credential assignment. */
   assigned?: boolean;
+  /**
+   * The value is the whole text between a pair of `QUOTE_PAIRS` the author
+   * wrote after the label, so a phrase there is their marking of the secret
+   * (`Password: “Open Sesame”`), not prose.
+   */
+  quoted?: boolean;
 }
 
 /** The shapes that are names, and so do not apply under an explicit assignment. */
@@ -81,16 +113,14 @@ const NAME_SHAPES: ReadonlySet<string> = new Set([
 /**
  * Whether one shape rejects a value where it sits.
  *
- * Args:
- *   shape: The shape to try.
- *   value: The trimmed candidate.
- *   assigned: Whether the value sits under an explicit credential assignment.
- *
- * Returns:
- *   True when the shape applies and matches.
+ * @param shape - The shape to try.
+ * @param value - The trimmed candidate.
+ * @param context - Where the value sits.
+ * @returns True when the shape applies and matches.
  */
-function shapeRejects(shape: NeverASecret, value: string, assigned: boolean): boolean {
-  if (NAME_SHAPES.has(shape.name) && assigned) return false;
+function shapeRejects(shape: NeverASecret, value: string, context: GuardContext): boolean {
+  if (NAME_SHAPES.has(shape.name) && context.assigned === true) return false;
+  if (shape.name === 'prose' && context.quoted === true) return false;
   if (shape.name === 'permission scope') return isPermissionScope(value);
   return shape.pattern.test(value);
 }
@@ -191,8 +221,10 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
  * A span that swallowed its own label: "password: hunter2", "the token is
  * abc123". The value is the last word; everything before it names the kind.
  */
-const LABEL_THEN_VALUE =
-  /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60]+)[`'"]?(?:[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60]\S*)?$/i;
+const LABEL_THEN_VALUE = new RegExp(
+  `^(?:[^\\s:=]+\\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\\s*(?:\\bis\\b|=|:|：|是|为)?\\s*[${QUOTE_OPENERS}]?([^\\s${QUOTE_OPENERS}${QUOTE_CLOSERS}\\u3000-\\u303f\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uff01-\\uff60]+)[${QUOTE_CLOSERS}]?(?:[\\u3000-\\u303f\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uff01-\\uff60]\\S*)?$`,
+  'i',
+);
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
 /** A word of a runbook or of code: lowercase, Capitalised, snake_case or camelCase letters, no digit. */
 const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+)$/;
@@ -207,7 +239,7 @@ function opaqueRunbookWord(value: string): boolean {
 const SECRET_LABEL =
   '(?:password|passwd|pwd|passcode|passphrase|pin|token|key|secret|login|credentials?|auth|pat|密码|口令|令牌|密钥|秘钥|凭证)';
 /** A quote around a label or value, literal or JSON-escaped. */
-const QUOTE = '(?:\\\\?[`\'"])?';
+const QUOTE = `(?:\\\\?[${QUOTE_OPENERS}${QUOTE_CLOSERS}])?`;
 /**
  * A credential label with its separator directly before the value: the
  * assignment forms a runbook writes, including a table cell after a labelled
@@ -219,8 +251,10 @@ const SECRET_ASSIGNMENT = new RegExp(
   'i',
 );
 const SECRET_LABEL_WORD = new RegExp(`(?:^|[^A-Za-z])${SECRET_LABEL}(?:$|[^A-Za-z])`, 'i');
-const PASSWORD_ASSIGNMENT =
-  /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
+const PASSWORD_ASSIGNMENT = new RegExp(
+  `(?:password|passwd|pwd|passcode|pin|密码|口令)\\s*(?:[:=：]|\\bis\\b|是|为)\\s*[${QUOTE_OPENERS}]?$`,
+  'i',
+);
 const ASSIGNED_VALUE =
   /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
 /**
@@ -243,27 +277,36 @@ const USERNAME_DESIGNATOR =
 const IDENTIFIER_KEY =
   /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
 const IDENTIFIER_KEY_ASSIGNMENT = /\b(?:channel|method)[ \t]+key[ \t]*[:=][ \t]*[`'"]?$/i;
-const LEADING_PUNCTUATION = /^[(\[{'"`（「『【《]+/;
+const LEADING_PUNCTUATION = new RegExp(`^[(\\[{（【《${QUOTE_OPENERS}]+`);
 /**
  * Sentence punctuation a model swallows, ASCII or full-width; ASCII `!` and `?`
  * stay, a password may end in one.
  */
-const TRAILING_PUNCTUATION = /[.,;:)\]}'"`，。；：、！？）」』】》]+$/;
+const TRAILING_PUNCTUATION = new RegExp(`[.,;:)\\]}，。；：、！？）】》${QUOTE_CLOSERS}]+$`);
 /** An ASCII value that runs straight on into CJK text: the value ends where the sentence starts. */
 const ASCII_BEFORE_CJK =
   /^[\x21-\x7e]+(?=[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60])/;
 /** A label and a `:`, `=` or `：` directly before the value; prose ("the password is ...") is not one. */
 const LABEL_SEPARATOR_BEFORE = new RegExp(`${SECRET_LABEL}\\s*[:=：]\\s*$`, 'i');
-/** A CJK password-class label, with or without a separator, directly before the value. */
-const CJK_LABEL_BEFORE = /(?:密码|口令|令牌|密钥|秘钥|凭证)\s*(?:[:=：]|是|为)?\s*$/;
+/**
+ * A CJK password-class label, with or without a separator, directly before
+ * the value or before the quote that opens it (`密码：“开门芝麻”`).
+ */
+const CJK_LABEL_BEFORE = new RegExp(
+  `(?:密码|口令|令牌|密钥|秘钥|凭证)\\s*(?:[:=：]|是|为)?\\s*[${QUOTE_OPENERS}]?$`,
+);
 /**
  * A span that swallowed a CJK password-class label and its CJK value:
  * "密码是开门芝麻". The value is what follows the separator.
  */
 const CJK_LABEL_THEN_VALUE =
   /^(?:密码|口令|令牌|密钥|秘钥|凭证)\s*(?:[:=：]|是|为)\s*([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]{2,})[。，]?$/;
-/** Letters only: the first word of a phrase when more words follow it on the line. */
-const LATIN_LETTERS = /^[A-Za-z]+$/;
+/**
+ * A plain word, lowercase or Capitalised: the one letters-only value the
+ * phrase rule reads as the author's prose ("Login: Google Workspace SSO").
+ * A random letters-only password (`HqZwTrPx`) is not one, whatever follows it.
+ */
+export const PLAIN_WORD = /^[A-Z]?[a-z]+$/;
 const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
 
 /**
@@ -393,13 +436,13 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   ) {
     return undefined;
   }
-  // "Login: Google Workspace SSO": an unquoted label value that is the first
-  // word of a phrase is the author's prose; a quote is how an author marks a
-  // secret that reads as a word.
+  // "Login: Google Workspace SSO": an unquoted label value that is a plain
+  // word starting a phrase is the author's prose; a quote is how an author
+  // marks a secret that reads as a word.
   if (
-    LATIN_LETTERS.test(value) &&
+    PLAIN_WORD.test(value) &&
     LABEL_SEPARATOR_BEFORE.test(before) &&
-    !/[`'"]$/.test(before) &&
+    !OPENING_QUOTE_BEFORE.test(before) &&
     PHRASE_CONTINUES.test(text.slice(end).split('\n', 1)[0] ?? '')
   ) {
     return undefined;
@@ -417,7 +460,7 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     // A CJK value right after a CJK password label ("门禁密码 开门芝麻") is the
     // label's value, whatever separator the author used.
     if (shape.name === 'cjk words' && CJK_LABEL_BEFORE.test(before)) return false;
-    return shapeRejects(shape, value, assignedValue);
+    return shapeRejects(shape, value, { assigned: assignedValue });
   });
   return rejected || sampleValueReason(value) ? undefined : { start, end };
 }
@@ -542,14 +585,15 @@ export function personalDataGuardReason(kind: string, value: string): string | u
  * Args:
  *   value: A candidate value.
  *   context: Where the value sits; under an explicit assignment the name
- *     shapes (scope, channel reference, dotted identifier) do not apply.
+ *     shapes (scope, channel reference, dotted identifier) do not apply, and
+ *     between the author's quotes a phrase is not prose.
  *
  * Returns:
  *   The rule name, or undefined when the value passes.
  */
 export function guardReason(value: string, context: GuardContext = {}): string | undefined {
   const shape = NEVER_A_SECRET.find((candidate: NeverASecret): boolean =>
-    shapeRejects(candidate, value, context.assigned === true),
+    shapeRejects(candidate, value, context),
   )?.name;
   if (shape) return shape;
   const sample = sampleValueReason(value);

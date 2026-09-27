@@ -1684,12 +1684,14 @@ describe('a write is sent once (P5-5)', (): void => {
   const toolCall = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: {} });
   const toolList = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
 
-  it('lets one tool call through a fenced send and refuses the client\'s silent second', async (): Promise<void> => {
+  it("lets one tool call through a fenced send and refuses the client's silent second", async (): Promise<void> => {
     const sent: string[] = [];
-    const fence = sendOnceFence(async (_input: string | URL, init?: RequestInit): Promise<Response> => {
-      sent.push(String(init?.body));
-      return new Response('{}');
-    });
+    const fence = sendOnceFence(
+      async (_input: string | URL, init?: RequestInit): Promise<Response> => {
+        sent.push(String(init?.body));
+        return new Response('{}');
+      },
+    );
     await expect(
       fence.sendOnce(async () => {
         await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolList });
@@ -1708,13 +1710,14 @@ describe('a write is sent once (P5-5)', (): void => {
     for (let send = 0; send < 2; send += 1) {
       await expect(
         fence.sendOnce(
-          async () => await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall }),
+          async () =>
+            await fence.fetch('https://mcp.linear.app/mcp', { method: 'POST', body: toolCall }),
         ),
       ).resolves.toBeInstanceOf(Response);
     }
   });
 
-  it('sends a write through the client\'s fence, and a refused re-send leaves its outcome unknown', async (): Promise<void> => {
+  it("sends a write through the client's fence, and a refused re-send leaves its outcome unknown", async (): Promise<void> => {
     const fenced: string[] = [];
     const client: FakeClient = fakeClient({
       linear_save_comment: async (): Promise<unknown> => {
@@ -1797,8 +1800,20 @@ describe('the origin after a click (P6-16)', (): void => {
 
   it('refuses a first-run click that left the approved surface, its outcome unknown', async (): Promise<void> => {
     const adapter = clickLandingOn('http://unexpected.internal/sso');
-    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
-    const clicked = await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
+    await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k0',
+    );
+    const clicked = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Save' }),
+      1,
+      'k1',
+    );
     expect(clicked).toMatchObject({
       ok: false,
       outcomeUnknown: true,
@@ -1806,9 +1821,105 @@ describe('the origin after a click (P6-16)', (): void => {
     });
   });
 
+  /** How the page check after the click fails, once the click has been sent. */
+  type CheckFailure = 'no snapshot tool' | 'snapshot error' | 'snapshot refused' | 'no page url';
+
+  /** A driver whose Save click reports no page, and whose page check then fails as named. */
+  function clickCheckFailing(failure: CheckFailure): McpAdapter {
+    return new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => {
+        let clicked = false;
+        const snapshot = (): unknown => {
+          if (!clicked) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: '### Page\n- Page URL: http://looker-tile:8080/\n### Snapshot\n- button "Save" [ref=e23]',
+                },
+              ],
+            };
+          }
+          if (failure === 'snapshot error') {
+            return { isError: true, content: [{ type: 'text', text: 'snapshot timed out' }] };
+          }
+          if (failure === 'snapshot refused') {
+            throw Object.assign(new Error('snapshot refused'), {
+              id: 'MCP_CLIENT_TOOL_EXECUTION_FAILED',
+            });
+          }
+          return { content: [{ type: 'text', text: '- button "Save" [ref=e23]' }] };
+        };
+        const tools: Record<string, (args: unknown) => unknown> = {
+          browser_navigate: (args) => ({
+            content: [
+              { type: 'text', text: `- Page URL: ${String((args as { url: string }).url)}` },
+            ],
+          }),
+          browser_snapshot: snapshot,
+          browser_click: () => {
+            clicked = true;
+            return { content: [{ type: 'text', text: 'ok' }] };
+          },
+        };
+        return {
+          listTools: async () =>
+            Object.fromEntries(
+              Object.entries(tools)
+                .filter(
+                  ([name]) =>
+                    !(clicked && failure === 'no snapshot tool' && name === 'browser_snapshot'),
+                )
+                .map(([name, execute]) => [
+                  `looker-pipeline-tile_${name}`,
+                  { execute: async (args: unknown): Promise<unknown> => execute(args) },
+                ]),
+            ),
+          disconnect: async (): Promise<void> => undefined,
+        };
+      },
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+    });
+  }
+
+  it.each<[CheckFailure, string]>([
+    ['no snapshot tool', 'the browser driver does not expose browser_snapshot'],
+    ['snapshot error', 'browser_snapshot failed after the click'],
+    ['snapshot refused', 'browser_snapshot failed after the click'],
+    ['no page url', 'the browser driver reported no final page URL'],
+  ])(
+    'keeps a click outcome-unknown when the page check after it fails (%s)',
+    async (failure: CheckFailure, reason: string): Promise<void> => {
+      const adapter = clickCheckFailing(failure);
+      await adapter.apply(
+        ctx,
+        run,
+        call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+        0,
+        'k0',
+      );
+      const clicked = await adapter.apply(
+        ctx,
+        run,
+        call('browser_click', { element: 'Save' }),
+        1,
+        'k1',
+      );
+      expect(clicked).toMatchObject({ ok: false, outcomeUnknown: true, reason });
+    },
+  );
+
   it('lands a first-run click that stayed on the surface', async (): Promise<void> => {
     const adapter = clickLandingOn('http://looker-tile:8080/saved');
-    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
+    await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k0',
+    );
     await expect(
       adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1'),
     ).resolves.toMatchObject({ ok: true });
