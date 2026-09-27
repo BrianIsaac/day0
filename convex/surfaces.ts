@@ -1458,12 +1458,31 @@ async function endAccessInTransaction(
     credentialLanded: false,
     lastVerifiedAt: undefined,
   });
+  // The end date is on the event so the upgrade can tell this release's end
+  // of a proposal-started clock from an end the older code recorded.
   await ctx.db.insert('events', {
     agentId: surface.agentId,
     type: 'surface.expired',
-    payload: { surfaceId: surface._id },
+    payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
     createdAt: now,
   });
+}
+
+/**
+ * Whether this release's code ended the surface's access, rather than the code
+ * before it: the latest `surface.expired` event for it carries the end date.
+ */
+async function endedByThisRelease(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<boolean> {
+  for await (const event of ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (index) =>
+      index.eq('agentId', surface.agentId).eq('type', 'surface.expired'),
+    )
+    .order('desc')) {
+    const payload = event.payload as { surfaceId?: unknown; expiresAt?: unknown } | undefined;
+    if (payload?.surfaceId === surface._id) return typeof payload.expiresAt === 'number';
+  }
+  return false;
 }
 
 /**
@@ -1647,9 +1666,12 @@ export const recordExpiryNotice = internalMutation({
  * connected, ungranted or listed-dead row's end date is the model's length
  * counted from before the manager approved. Each such row gets
  * `SURFACE_ACCESS_DEFAULT_DAYS` from the upgrade. A row with a
- * `surface.access-set` event already has a clock this release set, and an
- * ended access stays ended until a manager renews it; both are left alone,
- * which also makes a second run a no-op. Run by `migrations:runPending`.
+ * `surface.access-set` event already has a clock this release set and is left
+ * alone, which also makes a second run a no-op. An access the older code ended
+ * stays ended until a manager renews it; one this release's code ended on the
+ * proposal-started clock, between the upgrade's push and this page, is
+ * restarted and probed again, as if the page had run first. Run by
+ * `migrations:runPending`.
  *
  * @param cursor - Where the previous page stopped, or null for the first.
  * @param now - The upgrade's moment, from which the new clocks run.
@@ -1663,17 +1685,25 @@ export async function restartAccessClocksPage(
   const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
   let changed = 0;
   for (const surface of page.page) {
-    if (!ACCESS_VERDICTS.includes(surface.verdict) || surface.reason === 'expired') continue;
+    if (!ACCESS_VERDICTS.includes(surface.verdict)) continue;
     if (await surfaceEventExists(ctx, surface, 'surface.access-set')) continue;
+    const ended = surface.reason === 'expired';
+    if (ended && !(await endedByThisRelease(ctx, surface))) continue;
     const expiresAt = now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
-    await ctx.db.patch(surface._id, { expiresAt });
+    await ctx.db.patch(surface._id, { expiresAt, ...(ended ? { reason: undefined } : {}) });
     await logAccessSet(ctx, surface, {
       by: 'upgrade',
       days: SURFACE_ACCESS_DEFAULT_DAYS,
       from: surface.expiresAt,
       expiresAt,
+      ...(ended ? { renewed: true } : {}),
       at: now,
     });
+    if (ended) {
+      await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+        surfaceId: surface._id,
+      });
+    }
     changed += 1;
   }
   return {

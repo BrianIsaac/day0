@@ -34,10 +34,13 @@ import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 
 /**
- * Every migration, in the order the upgrade runs them. Owners come first so
- * the inclusion-list conversion can read an adopted agent's sources.
+ * Every migration, in the order the upgrade runs them. The access clocks come
+ * first, so the hourly sweep has the least time to end a card on the clock
+ * they restart; owners come before the inclusion-list conversion, which reads
+ * an adopted agent's sources.
  */
 export const MIGRATION_NAMES = [
+  'surfaces-access-clock',
   'agents-owner',
   'agents-inclusion-list',
   'agents-posture',
@@ -46,7 +49,6 @@ export const MIGRATION_NAMES = [
   'surfaces-credential-ref',
   'credentials-sync-revoke',
   'ticket-listings',
-  'surfaces-access-clock',
 ] as const;
 
 /** One migration's name. */
