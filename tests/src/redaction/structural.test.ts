@@ -287,6 +287,7 @@ describe("the labelled password grammar on an author's page", (): void => {
       ['密码："开门芝麻2026"', ['开门芝麻2026']],
       ['Password: S3cret! then press Enter', ['S3cret!']],
       ['Password: Winter2026 for the shared login', ['Winter2026']],
+      ['Password: HqZwTrPx for the ops account', ['HqZwTrPx']],
     ];
     for (const [text, values] of cases) {
       const spans = structuralSpans(text);

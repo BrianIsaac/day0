@@ -529,6 +529,11 @@ describe('what the guard still keeps from the model (review of the phrase and CJ
     expect(guardReason('Open Sesame', { assigned: true })).toBe('prose');
   });
 
+  it('keeps a letters-only random password that words follow, and refuses only a plain word there', (): void => {
+    expect(kept('Password: HqZwTrPx for the ops account', 'HqZwTrPx')).toBe('HqZwTrPx');
+    expect(kept('Password: Managed by Okta', 'Managed')).toBeUndefined();
+  });
+
   it('still refuses the first word of a phrase a label assigns with a colon, and a bare CJK label', (): void => {
     expect(kept('Login: Google Workspace SSO', 'Google')).toBeUndefined();
     expect(kept('请填写身份证号', '身份证号')).toBeUndefined();

@@ -301,8 +301,12 @@ const CJK_LABEL_BEFORE = new RegExp(
  */
 const CJK_LABEL_THEN_VALUE =
   /^(?:密码|口令|令牌|密钥|秘钥|凭证)\s*(?:[:=：]|是|为)\s*([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]{2,})[。，]?$/;
-/** Letters only: the first word of a phrase when more words follow it on the line. */
-const LATIN_LETTERS = /^[A-Za-z]+$/;
+/**
+ * A plain word, lowercase or Capitalised: the one letters-only value the
+ * phrase rule reads as the author's prose ("Login: Google Workspace SSO").
+ * A random letters-only password (`HqZwTrPx`) is not one, whatever follows it.
+ */
+export const PLAIN_WORD = /^[A-Z]?[a-z]+$/;
 const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
 
 /**
@@ -432,11 +436,11 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   ) {
     return undefined;
   }
-  // "Login: Google Workspace SSO": an unquoted label value that is the first
-  // word of a phrase is the author's prose; a quote is how an author marks a
-  // secret that reads as a word.
+  // "Login: Google Workspace SSO": an unquoted label value that is a plain
+  // word starting a phrase is the author's prose; a quote is how an author
+  // marks a secret that reads as a word.
   if (
-    LATIN_LETTERS.test(value) &&
+    PLAIN_WORD.test(value) &&
     LABEL_SEPARATOR_BEFORE.test(before) &&
     !OPENING_QUOTE_BEFORE.test(before) &&
     PHRASE_CONTINUES.test(text.slice(end).split('\n', 1)[0] ?? '')

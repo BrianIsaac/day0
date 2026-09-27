@@ -20,7 +20,7 @@
  * every rule that judged a value by how random it looked.
  */
 
-import { QUOTE_PAIRS, guardReason, sampleValueReason } from './guard';
+import { PLAIN_WORD, QUOTE_PAIRS, guardReason, sampleValueReason } from './guard';
 
 export type StructuralLabel =
   | 'connection password'
@@ -127,33 +127,19 @@ const LABELLED_PASSWORD = new RegExp(
 /** `login: user / password`, `credentials: user/password`: the second half is the secret. */
 const LOGIN_PAIR =
   /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/gi;
-/** A bare value that is a plain word, lowercase or Capitalised, is a word before it is a password. */
-const PLAIN_WORD = /^[A-Z]?[a-z]+$/;
-/** Letters only: the first word of a phrase when more words follow it on the line. */
-const LATIN_LETTERS = /^[A-Za-z]+$/;
-const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
-
 /**
  * Whether an unquoted value after a password-class label is the author's
  * prose rather than a password: "Login: Google Workspace SSO", "Password:
- * Managed by Okta". A CJK phrase ("密码：请联系IT管理员") never reaches here,
- * because a bare value stops at the first CJK character. A quoted value is
- * the author's own marking of the secret and is never refused here.
+ * Summer". Only a plain word is: a letters-only value with capitals inside
+ * (`Password: HqZwTrPx for the ops account`) is a password with words after
+ * it. A CJK phrase ("密码：请联系IT管理员") never reaches here, because a bare
+ * value stops at the first CJK character. A quoted value is the author's own
+ * marking of the secret and is never refused here.
  *
  * @param value - The bare value, trailing punctuation shed.
- * @param rest - The line after the value.
  */
-function bareValueIsProse(value: string, rest: string): boolean {
-  return PLAIN_WORD.test(value) || (LATIN_LETTERS.test(value) && PHRASE_CONTINUES.test(rest));
-}
-
-/**
- * The line after a bare value, as the phrase test reads it: a value that
- * ended its sentence (`Password: kXqZpLmN. Then sign in.`) is followed by a
- * new sentence, not by more of the same phrase.
- */
-function restOfPhrase(raw: string, value: string, after: string): string {
-  return raw === value ? after : '';
+function bareValueIsProse(value: string): boolean {
+  return PLAIN_WORD.test(value);
 }
 /** A Singapore NRIC or FIN: a series letter, seven digits and a check letter. */
 const NATIONAL_ID = /(?<![A-Za-z0-9])([STFGM])(\d{7})([A-Z])(?![A-Za-z0-9])/g;
@@ -268,11 +254,10 @@ export function structuralSpans(text: string): StructuralSpan[] {
       .find((group: string | undefined): boolean => group !== undefined);
     const raw = quoted ?? match[QUOTE_PAIRS.length + 1] ?? '';
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
-    const rest = restOfPhrase(raw, value, text.slice(match.index + match[0].length));
     if (
       !value ||
       guardReason(value, { assigned: true, quoted: quoted !== undefined }) ||
-      (quoted === undefined && bareValueIsProse(value, rest))
+      (quoted === undefined && bareValueIsProse(value))
     )
       continue;
     const start = match.index + match[0].lastIndexOf(raw);
