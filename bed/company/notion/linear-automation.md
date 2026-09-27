@@ -20,7 +20,7 @@ and project, which its handbook names.
 - Issue identifiers are the team key and a number, `FIN-4` for example.
 - Workflow states, the same in every team: `Todo`, `In Progress`, `Done`.
 - Integration endpoint: Linear's MCP server, Streamable HTTP, `https://mcp.linear.app/mcp`. Authentication is a bearer token in the `Authorization` header.
-- Tools the automation is allowed to use: `list_issues`, `get_issue`, `get_user`, `list_comments`, `save_comment`, `save_issue`.
+- Tools the automation is allowed to use: `list_issues`, `get_issue`, `list_comments`, `save_comment`, `save_issue`.
 
 ## Access
 
