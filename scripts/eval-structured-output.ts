@@ -31,7 +31,7 @@ export function writeStructuredOutputRecord(
   try {
     writeFileSync(output, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
     throw new Error(
       `a structured-output record already exists at ${output}; the evidence directory is frozen`,
       { cause: error },
