@@ -674,8 +674,11 @@ export const requeueStranded = internalMutation({
   },
 });
 
+/** How many skill rows one page of the sandbox-id move reads. */
+const SANDBOX_ID_PAGE = 100;
+
 /**
- * One-off: move what `daytonaSandboxId` holds onto `sandboxId`.
+ * Move what `daytonaSandboxId` holds onto `sandboxId`, one page of skills.
  *
  * The field was named after the only sandbox there was. The local one writes
  * `local:<run id>` into it, so the name is wrong on the row as much as it was
@@ -683,27 +686,44 @@ export const requeueStranded = internalMutation({
  * checks every stored document against the schema when it is pushed, so a
  * deployment holding rows under the old name refuses the new schema before any
  * migration could run. Hence both names are declared for now, this moves the
- * rows, and the old declaration comes out afterwards.
+ * rows, and the old declaration comes out in the release after the one that
+ * runs it. A row with nothing under the old name is left alone, so a second
+ * run changes nothing.
  *
- *   npx convex run skills:migrateSandboxIdField
+ * @param cursor - Where the previous page stopped; null for the first.
+ * @returns The rows read and moved, and where the next page starts.
+ */
+export async function migrateSandboxIdPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; moved: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db.query('skills').paginate({ cursor, numItems: SANDBOX_ID_PAGE });
+  let moved = 0;
+  for (const row of page.page) {
+    if (row.daytonaSandboxId === undefined) continue;
+    await ctx.db.patch(row._id, {
+      sandboxId: row.sandboxId ?? row.daytonaSandboxId,
+      daytonaSandboxId: undefined,
+    });
+    moved += 1;
+  }
+  return { read: page.page.length, moved, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * One page of the sandbox-id move, by hand. Internal. The upgrade runs the
+ * whole move as the `skills-sandbox-id` migration (`convex/migrations.ts`);
+ * by hand it is a page at a time, passing back the cursor until `isDone`:
  *
- * Safe to run twice: a row with nothing under the old name is left alone.
+ *   npx convex run skills:migrateSandboxIdField '{"cursor":null}'
  */
 export const migrateSandboxIdField = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<{ moved: number }> => {
-    const rows = await ctx.db.query('skills').collect();
-    let moved = 0;
-    for (const row of rows) {
-      if (row.daytonaSandboxId === undefined) continue;
-      await ctx.db.patch(row._id, {
-        sandboxId: row.sandboxId ?? row.daytonaSandboxId,
-        daytonaSandboxId: undefined,
-      });
-      moved += 1;
-    }
-    return { moved };
-  },
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ read: number; moved: number; cursor: string; isDone: boolean }> =>
+    await migrateSandboxIdPage(ctx, args.cursor),
 });
 
 /**
