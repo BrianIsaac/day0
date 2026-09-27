@@ -84,6 +84,7 @@ import {
   parseManifestListing,
   parseOllamaList,
   pickModel,
+  unfitDefaultReason,
   type ModelMenuEntry,
   type PresentModel,
 } from './models';
@@ -2010,7 +2011,8 @@ async function chooseRealLocalModel(
     io.log('  (nothing is present yet: this project has no model volume)');
   }
   for (const line of modelMenuLines(menu)) io.log(line);
-  io.log(hardwareLine(freeVram(io)));
+  const free = freeVram(io);
+  io.log(hardwareLine(free));
 
   if (options.model !== undefined) {
     const named = menu.find((entry: ModelMenuEntry): boolean => entry.id === options.model) ?? {
@@ -2024,8 +2026,28 @@ async function chooseRealLocalModel(
     );
     return named;
   }
-  const fallback = defaultModel(menu);
-  if (fallback === undefined) throw new Error('the model menu is empty');
+  const fallback = defaultModel(menu, { freeVramMiB: free });
+  if (fallback === undefined) {
+    const [first] = menu;
+    if (first === undefined) throw new Error('the model menu is empty');
+    const choose =
+      `${unfitDefaultReason(first, free) ?? ''} Choose it on purpose with \`--model ${first.id}\`, ` +
+      `or run the model elsewhere: \`${SETUP_SCRIPT} --route featherless\` (${WAY_NAMES.cloud}).`;
+    if (options.dryRun || options.assumeYes || io.interactive === false) {
+      throw new Error(`no model is the default on this machine. ${choose}`);
+    }
+    io.log(`  No default on this machine. ${choose}`);
+    const answer = await io.ask(`  Choose 1-${menu.length}: `);
+    if (answer.trim() === '') throw new Error(`no model was chosen. ${choose}`);
+    const chosen = pickModel(menu, answer, undefined);
+    if (chosen === undefined) {
+      throw new SetupCancelled(`"${answer.trim()}" is not one of the ${menu.length}`);
+    }
+    io.log(
+      `  ${chosen.id}: ${chosen.present ? 'present, so nothing is pulled' : 'not present, so it is pulled first'}.`,
+    );
+    return chosen;
+  }
   if (options.dryRun) {
     io.log(`  Would choose ${fallback.id} (${fallback.mark}); --model <id> chooses another.`);
     return fallback;

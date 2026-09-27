@@ -231,7 +231,10 @@ describe('the picker inside a real-mode run on the local route', (): void => {
     expect(ran(present)).not.toContain('model:pull');
     expect(readEnvValues(join(present.directory, '.env.local')).OPENAI_MODEL).toBe('llama3.2:3b');
 
-    const empty = harness({ services: ['backend', 'model', 'sandbox', 'redactor'] });
+    const empty = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      freeVramMiB: 12_000,
+    });
     expect(await runSetup(localRoute({ assumeYes: true }), empty.io)).toBe(0);
     expect(empty.output.join('\n')).toContain('nothing is present yet');
     expect(empty.output.join('\n')).toContain('--yes: qwen3:8b (will pull (about 5.2 GB)).');
@@ -323,10 +326,48 @@ describe('the picker inside a real-mode run on the local route', (): void => {
       false,
     );
 
-    const absent = harness();
+    const absent = harness({ freeVramMiB: 12_000 });
     expect(await runSetup(localRoute({ dryRun: true }), absent.io)).toBe(0);
     expect(absent.output.join('\n')).toContain('Would choose qwen3:8b (will pull (about 5.2 GB))');
     expect(absent.output.join('\n')).toContain('pnpm run model:pull qwen3:8b');
+  });
+
+  it('refuses to default to a pull that does not fit this machine, under --yes, off a terminal and on a dry run', async (): Promise<void> => {
+    for (const overrides of [{ assumeYes: true }, {}, { dryRun: true }]) {
+      const h = harness({
+        services: ['backend', 'model', 'sandbox', 'redactor'],
+        interactive: false,
+      });
+      expect(await runSetup(localRoute(overrides), h.io)).toBe(1);
+      const printed = h.output.join('\n');
+      expect(printed).toContain('No NVIDIA GPU answered, and qwen3:8b');
+      expect(printed).toContain('`--model qwen3:8b`');
+      expect(printed).toContain('--route featherless');
+      expect(ran(h)).not.toContain('model:pull');
+      expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
+    }
+  });
+
+  it('asks with no default on a terminal when nothing fits, and takes a model chosen on purpose', async (): Promise<void> => {
+    const chosen = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      interactive: true,
+      answers: ['1'],
+      freeVramMiB: 4096,
+    });
+    expect(await runSetup(localRoute(), chosen.io)).toBe(0);
+    expect(chosen.output.join('\n')).toContain('Choose 1-1: ');
+    expect(chosen.output.join('\n')).toContain('4096 MiB is free on the GPU');
+    expect(ran(chosen)).toContain('run model:pull qwen3:8b');
+
+    const blank = harness({
+      services: ['backend', 'model', 'sandbox', 'redactor'],
+      interactive: true,
+      answers: [''],
+    });
+    expect(await runSetup(localRoute(), blank.io)).toBe(1);
+    expect(blank.output.join('\n')).toContain('no model was chosen');
+    expect(existsSync(join(blank.directory, '.env.local'))).toBe(false);
   });
 
   it('leaves the mock local route on the hardware question, with no menu', async (): Promise<void> => {

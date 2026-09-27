@@ -118,6 +118,8 @@ export interface HarnessOptions {
   stamps?: Record<string, string>;
   /** Whether `nvidia-smi -L` names a GPU. */
   driver?: boolean;
+  /** What `nvidia-smi --query-gpu=memory.free` answers, in MiB; absent means no answer. */
+  freeVramMiB?: number;
   /** What compose reports for the redactor on each poll, last value repeated. */
   redactorHealth?: string[];
   failing?: { match: string; status: number; stderr: string }[];
@@ -266,6 +268,11 @@ export function harness(options: HarnessOptions = {}): Harness {
     }
     if (joined.includes('convex env list')) {
       return { status: options.adminKeyAccepted === false ? 1 : 0, stdout: '', stderr: '' };
+    }
+    if (joined.includes('nvidia-smi') && joined.includes('memory.free')) {
+      return options.freeVramMiB === undefined
+        ? { status: 1, stdout: '', stderr: 'not found' }
+        : { status: 0, stdout: `${options.freeVramMiB}\n`, stderr: '' };
     }
     if (joined.includes('nvidia-smi')) {
       return options.driver
