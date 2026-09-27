@@ -121,6 +121,8 @@ describe('documentation source validation', (): void => {
       ['git', 'https://ghp_secret123@github.com/example/docs'],
       ['urls', 'https://docs.example.com/a\nhttps://deploy:hunter2@docs.example.com/b'],
       ['mcp', 'https://svc:hunter2@docs.example.com/mcp'],
+      ['git', 'https://ghp_secret123#en@github.com/org/docs#main'],
+      ['urls', 'https://hunter2#x@docs.example.com/page'],
     ] as const) {
       let message = '';
       try {
