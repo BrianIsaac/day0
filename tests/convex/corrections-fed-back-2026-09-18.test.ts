@@ -13,7 +13,7 @@ import { randomBytes } from 'node:crypto';
 
 /**
  * Corrections are kept and fed back into the employee's later work. The
- * logistics beat of the finals run, in real mode with a scripted model and
+ * logistics beat of the company-bed run, in real mode with a scripted model and
  * everything between the model and the provider the real code: exception
  * ticket one stops asking which notice template to use, the manager retries
  * it with a note, it completes; exception ticket two arrives later, and its
