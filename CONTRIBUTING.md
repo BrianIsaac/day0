@@ -48,7 +48,7 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | `pnpm bed:company <subcommand>` | The synthetic company bed: its pages, its check and its seed |
 | `pnpm bed:record-spans` | Records the span model's answers over the company bed's pages |
 | `pnpm rehearse:real` | The maintainers' internal rehearsal of the real path; not a way to run Day0 |
-| `pnpm eval:semifinal`, `eval:revocation`, `eval:gate` | The evaluation, below |
+| `pnpm eval:comparison`, `eval:revocation`, `eval:gate` | The evaluation, below |
 | `pnpm metrics:recompute <export>` | Recomputes an owner's supervision figures from a snapshot export |
 | `pnpm lint`, `typecheck`, `test`, `build` | The gate, below |
 
@@ -120,14 +120,14 @@ Two parts of the tree are edited with particular care:
 The controlled comparison and the revocation trials are described, with their method and their limits, in [`evaluation/README.md`](evaluation/README.md). Running them needs a self-hosted backend in mock mode, the local sandbox and a model:
 
 ```bash
-pnpm eval:semifinal          # 15 tasks, two arms, three runs each
+pnpm eval:comparison         # 15 tasks, two arms, three runs each
 pnpm eval:revocation         # a grant revoked while an action is queued
 pnpm eval:gate               # the exact-action gate matrix, no model
 ```
 
-Each run writes a new timestamped directory under `evaluation/results/`. The directories that are already there are **frozen evidence**: they are the files the submission quotes, the cited beds carry a `SHA256SUMS` beside their `semifinal.json`, and none of them is edited, re-graded in place or deleted. A re-grade with `--regrade` writes a fresh directory and leaves the source alone. Earlier directories that no claim uses any more are kept as audit history rather than removed.
+Each run writes a new timestamped directory under `evaluation/results/`. The directories that are already there are **frozen evidence**: they are the files `evaluation/README.md` and the README quote, the cited beds carry a `SHA256SUMS` beside their evidence JSON (named `semifinal.json` in the directories written before 27 September 2026, `comparison.json` since), and none of them is edited, re-graded in place or deleted. A re-grade with `--regrade` writes a fresh directory and leaves the source alone. Earlier directories that no claim uses any more are kept as audit history rather than removed.
 
-Three fixture files are frozen in the same sense, because changing them changes what the comparison measures: `evaluation/tasks/semifinal.json`, `evaluation/onboarding/day0.json` and the graders in `evaluation/graders.ts`. A change to any of them is a new evaluation, not a continuation of an old one, and the harness refuses to resume an existing run across such a change. If you change them, say so in the commit and run the beds again.
+Three fixture files are frozen in the same sense, because changing them changes what the comparison measures: `evaluation/tasks/comparison.json`, `evaluation/onboarding/day0.json` and the graders in `evaluation/graders.ts`. A change to any of them is a new evaluation, not a continuation of an old one, and the harness refuses to resume an existing run across such a change. If you change them, say so in the commit and run the beds again.
 
 ## Security and disclosures
 
