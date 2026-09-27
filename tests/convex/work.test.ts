@@ -511,6 +511,35 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     ).toEqual([{ workItemId, by: 'autonomous' }]);
   });
 
+  it.each([
+    ['quality-fit', { qualityFitWaivedAt: 5 }],
+    ['scope', { scopeWaivedAt: 5 }],
+  ] as const)(
+    'holds the plan of an item the manager took anyway after a %s skip, whatever the switch says',
+    async (waived, waiver): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await seed(harness, 'claimed', undefined, {
+        autonomousActions: true,
+      });
+      await harness.run(async (ctx) => await ctx.db.patch(workItemId, waiver));
+      const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
+
+      await harness.mutation(internal.work.setPlan, { workItemId, plan });
+      expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+        approved: false,
+      });
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+      expect(await eventsOfType(harness, agentId, 'work.plan-approved')).toEqual([]);
+      expect(
+        (await eventsOfType(harness, agentId, 'work.plan-held')).map((event) => event.payload),
+      ).toEqual([{ workItemId, reason: 'skip-overruled', waived }]);
+      // The sweep re-deciding the row does not log the hold again.
+      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
+      expect(await eventsOfType(harness, agentId, 'work.plan-held')).toHaveLength(1);
+    },
+  );
+
   it('re-reads a switch flipped after the plan was stored but before the decision', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

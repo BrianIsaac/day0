@@ -2404,7 +2404,10 @@ export const setPlan = internalMutation({
  * A plan for a provider item on which the manager rejected any employee's
  * plan waits for the manager whatever the switch says (decision N3), and the
  * first time it is held for that reason a `work.plan-held` event names the
- * first rejection. Internal; called by the drafting action and the stalled-step sweep.
+ * first rejection. So does the plan of an item the manager took anyway after
+ * the agent skipped it (`reason: 'skip-overruled'`): the card promised that
+ * plan comes back to them. Internal; called by the drafting action and the
+ * stalled-step sweep.
  */
 export const decidePlan = internalMutation({
   args: { workItemId: v.id('workItems'), recovery: v.optional(v.boolean()) },
@@ -2414,6 +2417,26 @@ export const decidePlan = internalMutation({
     if (row.state !== 'plan-pending') return { approved: false };
     const agent = await ctx.db.get(row.agentId);
     if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    // "Take it anyway" overruled the agent's own skip and promised the manager
+    // the plan comes back to them; the switch does not speak for that decision.
+    const waived =
+      row.scopeWaivedAt !== undefined
+        ? 'scope'
+        : row.qualityFitWaivedAt !== undefined
+          ? 'quality-fit'
+          : undefined;
+    if (waived) {
+      if (!args.recovery) {
+        await ctx.db.insert('events', {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: { workItemId: args.workItemId, reason: 'skip-overruled', waived },
+          createdAt: Date.now(),
+        });
+      }
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
     }
