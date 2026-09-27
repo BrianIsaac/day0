@@ -24,6 +24,7 @@ import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
+import { appendEvent } from './eventLog';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -122,7 +123,7 @@ async function recordCharterMatchAmbiguity(
     now: number;
   },
 ): Promise<void> {
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: args.agentId,
     type: 'surface.charter-match-ambiguous',
     payload: {
@@ -547,13 +548,13 @@ export const propose = internalMutation({
       reason: undefined,
       intakeScope: args.intakeScope,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.proposed',
       payload: { surfaceId: surface._id, path: args.path },
       createdAt: now,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.oriented',
       payload: { surfaceId: surface._id, verdict: 'proposed' },
@@ -579,7 +580,7 @@ export const markAbsent = internalMutation({
       whereFound: args.whereFound,
       reason: `No approved surface found after searching: ${args.searched.join(', ')}`,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.oriented',
       payload: { surfaceId: surface._id, verdict: 'absent', searched: args.searched },
@@ -665,7 +666,7 @@ export const requestProposal = mutation({
       { surfaceId: surface._id, requested: true },
     );
     await ctx.db.patch(surface._id, { orientationJobId });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.proposal-requested',
       payload: { surfaceId: surface._id, slug: surface.slug },
@@ -689,7 +690,7 @@ export const recordOrientationFailure = internalMutation({
     if (!surface || surface.verdict !== 'declared') return false;
     const reason = `orientation failed: ${args.reason}`.slice(0, 400);
     await ctx.db.patch(surface._id, { reason });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.orientation-failed',
       payload: { surfaceId: surface._id, reason },
@@ -785,7 +786,7 @@ export const recordProvisionedApp = internalMutation({
         stateExpiresAt: args.stateExpiresAt,
       },
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.app-provisioned',
       payload: { surfaceId: surface._id, appId: args.appId, appName: args.appName },
@@ -863,7 +864,7 @@ export const recordInstallFailure = internalMutation({
     await ctx.db.patch(surface._id, {
       provisioning: { ...surface.provisioning, lastError: args.reason },
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.install-failed',
       payload: { surfaceId: surface._id, reason: args.reason },
@@ -921,7 +922,7 @@ export const recordInstalledApp = internalMutation({
       if (credential && !credential.revokedAt) {
         await ctx.db.patch(retired, { revokedAt: args.now });
       }
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: surface.agentId,
         type: 'surface.shared-credential-retired',
         payload: {
@@ -932,7 +933,7 @@ export const recordInstalledApp = internalMutation({
         createdAt: args.now,
       });
     }
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.app-installed',
       payload: { surfaceId: surface._id, appId: surface.provisioning?.appId },
@@ -1003,7 +1004,7 @@ export const recordProbeFailure = internalMutation({
         attemptedAt: args.attemptedAt ?? Date.now(),
       }),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.probe-failed',
       payload: { surfaceId: surface._id, verdict: args.verdict, reason: args.reason },
@@ -1049,7 +1050,7 @@ export const recordProbeRetry = internalMutation({
         retryAfterMs: args.retryAfterMs,
       }),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.probe-retried',
       payload: {
@@ -1136,7 +1137,7 @@ export const demoteAfterProbeFailure = internalMutation({
       }),
     };
     await ctx.db.patch(surface._id, patch);
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.probe-demoted',
       payload: {
@@ -1190,7 +1191,7 @@ async function requeueDeferredWork(
     const verdict = item.verdict as DeferredSurfaceVerdict | undefined;
     if (!verdict || !shouldRequeue(verdict)) continue;
     await ctx.db.patch(item._id, { state: 'discovered', verdict: undefined });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'work.requeued',
       payload: {
@@ -1327,10 +1328,13 @@ export const recordConnected = internalMutation({
       return false;
     }
     const transitioned = surface.verdict !== 'connected';
-    const managerChanged =
-      surface.managerUserId !== undefined &&
+    const previousManager = surface.managerUserId;
+    const managerChange =
+      previousManager !== undefined &&
       args.managerUserId !== undefined &&
-      surface.managerUserId !== args.managerUserId;
+      previousManager !== args.managerUserId
+        ? { previousManagerUserId: previousManager, managerUserId: args.managerUserId }
+        : undefined;
     const tools = frozenTools(surface, args);
     await ctx.db.patch(surface._id, {
       verdict: 'connected',
@@ -1353,7 +1357,7 @@ export const recordConnected = internalMutation({
       // connection; the next poll writes a fresh one if it skips for a new reason.
       intakeSkipReason: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.connected',
       payload:
@@ -1362,16 +1366,11 @@ export const recordConnected = internalMutation({
           : { surfaceId: surface._id },
       createdAt: args.verifiedAt,
     });
-    if (managerChanged) {
-      await ctx.db.insert('events', {
+    if (managerChange) {
+      await appendEvent(ctx, {
         agentId: surface.agentId,
         type: 'manager.changed',
-        payload: {
-          surfaceId: surface._id,
-          via: 'probe',
-          previousManagerUserId: surface.managerUserId,
-          managerUserId: args.managerUserId,
-        },
+        payload: { surfaceId: surface._id, via: 'probe', ...managerChange },
         createdAt: args.verifiedAt,
       });
     }
@@ -1473,7 +1472,7 @@ async function endAccessInTransaction(
   });
   // The end date is on the event so the upgrade can tell this release's end
   // of a proposal-started clock from an end the older code recorded.
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: surface.agentId,
     type: 'surface.expired',
     payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
@@ -1510,7 +1509,7 @@ async function logAccessSet(
   entry: { by: AccessSetBy; days: number; expiresAt: number; at: number } & Record<string, unknown>,
 ): Promise<void> {
   const { at, ...payload } = entry;
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: surface.agentId,
     type: 'surface.access-set',
     payload: { surfaceId: surface._id, ...payload },
@@ -1661,7 +1660,7 @@ export const recordExpiryNotice = internalMutation({
       return false;
     }
     if (await surfaceEventExists(ctx, surface, 'surface.expiring', surface.expiresAt)) return false;
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.expiring',
       payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
@@ -1799,7 +1798,7 @@ export const approve = mutation({
     const expiresAt = now + days * DAY_MS;
     await ctx.db.patch(surface._id, { ...patch, verdict: 'approved', expiresAt });
     await logAccessSet(ctx, surface, { by: 'approval', days, expiresAt, at: now });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.approved',
       payload: { surfaceId: surface._id },
@@ -1867,7 +1866,7 @@ export const reject = mutation({
       lastVerifiedAt: undefined,
       expiresAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.rejected',
       payload: { surfaceId: surface._id, reason: args.reason },
