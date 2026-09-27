@@ -28,6 +28,7 @@ import {
   type SnapshotElement,
 } from '../../../src/surfaces/browser';
 import { dashboardPage, SIGN_IN_PAGE } from '../../fixtures/browser-phase-split-2026-09-16';
+import { RELABELLED_SIGN_IN_PAGE } from '../../fixtures/browser-sign-in-relabelled-2026-09-28';
 
 const TILE = 'http://looker-tile:8080/';
 
@@ -330,6 +331,42 @@ describe('resolving an element a skill named', (): void => {
     expect(resolveElementRef(page, 'Save button')).toBeUndefined();
   });
 
+  // P8-5, executed in pass 9: once the button is relabelled, "Sign in" named
+  // only the heading, and the click on it came back ok as a completed sign-in.
+  it('finds nothing to click once a redesign leaves only a heading with the name', (): void => {
+    expect(resolveElementRef(SIGN_IN_PAGE, 'Sign in')?.ref).toBe('e15');
+    expect(resolveElementRef(RELABELLED_SIGN_IN_PAGE, 'Sign in')).toBeUndefined();
+    expect(resolveElementRef(RELABELLED_SIGN_IN_PAGE, 'Sign in', 'write')).toBeUndefined();
+  });
+
+  it('still lets a read name the lone heading', (): void => {
+    expect(resolveElementRef(RELABELLED_SIGN_IN_PAGE, 'Sign in', 'read')).toEqual({
+      name: 'Sign in',
+      ref: 'e7',
+      role: 'heading',
+    });
+  });
+
+  // The write rule reads the role, so every ARIA widget a person clicks has
+  // to count as one, or a tab or a tree row stops resolving for a click.
+  it('still lets a write act on a lone tab, tree item, grid cell or checkable menu item', (): void => {
+    for (const role of ['tab', 'treeitem', 'gridcell', 'menuitemcheckbox', 'menuitemradio']) {
+      expect(resolveElementRef(`- ${role} "Pipeline" [ref=e3]`, 'Pipeline')).toEqual({
+        name: 'Pipeline',
+        ref: 'e3',
+        role,
+      });
+    }
+  });
+
+  it('does not let a write reach a lone non-interactive element through a longer name', (): void => {
+    const page = ['- heading "Sign in to Looker" [ref=e7]', '- button "Log in" [ref=e15]'].join(
+      '\n',
+    );
+    expect(resolveElementRef(page, 'Sign in')).toBeUndefined();
+    expect(resolveElementRef(page, 'Sign in', 'read')?.ref).toBe('e7');
+  });
+
   it('still resolves a field whose name adds a unit to the description', (): void => {
     const page = ['- generic [ref=e4]: L', '- textbox "Pipeline coverage (%)" [ref=e24]'].join(
       '\n',
@@ -500,6 +537,26 @@ describe('where a browser action may carry the credential', (): void => {
         'tile',
       ),
     ).toContain('fields.0.name');
+  });
+
+  it('refuses once the page resolved a password name to a control that is not a text box', (): void => {
+    const toolArgs = { fields: [{ name: 'Password', value: '{{secret}}' }] };
+    for (const role of ['button', 'link', 'combobox', 'checkbox']) {
+      expect(
+        secretPlacementRefusal('browser_fill_form', toolArgs, 'tile', [
+          { name: 'Password', ref: 'e14', role },
+        ]),
+      ).toContain('typed only into a credential field');
+    }
+    expect(
+      withSecretTyped(
+        'browser_fill_form',
+        { fields: [{ name: 'Password', target: 'e14', value: '{{secret}}' }] },
+        [{ name: 'Password', ref: 'e14', role: 'button' }],
+        'tile-password',
+        'tile',
+      ),
+    ).toEqual({ fields: [{ name: 'Password', target: 'e14', value: '{{secret}}' }] });
   });
 
   it("refuses a placeholder naming another surface's credential", (): void => {

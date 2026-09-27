@@ -1,4 +1,5 @@
 import { isTransportUnreachable } from '../lib/transport-error';
+import type { ActionIntent } from './policy';
 import { injectSecret } from './secrets';
 
 /**
@@ -116,7 +117,8 @@ export function parseSnapshotRefs(snapshot: string): SnapshotElement[] {
 }
 
 /**
- * Roles a person can actually act on.
+ * Roles a person can actually act on: the ARIA widget roles a click or a
+ * keystroke reaches.
  *
  * A page routinely gives a field and its label the same accessible name, so a
  * skill writing "Username" would otherwise be ambiguous between the two. It is
@@ -135,15 +137,33 @@ const INTERACTIVE_ROLES = new Set([
   'switch',
   'option',
   'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'tab',
+  'treeitem',
+  'gridcell',
 ]);
 
-/** Narrow a set of equally-matching elements to the one that can be acted on. */
-function preferInteractive(candidates: readonly SnapshotElement[]): SnapshotElement | undefined {
-  if (candidates.length === 1) return candidates[0];
+/**
+ * Narrow a set of equally-matching elements to the one the action means.
+ *
+ * A write acts on a control, so only an element a person can act on answers
+ * it: after a redesign relabels a sign-in button, the heading that still says
+ * "Sign in" is not the button, and clicking it would report a sign-in that
+ * never happened. A read may name anything on the page, so a lone element of
+ * any role answers it.
+ */
+function preferInteractive(
+  candidates: readonly SnapshotElement[],
+  intent: ActionIntent,
+): SnapshotElement | undefined {
   const interactive = candidates.filter((element: SnapshotElement): boolean =>
     INTERACTIVE_ROLES.has(element.role),
   );
-  return interactive.length === 1 ? interactive[0] : undefined;
+  if (interactive.length === 1) return interactive[0];
+  return intent === 'read' && interactive.length === 0 && candidates.length === 1
+    ? candidates[0]
+    : undefined;
 }
 
 function normaliseDescription(value: string): string {
@@ -182,16 +202,19 @@ function containsWords(outer: string, inner: string): boolean {
  * brand mark named "L" is not "Pipeline coverage", and a lone label inside a
  * longer description is not the control the description means.
  *
- * Args:
- *   snapshot: The text a `browser_snapshot` call returned.
- *   description: What the action called the element.
+ * A write resolves only to an interactive element, at every tier; a read may
+ * resolve to a lone element of any role.
  *
- * Returns:
- *   The matching element, or undefined when none matches unambiguously.
+ * @param snapshot - The text a `browser_snapshot` call returned.
+ * @param description - What the action called the element.
+ * @param intent - Whether the action reads or writes; a caller that does not
+ *   say is held to the write rule.
+ * @returns The matching element, or undefined when none matches unambiguously.
  */
 export function resolveElementRef(
   snapshot: string,
   description: string,
+  intent: ActionIntent = 'write',
 ): SnapshotElement | undefined {
   const elements = parseSnapshotRefs(snapshot).filter(
     (element: SnapshotElement): boolean => element.name !== '',
@@ -204,12 +227,14 @@ export function resolveElementRef(
 
   const exact = preferInteractive(
     elements.filter((e: SnapshotElement): boolean => e.name.toLowerCase() === wanted),
+    intent,
   );
   if (exact) return exact;
   const normalised = preferInteractive(
     elements.filter(
       (e: SnapshotElement): boolean => normaliseDescription(e.name) === loose && canUseShortName(e),
     ),
+    intent,
   );
   if (normalised) return normalised;
   return preferInteractive(
@@ -221,6 +246,7 @@ export function resolveElementRef(
         (INTERACTIVE_ROLES.has(e.role) && containsWords(loose, name))
       );
     }),
+    intent,
   );
 }
 
@@ -403,7 +429,8 @@ function isCredentialField(description: unknown): boolean {
  * `browser_fill_form` field that is one. Nothing else - not a URL, not an
  * element's name, not a comment box - may carry it. Once the elements are
  * resolved, the element the page actually offered must be a credential field
- * too, so a description that loosely matched "Password notes" does not count.
+ * too, so a description that loosely matched "Password notes" does not count,
+ * and it must be a text box, so a button or link named "Password" does not.
  */
 function credentialSlots(
   tool: string,
@@ -412,7 +439,8 @@ function credentialSlots(
 ): Set<string> {
   const slots = new Set<string>();
   const onPage = (index: number): boolean =>
-    resolved === undefined || isCredentialField(resolved[index]?.name);
+    resolved === undefined ||
+    (resolved[index]?.role === 'textbox' && isCredentialField(resolved[index]?.name));
   if (tool === 'browser_type' && isCredentialField(toolArgs.element) && onPage(0)) {
     slots.add('text');
   }

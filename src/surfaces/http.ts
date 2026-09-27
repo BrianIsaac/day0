@@ -2,6 +2,7 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
+import { checkMcpAddress, McpAddressRefusal, pinnedFetch } from './mcp-address';
 import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
   actionIntent,
@@ -10,6 +11,7 @@ import {
   resolveRequestUrl,
   surfaceRefusal,
   TOOL_NOT_ALLOWED,
+  type HttpMethod,
   type ParsedHttpRequest,
 } from './policy';
 import { hasPlaceholder, injectSecret, SecretTemplateError } from './secrets';
@@ -90,7 +92,8 @@ export { resolveRequestUrl };
  */
 function moveReadBodyIntoQuery(request: ParsedHttpRequest, url: URL): boolean {
   const method = documentedRpcRead(request);
-  if (method === undefined || request.body === undefined || request.body.trim() === '') return false;
+  if (method === undefined || request.body === undefined || request.body.trim() === '')
+    return false;
   const given: Array<[string, unknown]> = request.bodyJson
     ? Object.entries(request.bodyJson)
     : [...new URLSearchParams(request.body.trim())];
@@ -170,6 +173,241 @@ export function providerIdFrom(payload: unknown): string | undefined {
   return undefined;
 }
 
+/** A verb and path the documentation gives for one operation, as `` `GET /issues` ``. */
+const DOCUMENTED_OPERATION = /`\s*(GET|HEAD|POST|PUT|PATCH|DELETE)\s+([^\s`]+)\s*`/g;
+
+/** A path segment that stands for a value: `{id}`, `:id` or `<id>`. */
+const PATH_PARAMETER = /(?:^|\/)(?:\{[^/}]*\}|:[A-Za-z_][\w-]*|<[^/>]*>)(?=\/|$)/;
+
+/**
+ * A header the documentation shows the credential in: `` `X-Api-Key: {{secret}}` ``,
+ * `` `Authorization: Token {{secret}}` `` or, without the placeholder,
+ * `` `Authorization: Bearer` ``.
+ */
+const DOCUMENTED_CREDENTIAL_HEADER =
+  /`\s*([A-Za-z0-9-]+)\s*:\s*(?:([A-Za-z]+)\s*)?(\{\{\s*secret\s*\}\})?\s*`/g;
+
+/** One operation a surface's documentation names on its API. */
+export interface DocumentedApiOperation {
+  readonly method: HttpMethod;
+  /** The path under the documented base, as the HTTP rung and the gate compare it with the allowlist. */
+  readonly operation: string;
+}
+
+/** Where a documented API takes its credential. */
+export interface CredentialHeader {
+  readonly name: string;
+  /** The word before the credential in the header value, such as `Bearer`; absent when the value is the credential alone. */
+  readonly scheme?: string;
+}
+
+/** A documented API's checked base address and the fetch that reaches only it. */
+export interface CheckedApi {
+  readonly url: URL;
+  readonly fetch: FetchLike;
+}
+
+/** Check a documented API's base address and return the one way to reach it. */
+export type ApiConnector = (endpoint: string) => Promise<CheckedApi>;
+
+/** What a documented-API probe found: the operations the rung may call on the surface. */
+export interface DocumentedApiDiscovery {
+  readonly toolAllowlist: string[];
+  readonly toolArguments: Array<{ tool: string; arguments: string[] }>;
+}
+
+/**
+ * A documented-API probe that stopped for want of something Day0 needs, not
+ * because the system failed: no documented address, operation or read, or an
+ * address Day0's boundary refuses.
+ */
+export class DocumentedApiLimitation extends Error {}
+
+/**
+ * The path of one documented address under the API's base, or undefined when
+ * the address is on another host, above the base, or not an address at all.
+ */
+function operationUnder(base: URL, written: string): string | undefined {
+  let target: URL;
+  try {
+    target = /^https?:\/\//i.test(written)
+      ? new URL(written)
+      : resolveRequestUrl(base.href, written);
+  } catch {
+    // Not an address under this API, so not one of its operations.
+    return undefined;
+  }
+  if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname)) return undefined;
+  return target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+}
+
+/**
+ * Read the operations a surface's documentation names on its API.
+ *
+ * An operation is a backticked verb and path, written relative to the
+ * documented base (`` `GET /issues` ``) or as an address under it. A path with
+ * a parameter segment is left out: the HTTP rung and the gate compare a
+ * request's path with the allowlist exactly, so a template could never match
+ * the request it describes. The query is not part of an operation.
+ *
+ * @param documentation - The surface's own documentation.
+ * @param endpoint - The documented API base the surface was approved with.
+ * @returns Each documented operation once, in the order the page gives them.
+ */
+export function documentedApiOperations(
+  documentation: string,
+  endpoint: string,
+): DocumentedApiOperation[] {
+  let base: URL;
+  try {
+    base = new URL(endpoint);
+  } catch {
+    // An endpoint that is not a URL names no operation; the probe says so.
+    return [];
+  }
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  const found = new Map<string, DocumentedApiOperation>();
+  for (const match of documentation.matchAll(DOCUMENTED_OPERATION)) {
+    const written = match[2].split(/[?#]/, 1)[0];
+    if (PATH_PARAMETER.test(written)) continue;
+    const operation = operationUnder(base, written);
+    if (!operation) continue;
+    const method = match[1] as HttpMethod;
+    const key = `${method} ${operation}`;
+    if (!found.has(key)) found.set(key, { method, operation });
+  }
+  return [...found.values()];
+}
+
+/**
+ * Read the header a documented API takes its credential in.
+ *
+ * @param documentation - The surface's own documentation.
+ * @returns The first header the page shows carrying `{{secret}}`, or an
+ *   `Authorization` header with a scheme; a bearer token when it shows neither.
+ */
+export function documentedCredentialHeader(documentation: string): CredentialHeader {
+  for (const match of documentation.matchAll(DOCUMENTED_CREDENTIAL_HEADER)) {
+    const [, name, scheme, placeholder] = match;
+    if (placeholder === undefined && (name.toLowerCase() !== 'authorization' || !scheme)) continue;
+    return scheme ? { name, scheme } : { name };
+  }
+  return { name: 'Authorization', scheme: 'Bearer' };
+}
+
+/**
+ * Check a documented API's base address the way a credential-bearing MCP
+ * client's is checked, and reach it only through the addresses checked.
+ *
+ * @param endpoint - The documented API base the surface was approved with.
+ * @returns The checked base and a fetch pinned to it.
+ * @throws DocumentedApiLimitation when Day0's boundary refuses the address.
+ */
+export async function connectCheckedApi(endpoint: string): Promise<CheckedApi> {
+  try {
+    const checked = await checkMcpAddress(endpoint);
+    return { url: checked.url, fetch: pinnedFetch(checked) };
+  } catch (error) {
+    if (!(error instanceof McpAddressRefusal)) throw error;
+    // The address rules are the MCP client's; only the noun on the card differs.
+    const message = error.message.replace(/\bMCP\b/g, 'API');
+    throw error.limitation ? new DocumentedApiLimitation(message) : new Error(message);
+  }
+}
+
+/**
+ * Verify a documented API that is not Slack: check the credential with one
+ * documented read and admit every operation the documentation names.
+ *
+ * The read is the first documented `GET` the gate would class as a read, so
+ * checking the credential never changes anything on the system. It is sent
+ * with the credential in the documented header, follows no redirect, and a
+ * 2xx answer without an `ok: false` envelope connects the surface.
+ *
+ * @param endpoint - The documented API base the surface was approved with.
+ * @param credential - The surface's decrypted credential.
+ * @param documentation - The surface's own documentation, scoped to it.
+ * @param connect - How the base address is checked and reached.
+ * @returns The documented operations, as the surface's allowlist.
+ * @throws DocumentedApiLimitation when the page gives Day0 nothing to check or
+ *   call, or its address is refused; Error when the system answers otherwise.
+ */
+export async function probeDocumentedApi(
+  endpoint: string | undefined,
+  credential: string,
+  documentation: string,
+  connect: ApiConnector = connectCheckedApi,
+): Promise<DocumentedApiDiscovery> {
+  if (!endpoint)
+    throw new DocumentedApiLimitation('No API base address is documented for this surface.');
+  const operations = documentedApiOperations(documentation, endpoint);
+  if (operations.length === 0) {
+    throw new DocumentedApiLimitation(
+      `The documentation names no operation on ${endpoint} in the form \`GET /path\`, so Day0 has nothing it may call there. This is not evidence that the system is unavailable.`,
+    );
+  }
+  const read = operations.find(
+    (entry: DocumentedApiOperation): boolean =>
+      entry.method === 'GET' &&
+      actionIntent({
+        kind: 'http.request',
+        surface: '',
+        method: 'GET',
+        path: entry.operation,
+        headers: {},
+      }) === 'read',
+  );
+  if (!read) {
+    throw new DocumentedApiLimitation(
+      `The documentation names no read (\`GET\`) operation on ${endpoint}, so Day0 cannot check the credential without changing anything. This is not evidence that the system is unavailable.`,
+    );
+  }
+  const api = await connect(endpoint);
+  const header = documentedCredentialHeader(documentation);
+  const label = `GET ${read.operation}`;
+  let response: Response;
+  try {
+    response = await api.fetch(resolveRequestUrl(api.url.href, read.operation), {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        [header.name]: header.scheme ? `${header.scheme} ${credential}` : credential,
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error(
+      `${label} could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const bounded = await readBoundedResponse(response);
+  if (!response.ok) {
+    const redirect = response.status >= 300 && response.status < 400;
+    throw new Error(
+      `${label} answered HTTP ${response.status}${redirect ? ', a redirect Day0 does not follow with a credential' : ''}.`,
+    );
+  }
+  let payload: unknown;
+  try {
+    payload = bounded.exceeded ? undefined : JSON.parse(bounded.text);
+  } catch {
+    // A body that is not JSON carries no envelope; the 2xx is the answer.
+    payload = undefined;
+  }
+  const envelope = payload as { ok?: unknown; error?: unknown } | undefined;
+  if (envelope?.ok === false) {
+    const detail = typeof envelope.error === 'string' ? ` (${envelope.error})` : '';
+    throw new Error(`${label} answered ok: false${detail}.`);
+  }
+  return {
+    toolAllowlist: [
+      ...new Set(operations.map((entry: DocumentedApiOperation): string => entry.operation)),
+    ],
+    toolArguments: [],
+  };
+}
+
 /** Adapter for `http.request` against a documented HTTP API surface. */
 export class HttpAdapter implements SurfaceAdapter {
   readonly tools = HTTP_TOOLS;
@@ -233,12 +471,18 @@ export class HttpAdapter implements SurfaceAdapter {
     void run;
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok || parsed.action.kind !== 'http.request') {
-      return { tool: action.tool, ok: false, reason: parsed.ok ? 'not an http.request' : parsed.reason, idempotencyKey };
+      return {
+        tool: action.tool,
+        ok: false,
+        reason: parsed.ok ? 'not an http.request' : parsed.reason,
+        idempotencyKey,
+      };
     }
     const request: ParsedHttpRequest = parsed.action;
     const surface = this.surfaces.find((row) => row.slug === request.surface);
     const refusal = surfaceRefusal(surface, this.deps.now());
-    if (!surface || refusal) return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
+    if (!surface || refusal)
+      return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
     if (surface.path !== 'documented-api') {
       return {
         tool: action.tool,
@@ -289,7 +533,10 @@ export class HttpAdapter implements SurfaceAdapter {
         headers[key] = injectSecret(value, secret, surface.slug);
       }
       const body =
-        bodyMoved || request.body === undefined || request.method === 'GET' || request.method === 'HEAD'
+        bodyMoved ||
+        request.body === undefined ||
+        request.method === 'GET' ||
+        request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
       const authorityRefusal = transportAuthority
@@ -332,9 +579,15 @@ export class HttpAdapter implements SurfaceAdapter {
       const effectLength = writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH;
       const summary = clipEffect(text, effectLength);
       if (!ok) {
-        const errorResult = typeof envelope?.error === 'string'
-          ? await redactOutcome(envelope.error, secret, this.deps.spanModel, this.deps.knownValues)
-          : undefined;
+        const errorResult =
+          typeof envelope?.error === 'string'
+            ? await redactOutcome(
+                envelope.error,
+                secret,
+                this.deps.spanModel,
+                this.deps.knownValues,
+              )
+            : undefined;
         const providerError = errorResult ? ` · ${errorResult.text}` : '';
         return {
           tool: action.tool,
@@ -346,7 +599,9 @@ export class HttpAdapter implements SurfaceAdapter {
         };
       }
       const rawId = providerIdFrom(payload);
-      const identifier = rawId ? await redactOutcome(rawId, secret, this.deps.spanModel, this.deps.knownValues) : undefined;
+      const identifier = rawId
+        ? await redactOutcome(rawId, secret, this.deps.spanModel, this.deps.knownValues)
+        : undefined;
       return {
         tool: action.tool,
         ok: true,
@@ -365,7 +620,12 @@ export class HttpAdapter implements SurfaceAdapter {
             : error instanceof Error
               ? error.message
               : String(error);
-      const redacted = await redactOutcome(message, secret, this.deps.spanModel, this.deps.knownValues);
+      const redacted = await redactOutcome(
+        message,
+        secret,
+        this.deps.spanModel,
+        this.deps.knownValues,
+      );
       return {
         tool: action.tool,
         ok: false,

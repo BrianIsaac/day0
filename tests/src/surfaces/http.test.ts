@@ -4,11 +4,17 @@ import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
+  connectCheckedApi,
+  DocumentedApiLimitation,
+  documentedApiOperations,
+  documentedCredentialHeader,
   EFFECT_LENGTH,
   HttpAdapter,
   HTTP_TIMEOUT_MS,
+  probeDocumentedApi,
   providerIdFrom,
   resolveRequestUrl,
+  type ApiConnector,
 } from '../../../src/surfaces/http';
 import { READ_EFFECT_LENGTH } from '../../../src/surfaces/mock';
 import type {
@@ -61,7 +67,9 @@ interface FakeFetch {
   fetch: (input: URL, init: RequestInit) => Promise<Response>;
 }
 
-function fakeFetch(respond: (url: URL, init: RequestInit) => Response | Promise<Response>): FakeFetch {
+function fakeFetch(
+  respond: (url: URL, init: RequestInit) => Response | Promise<Response>,
+): FakeFetch {
   const fake: FakeFetch = {
     calls: [],
     fetch: async (input: URL, init: RequestInit): Promise<Response> => {
@@ -89,19 +97,28 @@ function adapter(
 
 describe('HTTP adapter', (): void => {
   it('applies outcome redaction to extracted provider identifiers', async () => {
-    const result = await adapter(fakeFetch(() => Response.json({ id: 'password: hunter2' })))
-      .apply(ctx, run, post, 0, 'k');
+    const result = await adapter(fakeFetch(() => Response.json({ id: 'password: hunter2' }))).apply(
+      ctx,
+      run,
+      post,
+      0,
+      'k',
+    );
     expect(result.providerId).toBe('password: <redacted>');
   });
 
   it('marks the row degraded when redacting its extracted error fails', async () => {
     let calls = 0;
-    const spanModel = { name: 'intermittent', spans: async () => {
-      if (++calls > 1) throw new RedactorUnavailableError('offline');
-      return [];
-    } };
+    const spanModel = {
+      name: 'intermittent',
+      spans: async () => {
+        if (++calls > 1) throw new RedactorUnavailableError('offline');
+        return [];
+      },
+    };
     const surfaceAdapter = new HttpAdapter([slack], {
-      decrypt: async () => 'opaque-known', now: () => now,
+      decrypt: async () => 'opaque-known',
+      now: () => now,
       fetch: async () => Response.json({ ok: false, error: 'password: hunter2 opaque-known' }),
       spanModel,
     });
@@ -114,7 +131,10 @@ describe('HTTP adapter', (): void => {
   it('keeps a read response whole for the closing phase and clips a write to the short effect', async (): Promise<void> => {
     const long = JSON.stringify({
       ok: true,
-      members: Array.from({ length: 60 }, (_, index) => ({ id: `U${index}`, name: `member ${index}` })),
+      members: Array.from({ length: 60 }, (_, index) => ({
+        id: `U${index}`,
+        name: `member ${index}`,
+      })),
     });
     const get: MockAction = {
       tool: 'http.request',
@@ -189,18 +209,23 @@ describe('HTTP adapter', (): void => {
   it('never echoes the request headers or the secret into the ledger', async (): Promise<void> => {
     const fetchImpl = fakeFetch(
       (): Response =>
-        new Response(JSON.stringify({ ok: false, error: 'invalid_auth xoxb-test-value' }), { status: 200 }),
+        new Response(JSON.stringify({ ok: false, error: 'invalid_auth xoxb-test-value' }), {
+          status: 200,
+        }),
     );
     const result = await adapter(fetchImpl).apply(ctx, run, post, 0, 'k');
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe('HTTP 200 · invalid_auth <redacted> · {"ok":false,"error":"invalid_auth <redacted>"}');
+    expect(result.reason).toBe(
+      'HTTP 200 · invalid_auth <redacted> · {"ok":false,"error":"invalid_auth <redacted>"}',
+    );
     expect(JSON.stringify(result)).not.toContain('xoxb-test-value');
     expect(JSON.stringify(result)).not.toContain('Authorization');
   });
 
   it('redacts a credential echoed as the provider id', async (): Promise<void> => {
     const fetchImpl = fakeFetch(
-      (): Response => new Response(JSON.stringify({ ok: true, ts: 'xoxb-test-value' }), { status: 200 }),
+      (): Response =>
+        new Response(JSON.stringify({ ok: true, ts: 'xoxb-test-value' }), { status: 200 }),
     );
     const result = await adapter(fetchImpl).apply(ctx, run, post, 0, 'k');
     expect(result).toMatchObject({ ok: true, providerId: '<redacted>' });
@@ -215,7 +240,8 @@ describe('HTTP adapter', (): void => {
 
   it('treats redirects and oversized envelopes as not landed', async (): Promise<void> => {
     const redirect = fakeFetch(
-      (): Response => new Response('', { status: 302, headers: { Location: 'https://evil.example' } }),
+      (): Response =>
+        new Response('', { status: 302, headers: { Location: 'https://evil.example' } }),
     );
     await expect(adapter(redirect).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
       ok: false,
@@ -224,9 +250,12 @@ describe('HTTP adapter', (): void => {
 
     const oversized = fakeFetch(
       (): Response =>
-        new Response(JSON.stringify({ padding: 'x'.repeat(2 * 1024 * 1024), ok: false, error: 'denied' }), {
-          status: 200,
-        }),
+        new Response(
+          JSON.stringify({ padding: 'x'.repeat(2 * 1024 * 1024), ok: false, error: 'denied' }),
+          {
+            status: 200,
+          },
+        ),
     );
     const result = await adapter(oversized).apply(ctx, run, post, 0, 'k');
     expect(result).toEqual({
@@ -247,9 +276,15 @@ describe('HTTP adapter', (): void => {
   });
 
   it('reads an id from a JSON response without a ts', async (): Promise<void> => {
-    const fetchImpl = fakeFetch((): Response => new Response(JSON.stringify({ id: 'rec_9' }), { status: 201 }));
+    const fetchImpl = fakeFetch(
+      (): Response => new Response(JSON.stringify({ id: 'rec_9' }), { status: 201 }),
+    );
     const result = await adapter(fetchImpl).apply(ctx, run, post, 0, 'k');
-    expect(result).toMatchObject({ ok: true, providerId: 'rec_9', effect: 'HTTP 201 · {"id":"rec_9"}' });
+    expect(result).toMatchObject({
+      ok: true,
+      providerId: 'rec_9',
+      effect: 'HTTP 201 · {"id":"rec_9"}',
+    });
   });
 
   it('refuses a path that escapes the surface endpoint before decrypting', async (): Promise<void> => {
@@ -311,7 +346,10 @@ describe('HTTP adapter', (): void => {
       0,
       'k',
     );
-    expect(badHeader).toMatchObject({ ok: false, reason: 'secret placeholders are not allowed in header names' });
+    expect(badHeader).toMatchObject({
+      ok: false,
+      reason: 'secret placeholders are not allowed in header names',
+    });
     expect(fetchImpl.calls).toHaveLength(0);
     await expect(adapter(fetchImpl).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
       ok: false,
@@ -327,12 +365,18 @@ describe('HTTP adapter', (): void => {
       run,
       {
         tool: 'http.request',
-        args: { ...post.args, headersJson: JSON.stringify({ Authorization: 'Bearer {{secret:linear}}' }) },
+        args: {
+          ...post.args,
+          headersJson: JSON.stringify({ Authorization: 'Bearer {{secret:linear}}' }),
+        },
       },
       0,
       'k',
     );
-    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('surface "linear"') });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('surface "linear"'),
+    });
     expect(fetchImpl.calls).toHaveLength(0);
   });
 
@@ -343,16 +387,29 @@ describe('HTTP adapter', (): void => {
       throw error;
     });
     const result = await adapter(fetchImpl).apply(ctx, run, post, 0, 'k');
-    expect(result).toMatchObject({ ok: false, reason: `no response within ${HTTP_TIMEOUT_MS / 1000} s` });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: `no response within ${HTTP_TIMEOUT_MS / 1000} s`,
+    });
   });
 
   it('refuses an unconnected surface and a surface without a credential', async (): Promise<void> => {
     const fetchImpl = fakeFetch((): Response => new Response('x'));
-    await expect(adapter(fetchImpl, [{ ...slack, verdict: 'approved', credentialLanded: false }]).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
+    await expect(
+      adapter(fetchImpl, [{ ...slack, verdict: 'approved', credentialLanded: false }]).apply(
+        ctx,
+        run,
+        post,
+        0,
+        'k',
+      ),
+    ).resolves.toMatchObject({
       ok: false,
       reason: 'surface not connected (ungranted)',
     });
-    await expect(adapter(fetchImpl, [{ ...slack, credentialId: undefined }]).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
+    await expect(
+      adapter(fetchImpl, [{ ...slack, credentialId: undefined }]).apply(ctx, run, post, 0, 'k'),
+    ).resolves.toMatchObject({
       ok: false,
       reason: 'surface has no credential',
     });
@@ -360,11 +417,21 @@ describe('HTTP adapter', (): void => {
   });
 
   it('sends no body with a GET', async (): Promise<void> => {
-    const fetchImpl = fakeFetch((): Response => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const fetchImpl = fakeFetch(
+      (): Response => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
     await adapter(fetchImpl).apply(
       ctx,
       run,
-      { tool: 'http.request', args: { surface: 'slack', path: 'auth.test', headersJson: '{"Authorization":"Bearer {{secret}}"}', body: 'ignored' } },
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          path: 'auth.test',
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+          body: 'ignored',
+        },
+      },
       0,
       'k',
     );
@@ -375,14 +442,26 @@ describe('HTTP adapter', (): void => {
 
 describe('request URL and provider id helpers', (): void => {
   it('resolves relative paths under the endpoint and refuses escapes', (): void => {
-    expect(resolveRequestUrl('https://slack.com/api/', '/chat.postMessage').toString()).toBe('https://slack.com/api/chat.postMessage');
-    expect(resolveRequestUrl('https://slack.com/api', 'auth.test?x=1').toString()).toBe('https://slack.com/api/auth.test?x=1');
-    expect(() => resolveRequestUrl('https://slack.com/api/', '//evil.example/x')).toThrow('path escapes');
+    expect(resolveRequestUrl('https://slack.com/api/', '/chat.postMessage').toString()).toBe(
+      'https://slack.com/api/chat.postMessage',
+    );
+    expect(resolveRequestUrl('https://slack.com/api', 'auth.test?x=1').toString()).toBe(
+      'https://slack.com/api/auth.test?x=1',
+    );
+    expect(() => resolveRequestUrl('https://slack.com/api/', '//evil.example/x')).toThrow(
+      'path escapes',
+    );
     expect(() => resolveRequestUrl('https://slack.com/api/', '..%2fadmin')).toThrow('path escapes');
-    expect(() => resolveRequestUrl('https://slack.com/api/', '%252e%252e%252fadmin')).toThrow('path escapes');
+    expect(() => resolveRequestUrl('https://slack.com/api/', '%252e%252e%252fadmin')).toThrow(
+      'path escapes',
+    );
     expect(() => resolveRequestUrl('https://slack.com/api/', 'http:evil')).toThrow('path escapes');
-    expect(() => resolveRequestUrl('https://user@slack.com/api/', 'auth.test')).toThrow('without userinfo');
-    expect(() => resolveRequestUrl('https://slack.com/api/', 'https://slack.com/other')).toThrow('path escapes the surface endpoint');
+    expect(() => resolveRequestUrl('https://user@slack.com/api/', 'auth.test')).toThrow(
+      'without userinfo',
+    );
+    expect(() => resolveRequestUrl('https://slack.com/api/', 'https://slack.com/other')).toThrow(
+      'path escapes the surface endpoint',
+    );
     expect(() => resolveRequestUrl('not a url', 'x')).toThrow();
   });
 
@@ -392,5 +471,247 @@ describe('request URL and provider id helpers', (): void => {
     expect(providerIdFrom({ message: { ts: '3.4' } })).toBe('3.4');
     expect(providerIdFrom({ ok: true })).toBeUndefined();
     expect(providerIdFrom('text')).toBeUndefined();
+  });
+});
+
+/** A tracker's own runbook page, the shape a documented REST API takes in a team's docs. */
+const TRACKER_PAGE = [
+  '# Tracker',
+  '',
+  'The team tracker has a REST API at `https://tracker.example.com/api/v2/`. Send the service',
+  'key as `X-Api-Key: {{secret}}` on every request.',
+  '',
+  '- `GET /issues` lists the open issues; add `?state=open` to filter.',
+  '- `GET https://tracker.example.com/api/v2/projects` lists the projects.',
+  '- `POST /comments` adds a comment to an issue.',
+  '- `GET /issues/{id}` reads one issue.',
+  '- `DELETE https://other.example.com/api/v2/issues` belongs to another system.',
+  '- `Content-Type: application/json` on every write.',
+].join('\n');
+
+const TRACKER = 'https://tracker.example.com/api/v2/';
+
+/** A connector that skips DNS and answers every request from `respond`. */
+function trackerConnector(respond: (url: URL, init: RequestInit) => Response): {
+  connect: ApiConnector;
+  calls: Array<{ url: string; init: RequestInit }>;
+} {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  return {
+    calls,
+    connect: async (endpoint: string) => ({
+      url: new URL(endpoint),
+      fetch: async (input: URL, init: RequestInit): Promise<Response> => {
+        calls.push({ url: input.href, init });
+        return respond(input, init);
+      },
+    }),
+  };
+}
+
+describe('the operations a documented API offers', (): void => {
+  it('reads each backticked verb and path under the documented base', (): void => {
+    expect(documentedApiOperations(TRACKER_PAGE, TRACKER)).toEqual([
+      { method: 'GET', operation: 'issues' },
+      { method: 'GET', operation: 'projects' },
+      { method: 'POST', operation: 'comments' },
+    ]);
+  });
+
+  // The HTTP rung and the gate compare a request's path with the allowlist
+  // exactly, so a templated path could never match a real request.
+  it('leaves out a path with a parameter segment, which no request matches exactly', (): void => {
+    const page = '`GET /issues/{id}` `GET /issues/:id/comments` `PATCH /issues/<id>`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  });
+
+  it('leaves out an address on another host or above the documented base', (): void => {
+    const page = [
+      '`GET https://other.example.com/api/v2/issues`',
+      '`GET https://tracker.example.com/admin/users`',
+      '`GET /../admin`',
+    ].join('\n');
+    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  });
+
+  it('ignores prose, headers and verbs the rung does not send', (): void => {
+    const page = 'GET /issues without backticks; `Authorization: Bearer`; `TRACE /issues`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  });
+
+  it('names each operation once whatever the page repeats', (): void => {
+    const page = '`GET /issues` and again `GET /issues?state=open`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([
+      { method: 'GET', operation: 'issues' },
+    ]);
+  });
+
+  it('finds nothing against an endpoint that is not a URL', (): void => {
+    expect(documentedApiOperations(TRACKER_PAGE, 'not a url')).toEqual([]);
+  });
+});
+
+describe('the header a documented API takes its credential in', (): void => {
+  it('reads a header the page shows carrying the placeholder', (): void => {
+    expect(documentedCredentialHeader(TRACKER_PAGE)).toEqual({ name: 'X-Api-Key' });
+    expect(documentedCredentialHeader('Send `Authorization: Token {{secret}}`.')).toEqual({
+      name: 'Authorization',
+      scheme: 'Token',
+    });
+  });
+
+  it('reads the scheme of an Authorization header named without the placeholder', (): void => {
+    expect(documentedCredentialHeader('a bot token in the `Authorization: Bearer` header')).toEqual(
+      { name: 'Authorization', scheme: 'Bearer' },
+    );
+  });
+
+  it('falls back to a bearer token when the page names no header', (): void => {
+    expect(documentedCredentialHeader('`Content-Type: application/json`')).toEqual({
+      name: 'Authorization',
+      scheme: 'Bearer',
+    });
+  });
+});
+
+describe('probing a documented API that is not Slack', (): void => {
+  it('checks the credential with the first documented read and admits every documented path', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
+    const discovery = await probeDocumentedApi(
+      TRACKER,
+      'tracker-key',
+      TRACKER_PAGE,
+      tracker.connect,
+    );
+    expect(discovery).toEqual({
+      toolAllowlist: ['issues', 'projects', 'comments'],
+      toolArguments: [],
+    });
+    expect(tracker.calls).toHaveLength(1);
+    expect(tracker.calls[0].url).toBe('https://tracker.example.com/api/v2/issues');
+    expect(tracker.calls[0].init.method).toBe('GET');
+    expect(new Headers(tracker.calls[0].init.headers).get('x-api-key')).toBe('tracker-key');
+    expect(new Headers(tracker.calls[0].init.headers).get('authorization')).toBeNull();
+    expect(tracker.calls[0].init.redirect).toBe('manual');
+  });
+
+  it('never sends a documented write to check a credential', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json({ ok: true }));
+    await expect(
+      probeDocumentedApi(
+        TRACKER,
+        'k',
+        '# Tracker\n`POST /comments` `DELETE /issues`',
+        tracker.connect,
+      ),
+    ).rejects.toThrow(DocumentedApiLimitation);
+    await expect(
+      probeDocumentedApi(TRACKER, 'k', '# Tracker\n`GET /issues.delete`', tracker.connect),
+    ).rejects.toThrow('names no read');
+    expect(tracker.calls).toEqual([]);
+  });
+
+  it('says a page that names no operation is a limitation, not a dead system', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json({}));
+    const failure = probeDocumentedApi(TRACKER, 'k', '# Tracker\nIt has an API.', tracker.connect);
+    await expect(failure).rejects.toThrow(DocumentedApiLimitation);
+    await expect(failure).rejects.toThrow('not evidence that the system is unavailable');
+    await expect(probeDocumentedApi(undefined, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      DocumentedApiLimitation,
+    );
+    expect(tracker.calls).toEqual([]);
+  });
+
+  it('reports a refused key with its status so the verdict reads it as access', async (): Promise<void> => {
+    const tracker = trackerConnector(() => new Response('{"error":"bad key"}', { status: 401 }));
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      'GET issues answered HTTP 401',
+    );
+  });
+
+  it('does not follow a redirect with the credential', async (): Promise<void> => {
+    const tracker = trackerConnector(
+      () => new Response(null, { status: 302, headers: { Location: 'https://sso.example/' } }),
+    );
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      'HTTP 302',
+    );
+    expect(tracker.calls).toHaveLength(1);
+  });
+
+  it('reads an ok: false envelope inside a 200 as a failure', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json({ ok: false, error: 'invalid_auth' }));
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
+      'invalid_auth',
+    );
+  });
+
+  it('names the operation that could not be reached', async (): Promise<void> => {
+    const connect: ApiConnector = async (endpoint: string) => ({
+      url: new URL(endpoint),
+      fetch: async (): Promise<Response> => {
+        throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
+      },
+    });
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, connect)).rejects.toThrow(
+      'GET issues could not be reached: fetch failed',
+    );
+  });
+
+  it('refuses a private address in the words of an API, not an MCP server', async (): Promise<void> => {
+    const failure = connectCheckedApi('https://tracker.internal/api/v2/');
+    await expect(failure).rejects.toThrow(DocumentedApiLimitation);
+    await expect(failure).rejects.toThrow(
+      'The approved API endpoint must use a public HTTPS hostname',
+    );
+    await expect(failure).rejects.not.toThrow(/\bMCP\b/);
+  });
+
+  it('lets the HTTP rung read the tracker the probe connected', async (): Promise<void> => {
+    const tracker = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
+    const { toolAllowlist } = await probeDocumentedApi(
+      TRACKER,
+      'tracker-key',
+      TRACKER_PAGE,
+      tracker.connect,
+    );
+    const fake = fakeFetch(() => Response.json([{ id: 'TRK-1', title: 'Renewal call' }]));
+    const trackerAdapter = adapter(
+      fake,
+      [
+        {
+          slug: 'tracker',
+          displayName: 'Tracker',
+          class: 'kanban',
+          verdict: 'connected',
+          credentialLanded: true,
+          lastVerifiedAt: now,
+          endpoint: TRACKER,
+          path: 'documented-api',
+          toolAllowlist,
+          credentialId: 'cred-tracker',
+          credentialKind: 'value',
+        },
+      ],
+      'tracker-key',
+    );
+    const row = await trackerAdapter.apply(
+      ctx,
+      run,
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'tracker',
+          method: 'GET',
+          path: '/issues',
+          headersJson: JSON.stringify({ 'X-Api-Key': '{{secret}}' }),
+        },
+      },
+      0,
+      'key-read',
+    );
+    expect(row).toMatchObject({ ok: true, effect: expect.stringContaining('Renewal call') });
+    expect(fake.calls[0].url).toBe('https://tracker.example.com/api/v2/issues');
+    expect(new Headers(fake.calls[0].init.headers).get('x-api-key')).toBe('tracker-key');
   });
 });
