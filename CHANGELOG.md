@@ -2,6 +2,16 @@
 
 Version maintenance record for Day0, from the git history, grouped by release. Releases are tagged with semantic versions from 27 September 2026: `v0.1.0` is the build of 19 September 2026, and the work before it is grouped by date under "Before v0.1.0"; each engineering wave that reaches `main` takes the next minor, a hotfix on a release the next patch, and `v1.0.0` is the pilot release. Hashes are the commits on `main`, 1,607 of them at `f739614`; a merge of a job branch is listed by the substantive commits it carried, and counts are by author date. Every commit follows conventional-commit style, so `git log --no-merges --format='%ad %h %s' --date=short` is the full record and this file is its digest.
 
+## v0.3.0, 27 September 2026
+
+Four units the first wave's handovers and review called for, one pane each, landed on `staging` with the gate on every merge, reviewed as one change, plus the fixes that review asked for before the tag. 80 commits; 3,866 tests.
+
+- **The charter reaches the closing phase, and questions are declared (U18).** The executor's closing prompt carries the charter and a clause-bound decision records its clause; an action rejection holds a sibling's plan for the manager as a plan rejection does (`rejectedAt`); a question for the manager is a field the model declares in its output, with one model judgement for older output, and the word list is gone from the hold path (decision N20).
+- **The ticket is re-read before the first write (U19).** An apply whose ticket changed hands, state or label since the plan is withheld with a named reason; a re-listed ticket's row follows the tracker and a withdrawn ticket withdraws its waiting row; two status changes on one ticket keep the last and a reused write says which run sent it; a Linear server whose fields cannot be read holds the checkpoint; the two remaining MCP clients connect only through the checked address; a rotated credential value no longer lifts a person's revoke.
+- **Exa leaves the product (U20, decision N19).** No search key, no client, no web research step after charter approval; provider-native research is a roadmap line.
+- **The repository reads as a product (U21, decision N21).** The controlled comparison harness is named for what it measures; the README and the evaluation page carry the numbers, the method, the caveat and how to reproduce; the frozen evidence keeps its recorded file names.
+- **From the review.** A refused listing is never the re-read's baseline and a claimed row is withdrawn on a refusal; a record naming another ticket or none of the compared fields withholds; a Retry excuses an open state only, never a do-not-automate label or a close; a Retry note answers a declared question only when the stop was a question stop; the declared-question mapping has a test per phase.
+
 ## v0.2.0, 27 September 2026
 
 The first release cut from `staging` under the engineering plan (`docs/plans/engineering-plan-2026-09-27.md`): units U1, U2, U4, U5 and U11 of the consolidated backlog, one pane each, landed with the four-command gate on every merge, reviewed as one change, plus two fixes from that review. 101 commits; 3,761 tests in 267 files.
