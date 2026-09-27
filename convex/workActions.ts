@@ -126,6 +126,7 @@ import {
   personKey,
   recordFromText,
   ticketChange,
+  ticketRecordRefusal,
   ticketSnapshot,
   withheldBeforeFirstWrite,
   type PersonIdentity,
@@ -2715,6 +2716,11 @@ async function ticketRereadRefusal(
           true,
         );
       }
+      const unusable = ticketRecordRefusal(record, [
+        ticket,
+        ...(item.externalAlias === undefined ? [] : [item.externalAlias]),
+      ]);
+      if (unusable) return withheldBeforeFirstWrite(ticket, `${read.tool} ${unusable}`, true);
       const listings = await ctx.runQuery(internal.work.listedSnapshot, {
         workItemId: item._id,
         before: item.planPendingAt ?? Date.now(),

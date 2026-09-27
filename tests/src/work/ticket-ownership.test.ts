@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  recordFromText,
   samePerson,
   ticketAssignee,
   ticketChange,
+  ticketRecordRefusal,
   ticketSnapshot,
   type PersonIdentity,
   type TicketSnapshot,
@@ -168,5 +170,37 @@ describe('ticket ownership', () => {
         { owner: ownerRead('unread').read },
       ),
     ).resolves.toBe("it is assigned and the key's owner could not be read to confirm it is Day0's");
+  });
+
+  it('reads a null record under its key as no record, not as the wrapper around it (review M1)', () => {
+    expect(recordFromText('{"issue":null}', 'issue')).toBeUndefined();
+    expect(recordFromText('{"user":null}', 'user')).toBeUndefined();
+    expect(recordFromText('{"issue":{"id":"iss-1","status":"Todo"}}', 'issue')).toEqual({
+      id: 'iss-1',
+      status: 'Todo',
+    });
+    expect(recordFromText('{"id":"iss-1","status":"Todo"}', 'issue')).toEqual({
+      id: 'iss-1',
+      status: 'Todo',
+    });
+  });
+
+  it('refuses a record with neither a state nor an assignee, or one for another ticket (review M1)', () => {
+    const ours = ['iss-1', 'REVOPS-9'];
+    for (const text of ['{}', '{"success":true}', '{"error":"Entity not found: Issue"}']) {
+      expect(ticketRecordRefusal(recordFromText(text, 'issue')!, ours)).toBe(
+        'answered with neither a state nor an assignee',
+      );
+    }
+    expect(
+      ticketRecordRefusal({ id: 'iss-999', status: 'Todo', statusType: 'unstarted' }, ours),
+    ).toBe('answered for another ticket (iss-999)');
+    // Either of the ticket's names identifies it, whatever the case.
+    expect(
+      ticketRecordRefusal({ id: 'revops-9', uuid: 'f00d', status: 'Todo' }, ours),
+    ).toBeUndefined();
+    expect(ticketRecordRefusal({ identifier: 'REVOPS-9', assignee: null }, ours)).toBeUndefined();
+    // A record that names no id is still compared by its fields.
+    expect(ticketRecordRefusal({ assigneeId: 'user-ana' }, ours)).toBeUndefined();
   });
 });

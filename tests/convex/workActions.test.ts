@@ -142,6 +142,8 @@ const recorded = vi.hoisted(() => ({
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
   issueRecordText: undefined as string | undefined,
+  /** The state each ticket's last `save_issue` set, as the tracker would show it after. */
+  issueStates: new Map<string, string>(),
   afterCredentialRead: undefined as (() => Promise<void>) | undefined,
   afterToolList: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
@@ -646,6 +648,31 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                     if (tool === 'get_issue' && recorded.issueRecordText !== undefined) {
                       return { content: [{ type: 'text', text: recorded.issueRecordText }] };
                     }
+                    const called = args as Record<string, unknown>;
+                    if (tool === 'save_issue' && typeof called.state === 'string') {
+                      recorded.issueStates.set(String(called.id), called.state);
+                    }
+                    if (tool === 'get_issue') {
+                      // An unassigned record for the ticket asked for, in the state it
+                      // was left in, so every apply that meets the re-read proves
+                      // itself against one (review M1).
+                      const set = recorded.issueStates.get(String(called.id));
+                      return {
+                        content: [
+                          {
+                            type: 'text',
+                            text: JSON.stringify({
+                              id: called.id,
+                              assignee: null,
+                              ...(set === undefined
+                                ? { status: 'Todo', statusType: 'unstarted' }
+                                : { status: set }),
+                              labels: [],
+                            }),
+                          },
+                        ],
+                      };
+                    }
                     const text =
                       tool === 'browser_navigate'
                         ? '- Page URL: http://looker-tile:8080/'
@@ -709,6 +736,7 @@ afterEach((): void => {
   recorded.failMcpAfterRequest = false;
   recorded.failedMcpTool = undefined;
   recorded.issueRecordText = undefined;
+  recorded.issueStates.clear();
   recorded.afterCredentialRead = undefined;
   recorded.afterToolList = undefined;
   recorded.skillSwitches.length = 0;
@@ -2895,7 +2923,12 @@ describe('executing an approved plan through the gate', (): void => {
       // plan is pending; the read itself writes nothing to any surface.
       expect(recorded.http.filter((call) => !call.url.endsWith('/chat.postMessage'))).toEqual([]);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', subject: 'record', text: 'get_issue on linear · {"id":"get_issue-id"}' },
+        {
+          surface: 'linear',
+          tool: 'get_issue',
+          subject: 'record',
+          text: 'get_issue on linear · {"id":"iss-1","assignee":null,"status":"Todo","statusType":"unstarted","labels":[]}',
+        },
       ]);
       const events = await groundingEvents(harness);
       expect(events).toHaveLength(1);
@@ -6725,6 +6758,36 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     expect(stopped.state).toBe('failed');
     expect(stopped.skipReason).toContain('it changed hands');
     expect(linearTools()).toEqual(['get_issue']);
+  });
+
+  it('withholds when get_issue answers with none of the compared fields or for another ticket (review M1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const answers = [
+      ['{"issue":null}', 'get_issue answered with no record'],
+      ['{}', 'get_issue answered with neither a state nor an assignee'],
+      ['{"success":true}', 'get_issue answered with neither a state nor an assignee'],
+      [
+        '{"error":"Entity not found: Issue"}',
+        'get_issue answered with neither a state nor an assignee',
+      ],
+      [
+        '{"id":"iss-999","status":"Todo","statusType":"unstarted"}',
+        'get_issue answered for another ticket (iss-999)',
+      ],
+    ] as const;
+    for (const [text, finding] of answers) {
+      recorded.mcp.length = 0;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const workItemId = await atFirstWrite(harness);
+      recorded.issueRecordText = text;
+
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+      const stopped = await readItem(harness, workItemId);
+      expect(stopped.state).toBe('failed');
+      expect(stopped.skipReason).toContain(`iss-1 could not be re-read (${finding})`);
+      expect(linearTools()).toEqual(['get_issue']);
+    }
   });
 
   it('withholds when the state moved since the plan', async (): Promise<void> => {

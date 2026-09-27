@@ -268,7 +268,33 @@ export function recordFromText(
     return undefined;
   }
   const record = asRecord(parsed);
-  return asRecord(record?.[key]) ?? record;
+  // A record under its key is the answer, and a null there is no record (review M1).
+  return record !== undefined && key in record ? asRecord(record[key]) : record;
+}
+
+/**
+ * Why a re-read's record cannot stand for the ticket (review M1): it names
+ * another ticket, or it carries neither a state nor an assignee, so a
+ * comparison would find nothing changed whatever the ticket says.
+ *
+ * @param record - The record the single-record read answered with.
+ * @param ticketIds - The ticket's names: its id and the other name it goes by.
+ * @returns The reason, or undefined when the record can be compared.
+ */
+export function ticketRecordRefusal(
+  record: Record<string, unknown>,
+  ticketIds: readonly string[],
+): string | undefined {
+  const ours = new Set(ticketIds.flatMap((id) => personKey(id) ?? []));
+  const named = [record.id, record.identifier, record.uuid].filter(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  );
+  if (named.length > 0 && !named.some((name) => ours.has(personKey(name) ?? ''))) {
+    return `answered for another ticket (${named[0]})`;
+  }
+  const hasState = ticketStateName(record) !== undefined || ticketStateType(record) !== undefined;
+  const hasAssignee = 'assignee' in record || 'assigneeId' in record;
+  return hasState || hasAssignee ? undefined : 'answered with neither a state nor an assignee';
 }
 
 /**
