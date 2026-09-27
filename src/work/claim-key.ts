@@ -1,3 +1,4 @@
+import type { Id } from '../../convex/_generated/dataModel';
 import type { SurfaceMode } from '../lib/surface-mode';
 import { redactTokenShapes } from '../surfaces/redact';
 import {
@@ -321,6 +322,15 @@ export function writeTargetIds(
   return [
     ...new Set(references.flatMap((ref) => [ref, ref.toUpperCase(), ref.toLowerCase()])),
   ].slice(0, WRITE_TARGET_LIMIT);
+}
+
+/** The employee and work item holding a provider item, as a refused row records it. */
+export interface ClaimHolder {
+  readonly claimId: Id<'externalClaims'>;
+  readonly agentId: Id<'agents'>;
+  readonly workItemId: Id<'workItems'>;
+  readonly name: string;
+  readonly title: string;
 }
 
 /** The work item holding an external item a write addresses, as the ledger names it. */

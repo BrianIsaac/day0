@@ -7,6 +7,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
+import { logEvent } from './eventLog';
 import { assertRealMode } from '../src/lib/surface-mode';
 import {
   newOauthNonce,
@@ -209,7 +210,7 @@ async function revokeConfigurationToken(
   } catch (error: unknown) {
     failure = safeFailureMessage(error, token, 'Slack auth.revoke failed.');
   }
-  await ctx.runMutation(internal.events.log, {
+  await logEvent(ctx, {
     agentId: surface.agentId,
     type: 'surface.configuration-token-revoked',
     payload: {
@@ -349,7 +350,7 @@ export async function runProvisionApp(
     // Slack answered ok, so the app exists; without its credentials Day0
     // cannot install it and would create another on the next click (P3-17).
     const appId = typeof reply.app_id === 'string' ? reply.app_id : undefined;
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.app-unrecorded',
       payload: { surfaceId: surface._id, ...(appId ? { appId } : {}) },

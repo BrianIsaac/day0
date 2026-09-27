@@ -42,6 +42,7 @@ import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
 import { verdictFor as surfaceVerdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
+import { logEvent } from './eventLog';
 import { spanModelFromEnv } from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 
@@ -561,7 +562,7 @@ export async function holdSandboxLease(
     }
     if (!waiting) {
       waiting = true;
-      await ctx.runMutation(internal.events.log, {
+      await logEvent(ctx, {
         agentId: skill.agentId,
         type: 'skill.sandbox-waiting',
         payload: {
@@ -713,7 +714,7 @@ async function recordingAuthoringCalls<T>(
 ): Promise<T> {
   if (SURFACE_MODE !== 'real') return await fn();
   return await observeModelCalls(async (report: ModelCallReport): Promise<void> => {
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId: skill.agentId,
       type: 'work.model-call',
       payload: {

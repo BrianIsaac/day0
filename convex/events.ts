@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import type { PaginationOptions, PaginationResult } from 'convex/server';
-import { internalMutation, internalQuery, query, type QueryCtx } from './_generated/server';
+import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { isEvaluationAgent } from './metrics';
@@ -289,17 +289,5 @@ export const exportPage = internalQuery({
           ? { section: following, cursor: null }
           : null,
     };
-  },
-});
-
-export const log = internalMutation({
-  args: { agentId: v.id('agents'), type: v.string(), payload: v.optional(v.any()) },
-  handler: async (ctx, args) => {
-    await ctx.db.insert('events', {
-      agentId: args.agentId,
-      type: args.type,
-      payload: args.payload ?? {},
-      createdAt: Date.now(),
-    });
   },
 });

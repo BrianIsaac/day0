@@ -18,6 +18,8 @@ import {
   type CandidateRecord,
   type DraftPlanArgs,
 } from '../src/work/plan';
+import type { ObligationEvent } from '../src/work/plan-obligations';
+import type { ClosingAuthoring, ModelCallStage } from '../src/events/contract';
 import {
   ClosingGateRefusal,
   DEFERRALS_KEPT,
@@ -62,6 +64,7 @@ import {
 import { judgeManagerQuestion } from '../src/work/question-judgement';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
+import { logEvent } from './eventLog';
 import { asAgentId } from '../src/lib/ids';
 import {
   applySurfaceActions,
@@ -346,20 +349,38 @@ function buildLookups(args: {
   };
 }
 
-/** The loop steps whose model calls go on the item's events. */
-type ModelCallStage = 'evaluation' | 'draft' | 'execution' | 'closing';
+/** The loop steps whose model calls go on the item's events; authoring records its own. */
+type LoopModelCallStage = Exclude<ModelCallStage, 'authoring'>;
 
 /**
- * Which authoring of the closing set a closing-stage call belongs to. One run
- * can author the set up to four times (P8-10), and each re-sends the whole
- * prompt, so the ledger says which one each call was.
+ * Log one event the plan's obligation settlement recorded, against its work item.
+ *
+ * @param ctx - The drafting action's context.
+ * @param item - The employee and the work item the plan is for.
+ * @param event - What the settlement recorded.
  */
-type ClosingAuthoring =
-  | 'first'
-  | 'post-apply-round'
-  | 'after-carried-reads'
-  | 'holder-changed'
-  | 'hold-repair';
+async function logObligationEvent(
+  ctx: ActionCtx,
+  item: { agentId: Id<'agents'>; workItemId: Id<'workItems'> },
+  event: ObligationEvent,
+): Promise<void> {
+  const { agentId, workItemId } = item;
+  switch (event.type) {
+    case 'plan.obligations-judged':
+      await logEvent(ctx, { agentId, type: event.type, payload: { workItemId, ...event.payload } });
+      return;
+    case 'plan.obligations-failed-open':
+      await logEvent(ctx, { agentId, type: event.type, payload: { workItemId, ...event.payload } });
+      return;
+    case 'plan.obligations-disagreed':
+      await logEvent(ctx, { agentId, type: event.type, payload: { workItemId, ...event.payload } });
+      return;
+    default: {
+      const unhandled: never = event;
+      throw new Error(`unhandled obligation event ${String(unhandled)}`);
+    }
+  }
+}
 
 /**
  * Run one loop step with each of its model calls recorded on the item's
@@ -384,14 +405,14 @@ async function recordingModelCalls<T>(
   step: {
     agentId: Id<'agents'>;
     workItemId: Id<'workItems'>;
-    stage: ModelCallStage;
+    stage: LoopModelCallStage;
     closingAuthoring?: ClosingAuthoring;
   },
   fn: () => Promise<T>,
 ): Promise<T> {
   if (SURFACE_MODE !== 'real') return await fn();
   return await observeModelCalls(async (report: ModelCallReport): Promise<void> => {
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId: step.agentId,
       type: 'work.model-call',
       payload: {
@@ -549,7 +570,7 @@ async function evaluateWorkItemHandler(
     ),
   );
   if (isScopeUnavailable(verdict)) {
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId,
       type: 'work.scope-judgement-unavailable',
       payload: { workItemId: args.workItemId, cause: verdict.cause },
@@ -698,13 +719,8 @@ async function draftPlanHandler(
               ...(corrections.redaction ? { correctionsRedaction: corrections.redaction } : {}),
             }
           : {}),
-        onObligationEvent: async (event) => {
-          await ctx.runMutation(internal.events.log, {
-            agentId,
-            type: event.type,
-            payload: { workItemId: args.workItemId, ...event.payload },
-          });
-        },
+        onObligationEvent: async (event) =>
+          await logObligationEvent(ctx, { agentId, workItemId: args.workItemId }, event),
       }),
     ),
   );
@@ -1085,7 +1101,7 @@ async function holdDay0Actions(
         additionalModelCalls += 1;
       },
       onAuditCorrection: async (removedIndices, reason) => {
-        await ctx.runMutation(internal.events.log, {
+        await logEvent(ctx, {
           agentId: args.agentId,
           type: 'audit.corrected',
           payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
@@ -1239,7 +1255,7 @@ async function auditRepairedPayloads<T extends ExecutionOutput>(
     prewrittenIndices,
   );
   const record = async (removedIndices: number[], reason: string): Promise<void> => {
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId: args.agentId,
       type: 'audit.corrected',
       payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
@@ -1591,7 +1607,7 @@ async function recordConditionalWritesWithheld(
 ): Promise<void> {
   if (after === before || !after.openQuestion) return;
   const kept = new Set(after.actions);
-  await ctx.runMutation(internal.events.log, {
+  await logEvent(ctx, {
     agentId: run.agentId,
     type: CONDITIONAL_WRITES_WITHHELD,
     payload: {
@@ -1788,7 +1804,7 @@ async function applyCarriedReads(
     },
   );
   const applied = scrubKnownValues(rows, args.knownValues);
-  await ctx.runMutation(internal.events.log, {
+  await logEvent(ctx, {
     agentId: args.agent._id,
     type: CARRIED_READS_APPLIED,
     payload: {
@@ -2468,7 +2484,7 @@ export const authorDependentActions = internalAction({
             heldElsewhere: held,
             closingGate,
             onAuditCorrection: async (removedIndices, reason) => {
-              await ctx.runMutation(internal.events.log, {
+              await logEvent(ctx, {
                 agentId: item.agentId,
                 type: 'audit.corrected',
                 payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
@@ -2507,7 +2523,7 @@ export const authorDependentActions = internalAction({
         const taken = newlyHeldWrites(output.actions, heldElsewhere, heldNow, surfaces);
         if (taken.length > 0) {
           authored = output;
-          await ctx.runMutation(internal.events.log, {
+          await logEvent(ctx, {
             agentId: item.agentId,
             type: CLOSING_REAUTHORED,
             payload: {
@@ -2630,7 +2646,7 @@ export const authorDependentActions = internalAction({
         return { ok: false, reason: stop };
       }
       if (leftSaid.said.length > 0) {
-        await ctx.runMutation(internal.events.log, {
+        await logEvent(ctx, {
           agentId: item.agentId,
           type: 'audit.corrected',
           payload: {
@@ -3832,7 +3848,7 @@ async function executorCorrections(
     known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
   });
   if (scrubbed.redaction) {
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId: args.item.agentId,
       type: 'work.corrections-redaction-limited',
       payload: {
@@ -3955,7 +3971,7 @@ async function finishRun(
           reason: 'the run moved on before its closing set could be authored once more',
         };
       }
-      await ctx.runMutation(internal.events.log, {
+      await logEvent(ctx, {
         agentId: item.agentId,
         type: CLOSING_REAUTHORED,
         payload: {

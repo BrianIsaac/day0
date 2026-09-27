@@ -63,6 +63,7 @@ import {
   browserFieldId,
   providerItemKey,
   writeTargetIds,
+  type ClaimHolder,
   type HeldExternalItem,
   type WriteClaimHolder,
 } from '../src/work/claim-key';
@@ -1124,15 +1125,6 @@ export const reevaluatePending = internalMutation({
   handler: async (ctx, args): Promise<ReevaluatePendingResult> =>
     await reevaluatePendingInTransaction(ctx, args),
 });
-
-/** The employee and work item holding a provider item, as a refused row records it. */
-export interface ClaimHolder {
-  claimId: Id<'externalClaims'>;
-  agentId: Id<'agents'>;
-  workItemId: Id<'workItems'>;
-  name: string;
-  title: string;
-}
 
 /** A holder in one of these states no longer holds its item. */
 const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
