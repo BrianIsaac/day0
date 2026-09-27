@@ -1,10 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
+  COMPARISON_EXPERIMENT,
   documentedProcedureAdherence,
   evidenceTaskDefinitions,
   formatRate,
+  isComparisonExperiment,
   legacyDocumentedProcedureAdherence,
+  RECORDED_COMPARISON_EXPERIMENT,
   renderEvaluationReport,
   timeToOperational,
   wilsonInterval,
@@ -46,7 +49,7 @@ const passingGrade = {
 function evidence(): EvaluationEvidence {
   return {
     schemaVersion: 1,
-    experiment: 'day0-semifinal-controlled-comparison',
+    experiment: COMPARISON_EXPERIMENT,
     generatedAt: '2026-08-30T00:00:00.000Z',
     configuration: {
       harnessVersion: 2,
@@ -155,6 +158,20 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('| day0 | 3 | 2/3 (66.7%) | 16 | 1/1 |');
     expect(report).toContain('day0’s figure includes onboarding by design');
     expect(report).toContain('manager-report:dm-manager | manager-report:dm-manager | yes');
+  });
+
+  it('titles the report as the controlled comparison and cites the current task file', (): void => {
+    const report = renderEvaluationReport(evidence());
+
+    expect(report.split('\n')[0]).toBe('# Controlled comparison');
+    expect(report).toContain('Per-task timeouts are defined in `evaluation/tasks/comparison.json`');
+  });
+
+  it('reads the current and the recorded experiment id as the comparison, and nothing else', (): void => {
+    expect(isComparisonExperiment(COMPARISON_EXPERIMENT)).toBe(true);
+    expect(isComparisonExperiment(RECORDED_COMPARISON_EXPERIMENT)).toBe(true);
+    expect(isComparisonExperiment('day0-gate-accuracy')).toBe(false);
+    expect(isComparisonExperiment(undefined)).toBe(false);
   });
 
   it('renders the asserted harness parity and complete intentional-difference whitelist', (): void => {

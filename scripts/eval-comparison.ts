@@ -18,6 +18,8 @@ import {
   type EvaluationTask,
 } from '../evaluation/graders';
 import {
+  COMPARISON_EXPERIMENT,
+  isComparisonExperiment,
   renderEvaluationReport,
   type EvaluationDecision,
   type EvaluationEvidence,
@@ -246,9 +248,7 @@ function isEvidence(value: unknown): value is EvidenceWithProgress {
   if (!value || typeof value !== 'object') return false;
   const row = value as { experiment?: unknown; schemaVersion?: unknown; runs?: unknown };
   return (
-    row.experiment === 'day0-semifinal-controlled-comparison' &&
-    row.schemaVersion === 1 &&
-    Array.isArray(row.runs)
+    isComparisonExperiment(row.experiment) && row.schemaVersion === 1 && Array.isArray(row.runs)
   );
 }
 
@@ -324,7 +324,7 @@ async function loadOrCreateEvidence(
   const fixture = await readOnboardingFixture();
   return {
     schemaVersion: 1,
-    experiment: 'day0-semifinal-controlled-comparison',
+    experiment: COMPARISON_EXPERIMENT,
     generatedAt: new Date().toISOString(),
     configuration: {
       harnessVersion: EVALUATION_HARNESS_VERSION,

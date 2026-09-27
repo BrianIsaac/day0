@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadEvaluationTasks, type EvaluationTask } from '../../evaluation/graders';
-import type { EvaluationEvidence } from '../../evaluation/report';
+import {
+  COMPARISON_EXPERIMENT,
+  RECORDED_COMPARISON_EXPERIMENT,
+  type EvaluationEvidence,
+} from '../../evaluation/report';
 import {
   evaluationHarnessParameters,
   INTENTIONAL_ARM_DIFFERENCES,
@@ -111,7 +115,7 @@ describe('comparison evaluation CLI', (): void => {
     const taskTimeoutMs = Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs]));
     const recorded = (taskDefinitions: EvaluationTask[]): EvaluationEvidence => ({
       schemaVersion: 1,
-      experiment: 'day0-semifinal-controlled-comparison',
+      experiment: COMPARISON_EXPERIMENT,
       generatedAt: '2026-09-27T00:00:00.000Z',
       configuration: {
         harnessVersion: EVALUATION_HARNESS_VERSION,
@@ -205,7 +209,7 @@ async function stubContext(
     authenticatedAt: Date.now(),
     evidence: {
       schemaVersion: 1,
-      experiment: 'day0-semifinal-controlled-comparison',
+      experiment: COMPARISON_EXPERIMENT,
       generatedAt: '',
       configuration: {
         commit: 'abc',
@@ -410,7 +414,7 @@ describe('headless baseline driver', (): void => {
 function regradeFixture() {
   return {
     schemaVersion: 1,
-    experiment: 'day0-semifinal-controlled-comparison',
+    experiment: RECORDED_COMPARISON_EXPERIMENT,
     generatedAt: '2026-08-30T02:14:46.000Z',
     configuration: {
       commit: 'run-commit',
@@ -645,6 +649,29 @@ describe('read-only evidence re-grading', (): void => {
     expect(await readFile(outPath.replace(/\.json$/, '.md'), 'utf8')).toContain(
       'Re-graded from run 2026-08-30T02:14:46.000Z (commit `run-commit`) with graders at commit `grader-commit`; no model calls were made.',
     );
+  });
+
+  it('refuses a source that records another experiment', async (): Promise<void> => {
+    const dir = await temporaryDirectory('regrade-foreign-');
+    const sourcePath = join(dir, 'original.json');
+    const outPath = join(dir, 'new', 'comparison.json');
+    await writeFile(
+      sourcePath,
+      JSON.stringify({ ...regradeFixture(), experiment: 'day0-gate-accuracy' }),
+      'utf8',
+    );
+
+    await expect(
+      runRegrade(parseCliOptions(['--regrade', sourcePath, '--out', outPath]), {
+        client: {
+          setAuth: (): void => undefined,
+          query: async (): Promise<unknown> => ({}),
+        } as never,
+        authenticate: async (): Promise<void> => undefined,
+        commit: 'grader-commit',
+      }),
+    ).rejects.toThrow('regrade source is not evaluation evidence v1');
+    await expect(readFile(outPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('refuses when the backend no longer holds a recorded work item', async (): Promise<void> => {
