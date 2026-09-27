@@ -323,7 +323,7 @@ export function AgentDashboard({ agentId }: Props) {
             ) : null}
             {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
             <MetricsCard metrics={metrics} />
-            <EventTicker events={events ?? []} />
+            <EventTicker events={events ?? []} titles={itemTitles} />
           </div>
         </div>
 
@@ -4856,22 +4856,55 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
   );
 }
 
-function EventTicker({ events }: { events: Doc<'events'>[] }) {
+/**
+ * The work item an event is about, by its title, when the page lists it.
+ *
+ * Args:
+ *   event: The stored event.
+ *   titles: The employee's work item titles by id.
+ *
+ * Returns:
+ *   The title, or undefined for an event about no listed item.
+ */
+export function eventItemTitle(
+  event: Pick<Doc<'events'>, 'payload'>,
+  titles: ReadonlyMap<string, string>,
+): string | undefined {
+  const workItemId = (event.payload as { workItemId?: unknown } | null | undefined)?.workItemId;
+  return typeof workItemId === 'string' ? titles.get(workItemId) : undefined;
+}
+
+function EventTicker({
+  events,
+  titles,
+}: {
+  events: Doc<'events'>[];
+  titles: ReadonlyMap<string, string>;
+}) {
   const now = useNow();
   const zone = useAgentZone();
   return (
     <Card title="Live event feed">
       <ul className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto">
-        {events.map((e) => (
-          <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
-            {/* Was a UTC clock beside the Slack panel's local one — the same
-                event stamped eight hours apart on one page. */}
-            <span className="shrink-0 tabular-nums" title={clockTimeWithSeconds(e.createdAt, zone)}>
-              {relativeTime(e.createdAt, now)}
-            </span>
-            <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
-          </li>
-        ))}
+        {events.map((e) => {
+          const title = eventItemTitle(e, titles);
+          return (
+            <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
+              {/* Was a UTC clock beside the Slack panel's local one — the same
+                  event stamped eight hours apart on one page. */}
+              <span
+                className="shrink-0 tabular-nums"
+                title={clockTimeWithSeconds(e.createdAt, zone)}
+              >
+                {relativeTime(e.createdAt, now)}
+              </span>
+              <span className="min-w-0 break-words">
+                <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
+                {title ? <span className="text-[var(--color-fg)]"> · {title}</span> : null}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </Card>
   );

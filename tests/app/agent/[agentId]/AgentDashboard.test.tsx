@@ -39,6 +39,7 @@ import {
   sortedForQueue,
   phasedLedger,
   PermissionsCard,
+  eventItemTitle,
   planApprovalRequest,
   scopeUnavailableCauses,
   TICKET_REREAD_STOP,
@@ -2559,5 +2560,15 @@ describe("the plan card's minutes field (N11)", (): void => {
     expect(typedEstimateMinutes('0')).toBeNull();
     expect(typedEstimateMinutes('1.5')).toBeNull();
     expect(typedEstimateMinutes('-3')).toBeNull();
+  });
+});
+
+describe('the live feed names the item an event is about', (): void => {
+  it("reads the item's title from the queue, and nothing for an event about no listed item", (): void => {
+    const titles = new Map([['w1', 'Close REVOPS-5']]);
+    expect(eventItemTitle({ payload: { workItemId: 'w1' } }, titles)).toBe('Close REVOPS-5');
+    expect(eventItemTitle({ payload: { workItemId: 'w9' } }, titles)).toBeUndefined();
+    expect(eventItemTitle({ payload: { surfaceId: 's1' } }, titles)).toBeUndefined();
+    expect(eventItemTitle({ payload: null }, titles)).toBeUndefined();
   });
 });
