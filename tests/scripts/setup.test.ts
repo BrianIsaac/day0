@@ -622,6 +622,12 @@ describe('a checkout that moved', (): void => {
     expect(h.commands.some((call) => call.args.includes('down') && call.args.includes('-v'))).toBe(
       false,
     );
+    expect(h.commands.some((call) => call.args[0] === 'volume' && call.args[1] === 'rm')).toBe(
+      false,
+    );
+    expect(readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME).toBe(
+      'day0-setup-test',
+    );
     expect(readEnvValues(join(h.directory, '.env.local')).DAY0_SETUP_ROOT).toBe(
       realpathSync(h.directory),
     );

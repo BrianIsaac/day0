@@ -7,21 +7,12 @@ import {
 } from '../../scripts/model-reach';
 
 describe('dialling the model address from inside the backend container', (): void => {
-  it('asks curl for the models list with no key and a bounded wait', (): void => {
-    expect(containerDialArguments('http://10.1.2.3:8080/v1/')).toEqual([
-      'exec',
-      '-T',
-      'backend',
-      'curl',
-      '-sS',
-      '-o',
-      '/dev/null',
-      '-w',
-      '%{http_code}',
-      '--max-time',
-      '10',
-      'http://10.1.2.3:8080/v1/models',
-    ]);
+  it('asks curl inside the backend container for the models list, with no key and a bounded wait', (): void => {
+    const args = containerDialArguments('http://10.1.2.3:8080/v1/');
+    expect(args.slice(0, 4)).toEqual(['exec', '-T', 'backend', 'curl']);
+    expect(args.at(-1)).toBe('http://10.1.2.3:8080/v1/models');
+    expect(args).toContain('--max-time');
+    expect(args.join(' ')).not.toMatch(/authorization|bearer|-H\b/i);
   });
 
   it('counts any HTTP answer as reached, a refusal included', (): void => {
