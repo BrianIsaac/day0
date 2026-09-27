@@ -11,8 +11,13 @@ import {
   credentialRefRange,
   credentialSourceRef,
   redactCredentials,
+  textWindows,
 } from '../../../src/docs/redaction';
-import { RedactorUnavailableError } from '../../../src/redaction/client';
+import {
+  RedactorUnavailableError,
+  type ModelSpan,
+  type SpanModel,
+} from '../../../src/redaction/client';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 import {
   RecordedSpanModel,
@@ -366,4 +371,64 @@ it('preserves identifier values under channel-key and method-key documentation l
     expect(result.markdown).toBe(text);
     expect(result.credentials).toEqual([]);
   }
+});
+
+describe('the redactor asked one window at a time (P10-1)', (): void => {
+  const VALUE = ['Tq9', 'mZ4', 'vR2k'].join('!');
+  /** The component as it answers: a request past its limit is refused, as its 413 is. */
+  class LimitedSpanModel implements SpanModel {
+    readonly name = 'limited';
+    readonly sent: number[] = [];
+    async spans(text: string): Promise<ModelSpan[]> {
+      this.sent.push(text.length);
+      if (text.length > 8_000) {
+        throw new RedactorUnavailableError('redaction component answered HTTP 413');
+      }
+      const spans: ModelSpan[] = [];
+      for (let at = text.indexOf(VALUE); at !== -1; at = text.indexOf(VALUE, at + 1)) {
+        spans.push({ start: at, end: at + VALUE.length, label: 'password', score: 0.99 });
+      }
+      return spans;
+    }
+  }
+  const filler = (lines: number): string =>
+    Array.from(
+      { length: lines },
+      (_, index) => `Step ${index}: check the queue and note the owner.`,
+    ).join('\n');
+
+  it('redacts a page far past one request, and finds a value wherever the windows fall', async (): Promise<void> => {
+    for (const before of [120, 165, 170, 172, 173, 174, 175, 176, 180]) {
+      const page = `${filler(before)}\nThe tile password is ${VALUE} for the pipeline dashboard.\n${filler(400)}`;
+      const limited = new LimitedSpanModel();
+      const result = await redactCredentials(page, 'Pipeline runbook', { model: limited });
+      expect(result.credentials.map((credential) => credential.plaintext)).toEqual([VALUE]);
+      expect(result.markdown).not.toContain(VALUE);
+      expect(result.markdown).toContain('The tile password is <credential: ');
+      expect(Math.max(...limited.sent)).toBeLessThanOrEqual(8_000);
+      expect(limited.sent.length).toBeGreaterThan(2);
+    }
+  });
+
+  it('cuts overlapping windows that cover the text, at breaks where it can and never inside a surrogate pair', (): void => {
+    const texts = [
+      filler(300),
+      '\u6587\u6863'.repeat(5_000),
+      `${'a'.repeat(3_999)}\ud83d\ude00${'b'.repeat(5_000)}`,
+    ];
+    for (const text of texts) {
+      const windows = textWindows(text, 4_000, 400);
+      expect(windows[0]!.start).toBe(0);
+      expect(windows.at(-1)!.start + windows.at(-1)!.text.length).toBe(text.length);
+      for (const [index, window] of windows.entries()) {
+        expect(window.text).toBe(text.slice(window.start, window.start + window.text.length));
+        expect(window.text.length).toBeLessThanOrEqual(4_000);
+        expect(window.text).not.toMatch(/^[\udc00-\udfff]|[\ud800-\udbff]$/);
+        const next = windows[index + 1];
+        if (next) expect(next.start).toBeLessThanOrEqual(window.start + window.text.length);
+      }
+    }
+    const lines = textWindows(filler(300), 4_000, 400);
+    expect(lines.slice(0, -1).every((window) => window.text.endsWith('\n'))).toBe(true);
+  });
 });
