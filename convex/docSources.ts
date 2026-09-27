@@ -18,7 +18,7 @@ import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { reconcileDocumentedSystems } from './surfaces';
 import { purgeCredential } from './credentials';
-import { intakeScopeValues } from '../src/surfaces/intake-scope';
+import { restatedScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 const sourceKind = v.union(
@@ -706,9 +706,9 @@ export const finishSync = internalMutation({
       if (!mirror.sourceRef || !current.has(mirror.sourceRef)) await ctx.db.delete(mirror._id);
     }
     if (SURFACE_MODE === 'real') {
-      const currentPages = new Map(
-        pages.filter((page) => current.has(page.ref)).map((page) => [page.ref, page.markdown]),
-      );
+      const currentScopePages = pages
+        .filter((page) => current.has(page.ref))
+        .map((page) => ({ sourceId: source._id, ref: page.ref, markdown: page.markdown }));
       const agents = await ctx.db
         .query('agents')
         .withIndex('by_userId', (index) => index.eq('userId', source.userId))
@@ -729,14 +729,14 @@ export const finishSync = internalMutation({
             )
           )
             continue;
-          const changed = intakeScopeValues(surface.intakeScope).some(
-            (value) =>
-              value.sourceId === source._id &&
-              !currentPages
-                .get(value.ref)
-                ?.split(/\r?\n/)
-                .some((line) => line.trim() === value.quote),
-          );
+          // Compared by value: a rename, a move or a reflowed line re-points the
+          // approved quote; only a value no page of this source states demotes.
+          const restated = restatedScope(surface.intakeScope, currentScopePages, source._id);
+          const changed = restated.drift.length > 0;
+          if (!changed && JSON.stringify(restated.scope) !== JSON.stringify(surface.intakeScope)) {
+            await ctx.db.patch(surface._id, { intakeScope: restated.scope });
+            continue;
+          }
           if (
             !changed ||
             (surface.verdict === 'proposed' &&

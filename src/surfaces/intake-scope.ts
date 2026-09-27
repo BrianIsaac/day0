@@ -39,12 +39,15 @@ export interface ScopeDescription {
   text: string;
 }
 
-/** The stored shape of `surfaces.intakeScope`. */
-export interface IntakeScope {
-  team?: ScopeValue;
-  project?: ScopeValue;
-  projects?: ScopeValue[];
-  channels?: ScopeValue[];
+/**
+ * The stored shape of `surfaces.intakeScope`; a row's own value type (its
+ * source as a document id) is kept by the functions that return a scope.
+ */
+export interface IntakeScope<V extends ScopeValue = ScopeValue> {
+  team?: V;
+  project?: V;
+  projects?: V[];
+  channels?: V[];
   notes?: string[];
 }
 
@@ -635,31 +638,95 @@ function distinctLines(values: readonly ScopeValue[]): ScopeValue[] {
   });
 }
 
+/** The approved scope as it stands after reading the pages again. */
+export interface RestatedScope<V extends ScopeValue = ScopeValue> {
+  /** The scope with every still-stated value pointing at the line that states it now. */
+  readonly scope: IntakeScope<V>;
+  /** The values no page of their source states any more, in scope order. */
+  readonly drift: V[];
+}
+
 /**
- * The approved values whose page line is no longer on their page.
+ * Read an approved scope against the pages as they are now, by value.
  *
- * Intake keeps reading what was approved; this is what the card shows so a
- * changed page is re-proposed and approved rather than silently followed.
+ * A value stands while any page of its source still states it for the same
+ * field, through the same grammar orientation read it by (a "do not use"
+ * line states nothing). So renaming or moving the page, reflowing the line,
+ * fixing a typo beside the value or adding a channel to the line changes
+ * nothing intake reads, and the value is re-pointed at the line that states
+ * it now; only a value no page states any more has drifted.
  *
- * Args:
- *   scope: The approved scope.
- *   pages: The employee's current pages.
+ * @param scope - The approved scope.
+ * @param pages - The current pages.
+ * @param sourceId - When given, only values from this source are judged; the rest are kept as they are.
+ */
+export function restatedScope<V extends ScopeValue>(
+  scope: IntakeScope<V>,
+  pages: readonly ScopePage[],
+  sourceId?: string,
+): RestatedScope<V> {
+  const entries: Array<{ field: ScopeField; value: V }> = [
+    ...(scope.team ? [{ field: 'team' as const, value: scope.team }] : []),
+    ...(scope.project ? [{ field: 'project' as const, value: scope.project }] : []),
+    ...(scope.projects ?? []).map((value) => ({ field: 'project' as const, value })),
+    ...(scope.channels ?? []).map((value) => ({ field: 'channel' as const, value })),
+  ];
+  const stated = new Map(
+    entries.map(({ field, value }) => {
+      const own = pages.filter(
+        (page): boolean =>
+          value.sourceId === undefined ||
+          page.sourceId === undefined ||
+          page.sourceId === value.sourceId,
+      );
+      const lines = scopeCandidates(own, [field]).filter(
+        (candidate): boolean => candidate.value === value.value,
+      );
+      return [value, lines] as const;
+    }),
+  );
+  // A renamed handbook still states the whole scope, so the values follow it
+  // together rather than scattering to other teams' pages that share one.
+  const statedOn = new Map<string, number>();
+  for (const lines of stated.values()) {
+    for (const ref of new Set(lines.map((line): string => line.ref))) {
+      statedOn.set(ref, (statedOn.get(ref) ?? 0) + 1);
+    }
+  }
+  const drift: V[] = [];
+  const restate = (value: V): V => {
+    if (sourceId !== undefined && value.sourceId !== sourceId) return value;
+    const lines = stated.get(value) ?? [];
+    const line =
+      lines.find((candidate): boolean => candidate.ref === value.ref) ??
+      [...lines].sort(
+        (left, right): number => (statedOn.get(right.ref) ?? 0) - (statedOn.get(left.ref) ?? 0),
+      )[0];
+    if (!line) {
+      drift.push(value);
+      return value;
+    }
+    return { ...value, ref: line.ref, quote: line.quote };
+  };
+  const restated: IntakeScope<V> = {
+    ...scope,
+    ...(scope.team ? { team: restate(scope.team) } : {}),
+    ...(scope.project ? { project: restate(scope.project) } : {}),
+    ...(scope.projects ? { projects: scope.projects.map(restate) } : {}),
+    ...(scope.channels ? { channels: scope.channels.map(restate) } : {}),
+  };
+  return { scope: restated, drift };
+}
+
+/**
+ * The approved values no page of their source states any more.
  *
- * Returns:
- *   Each value whose page is gone or no longer carries its quoted line.
+ * @param scope - The approved scope.
+ * @param pages - The current pages.
+ * @returns The drifted values, in scope order.
  */
 export function scopeDrift(scope: IntakeScope, pages: readonly ScopePage[]): ScopeValue[] {
-  const values = intakeScopeValues(scope);
-  return values.filter((value): boolean => {
-    const page = pages.find(
-      (candidate): boolean =>
-        candidate.ref === value.ref &&
-        (value.sourceId === undefined ||
-          candidate.sourceId === undefined ||
-          candidate.sourceId === value.sourceId),
-    );
-    return !page?.markdown.split(/\r?\n/).some((line): boolean => line.trim() === value.quote);
-  });
+  return restatedScope(scope, pages).drift;
 }
 
 /**
