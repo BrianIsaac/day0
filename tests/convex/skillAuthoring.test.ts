@@ -6,10 +6,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { clipRefusedDraft, REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
+import { REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+/**
+ * Read back what a harnessed sandbox program carries: the author's program and
+ * the contract it runs under, from the two literals the harness decodes.
+ *
+ * Args:
+ *   program: The program the sandbox was sent.
+ *
+ * Returns:
+ *   The author's program, and the contract's body and surfaces.
+ */
+function readHarnessed(program: string): { authored: string; body: unknown; surfaces: unknown } {
+  const decoded = (name: string): string => {
+    const pattern = new RegExp(`^${name} = .*b64decode\\("([A-Za-z0-9+/=]+)"\\)`, 'm');
+    const literal = pattern.exec(program)?.[1];
+    if (!literal) throw new Error(`the harnessed program carries no ${name}`);
+    return Buffer.from(literal, 'base64').toString('utf8');
+  };
+  const contract = JSON.parse(decoded('CONTRACT')) as { body: unknown; surfaces: unknown };
+  return { authored: decoded('AUTHORED'), body: contract.body, surfaces: contract.surfaces };
+}
 
 const recorded = vi.hoisted(() => ({
   users: [] as string[],
@@ -211,7 +232,12 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(retryPrompt).toContain('SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`');
     expect(retryPrompt).toContain('--- Required correction ---');
     // The row keeps the draft whole; the prompt carries it bounded for the model's window.
-    expect(retryPrompt).toContain(`Refused SKILL.md:\n${clipRefusedDraft(failed.refusedBody!, REFUSED_DRAFT_PROMPT_CHARS.body)}`);
+    const stored = failed.refusedBody!;
+    const kept = stored.slice(0, REFUSED_DRAFT_PROMPT_CHARS.body);
+    const dropped = stored.length - kept.length;
+    expect(retryPrompt).toContain(
+      `Refused SKILL.md:\n${kept}${dropped > 0 ? `\n… (${dropped} more characters not kept)` : ''}`,
+    );
     expect(retryPrompt).not.toContain(failed.refusedBody!);
     expect(retryPrompt).toContain(`Refused smoke.py:\n${smokeTest}`);
     expect(retryPrompt).not.toContain('xoxb-');
@@ -398,12 +424,15 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
     ).resolves.toEqual({ ok: true });
     const { realAuthorSchema } = await import('../../convex/skillActions');
-    const { harnessedSmokeTest, smokeHarnessContract } = await import('../../src/work/smoke-harness');
     expect(recorded.schemas).toEqual([realAuthorSchema]);
-    // The contract is the stored body and the agent's connected surfaces: none on this seed.
-    expect(recorded.sandboxPrograms).toEqual([
-      harnessedSmokeTest(casesSmokeTest, smokeHarnessContract(reusableBody, [], undefined, 0)),
-    ]);
+    // The sandbox ran the author's program inside the harness, under the stored
+    // body and the agent's connected surfaces: none on this seed.
+    expect(recorded.sandboxPrograms).toHaveLength(1);
+    expect(readHarnessed(recorded.sandboxPrograms[0]!)).toEqual({
+      authored: casesSmokeTest,
+      body: reusableBody,
+      surfaces: [],
+    });
     const registered = await readSkill(harness, skillId);
     expect(registered.state).toBe('registered');
     expect(registered.verificationLog).toContain('case 1: run() emitted 1 action');
@@ -581,9 +610,10 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
     await expect(
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
     ).resolves.toEqual({ ok: true });
-    const { harnessedSmokeTest, smokeHarnessContract } = await import('../../src/work/smoke-harness');
-    const harnessed = harnessedSmokeTest(casesSmokeTest, smokeHarnessContract(reusableBody, [], undefined, 0));
     expect(recorded.users).toHaveLength(1);
-    expect(recorded.sandboxPrograms).toEqual([harnessed, harnessed]);
+    expect(recorded.sandboxPrograms.map(readHarnessed)).toEqual([
+      { authored: casesSmokeTest, body: reusableBody, surfaces: [] },
+      { authored: casesSmokeTest, body: reusableBody, surfaces: [] },
+    ]);
   });
 });
