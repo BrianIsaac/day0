@@ -211,7 +211,14 @@ describe('executor output contract', (): void => {
       { trailId: 'trail-1', state: 'inapplicable', reason: 'Not applicable here.' },
       { trailId: 'trail-1', state: 'deferred', reason: 'A later phase is required.', dependsOnActionIndex: null, dependsOnField: null },
     ]) {
-      expect(schema.safeParse({ ...base, deferredActions: null, procedureTrails: [row] }).success).toBe(true);
+      expect(
+        schema.safeParse({
+          ...base,
+          deferredActions: null,
+          openQuestion: null,
+          procedureTrails: [row],
+        }).success,
+      ).toBe(true);
     }
     expect(
       schema.safeParse({
@@ -1243,6 +1250,7 @@ describe('executor output contract', (): void => {
     const closing = (count: number) => ({
       draft: 'd',
       notes: 'n',
+      openQuestion: null,
       procedureTrails: [],
       planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0', basis: 'ledger' as const }],
       actions: Array.from({ length: count }, () => read),
@@ -1527,6 +1535,55 @@ describe('advisory plan steps in the closing phase', (): void => {
     expect(executorPreamble('mock')).not.toContain('re-read on resume');
   });
 
+  it('makes both real phases declare the question a withheld write waits on, and leaves mock without it', (): void => {
+    const phaseOne = executeSchemaForProcedureContract(
+      { trails: [] },
+      undefined,
+      undefined,
+      'real',
+    );
+    const closing = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real');
+    const mockFirst = {
+      draft: 'd',
+      notes: 'n',
+      needsDependentPhase: false,
+      actions: [],
+      procedureTrails: [],
+    };
+    const first = { ...mockFirst, deferredActions: null };
+    const last = { draft: 'd', notes: 'n', actions: [], procedureTrails: [], planStepOutcomes: [] };
+    for (const openQuestion of [
+      '请确认通知使用哪个模板。',
+      'Please confirm which template the notice should use.',
+      null,
+    ]) {
+      expect(phaseOne.safeParse({ ...first, openQuestion }).success).toBe(true);
+      expect(closing.safeParse({ ...last, openQuestion }).success).toBe(true);
+    }
+    expect(phaseOne.safeParse(first).success).toBe(false);
+    expect(closing.safeParse(last).success).toBe(false);
+    const mockPhase = executeSchemaForProcedureContract(
+      { trails: [] },
+      undefined,
+      undefined,
+      'mock',
+    );
+    expect(mockPhase.safeParse(mockFirst).success).toBe(true);
+    expect(mockPhase.safeParse({ ...mockFirst, openQuestion: null }).success).toBe(false);
+  });
+
+  it('tells the real executor when to declare the open question and when not to', (): void => {
+    const preamble = executorPreamble('real', true);
+    expect(preamble).toContain('Open question - `openQuestion`');
+    expect(preamble).toContain(
+      '"Please confirm which template the notice should use." is a question',
+    );
+    expect(preamble).toContain(
+      'Set it to null when nothing waits on the manager, and for a rhetorical question',
+    );
+    expect(executorPreamble('mock', true)).not.toContain('openQuestion');
+  });
+
   it('accepts not-verifiable only in the real closing schema', (): void => {
     const row = {
       draft: 'd',
@@ -1538,7 +1595,10 @@ describe('advisory plan steps in the closing phase', (): void => {
       ],
     };
     expect(
-      dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real').safeParse(row).success,
+      dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real').safeParse({
+        ...row,
+        openQuestion: null,
+      }).success,
     ).toBe(true);
     expect(
       dependentExecuteSchemaForProcedureContract({ trails: [] }, 'mock').safeParse(row).success,

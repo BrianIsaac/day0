@@ -108,7 +108,7 @@ vi.mock('../../src/lib/mastra', async () => {
         }
         throw new Error(`unscripted agent ${args.agent.name}`);
       })();
-      return args.schema.parse(reply) as T;
+      return args.schema.parse({ openQuestion: null, ...(reply as object) }) as T;
     },
     agentText: async (): Promise<string> => '',
   };

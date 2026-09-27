@@ -325,6 +325,15 @@ export interface OpenQuestion {
   steps: number[];
 }
 
+/**
+ * The question the executor declared its set waits on, in its `openQuestion`
+ * field (decision N20): the text as it put it to the manager, in the manager
+ * DM or, with no chat surface, in its notes; null when it declared none.
+ * Real mode only. Absent on a set authored before the field existed, whose
+ * question the model judgement reads instead.
+ */
+export type DeclaredQuestion = string | null;
+
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
@@ -332,6 +341,15 @@ export interface ExecutionOutput {
   withheldActions?: WithheldAction[];
   /** Server-derived: the question to the manager this set's withheld writes wait on; see `OpenQuestion`. */
   openQuestion?: OpenQuestion;
+  /** See `DeclaredQuestion`. */
+  declaredQuestion?: DeclaredQuestion;
+  /**
+   * Server-derived, real mode: the question a manager message landed by an
+   * earlier run of this item asks, as the model judgement read it, or null
+   * when none asks. Kept so the closing phase and a closing round read it
+   * without asking again; absent when nothing waited on an answer.
+   */
+  earlierQuestion?: string | null;
   /** Writes earlier runs of this item landed; server-derived on a retry, absent on a first run. */
   landedWrites?: LandedWrite[];
   draft: string;
@@ -414,6 +432,8 @@ export interface DependentExecutionOutput {
   withheldActions?: WithheldAction[];
   /** Server-derived: the question to the manager this set's withheld writes wait on; see `OpenQuestion`. */
   openQuestion?: OpenQuestion;
+  /** See `DeclaredQuestion`. */
+  declaredQuestion?: DeclaredQuestion;
   /** The one repair each held write earned before the hold; absent when none was needed. */
   argumentRepairs?: ArgumentRepairAttempt[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */

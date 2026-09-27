@@ -125,6 +125,13 @@ const REAL_PROCEDURE_TRAIL_OUTPUT =
   '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read, snapshot, or prior write that the plan or runbook orders before this action) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
+/**
+ * The executor declares the question a withheld write waits on (decision
+ * N20), so the hold reads a declaration rather than the wording of a
+ * message: the question in either language, with or without a mark.
+ */
+const OPEN_QUESTION_OUTPUT_REAL =
+  '  5. Open question - `openQuestion`: the question the manager must answer before a write the plan leaves to their answer can land, exactly as you put it to them (in the manager DM, or in `notes` when no chat surface is connected) and in the language you asked it in. Set it whenever this response asks the manager for an answer, a decision or a confirmation that such a write waits on, whether or not the sentence ends in a question mark: "Please confirm which template the notice should use." is a question. Set it to null when nothing waits on the manager, and for a rhetorical question, a closing line such as "Let me know if anything else is needed", a question quoted from the ticket or the requester, a report, or a draft put to the manager to decide (their decision is its own answer).';
 
 /**
  * Only the real path runs a second, result-dependent authoring phase. The
@@ -446,6 +453,7 @@ const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
   REAL_PROCEDURE_TRAIL_OUTPUT,
+  OPEN_QUESTION_OUTPUT_REAL,
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
@@ -471,7 +479,7 @@ const REAL_PREAMBLE = [
   "  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook's comment tool, and only after it, if the work is complete, the state change with the runbook's state argument. A status change is never the only trace of who acted.",
   '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
   '  - When blocked work needs a manager answer, emit only the question or escalation DM in the closing set; do not bundle it with a failure audit comment or a completion note.',
-  '  - When a chat surface is connected and you have a question or an escalation for the manager, send it as the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id; with nothing to ask, send no DM. When none is connected, put the question in `notes` instead of substituting another channel.',
+  '  - When a chat surface is connected and you have a question or an escalation for the manager, send it as the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id; with nothing to ask, send no DM. When none is connected, put the question in `notes` instead of substituting another channel. Either way the question also goes in `openQuestion`.',
   '  - Each provider mutation is its own action so it can be decided and applied on its own.',
 ].join('\n');
 
@@ -744,6 +752,18 @@ const deferredActionsSchema = z
   )
   .nullable();
 
+/** The question the set waits on the manager for, or null; required-but-nullable for strict providers. */
+const openQuestionSchema = z.string().nullable();
+
+/**
+ * The executor's declared question as the output keeps it: the trimmed text,
+ * or null when it declared none or only whitespace.
+ */
+function declaredQuestionOf(raw: unknown): string | null {
+  const question = openQuestionSchema.parse(raw ?? null)?.trim();
+  return question ? question : null;
+}
+
 /** Bind the runtime-loaded trail ids and exact inventory size into the provider schema. */
 export function executeSchemaForProcedureContract(
   contract: ProcedureContract,
@@ -752,7 +772,9 @@ export function executeSchemaForProcedureContract(
   mode: SurfaceMode = 'mock',
 ) {
   return executeSchema.extend({
-    ...(mode === 'real' ? { deferredActions: deferredActionsSchema } : {}),
+    ...(mode === 'real'
+      ? { deferredActions: deferredActionsSchema, openQuestion: openQuestionSchema }
+      : {}),
     actions:
       mode === 'mock'
         ? z.array(generatedActionSchema).min(requiredActionFloor(contract, candidate, plan))
@@ -795,6 +817,7 @@ export function dependentExecuteSchemaForProcedureContract(
   cap: number = DEPENDENT_ACTION_CAP,
 ) {
   return dependentExecuteSchema.extend({
+    ...(mode === 'real' ? { openQuestion: openQuestionSchema } : {}),
     actions: z.array(generatedActionSchema).max(cap),
     procedureTrails:
       mode === 'mock'
@@ -2656,7 +2679,10 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
     ...(mode === 'real'
-      ? { deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null) }
+      ? {
+          deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null),
+          declaredQuestion: declaredQuestionOf(raw.openQuestion),
+        }
       : {}),
   };
   if (mode !== 'mock') {
@@ -2739,6 +2765,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       actions: repairedRaw.actions.map(materialiseGeneratedAction),
       procedureTrails: repairedRaw.procedureTrails,
       deferredActions: deferredActionsSchema.parse(repairedRaw.deferredActions ?? null),
+      declaredQuestion: declaredQuestionOf(repairedRaw.openQuestion),
     };
     const remaining = procedureTrailAttentionIssues(repaired, candidate, procedureContract, {
       mode,
@@ -3375,6 +3402,7 @@ async function authorDependentSkillRun(
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
       planStepOutcomes: normalisePlanStepOutcomes(ordered.map(recordedPlanStepBasis), advisory),
+      ...(mode === 'real' ? { declaredQuestion: declaredQuestionOf(raw.openQuestion) } : {}),
     };
   }
 

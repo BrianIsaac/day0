@@ -252,7 +252,11 @@ vi.mock('../../src/lib/mastra', () => ({
         ) as T;
       throw new Error(`unscripted agent ${name}`);
     };
-    return args.schema.parse(reply()) as T;
+    // The recorded executor replies predate the declared question; they declare none.
+    const executor = args.agent.name.endsWith('-initial') || args.agent.name.endsWith('-dependent');
+    return args.schema.parse(
+      executor ? { openQuestion: null, ...(reply() as object) } : reply(),
+    ) as T;
   },
   agentText: async (): Promise<string> => '',
 }));
