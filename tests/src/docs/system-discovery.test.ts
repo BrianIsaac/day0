@@ -224,18 +224,15 @@ describe('documentation system discovery', (): void => {
       }),
     ]);
     expect(
-      validateModelCandidates(
-        [{ ...systemPage, ref: 'infrastructure/aws.md' }],
-        {
-          systems: [
-            {
-              name: 'Amazon Simple Queue Service',
-              class: 'other',
-              pageRef: 'infrastructure/aws.md',
-            },
-          ],
-        },
-      ),
+      validateModelCandidates([{ ...systemPage, ref: 'infrastructure/aws.md' }], {
+        systems: [
+          {
+            name: 'Amazon Simple Queue Service',
+            class: 'other',
+            pageRef: 'infrastructure/aws.md',
+          },
+        ],
+      }),
     ).toEqual([
       expect.objectContaining({
         name: 'Amazon Simple Queue Service',

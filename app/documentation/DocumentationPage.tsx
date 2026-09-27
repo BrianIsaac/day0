@@ -41,7 +41,10 @@ export function linkFormAfterLink(): { label: string; locator: string } {
  * Returns:
  *   The help line under the form fields.
  */
-export function SourceKindHelp(props: { kind: SourceKind; serverKind: ServerKind }): React.ReactNode {
+export function SourceKindHelp(props: {
+  kind: SourceKind;
+  serverKind: ServerKind;
+}): React.ReactNode {
   return (
     <p className="text-xs text-[var(--color-muted)]">
       {props.kind === 'mcp'

@@ -12,7 +12,8 @@ vi.mock('convex/react', () => ({
   useMutation: (): (() => void) => (): void => undefined,
   useQuery: (reference: unknown): unknown => {
     const name = getFunctionName(reference as never);
-    if (name === 'config:surfaceMode') return { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
+    if (name === 'config:surfaceMode')
+      return { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
     if (name === 'docSources:listMine') return state.sources;
     return [];
   },
