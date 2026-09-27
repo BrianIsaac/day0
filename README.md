@@ -63,7 +63,7 @@ Three ways to run it, and the two local ways are real mode: Day0 reads the docum
 - **Local, cloud model** - `./setup.sh --route featherless`: GLM 5.3 Flash through Featherless, with a Featherless key; `--route key` for OpenAI or any OpenAI-compatible key, `--route endpoint` for a server you already run. Your chat and relevant content are sent to the provider, which charges per token.
 - **Local, local model** - `./setup.sh --route local`: the bundled model (`qwen3:8b` tested) in Docker on this machine, nothing signed up for and nothing metered.
 
-You need Node 22+, pnpm 9+, and Docker with Compose v2. `./setup.sh` checks each of those, and the ports it is about to publish, before it starts anything.
+You need Node 22+, pnpm 9+, bash 4 or newer (macOS ships 3.2: `brew install bash`), and Docker with the Compose v2 plugin, its daemon running and reachable by your user. `./setup.sh` checks each of those - the daemon itself, not only the `docker` command - and the ports it is about to publish, before it starts anything, and says what to do about anything missing. The clone can sit in a directory of any name: the setup names its Compose project after the directory, and gives a clone called `day0` a short suffix of its own.
 
 ```bash
 git clone https://github.com/BrianIsaac/day0.git
@@ -254,7 +254,7 @@ Every way needs a model: the charter, the plans, the executor and the skill auth
 
 Both local ways also need somewhere to verify an authored skill, and that is bundled as well: `pnpm sandbox:up` starts a local sandbox on either of them, and Daytona is the hosted alternative. Only Exa is genuinely account-only, and its absence costs the good-habits research rather than the loop.
 
-Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the five setups - backend, auth, model, sandbox, voice - separately, and fails only on the states that are actually broken rather than merely incomplete.
+Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the five setups - backend, auth, model, sandbox, voice - separately, and fails only on the states that are actually broken rather than merely incomplete. `pnpm --silent check:setup --report > day0-setup-report.json` writes the same checks as one JSON document for support instead: the tool versions, the pinned images and which run, the digests of the redactor's locks and model manifest, every outbound host the configuration names, and each section's status, with no value from `.env.local` and nothing your documentation says.
 
 `pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
 
@@ -276,7 +276,7 @@ The choice this way offers is the provider. `--route featherless` is the tested 
 
 **On the key route the two addresses collapse into one, which is the point.** Empty means `https://api.openai.com/v1`, and that address means the same thing from Next as it does from inside the backend container - so the trap that costs an afternoon on a local model server cannot be sprung. Next reaches it over this machine's ordinary outbound connection and the backend over its container's, and the charter arrives from the Node action just as the chat streams from Next. Leave both variables empty rather than writing the default into them; there is nothing to point anywhere. Featherless is likewise one hosted address both sides reach.
 
-`./setup.sh` checks Node 22, pnpm 9 and Docker Compose v2, installs the dependencies if `node_modules` is missing, and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence under [What the setup does](#what-the-setup-does) in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run and writes nothing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
+`./setup.sh` checks Node 22, pnpm 9, bash 4, a Docker daemon that answers your user (it prints the daemon's own words and the fix when it does not) and the Compose v2 plugin, installs the dependencies if `node_modules` is missing (never on `--dry-run`, which writes nothing), and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence under [What the setup does](#what-the-setup-does) in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first (without `--project`, the Compose project is the checkout directory's name in lower case with `-` for anything Compose refuses, and a clone called `day0` gets a short suffix from its path, because `day0` is a name the maintainers' own stacks hold); `--adopt` after you move the checkout, which recreates the installation's containers from the new path and keeps its volumes, the data among them; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run, writes nothing, and exits non-zero when a prerequisite is missing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
 
 Stop, resume, clear - each reads the project from `.env.local` and refuses the protected projects:
 
@@ -322,7 +322,7 @@ pnpm install --frozen-lockfile
 pnpm dev                           # prints an unlock URL - open that, not localhost:3000
 ```
 
-The choice this way offers is the model. The setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the semi-final local bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again. `--model-port <n>` moves the model server off 11434 when a native `ollama serve` holds it. Everything else - the flags, `stop`, `resume` and `clear`, the components and the first day in the browser - is the same as [Local, cloud model](#local-cloud-model) above and [Real mode](#real-mode) below.
+The choice this way offers is the model. The setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the semi-final local bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again. A tested model that would have to be pulled is the default only when it fits the free memory on your GPU whole: with no NVIDIA GPU, or too little free, there is no default, and `--yes` stops and says so, so that a 5 GB pull that then runs on the CPU is something you chose with `--model` rather than something that happened. `--model-port <n>` moves the model server off 11434 when a native `ollama serve` holds it. Everything else - the flags, `stop`, `resume` and `clear`, the components and the first day in the browser - is the same as [Local, cloud model](#local-cloud-model) above and [Real mode](#real-mode) below.
 
 How fast that is has nothing to do with Day0. This route sets a custom `OPENAI_BASE_URL`, so the agent core makes ordinary OpenAI-compatible chat-completions calls; the wait is a property of the endpoint you pointed it at. The same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, while the key route of the cloud-model way uses the Responses API and answers as fast as OpenAI does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
 
@@ -425,7 +425,7 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 | `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API |
 | `demo` | a synthetic Looker-style pipeline tile with a login | you want a web-UI-only system to drive without pointing day0 at a real one |
 | `sandbox` | the networkless skill sandbox | always, unless you have a `DAYTONA_API_KEY` |
-| `redactor` | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, and provider outcomes record that only the exact-value and structural layers ran |
+| `redactor` | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, provider outcomes record that only the exact-value and structural layers ran, and `pnpm check:setup` fails a real-mode installation where it is missing or not running |
 
 What each is for, and what it never sees, is in [`docs/running/components.md`](docs/running/components.md).
 
@@ -434,7 +434,23 @@ On Linux x86-64 with Python 3.12, the redactor's first CPU start downloads about
 container image if it is not cached. These downloads need network access; inference
 runs locally without an account. CUDA wheels require additional space; their download
 size has not been verified here. Detection can miss secrets, and structural-only
-outcomes are labelled as limited redaction in the dashboard.
+outcomes are labelled as limited redaction in the dashboard. The wheel locks are
+compiled for x86_64 Linux only, so the real-mode setup refuses a Docker daemon that
+runs arm64 containers (Apple Silicon, Graviton) before it writes anything; mock mode
+has no redactor and runs there.
+
+### Tickets people own
+
+Intake leaves a Linear ticket alone when it is assigned to anyone but the person
+whose key Day0 reads with (it asks Linear who that is), when it carries a
+`do-not-automate` label (any case; spaces and underscores count as hyphens), or when
+its state is completed or cancelled. If the key's owner cannot be read, every
+assigned ticket is left alone and the unassigned ones are still worked. This is
+decided when intake first reads the ticket: one already in the work queue when
+somebody takes it is not re-read yet, so cancel it from its card. A Retry
+never sends a status change an earlier run of the item already landed, so a ticket
+somebody moved back since stays where they put it; the ledger row says it was
+reused, not sent.
 
 ### The documentation is yours
 
@@ -567,6 +583,8 @@ The bundled `model` service is a convenience, not a dependency - skip `pnpm mode
 | A remote or hosted endpoint | the same URL | leave empty |
 
 `host.docker.internal` is mapped for you in `docker-compose.yml`, but whether traffic from the container actually reaches your host is a firewall question and some machines drop it. If in doubt, use the bundled service: a compose network is not something a host firewall sits in the middle of.
+
+The only way to know is to ask from inside the container, so the setup does. On `--route endpoint` it dials the backend's address from inside the backend container, with no key, before anything is pushed, and refuses an address the container cannot reach with curl's own words and the fix; `pnpm check:setup` makes the same dial on every run. The usual case is a server on another Docker network, which this machine reaches and the container does not: attach its container to this project's network (`docker network connect <project>_default <container>`) and use its name, or publish its port and use `host.docker.internal`.
 
 ```bash
 pnpm probe:model
@@ -1096,7 +1114,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - **本地运行，云端模型**：`./setup.sh --route featherless`，通过 Featherless 使用 GLM 5.3 Flash，需要一个 Featherless key；`--route key` 使用 OpenAI 或任意 OpenAI-compatible key，`--route endpoint` 使用你已经在运行的服务器。你的聊天内容及相关内容会发送给该提供商，并按 token 计费。
 - **本地运行，本地模型**：`./setup.sh --route local`，在本机 Docker 中运行内置模型（已测试 `qwen3:8b`），不注册任何账户，也不产生任何费用。
 
-需要 Node 22+、pnpm 9+，以及带 Compose v2 的 Docker。`./setup.sh` 会在启动任何服务之前检查这些工具，以及它将要占用的端口。
+需要 Node 22+、pnpm 9+、bash 4 或更新版本（macOS 自带 3.2：`brew install bash`），以及带 Compose v2 插件的 Docker，且其守护进程正在运行、当前用户可以访问。`./setup.sh` 会在启动任何服务之前检查这些工具（检查的是守护进程本身，而不只是 `docker` 命令）以及它将要占用的端口，并说明缺什么、怎么补。仓库可以克隆到任意名称的目录：setup 以目录名命名 Compose project，克隆到 `day0` 目录时会自动加上一个短后缀。
 
 ```bash
 git clone https://github.com/BrianIsaac/day0.git
@@ -1288,7 +1306,7 @@ pnpm dev                           # prints an unlock URL - open that, not local
 
 key 路线上两个模型地址归并为同一个默认值。变量留空表示 `https://api.openai.com/v1`，从 Next 和后端容器访问时含义相同。不要把默认 URL 手工写入变量。Featherless 同样是两侧都能访问的同一个托管地址。
 
-`./setup.sh` 会检查 Node 22、pnpm 9 和 Docker Compose v2，在缺少 `node_modules` 时安装依赖，然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成[安装过程做了什么](#安装过程做了什么)中的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线。
+`./setup.sh` 会检查 Node 22、pnpm 9、bash 4、当前用户能否访问 Docker 守护进程（不能时打印守护进程自己的原话和修复办法）以及 Compose v2 插件，在缺少 `node_modules` 时安装依赖（`--dry-run` 时从不安装，它不写入任何内容），然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成[安装过程做了什么](#安装过程做了什么)中的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套（不加 `--project` 时，Compose project 名取 checkout 目录名，转为小写，Compose 不接受的字符换成 `-`；克隆到 `day0` 目录时会按路径加一个短后缀，因为 `day0` 是维护者自己的环境所用的名字）；移动 checkout 之后用 `--adopt`，它会从新路径重建该安装的容器，并保留其数据卷及其中的数据；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容，缺少前置条件时以非零状态退出；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线；`pnpm --silent check:setup --report > day0-setup-report.json` 则把同样的检查写成一份供支持人员使用的 JSON：工具版本、固定的镜像及其是否在运行、redactor 依赖锁定文件和模型清单的摘要、配置中出现的每个出站主机，以及每一节的状态，不含 `.env.local` 中的任何值，也不含文档内容。`--route endpoint` 时，setup 会在推送任何内容之前从 backend 容器内部拨测该地址（不带 key），容器访问不到时拒绝继续，并给出 curl 的原话和修复办法；`pnpm check:setup` 每次运行也会做同样的拨测。
 
 停止、恢复、清除：每条命令都从 `.env.local` 读取项目名，并拒绝受保护的项目：
 
@@ -1334,7 +1352,7 @@ pnpm install --frozen-lockfile
 pnpm dev                           # prints an unlock URL - open that, not localhost:3000
 ```
 
-这种方式的选择是模型。setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，半决赛本地 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口。其余一切，包括参数、`stop`、`resume`、`clear`、各组件以及浏览器中的第一天，都与上文的[本地运行，云端模型](#本地运行云端模型)和下文的[真实模式](#真实模式)相同。
+这种方式的选择是模型。setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，半决赛本地 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。需要拉取的已测试模型，只有在 GPU 空闲显存足以完整容纳它时才是默认项：没有 NVIDIA GPU 或空闲显存不足时没有默认项，`--yes` 会停下并说明原因，这样一次 5 GB 的拉取随后在 CPU 上运行，是你用 `--model` 选择的结果，而不是意外发生。`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口。其余一切，包括参数、`stop`、`resume`、`clear`、各组件以及浏览器中的第一天，都与上文的[本地运行，云端模型](#本地运行云端模型)和下文的[真实模式](#真实模式)相同。
 
 响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。本路径设置了自定义 `OPENAI_BASE_URL`，因此 Agent 核心执行普通的 OpenAI-compatible chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟。云端模型方式的 key 路线则通过 Responses API 调用 OpenAI，延迟取决于 OpenAI。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
 
@@ -1415,7 +1433,7 @@ pnpm convex:down                 # the backend; the data volume stays
 | `browser` | Playwright MCP，day0 的浏览器执行层 | 文档记录的系统只有 Web UI 而没有 API |
 | `demo` | 带登录的合成 Looker 风格 pipeline tile | 想演示浏览器执行层，但不希望指向真实系统 |
 | `sandbox` | 无网络的技能沙箱 | 除非配置了 `DAYTONA_API_KEY`，否则始终需要 |
-| `redactor` | 对文档和 ledger 做脱敏的 span 模型 | 真实模式下始终需要：没有它，文档同步会拒绝存储页面，provider 结果只会记录结构层脱敏 |
+| `redactor` | 对文档和 ledger 做脱敏的 span 模型 | 真实模式下始终需要：没有它，文档同步会拒绝存储页面，provider 结果只会记录结构层脱敏，`pnpm check:setup` 也会判定缺少它或它未运行的真实模式安装为失败 |
 
 每个组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。
 
@@ -1423,6 +1441,17 @@ pnpm convex:down                 # the backend; the data volume stays
 251 MB 的固定版本 wheel，以及 1.16 GB 的权重和分词器文件；若镜像未缓存，还需下载镜像。
 下载需要联网，推理在本地运行，无需账户。CUDA wheel 需要更多空间，此处尚未验证其下载大小。
 检测可能漏掉秘密；仅完成结构层脱敏的结果会在仪表盘中显示有限脱敏提示。
+依赖锁定文件只为 x86_64 Linux 编译，因此当 Docker 守护进程运行 arm64 容器（Apple Silicon、Graviton）时，
+真实模式的 setup 会在写入任何内容之前拒绝继续；mock 模式没有 redactor，可以在这类机器上运行。
+
+#### 他人负责的工单
+
+当 Linear 工单被指派给 Day0 所用 key 的所有者以外的人（它会向 Linear 询问这个人是谁）、
+带有 `do-not-automate` 标签（不区分大小写，空格和下划线视同连字符），或状态为已完成或已取消时，
+intake 不会接手它。无法读取 key 的所有者时，所有已指派的工单都不接手，未指派的照常处理。
+这一判断在 intake 首次读取工单时做出：工单进入工作队列之后才被人接手的，目前不会重新读取，
+请在其卡片上取消。Retry 不会再次发送之前某次运行已经成功的状态变更，因此别人之后改回的状态会保持原样；
+ledger 中该行会注明是复用，而非重新发送。
 
 #### 文档由你提供
 
