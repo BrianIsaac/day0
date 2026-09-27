@@ -485,6 +485,17 @@ describe('a Docker daemon this user cannot reach', (): void => {
   });
 });
 
+describe('a port setup never publishes', (): void => {
+  it('notes a busy dashboard port without refusing, since setup never starts the dashboard', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'], busyPorts: [6791] });
+    expect(await runSetup(keyRoute(), h.io)).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('note  CONVEX_DASHBOARD_PORT 6791: already in use on this machine');
+    expect(printed).toContain('pnpm convex:up --profile dev');
+    expect(printed).not.toContain('thing(s) to fix before Day0 can start here');
+  });
+});
+
 describe('refusing anything that is not this machine', (): void => {
   it('refuses to run as part of a hosted build', (): void => {
     expect(buildEnvironmentRefusal({ VERCEL: '1' })).toContain('Vercel');

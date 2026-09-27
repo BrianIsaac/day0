@@ -2233,11 +2233,21 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       : [
           { name: 'CONVEX_PORT', port: ports.backend },
           { name: 'CONVEX_SITE_PROXY_PORT', port: ports.site },
-          { name: 'CONVEX_DASHBOARD_PORT', port: ports.dashboard },
         ];
     const portResults = [];
     for (const candidate of portsToCheck) {
       portResults.push({ ...candidate, free: await io.portFree(candidate.port) });
+    }
+    // The dashboard is profile `dev`, which this setup never starts, so its
+    // port is said out loud and never a reason to stop.
+    if (!ownStackRunning) {
+      portResults.push({
+        name: 'CONVEX_DASHBOARD_PORT',
+        port: ports.dashboard,
+        free: await io.portFree(ports.dashboard),
+        blocking: false,
+        fix: `Only the Convex dashboard (\`pnpm convex:up --profile dev\`) publishes there, and this setup does not start it. Move it when you want it: \`--dashboard-port <n>\`.`,
+      });
     }
     // Not a port this helper publishes, and not a reason to stop: `pnpm dev`
     // serves there, and the unlock URL printed at the end names it.
