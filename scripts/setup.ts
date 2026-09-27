@@ -1171,10 +1171,9 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(real ? ['redactor:up'] : []),
     'admin-key',
     ...(input.existing
-      ? ['release:check', 'convex dev --once', 'migrations', 'sync:env']
-      : ['sync:env', 'convex dev --once', 'migrations']),
+      ? ['release:check', 'convex dev --once', 'migrations', 'release:stamp', 'sync:env']
+      : ['sync:env', 'convex dev --once', 'migrations', 'release:stamp']),
     'convex:restart',
-    'release:stamp',
     'check:setup',
     ...(real && input.company ? ['bed:company docs', 'bed:company check'] : []),
   ];
@@ -3250,32 +3249,32 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       return false;
     };
 
+    // The stamp follows the migrations at once, so rows a release has
+    // migrated are never left stamped with the release before it, whatever
+    // fails after them.
+    const stampRelease = (): boolean => {
+      const stamped = runStep(
+        'release:stamp',
+        `npx convex run migrations:recordRelease (${checkoutRelease.release})`,
+        { inherit: false, timeoutMs: 120_000 },
+      );
+      if (stamped) io.log(`    the deployment's rows are at ${checkoutRelease.release}`);
+      return stamped !== undefined;
+    };
+
     // Functions before env on a deployment with rows, so a refused push
     // leaves the old functions on the old env; the restart only once every
     // step before it succeeded.
     if (existingDeployment) {
-      if (!pushFunctions() || !runMigrations()) return 1;
+      if (!pushFunctions() || !runMigrations() || !stampRelease()) return 1;
       if (!runStep('sync:env', 'pnpm sync:env')) return 1;
     } else {
       if (!runStep('sync:env', 'pnpm sync:env')) return 1;
-      if (!pushFunctions() || !runMigrations()) return 1;
+      if (!pushFunctions() || !runMigrations() || !stampRelease()) return 1;
     }
 
     if (!runStep('convex:restart', 'pnpm convex:restart')) return 1;
     await io.waitForBackend(ports.backend, 180_000);
-    if (
-      !runStep(
-        'release:stamp',
-        `npx convex run migrations:recordRelease (${checkoutRelease.release})`,
-        {
-          inherit: false,
-          timeoutMs: 120_000,
-        },
-      )
-    ) {
-      return 1;
-    }
-    io.log(`    the deployment's rows are at ${checkoutRelease.release}`);
 
     if (real && redactor) {
       const health = await waitForRedactor(

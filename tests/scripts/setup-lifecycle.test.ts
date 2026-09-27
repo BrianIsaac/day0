@@ -476,7 +476,7 @@ describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void =
     expect(ran(h)).not.toContain('convex dev --once');
   });
 
-  it('pushes the functions, runs the migrations, then the env, restarts only after, and stamps the release', async (): Promise<void> => {
+  it('pushes the functions, runs the migrations and stamps the release, then the env, and restarts only after', async (): Promise<void> => {
     const h = configured({
       services: ['backend'],
       releaseStamp: '0.2.0',
@@ -490,9 +490,9 @@ describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void =
     const at = (text: string): number => lines.findIndex((line) => line.includes(text));
     expect(at('convex data deploymentVersions')).toBeLessThan(at('convex dev --once'));
     expect(at('convex dev --once')).toBeLessThan(at('migrations:runPending'));
-    expect(at('migrations:runPending')).toBeLessThan(at('run sync:env'));
+    expect(at('migrations:runPending')).toBeLessThan(at('migrations:recordRelease'));
+    expect(at('migrations:recordRelease')).toBeLessThan(at('run sync:env'));
     expect(at('run sync:env')).toBeLessThan(at('run convex:restart'));
-    expect(at('run convex:restart')).toBeLessThan(at('migrations:recordRelease'));
     expect(lines.filter((line) => line.includes('migrations:runPending'))).toHaveLength(2);
     expect(lines[at('migrations:recordRelease')]).toContain('{"release":"0.3.0"}');
     const printed = h.output.join('\n');

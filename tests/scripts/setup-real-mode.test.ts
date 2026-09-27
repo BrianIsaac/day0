@@ -305,8 +305,8 @@ describe('the order the real-mode helpers run in', (): void => {
       'sync:env',
       'convex dev --once',
       'migrations',
-      'convex:restart',
       'release:stamp',
+      'convex:restart',
       'check:setup',
     ]);
     expect(sequenceSteps('local', { mode: 'real', sandbox: 'daytona' })).toEqual([
@@ -319,8 +319,8 @@ describe('the order the real-mode helpers run in', (): void => {
       'sync:env',
       'convex dev --once',
       'migrations',
-      'convex:restart',
       'release:stamp',
+      'convex:restart',
       'check:setup',
     ]);
     expect(sequenceSteps('key')).toEqual(sequenceSteps('key', { mode: 'mock' }));

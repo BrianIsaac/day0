@@ -991,8 +991,8 @@ describe('the order the helpers run in', (): void => {
       'sync:env',
       'convex dev --once',
       'migrations',
-      'convex:restart',
       'release:stamp',
+      'convex:restart',
       'check:setup',
     ]);
     expect(sequenceSteps('local')).toEqual([
@@ -1005,8 +1005,8 @@ describe('the order the helpers run in', (): void => {
       'sync:env',
       'convex dev --once',
       'migrations',
-      'convex:restart',
       'release:stamp',
+      'convex:restart',
       'check:setup',
     ]);
   });
@@ -1020,9 +1020,9 @@ describe('the order the helpers run in', (): void => {
       'release:check',
       'convex dev --once',
       'migrations',
+      'release:stamp',
       'sync:env',
       'convex:restart',
-      'release:stamp',
       'check:setup',
     ]);
   });

@@ -140,6 +140,8 @@ export interface MigrationProgress {
   readonly read: number;
   readonly changed: number;
   readonly completedAt?: number;
+  /** Set when the migration had already finished before this call, so nothing ran. */
+  readonly finishedEarlier?: true;
 }
 
 /**
@@ -219,8 +221,10 @@ async function convertInclusionLists(
     let excluded: Id<'docSources'>[];
     // An empty list already reads every source.
     if (included.length === 0) excluded = agent.excludedDocSourceIds ?? [];
-    // An agent with no owner has no sources to exclude; it keeps its list until adopted.
-    else if (agent.userId === undefined) continue;
+    // An agent with no owner reads no source, listed or not (sources are the
+    // owner's), so clearing its list changes nothing it reads today and
+    // leaves no row carrying the field the next release removes.
+    else if (agent.userId === undefined) excluded = agent.excludedDocSourceIds ?? [];
     else excluded = await impliedExclusions(ctx, agent.userId, agent, included);
     await ctx.db.patch(agent._id, {
       docSourceIds: undefined,
@@ -397,7 +401,9 @@ export const runMigrationPage = internalMutation({
   args: { name: migrationName },
   handler: async (ctx, args): Promise<MigrationProgress> => {
     const row = await migrationRow(ctx, args.name);
-    if (row?.completedAt !== undefined) return progressOf(args.name, row);
+    if (row?.completedAt !== undefined) {
+      return { ...progressOf(args.name, row), finishedEarlier: true };
+    }
     const page = await MIGRATION_PAGES[args.name](ctx, row?.cursor ?? null);
     const now = Date.now();
     const reached = {
@@ -422,7 +428,8 @@ export const runMigrationPage = internalMutation({
 
 /**
  * Run every unfinished migration to the end, in order, and say what each
- * changed. Internal; the upgrade calls it through `npx convex run`. A call
+ * one this call ran changed; a migration finished by an earlier call is not
+ * reported again. Internal; the upgrade calls it through `npx convex run`. A call
  * that reaches its time budget returns with the rest still pending, and the
  * next call carries on from the stored cursor.
  */
@@ -441,7 +448,7 @@ export const runPending = internalAction({
         }
         progress = await ctx.runMutation(internal.migrations.runMigrationPage, { name });
       }
-      migrations.push(progress);
+      if (progress.finishedEarlier !== true) migrations.push(progress);
     }
     return { migrations, pending: [] };
   },

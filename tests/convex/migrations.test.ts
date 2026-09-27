@@ -200,6 +200,40 @@ describe('the upgrade migrations', (): void => {
     ).toMatchObject({ read: 1, changed: 0 });
   });
 
+  it('clears the inclusion list of an agent it could not give an owner, since it reads no source either way', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await agent(harness, { userId: 'owner-a' });
+    await agent(harness, { userId: 'owner-b' });
+    const sourceId = await source(harness, 'owner-a');
+    const orphan = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          state: 'active',
+          createdAt: 1,
+          docSourceIds: [sourceId],
+        }),
+    );
+
+    await runAll(harness);
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(orphan));
+    expect(row?.userId).toBeUndefined();
+    expect(row?.docSourceIds).toBeUndefined();
+    expect(row?.excludedDocSourceIds).toBeUndefined();
+  });
+
+  it('reports only the migrations a call ran, not those an earlier call finished', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const first = await harness.action(internal.migrations.runPending, {});
+    expect(first.migrations.map((row) => row.name)).toEqual([...MIGRATION_NAMES]);
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
+      migrations: [],
+      pending: [],
+    });
+  });
+
   it('clears the retired posture, supervised-run and credentialRef fields', async (): Promise<void> => {
     const harness = limitedHarness();
     const agentId = await harness.run(
