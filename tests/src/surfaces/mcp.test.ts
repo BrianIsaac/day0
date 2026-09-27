@@ -8,6 +8,7 @@ import {
   EFFECT_LENGTH,
   interpretToolResult,
   McpAdapter,
+  MCP_RESULT_TEXT_LIMIT,
   MCP_SECRET_ARGUMENT_REFUSAL,
   providerErrorMessage,
   type McpClientLike,
@@ -1541,5 +1542,39 @@ describe('where the credential is substituted', (): void => {
     expect(applied).toMatchObject({ ok: false, reason: MCP_SECRET_ARGUMENT_REFUSAL });
     expect(client.executions).toEqual([]);
     expect(client.options).toEqual([]);
+  });
+});
+
+describe('reading a large tool result', (): void => {
+  it('redacts a bounded prefix, with the credential removed before the cut', async (): Promise<void> => {
+    const seen: number[] = [];
+    const spanModel = {
+      name: 'measuring',
+      spans: async (text: string): Promise<never[]> => {
+        seen.push(text.length);
+        return [];
+      },
+    };
+    const secret = 'lin-secret-value';
+    const long = `${'a'.repeat(MCP_RESULT_TEXT_LIMIT - 5)}${secret}${'b'.repeat(200_000)}`;
+    const client = fakeClient({
+      linear_list_issues: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: long }],
+      }),
+    });
+    const surfaceAdapter = new McpAdapter([linear], {
+      decrypt: async (): Promise<string> => secret,
+      createClient: client.create,
+      now: (): number => now,
+      spanModel,
+    });
+    const listCall: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ team: 'T' }) },
+    };
+    const applied = await surfaceAdapter.apply(ctx, run, listCall, 0, 'k');
+    expect(applied.ok).toBe(true);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(MCP_RESULT_TEXT_LIMIT);
+    expect(JSON.stringify(applied)).not.toContain('lin-secret');
   });
 });

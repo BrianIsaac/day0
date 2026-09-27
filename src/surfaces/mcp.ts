@@ -12,6 +12,7 @@ import {
   type ParsedMcpCall,
 } from './policy';
 import { redactOutcome } from './redact';
+import { redactValue } from './secrets';
 import type { SpanModel } from '../redaction/client';
 import type { MCPClient } from '@mastra/mcp';
 import { createSecretMcpClient } from './mcp-client';
@@ -53,6 +54,25 @@ import type {
 } from './types';
 
 export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['tool'][];
+
+/**
+ * The most of one tool result the adapter redacts. The ledger keeps at most
+ * `READ_EFFECT_LENGTH` of it, and a page or a provider decides how long the
+ * result is, so the rest is never sent to the redactor.
+ */
+export const MCP_RESULT_TEXT_LIMIT = 64 * 1024;
+
+/**
+ * A tool result's text cut to `MCP_RESULT_TEXT_LIMIT`, with the credential and
+ * every known value removed exactly before the cut, so the cut cannot split
+ * one and leave a prefix no exact match would find.
+ */
+function boundedResultText(text: string, removals: readonly string[]): string {
+  if (text.length <= MCP_RESULT_TEXT_LIMIT) return text;
+  return removals
+    .reduce((scrubbed: string, value: string): string => redactValue(scrubbed, value), text)
+    .slice(0, MCP_RESULT_TEXT_LIMIT);
+}
 export const MCP_TIMEOUT_MS = 30_000;
 export const EFFECT_LENGTH = 180;
 
@@ -768,8 +788,9 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
+        const removals = [bearer, ...(this.deps.knownValues ?? [])];
         const redacted = await redactOutcome(
-          result.text,
+          boundedResultText(result.text, removals),
           bearer,
           this.deps.spanModel,
           this.deps.knownValues,
@@ -779,7 +800,7 @@ export class McpAdapter implements SurfaceAdapter {
         if (result.isError) {
           const errorResult = result.errorMessage
             ? await redactOutcome(
-                result.errorMessage,
+                boundedResultText(result.errorMessage, removals),
                 bearer,
                 this.deps.spanModel,
                 this.deps.knownValues,
