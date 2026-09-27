@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -111,6 +111,27 @@ async function downloadArchive(url: URL): Promise<Buffer> {
   return archive;
 }
 
+/**
+ * Why a clone from a host with no archive fallback failed, in the words the
+ * source's status shows: the backend having no git binary is said as such.
+ *
+ * @param hostname - The repository's host.
+ * @param cloned - The finished `git clone`.
+ */
+export function cloneFailure(
+  hostname: string,
+  cloned: Pick<SpawnSyncReturns<string>, 'error' | 'stderr'>,
+): string {
+  if ((cloned.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+    return (
+      `The backend has no git binary, so the repository on ${hostname} cannot be cloned; ` +
+      'only GitHub and GitLab have an archive fallback.'
+    );
+  }
+  const reason = (cloned.error?.message ?? cloned.stderr ?? '').trim().split('\n').pop();
+  return `Git clone from ${hostname} failed${reason ? `: ${reason}` : ''}.`;
+}
+
 /** Reader for public GitHub and GitLab Markdown repositories, and repositories on listed private hosts. */
 export class GitReader implements DocSourceReader {
   /**
@@ -183,10 +204,7 @@ export class GitReader implements DocSourceReader {
       );
       if (cloned.status !== 0) {
         if (!ARCHIVE_HOSTS.includes(locator.url.hostname)) {
-          const reason = (cloned.error?.message ?? cloned.stderr ?? '').trim().split('\n').pop();
-          throw new Error(
-            `Git clone from ${locator.url.hostname} failed${reason ? `: ${reason}` : ''}.`,
-          );
+          throw new Error(cloneFailure(locator.url.hostname, cloned));
         }
         await rm(checkout, { recursive: true, force: true });
         await mkdir(checkout);

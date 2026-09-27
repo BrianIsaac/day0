@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { archiveUrlFor, parseGitLocator } from '../../../../src/docs/readers/git';
+import { archiveUrlFor, cloneFailure, parseGitLocator } from '../../../../src/docs/readers/git';
 import { privateHostAllowlist } from '../../../../src/lib/private-hosts';
 
 describe('git documentation reader', (): void => {
@@ -81,5 +81,18 @@ describe("a git server inside the operator's network", (): void => {
       privateHostAllowlist('git.corp.internal'),
     );
     expect(() => archiveUrlFor(locator)).toThrow('no archive fallback');
+  });
+
+  it('says the backend has no git binary when that is why the clone failed', (): void => {
+    const missing = Object.assign(new Error('spawnSync git ENOENT'), { code: 'ENOENT' });
+    expect(cloneFailure('git.corp.internal', { error: missing, stderr: '' })).toContain(
+      'The backend has no git binary',
+    );
+    expect(
+      cloneFailure('git.corp.internal', {
+        error: undefined,
+        stderr: "Cloning into 'checkout'...\nfatal: repository not found\n",
+      }),
+    ).toBe('Git clone from git.corp.internal failed: fatal: repository not found.');
   });
 });
