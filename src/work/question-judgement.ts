@@ -91,6 +91,9 @@ export async function judgeManagerQuestion(
     return boundedQuestion(text);
   }
   if (!judgement.asks) return null;
+  // The card shows the manager's own message: a sentence the model paraphrased
+  // or made up is not quoted, and the whole message stands in for it.
   const question = judgement.question?.trim();
-  return boundedQuestion(question ? question : text);
+  const spaced = (value: string): string => value.replace(/\s+/g, ' ');
+  return boundedQuestion(question && spaced(text).includes(spaced(question)) ? question : text);
 }

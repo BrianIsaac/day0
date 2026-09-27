@@ -157,6 +157,8 @@ describe('the charter in the executor prompts', (): void => {
     expect(user).toContain(
       'Which notice template applies when the ETA is unconfirmed? Delay notice B.',
     );
+    expect(user).toContain('Charter approvalChain: Manager');
+    expect(user).toContain('Charter namedSystems: (none)');
   });
 
   it('gives real phase one the escalation triggers and answers, and leaves the mock prompt as it was', async (): Promise<void> => {
@@ -206,6 +208,24 @@ describe('the clause a closing decision was taken under', (): void => {
       text: 'Never send a customer notice without the desk lead approving the template.',
       charterVersion: '0.2',
     });
+  });
+
+  it('reads a stretch two lists share as the limit it sets', async (): Promise<void> => {
+    const shared = 'the desk lead approving the template';
+    recorded.outputs.push(closingReply(shared));
+
+    const output = await runDependentSkill({
+      ...closingArgs,
+      charter: {
+        ...charter,
+        proposedBoundaries: {
+          ...charter.proposedBoundaries,
+          willDo: ['Send a customer notice after the desk lead approving the template.'],
+        },
+      },
+    });
+
+    expect(output.planStepOutcomes[1]?.charterClause?.field).toBe('willNotDo');
   });
 
   it('keeps nothing for a quote the charter does not carry', async (): Promise<void> => {

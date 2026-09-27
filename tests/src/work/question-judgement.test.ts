@@ -50,6 +50,14 @@ describe('judgeManagerQuestion', (): void => {
     );
   });
 
+  it('quotes the whole message when the model returns a sentence the message does not carry', async (): Promise<void> => {
+    const call = answering({ asks: true, question: 'Which template do you prefer?' });
+
+    expect(
+      await judgeManagerQuestion('Please confirm   which template the notice should use.', call),
+    ).toBe('Please confirm   which template the notice should use.');
+  });
+
   it('reads a message as asking when the judgement cannot be had, so the writes stay held', async (): Promise<void> => {
     const failing: QuestionJudgementCall = async () => {
       throw new Error('model unavailable');

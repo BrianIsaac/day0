@@ -1029,9 +1029,10 @@ export interface RunSkillArgs {
 /**
  * The charter as an executor prompt reads it. The mock prompt keeps the role
  * and the two boundary lists it always had; the real prompt adds the
- * escalation triggers, the adjacent roles and the questions the manager has
- * answered, so both phases see the whole contract they are told to stay
- * inside (P8-9).
+ * escalation triggers, the adjacent roles, the named systems and
+ * collaborators, who approves, and the questions the manager has answered,
+ * so both phases see the whole contract they are told to stay inside (P8-9).
+ * The constraints are not repeated: their wording lives in the clauses.
  *
  * @param charter - The approved charter.
  * @param mode - The deployment's surface mode.
@@ -1052,6 +1053,9 @@ export function executorCharterLines(charter: Charter, mode: SurfaceMode): strin
     ...lines,
     `Charter escalationTriggers: ${clauses(boundaries.escalationTriggers)}`,
     `Charter adjacentRoles: ${clauses((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
+    `Charter namedSystems: ${clauses((charter.namedSystems ?? []).map((system) => system.name))}`,
+    `Charter namedCollaborators: ${clauses((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
+    `Charter approvalChain: ${charter.approvalChain?.boss ?? '(none)'}`,
     ...answeredQuestionLines(charter),
   ];
 }
@@ -1079,9 +1083,10 @@ function comparableClause(text: string): string {
 export function charterClauseOf(charter: Charter, quote: string): CharterClauseRef | undefined {
   const wanted = comparableClause(quote);
   if (wanted === '') return undefined;
-  const clauses = CHARTER_CLAUSE_FIELDS.flatMap((field) =>
-    (charter.proposedBoundaries[field] ?? []).map((text) => ({ field, text })),
-  );
+  // The limits first: a stretch two lists share is read as the limit it sets.
+  const clauses = [...CHARTER_CLAUSE_FIELDS]
+    .reverse()
+    .flatMap((field) => (charter.proposedBoundaries[field] ?? []).map((text) => ({ field, text })));
   const found =
     clauses.find((clause) => comparableClause(clause.text) === wanted) ??
     (wanted.length >= CLAUSE_STRETCH_CHARS
