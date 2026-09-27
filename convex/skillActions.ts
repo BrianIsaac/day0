@@ -605,7 +605,7 @@ async function recordAuthoringFailure(
   args: {
     rowReason: string;
     reason: string;
-    eventType: string;
+    eventType: 'skill.author-failed' | 'skill.verification-failed';
     refusedDraft?: { body: string; smokeTest: string };
   },
 ): Promise<{ ok: false; reason: string }> {

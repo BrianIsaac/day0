@@ -20,6 +20,8 @@ import { grantScopeInTransaction } from './agents';
 import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
 import { surfaceSlug } from '../src/surfaces/slug';
 import { redactTokenShapes } from '../src/surfaces/redact';
+import { appendEvent } from './eventLog';
+import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -73,6 +75,12 @@ const CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as cons
  * source work has already been requeued is not a proposal any more. */
 const REJECTABLE_STATES = ['proposed', 'approved', 'authoring', 'verified', 'failed'] as const;
 
+/** The event beside `skill.failed` that says which half of an authoring run failed. */
+export const authoringFailureEventValidator = v.union(
+  v.literal('skill.author-failed'),
+  v.literal('skill.verification-failed'),
+);
+
 type AuthoringClaim =
   | { claimed: true; runId: Id<'events'>; skill: Doc<'skills'> }
   | { claimed: false; reason: string };
@@ -90,12 +98,12 @@ async function claimHolder(
   ctx: MutationCtx,
   skillId: Id<'skills'>,
   runId: Id<'events'>,
-  attempted: string,
+  attempted: SkillAuthoringRefusedPayload['attempted'],
 ): Promise<Doc<'skills'> | null> {
   const row = await ctx.db.get(skillId);
   if (!row) return null;
   if (row.authoringRunId === runId) return row;
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'skill.authoring-refused',
     payload: { skillId, name: row.name, attempted, state: row.state },
@@ -301,7 +309,7 @@ async function moveWaitingWork(
     const skipReason = skillRejectedReason(skill.name);
     await ctx.db.patch(row._id, { state: 'cancelled', skipReason });
     // The item's terminal event, as every terminal transition writes one (A9's cycle time).
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.cancelled',
       payload: { workItemId: row._id, skillId: skill._id, reason: skipReason },
@@ -578,7 +586,7 @@ export const installBuiltin = internalMutation({
       createdAt: Date.now(),
       registeredAt: Date.now(),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'skill.builtin-installed',
       payload: { skillId: id, name: args.name },
@@ -669,7 +677,7 @@ export const propose = internalMutation({
       operation: args.operation,
       createdAt: Date.now(),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'skill.proposed',
       payload: {
@@ -719,7 +727,7 @@ export const approve = mutation({
     for (const scope of row.requiredScopes ?? []) {
       await grantScopeInTransaction(ctx, row.agentId, scope, 'skill');
     }
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.approved',
       payload: { skillId: args.skillId, name: row.name, scopes: row.requiredScopes ?? [] },
@@ -752,7 +760,7 @@ export const reject = mutation({
     // reason on its card, a batch at a time. A row that has moved on, or is
     // now linked to a different proposal, is not this rejection's to cancel.
     await moveWaitingWork(ctx, row, { kind: 'cancel' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.rejected',
       payload: { skillId: args.skillId, name: row.name },
@@ -835,7 +843,7 @@ export const requestRevision = mutation({
       },
       { queued: true },
     );
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.revision-requested',
       payload: { skillId: args.skillId, name: row.name },
@@ -970,7 +978,7 @@ export const retireUnshaped = internalMutation({
       );
     }
     await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.retired',
       payload: {
@@ -1027,14 +1035,14 @@ export const claimAuthoringRun = internalMutation({
           reason: `another authoring run has held this skill for ${Math.round(heldFor / 1000)}s; it can be taken over after ${Math.round(AUTHORING_LEASE_MS / 60000)} minutes`,
         };
       }
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: row.agentId,
         type: 'skill.authoring-superseded',
         payload: { skillId: args.skillId, name: row.name, heldForMs: heldFor },
         createdAt: Date.now(),
       });
     }
-    const runId = await ctx.db.insert('events', {
+    const runId = await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.authoring-claimed',
       payload: { skillId: args.skillId, name: row.name, fromState: row.state },
@@ -1075,7 +1083,7 @@ export const recordAuthoringProgress = internalMutation({
       refusedBody: undefined,
       refusedSmokeTest: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.authoring',
       payload: { skillId: args.skillId, sandboxId: args.sandboxId },
@@ -1120,7 +1128,7 @@ export const completeRegistration = internalMutation({
       registeredAt: row.registeredAt ?? Date.now(),
       ...RELEASED,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.registered',
       payload: { skillId: args.skillId, name: row.name },
@@ -1163,7 +1171,7 @@ export const failAuthoringRun = internalMutation({
     rowReason: v.string(),
     /** The shorter form for the event feed and the work item. */
     reason: v.string(),
-    eventType: v.string(),
+    eventType: authoringFailureEventValidator,
     refusedBody: v.optional(v.string()),
     refusedSmokeTest: v.optional(v.string()),
   },
@@ -1180,8 +1188,8 @@ export const failAuthoringRun = internalMutation({
       pendingSmokeTest: undefined,
       ...RELEASED,
     });
-    for (const type of ['skill.failed', args.eventType]) {
-      await ctx.db.insert('events', {
+    for (const type of ['skill.failed', args.eventType] as const) {
+      await appendEvent(ctx, {
         agentId: row.agentId,
         type,
         payload: { skillId: args.skillId, name: row.name, reason },
@@ -1225,7 +1233,7 @@ export const parkUnverified = internalMutation({
       refusedSmokeTest: undefined,
       ...RELEASED,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.sandbox-skipped',
       payload: { skillId: args.skillId, name: row.name, reason },
