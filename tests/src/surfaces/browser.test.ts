@@ -347,6 +347,18 @@ describe('resolving an element a skill named', (): void => {
     });
   });
 
+  // The write rule reads the role, so every ARIA widget a person clicks has
+  // to count as one, or a tab or a tree row stops resolving for a click.
+  it('still lets a write act on a lone tab, tree item, grid cell or checkable menu item', (): void => {
+    for (const role of ['tab', 'treeitem', 'gridcell', 'menuitemcheckbox', 'menuitemradio']) {
+      expect(resolveElementRef(`- ${role} "Pipeline" [ref=e3]`, 'Pipeline')).toEqual({
+        name: 'Pipeline',
+        ref: 'e3',
+        role,
+      });
+    }
+  });
+
   it('does not let a write reach a lone non-interactive element through a longer name', (): void => {
     const page = ['- heading "Sign in to Looker" [ref=e7]', '- button "Log in" [ref=e15]'].join(
       '\n',

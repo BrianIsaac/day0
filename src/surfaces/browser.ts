@@ -117,7 +117,8 @@ export function parseSnapshotRefs(snapshot: string): SnapshotElement[] {
 }
 
 /**
- * Roles a person can actually act on.
+ * Roles a person can actually act on: the ARIA widget roles a click or a
+ * keystroke reaches.
  *
  * A page routinely gives a field and its label the same accessible name, so a
  * skill writing "Username" would otherwise be ambiguous between the two. It is
@@ -136,6 +137,11 @@ const INTERACTIVE_ROLES = new Set([
   'switch',
   'option',
   'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'tab',
+  'treeitem',
+  'gridcell',
 ]);
 
 /**
