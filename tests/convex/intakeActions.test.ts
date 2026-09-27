@@ -3865,6 +3865,25 @@ describe('polling that survives a 429 (step 17, Q13)', (): void => {
     );
   });
 
+  it('fails the poll on a channel that refuses, rather than calling it a read in part', async (): Promise<void> => {
+    const harness = slackHarness();
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now,
+        fetcher: async (input: string | URL | Request): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) return channelList();
+          const channel = url.searchParams.get('channel') ?? '';
+          return channel === 'CASKS'
+            ? slackResponse({ ok: false, error: 'not_in_channel' })
+            : mention(channel);
+        },
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(harness.records[0]?.skipReason).toBe('intake failed: not_in_channel');
+  });
+
   it('finds an approved channel past the third page of the channel list', async (): Promise<void> => {
     const harness = slackHarness();
     await expect(

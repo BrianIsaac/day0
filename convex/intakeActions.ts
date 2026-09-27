@@ -16,6 +16,7 @@ import {
   fetchWithBackoff,
   PROVIDER_BACKOFF,
   TransientProviderError,
+  transportFailureKind,
   type BackoffPolicy,
 } from '../src/lib/transport-error';
 import type { McpConnection } from '../src/surfaces/mcp';
@@ -810,11 +811,11 @@ const LINEAR_MCP_ENDPOINT = 'https://mcp.linear.app/mcp';
  * those answers, as the surfaces layer's clients do: the bearer never
  * reaches an address the check did not see.
  *
- * @param endpoint - The validated endpoint.
- * @param credential - The decrypted bearer, kept inside the Node action.
  * A request the server answers with a 429 or a 5xx is tried again under the
  * provider backoff, keeping the client's own signal.
  *
+ * @param endpoint - The validated endpoint.
+ * @param credential - The decrypted bearer, kept inside the Node action.
  * @param connection - The resolver and transport; a test supplies its own.
  * @param backoff - How a rate-limited request waits; a test records the waits.
  * @returns The bounded client contract intake uses, connected on first use.
@@ -1571,6 +1572,14 @@ async function pollSlack(
           surface.lastPolledAt ?? since,
         );
       } catch (error) {
+        // A refusal (`not_in_channel`, `invalid_auth`, the page limit) is not
+        // waited out by reading again, so it fails the poll as it always did.
+        if (
+          !(error instanceof TransientProviderError) &&
+          transportFailureKind(error) !== 'interrupted'
+        ) {
+          throw error;
+        }
         unread.push({ what: `#${channel.name}`, error });
         continue;
       }
@@ -2025,7 +2034,8 @@ export async function runIntakeSweep(
             unseeded.push({ what: candidate.externalId, error });
           }
         }
-        waiting = queue.limit - admission.room;
+        // A candidate that failed to seed holds no place in the queue.
+        waiting = queue.limit - admission.room - (mapped.length - seeded);
         for (const { candidate, leftQueue } of polledPage.withdrawn) {
           await runtime.withdraw({
             ...seedOf(agentId, candidate, polledPage.trackers),
