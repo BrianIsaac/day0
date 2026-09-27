@@ -3070,6 +3070,50 @@ describe('a replaceable manager on the surface row', (): void => {
       },
     ]);
   });
+  it('records manager.changed when the probe after a failed lookup resolves someone else (wave 3 review m7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Slack', 'chat');
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const reserve = async (): Promise<number> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      return probe.generation;
+    };
+    const connect = async (managerUserId: string, verifiedAt: number): Promise<void> => {
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: await reserve(),
+        toolAllowlist: ['chat.postMessage'],
+        toolArguments: [],
+        managerDmChannelId: `D${managerUserId}`,
+        managerUserId,
+        managerName: managerUserId,
+        verifiedAt,
+      });
+    };
+    await connect('UFIRST', 100);
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: await reserve(),
+      verdict: 'ungranted',
+      reason: LEFT_WORKSPACE,
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'ungranted',
+      managerUserId: 'UFIRST',
+    });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('managerDmChannelId');
+    await connect('USECOND', 300);
+    const changes = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type === 'manager.changed')
+        .map((event) => event.payload),
+    );
+    expect(changes).toEqual([
+      { surfaceId, via: 'probe', previousManagerUserId: 'UFIRST', managerUserId: 'USECOND' },
+    ]);
+  });
 });
 
 describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {

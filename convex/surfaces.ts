@@ -982,6 +982,10 @@ export const recordProbeFailure = internalMutation({
     if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
       return false;
     }
+    // The last resolved manager stays: a failed lookup is the usual way a
+    // manager leaves, and the connecting probe after it can only say the
+    // manager changed (Q6) by comparing with who the row resolved before.
+    // Nothing reads it off a row that is not connected.
     await ctx.db.patch(surface._id, {
       verdict: args.verdict,
       reason: args.reason,
@@ -989,7 +993,6 @@ export const recordProbeFailure = internalMutation({
       toolAllowlist: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
-      managerUserId: undefined,
       managerName: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
