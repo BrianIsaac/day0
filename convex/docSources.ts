@@ -19,6 +19,7 @@ import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { reconcileDocumentedSystems } from './surfaces';
 import { purgeCredential } from './credentials';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
+import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -892,10 +893,18 @@ export const syncReport = internalQuery({
   },
 });
 
-/** Upsert one normalised page by its stable source reference. */
+/**
+ * Upsert one normalised page by its stable source reference. Internal;
+ * written by the sync for the generation it runs, and refused once a newer
+ * generation has superseded that one, so a stale action can never write back
+ * a page the newer sync removed.
+ *
+ * @throws Error when `syncRunId` is not the source's running generation.
+ */
 export const upsertPage = internalMutation({
   args: {
     sourceId: v.id('docSources'),
+    syncRunId: v.id('docSyncRuns'),
     ref: v.string(),
     title: v.string(),
     url: v.optional(v.string()),
@@ -903,6 +912,7 @@ export const upsertPage = internalMutation({
     updatedAt: v.number(),
   },
   handler: async (ctx, args): Promise<Id<'docPages'>> => {
+    await assertCurrentGeneration(ctx, args.sourceId, args.syncRunId);
     const existing = await ctx.db
       .query('docPages')
       .withIndex('by_source_ref', (index) =>

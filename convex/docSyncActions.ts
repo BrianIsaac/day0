@@ -73,9 +73,11 @@ async function mirrorPages(
   agentId: Id<'agents'>,
   source: Doc<'docSources'>,
   pages: DocPage[],
+  syncRunId?: Id<'docSyncRuns'>,
 ): Promise<void> {
   for (const page of pages) {
     await ctx.runMutation(internal.mock.upsertDoc, {
+      syncRunId,
       agentId,
       slug: mirroredDocSlug(source._id, page.ref),
       title: page.title,
@@ -109,6 +111,10 @@ export async function persistPageBatch(
   model: SpanModel | undefined = spanModelFromEnv(),
   knownValues?: readonly string[],
 ): Promise<PersistedBatch> {
+  // The source came from the generation's own context read, so its active
+  // generation is the one this batch belongs to; every write carries it.
+  const syncRunId = source.activeSyncId;
+  if (syncRunId === undefined) throw new Error('Documentation source has no running sync.');
   const safePages: DocPage[] = [];
   const credentialRefs: string[] = [];
   let redactions = 0;
@@ -135,15 +141,16 @@ export async function persistPageBatch(
           sourceId: source._id,
           ref,
         },
+        syncRunId,
       });
       credentialRefs.push(ref);
     }
     redactions += result.credentials.length;
     const safePage: DocPage = { ...page, title, markdown: result.markdown };
-    await ctx.runMutation(internal.docSources.upsertPage, safePage);
+    await ctx.runMutation(internal.docSources.upsertPage, { ...safePage, syncRunId });
     safePages.push(safePage);
   }
-  for (const agent of agents) await mirrorPages(ctx, agent._id, source, safePages);
+  for (const agent of agents) await mirrorPages(ctx, agent._id, source, safePages, syncRunId);
   return {
     refs: safePages.map((page: DocPage): string => page.ref),
     credentialRefs,

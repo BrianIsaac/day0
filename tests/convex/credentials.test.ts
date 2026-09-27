@@ -554,3 +554,50 @@ describe('credential persistence after unlink', () => {
     },
   );
 });
+
+describe('the sync generation fence on the credential store (step 14)', (): void => {
+  it('refuses a superseded sync the revival of a credential the newer sync retired, and lets the running one store', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const source = { sourceId, ref: 'linear-automation#credential=1' };
+    const args = { userId: 'owner', kind: 'value' as const, label: 'linear service token', source };
+    const stale = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const credentialId = await harness.action(internal.credentials.store, {
+      ...args,
+      plaintext: SECRET,
+      syncRunId: stale,
+    });
+    // A newer sync starts, no longer finds the value and retires the row.
+    const newer = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId: newer,
+      refs: [],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    expect((await rows(harness))[0]).toMatchObject({ status: 'superseded' });
+
+    // The older action, still on its last batch, finds the value again.
+    await expect(
+      harness.action(internal.credentials.store, { ...args, plaintext: SECRET, syncRunId: stale }),
+    ).rejects.toThrow('superseded by a newer one');
+    await expect(
+      harness.action(internal.credentials.store, { ...args, plaintext: ROTATED, syncRunId: stale }),
+    ).rejects.toThrow('superseded by a newer one');
+    expect(await rows(harness)).toEqual([
+      expect.objectContaining({ _id: credentialId, status: 'superseded' }),
+    ]);
+
+    const current = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...args,
+        plaintext: SECRET,
+        syncRunId: current,
+      }),
+    ).resolves.toBe(credentialId);
+    expect((await rows(harness))[0]?.status).toBeUndefined();
+  });
+});

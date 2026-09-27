@@ -62,6 +62,7 @@ function source(): Doc<'docSources'> {
     kind: 'folder',
     locator: '.',
     status: 'linking',
+    activeSyncId: 'run-contract' as Id<'docSyncRuns'>,
     createdAt: 1,
     updatedAt: 1,
   };

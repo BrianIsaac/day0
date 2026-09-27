@@ -3,6 +3,7 @@ import { internalMutation, internalQuery, query } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import type { MockSurfaceSnapshot } from '../src/work/types';
+import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 /**
  * Read + write API for the mock work environment.
@@ -119,8 +120,14 @@ export const upsertDoc = internalMutation({
     sourceId: v.optional(v.id('docSources')),
     sourceRef: v.optional(v.string()),
     sourceUrl: v.optional(v.string()),
+    /** The sync generation mirroring the page; a superseded one writes nothing. */
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args) => {
+    if (args.syncRunId !== undefined) {
+      if (args.sourceId === undefined) throw new Error('A synced mirror names its source.');
+      await assertCurrentGeneration(ctx, args.sourceId, args.syncRunId);
+    }
     const existing = await ctx.db
       .query('mockDocs')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.slug))
