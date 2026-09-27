@@ -104,7 +104,7 @@ import {
   type VenvDevice,
 } from './redactor-device';
 import { companyHandSteps, loadBedSpec } from './bed/spec';
-import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './rehearsal/docker';
+import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './lib/docker';
 import { setupRoute } from './setup-route';
 
 const ENV_FILE = '.env.local';

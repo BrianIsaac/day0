@@ -1,5 +1,6 @@
 /**
- * The company bed's Linear calls, over the rehearsal's GraphQL client.
+ * The company bed's Linear calls, over the shared GraphQL client in
+ * `scripts/lib/linear.ts`.
  *
  * The bed owns exactly what carries its marker: an issue whose description
  * ends with `day0-demo-key: <key>`, and the label seed created (its
@@ -9,14 +10,15 @@
  */
 
 import { endsWithProvenanceTrailer } from '../../src/surfaces/policy';
-import { LinearClient } from '../rehearsal/linear';
+import { LinearClient } from '../lib/linear';
 
 export { LinearClient };
 
 /** The line that makes an issue the bed's, and names which ticket it is. */
 export const MARKER_PREFIX = 'day0-demo-key: ';
 /** What the label seed creates says about itself, so teardown removes only its own. */
-export const LABEL_DESCRIPTION = 'Day0 company bed: created by pnpm bed:company seed, removed by teardown.';
+export const LABEL_DESCRIPTION =
+  'Day0 company bed: created by pnpm bed:company seed, removed by teardown.';
 const MARKER_LINE = /(?:^|\n)day0-demo-key: ([a-z0-9-]+)\s*$/;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 20;
@@ -194,7 +196,10 @@ export function markerKey(description: string | null | undefined): string | unde
  * Returns:
  *   What exists; a team missing from the answer does not exist.
  */
-export async function readWorkspace(client: LinearClient, keys: readonly string[]): Promise<Workspace> {
+export async function readWorkspace(
+  client: LinearClient,
+  keys: readonly string[],
+): Promise<Workspace> {
   const data = await client.request<{
     viewer: { id: string; name: string };
     organization: { name: string };
@@ -231,10 +236,9 @@ export async function readLabel(client: LinearClient, name: string): Promise<Bed
 
 /** Create the bed's workspace label, saying in its description that seed made it. */
 export async function createLabel(client: LinearClient, name: string): Promise<string> {
-  const data = await client.request<{ issueLabelCreate: { success: boolean; issueLabel: { id: string } | null } }>(
-    LABEL_CREATE,
-    { input: { name, description: LABEL_DESCRIPTION, color: '#5e6ad2' } },
-  );
+  const data = await client.request<{
+    issueLabelCreate: { success: boolean; issueLabel: { id: string } | null };
+  }>(LABEL_CREATE, { input: { name, description: LABEL_DESCRIPTION, color: '#5e6ad2' } });
   if (!data.issueLabelCreate.success || !data.issueLabelCreate.issueLabel) {
     throw new Error(`Linear issueLabelCreate ${name} did not succeed.`);
   }
@@ -243,8 +247,11 @@ export async function createLabel(client: LinearClient, name: string): Promise<s
 
 /** Delete one label. */
 export async function deleteLabel(client: LinearClient, id: string): Promise<void> {
-  const data = await client.request<{ issueLabelDelete: { success: boolean } }>(LABEL_DELETE, { id });
-  if (!data.issueLabelDelete.success) throw new Error(`Linear issueLabelDelete ${id} did not succeed.`);
+  const data = await client.request<{ issueLabelDelete: { success: boolean } }>(LABEL_DELETE, {
+    id,
+  });
+  if (!data.issueLabelDelete.success)
+    throw new Error(`Linear issueLabelDelete ${id} did not succeed.`);
 }
 
 /**
@@ -299,7 +306,9 @@ export async function readBedIssues(client: LinearClient): Promise<BedIssue[]> {
     if (!data.issues.pageInfo.hasNextPage || !data.issues.pageInfo.endCursor) return issues;
     after = data.issues.pageInfo.endCursor;
   }
-  throw new Error(`Linear listed more than ${MAX_PAGES * PAGE_SIZE} marked issues; refusing to guess which are the bed's.`);
+  throw new Error(
+    `Linear listed more than ${MAX_PAGES * PAGE_SIZE} marked issues; refusing to guess which are the bed's.`,
+  );
 }
 
 /**
@@ -365,25 +374,42 @@ export async function readForeignIssues(
  *   The tickets whose description ends with a provenance trailer and carries
  *   no bed marker; one that only quotes a trailer is not among them.
  */
-export async function readRunIssues(client: LinearClient, teamIds: readonly string[]): Promise<RunIssue[]> {
+export async function readRunIssues(
+  client: LinearClient,
+  teamIds: readonly string[],
+): Promise<RunIssue[]> {
   if (teamIds.length === 0) return [];
   const issues: RunIssue[] = [];
   let after: string | undefined;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const data = await client.request<{
       issues: {
-        nodes: Array<{ id: string; identifier: string; title: string; description: string | null; createdAt: string }>;
+        nodes: Array<{
+          id: string;
+          identifier: string;
+          title: string;
+          description: string | null;
+          createdAt: string;
+        }>;
         pageInfo: { hasNextPage: boolean; endCursor: string | null };
       };
     }>(RUN_ISSUES, { teamIds: [...teamIds], after: after ?? null });
     for (const node of data.issues.nodes) {
-      if (markerKey(node.description) || !endsWithProvenanceTrailer(node.description ?? '')) continue;
-      issues.push({ id: node.id, identifier: node.identifier, title: node.title, createdAt: node.createdAt });
+      if (markerKey(node.description) || !endsWithProvenanceTrailer(node.description ?? ''))
+        continue;
+      issues.push({
+        id: node.id,
+        identifier: node.identifier,
+        title: node.title,
+        createdAt: node.createdAt,
+      });
     }
     if (!data.issues.pageInfo.hasNextPage || !data.issues.pageInfo.endCursor) return issues;
     after = data.issues.pageInfo.endCursor;
   }
-  throw new Error(`Linear listed more than ${MAX_PAGES * PAGE_SIZE} run-filed issues in the bed's teams.`);
+  throw new Error(
+    `Linear listed more than ${MAX_PAGES * PAGE_SIZE} run-filed issues in the bed's teams.`,
+  );
 }
 
 /** Create one issue and return its id and identifier. */
@@ -406,7 +432,10 @@ export async function updateIssue(
   id: string,
   input: Record<string, unknown>,
 ): Promise<void> {
-  const data = await client.request<{ issueUpdate: { success: boolean } }>(ISSUE_UPDATE, { id, input });
+  const data = await client.request<{ issueUpdate: { success: boolean } }>(ISSUE_UPDATE, {
+    id,
+    input,
+  });
   if (!data.issueUpdate.success) throw new Error(`Linear issueUpdate on ${id} did not succeed.`);
 }
 
@@ -418,6 +447,9 @@ export async function archiveIssue(client: LinearClient, id: string): Promise<vo
 
 /** Bring one archived issue back. */
 export async function unarchiveIssue(client: LinearClient, id: string): Promise<void> {
-  const data = await client.request<{ issueUnarchive: { success: boolean } }>(ISSUE_UNARCHIVE, { id });
-  if (!data.issueUnarchive.success) throw new Error(`Linear issueUnarchive on ${id} did not succeed.`);
+  const data = await client.request<{ issueUnarchive: { success: boolean } }>(ISSUE_UNARCHIVE, {
+    id,
+  });
+  if (!data.issueUnarchive.success)
+    throw new Error(`Linear issueUnarchive on ${id} did not succeed.`);
 }

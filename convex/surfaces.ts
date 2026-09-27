@@ -1245,6 +1245,43 @@ async function requeueWorkAfterRejection(
   );
 }
 
+/** The callable tools one successful probe leaves on a surface, and any it withheld. */
+interface ProbedTools {
+  readonly allowlist: string[];
+  readonly toolArguments: Array<{ tool: string; arguments: string[] }>;
+  readonly withheld: string[];
+}
+
+/**
+ * Keep a connected surface's tool list to the one its connecting probe found.
+ *
+ * The probe that first connects the approved row fixes the list the approval
+ * covers. A later probe of the connected row (the hourly one, or one after a
+ * page names another Slack method) keeps only the tools of that list it still
+ * finds and withholds any other, so no probe widens what an employee may call.
+ * A rejection or a failed probe clears the list, and the next connection
+ * starts from its own probe.
+ *
+ * @param surface - The row before this probe's write.
+ * @param probed - What the probe found.
+ * @returns The tools to store, their arguments, and the tools withheld.
+ */
+function frozenTools(
+  surface: Doc<'surfaces'>,
+  probed: { toolAllowlist: string[]; toolArguments: Array<{ tool: string; arguments: string[] }> },
+): ProbedTools {
+  if (surface.verdict !== 'connected' || surface.toolAllowlist === undefined) {
+    return { allowlist: probed.toolAllowlist, toolArguments: probed.toolArguments, withheld: [] };
+  }
+  const approved = new Set(surface.toolAllowlist);
+  const allowlist = probed.toolAllowlist.filter((tool: string): boolean => approved.has(tool));
+  return {
+    allowlist,
+    toolArguments: probed.toolArguments.filter((entry): boolean => approved.has(entry.tool)),
+    withheld: probed.toolAllowlist.filter((tool: string): boolean => !approved.has(tool)),
+  };
+}
+
 /**
  * Persist one successful provider probe and its discovered safe metadata.
  *
@@ -1254,6 +1291,8 @@ async function requeueWorkAfterRejection(
  * the hourly re-probe never grants again. Only parked rows are re-admitted
  * here: a row still being evaluated from a read taken before this write is
  * caught where its verdict lands (`applyVerdict`), under this write's key.
+ * A re-probe of a connected row never widens its tool list (`frozenTools`);
+ * the connected event names any tool it withheld.
  */
 export const recordConnected = internalMutation({
   args: {
@@ -1278,13 +1317,14 @@ export const recordConnected = internalMutation({
       return false;
     }
     const transitioned = surface.verdict !== 'connected';
+    const tools = frozenTools(surface, args);
     await ctx.db.patch(surface._id, {
       verdict: 'connected',
       reason: undefined,
       credentialLanded: true,
       lastVerifiedAt: args.verifiedAt,
-      toolAllowlist: args.toolAllowlist,
-      toolArguments: args.toolArguments,
+      toolAllowlist: tools.allowlist,
+      toolArguments: tools.toolArguments,
       managerDmChannelId: args.managerDmChannelId,
       managerUserId: args.managerUserId,
       managerName: args.managerName,
@@ -1303,7 +1343,10 @@ export const recordConnected = internalMutation({
     await ctx.db.insert('events', {
       agentId: surface.agentId,
       type: 'surface.connected',
-      payload: { surfaceId: surface._id },
+      payload:
+        tools.withheld.length > 0
+          ? { surfaceId: surface._id, withheldTools: tools.withheld }
+          : { surfaceId: surface._id },
       createdAt: args.verifiedAt,
     });
     if (transitioned) {

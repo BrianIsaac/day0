@@ -47,7 +47,6 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | `pnpm demo:bed <subcommand>` | A restorable demonstration bed: snapshot, restore, up, preflight, offline-rung, down |
 | `pnpm bed:company <subcommand>` | The synthetic company bed: its pages, its check and its seed |
 | `pnpm bed:record-spans` | Records the span model's answers over the company bed's pages |
-| `pnpm rehearse:real` | The maintainers' internal rehearsal of the real path; not a way to run Day0 |
 | `pnpm eval:comparison`, `eval:revocation`, `eval:gate` | The evaluation, below |
 | `pnpm metrics:recompute <export>` | Recomputes an owner's supervision figures from a snapshot export |
 | `pnpm lint`, `typecheck`, `test`, `build` | The gate, below |

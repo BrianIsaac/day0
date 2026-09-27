@@ -1,7 +1,8 @@
 /**
  * The company bed's Slack calls. The token check and deletes go through the
- * rehearsal's client; the channel listing and thread reads it has no method
- * for are the read-only calls below, over the same token and fetch.
+ * shared client in `scripts/lib/slack.ts`; the channel listing and thread
+ * reads it has no method for are the read-only calls below, over the same
+ * token and fetch.
  *
  * The bed never posts. What it deletes is only what the shared bot posted,
  * carrying the server's provenance trailer, in the bed's own conversations,
@@ -16,7 +17,7 @@ import {
   SlackClient,
   type SlackAnswer,
   type SlackRetryIo,
-} from '../rehearsal/slack';
+} from '../lib/slack';
 
 export { SlackClient };
 export type { SlackRetryIo };
@@ -55,7 +56,7 @@ export interface BedMessage {
 
 /**
  * A fetch that records the token's scopes from the header Slack returns on
- * every Web API call, so the rehearsal client's `auth.test` reports them too.
+ * every Web API call, so the shared client's `auth.test` reports them too.
  *
  * Args:
  *   fetchImpl: The fetch to wrap.
@@ -90,7 +91,9 @@ async function slackGet(
   retry: SlackRetryIo = DEFAULT_SLACK_RETRY_IO,
   now: () => number = Date.now,
 ): Promise<SlackAnswer> {
-  return await retrySlackOnce(`Slack ${method}`, retry, () => requestSlack(fetchImpl, token, method, params, undefined, now));
+  return await retrySlackOnce(`Slack ${method}`, retry, () =>
+    requestSlack(fetchImpl, token, method, params, undefined, now),
+  );
 }
 
 function nextCursor(answer: SlackAnswer): string | undefined {
@@ -119,12 +122,19 @@ export async function listConversations(
   const channels: BedChannel[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const answer = await slackGet(fetchImpl, token, 'conversations.list', {
-      types,
-      exclude_archived: 'true',
-      limit: '200',
-      ...(cursor ? { cursor } : {}),
-    }, retry, now);
+    const answer = await slackGet(
+      fetchImpl,
+      token,
+      'conversations.list',
+      {
+        types,
+        exclude_archived: 'true',
+        limit: '200',
+        ...(cursor ? { cursor } : {}),
+      },
+      retry,
+      now,
+    );
     for (const raw of (answer.channels ?? []) as Array<Record<string, unknown>>) {
       if (typeof raw.id !== 'string') continue;
       channels.push({
@@ -180,18 +190,30 @@ export async function conversationMessages(
   const threads: string[] = [];
   let cursor: string | undefined;
   for (let page = 0; ; page += 1) {
-    if (page === MAX_PAGES) throw new Error(`Slack conversations.history on ${channel} did not finish.`);
-    const answer = await slackGet(fetchImpl, token, 'conversations.history', {
-      channel,
-      limit: '200',
-      ...(cursor ? { cursor } : {}),
-    }, retry, now);
+    if (page === MAX_PAGES)
+      throw new Error(`Slack conversations.history on ${channel} did not finish.`);
+    const answer = await slackGet(
+      fetchImpl,
+      token,
+      'conversations.history',
+      {
+        channel,
+        limit: '200',
+        ...(cursor ? { cursor } : {}),
+      },
+      retry,
+      now,
+    );
     for (const raw of (answer.messages ?? []) as Array<Record<string, unknown>>) {
       const message = asMessage(channel, raw);
       if (!message) continue;
       if (Number.parseFloat(message.ts) >= bound) messages.push(message);
       const latest = typeof raw.latest_reply === 'string' ? raw.latest_reply : message.ts;
-      if (typeof raw.reply_count === 'number' && raw.reply_count > 0 && Number.parseFloat(latest) >= bound) {
+      if (
+        typeof raw.reply_count === 'number' &&
+        raw.reply_count > 0 &&
+        Number.parseFloat(latest) >= bound
+      ) {
         threads.push(message.ts);
       }
     }
@@ -201,13 +223,21 @@ export async function conversationMessages(
   for (const thread of threads) {
     cursor = undefined;
     for (let page = 0; ; page += 1) {
-      if (page === MAX_PAGES) throw new Error(`Slack conversations.replies on ${channel} did not finish.`);
-      const answer = await slackGet(fetchImpl, token, 'conversations.replies', {
-        channel,
-        ts: thread,
-        limit: '200',
-        ...(cursor ? { cursor } : {}),
-      }, retry, now);
+      if (page === MAX_PAGES)
+        throw new Error(`Slack conversations.replies on ${channel} did not finish.`);
+      const answer = await slackGet(
+        fetchImpl,
+        token,
+        'conversations.replies',
+        {
+          channel,
+          ts: thread,
+          limit: '200',
+          ...(cursor ? { cursor } : {}),
+        },
+        retry,
+        now,
+      );
       for (const raw of (answer.messages ?? []) as Array<Record<string, unknown>>) {
         const message = asMessage(channel, raw);
         // The thread's parent comes back first in every replies page.
@@ -233,7 +263,11 @@ export async function conversationMessages(
  * Returns:
  *   The messages, in the order given.
  */
-export function bedMessages(messages: readonly BedMessage[], botId: string, epoch: string): BedMessage[] {
+export function bedMessages(
+  messages: readonly BedMessage[],
+  botId: string,
+  epoch: string,
+): BedMessage[] {
   const start = Number.parseFloat(epoch);
   return messages.filter(
     (message: BedMessage): boolean =>
@@ -243,11 +277,11 @@ export function bedMessages(messages: readonly BedMessage[], botId: string, epoc
   );
 }
 
-/** One ask `bed/company/slack-asks.md` lists: where it stands and what it says after the mention. */
-export interface StandingAsk {
+/** One ask `bed/company/slack-asks.md` lists: where it is posted and what it says after the mention. */
+export interface SlackAsk {
   channel: string;
   text: string;
-  /** The named sets of `linear.json` whose sitting keeps this ask; the full run keeps every ask. */
+  /** The named sets of `linear.json` whose sitting posts this ask; the full run posts every ask. */
   sets: string[];
 }
 
@@ -264,92 +298,20 @@ export interface StandingAsk {
  * Raises:
  *   Error: If the file lists no ask, so a check never calls an empty table complete.
  */
-export function standingAsksFromFile(markdown: string): StandingAsk[] {
-  const asks: StandingAsk[] = [];
+export function asksFromFile(markdown: string): SlackAsk[] {
+  const asks: SlackAsk[] = [];
   for (const line of markdown.split('\n')) {
     const cells = line.split('|').map((cell: string): string => cell.trim());
     const channel = /^`#([a-z0-9_-]+)`$/.exec(cells[2] ?? '')?.[1];
     const text = /^@bot\s+(.+)$/.exec(cells[3] ?? '')?.[1];
     if (!/^\d+$/.test(cells[1] ?? '') || !channel || !text) continue;
-    const sittings = [...(cells[5] ?? '').matchAll(/`([a-z0-9-]+)`/g)].map((match): string => match[1]!);
+    const sittings = [...(cells[5] ?? '').matchAll(/`([a-z0-9-]+)`/g)].map(
+      (match): string => match[1]!,
+    );
     asks.push({ channel, text, sets: sittings.filter((name: string): boolean => name !== 'full') });
   }
   if (asks.length === 0) throw new Error('bed/company/slack-asks.md lists no ask.');
   return asks;
-}
-
-/**
- * Whether a standing message is one of the file's asks, whatever the spacing or case.
- *
- * Args:
- *   message: A message that mentions the bot.
- *   ask: One ask from the tracked file.
- *
- * Returns:
- *   True when the message carries the ask's text.
- */
-export function carriesAsk(message: BedMessage, ask: StandingAsk): boolean {
-  const flat = (value: string): string => value.replace(/\s+/g, ' ').trim().toLowerCase();
-  return flat(message.text).includes(flat(ask.text));
-}
-
-/**
- * Messages that mention the bot and that intake would read: a new deployment's
- * first poll reads a channel's whole history, so each of these is work it
- * takes up. A person's message and another app's post both count; nothing the
- * bed's own app posted does, under any display name, because intake never
- * reads the app's own posts.
- *
- * Args:
- *   messages: A channel's messages.
- *   botUserId: The bot's user id, as a mention carries it.
- *   botId: The app's bot id, as its customised posts carry it.
- *
- * Returns:
- *   The mentions not posted by the app itself, oldest first.
- */
-export function standingMentions(
-  messages: readonly BedMessage[],
-  botUserId: string,
-  botId: string,
-): BedMessage[] {
-  const mention = `<@${botUserId}>`;
-  return messages
-    .filter(
-      (message: BedMessage): boolean =>
-        message.text.includes(mention) && message.botId !== botId && message.user !== botUserId,
-    )
-    // Slack timestamps are fixed-width strings; a float would round the last microsecond.
-    .sort((left: BedMessage, right: BedMessage): number =>
-      left.ts < right.ts ? -1 : left.ts > right.ts ? 1 : 0,
-    );
-}
-
-/**
- * Mentions of the bot that the app itself posted with no provenance trailer:
- * an ask sent through the bot token under a person's name, which reads like a
- * standing ask in Slack and which intake never reads.
- *
- * Args:
- *   messages: A channel's messages.
- *   botUserId: The bot's user id, as a mention carries it.
- *   botId: The app's bot id.
- *
- * Returns:
- *   The app's own mentions.
- */
-export function ownMentions(
-  messages: readonly BedMessage[],
-  botUserId: string,
-  botId: string,
-): BedMessage[] {
-  const mention = `<@${botUserId}>`;
-  return messages.filter(
-    (message: BedMessage): boolean =>
-      message.text.includes(mention) &&
-      message.botId === botId &&
-      !containsProvenanceTrailer(message.text),
-  );
 }
 
 /**

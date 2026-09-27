@@ -44,7 +44,7 @@ import {
   type ServiceRow,
   type TierInputs,
 } from '../../scripts/demo-bed';
-import { redactorVolumeClone } from '../../scripts/rehearsal/docker';
+import { redactorVolumeClone } from '../../scripts/lib/docker';
 import { PROFILES } from '../../scripts/compose';
 import { READ_ONLY_PROJECTS as SETUP_READ_ONLY_PROJECTS } from '../../scripts/setup';
 

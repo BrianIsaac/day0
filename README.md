@@ -491,18 +491,11 @@ Then, in the browser:
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
-### Rehearse the real path
-
-Either local way can be run unattended, from a fresh clone, against the operator's own Linear and Slack demonstration workspaces:
-
-```bash
-pnpm rehearse:real --secrets <file> --dry-run        # bring-up, onboarding and the cards; no provider write
-pnpm rehearse:real --secrets <file> --warm-from day0  # the whole run, cleaned up afterwards
-```
-
-The secrets file (mode 0600) holds `LINEAR_API_KEY` and `SLACK_BOT_TOKEN`; neither is ever written to the bed's `.env.local`. They are typed into the connection cards by a browser, exactly as you would type them, and the script's own reads and clean-up calls use them from memory. Everything else comes from your `.env.local`, opened read-only. The rehearsal clones this checkout at `HEAD`, writes the clone a private `.env.local`, brings up its own Compose project (`day0-rehearsal-<6 hex>`, refused when the name is protected, is your own project, or already exists) on free ports, links your `docs-local` folder, deploys, holds the 1:1 with seven scripted answers in the tickets' own words, approves the charter, waits for orientation and lands the credentials on the cards. That is the dry-run boundary: nothing before it writes to a provider, so `--dry-run` proves the whole bring-up and prints the writes the live run would make. The live run then assigns the demonstration ticket to you, polls intake, approves the skill, the plan, the browser batch and the closing set, checks the five ledger shapes the 14 September replay asserts, exports the ledger, and undoes what it did in reverse order: attributable ticket state restored (a landed move is attributed by its receipt or by the provider's own history of who moved it), comments and bot DMs carrying this work item's server provenance deleted, the project's containers and volumes removed, the clone removed. `--keep` leaves the bed up for inspection and still attempts workspace cleanup. Arrange exclusive use of the demonstration ticket during a run: restoration is not atomic with concurrent provider edits, and unknown effects require reconciliation. Every run leaves `summary.md`, `record.json`, the checks, the export and screenshots under `docs/plans/progress/real-mode-rehearsals/<stamp>/`, a directory the script keeps out of git. A card that already carries a credential stored from documentation offers no landing form, and the rehearsal records that as a stop rather than typing over it. `--warm-from <project>` copies another project's redactor wheel and model volumes into the bed so its first start does not download them.
-
 Closing actions carry a different approval identity from phase one, so a delayed approval cannot authorise new payloads at old indexes; provider idempotency retains the execution identity. Pre-hold repair preserves payload values and valid argument bindings, then reruns the closing-action checks. A blocked run can still send a manager DM under its standing grant when that message asks the manager something; a note that only reports is withheld with the stop. A Slack plan approval carries no question answers; use the charter or plan card to answer, and refresh a stale plan card if the charter answer changed.
+
+### One deployment per workspace
+
+Run one Day0 deployment per Slack workspace and per Linear team. Two deployments on one Slack bot or one Linear team read the same mentions and the same tickets, each answers them, and nothing on either side says which copy is real. A deployment takes only the Slack mentions written after its agent was deployed, so one started later does not answer a channel's history again, but every new ask and every open ticket would still be worked twice.
 
 ### The company bed
 
@@ -1497,16 +1490,9 @@ ledger 中该行会注明是复用，而非重新发送。
 
 章程修订仅重新准入因范围或质量匹配而跳过的事项；低价值事项和正在运行的已批准计划保持原状。收尾阶段使用不同于第一阶段的批准标识，延迟的旧批准不能批准新 payload；provider 幂等键仍沿用执行标识。参数名修复保留 payload 值及已有效的绑定，并重新执行收尾检查。受阻运行仍可在现行授权下发送仅含求助的 manager DM。Slack 的计划批准不携带问题答案；需要在章程或计划卡片作答，旧卡片与当前章程答案冲突时必须刷新。操作分类只覆盖演示流程，明确只读的请求使用独立 read 类型；它并非通用操作分类器。
 
-#### 演练真实路径
+#### 每个 workspace 一个部署
 
-任一本地方式都可以从一个全新 clone 无人值守地跑一遍，对象是操作者自己的 Linear 和 Slack 演示 workspace：
-
-```bash
-pnpm rehearse:real --secrets <file> --dry-run        # 搭建、入职和卡片；不向 provider 写入
-pnpm rehearse:real --secrets <file> --warm-from day0  # 完整运行，结束后清理
-```
-
-secrets 文件（权限 0600）保存 `LINEAR_API_KEY` 和 `SLACK_BOT_TOKEN`；两者都不会写进 bed 的 `.env.local`。它们由浏览器像你一样敲进连接卡片，脚本自己的读取和清理调用只在内存中使用它们。其余值来自你的 `.env.local`，以只读方式打开。演练会在 `HEAD` clone 本仓库、为 clone 写一份私有 `.env.local`、用空闲端口启动自己的 Compose 项目（`day0-rehearsal-<6 hex>`；名称受保护、是你自己的项目或已存在时会拒绝）、链接你的 `docs-local` 文件夹、部署、用七条按工单原话写好的回答完成 1:1、批准章程、等待 orientation，并把凭据填到卡片上。这里就是 dry-run 边界：在此之前没有任何一步会向 provider 写入，所以 `--dry-run` 能证明整个搭建过程，并打印出真实运行将要做的写入。真实运行随后把演示工单分配给你、轮询 intake、批准技能、计划、浏览器批次和收尾集合，检查 9 月 14 日 replay 断言的五种 ledger 形状，导出 ledger，然后按相反顺序撤销：恢复可归属的工单状态、删除带有该工作项服务端来源标记的评论和 bot 私信、移除该项目的容器和卷、移除 clone。`--keep` 会保留 bed 供检查，但仍会尝试清理 workspace。运行期间请独占演示工单：恢复操作与其他人的修改并非原子操作，无法归属的效果需要人工核对。每次运行都会在 `docs/plans/progress/real-mode-rehearsals/<stamp>/` 下留下 `summary.md`、`record.json`、各项检查、导出和截图，脚本会让该目录不进入 git。已经带有从文档中存储的凭据的卡片没有填写表单，演练会把它记录为一次停止，而不是覆盖它。`--warm-from <project>` 会把另一个项目的 redactor wheel 和模型卷复制到 bed 中，这样首次启动不必重新下载。
+每个 Slack workspace 和每个 Linear team 只运行一个 Day0 部署。两个部署共用一个 Slack bot 或一个 Linear team 时，会读取同样的提及和同样的工单，各自作答，任何一方都无法说明哪一份才是真的。一个部署只接收其 Agent 部署之后写下的 Slack 提及，所以稍后启动的部署不会再次回答频道里的历史消息；但此后每一个新请求、每一张未关闭的工单仍会被处理两次。
 
 #### 公司演示环境
 
