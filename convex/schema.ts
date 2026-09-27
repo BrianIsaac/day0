@@ -2,6 +2,20 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
 /**
+ * A tracker ticket as one intake listing showed it: who is assigned, its
+ * workflow state and whether a person labelled it do-not-automate. The re-read
+ * before apply compares the ticket with the listing a plan was made under.
+ */
+export const ticketSnapshotValidator = v.object({
+  assigned: v.boolean(),
+  assigneeId: v.optional(v.string()),
+  assigneeEmail: v.optional(v.string()),
+  state: v.optional(v.string()),
+  stateType: v.optional(v.string()),
+  doNotAutomate: v.boolean(),
+});
+
+/**
  * Day0 schema — one world per agent, by design.
  *
  * Every other table FK-points back at an `agents` row, the mock work
@@ -15,7 +29,9 @@ export default defineSchema({
     bossEmail: v.string(),
     name: v.string(),
     avatarId: v.optional(v.string()),
-    /** Legacy explicit inclusion list; new deploys store exclusions instead. */
+    /** Legacy explicit inclusion list; new deploys store exclusions instead.
+     * The `agents-inclusion-list` migration turns each into the exclusions it
+     * implies; the field and its read come out in the next release. */
     docSourceIds: v.optional(v.array(v.id('docSources'))),
     /** Sources the owner unticked at deploy. Everything else the owner links,
      * before or after the deploy, is inherited. */
@@ -46,9 +62,9 @@ export default defineSchema({
      * Decision requests are sent at once in either mode. */
     managerNotifications: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
     /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
-     * optional for one more deployment so rows the ladder wrote still
-     * validate at push; nothing reads or writes it. Delete once the primary
-     * has been pushed and its rows no longer carry it. */
+     * optional so rows the ladder wrote still validate at push; nothing reads
+     * or writes it. The `agents-posture` migration clears it, and the
+     * declaration comes out in the release after the one that ships it. */
     posture: v.optional(
       v.union(v.literal('cold-start'), v.literal('supervised'), v.literal('trusted')),
     ),
@@ -102,6 +118,9 @@ export default defineSchema({
     status: v.optional(v.union(v.literal('suspect'), v.literal('superseded'))),
     statusReason: v.optional(v.string()),
     revokedAt: v.optional(v.number()),
+    /** Which credential key sealed this row. Declared ahead of the re-seal
+     * that writes it (step 32); nothing writes or reads it yet. */
+    keyId: v.optional(v.string()),
   })
     .index('by_userId', ['userId'])
     .index('by_user_source_ref', ['userId', 'source.sourceId', 'source.ref']),
@@ -156,7 +175,11 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
-  }).index('by_source', ['sourceId']),
+  })
+    .index('by_source', ['sourceId'])
+    /** The run that finished at a given moment, for the migration that tells
+     * a sync's supersede stamp from a person's revoke. */
+    .index('by_source_completed_at', ['sourceId', 'completedAt']),
 
   docPages: defineTable({
     sourceId: v.id('docSources'),
@@ -373,8 +396,9 @@ export default defineSchema({
      * stays clean while approvals silently stop arriving; this is the row's
      * own signal, cleared by the next poll that succeeds. */
     lastDecisionError: v.optional(v.string()),
-    /** Transitional validator for rows written before credentialId. Every
-     * current state transition clears it; remove after deployed rows migrate. */
+    /** Transitional validator for rows written before credentialId; nothing
+     * reads it. The `surfaces-credential-ref` migration clears it, and the
+     * declaration comes out in the release after the one that ships it. */
     credentialRef: v.optional(v.string()),
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),
@@ -911,9 +935,9 @@ export default defineSchema({
      * writes it and nothing reads it. It stays declared because Convex checks
      * every existing document against this validator at push time and refuses
      * one carrying a field the validator does not name - so dropping it here
-     * would refuse the push on any deployment that has authored a skill. It
-     * comes out once those rows have been moved by
-     * `skills.migrateSandboxIdField`. */
+     * would refuse the push on any deployment that has authored a skill. The
+     * `skills-sandbox-id` migration (`convex/migrations.ts`) moves those rows;
+     * the declaration comes out in the release after the one that ships it. */
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
     /** A validated smoke test awaiting a sandbox; Retry verifies this body without authoring again. */
@@ -926,9 +950,10 @@ export default defineSchema({
     refusedBody: v.optional(v.string()),
     refusedSmokeTest: v.optional(v.string()),
     /** REMOVED 26 Aug (late): the posture ladder's per-skill supervised-run
-     * counter, replaced by `agents.autonomousActions`. Kept optional for one
-     * more deployment so rows the ladder wrote still validate at push;
-     * nothing reads or writes it. */
+     * counter, replaced by `agents.autonomousActions`. Kept optional so rows
+     * the ladder wrote still validate at push; nothing reads or writes it.
+     * The `skills-supervised-runs` migration clears it, and the declaration
+     * comes out in the release after the one that ships it. */
     supervisedRunsCompleted: v.optional(v.number()),
     createdAt: v.number(),
     registeredAt: v.optional(v.number()),
@@ -976,6 +1001,54 @@ export default defineSchema({
   })
     .index('by_agent', ['agentId'])
     .index('by_agent_type', ['agentId', 'type']),
+
+  /**
+   * Each intake listing of a ticket that changed it, one row per change, so
+   * the re-read before apply finds the listing a plan was made under by the
+   * work item's own index rather than by walking the agent's events. The
+   * first listing still rides on the item's `work.discovered` event.
+   */
+  ticketListings: defineTable({
+    agentId: v.id('agents'),
+    workItemId: v.id('workItems'),
+    tracker: ticketSnapshotValidator,
+    /** Why intake refused the ticket on this listing, when it did. */
+    refused: v.optional(v.string()),
+    listedAt: v.number(),
+  })
+    .index('by_work_item_listed_at', ['workItemId', 'listedAt'])
+    /** The listings intake took the ticket on (`refused` absent), newest last. */
+    .index('by_work_item_refused_listed_at', ['workItemId', 'refused', 'listedAt']),
+
+  /**
+   * One row per migration the upgrade runs (`convex/migrations.ts`): where
+   * its batches have reached and when it finished. A finished migration is
+   * never run again.
+   */
+  migrations: defineTable({
+    name: v.string(),
+    /** The release that ships the migration. */
+    release: v.string(),
+    cursor: v.optional(v.string()),
+    /** Rows read so far, and of those, rows the migration changed. */
+    read: v.number(),
+    changed: v.number(),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index('by_name', ['name']),
+
+  /**
+   * The release this deployment's rows are at, one row per upgrade that
+   * completed; the newest is current. The upgrade reads it before it pushes
+   * and refuses to skip a release (decision N10). The stamp is the checkout's
+   * own, because the pinned backend image answers `unknown` from `/version`.
+   */
+  deploymentVersions: defineTable({
+    release: v.string(),
+    /** The commit the functions were pushed from, when git could say. */
+    commit: v.optional(v.string()),
+    recordedAt: v.number(),
+  }),
 
   // ---- Mock work environment (per-agent) ----
   // Agent-readable docs (Confluence-style). Includes both team docs (the
