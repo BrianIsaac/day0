@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
 
 const SECRET = ['ntn', 'contract-value-0123456789abcdef'].join('_');
 const ROTATED = ['ntn', 'rotated-value-0123456789abcdef'].join('_');
@@ -293,6 +294,50 @@ describe('credential contract', (): void => {
       .query(api.credentials.summaryForOwner, {});
     expect(summary[0].revokedAt).toEqual(expect.any(Number));
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+  });
+});
+
+describe('the known-value cap (P10-1)', (): void => {
+  /** Insert `count` rows for one owner, each shaped by `extra`. */
+  const insertRows = async (
+    harness: TestConvex<typeof schema>,
+    count: number,
+    extra: Record<string, unknown>,
+  ): Promise<void> => {
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < count; index += 1) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: `row ${index}`,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'entered',
+          createdAt: index,
+          ...extra,
+        });
+      }
+    });
+  };
+
+  it('counts active rows only, so rows a sync superseded or a person revoked lock nobody out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await insertRows(harness, OWNER_KNOWN_VALUE_CAP, { status: 'superseded' });
+    await insertRows(harness, 200, { revokedAt: 1 });
+    await insertRows(harness, 2, {});
+    const list = await harness.query(internal.credentials.activeValuesForOwner, {
+      userId: 'owner',
+    });
+    expect(list.overflow).toBe(false);
+    expect(list.rows).toHaveLength(2);
+  });
+
+  it('still fails closed one active row past the cap', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await insertRows(harness, OWNER_KNOWN_VALUE_CAP + 1, {});
+    await expect(
+      harness.query(internal.credentials.activeValuesForOwner, { userId: 'owner' }),
+    ).resolves.toMatchObject({ overflow: true });
   });
 });
 

@@ -171,13 +171,29 @@ export const bySourceForStore = internalQuery({
 });
 
 /**
- * The owner's active, value-bearing rows for the exact-value layer.
+ * The most of an owner's rows the exact-value list reads past to find the
+ * active ones. Revoked, superseded and purged rows are read but not counted
+ * against the cap, so a sync that retires values cannot lock the owner out;
+ * an owner with more rows than this still fails closed.
+ */
+const OWNER_CREDENTIAL_SCAN_LIMIT = 4 * OWNER_KNOWN_VALUE_CAP;
+
+/** A row the exact-value layer decrypts: live, and holding a value. */
+function activeValueRow(
+  row: Doc<'credentials'>,
+): row is Doc<'credentials'> & { ciphertext: string; iv: string } {
+  return !row.revokedAt && !row.status && row.ciphertext !== undefined && row.iv !== undefined;
+}
+
+/**
+ * The owner's active, value-bearing rows for the exact-value layer. Internal;
+ * read by the Node action that decrypts them.
  *
  * Only the fields the Node action needs to decrypt leave this query, and
  * only to that action: it is internal, and the plaintext never comes back
- * through a query. One row past the cap is read so the action can tell a
- * full list from an overflowing one; the count is of every row the owner
- * holds, revoked or not, because a list read through a bound is only
+ * through a query. The cap counts active rows only; the list overflows when
+ * one more active row than the cap exists, or when the scan limit is reached
+ * before the owner's rows end, because a list read through a bound is only
  * complete when the bound was not reached.
  */
 export const activeValuesForOwner = internalQuery({
@@ -196,26 +212,22 @@ export const activeValuesForOwner = internalQuery({
       explicitlyAssigned?: boolean;
     }>;
   }> => {
-    const rows = await ctx.db
+    const scanned = await ctx.db
       .query('credentials')
       .withIndex('by_userId', (index) => index.eq('userId', args.userId))
-      .take(OWNER_KNOWN_VALUE_CAP + 1);
+      .take(OWNER_CREDENTIAL_SCAN_LIMIT + 1);
+    const active = scanned.slice(0, OWNER_CREDENTIAL_SCAN_LIMIT).filter(activeValueRow);
     return {
-      overflow: rows.length > OWNER_KNOWN_VALUE_CAP,
-      rows: rows.flatMap((row) =>
-        !row.revokedAt && !row.status && row.ciphertext !== undefined && row.iv !== undefined
-          ? [
-              {
-                _id: row._id,
-                ciphertext: row.ciphertext,
-                iv: row.iv,
-                label: row.label,
-                pageDerived: typeof row.source !== 'string',
-                explicitlyAssigned: row.explicitlyAssigned,
-              },
-            ]
-          : [],
-      ),
+      overflow:
+        scanned.length > OWNER_CREDENTIAL_SCAN_LIMIT || active.length > OWNER_KNOWN_VALUE_CAP,
+      rows: active.slice(0, OWNER_KNOWN_VALUE_CAP + 1).map((row) => ({
+        _id: row._id,
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        label: row.label,
+        pageDerived: typeof row.source !== 'string',
+        explicitlyAssigned: row.explicitlyAssigned,
+      })),
     };
   },
 });
