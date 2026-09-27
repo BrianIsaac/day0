@@ -589,7 +589,11 @@ export const beginSync = internalMutation({
     if (source.activeSyncId) {
       const active = await ctx.db.get(source.activeSyncId);
       if (active?.state === 'running') {
-        await ctx.db.patch(active._id, { state: 'superseded', completedAt: Date.now() });
+        await ctx.db.patch(active._id, {
+          state: 'superseded',
+          completedAt: Date.now(),
+          reason: SUPERSEDED_RUN_REASON,
+        });
       }
     }
     const runId = await ctx.db.insert('docSyncRuns', {
@@ -610,6 +614,9 @@ export const beginSync = internalMutation({
     return runId;
   },
 });
+
+/** Why a run that a newer one replaced before it finished ended. */
+const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
 
 /** Read a generation and source for one Node-action batch. */
 export const syncContext = internalQuery({
@@ -700,12 +707,20 @@ export const finishSync = internalMutation({
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', source._id))
       .collect();
+    let pagesRemoved = 0;
     for (const page of pages) {
-      if (!current.has(page.ref)) await ctx.db.delete(page._id);
+      if (current.has(page.ref)) continue;
+      await ctx.db.delete(page._id);
+      pagesRemoved += 1;
     }
+    let mirrorsRemoved = 0;
     for (const mirror of mirrors) {
-      if (!mirror.sourceRef || !current.has(mirror.sourceRef)) await ctx.db.delete(mirror._id);
+      if (mirror.sourceRef && current.has(mirror.sourceRef)) continue;
+      await ctx.db.delete(mirror._id);
+      mirrorsRemoved += 1;
     }
+    let surfacesToReapprove = 0;
+    let credentialsSuperseded = 0;
     if (SURFACE_MODE === 'real') {
       const currentScopePages = pages
         .filter((page) => current.has(page.ref))
@@ -765,6 +780,7 @@ export const finishSync = internalMutation({
             channelsNotJoined: undefined,
             lastPolledAt: undefined,
           });
+          surfacesToReapprove += 1;
           await appendEvent(ctx, {
             agentId: surface.agentId,
             type: 'surface.scope-reapproval-required',
@@ -792,6 +808,7 @@ export const finishSync = internalMutation({
         status: 'superseded',
         statusReason: 'No longer detected in synced documentation.',
       });
+      credentialsSuperseded += 1;
       const surfaces = await ctx.db
         .query('surfaces')
         .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
@@ -849,6 +866,13 @@ export const finishSync = internalMutation({
       redactionCount,
       state: 'completed',
       completedAt: now,
+      summary: {
+        pagesKept: pages.length - pagesRemoved,
+        pagesRemoved,
+        mirrorsRemoved,
+        credentialsSuperseded,
+        surfacesToReapprove,
+      },
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
@@ -874,7 +898,7 @@ export const failSync = internalMutation({
     const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
     if (!source || !run || source.activeSyncId !== run._id || run.state !== 'running') return false;
     const now = Date.now();
-    await ctx.db.patch(run._id, { state: 'error', completedAt: now });
+    await ctx.db.patch(run._id, { state: 'error', completedAt: now, reason: args.reason });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
       status: args.status,

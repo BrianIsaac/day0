@@ -624,6 +624,52 @@ describe('documentation sources in real mode', (): void => {
     expect(credential?.revokedAt).toBeUndefined();
   });
 
+  it('records on each run why it ended short, and what a completed one changed (U8 D1 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const superseded = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const failed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.failSync, {
+      sourceId,
+      runId: failed,
+      status: 'error',
+      reason: 'The documentation read was interrupted (timeout).',
+    });
+    const completed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: completed,
+      ref: 'fresh.md',
+      title: 'Fresh',
+      markdown: '# Fresh',
+      updatedAt: 2,
+    });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId: completed,
+      refs: ['fresh.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    const runs = await harness.run(
+      async (ctx) => await Promise.all([superseded, failed, completed].map((id) => ctx.db.get(id))),
+    );
+    expect(runs.map((run) => [run?.state, run?.reason ?? null])).toEqual([
+      ['superseded', 'a newer sync of the source started before this one finished'],
+      ['error', 'The documentation read was interrupted (timeout).'],
+      ['completed', null],
+    ]);
+    expect(runs[2]?.summary).toEqual({
+      pagesKept: 1,
+      pagesRemoved: 1,
+      mirrorsRemoved: 1,
+      credentialsSuperseded: 0,
+      surfacesToReapprove: 0,
+    });
+  });
+
   it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

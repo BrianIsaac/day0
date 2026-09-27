@@ -185,6 +185,18 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
+    /** Why the run ended without completing: the failure it recorded, or the newer run that superseded it. */
+    reason: v.optional(v.string()),
+    /** What a completed run changed, as the final batch counted it. */
+    summary: v.optional(
+      v.object({
+        pagesKept: v.number(),
+        pagesRemoved: v.number(),
+        mirrorsRemoved: v.number(),
+        credentialsSuperseded: v.number(),
+        surfacesToReapprove: v.number(),
+      }),
+    ),
   })
     .index('by_source', ['sourceId'])
     /** The run that finished at a given moment, for the migration that tells
