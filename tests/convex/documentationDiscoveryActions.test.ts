@@ -44,10 +44,7 @@ interface Seeded {
  * Returns:
  *   The source and the completed run discovery would read.
  */
-async function seedGeneration(
-  harness: TestConvex<typeof schema>,
-  pages: number,
-): Promise<Seeded> {
+async function seedGeneration(harness: TestConvex<typeof schema>, pages: number): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
     const sourceId = await ctx.db.insert('docSources', {
       userId: 'owner',
@@ -214,7 +211,10 @@ describe('the documentation discovery action', (): void => {
         });
       return {
         agentId,
-        outOfScope: await row('REVOPS-1', 'out-of-scope: no charter or current documented-system overlap'),
+        outOfScope: await row(
+          'REVOPS-1',
+          'out-of-scope: no charter or current documented-system overlap',
+        ),
         lowValue: await row('REVOPS-2', 'low-value: 10'),
       };
     });
@@ -223,15 +223,19 @@ describe('the documentation discovery action', (): void => {
     const requeued = async (): Promise<number> =>
       await harness.run(
         async (ctx) =>
-          (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
-            (event) => event.type === 'work.requeued',
-          ).length,
+          (
+            await ctx.db
+              .query('events')
+              .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+              .collect()
+          ).filter((event) => event.type === 'work.requeued').length,
       );
 
     await expect(
       harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
     ).resolves.toMatchObject({ applied: true });
-    const fingerprint = (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.discoveryFingerprint;
+    const fingerprint = (await harness.run(async (ctx) => await ctx.db.get(sourceId)))
+      ?.discoveryFingerprint;
     expect(fingerprint).toEqual(expect.any(String));
     expect(await state(outOfScope)).toMatchObject({
       state: 'discovered',
@@ -245,7 +249,10 @@ describe('the documentation discovery action', (): void => {
     await harness.run(async (ctx) => {
       await ctx.db.patch(outOfScope, {
         state: 'skipped',
-        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: no charter or current documented-system overlap',
+        },
       });
     });
     const unchangedRun = await harness.run(async (ctx): Promise<Id<'docSyncRuns'>> => {
@@ -263,7 +270,10 @@ describe('the documentation discovery action', (): void => {
       return id;
     });
     await expect(
-      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId: unchangedRun }),
+      harness.action(internal.documentationDiscoveryActions.discoverSource, {
+        sourceId,
+        runId: unchangedRun,
+      }),
     ).resolves.toMatchObject({ unchanged: true });
     expect((await state(outOfScope))?.state).toBe('skipped');
     expect(await requeued()).toBe(1);
@@ -291,10 +301,15 @@ describe('the documentation discovery action', (): void => {
       return id;
     });
     await expect(
-      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId: changedRun }),
+      harness.action(internal.documentationDiscoveryActions.discoverSource, {
+        sourceId,
+        runId: changedRun,
+      }),
     ).resolves.toMatchObject({ applied: true });
     expect((await state(outOfScope))?.state).toBe('discovered');
-    expect((await state(outOfScope))?.reevaluation?.key).not.toBe(`documentation:${sourceId}:${fingerprint}`);
+    expect((await state(outOfScope))?.reevaluation?.key).not.toBe(
+      `documentation:${sourceId}:${fingerprint}`,
+    );
     expect(await requeued()).toBe(2);
   });
 

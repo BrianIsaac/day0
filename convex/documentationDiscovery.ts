@@ -231,7 +231,8 @@ export const apply = internalMutation({
         (row) => row.slug === original.slug && !matches.some((match) => match.slug === row.slug),
       );
       const host = stableSlug(identity.hosts[0] ?? '');
-      const slug = target?.slug ?? (conflictingSlug ? `${original.slug}-${host || 'system'}` : original.slug);
+      const slug =
+        target?.slug ?? (conflictingSlug ? `${original.slug}-${host || 'system'}` : original.slug);
       const candidate = {
         ...original,
         slug,
@@ -240,7 +241,9 @@ export const apply = internalMutation({
         mergedNames: [
           ...new Set([
             ...(original.mergedNames ?? []),
-            ...(target && target.displayName !== original.displayName ? [original.displayName] : []),
+            ...(target && target.displayName !== original.displayName
+              ? [original.displayName]
+              : []),
           ]),
         ],
         identity: target ? combineIdentities(identity, target.identity) : identity,
