@@ -238,18 +238,22 @@ export async function redactCredentials(
   return { markdown: bodyResult.text, title: safeTitle, credentials };
 }
 
+/** What joins a page's ref to one of several credentials found on it. */
+const CREDENTIAL_REF_SEPARATOR = '#credential=';
+
 /**
  * Build a deterministic source reference for every credential on a page.
  *
- * Args:
- *   pageRef: Stable provider page reference.
- *   credential: Extracted credential metadata.
- *   total: Number of distinct credentials found on the page.
- *   index: Stable zero-based position when the page contains several values.
+ * The ref changes when the page's count of values does, from the page ref to
+ * a label-qualified one and back; `credentials.store` carries a value it
+ * already holds for the page to its new ref rather than storing it again.
  *
- * Returns:
- *   Exact page ref for the common single-value case, or a label-qualified ref
- *   when a page contains more than one value.
+ * @param pageRef - Stable provider page reference.
+ * @param credential - Extracted credential metadata.
+ * @param total - Number of distinct credentials found on the page.
+ * @param index - Stable zero-based position when the page contains several values.
+ * @returns The page ref for the common single-value case, or a
+ *   label-qualified ref when a page contains more than one value.
  */
 export function credentialSourceRef(
   pageRef: string,
@@ -259,5 +263,28 @@ export function credentialSourceRef(
 ): string {
   return total === 1
     ? pageRef
-    : `${pageRef}#credential=${index + 1}-${encodeURIComponent(credential.label)}`;
+    : `${pageRef}${CREDENTIAL_REF_SEPARATOR}${index + 1}-${encodeURIComponent(credential.label)}`;
+}
+
+/**
+ * The page a credential's source ref belongs to: the inverse of
+ * `credentialSourceRef` on its page part.
+ *
+ * @param ref - A credential source ref.
+ * @returns The page ref the credential was found on.
+ */
+export function credentialPageRef(ref: string): string {
+  const at = ref.lastIndexOf(CREDENTIAL_REF_SEPARATOR);
+  return at === -1 ? ref : ref.slice(0, at);
+}
+
+/**
+ * The bounds of every credential source ref one page can produce, for an
+ * index range; the range may also hold refs of other pages, which
+ * `credentialPageRef` tells apart.
+ *
+ * @param pageRef - Stable provider page reference.
+ */
+export function credentialRefRange(pageRef: string): { from: string; to: string } {
+  return { from: pageRef, to: `${pageRef}${CREDENTIAL_REF_SEPARATOR}\uffff` };
 }

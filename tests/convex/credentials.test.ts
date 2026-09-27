@@ -1,8 +1,12 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -294,6 +298,132 @@ describe('credential contract', (): void => {
       .query(api.credentials.summaryForOwner, {});
     expect(summary[0].revokedAt).toEqual(expect.any(Number));
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+  });
+});
+
+describe('a page whose count of values changes (P10-1)', (): void => {
+  const TWO = ['ntn', 'second-value-0123456789abcdef'].join('_');
+  const pageRef = 'linear-automation.md';
+  const qualified = (index: number, label: string): string =>
+    `${pageRef}#credential=${index}-${encodeURIComponent(label)}`;
+
+  it('carries a value the page already holds to its new ref instead of minting a row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const store = async (ref: string, plaintext: string, label = 'linear service token') =>
+      await harness.action(internal.credentials.store, {
+        userId: 'owner',
+        kind: 'value',
+        label,
+        plaintext,
+        source: { sourceId, ref },
+      });
+    const first = await store(pageRef, SECRET);
+
+    // A second value appears on the page, so both take label-qualified refs.
+    await expect(store(qualified(1, 'linear service token'), SECRET)).resolves.toBe(first);
+    const second = await store(qualified(2, 'notion token'), TWO, 'notion token');
+    expect(second).not.toBe(first);
+    expect(await rows(harness)).toHaveLength(2);
+
+    // The second value goes again: the first returns to the page's own ref.
+    await expect(store(pageRef, SECRET)).resolves.toBe(first);
+    expect(await rows(harness)).toHaveLength(2);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: first }),
+    ).resolves.toBe(SECRET);
+
+    // The same value on another page is that page's own row.
+    await expect(store('another-page.md', SECRET)).resolves.not.toBe(first);
+  });
+
+  it("keeps a person's revoke on a value it carries to a new ref", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const args = {
+      userId: 'owner',
+      kind: 'value' as const,
+      label: 'linear service token',
+      plaintext: SECRET,
+    };
+    const credentialId = await harness.action(internal.credentials.store, {
+      ...args,
+      source: { sourceId, ref: pageRef },
+    });
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.credentials.revoke, { credentialId });
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...args,
+        source: { sourceId, ref: qualified(1, 'linear service token') },
+      }),
+    ).resolves.toBe(credentialId);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
+  });
+
+  describe('through a folder sync', (): void => {
+    let redactor: { url: string; close: () => Promise<void> } | undefined;
+    beforeAll(async (): Promise<void> => {
+      redactor = await serveSpanModel();
+    });
+    afterAll(async (): Promise<void> => {
+      await redactor?.close();
+    });
+
+    it('keeps one row per value as a runbook gains a second token and loses it again', async (): Promise<void> => {
+      // Scheduled discovery never runs: the clock is fake and never advanced.
+      vi.useFakeTimers();
+      try {
+        const root = await mkdtemp(join(tmpdir(), 'day0-credential-refs-'));
+        vi.stubEnv('DAY0_DOCS_ROOT', root);
+        vi.stubEnv('DAY0_REDACTOR_URL', redactor?.url ?? '');
+        const linear = ['lin', 'api', 'refs-contract-0123456789abcdef'].join('_');
+        const backup = ['lin', 'api', 'backup-contract-0123456789abcdef'].join('_');
+        const write = async (...lines: string[]): Promise<void> =>
+          await writeFile(
+            join(root, 'runbook.md'),
+            ['# Linear automation', '', ...lines, ''].join('\n'),
+            'utf8',
+          );
+        useSurfaceMode('real');
+        const harness = convexTest(schema, allConvexModules());
+        const sourceId = await harness.mutation(internal.docSources.createSource, {
+          userId: 'owner',
+          label: 'Runbooks',
+          kind: 'folder',
+          locator: '.',
+        });
+        const sync = async (): Promise<void> => {
+          await expect(
+            harness.action(internal.docSyncActions.syncSource, { sourceId }),
+          ).resolves.toMatchObject({ ok: true, complete: true });
+        };
+
+        await write(`Service token: ${linear}`);
+        await sync();
+        const [first] = await rows(harness);
+        await write(`Service token: ${linear}`, `Backup token: ${backup}`);
+        await sync();
+        await write(`Service token: ${linear}`);
+        await sync();
+
+        const stored = await rows(harness);
+        expect(stored).toHaveLength(2);
+        const kept = stored.find((row) => row._id === first?._id);
+        expect(kept).toMatchObject({ source: { sourceId, ref: 'runbook.md' } });
+        expect(kept).not.toHaveProperty('status');
+        await expect(
+          harness.action(internal.credentials.decrypt, {
+            credentialId: first!._id as Id<'credentials'>,
+          }),
+        ).resolves.toBe(linear);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
 

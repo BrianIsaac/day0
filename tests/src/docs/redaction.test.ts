@@ -7,6 +7,8 @@ import {
 } from '../../fixtures/notion-pages';
 import {
   credentialMarker,
+  credentialPageRef,
+  credentialRefRange,
   credentialSourceRef,
   redactCredentials,
 } from '../../../src/docs/redaction';
@@ -213,6 +215,21 @@ describe('documentation credential redaction', (): void => {
     expect(credentialSourceRef('page', second, 2, 1)).toBe(
       'page#credential=2-linear%20service%20token',
     );
+  });
+
+  it('reads the page back from every source ref a page can give, and bounds them for an index range', (): void => {
+    const value = { label: 'linear service token', plaintext: 'a' };
+    const { from, to } = credentialRefRange('guides/page.md#intro');
+    for (const [total, index] of [
+      [1, 0],
+      [2, 0],
+      [3, 2],
+    ] as const) {
+      const ref = credentialSourceRef('guides/page.md#intro', value, total, index);
+      expect(credentialPageRef(ref)).toBe('guides/page.md#intro');
+      expect(ref >= from && ref <= to).toBe(true);
+    }
+    expect(credentialPageRef('guides/page.md.bak')).toBe('guides/page.md.bak');
   });
 });
 

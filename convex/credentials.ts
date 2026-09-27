@@ -5,12 +5,14 @@ import {
   internalQuery,
   mutation,
   query,
+  type ActionCtx,
   type MutationCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
+import { credentialPageRef, credentialRefRange } from '../src/docs/redaction';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -305,12 +307,119 @@ export const revokeInternal = internalMutation({
   },
 });
 
+/** The most rows one page can hold that `store` reads to find a value it already has. */
+const PAGE_ROW_LIMIT = 64;
+
+/**
+ * The page-derived rows of one page of one source, whatever the page's count
+ * of values made their refs. Internal; read by `store` before it inserts.
+ */
+export const pageRowsForStore = internalQuery({
+  args: { userId: v.string(), sourceId: v.id('docSources'), pageRef: v.string() },
+  handler: async (ctx, args): Promise<Doc<'credentials'>[]> => {
+    const { from, to } = credentialRefRange(args.pageRef);
+    const rows = await ctx.db
+      .query('credentials')
+      .withIndex('by_user_source_ref', (index) =>
+        index
+          .eq('userId', args.userId)
+          .eq('source.sourceId', args.sourceId)
+          .gte('source.ref', from)
+          .lte('source.ref', to),
+      )
+      .take(PAGE_ROW_LIMIT);
+    return rows.filter(
+      (row) => typeof row.source !== 'string' && credentialPageRef(row.source.ref) === args.pageRef,
+    );
+  },
+});
+
+/**
+ * Move a page-derived row to the ref its page now gives its value, with the
+ * metadata the sync found. Internal. Clears a sync's supersede like
+ * `updateMetadata`; a person's revoke stays.
+ *
+ * @returns False, and nothing written, when the row is not the owner's page
+ *   row on this source or another row already holds the ref.
+ */
+export const moveToRef = internalMutation({
+  args: {
+    credentialId: v.id('credentials'),
+    userId: v.string(),
+    source: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
+    kind: credentialKind,
+    label: v.string(),
+    appId: v.optional(v.string()),
+    explicitlyAssigned: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const row = await ctx.db.get(args.credentialId);
+    if (
+      !row ||
+      row.userId !== args.userId ||
+      typeof row.source === 'string' ||
+      row.source.sourceId !== args.source.sourceId
+    ) {
+      return false;
+    }
+    const taken = await ctx.db
+      .query('credentials')
+      .withIndex('by_user_source_ref', (index) =>
+        index
+          .eq('userId', args.userId)
+          .eq('source.sourceId', args.source.sourceId)
+          .eq('source.ref', args.source.ref),
+      )
+      .first();
+    if (taken) return false;
+    await ctx.db.patch(row._id, {
+      source: args.source,
+      kind: args.kind,
+      label: args.label,
+      appId: args.appId,
+      explicitlyAssigned: args.explicitlyAssigned,
+      status: undefined,
+      statusReason: undefined,
+    });
+    return true;
+  },
+});
+
+/**
+ * A row's value, or undefined when it holds none this deployment can read.
+ *
+ * @param ctx - The action context the Node decrypt runs through.
+ * @param row - A stored credential row.
+ */
+async function storedValue(
+  ctx: ActionCtx,
+  row: Pick<Doc<'credentials'>, 'ciphertext' | 'iv'>,
+): Promise<string | undefined> {
+  if (row.ciphertext === undefined || row.iv === undefined) return undefined;
+  try {
+    return await ctx.runAction(internal.credentialCryptoActions.open, {
+      ciphertext: row.ciphertext,
+      iv: row.iv,
+    });
+  } catch {
+    // Sealed under a rotated DAY0_CREDENTIAL_KEY: unreadable, so it holds no
+    // value this sync can match, and the page's value replaces it rather than
+    // failing every sync of that page.
+    return undefined;
+  }
+}
+
 /**
  * Encrypt and store one credential through the stable lane-A contract.
+ * Internal.
  *
- * The Node-only AES operation is isolated in `credentialCryptoActions`
- * because Convex forbids a Node module from also exporting this module's
- * public query and mutation.
+ * A page-derived value is upserted by `(userId, sourceId, ref)`. A ref the
+ * source has no row for is first looked for on the same page: a value the
+ * page already holds under the ref its old count of values gave it is moved
+ * to the new ref, not stored again, so a page gaining or losing a value never
+ * mints a row for a value already known. The Node-only AES operation is
+ * isolated in `credentialCryptoActions` because Convex forbids a Node module
+ * from also exporting this module's public query and mutation.
  */
 export const store = internalAction({
   args: {
@@ -333,6 +442,12 @@ export const store = internalAction({
         throw new Error('Credential source does not belong to its owner.');
       }
     }
+    const metadata = {
+      kind: args.kind,
+      label: args.label,
+      appId: args.appId,
+      explicitlyAssigned: args.explicitlyAssigned,
+    };
     const existing = !sourced
       ? null
       : await ctx.runQuery(internal.credentials.bySourceForStore, {
@@ -340,39 +455,37 @@ export const store = internalAction({
           sourceId: sourced.sourceId,
           ref: sourced.ref,
         });
-    if (existing && existing.ciphertext !== undefined && existing.iv !== undefined) {
-      let current: string | undefined;
-      try {
-        current = await ctx.runAction(internal.credentialCryptoActions.open, {
-          ciphertext: existing.ciphertext,
-          iv: existing.iv,
+    // The same value found again: a row an earlier sync superseded because
+    // its page went briefly missing is revived here.
+    if (existing && (await storedValue(ctx, existing)) === plaintext) {
+      await ctx.runMutation(internal.credentials.updateMetadata, {
+        credentialId: existing._id,
+        ...metadata,
+      });
+      return existing._id;
+    }
+    if (sourced && !existing && plaintext) {
+      const pageRows = await ctx.runQuery(internal.credentials.pageRowsForStore, {
+        userId: args.userId,
+        sourceId: sourced.sourceId,
+        pageRef: credentialPageRef(sourced.ref),
+      });
+      for (const row of pageRows) {
+        if ((await storedValue(ctx, row)) !== plaintext) continue;
+        const moved = await ctx.runMutation(internal.credentials.moveToRef, {
+          credentialId: row._id,
+          userId: args.userId,
+          source: sourced,
+          ...metadata,
         });
-      } catch {
-        // Sealed under a rotated DAY0_CREDENTIAL_KEY: unreadable, so the page's
-        // value replaces it rather than failing every sync of that page.
-        current = undefined;
-      }
-      // The same value found again: a row an earlier sync superseded because
-      // its page went briefly missing is revived here.
-      if (current === plaintext) {
-        await ctx.runMutation(internal.credentials.updateMetadata, {
-          credentialId: existing._id,
-          kind: args.kind,
-          label: args.label,
-          appId: args.appId,
-          explicitlyAssigned: args.explicitlyAssigned,
-        });
-        return existing._id;
+        if (moved) return row._id;
       }
     }
     const encrypted = await ctx.runAction(internal.credentialCryptoActions.seal, { plaintext });
     return await ctx.runMutation(internal.credentials.persistEncrypted, {
       userId: args.userId,
-      kind: args.kind,
-      label: args.label,
       source: args.source,
-      appId: args.appId,
-      explicitlyAssigned: args.explicitlyAssigned,
+      ...metadata,
       ...encrypted,
       reactivate: existing !== null,
     });
