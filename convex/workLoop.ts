@@ -375,8 +375,8 @@ async function queueState(
 }
 
 /**
- * The discovered row a free slot goes to: a row no evaluation has begun
- * before one whose evaluation died, then the most urgent, then the oldest.
+ * The waiting row a free slot goes to: a row no evaluation has begun before
+ * one whose evaluation died, then the most urgent, then the oldest.
  *
  * A row whose evaluation is running lands its own verdict and wakes the next
  * one itself, and a row whose evaluation died keeps its claim until the lease
@@ -384,22 +384,14 @@ async function queueState(
  * rows behind it. Only `QUEUE_WINDOW` rows are read, so an urgent row behind a
  * longer queue waits its turn into the window.
  *
- * Args:
- *   ctx: Mutation context.
- *   agentId: The employee.
- *   now: The instant to judge claims against.
- *
- * Returns:
- *   The row to evaluate, or undefined when the employee is at its cap or
- *   nothing is waiting.
+ * @param waiting - The window of waiting rows, oldest first.
+ * @param now - The instant to judge claims against.
+ * @returns The row to evaluate, or undefined when every row is in flight.
  */
-export async function nextRowForFreeSlot(
-  ctx: MutationCtx,
-  agentId: Id<'agents'>,
+function nextWaitingRow(
+  waiting: readonly Doc<'workItems'>[],
   now: number,
-): Promise<Id<'workItems'> | undefined> {
-  const { free, waiting } = await queueState(ctx, agentId, now);
-  if (free === 0) return undefined;
+): Doc<'workItems'> | undefined {
   const order = (row: Doc<'workItems'>): [number, number] => [
     (row.evaluationAttempts ?? 0) > 0 ? 1 : 0,
     queueRank(row.priority),
@@ -415,11 +407,11 @@ export async function nextRowForFreeSlot(
     const [nextAttempted, nextRank] = order(next);
     if (attempted < nextAttempted || (attempted === nextAttempted && rank < nextRank)) next = row;
   }
-  return next?._id;
+  return next;
 }
 
 /**
- * Park every waiting row whose evaluation died `MAX_EVALUATION_ATTEMPTS`
+ * Park each waiting row whose evaluation died `MAX_EVALUATION_ATTEMPTS`
  * times, each with a `work.evaluation-parked` event.
  *
  * A row is parked only once its last claim has lapsed, so an evaluation still
@@ -428,16 +420,17 @@ export async function nextRowForFreeSlot(
  * which the charter trigger and Check for new work re-admit; any other as
  * `EVALUATION_ATTEMPTS_SPENT`, which waits for the manager's Retry.
  *
- * Returns:
- *   How many rows were parked.
+ * @param waiting - The window of waiting rows.
+ * @param now - The instant to judge claims against.
+ * @returns The rows parked.
  */
 async function parkSpentEvaluations(
   ctx: MutationCtx,
-  agentId: Id<'agents'>,
+  waiting: readonly Doc<'workItems'>[],
   now: number,
-): Promise<number> {
-  let parked = 0;
-  for (const row of await queueWindow(ctx, agentId)) {
+): Promise<Set<Id<'workItems'>>> {
+  const parked = new Set<Id<'workItems'>>();
+  for (const row of waiting) {
     const attempts = row.evaluationAttempts ?? 0;
     if (attempts < MAX_EVALUATION_ATTEMPTS || holdsLiveStepClaim(row, 'evaluation', now)) continue;
     const unavailable =
@@ -451,12 +444,12 @@ async function parkSpentEvaluations(
       evaluationClaimedAt: undefined,
     });
     await appendEvent(ctx, {
-      agentId,
+      agentId: row.agentId,
       type: 'work.evaluation-parked',
       payload: { workItemId: row._id, attempts, reason },
       createdAt: now,
     });
-    parked += 1;
+    parked.add(row._id);
   }
   return parked;
 }
@@ -522,19 +515,26 @@ async function parkForCharter(
 }
 
 /**
- * Evaluate the queue's next row, or park the queue while the charter waits.
- * A row whose evaluation died too often is parked on the way.
+ * Evaluate the queue's next row when the employee has a free slot, or park
+ * the queue while the charter waits.
  *
  * Returns:
  *   How many steps were scheduled or rows parked.
  */
 async function evaluateNext(ctx: MutationCtx, agentId: Id<'agents'>, now: number): Promise<number> {
   if (await charterAwaitsApproval(ctx, agentId)) return await parkForCharter(ctx, agentId, now);
-  const parked = await parkSpentEvaluations(ctx, agentId, now);
-  const next = await nextRowForFreeSlot(ctx, agentId, now);
-  if (!next) return parked;
-  await scheduleEvaluation(ctx, next);
-  return parked + 1;
+  const { free, waiting } = await queueState(ctx, agentId, now);
+  if (free === 0) return 0;
+  // A row whose evaluation died too often is parked on the way, so it never
+  // takes the slot it would otherwise be given again.
+  const parked = await parkSpentEvaluations(ctx, waiting, now);
+  const next = nextWaitingRow(
+    waiting.filter((row) => !parked.has(row._id)),
+    now,
+  );
+  if (!next) return parked.size;
+  await scheduleEvaluation(ctx, next._id);
+  return parked.size + 1;
 }
 
 /**
