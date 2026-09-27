@@ -47,6 +47,12 @@ vi.mock('../../src/lib/mastra', async (importOriginal) => {
         if (name === 'day0-quality-fit') {
           return { object: { pass: true, reason: 'fits' } };
         }
+        if (name === 'day0-skill-author') {
+          return {
+            object: { body: '', smokeTest: '' },
+            usage: { inputTokens: 2_400, outputTokens: 10, totalTokens: 2_410 },
+          };
+        }
         throw new Error(`unscripted agent ${name}`);
       },
     }),
@@ -237,6 +243,72 @@ describe('work.model-call on the item events', (): void => {
     await harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId });
 
     expect(recorded.prompts.length).toBeGreaterThan(0);
+    expect(await modelCallEvents(harness)).toEqual([]);
+  });
+});
+
+describe('work.model-call for skill authoring', (): void => {
+  it('records the authoring call on the source item with its stage, skill and tokens', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-71');
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment',
+          description: 'Comment on a ticket.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'approved',
+          proposedFor: workItemId,
+          targetSurface: 'linear',
+          createdAt: 1,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+
+    const events = await modelCallEvents(harness);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.agentId).toBe(agentId);
+    expect(events[0]!.payload).toEqual({
+      workItemId,
+      skillId,
+      stage: 'authoring',
+      agent: 'day0-skill-author',
+      attempts: 1,
+      retries: 0,
+      durationMs: expect.any(Number),
+      outcome: 'ok',
+      structuredMode: 'native',
+      inputTokens: 2_400,
+      outputTokens: 10,
+    });
+  });
+
+  it('writes no authoring event in mock mode', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-72');
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment',
+          description: 'Comment on a ticket.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'approved',
+          proposedFor: workItemId,
+          createdAt: 1,
+        }),
+    );
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+
+    await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+
     expect(await modelCallEvents(harness)).toEqual([]);
   });
 });

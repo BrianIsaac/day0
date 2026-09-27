@@ -6,6 +6,7 @@ import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
+import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-telemetry';
 import {
   authorAndVerifySkill,
   configuredSkillSandboxBackend,
@@ -681,6 +682,38 @@ async function redactAuthoringTexts(
  */
 const FAILED_VERIFICATION_LOG_CHARS = 2_000;
 
+/**
+ * Run the authoring call with its model-call report on the ledger, in real
+ * mode: a `work.model-call` event with stage `authoring`, the skill and the
+ * work item it was proposed for, the same record the loop stages write, so
+ * the bill counts authoring too (P8-10). Mock mode writes nothing: its event
+ * feed is what the frozen harness and the hosted demo read.
+ *
+ * @param ctx - The authoring action's context.
+ * @param skill - The skill being authored.
+ * @param fn - The authoring call.
+ * @returns What the call returned.
+ */
+async function recordingAuthoringCalls<T>(
+  ctx: ActionCtx,
+  skill: Pick<Doc<'skills'>, '_id' | 'agentId' | 'proposedFor'>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (SURFACE_MODE !== 'real') return await fn();
+  return await observeModelCalls(async (report: ModelCallReport): Promise<void> => {
+    await ctx.runMutation(internal.events.log, {
+      agentId: skill.agentId,
+      type: 'work.model-call',
+      payload: {
+        ...(skill.proposedFor ? { workItemId: skill.proposedFor } : {}),
+        skillId: skill._id,
+        stage: 'authoring',
+        ...report,
+      },
+    });
+  }, fn);
+}
+
 export const authorAndRegisterSkill = action({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
@@ -728,11 +761,13 @@ export const authorAndRegisterSkill = action({
         SURFACE_MODE,
       );
       try {
-        authored = await agentJson<AuthoredSkill>({
-          agent: skillAuthorAgent,
-          user: userPrompt,
-          schema: authorSchemaFor(SURFACE_MODE),
-        });
+        authored = await recordingAuthoringCalls(ctx, skill, () =>
+          agentJson<AuthoredSkill>({
+            agent: skillAuthorAgent,
+            user: userPrompt,
+            schema: authorSchemaFor(SURFACE_MODE),
+          }),
+        );
       } catch (err) {
         const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
         return await recordAuthoringFailure(ctx, args.skillId, runId, {
