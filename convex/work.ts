@@ -20,6 +20,7 @@ import {
   markCorrectionsAppliedInTransaction,
 } from './corrections';
 import {
+  AWAITING_CHARTER,
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
   isManagerChannel,
@@ -972,6 +973,7 @@ function verdictReturnsOn(
     if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) return trigger === 'charter';
     return false;
   }
+  if (row.state === 'deferred' && reason === AWAITING_CHARTER) return trigger === 'charter';
   if (row.state !== 'deferred' || trigger !== 'surface' || !surface) return false;
   if (reason === 'awaiting-connection' && verdict.missingSurface !== undefined) {
     return missingSurfaceResolvedBy(verdict.missingSurface, surface.surface, surface.siblings);

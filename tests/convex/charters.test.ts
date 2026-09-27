@@ -553,11 +553,15 @@ describe('amending an approved charter', (): void => {
       }),
     ).rejects.toThrow(/no willDo clause at index 7/);
     expect(await owner.query(api.charters.listForAgent, { agentId: draft.agentId })).toHaveLength(1);
-    // The approval's own seeding is the only job: no refused amendment scheduled anything.
+    // The approval's own seeding and re-evaluation are the only jobs: no refused amendment scheduled anything.
     expect(await scheduledJobs(harness)).toEqual([
       {
         name: 'onboarding:postCharterApproval',
         args: [{ agentId: draft.agentId, charterId: draft.charterId }],
+      },
+      {
+        name: 'work:reevaluatePending',
+        args: [{ agentId: draft.agentId, trigger: 'charter', key: draft.charterId }],
       },
     ]);
   });
@@ -761,6 +765,7 @@ describe('approval seeds the work on the server (P5-6, P9-10)', (): void => {
     const approvedAt = (await charter(harness, charterId)).approvedAt;
     expect(await scheduledJobs(harness)).toEqual([
       { name: 'onboarding:postCharterApproval', args: [{ agentId, charterId }] },
+      { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: charterId }] },
     ]);
 
     // A second tab's click finds the charter approved and changes nothing.
@@ -770,7 +775,8 @@ describe('approval seeds the work on the server (P5-6, P9-10)', (): void => {
     expect(
       (await eventsOf(harness, agentId)).filter((event) => event.type === 'charter.approved'),
     ).toHaveLength(1);
-    expect(await scheduledJobs(harness)).toHaveLength(1);
+    expect(await scheduledJobs(harness)).toHaveLength(2);
     vi.useRealTimers();
   });
 });
+

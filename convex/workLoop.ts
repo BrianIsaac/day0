@@ -378,6 +378,72 @@ async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>)
   await ctx.scheduler.runAfter(0, internal.workActions.evaluateWorkItemInternal, { workItemId });
 }
 
+/** The deferral reason of a row parked because the employee's charter awaits approval. */
+export const AWAITING_CHARTER = 'awaiting-charter';
+
+/**
+ * Whether the employee's latest charter is a draft awaiting approval, which
+ * evaluation refuses to read.
+ *
+ * An employee with no charter at all has not had its 1:1: none of its
+ * surfaces has connected, so intake has seeded nothing for it, and it is not
+ * parked here.
+ */
+async function charterAwaitsApproval(ctx: MutationCtx, agentId: Id<'agents'>): Promise<boolean> {
+  const latest = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .first();
+  return latest !== null && !latest.approved;
+}
+
+/**
+ * Park the employee's waiting rows until its charter is approved.
+ *
+ * Evaluation refuses without an approved charter, after taking its claim, so
+ * a row handed to it would throw once a lease for as long as the charter
+ * waits, with nothing on the card or in the feed. Each waiting row is
+ * deferred as `awaiting-charter` with a `work.waiting-for-charter` event
+ * instead; the approval's `charter` re-evaluation returns it to the queue.
+ *
+ * Returns:
+ *   How many rows were parked.
+ */
+async function parkForCharter(ctx: MutationCtx, agentId: Id<'agents'>, now: number): Promise<number> {
+  let parked = 0;
+  for (const row of await queueWindow(ctx, agentId)) {
+    if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
+    await ctx.db.patch(row._id, {
+      state: 'deferred',
+      verdict: { decision: 'defer', reason: AWAITING_CHARTER, missingPermissions: [] },
+      evaluationClaimedAt: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId,
+      type: 'work.waiting-for-charter',
+      payload: { workItemId: row._id },
+      createdAt: now,
+    });
+    parked += 1;
+  }
+  return parked;
+}
+
+/**
+ * Evaluate the queue's next row, or park the queue while the charter waits.
+ *
+ * Returns:
+ *   How many steps were scheduled or rows parked.
+ */
+async function evaluateNext(ctx: MutationCtx, agentId: Id<'agents'>, now: number): Promise<number> {
+  if (await charterAwaitsApproval(ctx, agentId)) return await parkForCharter(ctx, agentId, now);
+  const next = await nextRowForFreeSlot(ctx, agentId, now);
+  if (!next) return 0;
+  await scheduleEvaluation(ctx, next);
+  return 1;
+}
+
 /**
  * Hand a free slot to the work waiting for one, if the employee has a slot.
  *
@@ -392,8 +458,7 @@ async function scheduleEvaluation(ctx: MutationCtx, workItemId: Id<'workItems'>)
  */
 export async function wakeQueuedWork(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
-  const next = await nextRowForFreeSlot(ctx, agentId, Date.now());
-  if (next) await scheduleEvaluation(ctx, next);
+  await evaluateNext(ctx, agentId, Date.now());
 }
 
 /**
@@ -613,11 +678,7 @@ export async function resumeStalledStepsInTransaction(
         rescheduled += 1;
       }
     }
-    const next = await nextRowForFreeSlot(ctx, agent._id, now);
-    if (next) {
-      await scheduleEvaluation(ctx, next);
-      rescheduled += 1;
-    }
+    rescheduled += await evaluateNext(ctx, agent._id, now);
   }
   return { rescheduled };
 }

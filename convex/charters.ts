@@ -218,7 +218,8 @@ export const setConstraintStruck = mutation({
  * Public, owner-guarded (`assertOwnsCharter`). Writes the approval, the
  * agent's `active` state and `charter.approved`, and in the same transaction
  * schedules `onboarding.postCharterApproval`, so the seeding no longer rests
- * on the page staying open (P5-6, P9-10). Approving an approved charter
+ * on the page staying open (P5-6, P9-10), and schedules the `charter`
+ * re-evaluation that returns work parked while the charter waited. Approving an approved charter
  * changes nothing and seeds nothing again: a second tab's click is a no-op.
  *
  * A strike is refused by `setConstraintStruck` before it is ever flagged,
@@ -277,6 +278,8 @@ export const approve = mutation({
       agentId: charter.agentId,
       charterId: args.charterId,
     });
+    // Work parked while the charter waited (`awaiting-charter`) returns now.
+    await scheduleReevaluation(ctx, charter.agentId, args.charterId);
     return { ok: true };
   },
 });

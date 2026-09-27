@@ -9,7 +9,12 @@ import type { ExecutionOutput } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import { EXECUTION_STALL_MS, MAX_DRAFT_RESUMES, STEP_LEASE_MS } from '../../convex/workLoop';
+import {
+  AWAITING_CHARTER,
+  EXECUTION_STALL_MS,
+  MAX_DRAFT_RESUMES,
+  STEP_LEASE_MS,
+} from '../../convex/workLoop';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -1065,5 +1070,54 @@ describe('a closing phase whose authoring never claimed the run (P5-1)', (): voi
     ).map((job) => ({ name: job.name, args: job.args[0] }));
     expect(jobs).toContainEqual({ name: 'work:recoverDependentAuthoring', args: { workItemId, runId } });
     expect(jobs.map((job) => job.name)).not.toContain('work:setFailed');
+  });
+});
+
+describe('queued work while the charter is not approved (step 4)', (): void => {
+  it('parks each waiting row with an event instead of an evaluation that throws, and the approval brings it back', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      const charter = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      if (!charter) throw new Error('charter missing');
+      await ctx.db.patch(charter._id, { approved: false, approvedAt: undefined });
+    });
+    const first = await insertDiscovered(harness, agentId, 'REVOPS-51');
+    const second = await insertDiscovered(harness, agentId, 'REVOPS-52');
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    for (const workItemId of [first, second]) {
+      expect(await readItem(harness, workItemId)).toMatchObject({
+        state: 'deferred',
+        verdict: { decision: 'defer', reason: AWAITING_CHARTER },
+      });
+    }
+    expect((await eventsOf(harness, 'work.waiting-for-charter')).map((event) => event.payload)).toEqual([
+      { workItemId: first },
+      { workItemId: second },
+    ]);
+    expect(await scheduledNames(harness)).not.toContain('workActions:evaluateWorkItemInternal');
+
+    await harness.run(async (ctx) => {
+      const charter = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      if (!charter) throw new Error('charter missing');
+      await ctx.db.patch(charter._id, { approved: true, approvedAt: Date.now() });
+    });
+    await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter-approved',
+    });
+    expect((await readItem(harness, first)).state).toBe('discovered');
+    expect((await readItem(harness, second)).state).toBe('discovered');
   });
 });
