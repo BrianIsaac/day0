@@ -6625,6 +6625,28 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     });
   });
 
+  it('says how to let the re-read happen when the surface allows no single-record read', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      const linear = await ctx.db
+        .query('surfaces')
+        .filter((q) => q.eq(q.field('slug'), 'linear'))
+        .first();
+      await ctx.db.patch(linear!._id, { toolAllowlist: ['save_comment', 'save_issue'] });
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain(
+      'Linear allows no single-record read (get_issue); add it to the tools the documentation allows and connect Linear again',
+    );
+    expect(linearTools()).toEqual([]);
+  });
+
   it('withholds when the ticket cannot be re-read', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());

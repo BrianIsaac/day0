@@ -2473,7 +2473,7 @@ async function ticketRereadRefusal(
   ) {
     return withheldBeforeFirstWrite(
       ticket,
-      `${surface.displayName} allows no single-record read`,
+      `${surface.displayName} allows no single-record read (get_issue); add it to the tools the documentation allows and connect ${surface.displayName} again`,
       true,
     );
   }
