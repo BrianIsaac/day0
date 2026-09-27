@@ -1766,9 +1766,7 @@ describe('approving a plan with answers', (): void => {
     expectedOutputType: 'ticket-update',
   };
 
-  async function askedAtPlan(
-    harness: Harness,
-  ): Promise<{
+  async function askedAtPlan(harness: Harness): Promise<{
     agentId: Id<'agents'>;
     workItemId: Id<'workItems'>;
     charterId: Id<'charters'>;
@@ -2063,12 +2061,10 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       });
     });
 
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, {
-        workItemId,
-        feedback: '  The three checks are done;   propose Done.  ',
-      });
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, {
+      workItemId,
+      feedback: '  The three checks are done;   propose Done.  ',
+    });
 
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-approved');
@@ -2328,24 +2324,20 @@ describe('the exact-action gate', (): void => {
     };
     await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [0, 1],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, 1],
+      }),
     ).rejects.toThrow(
       'action 2 is refused (tool not in the surface allowlist (delete_issue)); approve the others by selection',
     );
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [1],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [1],
+      }),
     ).rejects.toThrow('action 2 is refused');
     expect((await readItem(harness, workItemId)).approvedIndexes).toBeUndefined();
     expect(await scheduledFunctionNames(harness)).toEqual([]);
@@ -2398,13 +2390,11 @@ describe('the exact-action gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, runId } = await pend(harness);
-    const result = await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.approveActions, {
-        workItemId,
-        pendingRunId: runId,
-        approvedIndexes: [1, 0, 1],
-      });
+    const result = await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [1, 0, 1],
+    });
     expect(result).toEqual({ ok: true, approvedIndexes: [0, 1] });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('actions-pending');
@@ -2457,50 +2447,40 @@ describe('the exact-action gate', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await pend(harness);
     await expect(
-      harness
-        .withIdentity({ subject: 'intruder' })
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [0],
-        }),
+      harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0],
+      }),
     ).rejects.toThrow('forbidden');
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [2],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [2],
+      }),
     ).rejects.toThrow('outside the pending list');
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [-1],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [-1],
+      }),
     ).rejects.toThrow('outside the pending list');
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [0.5],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0.5],
+      }),
     ).rejects.toThrow('outside the pending list');
     const other = await seed(harness, 'plan-approved');
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId: other.workItemId,
-          pendingRunId: other.runId,
-          approvedIndexes: [],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId: other.workItemId,
+        pendingRunId: other.runId,
+        approvedIndexes: [],
+      }),
     ).rejects.toThrow('expected actions-pending');
     expect(await scheduledFunctionNames(harness)).toEqual([]);
   });
@@ -2616,13 +2596,11 @@ describe('the exact-action gate', (): void => {
     expect(retried).toEqual({ ok: true, resumeState: 'plan-approved' });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
     const blank = await pend(harness);
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.rejectActions, {
-        workItemId: blank.workItemId,
-        pendingRunId: blank.runId,
-        reason: '  ',
-      });
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+      workItemId: blank.workItemId,
+      pendingRunId: blank.runId,
+      reason: '  ',
+    });
     expect((await readItem(harness, blank.workItemId)).skipReason).toBe('rejected by the manager');
   });
 
@@ -3290,13 +3268,11 @@ describe('the exact-action gate', (): void => {
     ]);
     // The manager cannot decide while the auto phase is in flight.
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [3],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [3],
+      }),
     ).rejects.toThrow('expected actions-pending');
 
     const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
@@ -3383,13 +3359,11 @@ describe('the exact-action gate', (): void => {
     });
     // An auto row cannot be approved again; the held ones can, and the claim carries the auto ledger.
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [2, 3],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [2, 3],
+      }),
     ).rejects.toThrow('action 3 was applied automatically and cannot be approved again');
     await harness
       .withIdentity(OWNER)
@@ -3902,13 +3876,11 @@ describe('the exact-action gate', (): void => {
       harness.withIdentity(OWNER).query(api.work.countOpenForAgent, { agentId }),
     ).resolves.toBe(1);
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .query(api.work.findExistingClaim, {
-          agentId,
-          sourceSystem: 'linear',
-          externalId: 'REVOPS-1',
-        }),
+      harness.withIdentity(OWNER).query(api.work.findExistingClaim, {
+        agentId,
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+      }),
     ).resolves.toEqual({ state: 'actions-pending' });
   });
 
@@ -4034,12 +4006,10 @@ describe('sending a completed item back with a note', (): void => {
       });
     });
 
-    const result = await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.retryFailed, {
-        workItemId,
-        feedback: 'Draft the reply for the thread and hold it.',
-      });
+    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, {
+      workItemId,
+      feedback: 'Draft the reply for the thread and hold it.',
+    });
 
     expect(result).toEqual({ ok: true, resumeState: 'plan-approved' });
     const row = await readItem(harness, workItemId);
