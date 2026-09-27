@@ -144,38 +144,49 @@ describe('the declarations this checkout retired (N10)', (): void => {
     expect(unclearedDeclarations('')).toEqual(RETIRED_DECLARATIONS);
   });
 
-  it('refuses a deployment with rows and no migrations table, and passes a new one', (): void => {
+  it('refuses rows stamped before the clearing release until its migrations have finished, and passes a new one', (): void => {
     const checkout = { release: '0.4.0', releases: RELEASES };
     const cli = (answers: Record<string, string>) => (args: readonly string[]) => ({
       status: 0,
       stdout: answers[args.join(' ')] ?? '',
       stderr: '',
     });
-    const refused = readReleaseVerdict(
-      cli({
-        'convex data': 'agents\ndeploymentVersions\n',
-        'convex data deploymentVersions --limit 1 --format jsonl':
-          '{"release":"0.4.0","recordedAt":1}\n',
-      }),
-      checkout,
-    );
+    const stampedAt = (release: string, migrations?: string): Record<string, string> => ({
+      'convex data': `agents\ndeploymentVersions\n${migrations === undefined ? '' : 'migrations\n'}`,
+      'convex data deploymentVersions --limit 1 --format jsonl': `{"release":"${release}","recordedAt":1}\n`,
+      ...(migrations === undefined
+        ? {}
+        : { 'convex data migrations --limit 1000 --format jsonl': migrations }),
+    });
+    const refused = readReleaseVerdict(cli(stampedAt('0.3.0')), checkout);
     expect(refused.allowed ? '' : refused.reason).toContain(
       'rows may still carry agents.docSourceIds, agents.posture',
     );
     expect(readReleaseVerdict(cli({}), checkout)).toMatchObject({ allowed: true });
-    expect(
-      readReleaseVerdict(
-        cli({
+    const allFinished = RETIRED_DECLARATIONS.map(({ migration }) => finished(migration)).join('');
+    expect(readReleaseVerdict(cli(stampedAt('0.3.0', allFinished)), checkout)).toMatchObject({
+      allowed: true,
+    });
+    const garbled = readReleaseVerdict(cli(stampedAt('0.3.0', '{not json\n')), checkout);
+    expect(garbled.allowed ? '' : garbled.reason).toContain(
+      "the deployment's migrations could not be read",
+    );
+  });
+
+  it('passes rows stamped at or after the clearing release, which a volume created then never needed the migrations for', (): void => {
+    const checkout = { release: '0.4.0', releases: RELEASES };
+    const cli = (args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        {
           'convex data': 'agents\ndeploymentVersions\nmigrations\n',
           'convex data deploymentVersions --limit 1 --format jsonl':
             '{"release":"0.4.0","recordedAt":1}\n',
-          'convex data migrations --limit 1000 --format jsonl': RETIRED_DECLARATIONS.map(
-            ({ migration }) => finished(migration),
-          ).join(''),
-        }),
-        checkout,
-      ),
-    ).toMatchObject({ allowed: true });
+          'convex data migrations --limit 1000 --format jsonl': finished('agents-owner'),
+        }[args.join(' ')] ?? '',
+      stderr: '',
+    });
+    expect(readReleaseVerdict(cli, checkout)).toMatchObject({ allowed: true });
   });
 });
 

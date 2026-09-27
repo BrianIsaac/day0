@@ -160,8 +160,8 @@ export interface HarnessOptions {
   deploymentTables?: string[];
   /**
    * The clearing migrations of the retired declarations the deployment has
-   * not finished; absent means every one finished, as on any deployment the
-   * release that shipped them upgraded.
+   * not finished; absent means every one finished. The harness's checkout
+   * predates their release, so the check always reads them.
    */
   unfinishedMigrations?: string[];
   /** What each `migrations:runPending` call answers, in order, the last repeated. */
@@ -333,7 +333,8 @@ export function harness(options: HarnessOptions = {}): Harness {
         ...(options.deploymentTables ?? []),
         ...(options.releaseStamp === undefined ? [] : ['agents', 'deploymentVersions']),
       ];
-      // A deployment with rows has run the migrations of every release since 0.4.0.
+      // The harness's CHANGELOG stops at 0.3.0, so the release check cannot
+      // clear a retired declaration by the stamp and reads the migrations table.
       const tables = listed.length > 0 ? [...listed, MIGRATIONS_TABLE] : listed;
       return { status: 0, stdout: tables.map((table) => `${table}\n`).join(''), stderr: '' };
     }
