@@ -383,16 +383,61 @@ function nestedString(value: unknown, path: string[]): string | undefined {
   return typeof current === 'string' ? current : undefined;
 }
 
-/** Derive an Atlassian continuation cursor from common response fields. */
+/**
+ * The reason a walk stops when the provider says there is more but gives no
+ * continuation the reader can follow. Ending the walk there would complete the
+ * generation and delete every page after it, so the batch fails instead.
+ */
+export const TRUNCATED_CONTINUATION_REASON =
+  'the documentation provider said there were more pages but gave no continuation day0 can follow; the sync stops here rather than delete the pages after it';
+
+/**
+ * Derive an Atlassian continuation cursor from common response fields.
+ *
+ * @returns The cursor, or undefined when the response names no next page.
+ * @throws Error with `TRUNCATED_CONTINUATION_REASON` when a next page is
+ *   named in a shape that carries no cursor.
+ */
 function atlassianCursor(payload: Record<string, unknown>): string | undefined {
-  if (typeof payload.nextCursor === 'string') return payload.nextCursor;
-  const next = nestedString(payload, ['_links', 'next']);
-  if (!next) return undefined;
-  try {
-    return new URL(next, 'https://mcp.atlassian.com').searchParams.get('cursor') || undefined;
-  } catch {
-    return undefined;
+  if (typeof payload.nextCursor === 'string' && payload.nextCursor !== '')
+    return payload.nextCursor;
+  if (payload.nextCursor !== undefined && payload.nextCursor !== null) {
+    throw new Error(TRUNCATED_CONTINUATION_REASON);
   }
+  const links = payload._links;
+  const next =
+    links && typeof links === 'object' && !Array.isArray(links)
+      ? (links as Record<string, unknown>).next
+      : undefined;
+  if (next === undefined || next === null) return undefined;
+  if (typeof next !== 'string' || next === '') throw new Error(TRUNCATED_CONTINUATION_REASON);
+  let cursor: string | null;
+  try {
+    cursor = new URL(next, 'https://mcp.atlassian.com').searchParams.get('cursor');
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${TRUNCATED_CONTINUATION_REASON} (${detail})`);
+  }
+  if (!cursor) throw new Error(TRUNCATED_CONTINUATION_REASON);
+  return cursor;
+}
+
+/**
+ * The continuation a provider names in one field, when it names one.
+ *
+ * @param value - The provider's continuation field.
+ * @param more - Whether the provider says more pages follow, where it says so
+ *   apart from the field.
+ * @returns The cursor, or undefined at the end of the walk.
+ * @throws Error with `TRUNCATED_CONTINUATION_REASON` when the field is present
+ *   but unusable, or more pages follow and the field is missing.
+ */
+function continuationCursor(value: unknown, more?: boolean): string | undefined {
+  if (typeof value === 'string' && value !== '') return value;
+  if (more === true || (value !== undefined && value !== null)) {
+    throw new Error(TRUNCATED_CONTINUATION_REASON);
+  }
+  return undefined;
 }
 
 /** Reader for credential-bound MCP documentation locations. */
@@ -523,12 +568,13 @@ export class McpReader implements DocSourceReader {
             : Date.now(),
       });
     }
+    // A search Drive could not finish, with no token to go on from, is not the end of the corpus.
     return {
       pages,
-      nextCursor:
-        typeof searchResult.nextPageToken === 'string' && searchResult.nextPageToken
-          ? searchResult.nextPageToken
-          : undefined,
+      nextCursor: continuationCursor(
+        searchResult.nextPageToken,
+        searchResult.incompleteSearch === true ? true : undefined,
+      ),
     };
   }
 
@@ -663,9 +709,9 @@ export class McpReader implements DocSourceReader {
     return {
       pages,
       nextCursor:
-        searchResult.has_more === true && typeof searchResult.next_cursor === 'string'
-          ? searchResult.next_cursor
-          : undefined,
+        searchResult.has_more === false
+          ? undefined
+          : continuationCursor(searchResult.next_cursor, searchResult.has_more === true),
     };
   }
 
