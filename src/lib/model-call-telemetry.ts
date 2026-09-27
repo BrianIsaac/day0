@@ -263,9 +263,11 @@ function reportFor(facts: ModelCallFacts): ModelCallReport {
  * Report one completed call to the enclosing step's observer, or to the log.
  *
  * A loop step's observer puts the report on the item's ledger. A call no
- * step observes (charter synthesis, orientation, discovery, good habits, the
- * chat) is metered in the function log instead, as one `model-call` line, so
- * no model call goes unrecorded.
+ * step observes (charter synthesis, orientation, discovery, good habits) is
+ * metered in the function log instead, as one `model-call` line, so every
+ * call through the retry wrapper is recorded somewhere. Calls that bypass the
+ * wrapper (the chat route's own `streamText`, `./openai`'s completions) are
+ * not seen here.
  *
  * @param facts - What the retry wrapper knows about the call.
  * @throws Error when a step required an observer and none is installed.
