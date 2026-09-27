@@ -9,7 +9,7 @@ import {
   OWNERSHIP_GATE,
   readBackOf,
   type WorkItemView,
-} from '../../../scripts/rehearsal/checks';
+} from '../../../../scripts/bed/rehearsal/checks';
 
 const TILE = 'looker-pipeline-tile';
 const AUDIT = 'Last updated by revops at 2026-09-15 09:12:00 UTC';

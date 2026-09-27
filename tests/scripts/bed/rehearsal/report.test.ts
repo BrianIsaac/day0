@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderSummary, runStamp, type RunRecord } from '../../../scripts/rehearsal/report';
+import { renderSummary, runStamp, type RunRecord } from '../../../../scripts/bed/rehearsal/report';
 
 describe('the run record', (): void => {
   it('stamps a directory name from the clock without colons', (): void => {

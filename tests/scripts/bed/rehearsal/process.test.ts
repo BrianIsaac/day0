@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { must, runCommand, startServer, waitUntil } from '../../../scripts/rehearsal/process';
+import { must, runCommand, startServer, waitUntil } from '../../../../scripts/bed/rehearsal/process';
 
 describe('the process adapter', (): void => {
   it('runs a command to completion with both streams captured', (): void => {

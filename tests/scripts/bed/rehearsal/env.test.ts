@@ -6,7 +6,7 @@ import {
   NEVER_COPIED_KEYS,
   parseSecrets,
   secretsRefusal,
-} from '../../../scripts/rehearsal/env';
+} from '../../../../scripts/bed/rehearsal/env';
 
 const ports = { backend: 45210, site: 45211, dashboard: 45791, app: 45300 };
 

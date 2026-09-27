@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { agentIdFromUrl, ASK_AGAIN, COMPLETE_LINE, REPLY_PLACEHOLDER } from '../../../scripts/rehearsal/driver';
+import { agentIdFromUrl, ASK_AGAIN, COMPLETE_LINE, REPLY_PLACEHOLDER } from '../../../../scripts/bed/rehearsal/driver';
 
 const DASHBOARD = readFileSync('app/agent/[agentId]/AgentDashboard.tsx', 'utf8');
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
 const SURFACES = readFileSync('app/agent/[agentId]/mock/SurfacesTab.tsx', 'utf8');
 const DOCUMENTATION = readFileSync('app/documentation/DocumentationPage.tsx', 'utf8');
 const LANDING = readFileSync('app/page.tsx', 'utf8');
-const DRIVER = readFileSync('scripts/rehearsal/driver.ts', 'utf8');
+const DRIVER = readFileSync('scripts/bed/rehearsal/driver.ts', 'utf8');
 
 describe('the dashboard driver', (): void => {
   it('reads the agent id out of the agent page URL', (): void => {

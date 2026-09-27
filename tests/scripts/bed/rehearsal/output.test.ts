@@ -2,8 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { REHEARSALS_DIR, RunDirectory, runDirectory, shotPath } from '../../../scripts/rehearsal/output';
-import type { RunRecord } from '../../../scripts/rehearsal/report';
+import { REHEARSALS_DIR, RunDirectory, runDirectory, shotPath } from '../../../../scripts/bed/rehearsal/output';
+import type { RunRecord } from '../../../../scripts/bed/rehearsal/report';
 
 const record: RunRecord = {
   startedAt: '2026-09-15T10:00:00Z',

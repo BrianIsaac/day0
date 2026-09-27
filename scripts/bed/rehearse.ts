@@ -1,8 +1,10 @@
 /// <reference types="node" />
 /**
- * A repeatable real-mode rehearsal against the operator's own workspaces.
+ * A repeatable real-mode rehearsal against the operator's own workspaces:
+ * internal tooling for the maintainers, beside the company bed, and the one
+ * deliberate second deployment on a workspace (decision N4).
  *
- *   pnpm rehearse:real --secrets <file> [--dry-run] [--warm-from <project>] [...]
+ *   pnpm bed:rehearse --secrets <file> [--dry-run] [--warm-from <project>] [...]
  *
  * From a clean clone of this checkout it brings real mode up on its own
  * compose project and ports, links the primary's documentation folder,
@@ -13,7 +15,7 @@
  * down. The record lands under the primary checkout's
  * docs/plans/progress/real-mode-rehearsals/<stamp>/ and is never committed.
  *
- * `--help` prints the options; scripts/rehearsal/run.ts is the phase list.
+ * `--help` prints the options; scripts/bed/rehearsal/run.ts is the phase list.
  */
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -21,18 +23,18 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { composeDown, type Bed } from './rehearsal/bed';
 import { connectBackend } from './rehearsal/backend';
-import { UndoLedger } from './lib/cleanup';
+import { UndoLedger } from '../lib/cleanup';
 import { parseLines } from './rehearsal/docker';
 import { PlaywrightDashboard } from './rehearsal/driver';
 import { parseEnvText, parseSecrets } from './rehearsal/env';
-import { LinearClient } from './lib/linear';
+import { LinearClient } from '../lib/linear';
 import { parseComposeProjects, parseRehearsalArguments, rehearsalProjectName, USAGE } from './rehearsal/options';
 import { RunDirectory, runDirectory } from './rehearsal/output';
 import { portIsFree } from './rehearsal/ports';
 import { runCommand, startServer } from './rehearsal/process';
 import { runStamp, type RunRecord } from './rehearsal/report';
 import { runPhases, type RehearsalContext } from './rehearsal/run';
-import { SlackClient } from './lib/slack';
+import { SlackClient } from '../lib/slack';
 
 function fail(message: string): never {
   process.stderr.write(`error: ${message}\n`);

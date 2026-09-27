@@ -5,7 +5,7 @@ import {
   MAX_FOLLOW_UPS,
   nextAnswer,
   OWNERSHIP_CLAIM,
-} from '../../../scripts/rehearsal/answers';
+} from '../../../../scripts/bed/rehearsal/answers';
 
 describe("the Day-1 answers, in the tickets' own words", (): void => {
   it('answers the seven topics once each and then only the follow-up line', (): void => {

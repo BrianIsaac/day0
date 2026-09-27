@@ -1,8 +1,8 @@
 /**
- * The command line of `pnpm rehearse:real` and the refusals that decide
+ * The command line of `pnpm bed:rehearse` and the refusals that decide
  * whether a compose project may be used for a bed.
  */
-import { PROTECTED_PROJECTS, PROTECTED_VOLUMES } from '../demo-bed';
+import { PROTECTED_PROJECTS, PROTECTED_VOLUMES } from '../../demo-bed';
 
 export interface RehearsalOptions {
   /** Env-format file holding `LINEAR_API_KEY` and optionally `SLACK_BOT_TOKEN`. */
@@ -35,7 +35,7 @@ export interface RehearsalOptions {
   help: boolean;
 }
 
-export const USAGE = `Usage: pnpm rehearse:real --secrets <file> [options]
+export const USAGE = `Usage: pnpm bed:rehearse --secrets <file> [options]
 
 Brings real mode up from a clean clone on its own compose project and ports,
 links the primary checkout's documentation folder, deploys an agent, holds the

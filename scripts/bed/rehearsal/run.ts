@@ -36,11 +36,11 @@ import {
   checkWrongKeyReadRepaired,
   type CheckResult,
 } from './checks';
-import type { UndoLedger } from '../lib/cleanup';
+import type { UndoLedger } from '../../lib/cleanup';
 import type { Dashboard } from './driver';
 import { bedEnvValues, envRefusal, secretsRefusal, type RehearsalSecrets } from './env';
-import { deleteComment, readComments, type LinearClient } from '../lib/linear';
-import type { SlackClient } from '../lib/slack';
+import { deleteComment, readComments, type LinearClient } from '../../lib/linear';
+import type { SlackClient } from '../../lib/slack';
 import {
   assignIssue,
   issueRestoreSteps,

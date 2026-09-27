@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LinearClient } from '../../../scripts/lib/linear';
+import { LinearClient } from '../../../../scripts/lib/linear';
 import {
   ticketRestRefusal,
   assignIssue,
@@ -11,7 +11,7 @@ import {
   readViewer,
   stateMovedByActor,
   type IssueSnapshot,
-} from '../../../scripts/rehearsal/linear';
+} from '../../../../scripts/bed/rehearsal/linear';
 
 interface Recorded {
   url: string;

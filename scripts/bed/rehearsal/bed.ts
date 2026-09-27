@@ -5,16 +5,16 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseAdminKey } from '../setup';
-import { upsertEnvText } from '../demo-bed';
-import { writePrivateEnv } from '../private-env';
-import { pinnedNodeImage, redactorVolumeClone } from '../lib/docker';
+import { parseAdminKey } from '../../setup';
+import { upsertEnvText } from '../../demo-bed';
+import { writePrivateEnv } from '../../private-env';
+import { pinnedNodeImage, redactorVolumeClone } from '../../lib/docker';
 import { BED_PROFILES, bedComposeArgs } from './docker';
 import type { BedPorts } from './env';
 import { must, waitUntil, type Runner, type RunResult, type ServerHandle, type ServerStarter } from './process';
 
 /** The query parameter the unlock URL carries; restated from src/lib/dev-auth-server.ts, which tsx cannot import. */
-export const UNLOCK_PARAM: typeof import('../../src/lib/dev-auth-server').DEV_NO_AUTH_UNLOCK_PARAM =
+export const UNLOCK_PARAM: typeof import('../../../src/lib/dev-auth-server').DEV_NO_AUTH_UNLOCK_PARAM =
   'day0_key';
 
 export interface Bed {

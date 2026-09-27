@@ -4,7 +4,7 @@
  * calls it shares with the company bed are in `scripts/lib/linear.ts`.
  */
 
-import type { LinearClient } from '../lib/linear';
+import type { LinearClient } from '../../lib/linear';
 
 export interface IssueSnapshot {
   id: string;

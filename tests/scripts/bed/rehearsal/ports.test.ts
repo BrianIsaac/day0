@@ -6,7 +6,7 @@ import {
   pickFreePorts,
   portsFromBase,
   portsRefusal,
-} from '../../../scripts/rehearsal/ports';
+} from '../../../../scripts/bed/rehearsal/ports';
 
 describe('the bed ports', (): void => {
   it('lays four consecutive ports out from one base', (): void => {

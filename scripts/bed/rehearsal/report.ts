@@ -2,7 +2,7 @@
  * The run record: rewritten after every phase, so a crash still leaves one.
  */
 import type { CheckResult } from './checks';
-import type { UndoResult } from '../lib/cleanup';
+import type { UndoResult } from '../../lib/cleanup';
 import type { BedPorts } from './env';
 
 export type PhaseStatus = 'ok' | 'failed' | 'skipped' | 'stopped';

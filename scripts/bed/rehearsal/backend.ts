@@ -93,8 +93,8 @@ export async function connectBackend(
 ): Promise<{ reader: BackendReader; exportForAgent: (agentId: string) => Promise<unknown> }> {
   process.env.DEV_NO_AUTH_SIGNING_KEY = signingKey;
   const { ConvexHttpClient } = await import('convex/browser');
-  const { mintDevNoAuthToken } = await import('../../src/lib/dev-auth-token');
-  const { api } = await import('../../convex/_generated/api');
+  const { mintDevNoAuthToken } = await import('../../../src/lib/dev-auth-token');
+  const { api } = await import('../../../convex/_generated/api');
   type Id<T extends string> = string & { __tableName: T };
   const client = new ConvexHttpClient(url, { skipConvexDeploymentUrlCheck: true, logger: false });
   client.setAuth(await mintDevNoAuthToken());

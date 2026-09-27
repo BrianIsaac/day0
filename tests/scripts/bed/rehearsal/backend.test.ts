@@ -13,7 +13,7 @@ import {
   ticketItem,
   type SurfaceRow,
   type WorkItemRow,
-} from '../../../scripts/rehearsal/backend';
+} from '../../../../scripts/bed/rehearsal/backend';
 
 function surface(slug: string, verdict: string): SurfaceRow {
   return { _id: slug, slug, displayName: slug, class: 'x', verdict, credentialLanded: false };

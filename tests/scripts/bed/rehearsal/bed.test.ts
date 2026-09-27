@@ -24,8 +24,8 @@ import {
   waitForHealthy,
   writeBedEnv,
   type Bed,
-} from '../../../scripts/rehearsal/bed';
-import type { RunOptions, RunResult, ServerHandle } from '../../../scripts/rehearsal/process';
+} from '../../../../scripts/bed/rehearsal/bed';
+import type { RunOptions, RunResult, ServerHandle } from '../../../../scripts/bed/rehearsal/process';
 
 interface Call {
   command: string;

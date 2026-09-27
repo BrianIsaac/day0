@@ -2,11 +2,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { UndoLedger } from '../../../scripts/lib/cleanup';
-import { LinearClient } from '../../../scripts/lib/linear';
-import { parseRehearsalArguments } from '../../../scripts/rehearsal/options';
-import { RunDirectory } from '../../../scripts/rehearsal/output';
-import type { RunRecord } from '../../../scripts/rehearsal/report';
+import { UndoLedger } from '../../../../scripts/lib/cleanup';
+import { LinearClient } from '../../../../scripts/lib/linear';
+import { parseRehearsalArguments } from '../../../../scripts/bed/rehearsal/options';
+import { RunDirectory } from '../../../../scripts/bed/rehearsal/output';
+import type { RunRecord } from '../../../../scripts/bed/rehearsal/report';
 import {
   BOUNDARY,
   declaredWrites,
@@ -15,7 +15,7 @@ import {
   runPhases,
   type Phase,
   type RehearsalContext,
-} from '../../../scripts/rehearsal/run';
+} from '../../../../scripts/bed/rehearsal/run';
 
 function context(argv: string[], out: RunDirectory): RehearsalContext {
   const record: RunRecord = {

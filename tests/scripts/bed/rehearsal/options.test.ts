@@ -5,7 +5,7 @@ import {
   projectRefusal,
   rehearsalProjectName,
   USAGE,
-} from '../../../scripts/rehearsal/options';
+} from '../../../../scripts/bed/rehearsal/options';
 
 describe('command line', (): void => {
   it('defaults to a live run with HEAD of this checkout and a forty-minute ceiling', (): void => {

@@ -3,7 +3,7 @@
  * bed's work-item provenance. The client is in `scripts/lib/slack.ts`.
  */
 
-import type { SlackMessage } from '../lib/slack';
+import type { SlackMessage } from '../../lib/slack';
 
 /** A terminal server provenance trailer attributes a write to this isolated bed. */
 export function belongsToWorkItems(text: string, workItemIds: readonly string[]): boolean {

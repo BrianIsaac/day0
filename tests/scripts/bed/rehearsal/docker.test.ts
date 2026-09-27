@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BED_PROFILES, bedComposeArgs, parseLines } from '../../../scripts/rehearsal/docker';
+import { BED_PROFILES, bedComposeArgs, parseLines } from '../../../../scripts/bed/rehearsal/docker';
 
 describe('compose invocation for the bed', (): void => {
   it('names the project, the env file and the five real-mode profiles', (): void => {
