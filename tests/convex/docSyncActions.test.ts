@@ -9,6 +9,7 @@ import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } 
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
 import { FolderReader } from '../../src/docs/readers/folder';
+import { UrlsReader } from '../../src/docs/readers/urls';
 import { RedactorUnavailableError } from '../../src/redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -624,6 +625,36 @@ describe('documentation sync batching', (): void => {
     expect(state.runs[0]).toMatchObject({ state: 'completed', pageCount: 99 });
     expect(state.runs[1]).toMatchObject({ state: 'superseded' });
     expect(state.runs[1].reason).toContain('the listing changed under its cursor');
+  });
+
+  it('stops a source whose reader secret was revoked as a credential to land, and reads nothing (E-74)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Wiki reader secret',
+        source: 'entered',
+        createdAt: 1,
+        revokedAt: 2,
+      });
+      return await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Wiki',
+        kind: 'urls',
+        locator: 'https://wiki.example/one',
+        credentialId,
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    const reads = vi.spyOn(UrlsReader.prototype, 'listPageBatch');
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    expect(reads).not.toHaveBeenCalled();
+    expect(await harness.run(async (ctx) => await ctx.db.get(sourceId))).toMatchObject({
+      status: 'credential-not-landed',
+    });
   });
 
   it('words a failure while finishing as the error it is, not as a credential to land (adversarial pass)', async (): Promise<void> => {

@@ -444,6 +444,52 @@ describe('documentation sources in real mode', (): void => {
     vi.unstubAllEnvs();
   });
 
+  it('rotates a URL source’s reader secret, reads again from page one, and refuses one that would leave its site (E-74)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const sourceId = await owner.action(api.docSources.link, {
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'https://wiki.example/a\nhttps://wiki.example/b',
+      credential: 'first-reader-value',
+    });
+    const first = (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.credentialId;
+    await owner.action(api.docSources.rotateCredential, {
+      sourceId,
+      credential: 'second-reader-value',
+    });
+    const { source, old, scheduled } = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      old: first ? await ctx.db.get(first) : null,
+      scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    expect(source?.credentialId).not.toBe(first);
+    expect(old?.revokedAt).toEqual(expect.any(Number));
+    expect(scheduled.map((job) => job.args[0])).toContainEqual({ sourceId, fresh: true });
+    await expect(
+      owner.action(api.docSources.rotateCredential, { sourceId, credential: 'bad\nvalue' }),
+    ).rejects.toThrow('line break');
+    const folder = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Folder',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    await expect(
+      owner.action(api.docSources.rotateCredential, { sourceId: folder, credential: 'value' }),
+    ).rejects.toThrow('Documentation source not found.');
+    vi.unstubAllEnvs();
+  });
+
   it('refuses a reader secret a source cannot keep to one https site, and a folder’s (E-74)', (): void => {
     const folder = validateLinkInput({ label: 'Folder', kind: 'folder', locator: '.' });
     expect(() => validateReaderSecret(folder, 'value')).toThrow('takes no secret');
