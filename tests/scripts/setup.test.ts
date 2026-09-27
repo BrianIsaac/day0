@@ -429,6 +429,16 @@ describe('a Docker daemon this user cannot reach', (): void => {
     expect(compose?.fix).toContain('docker-compose-plugin');
   });
 
+  it('refuses real mode on an arm64 daemon, which the redactor wheel locks do not cover, and lets mock mode through', (): void => {
+    const arm = { ...everything, daemon: { ok: true, detail: '29.8.0', arch: 'aarch64' } };
+    const real = prerequisiteReport({ ...arm, mode: 'real' }).find(
+      (item) => item.name === 'Redactor wheels',
+    );
+    expect(real).toMatchObject({ ok: false, blocking: true });
+    expect(real?.detail).toContain('x86_64');
+    expect(prerequisiteReport({ ...arm, mode: 'mock' }).every((item) => item.ok)).toBe(true);
+  });
+
   it('reports the daemon on a dry run, keeps its words, and exits non-zero after the plan', async (): Promise<void> => {
     const h = harness({
       answers: ['synthetic-key'],

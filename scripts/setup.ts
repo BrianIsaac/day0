@@ -529,6 +529,23 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
         ? 'Install the Compose v2 plugin: Docker Desktop carries it; on Linux, the docker-compose-plugin package.'
         : 'Compose v2 ships with current Docker; the old `docker-compose` v1 is not enough.',
   });
+  if (
+    observed.mode === 'real' &&
+    observed.daemon?.ok &&
+    /^(aarch64|arm64)/i.test(observed.daemon.arch ?? '')
+  ) {
+    results.push({
+      blocking: true,
+      name: 'Redactor wheels',
+      ok: false,
+      detail:
+        `this Docker daemon runs ${observed.daemon.arch} containers, and the redactor's wheel locks ` +
+        '(redactor/requirements*.txt) are compiled for x86_64 Linux only',
+      fix:
+        'Real mode reads documentation through the redactor, so it needs an x86_64 machine for now. ' +
+        'Mock mode (`pnpm setup:local`) has no redactor and runs here.',
+    });
+  }
   for (const port of observed.ports) {
     results.push({
       blocking: port.blocking ?? true,
