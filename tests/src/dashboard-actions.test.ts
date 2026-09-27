@@ -466,7 +466,9 @@ describe('the supervision metrics card', (): void => {
         },
       }),
     );
-    expect(replayed).toContain('4 actions automatic');
+    // Writes are the automatic changes; the reads apply on their own beside them (U12 D4 (b)).
+    expect(replayed).toContain('2 automatic changes');
+    expect(replayed).toContain('Also applied on their own: 2 reads, 0 manager messages.');
     expect(replayed).toContain('3 browser calls replayed to sign in again');
   });
 
@@ -493,7 +495,8 @@ describe('the supervision metrics card', (): void => {
       auditTrail: { complete: 0, total: 0, fraction: null },
     };
     const html = renderToStaticMarkup(createElement(MetricsCard, { metrics }));
-    expect(html.match(/not yet/g)).toHaveLength(6);
+    // Six supervision rows, and the three pilot figures this fixture has no evidence for.
+    expect(html.match(/not yet/g)).toHaveLength(9);
     expect(html).not.toContain('0 s');
   });
 
