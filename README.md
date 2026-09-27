@@ -454,6 +454,24 @@ never sends a status change an earlier run of the item already landed, so a tick
 somebody moved back since stays where they put it; the ledger row says it was
 reused, not sent.
 
+### How long a card's access lasts
+
+A connection card's access runs from its second approval for the length the card
+asks for, capped at a year, and 90 days when it names none. The hourly re-probe
+ends it once the date has passed: the card goes back to approved, marked expired,
+and no probe renews it. The card has no renew control yet; until it does, renew
+from the checkout, as the card's owner (with the local key, `dev-no-auth|local-boss`):
+
+```bash
+npx convex data surfaces --format jsonl          # the card's _id
+npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identity '{"subject":"dev-no-auth|local-boss"}'
+```
+
+The length is 1 to 365 days from now. An ended card is probed again at once, and
+keeps the tools it was approved with. An upgrade to 0.4.0 restarts every approved
+card's clock at 90 days from the upgrade, since the older code started it at the
+proposal.
+
 ### The documentation is yours
 
 Nothing in this repository is your team's documentation, and `docs-local/` is not in it - the setup creates the directory with one placeholder page so the read-only mount has something to bind (`pnpm convex:up` by hand creates it empty). Real mode is worth nothing until you put something there: the runbooks, onboarding page and systems list your team actually uses, in Markdown. Day0 reads that folder read-only, redacts credential values out of what it stores, and treats the systems it names as the systems that exist.
@@ -559,6 +577,8 @@ A real-mode installation is durable: the data volume holds the credentials, the 
 ./setup.sh upgrade                 # after git pull: a backup, pnpm install --frozen-lockfile, then resume
 ```
 
+These are the real-mode forms. A mock deployment, the seeded office `pnpm setup:local` sets up, takes the same verbs through the pnpm form: `pnpm setup:local backup`, `pnpm setup:local restore <file>` and, after a `git pull`, `pnpm setup:local upgrade`; `./setup.sh upgrade` always runs the upgrade in real mode.
+
 **`backup`** stops the backend for the copy, because a tar of a live database is not a backup, and starts it again after. It writes `<project>-<time>.tar.gz` beside a `.sha256` and a `.json` naming the release, the commit and the time, under `~/day0-backups/<project>/` or wherever `--to <dir>` says, and refuses a directory inside the checkout, which a `git clean` or a deleted clone would take with it. The tar holds the deployment's env as well as its rows, `DAY0_CREDENTIAL_KEY` among it: it is written readable only by you, and it belongs where you keep secrets.
 
 **`restore`** checks the file against its checksum, asks, backs up the data volume it is about to replace (under a name of its own, beside the others), takes the project down, replaces the volume and resumes on it. Before the env sync it adopts the restored deployment's credential key into `.env.local`, so the credentials the backup holds stay readable. It refuses while `.env.local` points Slack at the test double (`DAY0_TEST_SLACK_API_URL`): that is the demo bed's own restore, `pnpm demo:bed restore`, which stays demo-only. A restore rewinds everything to the moment of the backup, the intake checkpoints included, so work that landed on your systems after it is unknown to the restored rows and can be picked up again; read the queue before you approve anything.
@@ -566,7 +586,7 @@ A real-mode installation is durable: the data volume holds the credentials, the 
 **`upgrade`** is what to run after a `git pull`. It takes a backup first, installs the dependencies the new lockfile names, and resumes, and the resume on a volume that already holds a deployment does the upgrade in this order:
 
 1. **The release check.** The release the rows are at is a row on the deployment (`deploymentVersions`), read before anything is pushed. The releases are the `## vX.Y.Z` headings of `CHANGELOG.md` and this checkout's is `package.json`'s version. The same release again or the next one goes ahead; a jump of more than one release is refused and names the release to go through first, and older functions over rows a newer release migrated are refused, because each release's migrations run once, in order. Rows from before the stamp existed count as 0.3.0.
-2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
+2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. A volume nothing was ever pushed to (a first run that stopped before its push) has no tables, and takes the env first as a new one does, since the auth config is read from the deployment's env at the push. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
 3. **The env, then the restart.** `pnpm sync:env`, then `pnpm convex:restart` once everything before it succeeded.
 
 A schema change existing rows do not fit ships as two releases: the first declares both shapes and migrates, the second removes the old declaration. The migrations in `convex/migrations.ts` say what the release after theirs may remove: `agents.posture`, `agents.docSourceIds` and its read, `skills.daytonaSandboxId`, `skills.supervisedRunsCompleted` and `surfaces.credentialRef`. `npx convex run skills:requeueStranded` is an earlier one-off that no migration runs; the sandbox-id move it sat beside is now the `skills-sandbox-id` migration.
@@ -1481,6 +1501,17 @@ intake 不会接手它。无法读取 key 的所有者时，所有已指派的�
 请在其卡片上取消。Retry 不会再次发送之前某次运行已经成功的状态变更，因此别人之后改回的状态会保持原样；
 ledger 中该行会注明是复用，而非重新发送。
 
+#### 卡片的访问期限
+
+连接卡片的访问从第二次批准起算，时长取卡片申请的天数，最长一年；未注明时为 90 天。到期之后，每小时一次的重新探测会结束访问：卡片回到已批准状态并标记为过期，任何探测都不会为它续期。卡片目前还没有续期控件；在它上线之前，请以卡片所有者的身份在 checkout 中续期（使用本地密钥时为 `dev-no-auth|local-boss`）：
+
+```bash
+npx convex data surfaces --format jsonl          # 卡片的 _id
+npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identity '{"subject":"dev-no-auth|local-boss"}'
+```
+
+时长为自现在起 1 到 365 天。已结束的卡片会立即重新探测，并保留批准时的工具列表。升级到 0.4.0 时，每张已批准卡片的期限都会从升级时刻重新计为 90 天，因为旧代码是从提议时刻开始计时的。
+
 #### 文档由你提供
 
 本仓库不包含你团队的文档，`docs-local/` 也不在其中；setup 会创建这个目录并放入一个占位页面，让只读挂载有内容可绑定（手动执行 `pnpm convex:up` 时只创建空目录）。真实模式在你放入内容之前没有意义：把团队实际使用的 runbook、onboarding 页面和系统清单以 Markdown 放进去。day0 以只读方式读取该文件夹，在存储前将凭据值脱敏，并把其中出现的系统视为存在的系统。
@@ -1587,6 +1618,8 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 ./setup.sh upgrade                 # git pull 之后：先备份，再 pnpm install --frozen-lockfile，然后 resume
 ```
 
+以上是 real mode 的写法。mock 部署（`pnpm setup:local` 搭建的种子办公室）用 pnpm 形式执行同样的动作：`pnpm setup:local backup`、`pnpm setup:local restore <file>`，以及 `git pull` 之后的 `pnpm setup:local upgrade`；`./setup.sh upgrade` 总是以 real mode 运行升级。
+
 **`backup`** 在复制期间停止 backend（运行中的数据库打出的 tar 不算备份），完成后再启动。它在 `~/day0-backups/<project>/`（或 `--to <dir>` 指定的目录）写出 `<project>-<时间>.tar.gz`，旁边是 `.sha256` 和记录版本、commit 与时间的 `.json`；它拒绝写入 checkout 内部的目录，因为 `git clean` 或删除克隆会把它一起带走。tar 里既有数据，也有 deployment 的 env，其中包括 `DAY0_CREDENTIAL_KEY`：文件只对你可读，应放在保管密钥的地方。
 
 **`restore`** 先按校验和检查文件，然后询问，先备份即将被替换的数据卷（使用独立的文件名，与其他备份放在一起），再停下项目、替换数据卷并在其上 resume。在同步 env 之前，它会把恢复出的 deployment 的凭据密钥写入 `.env.local`，使备份中的凭据仍可读取。若 `.env.local` 把 Slack 指向测试替身（`DAY0_TEST_SLACK_API_URL`），它会拒绝：那是演示环境自己的恢复 `pnpm demo:bed restore`，仍只用于演示。恢复会把一切回退到备份时刻，包括 intake 的检查点，因此备份之后已在你的系统上落地的工作不为恢复出的数据所知，可能被再次领取；批准任何操作前请先查看队列。
@@ -1594,7 +1627,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 **`upgrade`** 用于 `git pull` 之后。它先备份，再安装新 lockfile 指定的依赖，然后 resume；在已有 deployment 的数据卷上，resume 按以下顺序升级：
 
 1. **版本检查。** 数据所处的版本是 deployment 上的一行（`deploymentVersions`），在推送任何内容之前读取。版本列表取自 `CHANGELOG.md` 的 `## vX.Y.Z` 标题，本 checkout 的版本取自 `package.json`。同一版本或下一版本可以继续；跨越多个版本会被拒绝，并指出应先经过哪个版本；把旧 functions 推到已被新版本迁移过的数据上也会被拒绝，因为每个版本的迁移只按顺序运行一次。版本记录出现之前的数据视为 0.3.0。
-2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
+2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。从未推送过任何内容的数据卷（首次运行在推送前停止）没有任何表，会像新数据卷一样先推送 env，因为 auth config 在推送时读取 deployment 的 env。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
 3. **env，然后重启。** `pnpm sync:env`，此前各步都成功后 `pnpm convex:restart`。
 
 现有数据不符合的 schema 变更分两个版本发布：第一个同时声明新旧两种结构并迁移，第二个删除旧声明。`convex/migrations.ts` 中的迁移注明了下一版本可以删除的内容：`agents.posture`、`agents.docSourceIds` 及其读取、`skills.daytonaSandboxId`、`skills.supervisedRunsCompleted` 和 `surfaces.credentialRef`。`npx convex run skills:requeueStranded` 是更早的一次性命令，不由任何迁移运行；与它并列的 sandbox id 迁移现在是 `skills-sandbox-id` 迁移。
