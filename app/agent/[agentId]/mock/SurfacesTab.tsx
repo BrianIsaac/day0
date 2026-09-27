@@ -376,10 +376,17 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
   );
 }
 
+/** A stored credential as `credentials.summaryForOwner` lists it, with what the store says of it. */
+interface CredentialStatus extends CredentialOwnerSummary {
+  readonly revokedAt?: number;
+  readonly status?: 'suspect' | 'superseded';
+  readonly statusReason?: string;
+}
+
 const credentialSummariesQuery = makeFunctionReference<
   'query',
   Record<string, never>,
-  CredentialOwnerSummary[]
+  CredentialStatus[]
 >('credentials:summaryForOwner');
 
 export interface CredentialRowProps {
@@ -388,6 +395,8 @@ export interface CredentialRowProps {
   landing: boolean;
   onLand: (plaintext: string) => void;
   presentation: CredentialPresentation;
+  /** What the store says of the stored credential, when it is not simply live. */
+  status?: string;
 }
 
 /**
@@ -420,6 +429,9 @@ export function CredentialRow(props: CredentialRowProps): React.ReactNode {
           OAuth approval procedure
           {props.presentation.detail ? `: ${props.presentation.detail}` : ''}
         </p>
+      ) : null}
+      {props.status ? (
+        <p className="mt-1 text-[var(--color-warn)]">Status: {props.status}</p>
       ) : null}
       {props.presentation.governanceFinding ? (
         <p className="mt-1 text-[var(--color-warn)]">{props.presentation.governanceFinding}</p>
@@ -928,6 +940,23 @@ export function withheldToolsBySurface(
   return found;
 }
 
+/**
+ * What the credential store says about a stored credential: revoked, or a
+ * status the sync or a rotation set, with its reason (U19 D5). Nothing for a
+ * credential that is simply live.
+ */
+export function credentialStatusLine(
+  summary: Pick<CredentialStatus, 'revokedAt' | 'status' | 'statusReason'> | undefined,
+): string | undefined {
+  if (!summary) return undefined;
+  const reason = summary.statusReason?.trim();
+  const tail = reason ? `: ${reason.replace(/\.$/, '')}.` : '.';
+  if (summary.revokedAt !== undefined) return `Revoked${tail}`;
+  if (summary.status === 'suspect') return `Suspect${tail}`;
+  if (summary.status === 'superseded') return `Superseded${tail}`;
+  return undefined;
+}
+
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
@@ -974,14 +1003,12 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     [sources],
   );
   const credentialById = useMemo(
-    (): Map<string, CredentialOwnerSummary> =>
+    (): Map<string, CredentialStatus> =>
       new Map(
-        (credentialSummaries ?? []).map(
-          (summary: CredentialOwnerSummary): [string, CredentialOwnerSummary] => [
-            String(summary._id),
-            summary,
-          ],
-        ),
+        (credentialSummaries ?? []).map((summary: CredentialStatus): [string, CredentialStatus] => [
+          String(summary._id),
+          summary,
+        ]),
       ),
     [credentialSummaries],
   );
@@ -1319,6 +1346,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                     );
                   }}
                   presentation={presentation}
+                  status={credentialStatusLine(summary)}
                 />
               ) : null}
               {evidence.map((item: SurfaceEvidence, evidenceIndex: number): React.ReactNode => {

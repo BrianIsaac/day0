@@ -60,6 +60,7 @@ import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   AccessRow,
   CredentialRow,
+  credentialStatusLine,
   EMPTY_SURFACES,
   DiscoveryProvenance,
   EvidenceQuote,
@@ -934,5 +935,35 @@ describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b
     } finally {
       state.surfaces = undefined;
     }
+  });
+});
+
+describe("the stored credential's status (U19 D5)", (): void => {
+  it('says what the store says of a credential that is not simply live, with its reason', (): void => {
+    expect(
+      credentialStatusLine({
+        status: 'superseded',
+        statusReason: 'No longer detected in synced documentation.',
+      }),
+    ).toBe('Superseded: No longer detected in synced documentation.');
+    expect(credentialStatusLine({ status: 'suspect', statusReason: 'rotated on the page' })).toBe(
+      'Suspect: rotated on the page.',
+    );
+    expect(credentialStatusLine({ revokedAt: 5, statusReason: undefined })).toBe('Revoked.');
+    expect(credentialStatusLine({})).toBeUndefined();
+    expect(credentialStatusLine(undefined)).toBeUndefined();
+  });
+
+  it('is printed on the credential row beside the page-derived credential', (): void => {
+    const markup = renderCredentialRow(
+      {
+        canLand: false,
+        kind: 'masked',
+        label: 'linear service token',
+        text: 'located in Revenue operations / Linear automation (masked)',
+      },
+      { status: 'Superseded: No longer detected in synced documentation.' },
+    );
+    expect(markup).toContain('Status: Superseded: No longer detected in synced documentation.');
   });
 });
