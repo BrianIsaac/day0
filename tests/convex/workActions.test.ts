@@ -6463,9 +6463,14 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
       ok: true,
       idempotencyKey: key,
     });
+    // A reuse takes this run's key but sent nothing, so it is no move of this run's.
+    const reuse = { ...applied('wi:run:2'), reusedFrom: 'wi:earlier:0' };
     expect(
       thisRunWrites(
-        { actions: [comment, comment], applied: [applied('wi:earlier:0'), applied('wi:run:1')] },
+        {
+          actions: [comment, comment, comment],
+          applied: [applied('wi:earlier:0'), applied('wi:run:1'), reuse],
+        },
         { workItemId: 'wi', runId: 'run' },
       ),
     ).toEqual([{ action: comment, applied: applied('wi:run:1') }]);
