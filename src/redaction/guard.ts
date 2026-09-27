@@ -70,7 +70,13 @@ export interface GuardContext {
 }
 
 /** The shapes that are names, and so do not apply under an explicit assignment. */
-const NAME_SHAPES: ReadonlySet<string> = new Set(['permission scope', 'channel reference', 'hostname', 'dotted identifier']);
+const NAME_SHAPES: ReadonlySet<string> = new Set([
+  'permission scope',
+  'channel reference',
+  'hostname',
+  'dotted identifier',
+  'cjk words',
+]);
 
 /**
  * Whether one shape rejects a value where it sits.
@@ -87,6 +93,42 @@ function shapeRejects(shape: NeverASecret, value: string, assigned: boolean): bo
   if (NAME_SHAPES.has(shape.name) && assigned) return false;
   if (shape.name === 'permission scope') return isPermissionScope(value);
   return shape.pattern.test(value);
+}
+
+/**
+ * The prefixes of `PROVIDER_SHAPES` in `structural.ts`, which imports this
+ * module; a test holds the two lists together.
+ */
+const PROVIDER_PREFIX =
+  /^(?:lin_api_|xoxe\.xox[abps]-|xox[abpes]-|ntn_|secret_|AKIA|ghp_|github_pat_|sk_live_|whsec_|AIza|sk-ant-|sk-(?:proj-|svcacct-)?)/;
+/** The provider prefix a token-shaped value starts with, or undefined. */
+export function providerPrefix(value: string): string | undefined {
+  return PROVIDER_PREFIX.exec(value)?.[0];
+}
+
+/** A tail that is one short unit written again and again: `XXXX`, `0123abcd0123abcd`. */
+const REPEATED_UNIT = /^(.{1,8})\1+$/;
+
+/**
+ * Name why a provider-format value is a sample written for a reader rather
+ * than an issued secret, or return undefined.
+ *
+ * A runbook that explains a rotation writes `lin_api_XXXXXXXXXXXX`; stored,
+ * it becomes the system's bindable credential. The test is on the tail after
+ * the provider prefix: one short unit written again and again. An issued
+ * token never has that shape, so the check
+ * is narrow enough to run over the provider grammar, which the full guard is
+ * not (`xoxb-1234567890-abcdefghij` reads as a branch name to it). A value
+ * with no provider prefix is not judged here: a password may be anything.
+ *
+ * @param value - A candidate value, prefix included.
+ */
+export function sampleValueReason(value: string): string | undefined {
+  const prefix = providerPrefix(value);
+  if (prefix === undefined) return undefined;
+  const tail = value.slice(prefix.length).replace(/[_-]/g, '');
+  if (tail.length < 4) return undefined;
+  return REPEATED_UNIT.test(tail) ? 'sample value' : undefined;
 }
 
 /** A stored row's label that records an explicit password assignment on the page. */
@@ -118,10 +160,19 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
   { name: 'masked', pattern: /^(.)\1{3,}$/ },
   {
     name: 'label word',
-    pattern: /^(?:password|passwd|pwd|passcode|passphrase|pin|token|secret|key|api key|credential|credentials|login|username|user|account|bearer|basic|authorization)$/i,
+    pattern:
+      /^(?:password|passwd|pwd|passcode|passphrase|pin|token|secret|key|api key|credential|credentials|login|username|user|account|bearer|basic|authorization)$/i,
   },
+  /**
+   * Chinese, Japanese or Korean words and nothing else: a label (`身份证号`,
+   * `手机号码`), never a value, unless a label assigns it.
+   */
+  { name: 'cjk words', pattern: /^[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]{2,}$/ },
   /** A provider prefix with nothing after it but a mode word: a placeholder, not a key. */
-  { name: 'placeholder', pattern: /^[a-z]{1,4}[-_](?:test|live|example|sample|dummy|placeholder|changeme)$/i },
+  {
+    name: 'placeholder',
+    pattern: /^[a-z]{1,4}[-_](?:test|live|example|sample|dummy|placeholder|changeme)$/i,
+  },
   /** Dot-separated lowercase labels ending in an alphabetic top label: an address, not a value. */
   { name: 'hostname', pattern: /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/ },
   { name: 'dotted identifier', pattern: DOTTED_IDENTIFIER },
@@ -141,7 +192,7 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
  * abc123". The value is the last word; everything before it names the kind.
  */
 const LABEL_THEN_VALUE =
-  /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"，。]+)[`'"，。]?$/i;
+  /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60]+)[`'"]?(?:[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60]\S*)?$/i;
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
 /** A word of a runbook or of code: lowercase, Capitalised, snake_case or camelCase letters, no digit. */
 const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+)$/;
@@ -163,16 +214,22 @@ const QUOTE = '(?:\\\\?[`\'"])?';
  * cell. Prose that only mentions a label ("no token value is on this page")
  * has no separator and is not one.
  */
-const SECRET_ASSIGNMENT = new RegExp(`${SECRET_LABEL}${QUOTE}\\s*(?:[:=：|]|\\bis\\b|是|为)\\s*${QUOTE}$`, 'i');
+const SECRET_ASSIGNMENT = new RegExp(
+  `${SECRET_LABEL}${QUOTE}\\s*(?:[:=：|]|\\bis\\b|是|为)\\s*${QUOTE}$`,
+  'i',
+);
 const SECRET_LABEL_WORD = new RegExp(`(?:^|[^A-Za-z])${SECRET_LABEL}(?:$|[^A-Za-z])`, 'i');
-const PASSWORD_ASSIGNMENT = /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
-const ASSIGNED_VALUE = /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
+const PASSWORD_ASSIGNMENT =
+  /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
+const ASSIGNED_VALUE =
+  /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
 /**
  * A label with a short phrase before its separator ("PIN for the shared
  * phone: 0419"); only a value with a digit is taken this way, so "password
  * policy: rotate quarterly" stays prose.
  */
-const PHRASED_ASSIGNED_VALUE = /^(?:[ \t]+[^\s:=：]+){1,4}[ \t]*[:=：][ \t]*([^\s`'"，。<>\\]*\d[^\s`'"，。<>\\]*)/i;
+const PHRASED_ASSIGNED_VALUE =
+  /^(?:[ \t]+[^\s:=：]+){1,4}[ \t]*[:=：][ \t]*([^\s`'"，。<>\\]*\d[^\s`'"，。<>\\]*)/i;
 /** `user / password` in one span: the model read the pair as one name. */
 const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
 /**
@@ -180,13 +237,34 @@ const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
  * "username: revops", "user = revops". A `login:` assignment is not here; the
  * grammar reads it as the credential unless it is a user / password pair.
  */
-const USERNAME_DESIGNATOR = /(?:\blogin[ \t]+is|(?:\buser ?name|\buser|\baccount)[ \t]*(?:\bis\b|[:=：]))[ \t]*[`'"]?$/i;
+const USERNAME_DESIGNATOR =
+  /(?:\blogin[ \t]+is|(?:\buser ?name|\buser|\baccount)[ \t]*(?:\bis\b|[:=：]))[ \t]*[`'"]?$/i;
 /** JSON keys whose string values are identifiers by construction. */
-const IDENTIFIER_KEY = /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
+const IDENTIFIER_KEY =
+  /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
 const IDENTIFIER_KEY_ASSIGNMENT = /\b(?:channel|method)[ \t]+key[ \t]*[:=][ \t]*[`'"]?$/i;
-const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
-/** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
-const TRAILING_PUNCTUATION = /[.,;:)\]}'"`]+$/;
+const LEADING_PUNCTUATION = /^[(\[{'"`（「『【《]+/;
+/**
+ * Sentence punctuation a model swallows, ASCII or full-width; ASCII `!` and `?`
+ * stay, a password may end in one.
+ */
+const TRAILING_PUNCTUATION = /[.,;:)\]}'"`，。；：、！？）」』】》]+$/;
+/** An ASCII value that runs straight on into CJK text: the value ends where the sentence starts. */
+const ASCII_BEFORE_CJK =
+  /^[\x21-\x7e]+(?=[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff01-\uff60])/;
+/** A label and a `:`, `=` or `：` directly before the value; prose ("the password is ...") is not one. */
+const LABEL_SEPARATOR_BEFORE = new RegExp(`${SECRET_LABEL}\\s*[:=：]\\s*$`, 'i');
+/** A CJK password-class label, with or without a separator, directly before the value. */
+const CJK_LABEL_BEFORE = /(?:密码|口令|令牌|密钥|秘钥|凭证)\s*(?:[:=：]|是|为)?\s*$/;
+/**
+ * A span that swallowed a CJK password-class label and its CJK value:
+ * "密码是开门芝麻". The value is what follows the separator.
+ */
+const CJK_LABEL_THEN_VALUE =
+  /^(?:密码|口令|令牌|密钥|秘钥|凭证)\s*(?:[:=：]|是|为)\s*([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]{2,})[。，]?$/;
+/** Letters only: the first word of a phrase when more words follow it on the line. */
+const LATIN_LETTERS = /^[A-Za-z]+$/;
+const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
 
 /**
  * Narrow a model's secret span to the value it means, or reject it.
@@ -220,8 +298,8 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const tokenStart = start - (text.slice(0, start).match(/[A-Za-z0-9_:.-]+$/)?.[0].length ?? 0);
   const tokenEnd = end + (text.slice(end).match(/^[A-Za-z0-9_:.-]+/)?.[0].length ?? 0);
   const scope = isPermissionScope(text.slice(tokenStart, tokenEnd));
-  const scopeContext = /[\[,'"`]\s*$/.test(text.slice(0, tokenStart)) ||
-    /^\s*[\],'"`]/.test(text.slice(tokenEnd));
+  const scopeContext =
+    /[\[,'"`]\s*$/.test(text.slice(0, tokenStart)) || /^\s*[\],'"`]/.test(text.slice(tokenEnd));
   const assignedAt = (index: number): boolean =>
     SECRET_ASSIGNMENT.test(text.slice(0, index)) || PASSWORD_ASSIGNMENT.test(text.slice(0, index));
   const columnAssigned = inCredentialColumn(text, start, end);
@@ -233,13 +311,24 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const token = text.slice(tokenStart, tokenEnd);
   const hashed = text[tokenStart - 1] === '#' && !/[A-Za-z0-9_#]/.test(text[tokenStart - 2] ?? '');
   const wholeToken = hashed ? `#${token}` : token;
-  if (IDENTIFIER_KEY_ASSIGNMENT.test(text.slice(0, hashed ? tokenStart - 1 : tokenStart)) &&
-    (CHANNEL_REFERENCE.test(wholeToken) || DOTTED_IDENTIFIER.test(token))) return undefined;
-  if (hashed && CHANNEL_REFERENCE.test(`#${token}`) && !assignedAt(tokenStart - 1) && !columnAssigned) return undefined;
+  if (
+    IDENTIFIER_KEY_ASSIGNMENT.test(text.slice(0, hashed ? tokenStart - 1 : tokenStart)) &&
+    (CHANNEL_REFERENCE.test(wholeToken) || DOTTED_IDENTIFIER.test(token))
+  )
+    return undefined;
+  if (
+    hashed &&
+    CHANNEL_REFERENCE.test(`#${token}`) &&
+    !assignedAt(tokenStart - 1) &&
+    !columnAssigned
+  )
+    return undefined;
   if (DOTTED_IDENTIFIER.test(token) && !assigned) return undefined;
   const assignedTokenStart = hashed ? tokenStart - 1 : tokenStart;
-  if ((assignedAt(assignedTokenStart) || columnAssigned) &&
-    (start > assignedTokenStart || end < tokenEnd)) {
+  if (
+    (assignedAt(assignedTokenStart) || columnAssigned) &&
+    (start > assignedTokenStart || end < tokenEnd)
+  ) {
     start = assignedTokenStart;
     end = tokenEnd;
     value = text.slice(start, end);
@@ -263,7 +352,10 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   }
   const explicitPassword = label === 'password' && PASSWORD_ASSIGNMENT.test(text.slice(0, start));
   const wrappedPassword = explicitPassword && /^[^\s]+\r?\n[0-9]+$/.test(value);
-  const narrowed = label === 'private key' ? null : LABEL_THEN_VALUE.exec(value);
+  const narrowed =
+    label === 'private key'
+      ? null
+      : (LABEL_THEN_VALUE.exec(value) ?? CJK_LABEL_THEN_VALUE.exec(value));
   if (narrowed && narrowed[1] !== value) {
     start += value.lastIndexOf(narrowed[1]);
     end = start + narrowed[1].length;
@@ -271,37 +363,73 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   } else if (/\s/.test(value) && label !== 'private key' && !wrappedPassword) {
     return undefined;
   }
+  const cjkTail = ASCII_BEFORE_CJK.exec(value);
+  if (cjkTail) {
+    end = start + cjkTail[0].length;
+    value = text.slice(start, end);
+  }
   const padding = /^={1,2}(?![=A-Za-z0-9+/])/.exec(text.slice(end));
-  if (padding && /^[A-Za-z0-9+/]{8,}$/.test(value) && (value.length + padding[0].length) % 4 === 0) {
+  if (
+    padding &&
+    /^[A-Za-z0-9+/]{8,}$/.test(value) &&
+    (value.length + padding[0].length) % 4 === 0
+  ) {
     end += padding[0].length;
     value = text.slice(start, end);
   }
   if (end <= start) return undefined;
   const before = text.slice(0, start);
-  if (!explicitPassword && (USERNAME_DESIGNATOR.test(before) || IDENTIFIER_KEY.test(before))) return undefined;
+  if (!explicitPassword && (USERNAME_DESIGNATOR.test(before) || IDENTIFIER_KEY.test(before)))
+    return undefined;
   // Tool names and prose are not credentials merely because a detector
   // labels them as such. Explicit assignments still protect weak passwords.
   const wholeWord = !/[A-Za-z0-9_]$/.test(before) && !/^[A-Za-z0-9_]/.test(text.slice(end));
-  if (wholeWord && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value) &&
-    !SECRET_ASSIGNMENT.test(before) && !inCredentialColumn(text, start, end)) {
+  if (
+    wholeWord &&
+    RUNBOOK_WORD.test(value) &&
+    !opaqueRunbookWord(value) &&
+    !SECRET_ASSIGNMENT.test(before) &&
+    !inCredentialColumn(text, start, end)
+  ) {
+    return undefined;
+  }
+  // "Login: Google Workspace SSO": an unquoted label value that is the first
+  // word of a phrase is the author's prose; a quote is how an author marks a
+  // secret that reads as a word.
+  if (
+    LATIN_LETTERS.test(value) &&
+    LABEL_SEPARATOR_BEFORE.test(before) &&
+    !/[`'"]$/.test(before) &&
+    PHRASE_CONTINUES.test(text.slice(end).split('\n', 1)[0] ?? '')
+  ) {
     return undefined;
   }
   if (NEVER_REDACT.has(value)) return undefined;
   const assignedValue = assignedAt(start) || columnAssigned;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (shape.name === 'permission scope') return false;
-    if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
+    if (
+      explicitPassword &&
+      (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))
+    ) {
       return false;
     }
+    // A CJK value right after a CJK password label ("门禁密码 开门芝麻") is the
+    // label's value, whatever separator the author used.
+    if (shape.name === 'cjk words' && CJK_LABEL_BEFORE.test(before)) return false;
     return shapeRejects(shape, value, assignedValue);
   });
-  return rejected ? undefined : { start, end };
+  return rejected || sampleValueReason(value) ? undefined : { start, end };
 }
 
 /** Preserve the explicit page context that a generated credential label cannot encode. */
 export function explicitlyAssignedCredential(text: string, start: number, end: number): boolean {
   const before = text.slice(0, start);
-  return SECRET_ASSIGNMENT.test(before) || PASSWORD_ASSIGNMENT.test(before) || inCredentialColumn(text, start, end);
+  return (
+    SECRET_ASSIGNMENT.test(before) ||
+    PASSWORD_ASSIGNMENT.test(before) ||
+    inCredentialColumn(text, start, end)
+  );
 }
 
 /**
@@ -354,7 +482,9 @@ function inCredentialColumn(text: string, start: number, end: number): boolean {
  *   The two halves, or undefined when the span is not such a pair or the
  *   password half is a shape a secret never has.
  */
-export function splitUserPasswordPair(value: string): { username: string; password: string } | undefined {
+export function splitUserPasswordPair(
+  value: string,
+): { username: string; password: string } | undefined {
   const pair = USER_PASSWORD_PAIR.exec(value);
   if (!pair) return undefined;
   const password = pair[2].replace(TRAILING_PUNCTUATION, '');
@@ -363,7 +493,18 @@ export function splitUserPasswordPair(value: string): { username: string; passwo
 }
 
 /** Shapes an identifier has and personal data does not: the working ids of a ticket queue. */
-const WORKING_IDENTIFIER = new Set(['reference', 'marker or placeholder inside', 'issue key', 'url', 'uuid', 'hex id', 'slack id', 'date', 'figure', 'too short']);
+const WORKING_IDENTIFIER = new Set([
+  'reference',
+  'marker or placeholder inside',
+  'issue key',
+  'url',
+  'uuid',
+  'hex id',
+  'slack id',
+  'date',
+  'figure',
+  'too short',
+]);
 const DIGITS = /\d/g;
 
 /**
@@ -383,7 +524,8 @@ const DIGITS = /\d/g;
  */
 export function personalDataGuardReason(kind: string, value: string): string | undefined {
   const identifier = NEVER_A_SECRET.find(
-    (shape: NeverASecret): boolean => WORKING_IDENTIFIER.has(shape.name) && shape.pattern.test(value),
+    (shape: NeverASecret): boolean =>
+      WORKING_IDENTIFIER.has(shape.name) && shape.pattern.test(value),
   );
   if (identifier) return identifier.name;
   const digits = (value.match(DIGITS) ?? []).length;
@@ -410,6 +552,9 @@ export function guardReason(value: string, context: GuardContext = {}): string |
     shapeRejects(candidate, value, context.assigned === true),
   )?.name;
   if (shape) return shape;
-  if (!context.assigned && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value)) return 'runbook word';
+  const sample = sampleValueReason(value);
+  if (sample) return sample;
+  if (!context.assigned && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value))
+    return 'runbook word';
   return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;
 }

@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { presentSurfaceCredential } from '../../src/surfaces/credential-presentation';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -11,6 +11,7 @@ import { getFunctionName } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
+import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -70,7 +71,6 @@ afterAll(async (): Promise<void> => {
   delete process.env.DAY0_REDACTOR_URL;
   await redactorDouble?.close();
 });
-
 
 type DraftPath = 'mcp' | 'documented-api' | 'browser-driven' | 'escalate';
 
@@ -182,7 +182,8 @@ function stubRegistry(): ReturnType<typeof vi.fn> {
   const realFetch = globalThis.fetch;
   const fetchMock = vi.fn(async (input: URL | string, init?: RequestInit): Promise<Response> => {
     // The redaction component is reached over the same global; its calls are its own.
-    if (redactorDouble && String(input).startsWith(redactorDouble.url)) return realFetch(input, init);
+    if (redactorDouble && String(input).startsWith(redactorDouble.url))
+      return realFetch(input, init);
     const search = new URL(String(input)).searchParams.get('search')?.toLowerCase() ?? '';
     const servers = Object.values(REGISTRY_SERVERS).filter((entry): boolean =>
       `${entry.server.name} ${entry.server.title}`.toLowerCase().includes(search),
@@ -574,6 +575,17 @@ describe('credential extraction', (): void => {
     });
   });
 
+  it('takes a login documented on a runbook and on its system page from the system page', (): void => {
+    const pages = [
+      'revops/runbooks/how-to-refresh-the-tile.md',
+      'systems/looker-pipeline-tile.md',
+    ].map((ref) => ({ sourceId: 'folder', ...companyPage(ref) }));
+    expect(extractCredentialFinding(pages, 'Looker pipeline tile')).toMatchObject({
+      found: 'value',
+      evidenceRef: 'systems/looker-pipeline-tile.md',
+    });
+  });
+
   it('never carries a value that escaped redaction into a location finding', (): void => {
     const value = ['lin', 'api', 'ReviewValue0123456789'].join('_');
     const page = {
@@ -677,12 +689,51 @@ describe('URL attribution', (): void => {
       webUi: 'http://mcp.evil.example/mcp',
       insecure: 'http://mcp.evil.example/mcp',
     });
-    expect(documentedEndpoints(['http://playwright-mcp:8931/mcp'])).toEqual({
-      mcp: 'http://playwright-mcp:8931/mcp',
+  });
+
+  it('admits a private MCP endpoint only when DAY0_PRIVATE_HOSTS lists its host', (): void => {
+    const listed = privateHostAllowlist('mcp.corp.internal');
+    expect(documentedEndpoints(['https://mcp.corp.internal/mcp'], listed)).toEqual({
+      mcp: 'https://mcp.corp.internal/mcp',
       api: undefined,
       webUi: undefined,
       insecure: undefined,
+      refusedMcp: undefined,
     });
+  });
+
+  it('refuses a private MCP endpoint the probe would refuse, with the probe reason', (): void => {
+    const unlisted = documentedEndpoints(
+      ['https://mcp.corp.internal/mcp', 'http://playwright-mcp:8931/mcp'],
+      privateHostAllowlist(''),
+    );
+    expect(unlisted.mcp).toBeUndefined();
+    expect(unlisted.refusedMcp?.endpoint).toBe('https://mcp.corp.internal/mcp');
+    expect(unlisted.refusedMcp?.reason).toContain('DAY0_PRIVATE_HOSTS');
+    expect(unlisted.webUi).toBeUndefined();
+    expect(
+      documentedEndpoints(
+        ['https://northstar.internal/mcp', 'https://northstar.internal/login'],
+        privateHostAllowlist(''),
+      ).webUi,
+    ).toBeUndefined();
+    // Listed but plaintext: the probe sends a bearer over https only.
+    expect(
+      documentedEndpoints(
+        ['http://playwright-mcp:8931/mcp'],
+        privateHostAllowlist('playwright-mcp'),
+      ).mcp,
+    ).toBeUndefined();
+  });
+
+  it('reads the allowlist from the environment when none is passed', (): void => {
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '.corp.internal');
+    expect(documentedEndpoints(['https://mcp.corp.internal/mcp']).mcp).toBe(
+      'https://mcp.corp.internal/mcp',
+    );
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    expect(documentedEndpoints(['https://mcp.corp.internal/mcp']).mcp).toBeUndefined();
+    vi.unstubAllEnvs();
   });
 
   it('never takes a URL from a sentence that denies the surface', (): void => {
@@ -852,6 +903,101 @@ describe('orientation run', (): void => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('re-orients an absent system when a synced page first names it or drops its denial', async (): Promise<void> => {
+    const root = mkdtempSync(join(tmpdir(), 'day0-reorient-absent-'));
+    const folder = join(root, 'docs-local');
+    mkdirSync(join(folder, 'systems'), { recursive: true });
+    writeFileSync(join(folder, 'onboarding.md'), '# Onboarding\n\nRead the handbook first.\n');
+    writeFileSync(
+      join(folder, 'systems', 'northstar-crm.md'),
+      '# Northstar CRM\n\nNo approved API or MCP server is recorded for Northstar CRM.\n',
+    );
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    try {
+      const harness = convexTest(schema, orientationModules());
+      const { agentId, sourceId } = await harness.run(
+        async (ctx): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> => ({
+          agentId: await ctx.db.insert('agents', {
+            bossEmail: 'boss@day0.local',
+            name: 'reorientation test',
+            userId: 'owner',
+            state: 'active',
+            createdAt: 1,
+          }),
+          sourceId: await ctx.db.insert('docSources', {
+            userId: 'owner',
+            label: 'Team folder',
+            kind: 'folder',
+            locator: 'docs-local',
+            status: 'linking',
+            createdAt: 1,
+            updatedAt: 1,
+          }),
+        }),
+      );
+      await harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          { name: 'Northstar CRM', class: 'crm', whereMentioned: 'We use Northstar CRM.' },
+          { name: 'NetLedger', class: 'other', whereMentioned: 'We use NetLedger.' },
+        ],
+      });
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.action(internal.orientationActions.run, { agentId });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      const before = await surfacesBySlug(harness, agentId);
+      expect(before['northstar-crm']?.verdict).toBe('absent');
+      expect(before.netledger?.verdict).toBe('absent');
+
+      // The author removes the denial on one page and writes the first page for the other.
+      writeFileSync(
+        join(folder, 'systems', 'northstar-crm.md'),
+        '# Northstar CRM\n\nNorthstar CRM has a documented API at https://api.northstar.example/v1.\n',
+      );
+      writeFileSync(
+        join(folder, 'systems', 'netledger.md'),
+        '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.\n',
+      );
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const after = await surfacesBySlug(harness, agentId);
+      expect(after['northstar-crm']).toMatchObject({ verdict: 'proposed', path: 'documented-api' });
+      expect(after.netledger).toMatchObject({ verdict: 'proposed', path: 'documented-api' });
+      const reopened = await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent_type', (index) =>
+              index.eq('agentId', agentId).eq('type', 'surface.reopened'),
+            )
+            .collect(),
+      );
+      expect(reopened).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves an absent system absent while its page still denies a surface', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'escalate';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      { 'northstar.md': '# Northstar CRM\n\nNo approved API is recorded for Northstar CRM.' },
+      [{ name: 'Northstar CRM', class: 'crm' }],
+    );
+    await orientDeclared(harness, agentId);
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId }),
+    ).resolves.toEqual({ reopened: 0 });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await surfacesBySlug(harness, agentId))['northstar-crm']?.verdict).toBe('absent');
   });
 
   it("does not lend one system's MCP endpoint to another named in the same paragraph", async (): Promise<void> => {
@@ -1050,25 +1196,46 @@ describe('orientation run', (): void => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
     model.pathFor = () => 'documented-api';
     const harness = convexTest(schema, allConvexModules());
-    const { agentId, sourceId } = await seedOrientation(harness, {
-      'slack.md': '# Slack automation policy\nSlack API: https://slack.com/api/\n<credential: slack credential, stored>\nThe installing administrator lands the bot token.',
-    }, [{ name: 'Slack', class: 'chat' }]);
-    const credentialId = await harness.run(async (ctx) => await ctx.db.insert('credentials', {
-      userId: 'owner', kind: 'value', label: 'slack credential',
-      source: { sourceId, ref: 'slack.md' }, createdAt: 1,
-      ...encrypt('channels:history', key),
-    }));
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      {
+        'slack.md':
+          '# Slack automation policy\nSlack API: https://slack.com/api/\n<credential: slack credential, stored>\nThe installing administrator lands the bot token.',
+      },
+      [{ name: 'Slack', class: 'chat' }],
+    );
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'slack credential',
+          source: { sourceId, ref: 'slack.md' },
+          createdAt: 1,
+          ...encrypt('channels:history', key),
+        }),
+    );
     await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
     const slack = (await surfacesBySlug(harness, agentId)).slack;
     expect(slack.credentialId).toBeUndefined();
     expect(await harness.query(internal.credentials.getInternal, { credentialId })).toMatchObject({
-      status: 'suspect', statusReason: 'permission scope',
+      status: 'suspect',
+      statusReason: 'permission scope',
     });
     const request = slack.request as { credential: { found: 'value'; method: 'bot-token' } };
-    expect(presentSurfaceCredential({ credential: request.credential, credentialLocation: slack.credentialLocation }).canLand).toBe(true);
+    expect(
+      presentSurfaceCredential({
+        credential: request.credential,
+        credentialLocation: slack.credentialLocation,
+      }).canLand,
+    ).toBe(true);
     expect(JSON.stringify(slack)).not.toContain('channels:history');
-    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow('unavailable');
-    expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual([]);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
+    expect(
+      await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' }),
+    ).toEqual([]);
   });
 
   it('builds credential findings from all four sanitised Notion fixtures', async (): Promise<void> => {
@@ -2071,16 +2238,20 @@ describe('each employee reads its own role', (): void => {
 
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id, role: 'manager',
+      surfaceId: after['looker-pipeline-tile']._id,
+      role: 'manager',
     });
     expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
-      verdict: 'proposed', managerApprovedAt: expect.any(Number),
+      verdict: 'proposed',
+      managerApprovedAt: expect.any(Number),
     });
     await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id, role: 'it',
+      surfaceId: after['looker-pipeline-tile']._id,
+      role: 'it',
     });
     expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
-      verdict: 'approved', itApprovedAt: expect.any(Number),
+      verdict: 'approved',
+      itApprovedAt: expect.any(Number),
     });
 
     // Rejected, the card goes back under the row, one click from a card again.
@@ -2282,7 +2453,8 @@ describe('each employee reads its own role', (): void => {
     // Another role's prose never reaches the question, and a kanban card has none.
     expect(slackFor('finance')).not.toMatch(/revops|logistics-desk/);
     expect(
-      model.scopePrompts.filter((prompt): boolean => prompt.includes('Fields to pick: team, project'))
+      model.scopePrompts
+        .filter((prompt): boolean => prompt.includes('Fields to pick: team, project'))
         .some((prompt): boolean => prompt.includes('What the same pages say')),
     ).toBe(false);
 
@@ -2292,7 +2464,9 @@ describe('each employee reads its own role', (): void => {
     expect(INTAKE_SCOPE_INSTRUCTIONS).toContain(
       'Leave out a channel only when the manager and the pages both describe it as nothing more than where the team talks among itself.',
     );
-    expect(INTAKE_SCOPE_INSTRUCTIONS).not.toContain('A channel the documentation says every team reads');
+    expect(INTAKE_SCOPE_INSTRUCTIONS).not.toContain(
+      'A channel the documentation says every team reads',
+    );
   });
 
   it("never reaches another role's queue, whatever numbers the model answers", async (): Promise<void> => {

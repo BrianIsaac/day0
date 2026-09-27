@@ -1,16 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSpans, replaceSpans, structuralSpans } from '../../../src/redaction/structural';
+import { providerPrefix } from '../../../src/redaction/guard';
+import {
+  mergeSpans,
+  PROVIDER_LABELS,
+  replaceSpans,
+  structuralSpans,
+} from '../../../src/redaction/structural';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 
 function found(text: string): Array<[string, string]> {
-  return structuralSpans(text).map((span): [string, string] => [span.label, text.slice(span.start, span.end)]);
+  return structuralSpans(text).map((span): [string, string] => [
+    span.label,
+    text.slice(span.start, span.end),
+  ]);
 }
 
 describe('the structural grammar', (): void => {
   it('takes the password segment of a connection string and nothing else of it', (): void => {
-    expect(found(`DSN: postgres://app_reader:${CORPUS_SLOTS.db_password}@warehouse.internal:5432/revops`)).toEqual([
-      ['connection password', CORPUS_SLOTS.db_password],
-    ]);
+    expect(
+      found(
+        `DSN: postgres://app_reader:${CORPUS_SLOTS.db_password}@warehouse.internal:5432/revops`,
+      ),
+    ).toEqual([['connection password', CORPUS_SLOTS.db_password]]);
     for (const kept of [
       'Mirror: https://reader@warehouse.internal/revops',
       'DSN: postgres://app:${DB_PASSWORD}@warehouse.internal/revops',
@@ -23,14 +34,22 @@ describe('the structural grammar', (): void => {
   });
 
   it('takes a PEM body, a JSON web token and an Authorization header value', (): void => {
-    expect(found(`-----BEGIN OPENSSH PRIVATE KEY-----\n${CORPUS_SLOTS.pem_body}\n-----END OPENSSH PRIVATE KEY-----`)).toEqual([
-      ['private key', CORPUS_SLOTS.pem_body],
+    expect(
+      found(
+        `-----BEGIN OPENSSH PRIVATE KEY-----\n${CORPUS_SLOTS.pem_body}\n-----END OPENSSH PRIVATE KEY-----`,
+      ),
+    ).toEqual([['private key', CORPUS_SLOTS.pem_body]]);
+    expect(found(`Session: ${CORPUS_SLOTS.jwt}, valid for one hour.`)).toEqual([
+      ['json web token', CORPUS_SLOTS.jwt],
     ]);
-    expect(found(`Session: ${CORPUS_SLOTS.jwt}, valid for one hour.`)).toEqual([['json web token', CORPUS_SLOTS.jwt]]);
-    expect(found(`curl -H "Authorization: Bearer ${CORPUS_SLOTS.bearer_value}" https://api.example.com/v1`)).toEqual([
-      ['header value', CORPUS_SLOTS.bearer_value],
+    expect(
+      found(
+        `curl -H "Authorization: Bearer ${CORPUS_SLOTS.bearer_value}" https://api.example.com/v1`,
+      ),
+    ).toEqual([['header value', CORPUS_SLOTS.bearer_value]]);
+    expect(found(`Authorization: Basic ${CORPUS_SLOTS.basic_auth}`)).toEqual([
+      ['header value', CORPUS_SLOTS.basic_auth],
     ]);
-    expect(found(`Authorization: Basic ${CORPUS_SLOTS.basic_auth}`)).toEqual([['header value', CORPUS_SLOTS.basic_auth]]);
   });
 
   it('leaves the words Bearer and a placeholder header alone', (): void => {
@@ -100,14 +119,64 @@ describe('the structural grammar', (): void => {
       { start: 5, end: 10 },
       { start: 10, end: 12 },
     ]);
-    expect(replaceSpans('abcdefghij', [{ start: 1, end: 3 }, { start: 5, end: 6 }], (): string => '_')).toBe('a_de_ghij');
+    expect(
+      replaceSpans(
+        'abcdefghij',
+        [
+          { start: 1, end: 3 },
+          { start: 5, end: 6 },
+        ],
+        (): string => '_',
+      ),
+    ).toBe('a_de_ghij');
+  });
+});
+
+describe('provider-format samples on a rotation runbook', (): void => {
+  it('stores no sample written in a provider format', (): void => {
+    for (const text of [
+      'Rotate the token: lin_api_XXXXXXXXXXXX',
+      'A bot token looks like xoxb-0123abcd0123abcd.',
+      `ghp_${'x'.repeat(36)}`,
+    ]) {
+      expect(structuralSpans(text), text).toEqual([]);
+    }
+  });
+
+  it('refuses a repeated-character sample in every provider format the grammar knows', (): void => {
+    for (const [slot, value] of Object.entries(CORPUS_SLOTS)) {
+      const spans = structuralSpans(value);
+      if (spans.length !== 1 || !PROVIDER_LABELS.has(spans[0]!.label)) continue;
+      const prefix = providerPrefix(value);
+      expect(prefix, slot).toBeDefined();
+      const sample = `${prefix}${'X'.repeat(value.length - (prefix?.length ?? 0))}`;
+      expect(structuralSpans(`token: ${sample}`), slot).toEqual([]);
+    }
+  });
+
+  it('still stores an issued token, whatever its tail looks like to a reader', (): void => {
+    for (const token of [
+      'xoxb-1234567890-abcdefghij',
+      'lin_api_Zq8rT2vLm4Xw9KpB7nHc',
+      'ntn_4h7Kq2Lp9Xw3Vb8Nm5Rt',
+      'xoxb-8844112233-5566778899-Qk3LmN8pZr2Tv',
+    ]) {
+      const text = `token: ${token}`;
+      expect(
+        structuralSpans(text).map((span) => text.slice(span.start, span.end)),
+        token,
+      ).toEqual([token]);
+    }
   });
 });
 
 describe('the labelled password grammar', (): void => {
   it('takes the value after a password-class label, quoted or bare, and the password half of a login pair', (): void => {
     const cases: Array<[string, string[]]> = [
-      ['Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`)', ['pipeline-tile-local']],
+      [
+        'Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`)',
+        ['pipeline-tile-local'],
+      ],
       ['pwd: Winter2026!', ['Winter2026!']],
       ['Passcode = 482913', ['482913']],
       ['login: revops / Sunny-Day-42', ['Sunny-Day-42']],
@@ -118,8 +187,14 @@ describe('the labelled password grammar', (): void => {
     ];
     for (const [text, values] of cases) {
       const spans = structuralSpans(text);
-      expect(spans.map((span) => text.slice(span.start, span.end)), text).toEqual(values);
-      expect(spans.every((span) => span.label === 'password'), text).toBe(true);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+      expect(
+        spans.every((span) => span.label === 'password'),
+        text,
+      ).toBe(true);
     }
   });
 
@@ -141,9 +216,92 @@ describe('the labelled password grammar', (): void => {
   });
 });
 
+describe("the labelled password grammar on an author's page", (): void => {
+  it('never stores the prefix of a username that starts a login pair', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['login: Admin / hunter2x9', ['hunter2x9']],
+      ['Login: Admin / S3cret!', ['S3cret!']],
+      ['password: Admin / x', []],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+
+  it('leaves a bare capitalised word, a Latin phrase and a CJK phrase to the model', (): void => {
+    for (const text of [
+      'Login: Google Workspace SSO',
+      'Password: Managed by Okta',
+      'Password: Summer',
+      '密码：请联系IT管理员',
+      'Login: 请联系管理员',
+      'パスワード: see IT; password: 管理者に連絡',
+    ]) {
+      expect(structuralSpans(text), text).toEqual([]);
+    }
+  });
+
+  it('stops every bare value at CJK text and full-width punctuation, so no Chinese tail is stored', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['密码：abc123然后登录', ['abc123']],
+      ['密码：abc123，请勿外传', ['abc123']],
+      ['请求头 Authorization: Bearer abc123def456ghi，然后调用接口', ['abc123def456ghi']],
+      ['Bearer abc123def456ghi然后调用', ['abc123def456ghi']],
+      ['X-Api-Key: abcd1234efgh然后', ['abcd1234efgh']],
+      ['curl -u admin:s3cretpass，然后', ['s3cretpass']],
+      ['login: admin / Tr0ub4dor3。', ['Tr0ub4dor3']],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+
+  it('keeps the floor it had: a login pair takes any word, and a value that ends its sentence is taken', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['Login: admin / sunshine', ['sunshine']],
+      ['login: jdoe / Welcome', ['Welcome']],
+      ['Password: kXqZpLmN. Then sign in.', ['kXqZpLmN']],
+      ['curl -H "Authorization: Bearer xoxb-0123abcd0123abcd"', []],
+      ['X-Api-Key: lin_api_XXXXXXXXXXXXXXXX', []],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+
+  it('still takes a quoted value, and a bare value that is not a plain word, in a sentence', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['Password: "Summer"', ['Summer']],
+      ['密码："开门芝麻2026"', ['开门芝麻2026']],
+      ['Password: S3cret! then press Enter', ['S3cret!']],
+      ['Password: Winter2026 for the shared login', ['Winter2026']],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+});
+
 describe('the national identifier grammar', (): void => {
   it('takes a Singapore NRIC or FIN whose check letter verifies, as an id number', (): void => {
-    const text = 'Escalation note from HR: Ines Ferreira, NRIC S1234567D, FIN G1234567X, staff no. T0123456789.';
+    const text =
+      'Escalation note from HR: Ines Ferreira, NRIC S1234567D, FIN G1234567X, staff no. T0123456789.';
     const spans = structuralSpans(text);
     expect(spans.map((span) => [text.slice(span.start, span.end), span.kind, span.label])).toEqual([
       ['S1234567D', 'id-number', 'national id'],

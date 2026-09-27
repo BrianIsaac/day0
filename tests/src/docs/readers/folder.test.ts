@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
-import { FolderReader, resolveFolderLocator } from '../../../../src/docs/readers/folder';
+import {
+  FolderReader,
+  markdownPageTitle,
+  resolveFolderLocator,
+} from '../../../../src/docs/readers/folder';
 import type { DocSourceRecord } from '../../../../src/docs/types';
 
 const temporaryDirectories: string[] = [];
@@ -67,5 +71,21 @@ describe('folder documentation reader', (): void => {
   it('refuses absolute and escaping locators', (): void => {
     expect((): string => resolveFolderLocator('/docs', '/etc')).toThrow('must be relative');
     expect((): string => resolveFolderLocator('/docs', '../private')).toThrow('must stay inside');
+  });
+});
+
+describe('the title a folder page is given', (): void => {
+  it('never takes a heading from inside a fenced code block', (): void => {
+    expect(
+      markdownPageTitle(
+        ['```bash', '# rotate the key first', 'rotate --all', '```', '', '# Key rotation'].join(
+          '\n',
+        ),
+        'fallback.md',
+      ),
+    ).toBe('Key rotation');
+    expect(markdownPageTitle(['~~~', '# Example page', '~~~'].join('\n'), 'fallback.md')).toBe(
+      'fallback.md',
+    );
   });
 });

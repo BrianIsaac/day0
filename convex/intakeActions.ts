@@ -12,6 +12,13 @@ import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../src/surfaces/mcp-address';
+import {
+  fetchWithBackoff,
+  PROVIDER_BACKOFF,
+  TransientProviderError,
+  transportFailureKind,
+  type BackoffPolicy,
+} from '../src/lib/transport-error';
 import type { McpConnection } from '../src/surfaces/mcp';
 import { browserComponentRefusal } from '../src/surfaces/browser';
 import { documentedChannelNames } from '../src/surfaces/slack-policy';
@@ -38,8 +45,20 @@ import {
 import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
 
 const PROVIDER_TIMEOUT_MS = 10_000;
+/**
+ * No backoff wait in a sweep starts after this long, so a rate-limited
+ * workspace leaves the rest to the next sweep instead of reaching the
+ * action's ten-minute limit with surfaces unrecorded.
+ */
+const SWEEP_WAIT_BUDGET_MS = 6 * 60_000;
 const MAX_MCP_PAGES = 5;
-const MAX_SLACK_CHANNEL_PAGES = 3;
+/**
+ * A bound on the channel list walk, not a budget: the walk stops as soon as
+ * every approved channel is found, and a workspace with more public channels
+ * than this (10,000 at 200 a page) is refused with the reason rather than read
+ * in part.
+ */
+const MAX_SLACK_CHANNEL_PAGES = 50;
 const MAX_SLACK_HISTORY_PAGES = 5;
 const PAGE_SIZE = 100;
 
@@ -141,6 +160,8 @@ export interface IntakeDependencies {
    * waterfall; the poll a fresh connection schedules for itself.
    */
   surfaceId?: Id<'surfaces'>;
+  /** How a provider read waits before it is tried again; a test records the waits instead. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface IntakeSweepResult {
@@ -184,6 +205,8 @@ interface SlackMessage {
 interface ChatPollResult {
   candidates: WorkCandidate[];
   decisionReplies: Array<Omit<IntakeDecisionReply, 'surfaceId'>>;
+  /** Reads that failed after their retries, by what was read; the checkpoint holds while any did. */
+  unread: Array<{ what: string; error: unknown }>;
 }
 
 type IntakeFetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -788,15 +811,20 @@ const LINEAR_MCP_ENDPOINT = 'https://mcp.linear.app/mcp';
  * those answers, as the surfaces layer's clients do: the bearer never
  * reaches an address the check did not see.
  *
+ * A request the server answers with a 429 or a 5xx is tried again under the
+ * provider backoff, keeping the client's own signal.
+ *
  * @param endpoint - The validated endpoint.
  * @param credential - The decrypted bearer, kept inside the Node action.
  * @param connection - The resolver and transport; a test supplies its own.
+ * @param backoff - How a rate-limited request waits; a test records the waits.
  * @returns The bounded client contract intake uses, connected on first use.
  */
 export function createMcpClient(
   endpoint: URL,
   credential: string,
   connection: McpConnection = { resolveHostname },
+  backoff: BackoffPolicy = PROVIDER_BACKOFF,
 ): McpIntakeClient {
   let created: Promise<McpIntakeClient> | undefined;
   const create = async (): Promise<McpIntakeClient> => {
@@ -807,7 +835,7 @@ export function createMcpClient(
         surface: {
           url: checked.url,
           allowedHosts: [checked.url.host],
-          fetch: pinnedFetch(checked, connection.request),
+          fetch: fetchWithBackoff(pinnedFetch(checked, connection.request), undefined, backoff),
           requestInit: { headers: { Authorization: `Bearer ${credential}` } },
         },
       },
@@ -1113,12 +1141,16 @@ async function slackGet(
     method: 'GET',
     redirect: 'error',
     headers: { Authorization: `Bearer ${credential}` },
-    signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
   });
   const payload = asRecord(await response.json()) ?? {};
   if (!response.ok || payload.ok !== true) {
     const error =
       typeof payload.error === 'string' ? payload.error : `Slack returned HTTP ${response.status}.`;
+    if (response.status === 429 || error === 'ratelimited') {
+      throw new TransientProviderError(`Slack ${method} was rate limited (${error}).`, {
+        status: response.status,
+      });
+    }
     throw new Error(error);
   }
   return payload;
@@ -1160,6 +1192,7 @@ async function resolveSlackChannels(
 ): Promise<SlackChannel[]> {
   const wanted = new Set(names.map((name: string): string => name.toLowerCase()));
   const found = new Map<string, SlackChannel>();
+  const cursors = new Set<string>();
   let cursor: string | undefined;
   for (let pageIndex = 0; pageIndex < MAX_SLACK_CHANNEL_PAGES; pageIndex += 1) {
     const payload = await slackGet(fetcher, credential, 'conversations.list', {
@@ -1178,6 +1211,15 @@ async function resolveSlackChannels(
     if (found.size === wanted.size) break;
     cursor = slackCursor(payload);
     if (!cursor) break;
+    if (cursors.has(cursor)) {
+      throw new Error('Slack conversations.list repeated a cursor before the channel list ended.');
+    }
+    if (pageIndex === MAX_SLACK_CHANNEL_PAGES - 1) {
+      throw new Error(
+        `Slack conversations.list did not end within ${MAX_SLACK_CHANNEL_PAGES} pages of public channels.`,
+      );
+    }
+    cursors.add(cursor);
   }
   const missing = [...wanted].filter((name: string): boolean => !found.has(name));
   if (missing.length > 0) {
@@ -1505,6 +1547,7 @@ async function pollSlack(
     }
   }
   const candidates: WorkCandidate[] = [];
+  const unread: ChatPollResult['unread'] = [];
   if (include.work) {
     if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
     if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
@@ -1518,12 +1561,28 @@ async function pollSlack(
     const since = include.mentionsSince;
     const sinceTs = since === undefined ? undefined : String(since / 1_000);
     for (const channel of channels) {
-      const messages = await slackHistory(
-        fetcher,
-        credential,
-        channel.id,
-        surface.lastPolledAt ?? since,
-      );
+      // One channel that still fails after its retries costs that channel's
+      // read, not the rest of the poll: its mentions are read again next time.
+      let messages: SlackMessage[];
+      try {
+        messages = await slackHistory(
+          fetcher,
+          credential,
+          channel.id,
+          surface.lastPolledAt ?? since,
+        );
+      } catch (error) {
+        // A refusal (`not_in_channel`, `invalid_auth`, the page limit) is not
+        // waited out by reading again, so it fails the poll as it always did.
+        if (
+          !(error instanceof TransientProviderError) &&
+          transportFailureKind(error) !== 'interrupted'
+        ) {
+          throw error;
+        }
+        unread.push({ what: `#${channel.name}`, error });
+        continue;
+      }
       for (const message of messages) {
         if (!message.text.includes(mention) || postedByConnectedApp(message, surface, botId))
           continue;
@@ -1544,6 +1603,10 @@ async function pollSlack(
   };
   if (include.decisions && surface.managerDmChannelId && surface.managerUserId) {
     const dm = surface.managerDmChannelId;
+    // Replies stay all or nothing: a DM answer taken while an earlier answer in
+    // its thread went unread could decide the request the wrong way. The DM is
+    // read even when nothing is open, because the resolver answers a late or
+    // unknown code with a notice.
     collect(await slackHistory(fetcher, credential, dm, surface.lastPolledAt));
     // `conversations.history` lists only top-level messages. A manager who answers in
     // the thread under the request is answering all the same, so each open request's
@@ -1557,7 +1620,7 @@ async function pollSlack(
       }
     }
   }
-  return { candidates, decisionReplies: [...decisionReplies.values()] };
+  return { candidates, decisionReplies: [...decisionReplies.values()], unread };
 }
 
 /**
@@ -1607,6 +1670,7 @@ async function pollChat(
         decisionReplies: include.decisions
           ? await pollMcpManagerReplies(surface, credential, makeClient)
           : [],
+        unread: [],
       };
     }
     throw new Error(
@@ -1790,9 +1854,9 @@ export async function runIntakeSweep(
 ): Promise<IntakeSweepResult> {
   const mode = dependencies.mode ?? SURFACE_MODE;
   if (mode !== 'real') return { candidates: 0, mode, polled: 0, skipped: 0, surfaces: 0 };
-  const fetcher: IntakeFetcher = dependencies.fetcher ?? fetch;
-  const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const now = dependencies.now ?? Date.now;
+  const fetcher = providerFetcher(dependencies, now);
+  const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const browserAbsent = browserComponentRefusal(
     dependencies.browserMcpUrl ?? process.env.DAY0_BROWSER_MCP_URL,
   );
@@ -1814,11 +1878,28 @@ export async function runIntakeSweep(
     if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
-    const [pages, scopes, queue] = await Promise.all([
-      runtime.listPages(agentId),
-      runtime.grantedScopes(agentId),
-      runtime.waitingWork(agentId),
-    ]);
+    let pages: Doc<'docPages'>[];
+    let scopes: string[];
+    let queue: { waiting: number; limit: number };
+    try {
+      [pages, scopes, queue] = await Promise.all([
+        runtime.listPages(agentId),
+        runtime.grantedScopes(agentId),
+        runtime.waitingWork(agentId),
+      ]);
+    } catch (error) {
+      // One employee's reads failing is that employee's poll failing, not the sweep's.
+      for (const surface of agentSurfaces.filter(inScope)) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          // The order is read from the pages that could not be read; keep the last one.
+          waterfallPosition: surface.waterfallPosition ?? 0,
+          skipReason: `intake failed: ${safeIntakeError(error, '')}`,
+        });
+        skipped += 1;
+      }
+      continue;
+    }
     const granted = new Set(scopes);
     let waiting = queue.waiting;
     const documentedNames = extractDocumentedSystemOrder(
@@ -1941,10 +2022,20 @@ export async function runIntakeSweep(
         );
         const mapped = admission.admitted;
         const held = admission.held;
+        // Each candidate is seeded on its own: one that fails is named and read
+        // again next time, and the rest are not held back behind it.
+        const unseeded: ChatPollResult['unread'] = [...(chat?.unread ?? [])];
+        let seeded = 0;
         for (const candidate of mapped) {
-          await seedCandidate(runtime, agentId, candidate, polledPage.trackers);
+          try {
+            await seedCandidate(runtime, agentId, candidate, polledPage.trackers);
+            seeded += 1;
+          } catch (error) {
+            unseeded.push({ what: candidate.externalId, error });
+          }
         }
-        waiting = queue.limit - admission.room;
+        // A candidate that failed to seed holds no place in the queue.
+        waiting = queue.limit - admission.room - (mapped.length - seeded);
         for (const { candidate, leftQueue } of polledPage.withdrawn) {
           await runtime.withdraw({
             ...seedOf(agentId, candidate, polledPage.trackers),
@@ -1952,7 +2043,13 @@ export async function runIntakeSweep(
           });
         }
         const holdCheckpoint =
-          held > 0 ? queueFullReason(queue.limit, held) : polledPage.holdCheckpoint;
+          unseeded.length > 0
+            ? `intake read in part; read again next time: ${unseeded
+                .map(({ what, error }) => `${what} (${safeIntakeError(error, credential)})`)
+                .join('; ')}`
+            : held > 0
+              ? queueFullReason(queue.limit, held)
+              : polledPage.holdCheckpoint;
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
@@ -1960,8 +2057,10 @@ export async function runIntakeSweep(
             ? { polledAt: pollStartedAt }
             : { skipReason: holdCheckpoint }),
         });
-        candidates += mapped.length;
-        polled += 1;
+        candidates += seeded;
+        // A poll that read in part holds its checkpoint, so it has not completed.
+        if (unseeded.length > 0) skipped += 1;
+        else polled += 1;
       } catch (error) {
         await runtime.recordIntake({
           surfaceId: surface._id,
@@ -1977,6 +2076,23 @@ export async function runIntakeSweep(
   return { candidates, mode, polled, skipped, surfaces: surfaces.filter(inScope).length };
 }
 
+/**
+ * The fetch every provider read in one sweep goes through: each request with
+ * its own timeout, and one bounded backoff that honours Retry-After (Q13).
+ */
+function providerFetcher(dependencies: IntakeDependencies, now: () => number): IntakeFetcher {
+  return fetchWithBackoff(
+    dependencies.fetcher ?? fetch,
+    PROVIDER_TIMEOUT_MS,
+    {
+      ...PROVIDER_BACKOFF,
+      ...(dependencies.sleep ? { sleep: dependencies.sleep } : {}),
+      deadline: Date.now() + SWEEP_WAIT_BUDGET_MS,
+    },
+    now,
+  );
+}
+
 /** Poll only manager decision replies, without touching discovery checkpoints. */
 export async function runDecisionSweep(
   runtime: IntakeRuntime,
@@ -1984,9 +2100,9 @@ export async function runDecisionSweep(
 ): Promise<DecisionSweepResult> {
   const mode = dependencies.mode ?? SURFACE_MODE;
   if (mode !== 'real') return { mode, polled: 0, skipped: 0, surfaces: 0 };
-  const fetcher: IntakeFetcher = dependencies.fetcher ?? fetch;
-  const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const now = dependencies.now ?? Date.now;
+  const fetcher = providerFetcher(dependencies, now);
+  const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const surfaces = await runtime.listChatSurfaces();
   let polled = 0;
   let skipped = 0;

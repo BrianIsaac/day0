@@ -34,6 +34,7 @@ import {
 } from '../../../../src/docs/readers/mcp';
 import type { DocSourceRecord } from '../../../../src/docs/types';
 import { NOTION_DRIVER_ABSENT } from '../../../../src/docs/components';
+import { PROVIDER_BACKOFF, TransientProviderError } from '../../../../src/lib/transport-error';
 import { notionPageTemplate, type NotionPageName } from '../../../fixtures/notion-pages';
 
 /** Wrap one object in the MCP text-content result shape. */
@@ -250,6 +251,91 @@ describe('MCP documentation reader', (): void => {
       NOTION_DRIVER_ABSENT,
     );
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('records a read cut off after the preflight as a transient with its cause, not as an absent component', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    let tries = 0;
+    const reader = new McpReader(
+      () => ({
+        listTools: async (): Promise<Record<string, never>> => {
+          tries += 1;
+          throw new Error('request failed', { cause: reset });
+        },
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: vi.fn().mockResolvedValue(undefined),
+      }),
+      componentUp,
+      { ...PROVIDER_BACKOFF, sleep: async (): Promise<void> => undefined },
+    );
+    const failure = await reader.listPageBatch(notionSource(), 'ntn_value', undefined, 25).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(TransientProviderError);
+    expect((failure as Error).message).not.toContain(NOTION_DRIVER_ABSENT);
+    expect((failure as Error).message).toContain('transient');
+    expect((failure as Error).message).toContain('read ECONNRESET');
+    expect((failure as Error).cause).toBeDefined();
+    expect(tries).toBe(PROVIDER_BACKOFF.attempts);
+  });
+
+  it('retries a Notion rate limit and reads the batch', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    let searches = 0;
+    const waits: number[] = [];
+    const reader = new McpReader(
+      () => ({
+        listTools: async () => ({
+          'docs_API-post-search': {
+            execute: async () => {
+              searches += 1;
+              return searches === 1
+                ? textResult({ object: 'error', status: 429, code: 'rate_limited' })
+                : textResult({ object: 'list', results: [], has_more: false });
+            },
+          },
+          'docs_API-retrieve-page-markdown': { execute: async () => textResult({ markdown: '' }) },
+        }),
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: vi.fn().mockResolvedValue(undefined),
+      }),
+      componentUp,
+      { ...PROVIDER_BACKOFF, sleep: async (ms: number): Promise<void> => void waits.push(ms) },
+    );
+    await expect(
+      reader.listPageBatch(notionSource(), 'ntn_value', undefined, 25),
+    ).resolves.toMatchObject({ pages: [] });
+    expect(searches).toBe(2);
+    expect(waits).toEqual([PROVIDER_BACKOFF.baseMs]);
+  });
+
+  it('refuses a reply with no page list, or a page with no id, instead of completing as empty (P5-13)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    for (const reply of [
+      { object: 'list', has_more: false, data: [{ id: 'page-1' }] },
+      { object: 'list', has_more: false, results: [{ title: 'no id' }] },
+      { object: 'list', has_more: false, results: ['page-1'] },
+    ]) {
+      const reader = new McpReader(
+        () => ({
+          listTools: async () => ({
+            'docs_API-post-search': { execute: async () => textResult(reply) },
+            'docs_API-retrieve-page-markdown': {
+              execute: async () => textResult({ markdown: '# Page' }),
+            },
+          }),
+          resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+          disconnect: vi.fn().mockResolvedValue(undefined),
+        }),
+        componentUp,
+      );
+      await expect(
+        reader.listPageBatch(notionSource(), 'ntn_value', undefined, 25),
+        JSON.stringify(reply),
+      ).rejects.toThrow('the sync stops here rather than delete the pages it could not list');
+    }
   });
 
   it('authenticates the private hop under the new service name and the old alias', async (): Promise<void> => {
@@ -572,6 +658,40 @@ describe('the documentation MCP client reaches only the address it checked (M16)
     await built.servers.docs.fetch(new URL('https://docs.example.com/mcp'), { method: 'POST' });
     expect(dialled).toEqual([[{ address: '93.184.216.34', family: 4 }]]);
     expect(JSON.stringify(sent)).toContain('Bearer docs-secret');
+  });
+
+  it('waits out a 429 from the documentation server and sends the request again', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const statuses = [429, 200];
+    const waits: number[] = [];
+    const client = productionClient(
+      config('https://docs.example.com/mcp'),
+      {
+        resolveHostname: async (): Promise<string[]> => ['93.184.216.34'],
+        request: (_url, _options, callback) => ({
+          on: (): void => undefined,
+          end: (): void => {
+            const statusCode = statuses.shift() ?? 200;
+            const response = Object.assign(new PassThrough(), {
+              statusCode,
+              headers: statusCode === 429 ? { 'retry-after': '5' } : {},
+            });
+            callback(response as unknown as IncomingMessage);
+            response.end('{}');
+          },
+        }),
+      },
+      { ...PROVIDER_BACKOFF, sleep: async (ms: number): Promise<void> => void waits.push(ms) },
+    );
+    await client.listTools();
+    const built = mastra.configs[0] as {
+      servers: Record<string, { fetch: (url: URL, init?: RequestInit) => Promise<Response> }>;
+    };
+    const response = await built.servers.docs.fetch(new URL('https://docs.example.com/mcp'), {
+      method: 'POST',
+    });
+    expect(response.status).toBe(200);
+    expect(waits).toEqual([5_000]);
   });
 
   it("checks a non-Notion source that names the component's host like any other", async (): Promise<void> => {
