@@ -264,6 +264,23 @@ describe("the labelled password grammar on an author's page", (): void => {
     }
   });
 
+  it('keeps the floor it had: a login pair takes any word, and a value that ends its sentence is taken', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['Login: admin / sunshine', ['sunshine']],
+      ['login: jdoe / Welcome', ['Welcome']],
+      ['Password: kXqZpLmN. Then sign in.', ['kXqZpLmN']],
+      ['curl -H "Authorization: Bearer xoxb-0123abcd0123abcd"', []],
+      ['X-Api-Key: lin_api_XXXXXXXXXXXXXXXX', []],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+
   it('still takes a quoted value, and a bare value that is not a plain word, in a sentence', (): void => {
     const cases: Array<[string, string[]]> = [
       ['Password: "Summer"', ['Summer']],

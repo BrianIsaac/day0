@@ -138,6 +138,15 @@ const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
 function bareValueIsProse(value: string, rest: string): boolean {
   return PLAIN_WORD.test(value) || (LATIN_LETTERS.test(value) && PHRASE_CONTINUES.test(rest));
 }
+
+/**
+ * The line after a bare value, as the phrase test reads it: a value that
+ * ended its sentence (`Password: kXqZpLmN. Then sign in.`) is followed by a
+ * new sentence, not by more of the same phrase.
+ */
+function restOfPhrase(raw: string, value: string, after: string): string {
+  return raw === value ? after : '';
+}
 /** A Singapore NRIC or FIN: a series letter, seven digits and a check letter. */
 const NATIONAL_ID = /(?<![A-Za-z0-9])([STFGM])(\d{7})([A-Z])(?![A-Za-z0-9])/g;
 const NATIONAL_ID_WEIGHTS = [2, 7, 6, 5, 4, 3, 2];
@@ -225,7 +234,12 @@ export function structuralSpans(text: string): StructuralSpan[] {
     for (const match of text.matchAll(pattern)) {
       if (match.index === undefined) continue;
       const value = match[1].replace(TRAILING_PUNCTUATION, '');
-      if (REFERENCE_START.test(value) || UPPER_NAME.test(value) || value.startsWith('<credential:'))
+      if (
+        REFERENCE_START.test(value) ||
+        UPPER_NAME.test(value) ||
+        value.startsWith('<credential:') ||
+        sampleValueReason(value)
+      )
         continue;
       const start = match.index + match[0].lastIndexOf(match[1]);
       spans.push({ start, end: start + value.length, label: 'header value', kind: 'secret' });
@@ -234,8 +248,8 @@ export function structuralSpans(text: string): StructuralSpan[] {
   for (const match of text.matchAll(LOGIN_PAIR)) {
     if (match.index === undefined) continue;
     const value = match[2].replace(PASSWORD_TRAILING, '');
-    const rest = text.slice(match.index + match[0].length);
-    if (!value || guardReason(value, { assigned: true }) || bareValueIsProse(value, rest)) continue;
+    // The second half of `user / pass` is a password by its position, so no word test applies.
+    if (!value || guardReason(value, { assigned: true })) continue;
     const start = match.index + match[0].lastIndexOf(match[2]);
     spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }
@@ -244,7 +258,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
     const quoted = match[1] ?? match[2] ?? match[3];
     const raw = quoted ?? match[4] ?? '';
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
-    const rest = text.slice(match.index + match[0].length);
+    const rest = restOfPhrase(raw, value, text.slice(match.index + match[0].length));
     if (
       !value ||
       guardReason(value, { assigned: true }) ||
