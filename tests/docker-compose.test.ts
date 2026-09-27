@@ -54,6 +54,12 @@ describe('docker-compose.yml redactor', (): void => {
   });
 
   it('passes a Hugging Face and a PyPI mirror through when the operator sets one', (): void => {
-    expect(redactor.environment).toEqual(expect.arrayContaining(['HF_ENDPOINT', 'PIP_INDEX_URL']));
+    // An empty value in the container would break both clients, so unset falls back.
+    expect(redactor.environment).toEqual(
+      expect.arrayContaining([
+        'HF_ENDPOINT=${HF_ENDPOINT:-https://huggingface.co}',
+        'PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple}',
+      ]),
+    );
   });
 });

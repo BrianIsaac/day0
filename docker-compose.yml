@@ -309,7 +309,8 @@ services:
   # unpacks the wheels (a CUDA torch is gigabytes) through /tmp.
   #
   # HF_ENDPOINT and PIP_INDEX_URL, when set in `.env.local`, point the first
-  # start at a Hugging Face mirror and a PyPI mirror instead of the internet.
+  # start at a Hugging Face mirror and a PyPI mirror instead of the internet;
+  # empty keeps the public ones (an empty value in the container would not).
   # The torch wheel's own index is named inside redactor/requirements.txt.
   redactor:
     profiles: ['redactor']
@@ -322,8 +323,8 @@ services:
     mem_limit: 6g
     command: ['/opt/day0/start.sh']
     environment:
-      - HF_ENDPOINT
-      - PIP_INDEX_URL
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://huggingface.co}
+      - PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple}
       - REDACTOR_MODEL=${REDACTOR_MODEL:-urchade/gliner_multi_pii-v1}
       - REDACTOR_DEVICE=${REDACTOR_DEVICE:-cpu}
       - REDACTOR_PORT=8000
