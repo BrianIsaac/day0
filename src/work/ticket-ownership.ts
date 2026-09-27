@@ -177,18 +177,21 @@ function sameState(left: string, right: string): boolean {
  * What changed on a ticket since the plan was made, by the Q11 primitives,
  * or undefined when it is still the ticket the plan was made for.
  *
- * The state may be the one the listing the plan was made under showed, the
- * one a listing showed when the manager last pressed Retry since (the
+ * The state may be the one the listing the plan was made under showed, an
+ * open one a listing showed when the manager last pressed Retry since (the
  * manager has seen it), or one Day0 set itself; anything else is a move
- * somebody else made. The assignee is compared with the plan's listing
- * alone, since a Retry does not hand a person's ticket to Day0: a ticket
- * assigned since is still the item's only when it is assigned to the key's
- * owner. With no listing to compare with, the rule intake applies decides:
- * nobody or the key's owner assigned, open, and not labelled.
+ * somebody else made. A Retry excuses an open state only (review M2): a
+ * do-not-automate label or a close since the plan withholds whatever the
+ * manager retried after, since a listing is shown nowhere on the card. The
+ * assignee is compared with the plan's listing alone, since a Retry does
+ * not hand a person's ticket to Day0: a ticket assigned since is still the
+ * item's only when it is assigned to the key's owner. With no listing to
+ * compare with, the rule intake applies decides: nobody or the key's owner
+ * assigned, open, and not labelled.
  *
  * @param now - The ticket as it reads now.
  * @param context - The plan's listing, the listing the manager's last
- *   Retry saw, the states Day0 set on the ticket (names, or types when a run
+ *   Retry saw (its open state only counts), the states Day0 set on the ticket (names, or types when a run
  *   set one by type), and the key's owner, read only when an assignee has
  *   to be compared with it.
  * @returns The named change, or undefined.
@@ -203,11 +206,17 @@ export async function ticketChange(
   },
 ): Promise<string | undefined> {
   const { baseline } = context;
-  if (now.doNotAutomate && !baseline?.doNotAutomate && !context.acknowledged?.doNotAutomate) {
+  if (now.doNotAutomate && !baseline?.doNotAutomate) {
     return `it is labelled ${DO_NOT_AUTOMATE_LABEL}`;
   }
   const own = context.ownStates ?? [];
-  const accepted = [baseline?.state, context.acknowledged?.state, ...own].filter(
+  // An acknowledged state with no type may be a close; only a typed open one is excused.
+  const acknowledgedOpen =
+    context.acknowledged?.stateType !== undefined &&
+    !isClosedStateType(context.acknowledged.stateType)
+      ? context.acknowledged.state
+      : undefined;
+  const accepted = [baseline?.state, acknowledgedOpen, ...own].filter(
     (state): state is string => state !== undefined,
   );
   const matches = (state: string): boolean =>
@@ -216,11 +225,12 @@ export async function ticketChange(
   if (now.state !== undefined && accepted.length > 0 && !accepted.some(matches)) {
     return `its state moved from ${baseline?.state ?? accepted[0]} to ${now.state}`;
   }
-  // A ticket Day0 closed, or the manager retried once it was closed, is not taken away.
-  const closedKnown =
-    own.some(matches) ||
-    (context.acknowledged?.state !== undefined && matches(context.acknowledged.state));
-  if (!closedKnown && isClosedStateType(now.stateType) && !isClosedStateType(baseline?.stateType)) {
+  // A ticket Day0 closed is not taken away; one somebody else closed is.
+  if (
+    !own.some(matches) &&
+    isClosedStateType(now.stateType) &&
+    !isClosedStateType(baseline?.stateType)
+  ) {
     return `it is ${now.stateType}`;
   }
   if (!now.assigned) {

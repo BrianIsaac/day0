@@ -203,4 +203,27 @@ describe('ticket ownership', () => {
     // A record that names no id is still compared by its fields.
     expect(ticketRecordRefusal({ assigneeId: 'user-ana' }, ours)).toBeUndefined();
   });
+
+  it('lets a Retry excuse an open state it saw, never a do-not-automate label or a close (review M2)', async () => {
+    const owner = ownerRead();
+    const labelled = { ...todo, doNotAutomate: true };
+    await expect(
+      ticketChange(labelled, { baseline: todo, acknowledged: labelled, owner: owner.read }),
+    ).resolves.toBe('it is labelled do-not-automate');
+    const closed = { ...todo, state: 'Done', stateType: 'completed' };
+    await expect(
+      ticketChange(closed, { baseline: todo, acknowledged: closed, owner: owner.read }),
+    ).resolves.toBe('its state moved from Todo to Done');
+    const cancelled = { ...todo, state: "Won't do", stateType: 'canceled' };
+    await expect(
+      ticketChange(
+        { ...cancelled, stateType: undefined },
+        { baseline: todo, acknowledged: cancelled, owner: owner.read },
+      ),
+    ).resolves.toBe("its state moved from Todo to Won't do");
+    const inReview = { ...todo, state: 'In Review', stateType: 'started' };
+    await expect(
+      ticketChange(inReview, { baseline: todo, acknowledged: inReview, owner: owner.read }),
+    ).resolves.toBeUndefined();
+  });
 });

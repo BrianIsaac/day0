@@ -7038,6 +7038,43 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
   });
 
+  it('withholds a labelled ticket even when the manager pressed Retry after the label (review M2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    const labelled = { ...asPlanned, doNotAutomate: true };
+    await harness.run(async (ctx): Promise<void> => {
+      const row = (await ctx.db.get(workItemId))!;
+      await ctx.db.patch(workItemId, { planPendingAt: 10 });
+      // A person labelled the failed row's ticket, and the manager pressed Retry after.
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.listed',
+        payload: { workItemId, tracker: labelled },
+        createdAt: 20,
+      });
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.retry',
+        payload: { workItemId, resumeState: 'plan-approved', fromState: 'failed' },
+        createdAt: 30,
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'Todo',
+      statusType: 'unstarted',
+      labels: [{ name: 'do-not-automate' }],
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('it is labelled do-not-automate');
+    expect(linearTools()).toEqual(['get_issue']);
+  });
+
   it("drops a read the gate refused from a run the re-read stopped, as a finished run's ledger does", async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
