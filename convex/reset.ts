@@ -166,26 +166,38 @@ async function revokeUnbound(
 
 /**
  * Delete the signed-in owner's employees: one, when `agentId` names it, or
- * every one. Public; the caller must own the employee. Idempotent. Called
- * from the reset button on the landing page.
+ * every one. Public; the caller must own the employee. Idempotent for the
+ * whole owner; a named employee already retired is refused as not found.
+ * Called from the reset button on the landing page.
  *
  * In mock mode this is the hosted demo's full wipe. In real mode it is a
  * retire (decisions Q15 and N1): the working rows go, each credential a
  * retired employee bound that nothing else binds is revoked with its
  * ciphertext deleted, and each employee leaves one `agent.retired` event
- * (owner, agent id, row counts, date, credentials revoked and kept) that no
- * later reset deletes, so the ledger can say the employee existed.
+ * that no later reset deletes. The event sits on the retired agent's own id
+ * with the owner in its payload (the schema has no owner-keyed home for it
+ * yet) and counts the rows deleted and the credentials that employee bound,
+ * revoked or kept; a credential two retired employees shared is counted in
+ * both.
  *
  * Owner-level documentation and credentials outlive a plain reset. With
  * `alsoUnlinkDocumentation` every owned source is unlinked and every owned
  * credential is revoked with its ciphertext deleted; the credential rows
- * stay as the audit trail of what was held.
+ * stay as the audit trail of what was held. Unlinking retires every
+ * employee, so it is refused beside `agentId`.
  */
 export const deleteMyData = mutation({
   args: { alsoUnlinkDocumentation: v.optional(v.boolean()), agentId: v.optional(v.id('agents')) },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ deleted: number; unlinkedSources: number }> => {
     const identity = await getCallerOrThrow(ctx);
     const userId = identity.subject;
+    // The unlink purges every credential the owner holds, the ones the
+    // remaining employees connect with included.
+    if (args.agentId !== undefined && args.alsoUnlinkDocumentation) {
+      throw new Error(
+        'unlinking the documentation retires every employee; retire one employee without it',
+      );
+    }
 
     const agents =
       args.agentId === undefined
@@ -198,6 +210,12 @@ export const deleteMyData = mutation({
     const now = Date.now();
     const retired = new Map<Id<'agents'>, Retired>();
     for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
+    // Unlinked before the retire counts, so a credential the unlink purges is
+    // counted revoked rather than kept for a source that is gone.
+    const unlinkedSources = args.alsoUnlinkDocumentation
+      ? await deleteOwnedDocumentation(ctx, userId)
+      : 0;
+    if (args.alsoUnlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
     if (SURFACE_MODE === 'real') {
       const bound = new Set([...retired.values()].flatMap((entry) => [...entry.boundCredentials]));
       const { revoked, kept } = await revokeUnbound(ctx, userId, bound, now);
@@ -218,10 +236,6 @@ export const deleteMyData = mutation({
         });
       }
     }
-    const unlinkedSources = args.alsoUnlinkDocumentation
-      ? await deleteOwnedDocumentation(ctx, userId)
-      : 0;
-    if (args.alsoUnlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
     return { deleted: agents.length, unlinkedSources };
   },
 });

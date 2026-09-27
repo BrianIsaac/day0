@@ -391,7 +391,7 @@ describe('retire in real mode', (): void => {
     return { harness, ...seeded };
   }
 
-  it('deletes the working rows and leaves one tombstone keyed to the owner', async (): Promise<void> => {
+  it('deletes the working rows and leaves one tombstone on the agent id, naming the owner', async (): Promise<void> => {
     const { harness, retiring } = await seedRealOwner();
     await harness
       .withIdentity({ subject: 'owner' })
@@ -466,6 +466,42 @@ describe('retire in real mode', (): void => {
     for (const id of [only, shared, secret])
       expect(await row(id)).toMatchObject({ revokedAt: expect.any(Number) });
     expect(await row(documentation)).not.toHaveProperty('revokedAt');
+  });
+
+  it('counts a credential purged with the documentation as revoked, not kept', async (): Promise<void> => {
+    const { harness, documentation } = await seedRealOwner();
+    await harness.run(async (ctx) => {
+      const surfaces = await ctx.db.query('surfaces').collect();
+      for (const surface of surfaces)
+        await ctx.db.patch(surface._id, { credentialId: documentation });
+    });
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+
+    const tombstones = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter((event) => event.type === 'agent.retired'),
+    );
+    for (const tombstone of tombstones) {
+      expect(tombstone.payload).toMatchObject({ keptCredentials: 0 });
+    }
+    expect(await harness.run(async (ctx) => await ctx.db.get(documentation))).toMatchObject({
+      revokedAt: expect.any(Number),
+    });
+  });
+
+  it('refuses to unlink the documentation while retiring one employee', async (): Promise<void> => {
+    const { harness, retiring, shared } = await seedRealOwner();
+    await expect(
+      harness
+        .withIdentity({ subject: 'owner' })
+        .mutation(api.reset.deleteMyData, { agentId: retiring, alsoUnlinkDocumentation: true }),
+    ).rejects.toThrow('unlinking the documentation retires every employee');
+    expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
+    expect(await harness.run(async (ctx) => await ctx.db.get(shared))).not.toHaveProperty(
+      'revokedAt',
+    );
   });
 
   it('refuses to retire an employee the caller does not own', async (): Promise<void> => {
