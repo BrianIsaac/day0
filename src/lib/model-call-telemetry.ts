@@ -12,6 +12,7 @@
  * layer wholesale still has the real seam the loop step installs.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { log } from './logger';
 
 /**
  * What one model call through the retry wrapper came to.
@@ -41,6 +42,65 @@ export interface ModelCallReport {
    * retried one.
    */
   providerCalls?: number;
+  /** How a structured call asked for its object: the schema on the wire, or in the prompt. */
+  structuredMode?: StructuredMode;
+  /** Input tokens the provider billed across the call's attempts, when it reported usage. */
+  inputTokens?: number;
+  /** Output tokens, likewise; reasoning tokens are part of these. */
+  outputTokens?: number;
+  /** The part of `inputTokens` the provider served from its prompt cache, when it said. */
+  cachedInputTokens?: number;
+  /** On the prompt-rung call that followed a native attempt which produced no object. */
+  fellBack?: true;
+  /**
+   * On that call when it succeeded and the native failure proved the endpoint
+   * would not honour the schema: the agent's later calls start on the prompt
+   * rung until the demotion expires. This is the mode flip P8-4 found recorded
+   * nowhere a person looks.
+   */
+  demoted?: true;
+}
+
+/**
+ * How a structured object is asked for.
+ *
+ *   native: the schema goes down the wire as `response_format`
+ *           (`json_schema` for providers that advertise strict mode).
+ *   prompt: Mastra injects the schema into the system prompt instead
+ *           and parses the object back out of the reply text.
+ *
+ * `./mastra` runs the ladder between them, the twin of the one in
+ * `./openai`, driven by the same `OPENAI_JSON_MODE` switch.
+ */
+export type StructuredMode = 'native' | 'prompt';
+
+/** What a structured call adds to its report. */
+export interface StructuredCallFacts {
+  readonly mode: StructuredMode;
+  /** The call follows a native attempt that produced no object. */
+  readonly fellBack?: boolean;
+  /** Its success moves the agent onto the prompt rung. */
+  readonly demotes?: boolean;
+}
+
+/** Everything the retry wrapper knows about one completed call. */
+export interface ModelCallFacts {
+  /** The agent name or retry label. */
+  readonly agent: string;
+  /** Provider calls made, the last one included. */
+  readonly attempts: number;
+  /** When the first attempt began. */
+  readonly startedAt: number;
+  /** Requests the provider client counted, or 0 when it did not. */
+  readonly providerCalls: number;
+  /** Token usage the generations reported, when any did. */
+  readonly usage?: Pick<
+    ProviderRequestCounter,
+    'inputTokens' | 'outputTokens' | 'cachedInputTokens'
+  >;
+  /** What the last attempt threw, when the call failed. */
+  readonly failure?: { readonly error: unknown };
+  readonly structured?: StructuredCallFacts;
 }
 
 export type ModelCallObserver = (report: ModelCallReport) => void | Promise<void>;
@@ -73,13 +133,19 @@ const requiredObserverScopes: AsyncLocalStorage<boolean> = ((
  * Returns:
  *   Whatever the step returns.
  */
-export async function observeModelCalls<T>(observer: ModelCallObserver, fn: () => Promise<T>): Promise<T> {
+export async function observeModelCalls<T>(
+  observer: ModelCallObserver,
+  fn: () => Promise<T>,
+): Promise<T> {
   return await requiredObserverScopes.run(true, () => modelCallObservers.run(observer, fn));
 }
 
-/** A live count of the provider requests one model call has sent. */
+/** A live count of the provider requests one model call has sent, and what they cost. */
 export interface ProviderRequestCounter {
   count: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
 }
 
 /**
@@ -122,55 +188,105 @@ export function countProviderRequest(): void {
   if (counter) counter.count += 1;
 }
 
-function reportFor(
-  agent: string,
-  attempts: number,
-  startedAt: number,
-  providerCalls: number,
-  err?: unknown,
-): ModelCallReport {
+/** A token count from a provider's usage object, when it is one. */
+function tokens(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * Add one generation's token usage to the model call in progress.
+ *
+ * Reads the generation's `totalUsage` (every step of a tool-calling run) or
+ * else its `usage`, in the AI SDK's shape; a generation that reported none
+ * adds nothing, so a report never shows a count the provider did not give.
+ *
+ * @param generation - What the model SDK's generate call returned.
+ */
+export function countModelUsage(generation: unknown): void {
+  const counter = providerRequestCounts.getStore();
+  if (!counter || !generation || typeof generation !== 'object') return;
+  const source = generation as { totalUsage?: unknown; usage?: unknown };
+  const usage = (source.totalUsage ?? source.usage) as
+    | { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown }
+    | undefined;
+  if (!usage || typeof usage !== 'object') return;
+  const input = tokens(usage.inputTokens);
+  const output = tokens(usage.outputTokens);
+  const cached = tokens(usage.cachedInputTokens);
+  if (input !== undefined) counter.inputTokens = (counter.inputTokens ?? 0) + input;
+  if (output !== undefined) counter.outputTokens = (counter.outputTokens ?? 0) + output;
+  if (cached !== undefined) counter.cachedInputTokens = (counter.cachedInputTokens ?? 0) + cached;
+}
+
+/**
+ * The error classes a report may name: the product's own typed failures,
+ * whose names carry no provider or model text. Anything else is `Error`.
+ */
+const REPORTED_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'TimeoutError',
+  'StructuredOutputMissingError',
+  'StructuredOutputInvalidError',
+  'ModelRefusalError',
+  'ModelReplyCutError',
+]);
+
+function reportFor(facts: ModelCallFacts): ModelCallReport {
+  const structured = facts.structured;
   const report: ModelCallReport = {
-    agent,
-    attempts,
-    retries: attempts - 1,
-    durationMs: Date.now() - startedAt,
+    agent: facts.agent,
+    attempts: facts.attempts,
+    retries: facts.attempts - 1,
+    durationMs: Date.now() - facts.startedAt,
     outcome: 'ok',
-    ...(providerCalls > 0 ? { providerCalls } : {}),
+    ...(facts.providerCalls > 0 ? { providerCalls: facts.providerCalls } : {}),
+    ...(facts.usage?.inputTokens !== undefined ? { inputTokens: facts.usage.inputTokens } : {}),
+    ...(facts.usage?.outputTokens !== undefined ? { outputTokens: facts.usage.outputTokens } : {}),
+    ...(facts.usage?.cachedInputTokens !== undefined
+      ? { cachedInputTokens: facts.usage.cachedInputTokens }
+      : {}),
+    ...(structured ? { structuredMode: structured.mode } : {}),
+    ...(structured?.fellBack ? { fellBack: true as const } : {}),
+    ...(structured?.demotes && facts.failure === undefined ? { demoted: true as const } : {}),
   };
-  if (err === undefined) return report;
-  const error = err as { name?: unknown; statusCode?: unknown };
-  const errorName = err instanceof Error ? (err.name === 'TimeoutError' ? 'TimeoutError' : 'Error') : undefined;
+  if (facts.failure === undefined) return report;
+  const err = facts.failure.error;
+  const errorName =
+    err instanceof Error ? (REPORTED_ERROR_NAMES.has(err.name) ? err.name : 'Error') : undefined;
   report.outcome = errorName === 'TimeoutError' ? 'timed-out' : 'failed';
   if (errorName !== undefined) report.errorName = errorName;
-  if (typeof error.statusCode === 'number') report.statusCode = error.statusCode;
+  const statusCode = (err as { statusCode?: unknown } | null)?.statusCode;
+  if (typeof statusCode === 'number') report.statusCode = statusCode;
   return report;
 }
 
 /**
- * Report one completed call to the enclosing step's observer, if there is one.
+ * Report one completed call to the enclosing step's observer, or to the log.
  *
- * Args:
- *   agent: The agent name or retry label.
- *   attempts: Provider calls made.
- *   startedAt: When the first attempt began.
- *   providerCalls: Requests the provider client counted, or 0 when it did not.
- *   err: What the last attempt threw, when the call failed.
+ * A loop step's observer puts the report on the item's ledger. A call no
+ * step observes (charter synthesis, orientation, discovery, good habits) is
+ * metered in the function log instead, as one `model-call` line, so every
+ * call through the retry wrapper is recorded somewhere. Calls that bypass the
+ * wrapper (the chat route's own `streamText`, `./openai`'s completions) are
+ * not seen here.
+ *
+ * @param facts - What the retry wrapper knows about the call.
+ * @throws Error when a step required an observer and none is installed.
  */
-export async function reportModelCall(
-  agent: string,
-  attempts: number,
-  startedAt: number,
-  providerCalls: number,
-  err?: unknown,
-): Promise<void> {
+export async function reportModelCall(facts: ModelCallFacts): Promise<void> {
   const observer = modelCallObservers.getStore();
   if (!observer) {
-    if (requiredObserverScopes.getStore()) throw new Error('model-call observer missing in an observed scope');
+    if (requiredObserverScopes.getStore())
+      throw new Error('model-call observer missing in an observed scope');
+    log.info('model-call', { ...reportFor(facts) });
     return;
   }
   try {
-    await observer(reportFor(agent, attempts, startedAt, providerCalls, err));
-  } catch {
-    console.warn(`[mastra] model-call observer failed for ${agent}`);
+    await observer(reportFor(facts));
+  } catch (err) {
+    // The observer's failure never fails the call it observed.
+    log.warn('model-call observer failed', {
+      agent: facts.agent,
+      error: err instanceof Error ? err.name : typeof err,
+    });
   }
 }
