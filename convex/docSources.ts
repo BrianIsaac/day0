@@ -469,7 +469,13 @@ export const rotateCredential = action({
   },
 });
 
-/** Schedule a fresh sync of one owned location; refused outside real mode. */
+/**
+ * Schedule a sync of one owned location; refused outside real mode.
+ *
+ * Public, for the source's owner. A sync that ended short, or one still
+ * running, is carried on from its cursor (`beginSync`), so pressing it does
+ * not throw away the pages already read; a new secret starts from page one.
+ */
 export const resync = mutation({
   args: { sourceId: v.id('docSources') },
   handler: async (ctx, args): Promise<void> => {
