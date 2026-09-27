@@ -98,23 +98,26 @@ function request(
 }
 
 function deps(sent: Sent[], fetcher?: RealAdapterDeps['fetch']): RealAdapterDeps {
+  const recording: RealAdapterDeps['fetch'] = async (url, init) => {
+    sent.push({
+      url: url.toString(),
+      method: String(init.method),
+      headers: init.headers as Record<string, string>,
+      body: init.body === undefined || init.body === null ? undefined : String(init.body),
+    });
+    return fetcher
+      ? fetcher(url, init)
+      : new Response(JSON.stringify({ ok: true, messages: [] }), { status: 200 });
+  };
   return {
     decrypt: vi.fn(async (): Promise<string> => FAKE_BOT_TOKEN),
     now: (): number => now,
     createMcpClient: (): never => {
       throw new Error('no MCP surface in this test');
     },
-    fetch: async (url: URL, init: RequestInit): Promise<Response> => {
-      sent.push({
-        url: url.toString(),
-        method: String(init.method),
-        headers: init.headers as Record<string, string>,
-        body: init.body === undefined || init.body === null ? undefined : String(init.body),
-      });
-      return fetcher
-        ? fetcher(url, init)
-        : new Response(JSON.stringify({ ok: true, messages: [] }), { status: 200 });
-    },
+    fetch: recording,
+    // A documented API that is not Slack goes through the checked connector; no DNS here.
+    connectApi: async (endpoint: string) => ({ url: new URL(endpoint), fetch: recording }),
   };
 }
 

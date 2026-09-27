@@ -129,14 +129,24 @@ function deps(
         ),
       disconnect: async (): Promise<void> => {},
     }),
-    fetch: async (url: URL, init: RequestInit): Promise<Response> => {
-      recorded.http.push({
-        url: url.toString(),
-        body: init.body === undefined ? undefined : JSON.parse(String(init.body)),
-      });
-      return new Response(JSON.stringify({ ok: true, ts: '1.1' }), { status: 200 });
-    },
+    fetch: recordHttp(recorded),
+    // A documented API that is not Slack goes through the checked connector; no DNS here.
+    connectApi: async (endpoint: string) => ({
+      url: new URL(endpoint),
+      fetch: recordHttp(recorded),
+    }),
     now: (): number => now,
+  };
+}
+
+/** A fetch that records each request's address and JSON body and answers `ok`. */
+function recordHttp(recorded: Recorded): RealAdapterDeps['fetch'] {
+  return async (url: URL, init: RequestInit): Promise<Response> => {
+    recorded.http.push({
+      url: url.toString(),
+      body: init.body === undefined ? undefined : JSON.parse(String(init.body)),
+    });
+    return new Response(JSON.stringify({ ok: true, ts: '1.1' }), { status: 200 });
   };
 }
 

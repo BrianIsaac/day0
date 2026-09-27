@@ -44,7 +44,14 @@ export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
 
 export interface HttpAdapterDeps {
   decrypt: DecryptCredential;
+  /** The transport to Slack's fixed Web API base, which the code names and no page can move. */
   fetch: FetchLike;
+  /**
+   * How a documented API's base address is checked and reached on every
+   * request, as the probe reached it; `connectCheckedApi` unless a test
+   * replaces it.
+   */
+  connect?: ApiConnector;
   now: () => number;
   beforeTransport?: BeforeSurfaceTransport;
   /** The span model outcomes are redacted with; undefined degrades to the structural floor. */
@@ -369,7 +376,8 @@ export async function connectCheckedApi(endpoint: string): Promise<CheckedApi> {
 
 /**
  * Verify a documented API that is not Slack: check the credential with one
- * documented read and admit every operation the documentation names.
+ * documented read and admit every operation the documentation names, each
+ * with its verb.
  *
  * The read is the one the page names for the probe (`documentedProbeRead`),
  * so checking the credential never changes anything on the system. It is sent
@@ -482,6 +490,24 @@ export class HttpAdapter implements SurfaceAdapter {
     void ctx;
     void agentId;
     return {};
+  }
+
+  /**
+   * The fetch one request goes out on. Slack's base is fixed by the code, so
+   * it is reached directly; any other documented API's base is resolved,
+   * checked and pinned on every request, as the probe checked it, so a name
+   * that resolved to a permitted address at the probe cannot be re-pointed
+   * at a private or metadata address before a write.
+   *
+   * @throws DocumentedApiLimitation or Error when the address is refused.
+   */
+  private async transportFor(
+    surface: SurfaceRecord,
+    transportEndpoint: string,
+  ): Promise<FetchLike> {
+    if (isSlackApiEndpoint(surface.endpoint)) return this.deps.fetch;
+    const checked = await (this.deps.connect ?? connectCheckedApi)(transportEndpoint);
+    return checked.fetch;
   }
 
   /**
@@ -606,8 +632,9 @@ export class HttpAdapter implements SurfaceAdapter {
       if (authorityRefusal) {
         return { tool: action.tool, ok: false, reason: authorityRefusal, idempotencyKey };
       }
+      const transport = await this.transportFor(surface, transportEndpoint);
       writeAttempted = actionIntent(request) === 'write';
-      const response = await this.deps.fetch(url, {
+      const response = await transport(url, {
         method: request.method,
         headers,
         body,

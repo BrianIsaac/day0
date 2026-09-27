@@ -4,7 +4,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import type { DecryptCredential } from './credentials';
-import { HttpAdapter, type FetchLike } from './http';
+import { HttpAdapter, type ApiConnector, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
 import { MOCK_TOOLS, mockAdapter } from './mock';
 import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
@@ -59,7 +59,14 @@ import type { ReplyTarget } from '../work/types';
 export interface RealAdapterDeps {
   decrypt: DecryptCredential;
   createMcpClient: CreateMcpClient;
+  /** The transport to Slack's fixed Web API base. */
   fetch: FetchLike;
+  /**
+   * How a documented API that is not Slack is checked and reached on every
+   * request; the resolving, pinning `connectCheckedApi` unless a test
+   * replaces it.
+   */
+  connectApi?: ApiConnector;
   beforeTransport?: BeforeSurfaceTransport;
   now?: () => number;
   /** The browser driver's address; only a `browser-driven` surface uses it. */
@@ -182,6 +189,7 @@ export function resolveAdapters(
     const http = new HttpAdapter(surfaces, {
       decrypt: deps.decrypt,
       fetch: deps.fetch,
+      ...(deps.connectApi ? { connect: deps.connectApi } : {}),
       now,
       beforeTransport: deps.beforeTransport,
       spanModel: deps.spanModel,

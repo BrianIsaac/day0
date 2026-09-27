@@ -90,6 +90,9 @@ function adapter(
   return new HttpAdapter(surfaces, {
     decrypt: vi.fn(async (): Promise<string> => secret),
     fetch: fetchImpl.fetch,
+    // A documented API that is not Slack is reached through the checked
+    // connector; here it answers from the same fake, with no DNS.
+    connect: async (endpoint: string) => ({ url: new URL(endpoint), fetch: fetchImpl.fetch }),
     now: (): number => now,
     beforeTransport,
     spanModel: new RecordedSpanModel(),
@@ -789,23 +792,39 @@ describe('the HTTP rung on a documented API that is not Slack', (): void => {
     },
   });
 
+  function trackerAdapter(connect: ApiConnector): {
+    adapter: HttpAdapter;
+    direct: FakeFetch;
+  } {
+    const direct = fakeFetch(() => Response.json({ ok: true }));
+    return {
+      direct,
+      adapter: new HttpAdapter([tracker], {
+        decrypt: async (): Promise<string> => 'tracker-key',
+        fetch: direct.fetch,
+        connect,
+        now: (): number => now,
+      }),
+    };
+  }
+
   it('refuses DELETE /issues when only GET /issues is documented (review M3)', async (): Promise<void> => {
-    const sent = fakeFetch(() => Response.json({}));
-    const rung = adapter(sent, [tracker], 'tracker-key');
+    const pinned = trackerConnector(() => Response.json({}));
+    const { adapter: rung } = trackerAdapter(pinned.connect);
     for (const method of ['DELETE', 'PATCH', 'PUT']) {
       await expect(rung.apply(ctx, run, request(method, '/issues'), 0, 'k')).resolves.toMatchObject(
         { ok: false, reason: `tool not in the surface allowlist (${method} issues)` },
       );
     }
-    expect(sent.calls).toEqual([]);
+    expect(pinned.calls).toEqual([]);
     await expect(rung.apply(ctx, run, request('GET', '/issues'), 0, 'k')).resolves.toMatchObject({
       ok: true,
     });
   });
 
   it('matches a templated operation one segment for one segment', async (): Promise<void> => {
-    const sent = fakeFetch(() => Response.json({ id: 'TRK-7' }));
-    const rung = adapter(sent, [tracker], 'tracker-key');
+    const pinned = trackerConnector(() => Response.json({ id: 'TRK-7' }));
+    const { adapter: rung } = trackerAdapter(pinned.connect);
     await expect(
       rung.apply(ctx, run, request('GET', '/issues/TRK-7'), 0, 'k'),
     ).resolves.toMatchObject({ ok: true, providerId: 'TRK-7' });
@@ -814,14 +833,14 @@ describe('the HTTP rung on a documented API that is not Slack', (): void => {
         ok: false,
       });
     }
-    expect(sent.calls.map((call) => call.url)).toEqual([
+    expect(pinned.calls.map((call) => call.url)).toEqual([
       'https://tracker.example.com/api/v2/issues/TRK-7',
     ]);
   });
 
   it('never puts the credential in a body, a documented field or not, or a path (review M4)', async (): Promise<void> => {
-    const sent = fakeFetch(() => Response.json({ ok: true }));
-    const rung = adapter(sent, [tracker], 'tracker-key');
+    const pinned = trackerConnector(() => Response.json({ ok: true }));
+    const { adapter: rung } = trackerAdapter(pinned.connect);
     const inBody = await rung.apply(
       ctx,
       run,
@@ -839,7 +858,7 @@ describe('the HTTP rung on a documented API that is not Slack', (): void => {
     expect(inPath.reason).toContain('never in the path');
     const unfilled = await rung.apply(ctx, run, request('GET', '/issues/{{issue}}'), 0, 'k');
     expect(unfilled.reason).toContain('a value was left unfilled');
-    expect(sent.calls).toEqual([]);
+    expect(pinned.calls).toEqual([]);
     // The header is where the key goes.
     await rung.apply(
       ctx,
@@ -848,7 +867,62 @@ describe('the HTTP rung on a documented API that is not Slack', (): void => {
       0,
       'k',
     );
-    expect(new Headers(sent.calls[0]!.init.headers).get('x-api-key')).toBe('tracker-key');
-    expect(sent.calls[0]!.init.body).toBe('{"issue":"TRK-7","body":"Done."}');
+    expect(new Headers(pinned.calls[0]!.init.headers).get('x-api-key')).toBe('tracker-key');
+    expect(pinned.calls[0]!.init.body).toBe('{"issue":"TRK-7","body":"Done."}');
+  });
+
+  it("sends a listed host's write to the address it checked for that write, never by the plain fetch", async (): Promise<void> => {
+    const checkedFor: string[] = [];
+    const sent: string[] = [];
+    const connect: ApiConnector = async (endpoint: string) => {
+      checkedFor.push(endpoint);
+      return {
+        url: new URL(endpoint),
+        fetch: async (input: URL): Promise<Response> => {
+          sent.push(input.href);
+          return Response.json({ id: 'C-1' });
+        },
+      };
+    };
+    const { adapter: rung, direct } = trackerAdapter(connect);
+    await expect(
+      rung.apply(ctx, run, request('POST', '/comments', '{"body":"Done."}'), 0, 'k'),
+    ).resolves.toMatchObject({ ok: true });
+    expect(checkedFor).toEqual([TRACKER]);
+    expect(sent).toEqual(['https://tracker.example.com/api/v2/comments']);
+    expect(direct.calls).toEqual([]);
+  });
+
+  it('sends nothing when the address no longer passes the check at the write (DNS rebinding)', async (): Promise<void> => {
+    const connect: ApiConnector = async (): Promise<never> => {
+      throw new DocumentedApiLimitation(
+        'The approved API hostname is listed in DAY0_PRIVATE_HOSTS but resolved to a loopback address.',
+      );
+    };
+    const { adapter: rung, direct } = trackerAdapter(connect);
+    const row = await rung.apply(
+      ctx,
+      run,
+      request('POST', '/comments', '{"body":"Done."}'),
+      0,
+      'k',
+    );
+    expect(row).toMatchObject({ ok: false, reason: expect.stringContaining('loopback') });
+    // Refused before anything was sent, so a Retry is safe.
+    expect(row).not.toHaveProperty('outcomeUnknown');
+    expect(direct.calls).toEqual([]);
+  });
+
+  it('reaches the default connector for a documented API, which refuses a private address', async (): Promise<void> => {
+    const direct = fakeFetch(() => Response.json({ ok: true }));
+    const rung = new HttpAdapter([{ ...tracker, endpoint: 'https://tracker.internal/api/v2/' }], {
+      decrypt: async (): Promise<string> => 'tracker-key',
+      fetch: direct.fetch,
+      now: (): number => now,
+    });
+    const row = await rung.apply(ctx, run, request('GET', '/issues'), 0, 'k');
+    expect(row).toMatchObject({ ok: false });
+    expect(row.reason).toContain('public HTTPS hostname');
+    expect(direct.calls).toEqual([]);
   });
 });
