@@ -550,11 +550,10 @@ describe('tool result interpretation', (): void => {
 
 describe('Mastra client construction', (): void => {
   it('builds a client whose only server is the surface, restricted to its host', (): void => {
-    const client = createMastraMcpClient({
-      serverName: 'linear',
-      url: new URL('https://mcp.linear.app/mcp'),
-      bearer: 'lin-secret',
-    });
+    const client = createMastraMcpClient(
+      { serverName: 'linear', url: new URL('https://mcp.linear.app/mcp'), bearer: 'lin-secret' },
+      { resolveHostname: async (): Promise<string[]> => ['93.184.216.34'] },
+    );
     expect(typeof client.listTools).toBe('function');
     expect(typeof client.disconnect).toBe('function');
   });

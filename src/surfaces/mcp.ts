@@ -14,7 +14,15 @@ import {
 import { injectSecret } from './secrets';
 import { redactOutcome } from './redact';
 import type { SpanModel } from '../redaction/client';
+import type { MCPClient } from '@mastra/mcp';
 import { createSecretMcpClient } from './mcp-client';
+import {
+  checkMcpAddress,
+  pinnedFetch,
+  resolveHostname,
+  type HostResolver,
+  type HttpsRequest,
+} from './mcp-address';
 import {
   browserComponent,
   browserPageUrl,
@@ -191,6 +199,12 @@ export function providerErrorMessage(text: string): string | undefined {
   return 'the server reported an error';
 }
 
+/** How a credential-bearing client checks and reaches its server; a test supplies its own. */
+export interface McpConnection {
+  readonly resolveHostname: HostResolver;
+  readonly request?: HttpsRequest;
+}
+
 /**
  * Build a Streamable HTTP client for one surface.
  *
@@ -198,36 +212,64 @@ export function providerErrorMessage(text: string): string | undefined {
  * server also returns structured content. Its default logger is disabled so
  * a provider response cannot log a reflected credential before redaction.
  *
+ * A client that carries a bearer resolves the endpoint's hostname once, before
+ * its first request, refuses it unless every answer is public, and then dials
+ * only those answers: the probe's check holds for every connection a write or
+ * a manager message makes, not only for the probe. A client with no bearer is
+ * Day0's own browser driver on the compose network and is not checked.
+ *
  * Args:
  *   options: Server name, endpoint and bearer credential.
+ *   connection: The resolver and transport a bearer client uses.
  *
  * Returns:
  *   A connected-on-demand Mastra MCP client.
  */
-export function createMastraMcpClient(options: McpClientOptions): McpClientLike {
-  const client = createSecretMcpClient({
-    id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
-    servers: {
-      [options.serverName]: {
-        url: options.url,
-        allowedHosts: [options.url.host],
-        ...(options.bearer
-          ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
-          : {}),
+export function createMastraMcpClient(
+  options: McpClientOptions,
+  connection: McpConnection = { resolveHostname },
+): McpClientLike {
+  let created: Promise<MCPClient> | undefined;
+  const create = async (): Promise<MCPClient> => {
+    const pinned = options.bearer
+      ? pinnedFetch(
+          await checkMcpAddress(options.url, connection.resolveHostname),
+          connection.request,
+        )
+      : undefined;
+    return createSecretMcpClient({
+      id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
+      servers: {
+        [options.serverName]: {
+          url: options.url,
+          allowedHosts: [options.url.host],
+          ...(pinned ? { fetch: pinned } : {}),
+          ...(options.bearer
+            ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
+            : {}),
+        },
       },
-    },
-    timeout: MCP_TIMEOUT_MS,
-  });
+      timeout: MCP_TIMEOUT_MS,
+    });
+  };
+  const client = (): Promise<MCPClient> => (created ??= create());
   return {
     listTools: async (): Promise<Record<string, McpToolLike>> => {
-      const { tools, errors } = await client.listToolsWithErrors({
+      const { tools, errors } = await (
+        await client()
+      ).listToolsWithErrors({
         perServerTimeoutMs: MCP_TIMEOUT_MS,
       });
       const error = errors[options.serverName];
       if (error) throw new Error(error);
       return tools;
     },
-    disconnect: async (): Promise<void> => await client.disconnect(),
+    disconnect: async (): Promise<void> => {
+      if (!created) return;
+      // A client whose address check refused it never connected, so there is nothing to close.
+      const connected = await created.catch((): undefined => undefined);
+      await connected?.disconnect();
+    },
   };
 }
 

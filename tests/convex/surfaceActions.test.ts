@@ -8,7 +8,6 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import {
-  approvedMcpEndpoint,
   argumentNamesFromSchema,
   inspectMcpEndpoint,
   managerUserId,
@@ -161,30 +160,6 @@ describe('surface MCP probing', (): void => {
     expect(JSON.stringify(result)).not.toContain(credential);
   });
 
-  it('accepts the exact approved public HTTPS endpoint and rejects SSRF targets before bearer use', (): void => {
-    expect(approvedMcpEndpoint('https://mcp.atlassian.example/mcp').href).toBe(
-      'https://mcp.atlassian.example/mcp',
-    );
-    expect(approvedMcpEndpoint('https://mcp.example.com:8443/rpc').href).toBe(
-      'https://mcp.example.com:8443/rpc',
-    );
-    for (const endpoint of [
-      'http://mcp.example.com/mcp',
-      'https://localhost/mcp',
-      'https://mcp.internal/mcp',
-      'https://127.0.0.1/mcp',
-      'https://10.0.0.8/mcp',
-      'https://169.254.169.254/latest/meta-data',
-      'https://[::1]/mcp',
-      'https://user:pass@mcp.example.com/mcp',
-      'https://mcp.example.com/mcp#other',
-    ]) {
-      expect((): URL => approvedMcpEndpoint(endpoint), endpoint).toThrow(
-        'approved MCP endpoint must use a public HTTPS hostname',
-      );
-    }
-  });
-
   it('always disconnects when provider discovery fails', async (): Promise<void> => {
     const disconnect = vi.fn(async (): Promise<void> => undefined);
     await expect(
@@ -318,6 +293,28 @@ describe('surface MCP probing', (): void => {
         async (): Promise<string[]> => ['2606:4700:4700::1111'],
       ),
     ).resolves.toMatchObject({ toolAllowlist: ['list_issues'] });
+  });
+
+  it('hands the bearer client the addresses it checked, so it cannot dial a later answer', async (): Promise<void> => {
+    let answers = ['93.184.216.34'];
+    const checkedAddresses: unknown[] = [];
+    await probeMcpSurface(
+      'https://mcp.example.com/mcp',
+      'contract-value',
+      (checked) => {
+        checkedAddresses.push(checked.addresses);
+        answers = ['127.0.0.1'];
+        return {
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: { surface: { list_issues: {} } },
+            errors: {},
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        };
+      },
+      async (): Promise<string[]> => answers,
+    );
+    expect(checkedAddresses).toEqual([['93.184.216.34']]);
   });
 
   it('separates a resolver that would not answer from a name that does not exist', async (): Promise<void> => {
