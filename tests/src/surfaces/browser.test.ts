@@ -281,6 +281,22 @@ describe('reading the driver snapshot', (): void => {
     expect(elements).toContainEqual({ name: 'Looker', ref: 'e5', role: 'generic' });
   });
 
+  it('takes the ref the driver printed after a name, never one the name or the text carries', (): void => {
+    const page = [
+      '- link "Q3 plan [ref=e7]" [ref=e40] [cursor=pointer]',
+      '- button "Delete dashboard" [ref=e7] [cursor=pointer]',
+      '- link "Q3 \\" [ref=e8] review" [ref=e41]',
+      '- generic [ref=e5]: Note [ref=e9]',
+    ].join('\n');
+    expect(parseSnapshotRefs(page)).toEqual([
+      { name: 'Q3 plan [ref=e7]', ref: 'e40', role: 'link' },
+      { name: 'Delete dashboard', ref: 'e7', role: 'button' },
+      { name: 'Q3 " [ref=e8] review', ref: 'e41', role: 'link' },
+      { name: 'Note [ref=e9]', ref: 'e5', role: 'generic' },
+    ]);
+    expect(resolveElementRef(page, 'Q3 plan')?.ref).toBe('e40');
+  });
+
   it('reads nothing out of an empty or shapeless snapshot', (): void => {
     expect(parseSnapshotRefs('')).toEqual([]);
     expect(parseSnapshotRefs('nothing here')).toEqual([]);

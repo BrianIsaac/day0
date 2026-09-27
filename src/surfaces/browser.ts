@@ -76,6 +76,23 @@ export interface SnapshotElement {
 const ROLE_WORDS = /\b(button|textbox|field|input|link|checkbox|combobox|box|control|element)\b/gi;
 
 /**
+ * The attributes the driver prints after a node's role or name, in whatever
+ * order it sees fit: `[level=1] [ref=e7] [cursor=pointer]`.
+ */
+const SNAPSHOT_ATTRIBUTES = '((?:[ \\t]*\\[[^\\]\\n]*\\])*)';
+/** A named node, `- button "Sign in" [ref=e15]`; the name may carry escaped quotes. */
+const NAMED_NODE = new RegExp(
+  `^\\s*-\\s+([a-z]+)\\s+"((?:[^"\\\\]|\\\\.)*)"${SNAPSHOT_ATTRIBUTES}`,
+  'i',
+);
+/** An unnamed node whose text follows its attributes, `- generic [ref=e5]: Looker`. */
+const LABELLED_NODE = new RegExp(
+  `^\\s*-\\s+([a-z]+)${SNAPSHOT_ATTRIBUTES}[ \\t]*:[ \\t]*(.+)$`,
+  'i',
+);
+const REF_ATTRIBUTE = /\[ref=([^\]]+)\]/;
+
+/**
  * Read the addressable elements out of one driver snapshot.
  *
  * The driver renders an accessibility tree as indented YAML-ish lines, each
@@ -93,24 +110,26 @@ const ROLE_WORDS = /\b(button|textbox|field|input|link|checkbox|combobox|box|con
 export function parseSnapshotRefs(snapshot: string): SnapshotElement[] {
   const elements: SnapshotElement[] = [];
   for (const line of snapshot.split(/\r?\n/)) {
-    // The ref is found on its own rather than in sequence with the name,
-    // because the driver puts other attributes in between as it sees fit
-    // (`heading "Sign in" [level=1] [ref=e7]`).
-    const ref = /\[ref=([^\]]+)\]/.exec(line);
-    if (!ref) continue;
-    const named = /^\s*-\s+([a-z]+)\s+"([^"]*)"/i.exec(line);
+    // The ref is read only from the driver's attributes after the role or
+    // the quoted name, never from the name or the text a node carries: an
+    // element named "Q3 plan [ref=e7]" is page content, and its own ref is
+    // the one the driver printed after it.
+    const named = NAMED_NODE.exec(line);
     if (named) {
-      elements.push({ name: named[2].trim(), ref: ref[1], role: named[1].toLowerCase() });
+      const ref = REF_ATTRIBUTE.exec(named[3]);
+      if (ref) {
+        elements.push({
+          name: named[2].replace(/\\(.)/g, '$1').trim(),
+          ref: ref[1],
+          role: named[1].toLowerCase(),
+        });
+      }
       continue;
     }
-    // An unnamed node whose text follows the ref, e.g. `- generic [ref=e5]: Looker`.
-    const labelled = /^\s*-\s+([a-z]+)\b[^:]*:\s*(.+)$/i.exec(line);
-    if (labelled) {
-      elements.push({
-        name: labelled[2].trim(),
-        ref: ref[1],
-        role: labelled[1].toLowerCase(),
-      });
+    const labelled = LABELLED_NODE.exec(line);
+    const ref = labelled ? REF_ATTRIBUTE.exec(labelled[2]) : null;
+    if (labelled && ref) {
+      elements.push({ name: labelled[3].trim(), ref: ref[1], role: labelled[1].toLowerCase() });
     }
   }
   return elements;
