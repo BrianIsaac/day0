@@ -200,3 +200,38 @@ describe('the flips of the autonomous-actions switch', (): void => {
     ).rejects.toThrow('forbidden');
   });
 });
+
+describe('the dashboard ticker', (): void => {
+  it('leaves the intake listings out and still fills the window with what the agent did', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', { agentId: id, type: 'work.discovered', payload: {}, createdAt: 1 });
+      await ctx.db.insert('events', { agentId: id, type: 'work.completed', payload: {}, createdAt: 2 });
+      for (let index = 0; index < 12; index += 1) {
+        await ctx.db.insert('events', { agentId: id, type: 'work.listed', payload: {}, createdAt: 3 + index });
+      }
+      return id;
+    });
+    const recent = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.events.recent, { agentId, limit: 2 });
+    expect(recent.map((event) => event.type)).toEqual(['work.completed', 'work.discovered']);
+  });
+});
+
+describe('export redaction', (): void => {
+  it('drops the assignee’s address as it drops the manager’s', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport({ tracker: { assigneeEmail: 'aiko@example.com', state: 'Todo' } }),
+    ).toEqual({ tracker: { state: 'Todo' } });
+  });
+});

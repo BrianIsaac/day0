@@ -4,22 +4,44 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { collectLedgerObservations } from './metrics';
 import { redactTokenShapes } from '../src/surfaces/redact';
+import { WORK_LISTED_EVENT } from './work';
 
 /**
  * Events feed — append-only, drives the live UI ticker. The reading side
  * enforces per-account ownership; the writing side is internal-only.
  */
 
+/**
+ * Event types the ticker leaves out: each intake listing of a changed ticket
+ * is a record for the re-read before apply, not something the agent did
+ * (U19 D6), and one poll can write one per ticket.
+ */
+const TICKER_HIDDEN_TYPES = new Set([WORK_LISTED_EVENT]);
+
+/** The most events one ticker read walks to fill its window. */
+const TICKER_SCAN_LIMIT = 500;
+
+/**
+ * The newest events of one agent for the dashboard ticker, newest first,
+ * intake listings left out. Public; owner-guarded; reads at most
+ * `TICKER_SCAN_LIMIT` events.
+ */
 export const recent = query({
   args: { agentId: v.id('agents'), limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<'events'>[]> => {
     await assertOwnsAgent(ctx, args.agentId);
     const limit = args.limit ?? 50;
-    return await ctx.db
+    const shown: Doc<'events'>[] = [];
+    let scanned = 0;
+    for await (const event of ctx.db
       .query('events')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-      .order('desc')
-      .take(limit);
+      .order('desc')) {
+      scanned += 1;
+      if (!TICKER_HIDDEN_TYPES.has(event.type)) shown.push(event);
+      if (shown.length >= limit || scanned >= Math.max(limit, TICKER_SCAN_LIMIT)) break;
+    }
+    return shown;
   },
 });
 
@@ -49,7 +71,7 @@ export const autonomyChanges = query({
 });
 
 /** Payload keys that identify a person rather than describe an action. */
-const PERSONAL_KEYS = new Set(['bossEmail', 'email', 'managerEmail']);
+const PERSONAL_KEYS = new Set(['assigneeEmail', 'bossEmail', 'email', 'managerEmail']);
 
 /**
  * Redact one value for export: personal keys are dropped, every string has
