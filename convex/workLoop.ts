@@ -8,6 +8,7 @@ import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT } from '../src/work/types';
 import { normaliseActionVerdict } from '../src/surfaces/policy';
+import { appendEvent } from './eventLog';
 
 /**
  * The server-driven work loop, real mode only.
@@ -424,7 +425,7 @@ async function parkForCharter(
       verdict: { decision: 'defer', reason: AWAITING_CHARTER, missingPermissions: [] },
       evaluationClaimedAt: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId,
       type: 'work.waiting-for-charter',
       payload: { workItemId: row._id },
@@ -562,7 +563,7 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
       });
       return true;
     }
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: DRAFT_RESUMED,
       payload: { workItemId: row._id, attempt: resumed + 1 },
@@ -773,7 +774,7 @@ export const checkForNewWork = mutation({
     await ctx.scheduler.runAfter(0, internal.work.readmitSatisfiedDeferrals, {
       agentId: args.agentId,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: CHECK_REQUESTED,
       payload: { surfaceIds: surfaces.map((surface) => surface._id) },
