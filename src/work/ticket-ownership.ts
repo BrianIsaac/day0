@@ -203,7 +203,12 @@ export async function ticketChange(
   if (before !== undefined && now.state !== undefined && !sameState(before, now.state)) {
     return `its state moved from ${before} to ${now.state}`;
   }
-  if (isClosedStateType(now.stateType) && !isClosedStateType(baseline?.stateType)) {
+  // A ticket an earlier run of the item closed is closed by Day0, not taken away from it.
+  const ownMove =
+    context.ownState !== undefined &&
+    now.state !== undefined &&
+    sameState(context.ownState, now.state);
+  if (!ownMove && isClosedStateType(now.stateType) && !isClosedStateType(baseline?.stateType)) {
     return `it is ${now.stateType}`;
   }
   if (!now.assigned) {

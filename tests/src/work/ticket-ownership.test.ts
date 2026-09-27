@@ -101,6 +101,12 @@ describe('ticket ownership', () => {
         { baseline: todo, ownState: 'in progress', owner: owner.read },
       ),
     ).resolves.toBeUndefined();
+    await expect(
+      ticketChange(
+        { ...todo, state: 'Done', stateType: 'completed' },
+        { baseline: todo, ownState: 'Done', owner: owner.read },
+      ),
+    ).resolves.toBeUndefined();
     // The same assignee as the listing: the owner is never asked.
     const unasked = ownerRead();
     const mine = { ...todo, assigned: true, assigneeId: 'user-key' };
