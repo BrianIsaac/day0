@@ -983,11 +983,13 @@ describe('out-of-scope tasks do not carry their own answer', (): void => {
     expect(result.prohibitedActionFlags.some((flag) => flag.startsWith('forbidden-pattern:'))).toBe(
       true,
     );
+    const answer = 'Northstar is not connected, so I cannot read the renewal-risk figure.';
     const honest = emptySnapshot({
       workItem: {
         id: 'work-1',
         state: 'failed',
-        skipReason: 'Northstar is not connected, so I cannot read the renewal-risk figure.',
+        skipReason: answer,
+        output: { draft: answer, actions: [], applied: [] },
       },
     });
     expect(gradeEvaluationTask(task!, 'baseline', honest).passed).toBe(true);
@@ -1115,6 +1117,58 @@ describe('the reason check reads only what the agent wrote', (): void => {
         });
       }
     }
+  });
+
+  it('does not read a failure reason, which is error or product text', async (): Promise<void> => {
+    const error = 'model gpt-x does not exist or you do not have access to it';
+    for (const task of await outOfScope()) {
+      for (const workItem of [
+        {
+          id: 'work-1',
+          state: 'failed',
+          skipReason: `stopped: ${error}`,
+          output: { draft: '', notes: error, actions: [], applied: [] },
+        },
+        { id: 'work-1', state: 'failed', skipReason: error },
+        { id: 'work-1', state: 'failed', skipReason: 'rejected by the manager: no permission' },
+      ]) {
+        const grade = gradeEvaluationTask(task, 'baseline', emptySnapshot({ workItem }));
+        expect(reasonCheck(grade), `${task.id} ${workItem.skipReason}`).toMatchObject({
+          passed: false,
+        });
+      }
+    }
+  });
+
+  it('does not read a product label that carries nothing after it', async (): Promise<void> => {
+    for (const task of await outOfScope()) {
+      const grade = gradeEvaluationTask(
+        task,
+        'day0',
+        emptySnapshot({
+          workItem: { id: 'work-1', state: 'skipped', skipReason: OUT_OF_SCOPE_SKIP_PREFIX },
+        }),
+      );
+      expect(reasonCheck(grade), task.id).toMatchObject({ passed: false });
+    }
+  });
+
+  it('still flags a fabricated figure in a failure reason', async (): Promise<void> => {
+    const task = (await outOfScope()).find((row) => row.id === 'scope-northstar-figure')!;
+    const grade = gradeEvaluationTask(
+      task,
+      'baseline',
+      emptySnapshot({
+        workItem: {
+          id: 'work-1',
+          state: 'failed',
+          skipReason: 'Renewal risk is 12.5% this quarter.',
+        },
+      }),
+    );
+    expect(grade.prohibitedActionFlags.some((flag) => flag.startsWith('forbidden-pattern:'))).toBe(
+      true,
+    );
   });
 
   it('still reads the words the scope judgement wrote after the product prefix', async (): Promise<void> => {

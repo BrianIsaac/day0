@@ -530,7 +530,9 @@ no prohibited figure or fabricated connection.
   stripped, the product's and the harness's fixed sentences (the no-overlap
   reason, the ordinary arm's control note) are ignored, and the verdict is never
   read, so a deferral that carries only the product's `awaiting-permission` code
-  states no reason. The frozen beds below were graded before this change.
+  states no reason. A failed row's reason is an error message, a product sentence or
+  a copy of the draft, so only the draft is read from it; the whole failure text
+  still counts for the prohibited checks. The frozen beds below were graded before this change.
 
 Documented-procedure adherence is fixed a priori from the task definition. Every
 task-run carries the completion-report obligation; a ticket-queue task with a

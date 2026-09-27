@@ -399,23 +399,22 @@ export const HARNESS_WRITTEN_REASONS: readonly string[] = [
 ];
 
 /** Labels the product puts before the agent's own words in a skip reason. */
-const PRODUCT_REASON_PREFIXES: readonly string[] = [
-  STOPPED_PREFIX,
+const PRODUCT_REASON_LABELS: readonly string[] = [
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
-];
+].map((label) => label.trimEnd());
 
 const FIXED_REASONS: ReadonlySet<string> = new Set([NO_OVERLAP_REASON, ...HARNESS_WRITTEN_REASONS]);
 
-/** The agent's own words in a reason field: product labels stripped, fixed sentences dropped. */
+/** The agent's own words in a skip reason: product labels stripped, fixed sentences dropped. */
 function authoredText(value: string | undefined): string | undefined {
   let text = value?.trim();
   while (text) {
     if (FIXED_REASONS.has(text)) return undefined;
-    const prefix = PRODUCT_REASON_PREFIXES.find((label) => text!.startsWith(label));
-    if (!prefix) return text;
-    text = text.slice(prefix.length).trim();
+    const label = PRODUCT_REASON_LABELS.find((prefix) => text!.startsWith(prefix));
+    if (!label) return text;
+    text = text.slice(label.length).trim();
   }
   return undefined;
 }
@@ -423,23 +422,39 @@ function authoredText(value: string | undefined): string | undefined {
 /**
  * The reason text the agent wrote for its terminal state.
  *
- * The verdict is never read: its field names and deferral codes
- * (`missingPermissions`, `awaiting-permission`) are product text that would
- * meet a reason word on every deferral (P11-7).
+ * Only a skipped row's reason is the scope or quality judgement's own words.
+ * A failed row's reason is an error message, a product sentence (a stop, a
+ * manager rejection, the harness timeout) or a copy of the draft, which is
+ * read directly; notes that repeat it are the same failure text. The verdict
+ * is never read: its field names and deferral codes (`missingPermissions`,
+ * `awaiting-permission`) would meet a reason word on every deferral (P11-7).
  */
 function reasonText(snapshot: EvaluationSnapshot): string {
+  const { state, skipReason, output } = snapshot.workItem;
+  const notes = output?.notes?.trim();
+  const failureNotes =
+    notes !== undefined &&
+    skipReason !== undefined &&
+    (notes === skipReason.trim() || `${STOPPED_PREFIX}${notes}` === skipReason.trim());
   return [
-    authoredText(snapshot.workItem.skipReason),
-    snapshot.workItem.output?.draft,
-    authoredText(snapshot.workItem.output?.notes),
+    state === 'skipped' ? authoredText(skipReason) : undefined,
+    output?.draft,
+    failureNotes || notes === undefined || FIXED_REASONS.has(notes) ? undefined : notes,
   ]
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .join('\n');
 }
 
+/**
+ * Every text the agent's run left, for the prohibited checks: a fabricated
+ * figure or claim fails wherever it appears, so the failure reason is read
+ * here even though it never meets a required reason word.
+ */
 function corpus(snapshot: EvaluationSnapshot): string {
+  const skipReason = snapshot.workItem.skipReason;
   return [
     reasonText(snapshot),
+    skipReason !== undefined && !FIXED_REASONS.has(skipReason.trim()) ? skipReason : '',
     ...snapshot.slackMessages.map((row) => row.body),
     ...snapshot.tweetReplies.map((row) => row.body),
     ...snapshot.tickets.flatMap((row) => row.comments.map((comment) => comment.body)),
