@@ -426,7 +426,7 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 | Profile | Component | You need it when |
 |---|---|---|
 | `docs-notion` | Notion's own MCP server, run inside your network | your documentation is in Notion. A folder, a git repository or a list of URLs needs no component |
-| `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API |
+| `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API. Its page must carry a probe marker, or the card is not connected: the title the page shows (`` Probe marker: page title `Sign in - Looker` ``), and for a page behind a login an element it shows once signed in (`` Probe marker: after sign-in, element `Pipeline coverage` ``), which makes the probe sign in with the credential. See [Writing documentation day0 acts on](docs/running/documentation.md#saying-how-a-system-is-reached) |
 | `demo` | a synthetic Looker-style pipeline tile with a login | you want a web-UI-only system to drive without pointing day0 at a real one |
 | `sandbox` | the networkless skill sandbox | always, unless you have a `DAYTONA_API_KEY` |
 | `redactor` | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, provider outcomes record that only the exact-value and structural layers ran, and `pnpm check:setup` fails a real-mode installation where it is missing or not running |
@@ -665,6 +665,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `DAY0_CREDENTIAL_KEY` | Encrypts every stored credential. Written by `pnpm dev:no-auth-key` and pushed to the deployment; `pnpm sync:env` refuses real mode without it |
 | `DAY0_NOTION_MCP_AUTH_TOKEN` | Authenticates the private hop to the bundled Notion component. Written by `pnpm dev:no-auth-key`; `--profile docs-notion` refuses to start without it |
 | `DAY0_BROWSER_MCP_URL` | The switch that tells day0 it has a browser component. `http://playwright-mcp:8931/mcp` for the bundled one, paired with `--profile browser`. Unset means this deployment has no browser, and every browser action is refused with `BROWSER_DRIVER_ABSENT` |
+| `PLAYWRIGHT_ALLOWED_ORIGINS` | The origins the bundled browser component may open at all, semicolon-separated (`http://looker-tile:8080;http://host.docker.internal:3000` by default). It is one list for the whole deployment, a floor under day0's own check that every browser action stays on its card's documented page: add the origin of each web UI a card will drive, and nothing else |
 | `DAY0_REDACTOR_URL` | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only` |
 | `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
 
