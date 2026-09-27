@@ -262,11 +262,13 @@ describe('a private repository read with its own secret (E-74)', (): void => {
 
   it('carries the header in the environment, never in the arguments, and follows no redirect', async (): Promise<void> => {
     const header = gitAuthorization('token-value');
-    const environment = cloneEnvironment(true, header);
+    const environment = cloneEnvironment(true, { origin: 'https://github.com', header });
+    // Scoped to the repository's origin, and no LFS server a .lfsconfig names is fetched from.
     expect(environment).toMatchObject({
       GIT_CONFIG_COUNT: '1',
-      GIT_CONFIG_KEY_0: 'http.extraHeader',
+      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraHeader',
       GIT_CONFIG_VALUE_0: `Authorization: ${header}`,
+      GIT_LFS_SKIP_SMUDGE: '1',
     });
     expect(cloneEnvironment(true).GIT_CONFIG_VALUE_0).toBeUndefined();
     const locator = parseGitLocator('https://github.com/team/private-docs#main');

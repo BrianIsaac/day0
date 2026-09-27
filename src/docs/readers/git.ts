@@ -248,12 +248,17 @@ const PROXY_VARIABLES = [
  *
  * A reader secret travels as an `http.extraHeader` in the environment
  * (`GIT_CONFIG_COUNT`), never in the arguments, which any process on the
- * machine can list, nor in the remote URL git would store (E-74).
+ * machine can list, nor in the remote URL git would store (E-74). It is
+ * scoped to the repository's own origin, and a clone that carries one
+ * fetches no LFS object, whose server a `.lfsconfig` may name.
  *
  * @param archived - Whether the host is GitHub or GitLab, cloned as before.
- * @param authorization - The reader secret's authorization header, when the source has one.
+ * @param authorization - The reader secret's header and the origin it is for, when the source has one.
  */
-export function cloneEnvironment(archived: boolean, authorization?: string): NodeJS.ProcessEnv {
+export function cloneEnvironment(
+  archived: boolean,
+  authorization?: { readonly origin: string; readonly header: string },
+): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_TERMINAL_PROMPT: '0',
@@ -261,8 +266,9 @@ export function cloneEnvironment(archived: boolean, authorization?: string): Nod
       ? {}
       : {
           GIT_CONFIG_COUNT: '1',
-          GIT_CONFIG_KEY_0: 'http.extraHeader',
-          GIT_CONFIG_VALUE_0: `Authorization: ${authorization}`,
+          GIT_CONFIG_KEY_0: `http.${authorization.origin}/.extraHeader`,
+          GIT_CONFIG_VALUE_0: `Authorization: ${authorization.header}`,
+          GIT_LFS_SKIP_SMUDGE: '1',
         }),
   };
   if (archived) return environment;
@@ -395,7 +401,12 @@ export class GitReader implements DocumentationReader {
         {
           encoding: 'utf8',
           timeout: 30_000,
-          env: cloneEnvironment(archived, withSecret ? gitAuthorization(secret) : undefined),
+          env: cloneEnvironment(
+            archived,
+            withSecret
+              ? { origin: locator.url.origin, header: gitAuthorization(secret) }
+              : undefined,
+          ),
         },
       );
       if (cloned.status !== 0) {
