@@ -15,7 +15,11 @@ import * as exportActions from '../../convex/exportActions';
 import { redactCredentials } from '../../src/docs/redaction';
 import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { ScriptedSpanModel } from '../fixtures/redaction-double';
-import { encrypt } from '../../src/lib/credential-crypto';
+import {
+  CREDENTIAL_KEY_CHANGED_MESSAGE,
+  credentialOwnerBinding,
+  encrypt,
+} from '../../src/lib/credential-crypto';
 import {
   OWNER_KNOWN_VALUE_CAP,
   OWNER_KNOWN_VALUES_CAP_REASON,
@@ -155,12 +159,16 @@ describe('the owner known-value source', (): void => {
         });
       }
     });
-    const error = vi.spyOn(console, 'error').mockImplementation((): void => undefined);
+    const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
     await expect(
       harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'hoarder' }),
     ).rejects.toThrow(OWNER_KNOWN_VALUES_CAP_REASON);
-    expect(error).toHaveBeenCalled();
-    expect(JSON.stringify(error.mock.calls)).toContain(String(OWNER_KNOWN_VALUE_CAP));
+    const lines = log.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(lines).toContainEqual(
+      expect.objectContaining({ level: 'error', cap: OWNER_KNOWN_VALUE_CAP }),
+    );
   });
 });
 
@@ -501,4 +509,101 @@ it('drops old page-derived runbook words from exact removal but keeps an assigne
     userId: 'owner',
   });
   expect(after.includes('lookupByEmail')).toBe(true);
+});
+
+describe('associated data on the owner-bound paths', (): void => {
+  it('seals bound to the owner when given one, and opens only for that owner', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sealed = await harness.action(internal.credentialCryptoActions.seal, {
+      plaintext: 'bound-value',
+      userId: 'owner',
+    });
+    await expect(
+      harness.action(internal.credentialCryptoActions.open, { ...sealed, userId: 'owner' }),
+    ).resolves.toBe('bound-value');
+    await expect(
+      harness.action(internal.credentialCryptoActions.open, { ...sealed, userId: 'neighbour' }),
+    ).rejects.toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
+    await expect(harness.action(internal.credentialCryptoActions.open, sealed)).rejects.toThrow(
+      CREDENTIAL_KEY_CHANGED_MESSAGE,
+    );
+  });
+
+  it('opens an owner-bound row for exact removal and skips ciphertext copied from another owner', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const own = encrypt('own-bound-value', KEY, credentialOwnerBinding('owner'));
+    const moved = encrypt('neighbour-bound-value', KEY, credentialOwnerBinding('neighbour'));
+    await harness.run(async (ctx) => {
+      for (const [label, sealed] of [
+        ['Own', own],
+        ['Moved', moved],
+      ] as const) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          source: 'entered',
+          createdAt: 1,
+          ...sealed,
+        });
+      }
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+
+    const values = await harness.action(internal.credentialCryptoActions.ownerValues, {
+      userId: 'owner',
+    });
+
+    expect(values).toEqual(['own-bound-value']);
+    const lines = log.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(lines).toContainEqual(expect.objectContaining({ level: 'warn', skipped: 1 }));
+    expect(JSON.stringify(lines)).not.toContain('neighbour-bound-value');
+  });
+
+  it('logs how many rows the key could not open instead of shrinking exact removal silently', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await insertRow(harness, { userId: 'owner', label: 'Current', plaintext: 'current-value' });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Rotated one',
+      plaintext: 'rotated-one',
+      key: OTHER_KEY,
+    });
+    await insertRow(harness, {
+      userId: 'owner',
+      label: 'Rotated two',
+      plaintext: 'rotated-two',
+      key: OTHER_KEY,
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+
+    expect(
+      await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' }),
+    ).toEqual(['current-value']);
+
+    const lines = log.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        skipped: 2,
+        reason: CREDENTIAL_KEY_CHANGED_MESSAGE,
+      }),
+    );
+    expect(JSON.stringify(lines)).not.toMatch(/rotated-one|rotated-two/);
+  });
+
+  it('reads the guard reason of a row bound to its owner', (): void => {
+    const sealed = encrypt('chat:write', KEY, credentialOwnerBinding('owner'));
+    expect(
+      cryptoActions.storedCredentialGuardReason({
+        ...sealed,
+        userId: 'owner',
+        label: 'slack credential',
+      }),
+    ).toBe('permission scope');
+  });
 });
