@@ -2636,7 +2636,8 @@ async function stopForChangedTicket(
   const reason = scrubKnownValues(args.reason, args.knownValues);
   // A row parked for the manager before the re-read is withheld with the
   // rest: approving it could not send it.
-  const applied = args.applied.map((entry) =>
+  // A read the gate refused is accounted for as a finished run's ledger does.
+  const applied = withRefusedReadsDropped(args.output.actions ?? [], args.applied).map((entry) =>
     entry.awaitingApproval ? { ...entry, awaitingApproval: undefined, reason } : entry,
   );
   const output = isDependentPendingOutput(args.output)

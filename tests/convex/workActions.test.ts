@@ -6591,6 +6591,40 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
   });
 
+  it("drops a read the gate refused from a run the re-read stopped, as a finished run's ledger does", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    // list_issues is not on this surface's allowlist, so the gate refuses the read.
+    const read = linearCall('list_issues', { team: 'REVOPS' });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        approvedIndexes: [0, 1, 2],
+        actionVerdicts: [
+          { disposition: 'auto' as const },
+          { disposition: 'auto' as const },
+          { disposition: 'auto' as const },
+        ],
+        output: { draft: 'Audited and closed.', notes: '', actions: [read, ...closeOut] },
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'In Progress',
+      statusType: 'started',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(ledger(stopped)[0]).toMatchObject({
+      ok: true,
+      held: true,
+      reason: expect.stringMatching(new RegExp(`^${DROPPED_READ_PREFIX}`)),
+    });
+  });
+
   it('withholds when the ticket cannot be re-read', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
