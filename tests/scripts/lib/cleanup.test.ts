@@ -31,4 +31,14 @@ describe('the undo ledger', (): void => {
     ledger.register('b', async (): Promise<void> => undefined);
     expect(ledger.pending()).toEqual(['b', 'a']);
   });
+
+  it('reports the reason of a step that throws something other than an Error', async (): Promise<void> => {
+    const ledger = new UndoLedger();
+    ledger.register('provider', async (): Promise<void> => {
+      throw 'rate limited';
+    });
+    await expect(ledger.runAll()).resolves.toEqual([
+      { label: 'provider', ok: false, error: 'rate limited' },
+    ]);
+  });
 });

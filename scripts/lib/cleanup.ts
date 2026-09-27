@@ -3,6 +3,7 @@
  * reported step by step: one failing undo never stops the others.
  */
 
+/** How one undo step went. */
 export interface UndoResult {
   label: string;
   ok: boolean;
@@ -14,6 +15,7 @@ interface UndoStep {
   run: () => Promise<void>;
 }
 
+/** The undo steps a run registered, run newest first and each attempted whatever the others did. */
 export class UndoLedger {
   private readonly steps: UndoStep[] = [];
 
@@ -48,7 +50,8 @@ export class UndoLedger {
         await step.run();
         results.push({ label: step.label, ok: true });
       } catch (error) {
-        results.push({ label: step.label, ok: false, error: (error as Error).message });
+        const reason = error instanceof Error ? error.message : String(error);
+        results.push({ label: step.label, ok: false, error: reason });
       }
     }
     return results;
