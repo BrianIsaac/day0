@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
 import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /** The configurations the production intake client built, when a test reaches it. */
 const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
@@ -51,6 +51,7 @@ import type { WorkCandidate } from '../../src/work/types';
 import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 type CredentialId = GenericId<'credentials'>;
 
@@ -78,6 +79,10 @@ interface RuntimeHarness {
   botIdentities: Array<{ surfaceId: Id<'surfaces'>; generation: number; providerBotId: string }>;
   /** Tickets intake refused on a poll, with why they left the queue. */
   withdrawn: Array<{ externalId: string; leftQueue: string }>;
+  /** Scopes the manager revoked; every surface's read scope is granted otherwise. */
+  revoked: Set<string>;
+  /** Credentials intake decrypted, in order. */
+  decrypted: string[];
 }
 
 /**
@@ -200,6 +205,8 @@ function runtimeHarness(
   const openRequests = new Map<string, Array<{ ts: string }>>();
   const botIdentities: RuntimeHarness['botIdentities'] = [];
   const withdrawn: RuntimeHarness['withdrawn'] = [];
+  const revoked = new Set<string>();
+  const decrypted: string[] = [];
   const runtime: IntakeRuntime = {
     recordBotIdentity: async (record): Promise<void> => {
       botIdentities.push(record);
@@ -214,7 +221,13 @@ function runtimeHarness(
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       agents.find((agent: Doc<'agents'>): boolean => agent._id === agentId) ?? null,
     listPages: async (): Promise<Doc<'docPages'>[]> => pages,
+    grantedScopes: async (agentId: Id<'agents'>): Promise<string[]> =>
+      surfaces
+        .filter((surface: Doc<'surfaces'>): boolean => surface.agentId === agentId)
+        .map((surface: Doc<'surfaces'>): string => `${surface.slug}:read`)
+        .filter((scope: string): boolean => !revoked.has(scope)),
     decrypt: async (credentialId: CredentialId): Promise<string> => {
+      decrypted.push(String(credentialId));
       const value = credentials.get(String(credentialId));
       if (!value) throw new Error('credential unavailable');
       return value;
@@ -265,6 +278,8 @@ function runtimeHarness(
     seeds,
     openRequests,
     withdrawn,
+    revoked,
+    decrypted,
   };
 }
 
@@ -1160,6 +1175,7 @@ describe('real surface intake', (): void => {
       listChatSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       getAgent: vi.fn(),
       listPages: vi.fn(),
+      grantedScopes: vi.fn(),
       decrypt: vi.fn(),
       recordIntake: vi.fn(),
       recordDecisionPoll: vi.fn(),
@@ -3295,5 +3311,135 @@ describe('the Linear intake client reaches only the address it checked (M16)', (
       body: '{}',
     });
     expect(dialled).toEqual([[{ address: '93.184.216.34', family: 4 }]]);
+  });
+});
+
+describe('the read grant (Q7, N2)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('reads nothing from a connected surface whose read scope is revoked, and says why', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-linear');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId,
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const harness = runtimeHarness(
+      [linear],
+      [pageRow('linear.md', 'Linear automation', LINEAR)],
+      new Map([[String(credentialId), 'linear-test-value']]),
+    );
+    harness.revoked.add('linear:read');
+    const makeMcpClient = vi.fn();
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => 10_000,
+        makeMcpClient,
+      }),
+    ).resolves.toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(harness.records).toEqual([
+      {
+        surfaceId: linear._id,
+        waterfallPosition: 1,
+        skipReason:
+          'read scope linear:read is not granted; intake reads nothing here until the manager grants it again',
+      },
+    ]);
+    expect(harness.decrypted).toEqual([]);
+    expect(makeMcpClient).not.toHaveBeenCalled();
+    expect(harness.seeds.size).toBe(0);
+  });
+
+  it("keeps polling the manager's decisions on a chat surface whose read scope is revoked", async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-slack');
+    const slack = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: Date.parse('2026-08-26T01:04:00.000Z'),
+    });
+    const harness = runtimeHarness(
+      [slack],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(credentialId), 'slack-test-value']]),
+    );
+    harness.revoked.add('slack:read');
+    const fetcher = async (): Promise<Response> =>
+      slackResponse({
+        ok: true,
+        messages: [{ ts: '1770000001.000100', user: 'UMANAGER', text: 'approve bq2wxy' }],
+        response_metadata: { next_cursor: '' },
+      });
+
+    await expect(
+      runDecisionSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T01:05:00.000Z'),
+        fetcher,
+      }),
+    ).resolves.toEqual({ mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: slack._id,
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000100',
+        reply: { verb: 'approve', id: 'bq2wxy' },
+      },
+    ]);
+  });
+
+  it('reads the grants the database holds, and stops once the manager revokes the scope', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'read grant',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'jira',
+        displayName: 'Jira',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId,
+        scope: 'jira:read',
+        source: 'surface',
+        createdAt: 1,
+      });
+      return { agentId, surfaceId };
+    });
+    const skipReason = async (): Promise<string | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.intakeSkipReason;
+
+    await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
+    expect(await skipReason()).toBe(
+      'connected surface has no stored credential; re-probe required',
+    );
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(liveApi.agents.revokeScope, { agentId, scope: 'jira:read' });
+    await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
+    expect(await skipReason()).toBe(
+      'read scope jira:read is not granted; intake reads nothing here until the manager grants it again',
+    );
   });
 });

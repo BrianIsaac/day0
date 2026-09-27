@@ -98,6 +98,8 @@ export interface IntakeRuntime {
   listChatSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
   listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
+  /** The scopes the employee holds now: granted and not revoked. */
+  grantedScopes(agentId: Id<'agents'>): Promise<string[]>;
   decrypt(credentialId: CredentialId): Promise<string>;
   recordIntake(record: IntakeRecord): Promise<void>;
   recordDecisionPoll(record: {
@@ -1637,7 +1639,25 @@ function disconnectedReason(surface: Doc<'surfaces'>): string {
 }
 
 /**
+ * Why intake reads nothing from a surface whose read scope is not held.
+ *
+ * Args:
+ *   scope: The surface's read scope, `<slug>:read`.
+ *
+ * Returns:
+ *   The skip reason the card shows.
+ */
+function ungrantedReadReason(scope: string): string {
+  return `read scope ${scope} is not granted; intake reads nothing here until the manager grants it again`;
+}
+
+/**
  * Run one deployment-wide waterfall sweep.
+ *
+ * A connected surface is read only while its employee holds `<slug>:read`
+ * (Q7): a revoked read scope stops intake before the credential is touched.
+ * The manager's decision poll (`runDecisionSweep`) runs under the manager
+ * channel's own scope and is not stopped by it (N2).
  *
  * Args:
  *   runtime: Persistence and credential boundary.
@@ -1676,7 +1696,11 @@ export async function runIntakeSweep(
     if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
-    const pages = await runtime.listPages(agentId);
+    const [pages, scopes] = await Promise.all([
+      runtime.listPages(agentId),
+      runtime.grantedScopes(agentId),
+    ]);
+    const granted = new Set(scopes);
     const documentedNames = extractDocumentedSystemOrder(
       pages.map((page: Doc<'docPages'>): { title: string; content: string } => ({
         title: page.title,
@@ -1692,6 +1716,16 @@ export async function runIntakeSweep(
           surfaceId: surface._id,
           waterfallPosition,
           skipReason: disconnectedReason(surface),
+        });
+        skipped += 1;
+        continue;
+      }
+      const readScope = `${surface.slug}:read`;
+      if (!granted.has(readScope)) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: ungrantedReadReason(readScope),
         });
         skipped += 1;
         continue;
@@ -1881,6 +1915,10 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       await ctx.runQuery(internal.agents.getInternal, { agentId }),
     listPages: async (agentId: Id<'agents'>): Promise<Doc<'docPages'>[]> =>
       await ctx.runQuery(internal.orientationData.pagesForAgent, { agentId }),
+    grantedScopes: async (agentId: Id<'agents'>): Promise<string[]> =>
+      (await ctx.runQuery(internal.agents.grantedScopes, { agentId })).map(
+        (grant: Doc<'permissionGrants'>): string => grant.scope,
+      ),
     decrypt: async (credentialId: CredentialId): Promise<string> =>
       await ctx.runAction(credentialInternal.credentials.decrypt, { credentialId }),
     recordIntake: async (record: IntakeRecord): Promise<void> => {
