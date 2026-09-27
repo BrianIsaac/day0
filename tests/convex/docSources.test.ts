@@ -559,7 +559,8 @@ describe('documentation sources in real mode', (): void => {
       redactionCount: 0,
     });
     const credential = await harness.run(async (ctx) => await ctx.db.get(credentialId));
-    expect(credential?.revokedAt).toEqual(expect.any(Number));
+    expect(credential?.status).toBe('superseded');
+    expect(credential?.revokedAt).toBeUndefined();
   });
 
   it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {
@@ -731,10 +732,10 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
     redactionCount: 1,
   };
   await harness.mutation(internal.docSources.finishSync, finish);
-  expect(await harness.query(internal.credentials.getInternal, { credentialId })).toMatchObject({
-    status: 'superseded',
-    revokedAt: expect.any(Number),
-  });
+  const superseded = await harness.query(internal.credentials.getInternal, { credentialId });
+  expect(superseded).toMatchObject({ status: 'superseded' });
+  // Superseded by the sync, not revoked: the same value returning revives it.
+  expect(superseded).not.toHaveProperty('revokedAt');
   const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
   expect(surface).toMatchObject({
     verdict: 'ungranted',

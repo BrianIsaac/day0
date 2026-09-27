@@ -757,10 +757,13 @@ export const finishSync = internalMutation({
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
+      // Superseded, not revoked: the status alone keeps the value out of every
+      // decrypt and exact-value list, and the same value returning on a later
+      // sync revives the row (`credentials.store`). Only a person's revoke
+      // stamps `revokedAt`, so a sync never undoes one and never makes one.
       await ctx.db.patch(credential._id, {
         status: 'superseded',
         statusReason: 'No longer detected in synced documentation.',
-        revokedAt: credential.revokedAt ?? Date.now(),
       });
       const surfaces = await ctx.db
         .query('surfaces')

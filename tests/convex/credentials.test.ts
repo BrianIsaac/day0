@@ -125,6 +125,55 @@ describe('credential contract', (): void => {
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
   });
 
+  it("revives a credential a sync superseded when the same value returns, and keeps a person's revoke (P10-1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const source = { sourceId, ref: 'linear-automation' };
+    const args = { userId: 'owner', kind: 'value' as const, label: 'linear service token', source };
+    const credentialId = await harness.action(internal.credentials.store, {
+      ...args,
+      plaintext: SECRET,
+    });
+    /** One sync generation that found the credential's page ref, or did not. */
+    const sync = async (found: boolean): Promise<void> => {
+      const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+      if (found) await harness.action(internal.credentials.store, { ...args, plaintext: SECRET });
+      await harness.mutation(internal.docSources.finishSync, {
+        sourceId,
+        runId,
+        refs: ['linear-automation'],
+        credentialRefs: found ? ['linear-automation'] : [],
+        pageCount: 1,
+        redactionCount: found ? 1 : 0,
+      });
+    };
+
+    // The page blinks: one sync does not find the value, the next finds it again.
+    await sync(false);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+    await sync(true);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
+      SECRET,
+    );
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
+    expect(await rows(harness)).toEqual([
+      expect.not.objectContaining({ status: expect.anything(), revokedAt: expect.anything() }),
+    ]);
+
+    // A revoke the owner made survives the same blink.
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {
+      credentialId,
+    });
+    await sync(false);
+    await sync(true);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
+  });
+
   it('replaces a row sealed under a rotated deployment key instead of failing the sync', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'owner');

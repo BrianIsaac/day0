@@ -126,7 +126,11 @@ export const persistEncrypted = internalMutation({
   },
 });
 
-/** Update non-secret metadata without changing revocation or usage state. */
+/**
+ * Update non-secret metadata without changing revocation or usage state.
+ * Internal. Clears the status, so a row a sync superseded is live again once
+ * its value is found again; a person's revoke stays.
+ */
 export const updateMetadata = internalMutation({
   args: {
     credentialId: v.id('credentials'),
@@ -336,6 +340,8 @@ export const store = internalAction({
         // value replaces it rather than failing every sync of that page.
         current = undefined;
       }
+      // The same value found again: a row an earlier sync superseded because
+      // its page went briefly missing is revived here.
       if (current === plaintext) {
         await ctx.runMutation(internal.credentials.updateMetadata, {
           credentialId: existing._id,
@@ -421,13 +427,19 @@ export const summaryForOwner = query({
   },
 });
 
-/** Count active stored credentials for local setup diagnostics. */
+/**
+ * Count active stored credentials for local setup diagnostics: neither
+ * revoked by a person nor superseded by a sync that no longer found them.
+ * Internal.
+ */
 export const countStored = internalQuery({
   args: {},
   handler: async (ctx): Promise<number> => {
     const credentials = await ctx.db.query('credentials').take(1_001);
     if (credentials.length > 1_000) throw new Error('Credential count exceeds the setup limit.');
-    return credentials.filter((credential) => !credential.revokedAt).length;
+    return credentials.filter(
+      (credential) => !credential.revokedAt && credential.status !== 'superseded',
+    ).length;
   },
 });
 
