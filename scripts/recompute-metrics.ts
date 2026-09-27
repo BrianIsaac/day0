@@ -1,38 +1,51 @@
 /**
- * Recompute one owner's supervision figures from a Convex snapshot export,
- * with the product's own functions (`convex/metrics.ts`):
+ * Recompute one owner's supervision and pilot figures (A9) with the
+ * product's own functions (`convex/metrics.ts`), from the owner's exported
+ * traces:
  *
- *   pnpm metrics:recompute <export.zip | export-directory> [--owner <subject>] [--expect <file.json>] [--json]
+ *   pnpm metrics:recompute <trace.json>... [--owner <subject>] [--expect <file.json>] [--json]
  *
- * The rows are grouped by agent and the owner's employees are chosen as
- * `metrics:forOwner` chooses them (evaluation agents and baseline arms left
- * out), so the JSON printed first is the shape the query returns, field for
- * field. The event timeline follows, anchored on the owner's first
- * documentation sync, offsets floored to the second. `--json` emits only the
- * figures so stdout can be saved as a valid JSON file.
+ * Each trace is one employee's, as `scripts/export-trace.ts` writes it from
+ * the paged export: redacted, dated in the agent's zone, stamped with the
+ * release and commit. The owner's employees are chosen as `metrics:forOwner`
+ * chooses them (evaluation agents, which a trace flags, and baseline arms
+ * left out), so the JSON printed first is the shape the query returns, field
+ * for field. A recording made before the trace existed is read from its
+ * Convex snapshot export instead (`<export.zip | export-directory>`), the
+ * unredacted database, and the output says so.
  *
- * `--owner` defaults to the no-auth subject every local bed runs as. With
- * `--expect`, every field the file names must equal the recomputed one; a
- * file holding the query's whole result compares every field. Exit 0: the
- * figures (and every expectation) hold; 1: an expectation differs, each
- * difference printed; 2: usage, or an input that is not a readable export.
+ * After the figures: the line saying when this recompute ran and what it
+ * read (each trace's export date, zone, release and commit), then the event
+ * timeline, anchored on the owner's first documentation sync where a
+ * snapshot has one and on the first named event otherwise, offsets floored to
+ * the second. `--json` emits only the figures so stdout can be saved as a
+ * valid JSON file.
+ *
+ * `--owner` defaults to the traces' own owner, or to the no-auth subject
+ * every local bed runs as for a snapshot. With `--expect`, every field the
+ * file names must equal the recomputed one; a file holding the query's whole
+ * result compares every field. Exit 0: the figures (and every expectation)
+ * hold; 1: an expectation differs, each difference printed; 2: usage, or an
+ * input that is neither a trace nor a readable export.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Doc } from '../convex/_generated/dataModel';
+import type { Doc, Id } from '../convex/_generated/dataModel';
 import { DEV_NO_AUTH_SUBJECT } from '../convex/devAuth';
 import {
   byWriteOrder,
   computeCompanyMetrics,
+  isEvaluationAgent,
   selectCompanyEmployees,
   type EmployeeRecords,
   type OwnerMetrics,
 } from '../convex/metrics';
 import { exportEntries, exportRows } from './convex-export';
+import { isAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
 
 const USAGE =
-  'Usage: pnpm metrics:recompute <export.zip|export-directory> [--owner <subject>] [--expect <file.json>] [--json]';
+  'Usage: pnpm metrics:recompute <trace.json>... | <export.zip|export-directory> [--owner <subject>] [--expect <file.json>] [--json]';
 
 const METRIC_TABLES = ['agents', 'events', 'workItems', 'charters'] as const;
 const TIMELINE_TABLES = ['docSources', 'docSyncRuns'] as const;
@@ -65,12 +78,27 @@ export interface TimelineRow {
   tag: string;
 }
 
+/** What a recompute read: the owner's traces, or a snapshot of the whole database. */
+export type RecomputeSource =
+  | {
+      kind: 'traces';
+      traces: Array<
+        Pick<TraceManifest, 'exportedAt' | 'exportedOn' | 'zone' | 'release' | 'commit'> & {
+          employee: string;
+        }
+      >;
+    }
+  | { kind: 'snapshot' };
+
 export interface Recomputed {
   owner: string;
   figures: OwnerMetrics;
   /** The first documentation sync of the owner's sources, else the first named event. */
   anchor: { at: number; source: 'documentation sync' | 'first event' } | null;
   timeline: TimelineRow[];
+  /** When this recompute ran, which is not when the recording was made. */
+  recomputedAt: number;
+  source: RecomputeSource;
 }
 
 interface Io {
@@ -97,8 +125,8 @@ function eventTag(event: Doc<'events'>): string {
  *
  * Args:
  *   path: The export ZIP or its extracted directory.
- *   options: `owner`, the subject whose company is recomputed; the no-auth
- *     subject when absent.
+ *   options: `owner`, the subject whose company is recomputed, the no-auth
+ *     subject when absent; `now`, the recompute's own time, the clock's when absent.
  *
  * Returns:
  *   The figures as `metrics:forOwner` returns them, and the timeline.
@@ -107,9 +135,12 @@ function eventTag(event: Doc<'events'>): string {
  *   Error: The path is not a readable Convex export, or lacks a table the
  *     figures are computed from.
  */
-export function recomputeFromExport(path: string, options: { owner?: string } = {}): Recomputed {
+export function recomputeFromExport(
+  path: string,
+  options: { owner?: string; now?: number } = {},
+): Recomputed {
   const owner = options.owner ?? DEV_NO_AUTH_SUBJECT;
-  const entries = exportEntries(path, new Set([...METRIC_TABLES, ...TIMELINE_TABLES]));
+  const entries = exportEntries(path, new Set([...METRIC_TABLES, ...TIMELINE_TABLES, 'surfaces']));
   const required = <Row>(table: (typeof METRIC_TABLES)[number]): Row[] => {
     const rows = exportRows(entries, table);
     if (!rows) throw new Error(`the export has no ${table} table; is this a Convex export?`);
@@ -120,12 +151,14 @@ export function recomputeFromExport(path: string, options: { owner?: string } = 
   const workItems = groupByAgent(required<Doc<'workItems'>>('workItems'));
   const charters = groupByAgent(required<Doc<'charters'>>('charters'));
 
-  const selection = selectCompanyEmployees(agents, owner);
+  const selection = selectCompanyEmployees(agents, owner, isEvaluationAgent);
+  const surfaces = groupByAgent((exportRows(entries, 'surfaces') ?? []) as Doc<'surfaces'>[]);
   const records: EmployeeRecords[] = selection.employees.map((agent) => ({
     agent,
     events: events.get(agent._id) ?? [],
     workItems: workItems.get(agent._id) ?? [],
     charters: charters.get(agent._id) ?? [],
+    surfaces: surfaces.get(agent._id) ?? [],
   }));
   const figures = computeCompanyMetrics(records, selection);
 
@@ -134,6 +167,20 @@ export function recomputeFromExport(path: string, options: { owner?: string } = 
   const syncStarts = ((exportRows(entries, 'docSyncRuns') ?? []) as Doc<'docSyncRuns'>[])
     .filter((run) => ownSources.has(run.sourceId))
     .map((run) => run.createdAt);
+  return {
+    owner,
+    figures,
+    ...timelineOf(records, syncStarts),
+    recomputedAt: options.now ?? Date.now(),
+    source: { kind: 'snapshot' },
+  };
+}
+
+/** The named events of the employees, in write order, anchored on the first sync or event. */
+function timelineOf(
+  records: readonly EmployeeRecords[],
+  syncStarts: readonly number[],
+): Pick<Recomputed, 'anchor' | 'timeline'> {
   const named = records
     .flatMap((record) =>
       record.events
@@ -155,7 +202,91 @@ export function recomputeFromExport(path: string, options: { owner?: string } = 
     type: event.type,
     tag: eventTag(event),
   }));
-  return { owner, figures, anchor, timeline };
+  return { anchor, timeline };
+}
+
+/**
+ * Recompute the figures of one owner's company from the employees' traces.
+ *
+ *
+ * @param traces - Each employee's assembled trace.
+ * @param options - `owner`, the subject whose company is recomputed, the traces'
+ *   own owner when absent; `now`, the recompute's own time.
+ * @returns The figures as `metrics:forOwner` returns them, the timeline and what was read.
+ * @throws Error when the traces belong to more than one owner and none was named.
+ */
+export function recomputeFromTraces(
+  traces: readonly AgentTrace[],
+  options: { owner?: string; now?: number } = {},
+): Recomputed {
+  const owners = [...new Set(traces.flatMap((trace) => trace.agent.userId ?? []))];
+  if (options.owner === undefined && owners.length > 1) {
+    throw new Error(`the traces belong to ${owners.length} owners; name one with --owner`);
+  }
+  const owner = options.owner ?? owners[0] ?? DEV_NO_AUTH_SUBJECT;
+  const agents = traces.map((trace) => ({
+    _id: trace.agent.id as Id<'agents'>,
+    _creationTime: trace.agent.creationTime,
+    userId: trace.agent.userId,
+    name: trace.agent.name,
+    createdAt: trace.agent.createdAt,
+    evaluation: trace.agent.evaluation || trace.agent.arm === 'baseline',
+    trace,
+  }));
+  const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation);
+  const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) => ({
+    agent,
+    events: trace.sections.events,
+    workItems: trace.sections.workItems,
+    charters: trace.sections.charters,
+    surfaces: trace.sections.surfaces,
+  }));
+  return {
+    owner,
+    figures: computeCompanyMetrics(records, selection),
+    ...timelineOf(records, []),
+    recomputedAt: options.now ?? Date.now(),
+    source: {
+      kind: 'traces',
+      traces: traces.map(({ agent, manifest }) => ({
+        employee: agent.name,
+        exportedAt: manifest.exportedAt,
+        exportedOn: manifest.exportedOn,
+        zone: manifest.zone,
+        release: manifest.release,
+        commit: manifest.commit,
+      })),
+    },
+  };
+}
+
+/**
+ * Read the command line's inputs: one or more trace files, or one snapshot export.
+ *
+ * Raises:
+ *   Error: A JSON file is not a trace of this version, or traces and a snapshot are mixed.
+ */
+export function recompute(
+  paths: readonly string[],
+  options: { owner?: string; now?: number } = {},
+): Recomputed {
+  const traces = paths.filter((path) => statSync(path).isFile() && path.endsWith('.json'));
+  if (traces.length === 0 && paths.length === 1) return recomputeFromExport(paths[0], options);
+  if (traces.length !== paths.length) {
+    throw new Error('pass trace files, or one snapshot export, not both');
+  }
+  return recomputeFromTraces(
+    traces.map((path) => {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!isAgentTrace(parsed)) {
+        throw new Error(
+          `${path} is not a day0 trace (version 2); export it with scripts/export-trace.ts`,
+        );
+      }
+      return parsed;
+    }),
+    options,
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -211,13 +342,28 @@ function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
-function timelineLines({ owner, figures, anchor, timeline }: Recomputed): string[] {
+/** When the recompute ran and what it read, beside the recording's own date. */
+function sourceLine({ recomputedAt, source }: Recomputed): string {
+  const ran = `recomputed ${new Date(recomputedAt).toISOString()}`;
+  if (source.kind === 'snapshot') {
+    return `${ran} from a snapshot export (the unredacted database, for a recording made before the trace)`;
+  }
+  const read = source.traces.map(
+    (trace) =>
+      `${trace.employee} exported ${trace.exportedOn} (${trace.zone}) at release ${trace.release ?? 'unstamped'}, commit ${trace.commit ?? 'unknown'}`,
+  );
+  return `${ran} from ${count(source.traces.length, 'trace')}: ${read.join('; ')}`;
+}
+
+function timelineLines(recomputed: Recomputed): string[] {
+  const { owner, figures, anchor, timeline } = recomputed;
   const utc = (at: number): string => new Date(at).toISOString().slice(11, 23);
   const width = Math.max(0, ...timeline.map((row) => row.employee.length));
   return [
+    sourceLine(recomputed),
     `owner ${owner}: ${count(figures.company.employees, 'employee')}, ${count(figures.excludedAgents, 'evaluation agent')} set aside, ${figures.omittedEmployees} omitted`,
     anchor
-      ? `anchor ${new Date(anchor.at).toISOString()} (${anchor.source})`
+      ? `anchor ${new Date(anchor.at).toISOString()} (${anchor.source}): the recording's own time`
       : 'anchor none: no documentation sync and no named event',
     ...timeline.map((row) =>
       `${utc(row.at)} ${clock(row.offsetMs).padStart(5)} ${row.employee.padEnd(width)} ${row.eventId.slice(0, 8)} ${row.type.padEnd(26)} ${row.tag}`.trimEnd(),
@@ -227,8 +373,8 @@ function timelineLines({ owner, figures, anchor, timeline }: Recomputed): string
 
 function parseArguments(
   argv: readonly string[],
-): { path: string; owner?: string; expect?: string; json: boolean } | undefined {
-  let path: string | undefined;
+): { paths: string[]; owner?: string; expect?: string; json: boolean } | undefined {
+  const paths: string[] = [];
   let owner: string | undefined;
   let expect: string | undefined;
   let json = false;
@@ -241,13 +387,13 @@ function parseArguments(
       if (argument === '--owner') owner = value;
       else expect = value;
       index += 1;
-    } else if (argument.startsWith('--') || path !== undefined) {
+    } else if (argument.startsWith('--')) {
       return undefined;
     } else {
-      path = argument;
+      paths.push(argument);
     }
   }
-  return path === undefined ? undefined : { path, owner, expect, json };
+  return paths.length === 0 ? undefined : { paths, owner, expect, json };
 }
 
 /**
@@ -270,7 +416,7 @@ export function runRecompute(argv: readonly string[], io: Io = console): number 
   let recomputed: Recomputed;
   let expected: unknown;
   try {
-    recomputed = recomputeFromExport(options.path, { owner: options.owner });
+    recomputed = recompute(options.paths, { owner: options.owner });
     if (options.expect !== undefined) expected = JSON.parse(readFileSync(options.expect, 'utf8'));
   } catch (error) {
     io.error(`Recompute failed: ${(error as Error).message}`);

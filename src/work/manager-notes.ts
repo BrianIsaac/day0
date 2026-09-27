@@ -6,15 +6,22 @@
  * their information: the note that work landed, and the record that a run
  * stopped. Per run, the landed note is sent as it happens and a stop is
  * never sent, because nothing needs deciding; in digest mode both are kept
- * and sent together on the hour.
+ * and sent together on the hour in the agent's zone, each with its date and
+ * time.
  */
+
+import { agentZone, formatStamp, isHourStart } from '../lib/zone';
 
 export type ManagerNotificationMode = 'per-run' | 'digest';
 
 export type ManagerNoteKind = 'landed' | 'stopped';
 
-/** How often the digest cron runs. */
-export const DIGEST_INTERVAL_MINUTES = 60;
+/**
+ * When the digest cron runs: every quarter hour on the UTC clock, so it meets
+ * the top of every zone's hour, half and three-quarter hour offsets included.
+ * `digestDue` sends an agent's digest only at its own hour.
+ */
+export const DIGEST_SCHEDULE = '0,15,30,45 * * * *';
 
 /** The reason recorded on `agent.notifications-changed`. */
 export const NOTIFICATIONS_CHANGE_REASON = 'set by the manager';
@@ -38,6 +45,25 @@ export function managerNotificationMode(agent: {
   managerNotifications?: ManagerNotificationMode;
 }): ManagerNotificationMode {
   return agent.managerNotifications ?? 'per-run';
+}
+
+/**
+ * Whether an agent's kept notes go out now.
+ *
+ * In digest mode, on the hour in the agent's zone. A per-run agent keeps no
+ * note, so a note it still holds was kept in digest mode before the switch,
+ * and it goes at once rather than waiting for an hour that never comes.
+ *
+ *
+ * @param agent - The agent row's notification mode and zone.
+ * @param now - The cron's time.
+ * @returns True when the notes are due.
+ */
+export function digestDue(
+  agent: { managerNotifications?: ManagerNotificationMode; zone?: string },
+  now: number,
+): boolean {
+  return managerNotificationMode(agent) === 'per-run' || isHourStart(now, agentZone(agent));
 }
 
 function quoted(title: string): string {
@@ -89,7 +115,8 @@ export function landedNoteText(args: {
   outcome: 'completed' | 'failed';
   reason?: string;
 }): string {
-  const rows = args.outcome === 'completed' ? args.rows : args.rows.filter((row) => row.kind === 'write');
+  const rows =
+    args.outcome === 'completed' ? args.rows : args.rows.filter((row) => row.kind === 'write');
   const lines = rows.map((row) => `- ${row.line}${row.outcomeUnknown ? ' (outcome unknown)' : ''}`);
   const head =
     args.outcome === 'completed'
@@ -107,27 +134,31 @@ export function landedNoteText(args: {
  * Returns:
  *   The note text.
  */
-export function stoppedNoteText(args: { agentName: string; title: string; reason: string }): string {
+export function stoppedNoteText(args: {
+  agentName: string;
+  title: string;
+  reason: string;
+}): string {
   return `${args.agentName} stopped on ${quoted(args.title)}: ${args.reason}. Nothing landed; Retry stands in day0.`;
 }
 
 /**
- * One digest message from the notes kept since the last one.
+ * One digest message from the notes kept since the last one, each stamped
+ * with the date and time it was kept, in the agent's zone.
  *
- * Args:
- *   args: The agent and the notes in the order they were recorded.
  *
- * Returns:
- *   The digest text.
+ * @param args - The agent, its zone and the notes in the order they were recorded.
+ * @returns The digest text.
  */
 export function digestText(args: {
   agentName: string;
-  notes: ReadonlyArray<{ text: string }>;
+  zone: string;
+  notes: ReadonlyArray<{ text: string; createdAt: number }>;
 }): string {
   const count = args.notes.length;
   return [
-    `${args.agentName}: ${count} ${count === 1 ? 'update' : 'updates'} since the last digest.`,
+    `${args.agentName}: ${count} ${count === 1 ? 'update' : 'updates'} since the last digest (times in ${args.zone}).`,
     '',
-    ...args.notes.map((note) => note.text),
+    ...args.notes.map((note) => `${formatStamp(note.createdAt, args.zone)}: ${note.text}`),
   ].join('\n\n');
 }

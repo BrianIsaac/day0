@@ -90,12 +90,14 @@ import {
 } from '../src/work/reconciliation';
 import { isStopped, landedNoteRows, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
+  digestDue,
   digestText,
   landedNoteText,
   managerNotificationMode,
   stoppedNoteText,
   type ManagerNoteKind,
 } from '../src/work/manager-notes';
+import { agentZone } from '../src/lib/zone';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
@@ -290,6 +292,8 @@ export const workItemSeedFields = {
       threadTs: v.optional(v.string()),
     }),
   ),
+  /** When the ask was made, by the provider's clock (a Linear `createdAt`), when intake read it. */
+  askedAt: v.optional(v.number()),
 } as const;
 
 export interface WorkItemSeedInput {
@@ -307,6 +311,21 @@ export interface WorkItemSeedInput {
   owner?: string;
   requester?: string;
   replyTarget?: { channel: string; channelName?: string; threadTs?: string };
+  /** When the ask was made, by the provider's clock, when intake read it. */
+  askedAt?: number;
+}
+
+/**
+ * When an item was asked for: the provider's time intake passed, else the
+ * `ts` a Slack message's id carries (`<channel id>:<ts>`), else now. Cycle time
+ * (A9) starts here, so a chat ask seen on a later poll still counts from the
+ * message.
+ */
+function askedAtOf(args: Pick<WorkItemSeedInput, 'askedAt' | 'externalId'>, now: number): number {
+  if (args.askedAt !== undefined) return args.askedAt;
+  const ts = /^[CDG][A-Z0-9]{6,}:(\d{9,10}\.\d{1,6})$/.exec(args.externalId)?.[1];
+  const fromTs = ts === undefined ? null : providerTsToMs(ts);
+  return fromTs === null ? now : Math.round(fromTs);
 }
 
 /**
@@ -756,7 +775,7 @@ export async function seedItemInTransaction(
     await rememberExternalAlias(ctx, existing, args.externalAlias, externalClaimAlias);
     return existing._id;
   }
-  const { externalAlias, ...seed } = args;
+  const { externalAlias, askedAt, ...seed } = args;
   const id = await ctx.db.insert('workItems', {
     ...seed,
     ...(externalClaimKey ? { externalClaimKey } : {}),
@@ -764,7 +783,7 @@ export async function seedItemInTransaction(
       ? { externalAlias, externalClaimAlias }
       : {}),
     state: 'discovered',
-    observedAt: Date.now(),
+    observedAt: askedAtOf({ askedAt, externalId: args.externalId }, Date.now()),
     createdAt: Date.now(),
   });
   await ctx.db.insert('events', {
@@ -2220,10 +2239,22 @@ export async function applyVerdict(
       ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
   });
+  // The newest charter row is the active one: the verdict names the version
+  // it was reached under, so the trail says which rules decided (Q14).
+  const charter = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .order('desc')
+    .first();
   const evaluatedId = await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.evaluated',
-    payload: { workItemId, decision, verdict: effective },
+    payload: {
+      workItemId,
+      decision,
+      verdict: effective,
+      ...(charter ? { charterId: charter._id, charterVersion: charter.version } : {}),
+    },
     createdAt: Date.now(),
   });
   // The proposal is written by the evaluating action after this commit; if it
@@ -2232,6 +2263,15 @@ export async function applyVerdict(
     await ctx.scheduler.runAfter(STEP_LEASE_MS, internal.work.recoverUnproposedSkill, {
       workItemId,
       evaluatedId,
+    });
+  }
+  if (nextState === 'skipped') {
+    // A skip ends the item: its terminal event, as every terminal transition writes one.
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.skipped',
+      payload: { workItemId, ...(skipReason ? { reason: skipReason } : {}) },
+      createdAt: Date.now(),
     });
   }
   if (readmission) {
@@ -3281,6 +3321,9 @@ async function approvePlanInTransaction(
   await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
 }
 
+/** The longest manual estimate the plan card takes: a working month. */
+const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
+
 export const approvePlan = mutation({
   args: {
     workItemId: v.id('workItems'),
@@ -3290,12 +3333,24 @@ export const approvePlan = mutation({
     ),
     /** The manager's answer to the planner's own note, for this run. */
     note: v.optional(v.string()),
+    /** N11: "this would have taken me about N minutes", optional; hours saved sums it. */
+    manualEstimateMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     if (row.state !== 'plan-pending') {
       throw new Error(`workItem state is ${row.state}; expected plan-pending`);
     }
+    const estimate = args.manualEstimateMinutes;
+    if (
+      estimate !== undefined &&
+      (!Number.isInteger(estimate) || estimate < 1 || estimate > MANUAL_ESTIMATE_MAX_MINUTES)
+    ) {
+      throw new ConvexError(
+        `The estimate is a whole number of minutes from 1 to ${MANUAL_ESTIMATE_MAX_MINUTES}.`,
+      );
+    }
+    if (estimate !== undefined) await ctx.db.patch(row._id, { manualEstimateMinutes: estimate });
     // Approve-with-answer is one decision: the answers land, the charter is
     // amended where a question is still open there, and the plan is approved
     // in the same transaction, or none of it happens.
@@ -3662,6 +3717,8 @@ export const claimForExecution = internalMutation({
         skillId: args.skillId,
         ...(skill.registeredAt !== undefined ? { skillRegisteredAt: skill.registeredAt } : {}),
         skillBodyHash: skillBodyHash(skill.body),
+        // The item the skill was made for: a run for any other item is a reuse (A9).
+        ...(skill.proposedFor !== undefined ? { proposedFor: skill.proposedFor } : {}),
       },
       createdAt: Date.now(),
     });
@@ -3773,6 +3830,9 @@ export const prepareDependentPhase = internalMutation({
         workItemId: args.workItemId,
         runId: args.runId,
         prerequisiteActionCount: output.actions.length,
+        // Phase one's ledger rides on the event, so the trail keeps what
+        // landed however the closing set that follows ends (P9-9).
+        output: args.output,
       },
       createdAt: Date.now(),
     });
@@ -4089,6 +4149,7 @@ async function queueManagerNote(
     kind,
     text: text(agent.name),
     createdAt: Date.now(),
+    keptFor: mode,
   });
   if (mode === 'per-run') {
     await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerNote, { noteId });
@@ -4223,39 +4284,82 @@ export const recordManagerNote = internalMutation({
   },
 });
 
-/** The agents whose kept notes are due in a digest. */
+/** The most unsent notes one digest check reads across agents, and one agent's digest takes. */
+const DIGEST_NOTE_LIMIT = 500;
+
+/** A digest this soon after the last one waits: at most one per quarter hour, whatever triggered it. */
+const DIGEST_MIN_GAP_MS = 15 * 60_000;
+
+/**
+ * The agents holding notes not sent yet: digest agents, and agents switched
+ * to per run with notes the switch stranded. Reads the unsent notes only;
+ * `prepareManagerDigest` decides which agents are due now.
+ */
 export const digestCandidates = internalQuery({
   args: {},
   handler: async (ctx): Promise<Id<'agents'>[]> => {
-    const agents = await ctx.db.query('agents').collect();
-    const due: Id<'agents'>[] = [];
-    for (const agent of agents) {
-      if (managerNotificationMode(agent) !== 'digest') continue;
-      const notes = await ctx.db
-        .query('managerNotes')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .collect();
-      if (notes.some((note) => note.claimedAt === undefined && note.providerTs === undefined)) {
-        due.push(agent._id);
-      }
-    }
-    return due;
+    const unsent = await ctx.db
+      .query('managerNotes')
+      .withIndex('by_unsent', (q) => q.eq('claimedAt', undefined).eq('providerTs', undefined))
+      .take(DIGEST_NOTE_LIMIT);
+    return [...new Set(unsent.map((note) => note.agentId))];
   },
 });
 
-/** Claim every kept note of one agent for a single digest send. */
+/**
+ * Whether a note is the digest's to send. A digest agent's notes all are. A
+ * per-run agent's own notes go one by one; only those kept in digest mode
+ * before the switch are the digest's, by the mode stamped on the note, or
+ * for a note from before the stamp, by the time of the last switch.
+ */
+async function digestNoteFilter(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+): Promise<(note: Doc<'managerNotes'>) => boolean> {
+  if (managerNotificationMode(agent) === 'digest') return () => true;
+  const lastSwitch = await ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (q) =>
+      q.eq('agentId', agent._id).eq('type', 'agent.notifications-changed'),
+    )
+    .order('desc')
+    .first();
+  const keptUntil = lastSwitch?.createdAt ?? Number.NEGATIVE_INFINITY;
+  return (note) =>
+    note.keptFor !== undefined ? note.keptFor === 'digest' : note.createdAt <= keptUntil;
+}
+
+/**
+ * Claim every kept note of one agent for a single digest send, when it is
+ * due: at the top of the hour in the agent's zone, or at once for notes a
+ * switch to per run stranded; never twice in one quarter hour.
+ */
 export const prepareManagerDigest = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
     const agent = await ctx.db.get(args.agentId);
-    if (!agent || managerNotificationMode(agent) !== 'digest') return { prepared: false as const };
+    const now = Date.now();
+    if (!agent || !digestDue(agent, now)) return { prepared: false as const };
+    if (managerNotificationMode(agent) === 'digest') {
+      const last = await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) =>
+          q.eq('agentId', args.agentId).eq('type', 'work.manager-digest-sending'),
+        )
+        .order('desc')
+        .first();
+      if (last && now - last.createdAt < DIGEST_MIN_GAP_MS) return { prepared: false as const };
+    }
+    const belongs = await digestNoteFilter(ctx, agent);
     const notes = (
       await ctx.db
         .query('managerNotes')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .collect()
+        .withIndex('by_agent_unsent', (q) =>
+          q.eq('agentId', args.agentId).eq('claimedAt', undefined).eq('providerTs', undefined),
+        )
+        .take(DIGEST_NOTE_LIMIT)
     )
-      .filter((note) => note.claimedAt === undefined && note.providerTs === undefined)
+      .filter(belongs)
       .sort((left, right) => left.createdAt - right.createdAt);
     if (notes.length === 0) return { prepared: false as const };
     const delivery = await managerDelivery(ctx, args.agentId);
@@ -4264,10 +4368,10 @@ export const prepareManagerDigest = internalMutation({
       agentId: args.agentId,
       type: 'work.manager-digest-sending',
       payload: { noteIds: notes.map((note) => note._id), count: notes.length },
-      createdAt: Date.now(),
+      createdAt: now,
     });
     for (const note of notes) {
-      await ctx.db.patch(note._id, { claimedAt: Date.now(), digestId });
+      await ctx.db.patch(note._id, { claimedAt: now, digestId });
     }
     return {
       prepared: true as const,
@@ -4275,7 +4379,7 @@ export const prepareManagerDigest = internalMutation({
       requestRunId: digestId,
       workItemId: notes[0].workItemId,
       noteIds: notes.map((note) => note._id),
-      text: digestText({ agentName: agent.name, notes }),
+      text: digestText({ agentName: agent.name, zone: agentZone(agent), notes }),
     };
   },
 });

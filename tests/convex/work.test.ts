@@ -23,6 +23,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
+import { collectLedgerObservations } from '../../convex/metrics';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -3095,6 +3096,22 @@ describe('the exact-action gate', (): void => {
     await expect(harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId })).rejects.toThrow('reconcile the provider first');
   });
 
+  it('carries phase one’s ledger on the dependent-authoring event, so the trail keeps it whatever the closing set becomes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    const landed = { tool: 'mcp.call', ok: true, authority: 'standing', effect: 'Refreshed the tile', idempotencyKey: `${workItemId}:${runId}:0` };
+    await harness.mutation(internal.work.prepareDependentPhase, {
+      workItemId,
+      runId,
+      output: { ...pendingOutput, needsDependentPhase: true, phase: 'dependent-authoring', applied: [landed] },
+    });
+    const [event] = await eventsOfType(harness, agentId, 'work.dependent-authoring');
+    expect(event?.payload).toMatchObject({ workItemId, runId, output: { applied: [landed] } });
+    const ledger = collectLedgerObservations([event!], []);
+    expect(ledger.map((observation) => observation.entry)).toEqual([landed]);
+  });
+
   it('claims the dependent authoring turn once and never prepares a second phase', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -3737,6 +3754,29 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     return rows[0]!;
   }
 
+  it('dates the ask by the provider’s own time when intake gives one, or a chat message’s ts, and by the seed otherwise', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 8, 28, 9, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const askedAt = Date.UTC(2026, 8, 27, 23, 30);
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), askedAt });
+    await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      sourceCategory: 'inbox',
+      sourceSystem: 'team-chat',
+      externalId: 'C0REVOPS:1790551800.123456',
+    });
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), externalId: 'REVOPS-10' });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('workItems').collect());
+    expect(Object.fromEntries(rows.map((row) => [row.externalId, row.observedAt]))).toEqual({
+      'REVOPS-9': askedAt,
+      'C0REVOPS:1790551800.123456': 1_790_551_800_123,
+      'REVOPS-10': Date.UTC(2026, 8, 28, 9, 0),
+    });
+    vi.useRealTimers();
+  });
+
   it('updates the title, summary and owner the tracker now shows instead of keeping the first read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);
@@ -4245,6 +4285,39 @@ describe('the execution claim and the skill body it runs', (): void => {
     expect(row.skillId).toBeUndefined();
   });
 
+  it('records the item the skill was made for, so a run for another item counts as a reuse', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, {
+      state: 'registered',
+      body: 'Comment, then close.',
+    });
+    const madeFor = await harness.run(async (ctx) => {
+      const skill = await ctx.db.get(skillId);
+      const other = await ctx.db.insert('workItems', {
+        agentId: skill!.agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'The item the skill was authored for',
+        contentSummary: 'Earlier work.',
+        contentRefs: [],
+        state: 'completed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(skillId, { proposedFor: other });
+      return other;
+    });
+
+    await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+
+    const row = await readItem(harness, workItemId);
+    const [event] = (await eventsOfType(harness, row.agentId, 'work.execution-claimed')).filter(
+      (entry) => entry._id === row.executionRunId,
+    );
+    expect(event?.payload).toMatchObject({ workItemId, skillId, proposedFor: madeFor });
+  });
+
   it('records the registration and the hash of the body the run claimed', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, skillId } = await seedApproved(harness, {
@@ -4600,5 +4673,77 @@ describe('a recovery for every claim (P5-1, P5-2, P5-3)', (): void => {
     expect(row.state).toBe('failed');
     expect(row.skipReason).toContain(NOTHING_TO_DECIDE_REASON);
     expect(await scheduledFunctionNames(harness)).not.toContain('managerChannelActions:requestDecision');
+  });
+});
+
+describe('the evaluation’s record (step 29)', (): void => {
+  it('names the charter the verdict was reached under and writes a terminal event for a skip', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId, workItemId } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('charters', { agentId, version: '1.0', body: {}, approved: true, createdAt: 1 });
+      const charterId = await ctx.db.insert('charters', { agentId, version: '1.1', body: {}, approved: true, createdAt: 2 });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-11',
+        title: 'Northstar renewal',
+        contentSummary: 'Out of scope.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      return { agentId, charterId, workItemId };
+    });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'skip', reason: 'outside the charter' },
+    });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(events.find((event) => event.type === 'work.evaluated')?.payload).toMatchObject({
+      workItemId,
+      decision: 'skip',
+      charterId,
+      charterVersion: '1.1',
+    });
+    expect(events.find((event) => event.type === 'work.skipped')?.payload).toEqual({
+      workItemId,
+      reason: 'outside the charter',
+    });
+    vi.useRealTimers();
+  });
+});
+
+describe('the manager’s estimate at plan approval (N11)', (): void => {
+  it('keeps the optional minutes the manager says the work would have taken, and refuses a nonsense figure', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending');
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: -5 }),
+    ).rejects.toThrow('whole number of minutes');
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    await owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: 45 });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-approved',
+      manualEstimateMinutes: 45,
+    });
+    vi.useRealTimers();
   });
 });

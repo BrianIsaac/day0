@@ -41,10 +41,10 @@ describe('scheduled surface maintenance', (): void => {
     });
   });
 
-  it('sends manager digests every hour', (): void => {
+  it('checks for manager digests on every quarter hour of the clock, so each zone’s hour is met', (): void => {
     expect(crons.crons['send manager digests']).toMatchObject({
       name: 'managerChannelActions:sendManagerDigests',
-      schedule: { type: 'interval', minutes: 60 },
+      schedule: { type: 'cron', cron: '0,15,30,45 * * * *' },
     });
   });
 });

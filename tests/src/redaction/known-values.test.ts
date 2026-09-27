@@ -21,6 +21,7 @@ import type { DocPage } from '../../../src/docs/types';
 import type { MockAction } from '../../../src/work/types';
 import { allConvexModules } from '../../convex/all-modules';
 import { RecordedSpanModel, ScriptedSpanModel, StalledSpanModel, UnreachableSpanModel, serveSpanModel } from '../../fixtures/redaction-double';
+import { assembleTrace } from '../../../src/export/trace';
 
 /**
  * A value Day0 stored for this owner that no transport in the run holds and
@@ -233,7 +234,11 @@ describe.each(STATES)('an unrelated stored password with the redaction component
         });
         return id;
       });
-      const trace = await harness.withIdentity({ subject: 'owner' }).action(api.exportActions.exportForAgent, { agentId });
+      const owner = harness.withIdentity({ subject: 'owner' });
+      const trace = await assembleTrace(agentId, {
+        head: async () => await owner.action(api.exportActions.exportForAgent, { agentId }),
+        page: async ({ page }) => await owner.action(api.exportActions.exportPage, { agentId, ...page }),
+      });
       const serialised = JSON.stringify(trace);
       expect(serialised).not.toContain(STORED);
       expect(serialised).not.toContain(encodeURIComponent(STORED));

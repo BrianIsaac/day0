@@ -101,7 +101,8 @@ export async function askOpenQuestionsAtPlan(
  *
  * The answer amends the latest charter when the question is still open
  * there. When the charter already carries an answer (given from the card),
- * the record takes the text without a second amendment.
+ * the record takes the text without a second amendment. Either way one
+ * `charter.question-answered` event says whether the charter changed.
  *
  * Args:
  *   ctx: Mutation context.
@@ -151,6 +152,19 @@ export async function answerQuestionInTransaction(
       via,
       ...(amendedCharterId ? { amendedCharterId } : {}),
     },
+  });
+  // Every answer is one reorientation the manager settled, whether or not
+  // it changed the charter: A9's acceptance figure reads the pair.
+  await ctx.db.insert('events', {
+    agentId: record.agentId,
+    type: 'charter.question-answered',
+    payload: {
+      questionId: record._id,
+      via,
+      amended: amendedCharterId !== null,
+      ...(amendedCharterId ? { charterId: amendedCharterId } : {}),
+    },
+    createdAt: Date.now(),
   });
   return { amendedCharterId };
 }

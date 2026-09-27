@@ -68,6 +68,16 @@ export default defineSchema({
     posture: v.optional(
       v.union(v.literal('cold-start'), v.literal('supervised'), v.literal('trusted')),
     ),
+    /** The IANA zone the agent's day is measured in (N12): set at deploy from
+     * the manager's browser, editable on the card, read through
+     * `src/lib/zone.ts` for every day boundary and every stamp. Absent reads
+     * as the deployment's zone; the `agents-zone` migration fills it. */
+    zone: v.optional(v.string()),
+    /** The surface mode the agent was deployed under, so a figure or an
+     * export can say whether it came from the mock or real systems. Absent
+     * on rows from before the stamp; the `agents-zone` migration fills it
+     * with the deployment's mode. */
+    mode: v.optional(v.union(v.literal('mock'), v.literal('real'))),
     createdAt: v.number(),
   })
     .index('by_bossEmail', ['bossEmail'])
@@ -711,10 +721,19 @@ export default defineSchema({
      * provider call without replaying an outcome that may already have landed. */
     applyAttemptId: v.optional(v.id('events')),
     applyClaimedAt: v.optional(v.number()),
+    /** The manager's optional "this would have taken me about N minutes",
+     * given at plan approval (N11); hours saved is its sum over completed
+     * items, an internal gauge only. */
+    manualEstimateMinutes: v.optional(v.number()),
+    /** When the ask was made: the provider's own timestamp when intake gave
+     * one (a Slack `ts`, a Linear `createdAt`), else when intake saw it.
+     * Cycle time starts here. */
     observedAt: v.number(),
     createdAt: v.number(),
   })
     .index('by_agent_state', ['agentId', 'state'])
+    /** One agent's rows in creation order: a stable order for the export's pages. */
+    .index('by_agent', ['agentId'])
     .index('by_agent_decision', ['agentId', 'decision.id'])
     .index('by_agent_decision_surface_channel', [
       'agentId',
@@ -845,7 +864,13 @@ export default defineSchema({
     digestId: v.optional(v.id('events')),
     providerTs: v.optional(v.string()),
     failure: v.optional(v.string()),
-  }).index('by_agent', ['agentId']),
+    /** The mode the note was kept under: a digest note stays the digest's to send after a switch to per run. */
+    keptFor: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
+  })
+    .index('by_agent', ['agentId'])
+    /** The notes not sent yet, across agents, so the digest never reads the sent history. */
+    .index('by_unsent', ['claimedAt', 'providerTs'])
+    .index('by_agent_unsent', ['agentId', 'claimedAt', 'providerTs']),
 
   /**
    * The manager's corrections, kept for the employee's later work: a note
@@ -1000,7 +1025,9 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_agent', ['agentId'])
-    .index('by_agent_type', ['agentId', 'type']),
+    .index('by_agent_type', ['agentId', 'type'])
+    /** Events of one type across agents: the export's owner section reads the retire tombstones here. */
+    .index('by_type', ['type']),
 
   /**
    * Each intake listing of a ticket that changed it, one row per change, so
@@ -1035,6 +1062,8 @@ export default defineSchema({
     changed: v.number(),
     startedAt: v.number(),
     completedAt: v.optional(v.number()),
+    /** What the migration chose where it had to choose, for `migrations:status`. */
+    note: v.optional(v.string()),
   }).index('by_name', ['name']),
 
   /**
