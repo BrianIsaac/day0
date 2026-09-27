@@ -896,9 +896,12 @@ export interface OwnerMetrics {
   omittedEmployees: number;
 }
 
-export interface CompanySelection {
+/** What the company selection reads of an agent, from a row or from a trace. */
+export type CompanyAgent = Pick<Doc<'agents'>, '_id' | '_creationTime' | 'userId'>;
+
+export interface CompanySelection<Agent extends CompanyAgent = Doc<'agents'>> {
   /** The employees the figures cover, in deploy order. */
-  employees: Doc<'agents'>[];
+  employees: Agent[];
   excludedAgents: number;
   omittedEmployees: number;
 }
@@ -932,7 +935,7 @@ export function isEvaluationAgent(
   );
 }
 
-function byDeployOrder(left: Doc<'agents'>, right: Doc<'agents'>): number {
+function byDeployOrder(left: CompanyAgent, right: CompanyAgent): number {
   return left._creationTime - right._creationTime || (left._id < right._id ? -1 : 1);
 }
 
@@ -948,16 +951,19 @@ function byDeployOrder(left: Doc<'agents'>, right: Doc<'agents'>): number {
  * Args:
  *   agents: Agent rows, in any order; rows of other owners are ignored.
  *   owner: The owner's subject.
+ *   isEvaluation: How an evaluation agent is told: by its row's reserved
+ *     address, or by the flag a trace carries instead of the address.
  *
  * Returns:
  *   The employees in deploy order and the counts left out.
  */
-export function selectCompanyEmployees(
-  agents: readonly Doc<'agents'>[],
+export function selectCompanyEmployees<Agent extends CompanyAgent>(
+  agents: readonly Agent[],
   owner: string,
-): CompanySelection {
+  isEvaluation: (agent: Agent) => boolean,
+): CompanySelection<Agent> {
   const owned = agents.filter((agent) => agent.userId === owner);
-  const company = owned.filter((agent) => !isEvaluationAgent(agent)).sort(byDeployOrder);
+  const company = owned.filter((agent) => !isEvaluation(agent)).sort(byDeployOrder);
   const kept = company.slice(Math.max(0, company.length - MAX_COMPANY_EMPLOYEES));
   return {
     employees: kept,
@@ -1115,7 +1121,7 @@ export const forOwner = query({
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
       .collect();
-    const selection = selectCompanyEmployees(agents, identity.subject);
+    const selection = selectCompanyEmployees(agents, identity.subject, isEvaluationAgent);
     const records = await Promise.all(
       selection.employees.map((agent) => readEmployeeRecords(ctx, agent)),
     );
