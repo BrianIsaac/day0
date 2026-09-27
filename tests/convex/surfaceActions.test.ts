@@ -1526,6 +1526,8 @@ describe('probing the browser floor', (): void => {
             browser_click: { inputSchema: { properties: { ref: {} } } },
             browser_type: { inputSchema: { properties: { ref: {}, text: {} } } },
             browser_fill_form: { inputSchema: { properties: { fields: {} } } },
+            browser_wait_for: { inputSchema: { properties: { text: {}, time: {} } } },
+            browser_handle_dialog: { inputSchema: { properties: { accept: {} } } },
             browser_evaluate: { inputSchema: { properties: {} } },
             browser_run_code_unsafe: { inputSchema: { properties: {} } },
           },
@@ -1552,9 +1554,11 @@ describe('probing the browser floor', (): void => {
     expect(discovery.toolAllowlist).toEqual([
       'browser_navigate',
       'browser_snapshot',
+      'browser_wait_for',
       'browser_click',
       'browser_type',
       'browser_fill_form',
+      'browser_handle_dialog',
     ]);
     expect(discovery.toolArguments).toContainEqual({
       tool: 'browser_type',

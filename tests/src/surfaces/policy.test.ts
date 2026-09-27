@@ -1385,6 +1385,23 @@ describe('the browser floor under the gate', (): void => {
     expect(requiredScope(parsedBrowser('browser_snapshot'))).toBe('looker-pipeline-tile:read');
   });
 
+  it('counts waiting for the page as a read and answering its dialog as a write', (): void => {
+    expect(actionIntent(parsedBrowser('browser_wait_for', { text: 'Saved' }))).toBe('read');
+    expect(requiredScope(parsedBrowser('browser_wait_for', { time: 2 }))).toBe(
+      'looker-pipeline-tile:read',
+    );
+    expect(actionIntent(parsedBrowser('browser_handle_dialog', { accept: true }))).toBe('write');
+  });
+
+  it("does not lend the floor's wait to a third party's tool that starts with wait", (): void => {
+    const parsed = parseSurfaceAction({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'wait_for_merge', toolArgsJson: '{}' },
+    } as MockAction);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    expect(actionIntent(parsed.action)).toBe('write');
+  });
+
   it('counts typing and clicking as writes', (): void => {
     expect(actionIntent(parsedBrowser('browser_click', { element: 'Save' }))).toBe('write');
     expect(actionIntent(parsedBrowser('browser_type', { element: 'Coverage', text: '74%' }))).toBe(

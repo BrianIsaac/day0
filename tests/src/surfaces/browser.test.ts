@@ -132,13 +132,15 @@ describe('what the card says about the browser component', (): void => {
 });
 
 describe('the tools the floor may use', (): void => {
-  it('is the set a person needs to read a page and complete a form', (): void => {
+  it('is the set a person needs to read a page, wait for it and complete a form', (): void => {
     expect([...BROWSER_TOOLS]).toEqual([
       'browser_navigate',
       'browser_snapshot',
+      'browser_wait_for',
       'browser_click',
       'browser_type',
       'browser_fill_form',
+      'browser_handle_dialog',
     ]);
   });
 
@@ -150,7 +152,6 @@ describe('the tools the floor may use', (): void => {
       'browser_tabs',
       'browser_network_requests',
       'browser_take_screenshot',
-      'browser_handle_dialog',
     ]) {
       expect(BROWSER_TOOLS).not.toContain(tool);
     }

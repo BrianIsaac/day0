@@ -34,19 +34,25 @@ export const DEFAULT_BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
  * Tools the floor may use, whatever else the driver exposes.
  *
  * Enough to read a page and to complete a form a person would complete: the
- * work item this exists for is "refresh the tile", which is a write. What is
- * deliberately absent is everything that turns a browser into a general
- * runtime or a file mover - `browser_evaluate`, `browser_run_code_unsafe`,
- * `browser_file_upload`, `browser_tabs`, `browser_network_requests`,
- * `browser_take_screenshot`. Playwright MCP has no read-only flag of its own
- * (upstream issue #885), so this list is the enforcement.
+ * work item this exists for is "refresh the tile", which is a write. A page
+ * that renders after the call returns is waited for (`browser_wait_for`, a
+ * read), and a confirmation the page raises is answered
+ * (`browser_handle_dialog`, a write: accepting "Delete this?" is the delete).
+ * What is deliberately absent is everything that turns a browser into a
+ * general runtime or a file mover - `browser_evaluate`,
+ * `browser_run_code_unsafe`, `browser_file_upload`, `browser_tabs`,
+ * `browser_network_requests`, `browser_take_screenshot`. Playwright MCP has no
+ * read-only flag of its own (upstream issue #885), so this list is the
+ * enforcement.
  */
 export const BROWSER_TOOLS = [
   'browser_navigate',
   'browser_snapshot',
+  'browser_wait_for',
   'browser_click',
   'browser_type',
   'browser_fill_form',
+  'browser_handle_dialog',
 ] as const;
 
 /** Tools whose arguments name a destination the origin bound applies to. */

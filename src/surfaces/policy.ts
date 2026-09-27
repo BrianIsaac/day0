@@ -120,11 +120,18 @@ const READ_TOOL_PREFIX =
  * Browser tools that observe the page without changing anything on it.
  *
  * The floor's tool names carry no read verb - opening a page is `navigate`,
- * reading it is `snapshot` - so without naming them the generic rule counts
- * both as writes, and a run that only looked at a dashboard would be held for
- * the manager as though it had edited one.
+ * reading it is `snapshot`, waiting for it to render is `wait_for` - so
+ * without naming them the generic rule counts each as a write, and a run that
+ * only looked at a dashboard would be held for the manager as though it had
+ * edited one. `wait` stays out of `READ_TOOL_PREFIX`: a third party's
+ * `wait_and_merge` is not a read because the floor's wait is.
  */
-const BROWSER_READ_TOOLS = new Set(['browser_navigate', 'browser_snapshot', 'browser_hover']);
+const BROWSER_READ_TOOLS = new Set([
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_hover',
+  'browser_wait_for',
+]);
 const HTTP_MUTATION_WORDS = new Set([
   'activate',
   'add',
