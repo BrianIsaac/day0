@@ -2214,7 +2214,7 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
     expect(markup).toContain('1 of 3 (33%)');
     expect(markup).toContain('2 min / 3 min (2 done)');
     expect(markup).toContain('1 of 1 answer');
-    expect(markup).toContain('hours saved (your estimates, internal gauge)');
+    expect(markup).toMatch(/hours saved<span[^>]*>your estimates, internal gauge<\/span>/);
     expect(markup).toContain('1.3 h over 2 items');
     expect(markup).toContain('not measured yet');
   });

@@ -4843,10 +4843,11 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
                 title={figure.definition}
                 className="flex items-start justify-between gap-3 text-xs"
               >
-                <dt className="text-[var(--color-muted)] leading-tight">
-                  {figure.label.toLowerCase()} ({figure.unit})
+                <dt className="basis-1/2 shrink-0 text-[var(--color-muted)] leading-tight">
+                  {figure.label.toLowerCase()}
+                  <span className="block text-[10px]">{figure.unit}</span>
                 </dt>
-                <dd className="font-mono text-[var(--color-fg)] text-right shrink-0">
+                <dd className="min-w-0 font-mono text-[var(--color-fg)] text-right break-words">
                   {figure.value(metrics.pilot)}
                 </dd>
               </div>
