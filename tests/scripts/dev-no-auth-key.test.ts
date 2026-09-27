@@ -200,12 +200,32 @@ describe('rotation', (): void => {
     expect(run.output).toContain('every unlocked browser is signed out');
   });
 
-  it('says --force regenerates the credential key before it does so', (): void => {
+  it('regenerates the three no-auth values on --force and keeps the credential key and the Notion token (U4 decision 3)', (): void => {
     const { cwd, envFile } = envDirectory(complete);
     const run = runScript(cwd, ['init', '--force']);
     expect(run.status).toBe(0);
-    expect(valueOf(envFile, 'DAY0_CREDENTIAL_KEY')).not.toBe(DEPLOYMENT_KEY);
-    expect(run.output).toContain('--force regenerated DAY0_CREDENTIAL_KEY');
-    expect(run.output).toContain('can no longer be decrypted');
+    expect(valueOf(envFile, 'DEV_NO_AUTH_SECRET')).not.toBe('old-secret');
+    expect(valueOf(envFile, 'DEV_NO_AUTH_SIGNING_KEY')).not.toBe('old-signing');
+    expect(valueOf(envFile, 'DEV_NO_AUTH_JWKS')).not.toBe('old-jwks');
+    expect(valueOf(envFile, 'DAY0_CREDENTIAL_KEY')).toBe(DEPLOYMENT_KEY);
+    expect(valueOf(envFile, 'DAY0_NOTION_MCP_AUTH_TOKEN')).toBe(DEPLOYMENT_TOKEN);
+    expect(run.output).toContain('DAY0_CREDENTIAL_KEY is unchanged');
+    expect(run.output).toContain('scripts/rotate-credential-key.ts');
+  });
+
+  it('regenerates only the Notion token on surface-keys --force, and adopts a missing credential key rather than minting one', (): void => {
+    const kept = envDirectory(complete);
+    const forced = runScript(kept.cwd, ['surface-keys', '--force']);
+    expect(forced.status).toBe(0);
+    expect(valueOf(kept.envFile, 'DAY0_CREDENTIAL_KEY')).toBe(DEPLOYMENT_KEY);
+    expect(valueOf(kept.envFile, 'DAY0_NOTION_MCP_AUTH_TOKEN')).not.toBe(DEPLOYMENT_TOKEN);
+
+    const missing = envDirectory(`DAY0_SURFACE_MODE=real\n${SELF_HOSTED}`);
+    const adopted = runScript(missing.cwd, ['surface-keys', '--force'], {
+      listing: `DAY0_CREDENTIAL_KEY=${DEPLOYMENT_KEY}`,
+    });
+    expect(adopted.status).toBe(0);
+    expect(adopted.calls).toEqual(['convex env list']);
+    expect(valueOf(missing.envFile, 'DAY0_CREDENTIAL_KEY')).toBe(DEPLOYMENT_KEY);
   });
 });
