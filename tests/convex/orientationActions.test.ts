@@ -1078,6 +1078,56 @@ describe('orientation run', (): void => {
     ]);
   });
 
+  it('re-opens an absent system from a corpus larger than one read, a page at a time (review m30)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest({
+      schema,
+      modules: orientationModules(),
+      transactionLimits: true,
+    });
+    const { agentId, sourceId } = await seedOrientation(harness, {}, [
+      { name: 'NetLedger', class: 'other' },
+    ]);
+    const body = `# Runbook\n\n${'Follow the documented steps in order.\n'.repeat(14_000)}`;
+    for (let start = 0; start < 40; start += 4) {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let index = start; index < start + 4; index += 1) {
+          await ctx.db.insert('docPages', {
+            sourceId,
+            ref: `runbooks/page-${index}.md`,
+            title: `Page ${index}`,
+            markdown: body,
+            updatedAt: 1,
+          });
+        }
+      });
+    }
+    const netledgerId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'systems/netledger.md',
+        title: 'NetLedger',
+        markdown:
+          '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.',
+        updatedAt: 1,
+      });
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .first();
+      await ctx.db.patch(surface!._id, { verdict: 'absent' });
+      return surface!._id;
+    });
+
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId }),
+    ).resolves.toEqual({ reopened: 1 });
+    expect((await harness.run(async (ctx) => await ctx.db.get(netledgerId)))?.verdict).toBe(
+      'declared',
+    );
+  });
+
   it('leaves an absent system absent while its page still denies a surface', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'escalate';

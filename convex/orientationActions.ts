@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { v } from 'convex/values';
 import type { GenericId } from 'convex/values';
-import type { FunctionReference } from 'convex/server';
+import type { FunctionReference, PaginationResult } from 'convex/server';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
@@ -1730,10 +1730,15 @@ export const orientOne = internalAction({
  *
  * The check is orientation's own (`surfaceDocumentation`), so a page that
  * still says nothing, or still denies the system, leaves it absent and
- * nothing loops.
+ * nothing loops. The pages are read a bounded page at a time, never the
+ * corpus in one read (review m30): first the pages that could have changed
+ * the absence (the synced source's, or every source the agent reads when no
+ * sync prompted the pass), and only when one of them names an absent system,
+ * every page the agent reads, keeping the bodies that name it.
  *
  * @param absent - The agent's `absent` surfaces.
  * @param charterNamesSystems - Whether the employee's approved charter names any work system.
+ * @param syncedSourceId - The source whose completed sync prompted the pass, if one did.
  * @returns How many surfaces were re-opened, and how many of them were given an orientation job.
  */
 async function reopenDocumentedAbsences(
@@ -1741,13 +1746,38 @@ async function reopenDocumentedAbsences(
   agentId: Id<'agents'>,
   absent: readonly Doc<'surfaces'>[],
   charterNamesSystems: boolean,
+  syncedSourceId?: Id<'docSources'>,
 ): Promise<ReopenedAbsences> {
   const reopened: ReopenedAbsences = { reopened: 0, oriented: 0 };
   if (absent.length === 0) return reopened;
-  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-    agentId,
+  const sources: Doc<'docSources'>[] = await ctx.runQuery(
+    internal.docSources.sourcesForAgentInternal,
+    { agentId },
+  );
+  const prompting =
+    syncedSourceId === undefined
+      ? sources
+      : sources.filter((source): boolean => source._id === syncedSourceId);
+  const named = new Set<Id<'surfaces'>>();
+  await forEachStoredPage(ctx, prompting, (page): void => {
+    for (const surface of absent) {
+      if (!named.has(surface._id) && namesSystem(pageText(page), surface.displayName)) {
+        named.add(surface._id);
+      }
+    }
   });
-  for (const surface of absent) {
+  const candidates = absent.filter((surface): boolean => named.has(surface._id));
+  if (candidates.length === 0) return reopened;
+  // A page that names no candidate still counts for its address, which is
+  // never taken for a system's endpoint; its body is not kept.
+  const pages: Doc<'docPages'>[] = [];
+  await forEachStoredPage(ctx, sources, (page): void => {
+    const naming = candidates.some((surface): boolean =>
+      namesSystem(pageText(page), surface.displayName),
+    );
+    pages.push(naming ? page : { ...page, title: '', markdown: '' });
+  });
+  for (const surface of candidates) {
     if (surfaceDocumentation(pages, surface).absent) continue;
     const outcome: ReopenOutcome = await ctx.runMutation(internal.surfaceReopen.reopenAbsent, {
       surfaceId: surface._id,
@@ -1757,6 +1787,31 @@ async function reopenDocumentedAbsences(
     if (outcome === 'oriented') reopened.oriented += 1;
   }
   return reopened;
+}
+
+/** The text a page names a system in: its title and its body. */
+function pageText(page: Pick<Doc<'docPages'>, 'title' | 'markdown'>): string {
+  return `${page.title}\n${page.markdown}`;
+}
+
+/** Visit every stored page of some sources, one bounded read at a time. */
+async function forEachStoredPage(
+  ctx: OrientationCtx,
+  sources: readonly Doc<'docSources'>[],
+  visit: (page: Doc<'docPages'>) => void,
+): Promise<void> {
+  for (const source of sources) {
+    let cursor: string | null = null;
+    for (;;) {
+      const result: PaginationResult<Doc<'docPages'>> = await ctx.runQuery(
+        internal.docSources.pagesForSourceInternal,
+        { sourceId: source._id, paginationOpts: { numItems: 100, cursor } },
+      );
+      for (const page of result.page) visit(page);
+      if (result.isDone) break;
+      cursor = result.continueCursor;
+    }
+  }
 }
 
 /** What one agent's re-open pass did. */
@@ -1806,6 +1861,7 @@ export const reorientAbsent = internalAction({
           agent._id,
           absent,
           await charterNamesSystemsFor(ctx, agent._id),
+          args.sourceId,
         )
       ).reopened;
     }
