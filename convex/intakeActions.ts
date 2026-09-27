@@ -30,8 +30,10 @@ import {
   samePerson,
   ticketAssignee,
   ticketLabels,
+  ticketSnapshot,
   ticketStateType,
   type PersonIdentity,
+  type TicketSnapshot,
 } from '../src/work/ticket-ownership';
 import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
 
@@ -79,6 +81,8 @@ interface IntakeRecord {
 
 interface IntakeSeed extends Omit<WorkCandidate, 'observedAt'> {
   agentId: Id<'agents'>;
+  /** The ticket as this listing showed it, kept for the re-read before apply. */
+  tracker?: TicketSnapshot;
 }
 
 interface IntakeDecisionReply {
@@ -833,6 +837,8 @@ interface WithdrawnTicket {
 interface LinearPoll {
   candidates: WorkCandidate[];
   withdrawn: WithdrawnTicket[];
+  /** Each listed ticket as the ownership rule read it, by external id. */
+  trackers: ReadonlyMap<string, TicketSnapshot>;
   holdCheckpoint?: string;
 }
 
@@ -906,6 +912,7 @@ async function pollLinear(
       return {
         candidates: [],
         withdrawn: [],
+        trackers: new Map(),
         holdCheckpoint: unreadableOwnershipHold(unselectable),
       };
     }
@@ -919,6 +926,7 @@ async function pollLinear(
     const candidates: WorkCandidate[] = [];
     const candidateIds = new Set<string>();
     const withdrawn: WithdrawnTicket[] = [];
+    const trackers = new Map<string, TicketSnapshot>();
     const leftAlone = new Map<string, number>();
     const projects = scope.projects?.length ? [...new Set(scope.projects)] : [scope.project];
     // Only an approved team is enforced here. A row still on the page scan
@@ -976,6 +984,7 @@ async function pollLinear(
               refusal === OWNER_UNREAD ? undefined : linearCandidate(issue, surface, observedAt);
             if (left && !candidateIds.has(left.externalId)) {
               withdrawn.push({ candidate: left, leftQueue: refusal });
+              trackers.set(left.externalId, ticketSnapshot(issue));
               candidateIds.add(left.externalId);
             }
             continue;
@@ -983,6 +992,7 @@ async function pollLinear(
           const candidate = linearCandidate(issue, surface, observedAt);
           if (candidate && !candidateIds.has(candidate.externalId)) {
             candidates.push(candidate);
+            trackers.set(candidate.externalId, ticketSnapshot(issue));
             candidateIds.add(candidate.externalId);
           }
         }
@@ -1020,10 +1030,11 @@ async function pollLinear(
     }
     const unread = leftAlone.get(OWNER_UNREAD) ?? 0;
     return unread === 0
-      ? { candidates, withdrawn }
+      ? { candidates, withdrawn, trackers }
       : {
           candidates,
           withdrawn,
+          trackers,
           holdCheckpoint:
             `${unread} assigned ticket(s) left alone because the key's owner could not be read; ` +
             'the checkpoint is held so the next poll reads them again.',
@@ -1557,13 +1568,20 @@ async function seedCandidate(
   runtime: IntakeRuntime,
   agentId: Id<'agents'>,
   candidate: WorkCandidate,
+  trackers: ReadonlyMap<string, TicketSnapshot> = new Map(),
 ): Promise<void> {
-  await runtime.seed(seedOf(agentId, candidate));
+  await runtime.seed(seedOf(agentId, candidate, trackers));
 }
 
-/** The seed a candidate makes for one agent. */
-function seedOf(agentId: Id<'agents'>, candidate: WorkCandidate): IntakeSeed {
+/** The seed a candidate makes for one agent, with the ticket as it was listed. */
+function seedOf(
+  agentId: Id<'agents'>,
+  candidate: WorkCandidate,
+  trackers: ReadonlyMap<string, TicketSnapshot>,
+): IntakeSeed {
+  const tracker = trackers.get(candidate.externalId);
   return {
+    ...(tracker ? { tracker } : {}),
     agentId,
     sourceCategory: candidate.sourceCategory,
     sourceSystem: candidate.sourceSystem,
@@ -1737,12 +1755,17 @@ export async function runIntakeSweep(
               )
             : undefined;
         const polledPage: LinearPoll = chat
-          ? { candidates: chat.candidates, withdrawn: [] }
+          ? { candidates: chat.candidates, withdrawn: [], trackers: new Map() }
           : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
         const mapped = polledPage.candidates;
-        for (const candidate of mapped) await seedCandidate(runtime, agentId, candidate);
+        for (const candidate of mapped) {
+          await seedCandidate(runtime, agentId, candidate, polledPage.trackers);
+        }
         for (const { candidate, leftQueue } of polledPage.withdrawn) {
-          await runtime.withdraw({ ...seedOf(agentId, candidate), leftQueue });
+          await runtime.withdraw({
+            ...seedOf(agentId, candidate, polledPage.trackers),
+            leftQueue,
+          });
         }
         await runtime.recordIntake({
           surfaceId: surface._id,

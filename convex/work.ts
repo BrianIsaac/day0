@@ -44,6 +44,7 @@ import { autonomousActionsOn } from '../src/work/autonomy';
 import { transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
+import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import {
   AUTONOMOUS_WIP_LIMIT,
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
@@ -346,6 +347,86 @@ async function rememberExternalAlias(
   }
 }
 
+/** The ticket as a listing showed it, for the re-read before apply to compare with. */
+const trackerSnapshot = v.object({
+  assigned: v.boolean(),
+  assigneeId: v.optional(v.string()),
+  assigneeEmail: v.optional(v.string()),
+  state: v.optional(v.string()),
+  stateType: v.optional(v.string()),
+  doNotAutomate: v.boolean(),
+});
+
+/** The event that keeps each listing's snapshot of a ticket. */
+export const WORK_LISTED_EVENT = 'work.listed';
+
+/** How many of an agent's latest listing events a lookup reads, newest first. */
+const LISTING_SCAN_LIMIT = 500;
+
+/**
+ * The latest snapshot a listing kept for an item, at or before a time.
+ *
+ * Args:
+ *   ctx: Query or mutation context.
+ *   row: The item and its agent.
+ *   before: The latest listing time that counts.
+ *
+ * Returns:
+ *   The snapshot, or undefined when none is among the agent's latest listings.
+ */
+async function listedSnapshotAt(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  before: number,
+): Promise<TicketSnapshot | undefined> {
+  const listings = await ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', WORK_LISTED_EVENT))
+    .order('desc')
+    .take(LISTING_SCAN_LIMIT);
+  const listing = listings.find(
+    (event) =>
+      (event.payload as { workItemId?: unknown }).workItemId === row._id &&
+      event.createdAt <= before,
+  );
+  return (listing?.payload as { tracker?: TicketSnapshot } | undefined)?.tracker;
+}
+
+/**
+ * Keep the ticket as this listing showed it, when it differs from the last
+ * listing kept, so the re-read before apply can tell what changed since the
+ * plan was made.
+ */
+async function recordListing(
+  ctx: MutationCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  tracker: TicketSnapshot | undefined,
+): Promise<void> {
+  if (tracker === undefined) return;
+  const now = Date.now();
+  const last = await listedSnapshotAt(ctx, row, now);
+  if (last !== undefined && JSON.stringify(last) === JSON.stringify(tracker)) return;
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: WORK_LISTED_EVENT,
+    payload: { workItemId: row._id, tracker },
+    createdAt: now,
+  });
+}
+
+/**
+ * The ticket as the listing a plan was made under showed it: the latest
+ * listing kept at or before the given time. Internal; read by the apply.
+ */
+export const listedSnapshot = internalQuery({
+  args: { workItemId: v.id('workItems'), before: v.number() },
+  handler: async (ctx, args): Promise<TicketSnapshot | null> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) return null;
+    return (await listedSnapshotAt(ctx, row, args.before)) ?? null;
+  },
+});
+
 /** How a row intake withdrew says so on the card; its return is found by the same words. */
 export const WITHDRAWN_FROM_QUEUE_PREFIX = 'withdrawn from the queue on the tracker: ';
 
@@ -454,10 +535,13 @@ async function listedRow(
  */
 export async function seedItemInTransaction(
   ctx: MutationCtx,
-  args: WorkItemSeedInput,
+  { tracker, ...args }: WorkItemSeedInput & { tracker?: TicketSnapshot },
 ): Promise<Id<'workItems'>> {
   const existing = await listedRow(ctx, args);
-  if (existing) await refreshListedItem(ctx, existing, args, undefined);
+  if (existing) {
+    await refreshListedItem(ctx, existing, args, undefined);
+    await recordListing(ctx, existing, tracker);
+  }
   // An existing row is read again for its other name only while it still lacks it.
   if (existing && (args.externalAlias === undefined || existing.externalClaimAlias !== undefined)) {
     return existing._id;
@@ -503,6 +587,7 @@ export async function seedItemInTransaction(
     payload: { workItemId: id, title: args.title },
     createdAt: Date.now(),
   });
+  await recordListing(ctx, { _id: id, agentId: args.agentId }, tracker);
   await scheduleNextStep(ctx, {
     _id: id,
     agentId: args.agentId,
@@ -515,7 +600,7 @@ export async function seedItemInTransaction(
 
 /** Seed one listed item or bring its row up to the listing. Internal; called by intake. */
 export const seedItem = internalMutation({
-  args: { agentId: v.id('agents'), ...workItemSeedFields },
+  args: { agentId: v.id('agents'), ...workItemSeedFields, tracker: v.optional(trackerSnapshot) },
   handler: async (ctx, args): Promise<Id<'workItems'>> => await seedItemInTransaction(ctx, args),
 });
 
@@ -527,11 +612,17 @@ export const seedItem = internalMutation({
  * @returns The ticket's row, or null when it never had one.
  */
 export const withdrawListedItem = internalMutation({
-  args: { agentId: v.id('agents'), ...workItemSeedFields, leftQueue: v.string() },
-  handler: async (ctx, { leftQueue, ...listed }): Promise<Id<'workItems'> | null> => {
+  args: {
+    agentId: v.id('agents'),
+    ...workItemSeedFields,
+    leftQueue: v.string(),
+    tracker: v.optional(trackerSnapshot),
+  },
+  handler: async (ctx, { leftQueue, tracker, ...listed }): Promise<Id<'workItems'> | null> => {
     const existing = await listedRow(ctx, listed);
     if (!existing) return null;
     await refreshListedItem(ctx, existing, listed, leftQueue);
+    await recordListing(ctx, existing, tracker);
     return existing._id;
   },
 });

@@ -3551,6 +3551,42 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     );
   });
 
+  it('keeps each changed listing of the ticket and gives the apply the one the plan was made under', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const todo = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: todo,
+    });
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), tracker: todo });
+    const planMadeAt = Date.now();
+    const taken = { ...todo, assigned: true, assigneeId: 'user-ana', state: 'In Progress' };
+    await harness.run(async (ctx) => {
+      // A listing after the plan, as the next poll would keep it.
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.listed',
+        payload: { workItemId, tracker: taken },
+        createdAt: planMadeAt + 60_000,
+      });
+    });
+    const listings = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.listed'))
+          .collect(),
+    );
+    expect(listings).toHaveLength(2);
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: planMadeAt }),
+    ).resolves.toEqual(todo);
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: planMadeAt + 120_000 }),
+    ).resolves.toEqual(taken);
+  });
+
   it('leaves a row with a plan or a run to the re-read before apply, and a finished row alone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'plan-pending');

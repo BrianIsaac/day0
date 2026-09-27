@@ -48,6 +48,7 @@ import {
   type LinearListRequest,
 } from '../../convex/intakeActions';
 import type { WorkCandidate } from '../../src/work/types';
+import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 
@@ -62,6 +63,7 @@ interface RecordedIntake {
 
 interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
   agentId: Id<'agents'>;
+  tracker?: TicketSnapshot;
 }
 
 interface RuntimeHarness {
@@ -2687,6 +2689,12 @@ describe('each employee reads its own approved queues', (): void => {
         ),
       });
       expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual(['FIN-1']);
+      // The ticket as listed is kept with the seed, for the re-read before apply.
+      expect([...harness.seeds.values()][0]?.tracker).toEqual({
+        assigned: false,
+        stateType: 'unstarted',
+        doNotAutomate: false,
+      });
       expect(harness.withdrawn).toEqual([
         { externalId: 'FIN-2', leftQueue: 'the ticket is assigned to someone else' },
         { externalId: 'FIN-3', leftQueue: 'the ticket is completed' },
