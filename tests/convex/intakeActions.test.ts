@@ -3741,3 +3741,187 @@ describe('the bound on seeding (N7)', (): void => {
     });
   });
 });
+
+describe('polling that survives a 429 (step 17, Q13)', (): void => {
+  const slackCredential = id<'credentials'>('credential-slack');
+  const now = (): number => Date.parse('2026-08-26T03:00:00.000Z');
+  const slackHarness = (): ReturnType<typeof runtimeHarness> =>
+    runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+  const channelList = (): Response =>
+    slackResponse({
+      ok: true,
+      channels: [
+        { id: 'CASKS', name: 'revops-asks' },
+        { id: 'CREVOPS', name: 'revops' },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+  const mention = (channel: string): Response =>
+    slackResponse({
+      ok: true,
+      messages: [{ ts: '1770000000.000100', user: 'UUSER', text: `<@UBOT> ask in ${channel}` }],
+      response_metadata: { next_cursor: '' },
+    });
+  const limited = (): Response =>
+    new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': '1' },
+    });
+
+  it('waits out one 429 and reads the channel, so the 429 costs one request and nothing else', async (): Promise<void> => {
+    const harness = slackHarness();
+    const waits: number[] = [];
+    let asksReads = 0;
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now,
+        sleep: async (ms: number): Promise<void> => void waits.push(ms),
+        fetcher: async (input: string | URL | Request): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) return channelList();
+          const channel = url.searchParams.get('channel') ?? '';
+          if (channel === 'CASKS' && (asksReads += 1) === 1) return limited();
+          return mention(channel);
+        },
+      }),
+    ).resolves.toMatchObject({ candidates: 2, polled: 1, skipped: 0 });
+    expect(waits).toEqual([1_000]);
+    expect(asksReads).toBe(2);
+    expect(harness.records[0]?.polledAt).toBe(now());
+    expect(harness.seeds.size).toBe(2);
+  });
+
+  it('keeps what the other channels said when one stays rate limited, and holds the checkpoint', async (): Promise<void> => {
+    const harness = slackHarness();
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now,
+        sleep: async (): Promise<void> => undefined,
+        fetcher: async (input: string | URL | Request): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) return channelList();
+          const channel = url.searchParams.get('channel') ?? '';
+          return channel === 'CASKS' ? limited() : mention(channel);
+        },
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 0, skipped: 1 });
+    expect([...harness.seeds.keys()]).toEqual(['agent-intake:slack:CREVOPS:1770000000.000100']);
+    expect(harness.records[0]?.polledAt).toBeUndefined();
+    expect(harness.records[0]?.skipReason).toBe(
+      'intake read in part; read again next time: #revops-asks (Slack conversations.history was rate limited (ratelimited).)',
+    );
+  });
+
+  it('finds an approved channel past the third page of the channel list', async (): Promise<void> => {
+    const harness = slackHarness();
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now,
+        fetcher: async (input: string | URL | Request): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) {
+            const page = Number(url.searchParams.get('cursor') ?? '0');
+            return slackResponse({
+              ok: true,
+              channels:
+                page === 4
+                  ? [
+                      { id: 'CASKS', name: 'revops-asks' },
+                      { id: 'CREVOPS', name: 'revops' },
+                    ]
+                  : [{ id: `COTHER${page}`, name: `other-${page}` }],
+              response_metadata: { next_cursor: page === 4 ? '' : String(page + 1) },
+            });
+          }
+          return mention(url.searchParams.get('channel') ?? '');
+        },
+      }),
+    ).resolves.toMatchObject({ candidates: 2, polled: 1 });
+  });
+
+  it('seeds the other candidates when one fails, and names the one that did', async (): Promise<void> => {
+    const harness = slackHarness();
+    const seed = harness.runtime.seed;
+    harness.runtime.seed = async (candidate): Promise<void> => {
+      if (candidate.externalId.startsWith('CASKS')) throw new Error('seed write conflicted');
+      await seed(candidate);
+    };
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now,
+        fetcher: async (input: string | URL | Request): Promise<Response> => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/conversations.list')) return channelList();
+          return mention(url.searchParams.get('channel') ?? '');
+        },
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 0, skipped: 1 });
+    expect([...harness.seeds.keys()]).toEqual(['agent-intake:slack:CREVOPS:1770000000.000100']);
+    expect(harness.records[0]?.polledAt).toBeUndefined();
+    expect(harness.records[0]?.skipReason).toContain(
+      'CASKS:1770000000.000100 (seed write conflicted)',
+    );
+  });
+});
+
+describe('the manager decision poll under a rate limit', (): void => {
+  it('waits out a 429 on the manager DM and still resolves the reply', async (): Promise<void> => {
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: id<'credentials'>('credential-slack'),
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastPolledAt: Date.parse('2026-08-26T01:00:00.000Z'),
+      lastDecisionPolledAt: Date.parse('2026-08-26T01:04:00.000Z'),
+    });
+    const harness = runtimeHarness(
+      [surface],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(id<'credentials'>('credential-slack')), 'slack-test-value']]),
+    );
+    let reads = 0;
+    const waits: number[] = [];
+    await runDecisionSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => Date.parse('2026-08-26T01:05:00.000Z'),
+      sleep: async (ms: number): Promise<void> => void waits.push(ms),
+      fetcher: async (): Promise<Response> =>
+        (reads += 1) === 1
+          ? new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+              status: 429,
+              headers: { 'Retry-After': '2' },
+            })
+          : slackResponse({
+              ok: true,
+              messages: [{ ts: '1770000001.000100', user: 'UMANAGER', text: 'approve bq2wxy' }],
+              response_metadata: { next_cursor: '' },
+            }),
+    });
+    expect(waits).toEqual([2_000]);
+    expect(harness.decisions).toHaveLength(1);
+    expect(harness.decisionPolls).toEqual([
+      { surfaceId: surface._id, polledAt: Date.parse('2026-08-26T01:05:00.000Z') },
+    ]);
+  });
+});
