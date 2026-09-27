@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 
+import { makeFunctionReference } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
@@ -422,5 +423,75 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
     expect(await scheduledSteps(harness)).toEqual([]);
+  });
+});
+
+describe('the cron targets, run by the names they are scheduled under', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+    restoreSurfaceMode();
+  });
+
+  /**
+   * Run one cron's target the way the scheduler does: by its name and its arguments.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   label: The cron's label in `crons.ts`.
+   *
+   * Returns:
+   *   What the target returned.
+   */
+  async function runCron(harness: Harness, label: string): Promise<unknown> {
+    const cron = crons.crons[label] as { name: string; args: Array<Record<string, unknown>> };
+    return await harness.action(makeFunctionReference<'action'>(cron.name), cron.args[0] ?? {});
+  }
+
+  it('polls, polls decisions, re-probes and syncs one connected surface with no read grant', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const agentId = await seedAgent(harness, false);
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          managerApprovedAt: 1,
+          itApprovedAt: 1,
+          credentialLanded: true,
+          createdAt: 1,
+        }),
+    );
+
+    await expect(runCron(harness, 'poll connected surfaces for work')).resolves.toEqual({
+      candidates: 0,
+      mode: 'real',
+      polled: 0,
+      skipped: 1,
+      surfaces: 1,
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.intakeSkipReason).toBe(
+      'read scope linear:read is not granted; intake reads nothing here until the manager grants it again',
+    );
+    await expect(runCron(harness, 'poll manager decision replies')).resolves.toEqual({
+      mode: 'real',
+      polled: 0,
+      skipped: 0,
+      surfaces: 0,
+    });
+    await expect(runCron(harness, 're-probe connected surfaces')).resolves.toEqual({
+      expired: 0,
+      noticed: 0,
+      scheduled: 1,
+    });
+    await expect(runCron(harness, 'sync documentation sources')).resolves.toEqual({
+      sources: 0,
+      passed: 0,
+    });
   });
 });
