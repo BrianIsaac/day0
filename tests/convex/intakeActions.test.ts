@@ -2452,6 +2452,152 @@ describe('each employee reads its own approved queues', (): void => {
       expect.objectContaining({ externalId: 'FIN-1', externalAlias: fin1.uuid }),
     ]);
   });
+
+  describe('tickets owned by people', (): void => {
+    const KEY_OWNER = {
+      id: 'user-key',
+      name: 'Kestrel Ops',
+      displayName: 'ops',
+      email: 'ops@kestrel.test',
+    };
+
+    /** A finance-scoped issue with whatever ownership, labels and state a case needs. */
+    function ticket(
+      identifier: string,
+      patch: Record<string, unknown> = {},
+    ): Record<string, unknown> {
+      return {
+        id: identifier,
+        title: `Issue ${identifier}`,
+        url: `https://linear.app/kestrel/issue/${identifier}`,
+        project: 'September close',
+        team: 'Finance close',
+        statusType: 'unstarted',
+        ...patch,
+      };
+    }
+
+    /**
+     * A Linear client whose `list_issues` returns the rows and whose
+     * `get_user` answers `me` with the key owner, or is absent.
+     */
+    function linearClient(
+      rows: Record<string, unknown>[],
+      options: { owner?: Record<string, unknown>; userCalls?: unknown[] } = {},
+    ) {
+      return () => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: {
+            surface: {
+              list_issues: {
+                name: 'list_issues',
+                inputSchema: { properties: { project: {}, team: {}, limit: {} } },
+              },
+              ...(options.owner === undefined
+                ? {}
+                : { get_user: { name: 'get_user', inputSchema: { properties: { query: {} } } } }),
+            },
+          },
+          errors: {},
+        }),
+        toolFromDefinition: async ({ definition }: { definition: { name?: string } }) => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            if (definition.name === 'get_user') {
+              options.userCalls?.push(args);
+              return { content: [{ type: 'text', text: JSON.stringify(options.owner) }] };
+            }
+            return { issues: rows };
+          },
+        }),
+        disconnect: async (): Promise<void> => undefined,
+      });
+    }
+
+    async function seededFrom(
+      rows: Record<string, unknown>[],
+      options: {
+        owner?: Record<string, unknown>;
+        userCalls?: unknown[];
+        allowlist?: string[];
+      } = {},
+    ): Promise<string[]> {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: options.allowlist ?? ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        makeMcpClient: linearClient(rows, options),
+      });
+      return [...harness.seeds.values()].map((seed) => seed.externalId);
+    }
+
+    it("skips a ticket assigned to a person other than the key's owner and keeps the owner's and the unassigned", async (): Promise<void> => {
+      const userCalls: unknown[] = [];
+      const seeded = await seededFrom(
+        [
+          ticket('FIN-1'),
+          ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' }),
+          ticket('FIN-3', { assignee: 'Kestrel Ops', assigneeId: 'user-key' }),
+          ticket('FIN-4', { assignee: { id: 'user-ana', name: 'Ana Lim' } }),
+          ticket('FIN-5', { assignee: { email: 'OPS@kestrel.test' } }),
+        ],
+        { owner: KEY_OWNER, userCalls },
+      );
+      expect(seeded).toEqual(['FIN-1', 'FIN-3', 'FIN-5']);
+      expect(userCalls).toEqual([{ query: 'me' }]);
+    });
+
+    it("skips every assigned ticket when the key's owner cannot be read, and keeps the unassigned", async (): Promise<void> => {
+      const withoutTool = await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops', assigneeId: 'user-key' })],
+        { allowlist: ['list_issues'] },
+      );
+      expect(withoutTool).toEqual(['FIN-1']);
+
+      const unanswered = await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops' })],
+        { owner: { error: 'not found' } },
+      );
+      expect(unanswered).toEqual(['FIN-1']);
+    });
+
+    it('honours a do-not-automate label in the shapes the provider returns it', async (): Promise<void> => {
+      const seeded = await seededFrom(
+        [
+          ticket('FIN-1', { labels: ['day0-demo'] }),
+          ticket('FIN-2', { labels: ['Do not automate'] }),
+          ticket('FIN-3', { labels: [{ name: 'do-not-automate' }] }),
+          ticket('FIN-4', { labels: { nodes: [{ name: 'DO_NOT_AUTOMATE' }] } }),
+        ],
+        { owner: KEY_OWNER },
+      );
+      expect(seeded).toEqual(['FIN-1']);
+    });
+
+    it('never seeds a completed or cancelled ticket', async (): Promise<void> => {
+      const seeded = await seededFrom(
+        [
+          ticket('FIN-1', { status: 'In Progress', statusType: 'started' }),
+          ticket('FIN-2', { status: 'Done', statusType: 'completed' }),
+          ticket('FIN-3', { status: 'Canceled', statusType: 'canceled' }),
+          ticket('FIN-4', {
+            statusType: undefined,
+            state: { name: 'Duplicate', type: 'canceled' },
+          }),
+          ticket('FIN-5', { statusType: undefined, status: { name: 'Todo', type: 'unstarted' } }),
+        ],
+        { owner: KEY_OWNER },
+      );
+      expect(seeded).toEqual(['FIN-1', 'FIN-5']);
+    });
+  });
 });
 
 describe("the app's own posts are never intake", (): void => {

@@ -8,6 +8,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
+import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { browserComponentRefusal } from '../src/surfaces/browser';
@@ -295,6 +296,8 @@ const LINEAR_ISSUE_FIELDS = [
   'updatedAt',
   'createdBy',
   'assignee',
+  'assigneeId',
+  'labels',
   'project',
   'projectId',
   'team',
@@ -520,6 +523,170 @@ export function mcpIssuePage(value: unknown): McpPage {
   return { issues, nextCursor: typeof cursor === 'string' && cursor ? cursor : undefined };
 }
 
+/** The label a person puts on a ticket to keep every Day0 employee off it (Q11). */
+export const DO_NOT_AUTOMATE_LABEL = 'do-not-automate';
+
+/** Workflow state types Linear gives a ticket nobody is to work on any more. */
+const CLOSED_STATE_TYPES: ReadonlySet<string> = new Set(['completed', 'canceled', 'cancelled']);
+
+/** A name compared case- and separator-insensitively: `Do not automate` is `do-not-automate`. */
+function labelKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-');
+}
+
+/** A person's name, id or address as the assignee rule compares them. */
+function personKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Read the workflow state type of an issue, in the shapes providers use.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *
+ * Returns:
+ *   The lower-cased state type (`unstarted`, `completed`), or undefined.
+ */
+function issueStateType(issue: Record<string, unknown>): string | undefined {
+  const type = [issue.statusType, asRecord(issue.status)?.type, asRecord(issue.state)?.type].find(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  );
+  return type?.trim().toLowerCase();
+}
+
+/**
+ * Read an issue's label names, in the shapes providers use.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *
+ * Returns:
+ *   Label names compared case- and separator-insensitively.
+ */
+function issueLabels(issue: Record<string, unknown>): string[] {
+  const listed: unknown = Array.isArray(issue.labels)
+    ? issue.labels
+    : asRecord(issue.labels)?.nodes;
+  if (!Array.isArray(listed)) return [];
+  return listed.flatMap((label: unknown): string[] => {
+    const name = typeof label === 'string' ? label : asRecord(label)?.name;
+    return typeof name === 'string' && name.trim() !== '' ? [labelKey(name)] : [];
+  });
+}
+
+/**
+ * Every way an issue names its assignee: the display name, a nested object's
+ * id, name, display name and address, and the assignee id.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *
+ * Returns:
+ *   Lower-cased identifiers; empty when nobody is assigned.
+ */
+function issueAssignee(issue: Record<string, unknown>): string[] {
+  const nested = asRecord(issue.assignee);
+  return [
+    typeof issue.assignee === 'string' ? issue.assignee : undefined,
+    issue.assigneeId,
+    nested?.id,
+    nested?.name,
+    nested?.displayName,
+    nested?.email,
+  ].flatMap((value: unknown): string[] =>
+    typeof value === 'string' && value.trim() !== '' ? [personKey(value)] : [],
+  );
+}
+
+/**
+ * Why intake leaves a Linear ticket alone, by the kanban's own primitives
+ * (Q11): a completed or cancelled state, the do-not-automate label, or an
+ * assignee who is not the person whose key Day0 reads with. When the key's
+ * owner could not be read, any assigned ticket is left alone: it may be
+ * somebody else's, and the unassigned ones are still worked.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *   owner: The key owner's identifiers, lower-cased, or undefined when unread.
+ *
+ * Returns:
+ *   The reason to skip, or undefined when the ticket is intake's to take.
+ */
+export function linearIntakeRefusal(
+  issue: Record<string, unknown>,
+  owner: ReadonlySet<string> | undefined,
+): string | undefined {
+  const state = issueStateType(issue);
+  if (state !== undefined && CLOSED_STATE_TYPES.has(state)) return `the ticket is ${state}`;
+  if (issueLabels(issue).includes(DO_NOT_AUTOMATE_LABEL)) {
+    return `the ticket is labelled ${DO_NOT_AUTOMATE_LABEL}`;
+  }
+  const assignee = issueAssignee(issue);
+  if (assignee.length === 0) return undefined;
+  if (owner === undefined) return "the ticket is assigned and the key's owner could not be read";
+  return assignee.some((name: string): boolean => owner.has(name))
+    ? undefined
+    : 'the ticket is assigned to someone else';
+}
+
+/**
+ * Ask Linear who the intake key belongs to, through the key's own `get_user`
+ * with `me`, so an assignee can be compared with it.
+ *
+ * Args:
+ *   client: The connected MCP client.
+ *   catalog: The tools the server listed.
+ *   allowlist: The tools the surface's approval allows.
+ *   credential: The decrypted bearer, kept out of any logged reason.
+ *
+ * Returns:
+ *   The owner's id, names and address, lower-cased; undefined when the tool is
+ *   not allowed or the answer names nobody.
+ */
+async function linearKeyOwner(
+  client: McpIntakeClient,
+  catalog: Record<string, McpToolDefinition> | undefined,
+  allowlist: readonly string[] | undefined,
+  credential: string,
+): Promise<ReadonlySet<string> | undefined> {
+  const definition = catalog?.get_user;
+  if (!definition || !allowlist?.includes('get_user')) return undefined;
+  const argument = discoveredArgument(schemaProperties(definition.inputSchema), [
+    'query',
+    'id',
+    'userId',
+    'user',
+  ]);
+  if (!argument) return undefined;
+  try {
+    const tool = await client.toolFromDefinition({ serverName: 'surface', definition });
+    if (!tool.execute) return undefined;
+    const answer = asRecord(
+      decodeMcpPayload(
+        await tool.execute(
+          { [argument]: 'me' },
+          { abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) },
+        ),
+      ),
+    );
+    const user = asRecord(answer?.user) ?? answer;
+    const names = [user?.id, user?.name, user?.displayName, user?.email].flatMap(
+      (value: unknown): string[] =>
+        typeof value === 'string' && value.trim() !== '' ? [personKey(value)] : [],
+    );
+    return names.length > 0 ? new Set(names) : undefined;
+  } catch (error) {
+    log.warn('linear key owner unreadable; assigned tickets are left alone this poll', {
+      reason: safeIntakeError(error, credential),
+    });
+    return undefined;
+  }
+}
+
 /**
  * Read a person field in the shapes providers use.
  *
@@ -710,9 +877,16 @@ async function pollLinear(
     if (!definition) throw new Error('Linear MCP server exposes no list_issues tool.');
     const tool = await client.toolFromDefinition({ serverName: 'surface', definition });
     if (!tool.execute) throw new Error('Linear list_issues tool is not executable.');
+    const owner = await linearKeyOwner(
+      client,
+      definitions.surface,
+      surface.toolAllowlist,
+      credential,
+    );
 
     const candidates: WorkCandidate[] = [];
     const candidateIds = new Set<string>();
+    const leftAlone = new Map<string, number>();
     const projects = scope.projects?.length ? [...new Set(scope.projects)] : [scope.project];
     // Only an approved team is enforced here. A row still on the page scan
     // keeps its behaviour exactly, and the scan's team may be another
@@ -761,6 +935,11 @@ async function pollLinear(
           ) {
             continue;
           }
+          const refusal = linearIntakeRefusal(issue, owner);
+          if (refusal !== undefined) {
+            leftAlone.set(refusal, (leftAlone.get(refusal) ?? 0) + 1);
+            continue;
+          }
           const candidate = linearCandidate(issue, surface, observedAt);
           if (candidate && !candidateIds.has(candidate.externalId)) {
             candidates.push(candidate);
@@ -792,6 +971,12 @@ async function pollLinear(
         cursors.add(page.nextCursor);
         cursor = page.nextCursor;
       }
+    }
+    if (leftAlone.size > 0) {
+      log.info('linear intake left tickets alone', {
+        surfaceId: surface._id,
+        reasons: Object.fromEntries(leftAlone),
+      });
     }
     return candidates;
   } finally {
