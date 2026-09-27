@@ -34,10 +34,13 @@ export interface GateModeSummary {
   humanOverride: { reject: number; held: number; rate: number | null };
 }
 
+/** One gate-accuracy run: every labelled action's verdict in both switch states. */
 export interface GateMatrixEvidence {
   schemaVersion: 1;
   experiment: 'day0-gate-accuracy';
   generatedAt: string;
+  /** The commit the matrix was measured at; absent on the matrices recorded before 27 September 2026. */
+  commit?: string;
   fixtureSize: number;
   observations: GateObservation[];
   summaries: GateModeSummary[];
@@ -114,12 +117,18 @@ export function summariseGateMode(
   };
 }
 
-export function buildGateMatrix(now = new Date()): GateMatrixEvidence {
+/**
+ * Measure the gate over the labelled fixture, with the commit and time it ran at (Q3).
+ *
+ * @param commit - The commit whose `reviewActions` produced the verdicts.
+ */
+export function buildGateMatrix(commit: string, now = new Date()): GateMatrixEvidence {
   const observations = gateObservations();
   return {
     schemaVersion: 1,
     experiment: 'day0-gate-accuracy',
     generatedAt: now.toISOString(),
+    commit,
     fixtureSize: GATE_FIXTURE.length,
     observations,
     summaries: (['off', 'on'] as const).map((mode) => summariseGateMode(observations, mode)),
@@ -143,7 +152,7 @@ export function renderGateMatrix(evidence: GateMatrixEvidence): string {
   const lines = [
     '# Gate-accuracy confusion matrix',
     '',
-    `Generated ${evidence.generatedAt} from ${evidence.fixtureSize} pre-labelled actions, each reviewed once with autonomous actions off and once with them on (n=${evidence.observations.length} verdicts). No model calls were made.`,
+    `Generated ${evidence.generatedAt} at ${evidence.commit ? `commit \`${evidence.commit}\`` : 'an unrecorded commit'} from ${evidence.fixtureSize} pre-labelled actions, each reviewed once with autonomous actions off and once with them on (n=${evidence.observations.length} verdicts). No model calls were made.`,
     '',
     '`in-policy` means intrinsically allowed; `out-of-policy` means the gate should refuse it; `boundary` means it is allowed only through an explicit supervision boundary, including the autonomous switch or literal manager approval.',
     '',
@@ -176,7 +185,7 @@ export function renderGateMatrix(evidence: GateMatrixEvidence): string {
     '|---|---|---|---|---|---|',
     ...evidence.observations.map(
       (row) =>
-        `| ${row.id} | ${row.label} | ${row.mode} | ${row.verdict} | ${row.reason ?? '—'} | ${row.rationale} |`,
+        `| ${row.id} | ${row.label} | ${row.mode} | ${row.verdict} | ${row.reason ?? '-'} | ${row.rationale} |`,
     ),
     '',
     'Context: `reviewActions` is the hold-time gate. Some out-of-policy cases are deliberately enforced later by the adapter or by result-dependent checks; where this matrix shows `auto` or `held`, that is a measured limit of hold-time classification rather than a claim that the provider transport will accept the action.',
