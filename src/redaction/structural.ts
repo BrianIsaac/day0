@@ -20,7 +20,7 @@
  * every rule that judged a value by how random it looked.
  */
 
-import { guardReason, sampleValueReason } from './guard';
+import { QUOTE_PAIRS, guardReason, sampleValueReason } from './guard';
 
 export type StructuralLabel =
   | 'connection password'
@@ -104,18 +104,26 @@ const CREDENTIAL_HEADER =
   /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]{8,})/gi;
 /** curl's `-u user:password` and `--user user:password`. */
 const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"'　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/g;
+/** What a bare labelled value is made of: no whitespace, quote mark, closing punctuation or CJK text. */
+const BARE_VALUE_CHARACTER = '[^\\s`\'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]';
 /**
  * A line that assigns a value to a password-class label. The label must sit
  * directly before the separator (an optional parenthetical allowed), so
  * "password policy: rotate quarterly" is prose and "PIN for the phone: 0419"
- * is the model's to find. A quoted value is taken whole; a bare value stops
- * at whitespace and closing punctuation, ASCII or full-width, never gives back
- * a character to let the rest of the pattern match (so `login: Admin / pass`
- * cannot store `Admi`), and is not taken when it starts a `user / password`
- * pair, which `LOGIN_PAIR` reads instead.
+ * is the model's to find. A value between any pair of `QUOTE_PAIRS` is taken
+ * whole, one capture group per pair in the table's order; a bare value (the
+ * group after them) stops at whitespace and closing punctuation, ASCII or
+ * full-width, never gives back a character to let the rest of the pattern
+ * match (so `login: Admin / pass` cannot store `Admi`), and is not taken when
+ * it starts a `user / password` pair, which `LOGIN_PAIR` reads instead.
  */
-const LABELLED_PASSWORD =
-  /(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)(?:[ \t]*\([^)\n]{0,60}\))?[ \t]*[:=：][ \t]*(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|([^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)(?![^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠])(?![ \t]*\/[ \t]*[^\s/]))/gi;
+const LABELLED_PASSWORD = new RegExp(
+  '(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)' +
+    '(?:[ \\t]*\\([^)\\n]{0,60}\\))?[ \\t]*[:=：][ \\t]*' +
+    `(?:${QUOTE_PAIRS.map(([open, close]): string => `${open}([^${close}\\n]+)${close}`).join('|')}` +
+    `|(${BARE_VALUE_CHARACTER}+)(?!${BARE_VALUE_CHARACTER})(?![ \\t]*\\/[ \\t]*[^\\s/]))`,
+  'gi',
+);
 /** `login: user / password`, `credentials: user/password`: the second half is the secret. */
 const LOGIN_PAIR =
   /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/gi;
@@ -255,13 +263,15 @@ export function structuralSpans(text: string): StructuralSpan[] {
   }
   for (const match of text.matchAll(LABELLED_PASSWORD)) {
     if (match.index === undefined) continue;
-    const quoted = match[1] ?? match[2] ?? match[3];
-    const raw = quoted ?? match[4] ?? '';
+    const quoted = match
+      .slice(1, QUOTE_PAIRS.length + 1)
+      .find((group: string | undefined): boolean => group !== undefined);
+    const raw = quoted ?? match[QUOTE_PAIRS.length + 1] ?? '';
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
     const rest = restOfPhrase(raw, value, text.slice(match.index + match[0].length));
     if (
       !value ||
-      guardReason(value, { assigned: true }) ||
+      guardReason(value, { assigned: true, quoted: quoted !== undefined }) ||
       (quoted === undefined && bareValueIsProse(value, rest))
     )
       continue;

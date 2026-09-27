@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { providerPrefix } from '../../../src/redaction/guard';
+import { QUOTE_PAIRS, providerPrefix } from '../../../src/redaction/guard';
 import {
   mergeSpans,
   PROVIDER_LABELS,
@@ -294,6 +294,41 @@ describe("the labelled password grammar on an author's page", (): void => {
         spans.map((span) => text.slice(span.start, span.end)),
         text,
       ).toEqual(values);
+    }
+  });
+
+  it('takes a value in Chinese, corner-bracket, full-width or curly quotation marks whole, without the marks', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['密码：“开门芝麻”', ['开门芝麻']],
+      ['密码：「开门芝麻」', ['开门芝麻']],
+      ['密码：『开门芝麻』', ['开门芝麻']],
+      ['密码：＂开门芝麻＂', ['开门芝麻']],
+      ['Password: “Open Sesame”', ['Open Sesame']],
+      ['Password: “Sunshine”', ['Sunshine']],
+      ['Password: ‘Sunshine’', ['Sunshine']],
+      ['Password: "Open Sesame"', ['Open Sesame']],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+
+  it('takes a value between every pair of the shared quote table', (): void => {
+    for (const [open, close] of QUOTE_PAIRS) {
+      for (const text of [
+        `密码：${open}开门芝麻${close}`,
+        `Password: ${open}Open Sesame${close}`,
+      ]) {
+        const spans = structuralSpans(text);
+        expect(
+          spans.map((span) => text.slice(span.start, span.end)),
+          text,
+        ).toEqual([text.slice(text.indexOf(open) + open.length, text.lastIndexOf(close))]);
+      }
     }
   });
 });

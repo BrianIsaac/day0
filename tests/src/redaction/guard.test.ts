@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { guardReason, guardSecretSpan, splitUserPasswordPair } from '../../../src/redaction/guard';
+import {
+  QUOTE_PAIRS,
+  guardReason,
+  guardSecretSpan,
+  splitUserPasswordPair,
+} from '../../../src/redaction/guard';
 import { NEVER_REDACT } from '../../../src/redaction/policy';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 
@@ -501,6 +506,27 @@ describe('what the guard still keeps from the model (review of the phrase and CJ
     expect(kept('密码是开门芝麻', '密码是开门芝麻')).toBe('开门芝麻');
     expect(kept('门禁密码 开门芝麻', '开门芝麻')).toBe('开门芝麻');
     expect(kept('备用口令 天王盖地虎', '天王盖地虎')).toBe('天王盖地虎');
+  });
+
+  it('keeps a value quoted in Chinese, corner-bracket or curly marks after its label, without the marks', (): void => {
+    expect(kept('密码：“开门芝麻”', '开门芝麻')).toBe('开门芝麻');
+    expect(kept('密码：「开门芝麻」', '开门芝麻')).toBe('开门芝麻');
+    expect(kept('密码：“开门芝麻”', '“开门芝麻”')).toBe('开门芝麻');
+    expect(kept('门禁密码 「开门芝麻」', '开门芝麻')).toBe('开门芝麻');
+    expect(kept('Password: “Sunshine”', 'Sunshine')).toBe('Sunshine');
+  });
+
+  it('keeps a CJK value between every pair of the shared quote table', (): void => {
+    for (const [open, close] of QUOTE_PAIRS) {
+      const text = `密码：${open}开门芝麻${close}`;
+      expect(kept(text, '开门芝麻'), text).toBe('开门芝麻');
+      expect(kept(text, `${open}开门芝麻${close}`), text).toBe('开门芝麻');
+    }
+  });
+
+  it('does not refuse a phrase the author quoted as prose', (): void => {
+    expect(guardReason('Open Sesame', { assigned: true, quoted: true })).toBeUndefined();
+    expect(guardReason('Open Sesame', { assigned: true })).toBe('prose');
   });
 
   it('still refuses the first word of a phrase a label assigns with a colon, and a bare CJK label', (): void => {
