@@ -112,3 +112,13 @@ describe('the top of an hour', (): void => {
     expect(isHourStart(Date.UTC(2026, 8, 27, 16, 0), 'Asia/Kolkata')).toBe(false);
   });
 });
+
+describe('UTC without zone data', (): void => {
+  it('computes UTC from the clock alone, so a runtime with no zone data still has a day', (): void => {
+    expect(isTimeZone('UTC')).toBe(true);
+    expect(dayKey(Date.UTC(2026, 11, 31, 23, 59), 'UTC')).toBe('2026-12-31');
+    expect(formatStamp(Date.UTC(2026, 0, 2, 3, 4, 5), 'UTC', { seconds: true })).toBe(
+      '2 Jan 2026, 03:04:05',
+    );
+  });
+});

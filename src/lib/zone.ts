@@ -46,6 +46,7 @@ function partsFormatter(zone: string): Intl.DateTimeFormat {
  */
 export function isTimeZone(value: unknown): boolean {
   if (typeof value !== 'string' || value === '') return false;
+  if (value === 'UTC') return true;
   try {
     partsFormatter(value);
     return true;
@@ -60,7 +61,13 @@ export function isTimeZone(value: unknown): boolean {
  * unless `TZ` is set), the viewer's in the browser.
  */
 export function deploymentZone(): string {
-  const zone: string | undefined = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  let zone: string | undefined;
+  try {
+    zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    // A runtime without zone data answers UTC, the zone it can compute.
+    return 'UTC';
+  }
   return zone !== undefined && isTimeZone(zone) ? zone : 'UTC';
 }
 
@@ -74,6 +81,18 @@ export function agentZone(agent: { readonly zone?: string }): string {
 
 /** The calendar and clock of an instant in a zone. */
 export function zonedParts(ms: number, zone: string): ZonedParts {
+  if (zone === 'UTC') {
+    // Needs no zone data, so UTC works on a runtime that carries none.
+    const date = new Date(ms);
+    return {
+      year: date.getUTCFullYear(),
+      month: date.getUTCMonth() + 1,
+      day: date.getUTCDate(),
+      hour: date.getUTCHours(),
+      minute: date.getUTCMinutes(),
+      second: date.getUTCSeconds(),
+    };
+  }
   const values: Record<string, number> = {};
   for (const part of partsFormatter(zone).formatToParts(ms)) {
     if (part.type !== 'literal') values[part.type] = Number(part.value);
