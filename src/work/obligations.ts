@@ -6,8 +6,15 @@
  * here, and each caller skips what it cannot see.
  */
 
-import { actionIntent, isManagerDm, isStatusChange, parseSurfaceAction, type ParsedSurfaceAction } from '../surfaces/policy';
+import {
+  actionIntent,
+  isManagerDm,
+  isStatusChange,
+  parseSurfaceAction,
+  type ParsedSurfaceAction,
+} from '../surfaces/policy';
 import type { SurfaceRecord } from '../surfaces/types';
+import { verdictFor } from '../surfaces/verdict';
 import type { ExecutionPlan, MockAction, PlanObligations, PlanTransition } from './types';
 
 /** A surface the run can act on, by slug, with the name the card shows. */
@@ -34,7 +41,10 @@ const PROMISED_TRANSITIONS: ReadonlySet<PlanTransition> = new Set([
   'conditional-on-manager',
 ]);
 /** The transitions under which the state change is the manager's decision, whatever the switch says. */
-const WITHHELD_TRANSITIONS: ReadonlySet<PlanTransition> = new Set(['withheld', 'conditional-on-manager']);
+const WITHHELD_TRANSITIONS: ReadonlySet<PlanTransition> = new Set([
+  'withheld',
+  'conditional-on-manager',
+]);
 
 /**
  * The declared obligations of a plan, when they line up with its steps.
@@ -49,7 +59,9 @@ const WITHHELD_TRANSITIONS: ReadonlySet<PlanTransition> = new Set(['withheld', '
  * Returns:
  *   The obligations, or undefined when the plan declares none it can use.
  */
-export function planObligations(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): PlanObligations | undefined {
+export function planObligations(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+): PlanObligations | undefined {
   const declared = plan.obligations;
   if (!declared || !Array.isArray(declared.steps)) return undefined;
   if (declared.steps.length !== plan.steps.length) return undefined;
@@ -112,7 +124,9 @@ export function readingSteps(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>)
  * comment, the reply and the state change are authored from results that
  * do not exist when phase one is written.
  */
-export function planReadsBeforeClosing(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): boolean {
+export function planReadsBeforeClosing(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+): boolean {
   return readingSteps(plan).length > 0;
 }
 
@@ -127,14 +141,18 @@ export function planReadsBeforeClosing(plan: Pick<ExecutionPlan, 'steps' | 'obli
  * judged (mock mode, a row from before the field existed) is left to the
  * executor's own flag, and mock mode never consults this.
  */
-export function closingPhaseOwed(plan: Pick<ExecutionPlan, 'steps' | 'obligations' | 'obligationsFailedOpen'>): boolean {
+export function closingPhaseOwed(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations' | 'obligationsFailedOpen'>,
+): boolean {
   if (planReadsBeforeClosing(plan)) return true;
   if (plan.obligationsFailedOpen !== undefined) return true;
   return plan.obligations !== undefined && planObligations(plan) === undefined;
 }
 
 /** The plan's declared word on the ticket state, or undefined when it declares nothing. */
-export function planTransition(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): PlanTransition | undefined {
+export function planTransition(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+): PlanTransition | undefined {
   return planObligations(plan)?.transition;
 }
 
@@ -164,7 +182,8 @@ export function transitionWithheld(plan: Pick<ExecutionPlan, 'steps' | 'obligati
   if (!declared) return false;
   return (
     WITHHELD_TRANSITIONS.has(declared.transition) ||
-    (declared.plannerTransition !== undefined && WITHHELD_TRANSITIONS.has(declared.plannerTransition))
+    (declared.plannerTransition !== undefined &&
+      WITHHELD_TRANSITIONS.has(declared.plannerTransition))
   );
 }
 
@@ -172,7 +191,10 @@ type ObligedPlan = Pick<ExecutionPlan, 'steps' | 'obligations'>;
 
 /** Whether either reading of the plan conditions the ticket state on the manager. */
 function conditionedOnManager(declared: PlanObligations): boolean {
-  return declared.transition === 'conditional-on-manager' || declared.plannerTransition === 'conditional-on-manager';
+  return (
+    declared.transition === 'conditional-on-manager' ||
+    declared.plannerTransition === 'conditional-on-manager'
+  );
 }
 
 /**
@@ -197,15 +219,21 @@ export function managerConditionalSteps(plan: ObligedPlan): number[] {
   );
 }
 
-/** A question mark that ends a clause; one inside a link's query string asks nothing. */
-const QUESTION_MARK = /\?(?=$|[\s"'\u201d\u2019)\]*_])/;
+/**
+ * A question mark that ends a clause; one inside a link's query string asks
+ * nothing. The full-width mark a Chinese question ends with never sits in a
+ * link, so it asks wherever it stands.
+ */
+const QUESTION_MARK = /\?(?=$|[\s"'\u201d\u2019)\]*_])|？/;
 /** The most of a question a stop reason carries. */
 const QUESTION_CHARS = 600;
 
 /** The text a manager message carries, whichever transport it takes. */
 function messageText(parsed: ParsedSurfaceAction): string {
   if (parsed.kind === 'mcp.call') {
-    const text = ['text', 'message', 'body'].map((key) => parsed.toolArgs[key]).find((value) => typeof value === 'string');
+    const text = ['text', 'message', 'body']
+      .map((key) => parsed.toolArgs[key])
+      .find((value) => typeof value === 'string');
     return typeof text === 'string' ? text : '';
   }
   return typeof parsed.bodyJson?.text === 'string' ? parsed.bodyJson.text : '';
@@ -213,19 +241,45 @@ function messageText(parsed: ParsedSurfaceAction): string {
 
 /** The sentences of a message that ask, in order; the whole message when none can be cut out. */
 function questionsIn(text: string): string {
-  const asked = text.split(/(?<=[.?!])\s+|\n+/).filter((sentence) => QUESTION_MARK.test(sentence));
-  const question = (asked.length > 0 ? asked.join(' ') : text).trim();
-  return question.length > QUESTION_CHARS ? `${question.slice(0, QUESTION_CHARS - 1).trimEnd()}…` : question;
+  // A Chinese sentence ends at its full-width stop with no space after it.
+  const asked = text
+    .split(/(?<=[.?!])\s+|(?<=[。？！])\s*|\n+/)
+    .filter((sentence) => QUESTION_MARK.test(sentence));
+  const joined = asked.reduce(
+    (together, sentence) =>
+      together === '' || /[。？！]$/.test(together)
+        ? `${together}${sentence}`
+        : `${together} ${sentence}`,
+    '',
+  );
+  const question = (asked.length > 0 ? joined : text).trim();
+  return question.length > QUESTION_CHARS
+    ? `${question.slice(0, QUESTION_CHARS - 1).trimEnd()}…`
+    : question;
 }
 
 /** A question put to the manager that the plan's conditional writes wait on. */
 export interface OpenManagerQuestion {
-  /** The question as the manager DM asked it. */
+  /** The question as the manager DM, or the notes when no chat surface could carry one, asked it. */
   question: string;
   /** The actions to withhold, by index in the set, each with the one-based plan step it belongs to. */
   withheld: Array<{ index: number; step: number }>;
   /** The plan steps that wait on the answer, sorted. */
   steps: number[];
+}
+
+/**
+ * Whether a connected chat surface can carry the manager DM. Without one the
+ * executor is told to put its question in `notes`, so that is where the
+ * question is read from.
+ */
+function managerDmReachable(surfaces: readonly SurfaceRecord[], now: number): boolean {
+  return surfaces.some(
+    (surface) =>
+      surface.class === 'chat' &&
+      !!surface.managerDmChannelId &&
+      verdictFor(surface, now) === 'connected',
+  );
 }
 
 /**
@@ -235,53 +289,69 @@ export interface OpenManagerQuestion {
  * plan left to the manager has answered its own question for them. The writes
  * are the state change, and any other write to a surface that only
  * manager-conditional steps write; the question is a manager DM, in this set
- * or landed earlier in the run, that ends a clause with a question mark. A
- * message that reports, or sends a draft for approval, asks nothing: the
- * approval of the held write is that answer. Whether the manager has already
- * answered is the caller's to read from the ledger.
+ * or landed earlier in the run, that ends a clause with a question mark. With
+ * no chat surface to carry a DM the executor asks in its notes instead, and a
+ * question there holds the same writes: the dashboard is then the only place
+ * the manager can answer it. A message that reports, or sends a draft for
+ * approval, asks nothing: the approval of the held write is that answer.
+ * Whether the manager has already answered is the caller's to read from the
+ * ledger.
  *
- * Args:
- *   args: The plan, the set, the agent's surfaces, the manager messages this
- *     run already landed, and whether the manager has answered.
- *
- * Returns:
- *   The open question with the actions to withhold, or undefined when the
- *   set goes on as it stands.
+ * @param args - The plan, the set, the agent's surfaces, the manager messages
+ *   this run already landed, and whether the manager has answered. `notes` are
+ *   the executor's notes for this set and the phase before it, read only when
+ *   no connected chat surface carries the manager DM at `now`.
+ * @returns The open question with the actions to withhold, or undefined when
+ *   the set goes on as it stands.
  */
-export function openManagerQuestion(args: {
-  plan: ObligedPlan;
-  actions: readonly MockAction[];
-  surfaces: readonly SurfaceRecord[];
-  askedEarlier?: readonly MockAction[];
-  answered: boolean;
-}): OpenManagerQuestion | undefined {
+export function openManagerQuestion(
+  args: {
+    plan: ObligedPlan;
+    actions: readonly MockAction[];
+    surfaces: readonly SurfaceRecord[];
+    askedEarlier?: readonly MockAction[];
+    answered: boolean;
+  } & ({ notes?: undefined } | { notes: readonly string[]; now: number }),
+): OpenManagerQuestion | undefined {
   if (args.answered) return undefined;
   const steps = managerConditionalSteps(args.plan);
   const declared = planObligations(args.plan);
   if (steps.length === 0 || !declared) return undefined;
-  const parsedWith = (action: MockAction): { parsed: ParsedSurfaceAction; surface: SurfaceRecord } | undefined => {
+  const parsedWith = (
+    action: MockAction,
+  ): { parsed: ParsedSurfaceAction; surface: SurfaceRecord } | undefined => {
     const result = parseSurfaceAction(action);
-    const surface = result.ok ? args.surfaces.find((row) => row.slug === result.action.surface) : undefined;
+    const surface = result.ok
+      ? args.surfaces.find((row) => row.slug === result.action.surface)
+      : undefined;
     return result.ok && surface ? { parsed: result.action, surface } : undefined;
   };
-  const asked = [...args.actions, ...(args.askedEarlier ?? [])].flatMap((action) => {
+  const askedInDm = [...args.actions, ...(args.askedEarlier ?? [])].flatMap((action) => {
     const row = parsedWith(action);
     if (!row || !isManagerDm(row.parsed, row.surface)) return [];
     const text = messageText(row.parsed);
     return QUESTION_MARK.test(text) ? [questionsIn(text)] : [];
   });
+  const askedInNotes =
+    args.notes === undefined || managerDmReachable(args.surfaces, args.now)
+      ? []
+      : args.notes.flatMap((notes) => (QUESTION_MARK.test(notes) ? [questionsIn(notes)] : []));
+  const asked = [...askedInDm, ...askedInNotes];
   if (asked.length === 0) return undefined;
   const stepOf = (parsed: ParsedSurfaceAction): number | undefined => {
     if (isStatusChange(parsed)) return declared.transitionStep ?? steps[steps.length - 1];
     const slug = parsed.surface.toLowerCase();
     const writes = (step: number): boolean =>
       (declared.steps[step - 1]!.writes ?? []).some((written) => written.toLowerCase() === slug);
-    const unconditional = declared.steps.some((row, index) => row.kind === 'write' && writes(index + 1));
+    const unconditional = declared.steps.some(
+      (row, index) => row.kind === 'write' && writes(index + 1),
+    );
     return unconditional ? undefined : steps.find(writes);
   };
   const waiting = args.actions.flatMap((action, index) => {
     const row = parsedWith(action);
-    if (!row || actionIntent(row.parsed) !== 'write' || isManagerDm(row.parsed, row.surface)) return [];
+    if (!row || actionIntent(row.parsed) !== 'write' || isManagerDm(row.parsed, row.surface))
+      return [];
     const step = stepOf(row.parsed);
     return step === undefined ? [] : [{ index, step }];
   });
@@ -308,13 +378,14 @@ export function isWithheldForAnswer(reason: string): boolean {
 /**
  * Why a run stops with its question open.
  *
- * Args:
- *   open: The open question and the steps that wait on it.
- *
- * Returns:
- *   The reason the card shows, with the question as it was asked.
+ * @param open - The open question and the steps that wait on it.
+ * @returns The reason the card shows, with the question as it was asked,
+ *   wherever it was asked: the manager DM, or the notes when no chat surface
+ *   was connected.
  */
-export function openQuestionStopReason(open: Pick<OpenManagerQuestion, 'question' | 'steps'>): string {
+export function openQuestionStopReason(
+  open: Pick<OpenManagerQuestion, 'question' | 'steps'>,
+): string {
   const steps = open.steps.map((step) => `step ${step}`).join(' and ');
-  return `the approved plan leaves ${steps} to the manager's answer, and the question is still open. Asked in the manager DM: ${open.question}`;
+  return `the approved plan leaves ${steps} to the manager's answer, and the question put to the manager is still open: ${open.question}`;
 }

@@ -1290,12 +1290,18 @@ function actionName(action: MockAction): string {
 type QuestionableOutput = Parameters<typeof withholdActions>[0] & {
   argumentRepairs?: ArgumentRepairAttempt[];
   openQuestion?: ExecutionOutput['openQuestion'];
+  /** Where the executor asks when no chat surface can carry the manager DM. */
+  notes?: string;
+  /** The phase before a closing set, whose notes may have asked already. */
+  initial?: { notes?: string } | null;
 };
 
 /**
  * The set with the writes the approved plan left to the manager's answer
  * withheld, when the run asks the manager a question nobody has answered
- * (`openManagerQuestion`). The question and everything else in the set go on;
+ * (`openManagerQuestion`), in the manager DM or, with no chat surface to carry
+ * one, in the notes of this set or the phase before it. The question and
+ * everything else in the set go on;
  * the withheld writes stay on the output with their reason, and the open
  * question is recorded so the run stops with it once the rest has settled.
  *
@@ -1316,7 +1322,8 @@ export function withOpenQuestionHeld<T extends QuestionableOutput>(
     askedEarlier?: readonly MockAction[];
   },
 ): T {
-  const open = openManagerQuestion({ ...context, actions: output.actions });
+  const notes = [output.notes, output.initial?.notes].filter((text): text is string => typeof text === 'string');
+  const open = openManagerQuestion({ ...context, actions: output.actions, notes, now: Date.now() });
   if (!open) return output;
   const removed = new Set(open.withheld.map((row) => row.index));
   const withheld = withholdActions(
@@ -1810,10 +1817,13 @@ export function blockedPlanReason(
 
 /**
  * A manager message that puts something to the manager: a question, or an
- * ask for a decision. A note that only reports is not a way to unblock the
- * work, so a stop still withholds it.
+ * ask for a decision, in English or in Chinese. A note that only reports is
+ * not a way to unblock the work, so a stop still withholds it. The Chinese
+ * forms carry no word boundary: `\b` only sees Latin letters and digits, and
+ * 请 is an ask except where it opens 请求, the noun a report uses.
  */
-const MANAGER_ASK = /\?|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b/i;
+const MANAGER_ASK =
+  /[?？]|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b|请(?!求)|能否|可否|是否|麻烦|告知|确认|批准|决定|需要/i;
 
 /** The text a manager message carries, whichever transport it takes. */
 function managerMessageText(parsed: ParsedSurfaceAction): string {

@@ -9,9 +9,14 @@
  * The marker label names the system and the kind of credential, so the
  * owner's credential list reads as a list of what was found and where.
  */
-import { KNOWN_VALUE_LABEL, redactText, type Finding, type RedactOptions } from '../redaction/redact';
+import {
+  KNOWN_VALUE_LABEL,
+  redactText,
+  type Finding,
+  type RedactOptions,
+} from '../redaction/redact';
 import { explicitlyAssignedCredential, guardReason } from '../redaction/guard';
-import type { SpanModel } from '../redaction/client';
+import type { ModelSpan, SpanModel } from '../redaction/client';
 import { PROVIDER_LABELS } from '../redaction/structural';
 
 export interface RedactedCredential {
@@ -120,9 +125,20 @@ function credentialLabel(line: string, label: string, title: string): string {
     pattern.test(descriptor),
   )?.[1];
   const kind = lineKind ?? LABEL_KINDS[label] ?? 'credential';
-  const namedSystem = ['linear', 'slack', 'notion', 'github', 'stripe', 'aws', 'google', 'openai', 'anthropic', 'postgres', 'mysql', 'redis'].find(
-    (system: string): boolean => new RegExp(`\\b${system}\\b`).test(descriptor),
-  );
+  const namedSystem = [
+    'linear',
+    'slack',
+    'notion',
+    'github',
+    'stripe',
+    'aws',
+    'google',
+    'openai',
+    'anthropic',
+    'postgres',
+    'mysql',
+    'redis',
+  ].find((system: string): boolean => new RegExp(`\\b${system}\\b`).test(descriptor));
   return `${namedSystem || systemFromTitle(title)} ${kind}`;
 }
 
@@ -137,6 +153,91 @@ function lineAround(text: string, finding: Finding): string {
   const endIndex = text.indexOf('\n', finding.end);
   const end = endIndex === -1 ? text.length : endIndex;
   return `${text.slice(start, finding.start)} ${text.slice(finding.end, end)}`;
+}
+
+/**
+ * The most characters one request to the redaction component carries: about
+ * six of the component's own 1,400-character prediction windows, twice the
+ * longest page the tracked company bed sends today, and far under the
+ * component's body limit, so no page fails on its size and each request has
+ * the whole deadline for one window.
+ */
+const REDACTOR_WINDOW_CHARS = 8_000;
+/** How far consecutive windows overlap, so a value one window cuts is whole in the next. */
+const REDACTOR_WINDOW_OVERLAP = 400;
+
+/** One window of a text: where it starts in the text, and what it holds. */
+export interface TextWindow {
+  readonly start: number;
+  readonly text: string;
+}
+
+/**
+ * Cut a text into overlapping windows of at most `size` characters, each
+ * ending at a line break, or failing that a word break, where one falls in
+ * its second half, and each
+ * after the first starting after a break inside the overlap. A run with no
+ * break is cut where it must be, never inside a surrogate pair.
+ *
+ * @param text - The text to cut.
+ * @param size - The most characters a window holds.
+ * @param overlap - How far a window reaches back into the one before.
+ */
+export function textWindows(text: string, size: number, overlap: number): TextWindow[] {
+  const windows: TextWindow[] = [];
+  let start = 0;
+  for (;;) {
+    let end = Math.min(start + size, text.length);
+    if (end < text.length) {
+      const newline = text.lastIndexOf('\n', end - 1);
+      const breakAt =
+        newline > start + size / 2 ? newline : text.slice(start, end).search(/\s\S*$/) + start;
+      if (breakAt > start + size / 2) end = breakAt + 1;
+      else if (/[\ud800-\udbff]/.test(text.charAt(end - 1))) end -= 1;
+    }
+    windows.push({ start, text: text.slice(start, end) });
+    if (end >= text.length) return windows;
+    const reach = Math.max(end - overlap, start + 1);
+    const afterBreak = text.slice(reach, end).search(/\s/);
+    let next = afterBreak === -1 ? reach : reach + afterBreak + 1;
+    if (/[\udc00-\udfff]/.test(text.charAt(next))) next -= 1;
+    start = Math.max(next, start + 1);
+  }
+}
+
+/**
+ * The span model asked one window at a time.
+ *
+ * The component's HTTP client puts one deadline on a whole request and the
+ * component refuses a body past its limit, so a long page sent whole failed
+ * the source on a size or a time that had nothing to do with what the page
+ * held. Each window is its own request with its own deadline; spans come back
+ * at their offsets in the whole text, a span two windows both saw once.
+ *
+ * @param model - The span model to ask.
+ * @returns A span model with the same name that never sends more than one
+ *   window of a text.
+ */
+export function windowedSpanModel(model: SpanModel): SpanModel {
+  return {
+    name: model.name,
+    async spans(text: string, labels: readonly string[], threshold: number): Promise<ModelSpan[]> {
+      if (text.length <= REDACTOR_WINDOW_CHARS) return await model.spans(text, labels, threshold);
+      const spans = new Map<string, ModelSpan>();
+      for (const window of textWindows(text, REDACTOR_WINDOW_CHARS, REDACTOR_WINDOW_OVERLAP)) {
+        for (const span of await model.spans(window.text, labels, threshold)) {
+          const shifted = {
+            ...span,
+            start: span.start + window.start,
+            end: span.end + window.start,
+          };
+          const key = `${shifted.start}:${shifted.end}:${shifted.label}`;
+          if (!spans.has(key) || spans.get(key)!.score < shifted.score) spans.set(key, shifted);
+        }
+      }
+      return [...spans.values()];
+    },
+  };
 }
 
 /**
@@ -171,12 +272,15 @@ export async function redactCredentials(
     (context: string) =>
     (finding: Finding): string => {
       if (!labels.has(finding.value)) {
-        labels.set(finding.value, credentialLabel(lineAround(context, finding), finding.label, safeTitle));
+        labels.set(
+          finding.value,
+          credentialLabel(lineAround(context, finding), finding.label, safeTitle),
+        );
       }
       return credentialMarker(labels.get(finding.value) ?? finding.label);
     };
   const base: Omit<RedactOptions, 'secretMarker'> = {
-    model: options.model,
+    model: options.model ? windowedSpanModel(options.model) : undefined,
     known: options.known,
     onUnavailable: 'throw',
   };
@@ -190,11 +294,16 @@ export async function redactCredentials(
     secretMarker: collect(markdown),
   });
   const credentials: RedactedCredential[] = [];
-  for (const [context, findings] of [[title, titleResult.findings], [markdown, bodyResult.findings]] as const) {
+  for (const [context, findings] of [
+    [title, titleResult.findings],
+    [markdown, bodyResult.findings],
+  ] as const) {
     for (const finding of findings) {
       if (finding.kind !== 'secret') continue;
-      const assigned = explicitlyAssignedCredential(context, finding.start, finding.end) &&
-        guardReason(finding.value) !== undefined && guardReason(finding.value, { assigned: true }) === undefined;
+      const assigned =
+        explicitlyAssignedCredential(context, finding.start, finding.end) &&
+        guardReason(finding.value) !== undefined &&
+        guardReason(finding.value, { assigned: true }) === undefined;
       const existing = credentials.find((row) => row.plaintext === finding.value);
       if (existing) {
         if (assigned) existing.explicitlyAssigned = true;
@@ -214,18 +323,22 @@ export async function redactCredentials(
   return { markdown: bodyResult.text, title: safeTitle, credentials };
 }
 
+/** What joins a page's ref to one of several credentials found on it. */
+const CREDENTIAL_REF_SEPARATOR = '#credential=';
+
 /**
  * Build a deterministic source reference for every credential on a page.
  *
- * Args:
- *   pageRef: Stable provider page reference.
- *   credential: Extracted credential metadata.
- *   total: Number of distinct credentials found on the page.
- *   index: Stable zero-based position when the page contains several values.
+ * The ref changes when the page's count of values does, from the page ref to
+ * a label-qualified one and back; `credentials.store` carries a value it
+ * already holds for the page to its new ref rather than storing it again.
  *
- * Returns:
- *   Exact page ref for the common single-value case, or a label-qualified ref
- *   when a page contains more than one value.
+ * @param pageRef - Stable provider page reference.
+ * @param credential - Extracted credential metadata.
+ * @param total - Number of distinct credentials found on the page.
+ * @param index - Stable zero-based position when the page contains several values.
+ * @returns The page ref for the common single-value case, or a
+ *   label-qualified ref when a page contains more than one value.
  */
 export function credentialSourceRef(
   pageRef: string,
@@ -235,5 +348,28 @@ export function credentialSourceRef(
 ): string {
   return total === 1
     ? pageRef
-    : `${pageRef}#credential=${index + 1}-${encodeURIComponent(credential.label)}`;
+    : `${pageRef}${CREDENTIAL_REF_SEPARATOR}${index + 1}-${encodeURIComponent(credential.label)}`;
+}
+
+/**
+ * The page a credential's source ref belongs to: the inverse of
+ * `credentialSourceRef` on its page part.
+ *
+ * @param ref - A credential source ref.
+ * @returns The page ref the credential was found on.
+ */
+export function credentialPageRef(ref: string): string {
+  const at = ref.lastIndexOf(CREDENTIAL_REF_SEPARATOR);
+  return at === -1 ? ref : ref.slice(0, at);
+}
+
+/**
+ * The bounds of every credential source ref one page can produce, for an
+ * index range; the range may also hold refs of other pages, which
+ * `credentialPageRef` tells apart.
+ *
+ * @param pageRef - Stable provider page reference.
+ */
+export function credentialRefRange(pageRef: string): { from: string; to: string } {
+  return { from: pageRef, to: `${pageRef}${CREDENTIAL_REF_SEPARATOR}\uffff` };
 }

@@ -10,6 +10,7 @@ import { allConvexModules } from './all-modules';
 /** Controllable discovery classifier boundary. */
 const model = vi.hoisted(() => ({
   calls: 0,
+  onCall: undefined as (() => void) | undefined,
   error: undefined as Error | undefined,
   systems: [] as Array<{ name: string; class: 'chat'; pageRef: string }>,
 }));
@@ -18,6 +19,7 @@ vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: async (): Promise<{ systems: typeof model.systems }> => {
     model.calls += 1;
+    model.onCall?.();
     if (model.error) throw model.error;
     return { systems: model.systems };
   },
@@ -25,6 +27,7 @@ vi.mock('../../src/lib/mastra', () => ({
 
 beforeEach((): void => {
   model.calls = 0;
+  model.onCall = undefined;
   model.error = undefined;
   model.systems = [];
 });
@@ -44,10 +47,7 @@ interface Seeded {
  * Returns:
  *   The source and the completed run discovery would read.
  */
-async function seedGeneration(
-  harness: TestConvex<typeof schema>,
-  pages: number,
-): Promise<Seeded> {
+async function seedGeneration(harness: TestConvex<typeof schema>, pages: number): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
     const sourceId = await ctx.db.insert('docSources', {
       userId: 'owner',
@@ -167,23 +167,140 @@ describe('the documentation discovery action', (): void => {
     expect(discoveries).toEqual([]);
   });
 
-  it('records why an over-cap source was never read instead of failing silently', async (): Promise<void> => {
+  /** Put the one page that names a system at the end of a large generation. */
+  const namePipelineSystem = async (
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+  ): Promise<void> => {
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'pipeline.md',
+        title: 'Pipeline reporting',
+        markdown:
+          'The Looker dashboard is the pipeline system the revenue team reads every Monday.',
+        updatedAt: 1,
+      });
+    });
+    model.systems = [{ name: 'Looker', class: 'chat', pageRef: 'pipeline.md' }];
+  };
+  const currentDiscoveries = async (
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+  ): Promise<string[]> =>
+    (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('docSystemDiscoveries')
+            .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+            .collect(),
+      )
+    )
+      .filter((row) => row.current)
+      .map((row) => row.displayName);
+
+  it('pages a 501-page source instead of refusing it, and finds the system on its last page (P10-1)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const { sourceId, runId } = await seedGeneration(harness, 501);
+    const { sourceId, runId } = await seedGeneration(harness, 500);
+    await namePipelineSystem(harness, sourceId);
 
     await expect(
       harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
-    ).resolves.toMatchObject({
-      applied: false,
-      systems: 0,
-      reason: expect.stringContaining('exceeds 500 pages'),
+    ).resolves.toMatchObject({ applied: true, systems: 1 });
+    expect(await currentDiscoveries(harness, sourceId)).toEqual(['Looker']);
+    // Every page reached the classifier, twenty-five at a time.
+    expect(model.calls).toBe(Math.ceil(501 / 25));
+    const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(source?.lastDiscoverySyncId).toBe(runId);
+    expect(source?.lastDiscoveryError).toBeUndefined();
+  });
+
+  it('reads a generation larger than one read allows in byte-bounded windows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness, 0);
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 6; index += 1) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: `large-${index}.md`,
+          title: `Large ${index}`,
+          // Each under a Convex document's one-mebibyte limit, together past one window.
+          markdown: `# Large ${index}\n${'x'.repeat(900_000)}`,
+          updatedAt: 1,
+        });
+      }
     });
-    // The generation is not marked discovered, so the next completed sync
-    // retries rather than treating this one as done.
-    const failed = await harness.run(async (ctx) => await ctx.db.get(sourceId));
-    expect(failed?.lastDiscoveryError).toContain('exceeds 500 pages');
-    expect(failed?.lastDiscoverySyncId).toBeUndefined();
-    expect(model.calls).toBe(0);
+    await namePipelineSystem(harness, sourceId);
+
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: true, systems: 1 });
+    expect(await currentDiscoveries(harness, sourceId)).toEqual(['Looker']);
+    // Seven pages in windows of at most four mebibytes: more than one read.
+    expect(model.calls).toBeGreaterThan(1);
+  });
+
+  it('hands the rest of a slow classification to a continuation that carries no page text', async (): Promise<void> => {
+    vi.useFakeTimers();
+    try {
+      const harness = convexTest(schema, allConvexModules());
+      const { sourceId, runId } = await seedGeneration(harness, 500);
+      await namePipelineSystem(harness, sourceId);
+      // Each classifier call takes a minute, so one invocation's budget covers four.
+      model.onCall = (): void => {
+        vi.advanceTimersByTime(60_000);
+      };
+
+      await expect(
+        harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+      ).resolves.toMatchObject({ applied: false, continued: true });
+      expect(model.calls).toBe(4);
+      const pending = await harness.run(
+        async (ctx) =>
+          await ctx.db.system
+            .query('_scheduled_functions')
+            .filter((q) => q.eq(q.field('state.kind'), 'pending'))
+            .collect(),
+      );
+      expect(pending.map((job) => job.name)).toEqual([
+        'documentationDiscoveryActions:discoverSource',
+      ]);
+      expect(JSON.stringify(pending)).not.toContain('# Page');
+
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await currentDiscoveries(harness, sourceId)).toEqual(['Looker']);
+      expect(model.calls).toBe(Math.ceil(501 / 25));
+      expect(
+        (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.lastDiscoverySyncId,
+      ).toBe(runId);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops a continuation whose generation a newer sync replaced, and records nothing', async (): Promise<void> => {
+    vi.useFakeTimers();
+    try {
+      const harness = convexTest(schema, allConvexModules());
+      const { sourceId, runId } = await seedGeneration(harness, 500);
+      model.onCall = (): void => {
+        vi.advanceTimersByTime(60_000);
+      };
+      await harness.action(internal.documentationDiscoveryActions.discoverSource, {
+        sourceId,
+        runId,
+      });
+      await harness.mutation(internal.docSources.beginSync, { sourceId });
+
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(model.calls).toBe(4);
+      const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+      expect(source?.lastDiscoverySyncId).toBeUndefined();
+      expect(source?.lastDiscoveryError).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('re-admits the out-of-scope skips of every reading agent once per changed generation', async (): Promise<void> => {
@@ -214,7 +331,10 @@ describe('the documentation discovery action', (): void => {
         });
       return {
         agentId,
-        outOfScope: await row('REVOPS-1', 'out-of-scope: no charter or current documented-system overlap'),
+        outOfScope: await row(
+          'REVOPS-1',
+          'out-of-scope: no charter or current documented-system overlap',
+        ),
         lowValue: await row('REVOPS-2', 'low-value: 10'),
       };
     });
@@ -223,15 +343,19 @@ describe('the documentation discovery action', (): void => {
     const requeued = async (): Promise<number> =>
       await harness.run(
         async (ctx) =>
-          (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
-            (event) => event.type === 'work.requeued',
-          ).length,
+          (
+            await ctx.db
+              .query('events')
+              .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+              .collect()
+          ).filter((event) => event.type === 'work.requeued').length,
       );
 
     await expect(
       harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
     ).resolves.toMatchObject({ applied: true });
-    const fingerprint = (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.discoveryFingerprint;
+    const fingerprint = (await harness.run(async (ctx) => await ctx.db.get(sourceId)))
+      ?.discoveryFingerprint;
     expect(fingerprint).toEqual(expect.any(String));
     expect(await state(outOfScope)).toMatchObject({
       state: 'discovered',
@@ -245,7 +369,10 @@ describe('the documentation discovery action', (): void => {
     await harness.run(async (ctx) => {
       await ctx.db.patch(outOfScope, {
         state: 'skipped',
-        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: no charter or current documented-system overlap',
+        },
       });
     });
     const unchangedRun = await harness.run(async (ctx): Promise<Id<'docSyncRuns'>> => {
@@ -263,7 +390,10 @@ describe('the documentation discovery action', (): void => {
       return id;
     });
     await expect(
-      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId: unchangedRun }),
+      harness.action(internal.documentationDiscoveryActions.discoverSource, {
+        sourceId,
+        runId: unchangedRun,
+      }),
     ).resolves.toMatchObject({ unchanged: true });
     expect((await state(outOfScope))?.state).toBe('skipped');
     expect(await requeued()).toBe(1);
@@ -291,10 +421,15 @@ describe('the documentation discovery action', (): void => {
       return id;
     });
     await expect(
-      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId: changedRun }),
+      harness.action(internal.documentationDiscoveryActions.discoverSource, {
+        sourceId,
+        runId: changedRun,
+      }),
     ).resolves.toMatchObject({ applied: true });
     expect((await state(outOfScope))?.state).toBe('discovered');
-    expect((await state(outOfScope))?.reevaluation?.key).not.toBe(`documentation:${sourceId}:${fingerprint}`);
+    expect((await state(outOfScope))?.reevaluation?.key).not.toBe(
+      `documentation:${sourceId}:${fingerprint}`,
+    );
     expect(await requeued()).toBe(2);
   });
 

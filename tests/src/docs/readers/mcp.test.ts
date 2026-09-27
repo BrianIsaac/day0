@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import {
   McpReader,
+  DRIVE_INCOMPLETE_SEARCH_REASON,
+  TRUNCATED_CONTINUATION_REASON,
   authorizationHeader,
   sessionBoundFetch,
   unwrapWholePageFence,
@@ -296,6 +298,137 @@ describe('MCP documentation reader', (): void => {
       ),
     ).rejects.toThrow('escalate');
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+});
+
+describe('MCP documentation continuations (P10-1)', (): void => {
+  /** One source of the given server kind; none of these is a bundled component. */
+  const sourceOf = (serverKind: 'confluence' | 'drive' | 'notion'): DocSourceRecord => ({
+    _id: `source-${serverKind}` as Id<'docSources'>,
+    label: 'Handbook',
+    kind: 'mcp',
+    locator: `https://${serverKind}.example.test/mcp`,
+    serverKind,
+  });
+  /** A reader whose session answers every tool from the given table. */
+  const readerWith = (
+    tools: Record<string, (args: Record<string, unknown>) => unknown>,
+  ): McpReader =>
+    new McpReader(
+      () => ({
+        listTools: async () =>
+          Object.fromEntries(
+            Object.entries(tools).map(([name, answer]) => [
+              `docs_${name}`,
+              { execute: async (args: Record<string, unknown>) => answer(args) },
+            ]),
+          ),
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      componentUp,
+    );
+  const confluence = (
+    search: Record<string, unknown>,
+    calls: Array<Record<string, unknown>> = [],
+  ): McpReader =>
+    readerWith({
+      getAccessibleAtlassianResources: () => textResult({ resources: [{ id: 'cloud-1' }] }),
+      searchConfluenceUsingCql: (args) => {
+        calls.push(args);
+        return textResult({
+          results: [{ content: { id: 'page-1', title: 'Runbook' } }],
+          ...search,
+        });
+      },
+      getConfluencePage: () => textResult({ markdown: '# Runbook' }),
+    });
+  const drive = (search: Record<string, unknown>): McpReader =>
+    readerWith({
+      search_files: () => textResult({ files: [{ id: 'file-1', title: 'Runbook' }], ...search }),
+      read_file_content: () => textResult({ fileContent: '# Runbook' }),
+    });
+  const notion = (search: Record<string, unknown>): McpReader =>
+    readerWith({
+      'API-post-search': () => textResult({ results: [{ id: 'page-1' }], ...search }),
+      'API-retrieve-page-markdown': () => textResult({ markdown: '# Runbook' }),
+    });
+  const secret = 'contract-value';
+
+  it('walks Confluence in creation order, which a page edited mid-walk cannot change', async (): Promise<void> => {
+    const calls: Array<Record<string, unknown>> = [];
+    const batch = await confluence(
+      { _links: { next: '/wiki/rest/api/search?cursor=abc&limit=10' } },
+      calls,
+    ).listPageBatch(sourceOf('confluence'), secret, undefined, 10);
+    expect(calls[0]?.cql).toBe('type=page ORDER BY created ASC');
+    expect(batch.nextCursor).toBe('abc');
+  });
+
+  it('ends a Confluence walk only when no next page is named', async (): Promise<void> => {
+    await expect(
+      confluence({}).listPageBatch(sourceOf('confluence'), secret, undefined, 10),
+    ).resolves.toMatchObject({
+      nextCursor: undefined,
+    });
+    for (const search of [
+      { _links: { next: null }, nextCursor: null },
+      { _links: { next: '' }, nextCursor: '' },
+    ]) {
+      await expect(
+        confluence(search).listPageBatch(sourceOf('confluence'), secret, undefined, 10),
+      ).resolves.toMatchObject({ nextCursor: undefined });
+    }
+  });
+
+  it('fails a Confluence walk whose next page carries no cursor, instead of completing it', async (): Promise<void> => {
+    for (const search of [
+      { _links: { next: '/wiki/rest/api/search?limit=10' } },
+      { _links: { next: 42 } },
+      { nextCursor: 7 },
+    ]) {
+      await expect(
+        confluence(search).listPageBatch(sourceOf('confluence'), secret, undefined, 10),
+      ).rejects.toThrow(TRUNCATED_CONTINUATION_REASON);
+    }
+  });
+
+  it('fails a Drive walk with an unusable token or an unfinished search, and ends one with neither', async (): Promise<void> => {
+    await expect(
+      drive({ nextPageToken: 'token-2' }).listPageBatch(sourceOf('drive'), secret, undefined, 25),
+    ).resolves.toMatchObject({
+      nextCursor: 'token-2',
+    });
+    for (const search of [{}, { nextPageToken: '' }, { nextPageToken: null }]) {
+      await expect(
+        drive(search).listPageBatch(sourceOf('drive'), secret, undefined, 25),
+      ).resolves.toMatchObject({ nextCursor: undefined });
+    }
+    await expect(
+      drive({ nextPageToken: 12 }).listPageBatch(sourceOf('drive'), secret, undefined, 25),
+    ).rejects.toThrow(TRUNCATED_CONTINUATION_REASON);
+    await expect(
+      drive({ incompleteSearch: true }).listPageBatch(sourceOf('drive'), secret, undefined, 25),
+    ).rejects.toThrow(DRIVE_INCOMPLETE_SEARCH_REASON);
+  });
+
+  it('fails a Notion walk that has more pages and no cursor, and ends one that has none', async (): Promise<void> => {
+    await expect(
+      notion({ has_more: true, next_cursor: '' }).listPageBatch(
+        sourceOf('notion'),
+        secret,
+        undefined,
+        25,
+      ),
+    ).rejects.toThrow(TRUNCATED_CONTINUATION_REASON);
+    await expect(
+      notion({ has_more: false, next_cursor: null }).listPageBatch(
+        sourceOf('notion'),
+        secret,
+        undefined,
+        25,
+      ),
+    ).resolves.toMatchObject({ nextCursor: undefined });
   });
 });
 

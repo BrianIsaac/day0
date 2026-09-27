@@ -1,34 +1,71 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate, type NotionPageName } from '../../fixtures/notion-pages';
-import { credentialMarker, credentialSourceRef, redactCredentials } from '../../../src/docs/redaction';
-import { RedactorUnavailableError } from '../../../src/redaction/client';
+import {
+  LINEAR_TOKEN_PLACEHOLDER,
+  notionPageTemplate,
+  type NotionPageName,
+} from '../../fixtures/notion-pages';
+import {
+  credentialMarker,
+  credentialPageRef,
+  credentialRefRange,
+  credentialSourceRef,
+  redactCredentials,
+  textWindows,
+} from '../../../src/docs/redaction';
+import {
+  RedactorUnavailableError,
+  type ModelSpan,
+  type SpanModel,
+} from '../../../src/redaction/client';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
-import { RecordedSpanModel, ScriptedSpanModel, UnreachableSpanModel } from '../../fixtures/redaction-double';
+import {
+  RecordedSpanModel,
+  ScriptedSpanModel,
+  UnreachableSpanModel,
+} from '../../fixtures/redaction-double';
 
 const model = new RecordedSpanModel();
 const options = { model };
 
 describe('documentation credential redaction', (): void => {
   it('fails closed without a model rather than persist a page in the clear', async (): Promise<void> => {
-    await expect(redactCredentials('# Page\n\nbody', 'Page', {})).rejects.toBeInstanceOf(RedactorUnavailableError);
-    await expect(redactCredentials('# Page\n\nbody', 'Page', { model: new UnreachableSpanModel() })).rejects.toBeInstanceOf(
+    await expect(redactCredentials('# Page\n\nbody', 'Page', {})).rejects.toBeInstanceOf(
       RedactorUnavailableError,
     );
+    await expect(
+      redactCredentials('# Page\n\nbody', 'Page', { model: new UnreachableSpanModel() }),
+    ).rejects.toBeInstanceOf(RedactorUnavailableError);
   });
 
   it('names a provider token by its grammar and stores it once', async (): Promise<void> => {
     const fixtures = [
-      { title: 'Notion handbook', value: CORPUS_SLOTS.notion_token, label: 'notion connection token' },
-      { title: 'Linear automation', value: CORPUS_SLOTS.linear_token, label: 'linear service token' },
+      {
+        title: 'Notion handbook',
+        value: CORPUS_SLOTS.notion_token,
+        label: 'notion connection token',
+      },
+      {
+        title: 'Linear automation',
+        value: CORPUS_SLOTS.linear_token,
+        label: 'linear service token',
+      },
       { title: 'Slack automation', value: CORPUS_SLOTS.slack_bot_token, label: 'slack bot token' },
-      { title: 'Slack automation', value: CORPUS_SLOTS.slack_user_token, label: 'slack user token' },
+      {
+        title: 'Slack automation',
+        value: CORPUS_SLOTS.slack_user_token,
+        label: 'slack user token',
+      },
       { title: 'Slack automation', value: CORPUS_SLOTS.slack_app_token, label: 'slack app token' },
       { title: 'Warehouse automation', value: CORPUS_SLOTS.aws_key, label: 'aws access key' },
       { title: 'Billing automation', value: CORPUS_SLOTS.stripe_key, label: 'stripe api key' },
     ];
     for (const fixture of fixtures) {
-      const result = await redactCredentials(`# ${fixture.title}\n\nValue: ${fixture.value}`, fixture.title, options);
+      const result = await redactCredentials(
+        `# ${fixture.title}\n\nValue: ${fixture.value}`,
+        fixture.title,
+        options,
+      );
       expect(result.markdown).toContain(credentialMarker(fixture.label));
       expect(result.markdown).not.toContain(fixture.value);
       expect(result.title).toBe(fixture.title);
@@ -53,12 +90,20 @@ describe('documentation credential redaction', (): void => {
 
   it('keeps sentence punctuation out of the stored value and redacts a token in the title', async (): Promise<void> => {
     const value = CORPUS_SLOTS.linear_token;
-    const result = await redactCredentials(`Use ${value}, then rotate ${value}.`, 'Linear automation', options);
+    const result = await redactCredentials(
+      `Use ${value}, then rotate ${value}.`,
+      'Linear automation',
+      options,
+    );
     expect(result.credentials).toEqual([{ label: 'linear service token', plaintext: value }]);
     expect(result.markdown).toBe(
       `Use ${credentialMarker('linear service token')}, then rotate ${credentialMarker('linear service token')}.`,
     );
-    const title = await redactCredentials(`# Title ${CORPUS_SLOTS.notion_token}\n\nbody`, `Title ${CORPUS_SLOTS.notion_token}`, options);
+    const title = await redactCredentials(
+      `# Title ${CORPUS_SLOTS.notion_token}\n\nbody`,
+      `Title ${CORPUS_SLOTS.notion_token}`,
+      options,
+    );
     const marker = credentialMarker('notion connection token');
     expect(title.title).toBe(`Title ${marker}`);
     expect(title.markdown).toBe(`# Title ${marker}\n\nbody`);
@@ -75,18 +120,32 @@ describe('documentation credential redaction', (): void => {
       'Looker pipeline tile',
       options,
     );
-    expect(looker.credentials).toEqual([{ label: 'looker pipeline tile dashboard login', plaintext: 'pipeline-tile-local' }]);
+    expect(looker.credentials).toEqual([
+      { label: 'looker pipeline tile dashboard login', plaintext: 'pipeline-tile-local' },
+    ]);
     expect(looker.markdown).toContain('<credential: looker pipeline tile dashboard login, stored>');
     expect(looker.markdown).toContain('username `revops`');
-    const key = await redactCredentials('# Billing automation\n\nAPI key: runtime-contract-value-0123456789', 'Billing automation', options);
-    expect(key.credentials).toEqual([{ label: 'billing api key', plaintext: 'runtime-contract-value-0123456789' }]);
+    const key = await redactCredentials(
+      '# Billing automation\n\nAPI key: runtime-contract-value-0123456789',
+      'Billing automation',
+      options,
+    );
+    expect(key.credentials).toEqual([
+      { label: 'billing api key', plaintext: 'runtime-contract-value-0123456789' },
+    ]);
     const two = await redactCredentials(
       '- Dashboard login (Looker tile): `pipeline-tile-local`\n- Warehouse password: `warehouse-read-only`',
       'Systems',
       options,
     );
-    expect(two.credentials.map((row) => row.plaintext)).toEqual(['pipeline-tile-local', 'warehouse-read-only']);
-    expect(two.credentials.map((row) => row.label)).toEqual(['systems dashboard login', 'systems password']);
+    expect(two.credentials.map((row) => row.plaintext)).toEqual([
+      'pipeline-tile-local',
+      'warehouse-read-only',
+    ]);
+    expect(two.credentials.map((row) => row.label)).toEqual([
+      'systems dashboard login',
+      'systems password',
+    ]);
   });
 
   it('leaves prose, names, counts, dates, placeholders and locations alone', async (): Promise<void> => {
@@ -103,7 +162,9 @@ describe('documentation credential redaction', (): void => {
       `Bot token: Bearer ${CORPUS_SLOTS.slack_bot_token}`,
     ].join('\n');
     const result = await redactCredentials(body, 'Onboarding', options);
-    expect(result.credentials).toEqual([{ label: 'slack bot token', plaintext: CORPUS_SLOTS.slack_bot_token }]);
+    expect(result.credentials).toEqual([
+      { label: 'slack bot token', plaintext: CORPUS_SLOTS.slack_bot_token },
+    ]);
     expect(result.markdown).toContain('Key contacts: Alice Smith');
     expect(result.markdown).toContain('Token budget: 20000');
     expect(result.markdown).toContain('ntn_prefix convention');
@@ -122,15 +183,30 @@ describe('documentation credential redaction', (): void => {
     expect(template).toContain(LINEAR_TOKEN_PLACEHOLDER);
     const placeholder = await redactCredentials(template, 'Linear automation', options);
     expect(placeholder.credentials).toEqual([]);
-    const pasted = await redactCredentials(template.replace(LINEAR_TOKEN_PLACEHOLDER, CORPUS_SLOTS.linear_token), 'Linear automation', options);
-    expect(pasted.credentials).toEqual([{ label: 'linear service token', plaintext: CORPUS_SLOTS.linear_token }]);
+    const pasted = await redactCredentials(
+      template.replace(LINEAR_TOKEN_PLACEHOLDER, CORPUS_SLOTS.linear_token),
+      'Linear automation',
+      options,
+    );
+    expect(pasted.credentials).toEqual([
+      { label: 'linear service token', plaintext: CORPUS_SLOTS.linear_token },
+    ]);
     expect(pasted.markdown).toContain(marker);
   });
 
   it('stores one value across the five committed handbook pages, the tile login', async (): Promise<void> => {
-    const names: NotionPageName[] = ['onboarding', 'linear-automation', 'slack-day0-app', 'northstar-crm', 'looker-pipeline-tile'];
+    const names: NotionPageName[] = [
+      'onboarding',
+      'linear-automation',
+      'slack-day0-app',
+      'northstar-crm',
+      'looker-pipeline-tile',
+    ];
     const counts: number[] = [];
-    for (const name of names) counts.push((await redactCredentials(notionPageTemplate(name), name, options)).credentials.length);
+    for (const name of names)
+      counts.push(
+        (await redactCredentials(notionPageTemplate(name), name, options)).credentials.length,
+      );
     expect(counts).toEqual([0, 0, 0, 0, 1]);
   });
 
@@ -138,19 +214,46 @@ describe('documentation credential redaction', (): void => {
     const first = { label: 'linear service token', plaintext: 'a' };
     const second = { label: 'linear service token', plaintext: 'b' };
     expect(credentialSourceRef('page', first, 1)).toBe('page');
-    expect(credentialSourceRef('page', first, 2, 0)).toBe('page#credential=1-linear%20service%20token');
-    expect(credentialSourceRef('page', second, 2, 1)).toBe('page#credential=2-linear%20service%20token');
+    expect(credentialSourceRef('page', first, 2, 0)).toBe(
+      'page#credential=1-linear%20service%20token',
+    );
+    expect(credentialSourceRef('page', second, 2, 1)).toBe(
+      'page#credential=2-linear%20service%20token',
+    );
+  });
+
+  it('reads the page back from every source ref a page can give, and bounds them for an index range', (): void => {
+    const value = { label: 'linear service token', plaintext: 'a' };
+    const { from, to } = credentialRefRange('guides/page.md#intro');
+    for (const [total, index] of [
+      [1, 0],
+      [2, 0],
+      [3, 2],
+    ] as const) {
+      const ref = credentialSourceRef('guides/page.md#intro', value, total, index);
+      expect(credentialPageRef(ref)).toBe('guides/page.md#intro');
+      expect(ref >= from && ref <= to).toBe(true);
+    }
+    expect(credentialPageRef('guides/page.md.bak')).toBe('guides/page.md.bak');
   });
 });
 
 it('preserves runbook words while extracting an explicitly assigned word password', async () => {
   const words = ['linear', 'Linear', 'save_comment', 'surface', 'icon_emoji'];
-  const detector = new ScriptedSpanModel((text) => words.flatMap((value) =>
-    [...text.matchAll(new RegExp(`\\b${value}\\b`, 'g'))].map((match) => ({
-      start: match.index, end: match.index + value.length, label: 'access token', score: 0.97,
-    })),
-  ));
-  const body = readFileSync(new URL('../../fixtures/redaction/runbook.md', import.meta.url), 'utf8');
+  const detector = new ScriptedSpanModel((text) =>
+    words.flatMap((value) =>
+      [...text.matchAll(new RegExp(`\\b${value}\\b`, 'g'))].map((match) => ({
+        start: match.index,
+        end: match.index + value.length,
+        label: 'access token',
+        score: 0.97,
+      })),
+    ),
+  );
+  const body = readFileSync(
+    new URL('../../fixtures/redaction/runbook.md', import.meta.url),
+    'utf8',
+  );
   const clean = await redactCredentials(body, 'Ticket runbook', { model: detector });
   expect(clean.credentials).toEqual([]);
   expect(clean.markdown).toBe(body);
@@ -164,7 +267,10 @@ it('preserves runbook words while extracting an explicitly assigned word passwor
 it('keeps a word-shaped value in every credential assignment form a runbook uses', async () => {
   const detector = new ScriptedSpanModel((text) =>
     [...text.matchAll(/\bsunshine\b/g)].map((match) => ({
-      start: match.index, end: match.index + match[0].length, label: 'password', score: 0.97,
+      start: match.index,
+      end: match.index + match[0].length,
+      label: 'password',
+      score: 0.97,
     })),
   );
   const forms = [
@@ -182,17 +288,27 @@ it('keeps a word-shaped value in every credential assignment form a runbook uses
   ];
   for (const form of forms) {
     const result = await redactCredentials(form, 'Ticket runbook', { model: detector });
-    expect(result.credentials.map((row) => row.plaintext), form).toEqual(['sunshine']);
+    expect(
+      result.credentials.map((row) => row.plaintext),
+      form,
+    ).toEqual(['sunshine']);
     expect(result.markdown, form).not.toContain('sunshine');
   }
 });
 
 it('does not store manifest scopes even when every scope and a dotted prefix are flagged', async () => {
   const markdown = readFileSync('tests/fixtures/slack-manifest-scopes.md', 'utf8');
-  const model = new ScriptedSpanModel((text) => [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].flatMap((match) => {
-    const span = { start: match.index!, end: match.index! + match[0].length, label: 'credential', score: 0.99 };
-    return match[0].includes('.') ? [span, { ...span, end: span.end - 6 }] : [span];
-  }));
+  const model = new ScriptedSpanModel((text) =>
+    [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].flatMap((match) => {
+      const span = {
+        start: match.index!,
+        end: match.index! + match[0].length,
+        label: 'credential',
+        score: 0.99,
+      };
+      return match[0].includes('.') ? [span, { ...span, end: span.end - 6 }] : [span];
+    }),
+  );
   const result = await redactCredentials(markdown, 'Slack automation policy', { model });
   expect(result.credentials).toEqual([]);
   expect(result.markdown).toBe(markdown);
@@ -200,11 +316,25 @@ it('does not store manifest scopes even when every scope and a dotted prefix are
 
 it('retains protection for assignments, bearer headers and userinfo', async () => {
   for (const [text, value] of [
-    ['password: hunter2', 'hunter2'], ['token: abc123', 'abc123'],
-    ['Authorization: Bearer x', 'x'], ['https://user:password@host/path', 'password'],
+    ['password: hunter2', 'hunter2'],
+    ['token: abc123', 'abc123'],
+    ['Authorization: Bearer x', 'x'],
+    ['https://user:password@host/path', 'password'],
   ]) {
-    const result = await redactCredentials(text, 'Access', { model: new ScriptedSpanModel(() => [{ start: text.indexOf(value), end: text.indexOf(value) + value.length, label: 'credential', score: 0.99 }]) });
-    expect(result.credentials.map((credential) => credential.plaintext), text).toContain(value);
+    const result = await redactCredentials(text, 'Access', {
+      model: new ScriptedSpanModel(() => [
+        {
+          start: text.indexOf(value),
+          end: text.indexOf(value) + value.length,
+          label: 'credential',
+          score: 0.99,
+        },
+      ]),
+    });
+    expect(
+      result.credentials.map((credential) => credential.plaintext),
+      text,
+    ).toContain(value);
   }
 });
 
@@ -216,7 +346,9 @@ it('stores an entire assigned name-shaped value when detection covers only a seg
     const text = `token: ${value}`;
     const model = new ScriptedSpanModel((body) => {
       const start = body.indexOf(segment);
-      return start < 0 ? [] : [{ start, end: start + segment.length, label: 'access token', score: 0.99 }];
+      return start < 0
+        ? []
+        : [{ start, end: start + segment.length, label: 'access token', score: 0.99 }];
     });
     const result = await redactCredentials(text, 'Access', { model });
     expect(result.credentials.map((credential) => credential.plaintext)).toEqual([value]);
@@ -231,10 +363,72 @@ it('preserves identifier values under channel-key and method-key documentation l
   ]) {
     const model = new ScriptedSpanModel((body) => {
       const start = body.indexOf(value);
-      return start < 0 ? [] : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
+      return start < 0
+        ? []
+        : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
     });
     const result = await redactCredentials(text, 'Access', { model });
     expect(result.markdown).toBe(text);
     expect(result.credentials).toEqual([]);
   }
+});
+
+describe('the redactor asked one window at a time (P10-1)', (): void => {
+  const VALUE = ['Tq9', 'mZ4', 'vR2k'].join('!');
+  /** The component as it answers: a request past its limit is refused, as its 413 is. */
+  class LimitedSpanModel implements SpanModel {
+    readonly name = 'limited';
+    readonly sent: number[] = [];
+    async spans(text: string): Promise<ModelSpan[]> {
+      this.sent.push(text.length);
+      if (text.length > 8_000) {
+        throw new RedactorUnavailableError('redaction component answered HTTP 413');
+      }
+      const spans: ModelSpan[] = [];
+      for (let at = text.indexOf(VALUE); at !== -1; at = text.indexOf(VALUE, at + 1)) {
+        spans.push({ start: at, end: at + VALUE.length, label: 'password', score: 0.99 });
+      }
+      return spans;
+    }
+  }
+  const filler = (lines: number): string =>
+    Array.from(
+      { length: lines },
+      (_, index) => `Step ${index}: check the queue and note the owner.`,
+    ).join('\n');
+
+  it('redacts a page far past one request, and finds a value wherever the windows fall', async (): Promise<void> => {
+    for (const before of [120, 165, 170, 172, 173, 174, 175, 176, 180]) {
+      const page = `${filler(before)}\nThe tile password is ${VALUE} for the pipeline dashboard.\n${filler(400)}`;
+      const limited = new LimitedSpanModel();
+      const result = await redactCredentials(page, 'Pipeline runbook', { model: limited });
+      expect(result.credentials.map((credential) => credential.plaintext)).toEqual([VALUE]);
+      expect(result.markdown).not.toContain(VALUE);
+      expect(result.markdown).toContain('The tile password is <credential: ');
+      expect(Math.max(...limited.sent)).toBeLessThanOrEqual(8_000);
+      expect(limited.sent.length).toBeGreaterThan(2);
+    }
+  });
+
+  it('cuts overlapping windows that cover the text, at breaks where it can and never inside a surrogate pair', (): void => {
+    const texts = [
+      filler(300),
+      '\u6587\u6863'.repeat(5_000),
+      `${'a'.repeat(3_999)}\ud83d\ude00${'b'.repeat(5_000)}`,
+    ];
+    for (const text of texts) {
+      const windows = textWindows(text, 4_000, 400);
+      expect(windows[0]!.start).toBe(0);
+      expect(windows.at(-1)!.start + windows.at(-1)!.text.length).toBe(text.length);
+      for (const [index, window] of windows.entries()) {
+        expect(window.text).toBe(text.slice(window.start, window.start + window.text.length));
+        expect(window.text.length).toBeLessThanOrEqual(4_000);
+        expect(window.text).not.toMatch(/^[\udc00-\udfff]|[\ud800-\udbff]$/);
+        const next = windows[index + 1];
+        if (next) expect(next.start).toBeLessThanOrEqual(window.start + window.text.length);
+      }
+    }
+    const lines = textWindows(filler(300), 4_000, 400);
+    expect(lines.slice(0, -1).every((window) => window.text.endsWith('\n'))).toBe(true);
+  });
 });

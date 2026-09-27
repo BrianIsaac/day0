@@ -1216,6 +1216,13 @@ describe('stopping blocked work with only a manager message left', (): void => {
   it('still stops on a note that asks the manager nothing', (): void => {
     expect(closingStopReason(run('REVOPS-7 has no owner, so nothing was changed and I stopped.'))).toContain('blocked');
   });
+
+  it('lets a Chinese question or ask for a decision through, and stops on a Chinese report', (): void => {
+    expect(closingStopReason(run('REVOPS-7 没有负责人，应该指派给谁？'))).toBeUndefined();
+    expect(closingStopReason(run('请为 REVOPS-7 指派负责人，之后我会继续处理。'))).toBeUndefined();
+    expect(closingStopReason(run('REVOPS-7 没有负责人，因此没有做任何更改，我已停止。'))).toContain('blocked');
+    expect(closingStopReason(run('REVOPS-7 的请求已记录，但没有负责人，我已停止。'))).toContain('blocked');
+  });
 });
 
 describe('writes the plan left to the manager\'s answer stop with the question (19 Sep fourth run, finding V)', (): void => {
@@ -6122,5 +6129,107 @@ describe('the promised-read gate on a retry (finding T, 19 September)', (): void
     // A stop withholds the closing set whole: nothing reaches the ticket, not even the re-read.
     expect(recorded.mcp).toEqual([]);
     expect(recorded.http.filter((call) => call.url.includes('chat.postMessage'))).toHaveLength(1);
+  });
+});
+
+describe('a question asked in the notes when no chat surface can carry the manager DM (step 5)', (): void => {
+  const [read, , comment, done] = sitting4Log1PhaseOne.actions;
+  const ENGLISH = "The customer-notice template is not documented for an unconfirmed ETA. Which template should the notice use, and what next-update time should it promise?";
+  const CHINESE = '承运商没有给出新的到港时间。请问通知应使用哪个模板？下次更新时间定在几点？';
+
+  /** The fourth sitting's LOG-1 on an employee with Linear connected and no chat surface. */
+  const seedWithoutChat = async (harness: Harness): Promise<Seeded> => {
+    const seeded = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      const surfaces = await ctx.db.query('surfaces').withIndex('by_agent', (q) => q.eq('agentId', seeded.agentId)).collect();
+      for (const surface of surfaces) if (surface.class === 'chat') await ctx.db.delete(surface._id);
+      await ctx.db.patch(seeded.workItemId, {
+        externalId: sitting4Log1Candidate.externalId,
+        title: sitting4Log1Candidate.title,
+        contentSummary: sitting4Log1Candidate.contentSummary,
+        contentRefs: sitting4Log1Candidate.contentRefs,
+        plan: sitting4Log1Plan,
+      });
+    });
+    return seeded;
+  };
+  const ticketWrites = (): string[] => recorded.mcp.map((call) => call.tool).filter((tool) => tool !== 'get_issue');
+
+  it.each([
+    ['English', ENGLISH, 'Which template should the notice use'],
+    ['Chinese', CHINESE, '请问通知应使用哪个模板？下次更新时间定在几点？'],
+  ])('withholds the comment and Done behind a %s question and stops on it as a hold', async (_language, notes, asked): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, notes, actions: [read!, comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutChat(harness);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toMatch(/^stopped: /);
+    expect(stopped.skipReason).toContain(asked);
+    expect(stopped.skipReason).toContain('step 2 and step 3');
+    // The ticket was read and nothing was written to it; there was nowhere to post.
+    expect(ticketWrites()).toEqual([]);
+    expect(recorded.http).toEqual([]);
+    const output = stopped.output as { actions: unknown[]; openQuestion?: { question: string; steps: number[] }; withheldActions?: Array<{ action: unknown; reason: string }> };
+    expect(output.actions).toEqual([read]);
+    expect(output.openQuestion).toEqual({ question: expect.stringContaining(asked), steps: [2, 3] });
+    expect(output.withheldActions?.map((row) => row.action)).toEqual([comment, done]);
+    expect(output.withheldActions?.every((row) => row.reason.includes("the manager's answer"))).toBe(true);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect());
+    expect(events.filter((event) => event.type === 'work.conditional-writes-withheld').map((event) => (event.payload as { steps: number[] }).steps)).toEqual([[2, 3]]);
+  });
+
+  it('holds nothing when the notes ask nothing, so the comment and Done reach the gate as before', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, notes: 'The comment records the exception; the notice is left pending.', actions: [read!, comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    expect((pending.output as { openQuestion?: unknown }).openQuestion).toBeUndefined();
+  });
+
+  it('reads the notes only when no chat surface is connected: with the manager DM there, the DM is the question', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, notes: ENGLISH, actions: [read!, comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { externalId: sitting4Log1Candidate.externalId, title: sitting4Log1Candidate.title, contentSummary: sitting4Log1Candidate.contentSummary, contentRefs: sitting4Log1Candidate.contentRefs, plan: sitting4Log1Plan });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect((await readItem(harness, workItemId)).state).toBe('actions-pending');
+  });
+
+  it('lands the comment and Done for the manager once Retry carries the answer', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, notes: ENGLISH, actions: [read!, comment!, done!] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+
+    recorded.skillOutput = { ...sitting4Log1PhaseOne, notes: 'Answered on the card.', actions: [comment!, done!] };
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: SITTING_4_RETRY_NOTE });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    expect((pending.output as { actions: unknown[] }).actions).toEqual([comment, done]);
+    expect(pending.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['held', 'held']);
   });
 });
