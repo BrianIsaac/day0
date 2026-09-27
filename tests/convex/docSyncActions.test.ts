@@ -499,6 +499,71 @@ describe('documentation sync batching', (): void => {
     expect(JSON.stringify(after)).not.toContain(value);
   });
 
+  it('resumes a sync that failed at page 300 of 500 at page 300, not page one (step 17)', async (): Promise<void> => {
+    const root = temporary('day0-sync-resume-');
+    await mkdir(join(root, 'many'));
+    for (let index = 1; index <= 500; index += 1) {
+      await writeFile(
+        join(root, 'many', `page-${String(index).padStart(3, '0')}.md`),
+        `# Page ${index}\n\nBody ${index}\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    const read = FolderReader.prototype.listPageBatch;
+    let cutOff = false;
+    const reads = vi
+      .spyOn(FolderReader.prototype, 'listPageBatch')
+      .mockImplementation(async function (this: FolderReader, ...args) {
+        if (args[2] === '300' && !cutOff) {
+          cutOff = true;
+          throw new Error('fetch failed', {
+            cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+          });
+        }
+        return await read.apply(this, args);
+      });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ status: 'error', pageCount: 300 });
+
+    reads.mockClear();
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    expect(reads.mock.calls.map((call) => call[2])).toEqual([
+      '300',
+      '325',
+      '350',
+      '375',
+      '400',
+      '425',
+      '450',
+      '475',
+    ]);
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ status: 'synced', running: false, pageCount: 500 });
+    const [completed, failed] = await harness.run(
+      async (ctx) => await ctx.db.query('docSyncRuns').order('desc').collect(),
+    );
+    expect(completed).toMatchObject({ state: 'completed', pageCount: 500 });
+    expect(new Set(completed.refs).size).toBe(500);
+    expect(failed).toMatchObject({ state: 'error', cursor: '300', pageCount: 300 });
+    expect(failed.reason).toBe(
+      'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again. A newer sync of the source took over from its cursor after 300 pages.',
+    );
+  }, 60_000);
+
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {
     const root = temporary('day0-sync-known-');
     await mkdir(join(root, 'few'));

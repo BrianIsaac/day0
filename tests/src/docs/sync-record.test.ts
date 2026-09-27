@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_UNREAD_LISTED,
+  endedShort,
   unreadPageCount,
   unreadPagesLine,
+  unreadRecordIn,
   withUnreadPages,
 } from '../../../src/docs/sync-record';
 
@@ -58,5 +60,15 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     ).toBe(
       '1 page could not be read this sync and keeps its last stored version: a.md: HTTP 404. The next sync reads them again.',
     );
+  });
+
+  it('keeps a run’s unread-pages record below the reason it ended short, for a resume to carry on (step 17)', (): void => {
+    const record = withUnreadPages(undefined, [{ ref: 'a.md', reason: 'HTTP 404' }]);
+    const ended = endedShort('The documentation read was interrupted (timeout).', record);
+    expect(ended).toBe(`The documentation read was interrupted (timeout).\n${record}`);
+    expect(unreadRecordIn(ended)).toBe(record);
+    expect(unreadRecordIn(record)).toBe(record);
+    expect(endedShort('superseded', undefined)).toBe('superseded');
+    expect(unreadRecordIn('The documentation read was interrupted (timeout).')).toBeUndefined();
   });
 });

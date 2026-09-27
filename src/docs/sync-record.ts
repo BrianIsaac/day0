@@ -35,6 +35,33 @@ export function unreadPageCount(record: string | undefined): number {
 }
 
 /**
+ * The unread-pages record inside a run's reason, wherever it starts.
+ *
+ * A run that ended short records why on its first line and keeps the
+ * record of the pages it could not read below it, so a sync that resumes
+ * the run carries that record on.
+ *
+ * @param reason - A run's reason, or nothing.
+ * @returns The record, or undefined when the reason holds none.
+ */
+export function unreadRecordIn(reason: string | undefined): string | undefined {
+  const lines = (reason ?? '').split('\n');
+  const start = lines.findIndex((line: string): boolean => HEADER.test(line));
+  return start === -1 ? undefined : lines.slice(start).join('\n');
+}
+
+/**
+ * A run's reason for ending short, with the record of its unread pages kept below it.
+ *
+ * @param ending - Why the run ended: its failure, or the run that replaced it.
+ * @param reason - The run's reason so far, which may hold an unread-pages record.
+ */
+export function endedShort(ending: string, reason: string | undefined): string {
+  const record = unreadRecordIn(reason);
+  return record === undefined ? ending : `${ending}\n${record}`;
+}
+
+/**
  * Add a batch's unread pages to a run's record.
  *
  * @param record - The run's record so far, or nothing.

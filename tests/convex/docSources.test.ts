@@ -935,6 +935,70 @@ describe('documentation sources in real mode', (): void => {
     ).resolves.toBeNull();
     const dead = await harness.run(async (ctx) => await ctx.db.get(runId));
     expect(dead?.state).toBe('superseded');
+    // The action the runtime killed read 25 pages; the new run reads on from there (step 17).
+    expect(dead?.reason).toBe(
+      'a newer sync of the source took over from its cursor after 25 pages',
+    );
+    await expect(
+      harness.query(internal.docSources.syncContext, { sourceId, runId: replacementRunId }),
+    ).resolves.toMatchObject({ run: { cursor: '25', pageCount: 25, state: 'running' } });
+  });
+
+  it('starts a sync from page one for a new secret, and after a resume that got no further (step 17)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const failAt = async (runId: Id<'docSyncRuns'>): Promise<void> => {
+      await harness.mutation(internal.docSources.failSync, {
+        sourceId,
+        runId,
+        status: 'error',
+        reason: 'The documentation read was interrupted (timeout).',
+      });
+    };
+    const first = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: first,
+      nextCursor: '25',
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 25,
+      redactionCount: 0,
+    });
+    await failAt(first);
+    const context = async (runId: Id<'docSyncRuns'>) =>
+      (await harness.query(internal.docSources.syncContext, { sourceId, runId }))?.run;
+
+    const rotated = await harness.mutation(internal.docSources.beginSync, {
+      sourceId,
+      fresh: true,
+    });
+    expect(await context(rotated)).toMatchObject({ refs: [], pageCount: 0 });
+    expect((await context(rotated))?.cursor).toBeUndefined();
+    await failAt(rotated);
+
+    // The fresh run failed before its first batch: nothing to carry.
+    const second = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    expect((await context(second))?.cursor).toBeUndefined();
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: second,
+      nextCursor: '25',
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 25,
+      redactionCount: 0,
+    });
+    await failAt(second);
+    const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    expect(await context(resumed)).toMatchObject({ cursor: '25', pageCount: 25 });
+    await failAt(resumed);
+
+    // The resume failed where it started: the provider may no longer take the cursor.
+    const restarted = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    expect(await context(restarted)).toMatchObject({ refs: [], pageCount: 0 });
+    expect((await context(restarted))?.cursor).toBeUndefined();
   });
 });
 

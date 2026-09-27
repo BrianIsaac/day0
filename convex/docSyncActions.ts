@@ -307,9 +307,15 @@ interface SyncResult {
   reason?: string;
 }
 
-/** Start a fenced source sync and execute its first bounded batch. */
+/**
+ * Start a fenced source sync and execute its first bounded batch.
+ *
+ * A run that ended short is taken over from its cursor (`beginSync`), so the
+ * first batch reads where that run stopped, or finishes it when it had read
+ * every page. `fresh` starts at page one, as a new connection secret needs.
+ */
 export const syncSource = internalAction({
-  args: { sourceId: v.id('docSources') },
+  args: { sourceId: v.id('docSources'), fresh: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<SyncResult> => {
     const source = await ctx.runQuery(internal.docSources.getInternal, {
       sourceId: args.sourceId,
@@ -317,11 +323,19 @@ export const syncSource = internalAction({
     if (!source) {
       return { ok: false, pages: 0, redactions: 0, complete: true, reason: 'source not found' };
     }
-    const runId = await ctx.runMutation(internal.docSources.beginSync, { sourceId: source._id });
+    const runId = await ctx.runMutation(internal.docSources.beginSync, {
+      sourceId: source._id,
+      fresh: args.fresh,
+    });
     await ctx.runMutation(internal.docSources.pruneRunHistory, { sourceId: source._id });
+    const context = await ctx.runQuery(internal.docSources.syncContext, {
+      sourceId: source._id,
+      runId,
+    });
     return await ctx.runAction(internal.docSyncActions.syncBatch, {
       sourceId: source._id,
       runId,
+      cursor: context?.run.cursor,
     });
   },
 });
@@ -330,7 +344,7 @@ export const syncSource = internalAction({
  * Read and persist at most 25 pages, then schedule a secret-free continuation.
  *
  * After the last batch the run holds `FINISHING_CURSOR` and the same action
- * finishes it; a batch scheduled at that cursor only finishes.
+ * finishes it; a batch scheduled at that cursor (a resumed run) only finishes.
  */
 export const syncBatch = internalAction({
   args: {

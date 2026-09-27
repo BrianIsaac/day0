@@ -24,7 +24,13 @@ import type { IntakeScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
-import { unreadPagesLine, withUnreadPages } from '../src/docs/sync-record';
+import {
+  endedShort,
+  unreadPagesLine,
+  unreadRecordIn,
+  withUnreadPages,
+} from '../src/docs/sync-record';
+import { runToResume } from '../src/docs/sync-resume';
 import { cardPageRefs } from '../src/docs/card-pages';
 import type { MigrationName } from './migrations';
 
@@ -84,6 +90,11 @@ const CARD_SURFACE_LIMIT = 1_000;
 
 /** Why a run that a newer one replaced before it finished ended. */
 const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
+
+/** Why a run that a newer one took over from its cursor ended. */
+function resumedRunReason(pageCount: number): string {
+  return `a newer sync of the source took over from its cursor after ${pageCount} ${pageCount === 1 ? 'page' : 'pages'}`;
+}
 
 /**
  * How many pages a source holds, from its run record rather than its pages.
@@ -381,8 +392,10 @@ export const rotateCredential = action({
         credentialId: source.credentialId,
       });
     }
+    // A new secret may read a different workspace, so nothing an older run read is carried over.
     await ctx.scheduler.runAfter(0, internal.docSyncActions.syncSource, {
       sourceId: source._id,
+      fresh: true,
     });
     return credentialId;
   },
@@ -711,36 +724,66 @@ export const sourcesForAgentInternal = internalQuery({
   },
 });
 
-/** Start a fenced sync generation and supersede any older continuation. */
+/**
+ * Start a fenced sync generation, taking over a run that ended short from its cursor.
+ *
+ * Internal. The source's newest run, when it failed or is being replaced
+ * before it finished, carries its cursor, its refs and credential refs, its
+ * counts and its record of unread pages into the new run, which reads on
+ * from there (step 17); its own reason says the new run took over. A fresh
+ * start (`fresh`, as a new connection secret needs), a run too old or a
+ * resume that got nowhere reads from page one (`runToResume`).
+ *
+ * @returns The new run's id; its `cursor` is where its first batch reads from.
+ */
 export const beginSync = internalMutation({
-  args: { sourceId: v.id('docSources') },
+  args: { sourceId: v.id('docSources'), fresh: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<Id<'docSyncRuns'>> => {
     const source = await ctx.db.get(args.sourceId);
     if (!source) throw new Error('Documentation source not found.');
-    if (source.activeSyncId) {
-      const active = await ctx.db.get(source.activeSyncId);
-      if (active?.state === 'running') {
-        await ctx.db.patch(active._id, {
-          state: 'superseded',
-          completedAt: Date.now(),
-          reason: SUPERSEDED_RUN_REASON,
-        });
-      }
+    const now = Date.now();
+    const [latest, previous] = await ctx.db
+      .query('docSyncRuns')
+      .withIndex('by_source', (index) => index.eq('sourceId', source._id))
+      .order('desc')
+      .take(2);
+    const resumed = args.fresh === true ? undefined : runToResume(latest, previous, now);
+    const active = source.activeSyncId ? await ctx.db.get(source.activeSyncId) : null;
+    if (active?.state === 'running') {
+      await ctx.db.patch(active._id, {
+        state: 'superseded',
+        completedAt: now,
+        reason: endedShort(
+          active._id === resumed?._id ? resumedRunReason(active.pageCount) : SUPERSEDED_RUN_REASON,
+          active.reason,
+        ),
+      });
+    } else if (resumed !== undefined) {
+      const ending = (resumed.reason ?? '').split('\n')[0] || 'The run ended short.';
+      const tookOver = resumedRunReason(resumed.pageCount);
+      await ctx.db.patch(resumed._id, {
+        reason: endedShort(
+          `${ending} ${tookOver.charAt(0).toUpperCase()}${tookOver.slice(1)}.`,
+          resumed.reason,
+        ),
+      });
     }
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId: source._id,
-      refs: [],
-      credentialRefs: [],
-      pageCount: 0,
-      redactionCount: 0,
+      cursor: resumed?.cursor,
+      refs: resumed?.refs ?? [],
+      credentialRefs: resumed?.credentialRefs ?? [],
+      pageCount: resumed?.pageCount ?? 0,
+      redactionCount: resumed?.redactionCount ?? 0,
+      reason: unreadRecordIn(resumed?.reason),
       state: 'running',
-      createdAt: Date.now(),
+      createdAt: now,
     });
     await ctx.db.patch(source._id, {
       activeSyncId: runId,
       status: 'linking',
       lastError: undefined,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
     return runId;
   },
@@ -1267,7 +1310,12 @@ export const failSync = internalMutation({
     const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
     if (!source || !run || source.activeSyncId !== run._id || run.state !== 'running') return false;
     const now = Date.now();
-    await ctx.db.patch(run._id, { state: 'error', completedAt: now, reason: args.reason });
+    // The cursor stays, so the next sync resumes the run from it (`beginSync`).
+    await ctx.db.patch(run._id, {
+      state: 'error',
+      completedAt: now,
+      reason: endedShort(args.reason, run.reason),
+    });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
       status: args.status,
