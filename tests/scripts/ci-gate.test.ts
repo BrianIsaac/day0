@@ -17,3 +17,8 @@ it('runs the documented gate in order with development auth disabled for the bui
   ]);
   expect(commands.at(-1)).toMatch(/^NEXT_PUBLIC_DEV_NO_AUTH= pnpm build$/);
 });
+
+it('runs every step in UTC, the zone the suite and the pinned backend image use', () => {
+  const workflow = parse(readFileSync('.github/workflows/gate.yml', 'utf8'));
+  expect(workflow.jobs.gate.env.TZ).toBe('UTC');
+});
