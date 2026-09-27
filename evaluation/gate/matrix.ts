@@ -9,8 +9,10 @@ import {
   type GatePolicyLabel,
 } from './fixture';
 
+/** The autonomous-actions switch state a verdict was taken under. */
 export type GateMode = 'off' | 'on';
 
+/** One labelled action's verdict under one switch state. */
 export interface GateObservation {
   id: string;
   label: GatePolicyLabel;
@@ -20,12 +22,14 @@ export interface GateObservation {
   reason?: string;
 }
 
+/** How many actions with one label received one verdict. */
 export interface GateMatrixCell {
   label: GatePolicyLabel;
   verdict: ActionDisposition;
   count: number;
 }
 
+/** One switch state's confusion matrix, refusal codes and override rate. */
 export interface GateModeSummary {
   mode: GateMode;
   n: number;
@@ -55,6 +59,7 @@ function refusalCode(reason: string): string {
   return parenthesis === -1 ? reason : reason.slice(0, parenthesis);
 }
 
+/** Review every labelled action with the switch off and then on, without a model. */
 export function gateObservations(): GateObservation[] {
   return (['off', 'on'] as const).flatMap((mode) =>
     GATE_FIXTURE.map((fixture): GateObservation => {
@@ -80,6 +85,7 @@ export function gateObservations(): GateObservation[] {
   );
 }
 
+/** Summarise one switch state's observations as a confusion matrix. */
 export function summariseGateMode(
   observations: readonly GateObservation[],
   mode: GateMode,
@@ -148,6 +154,7 @@ function percent(rate: number | null): string {
   return rate === null ? 'not defined (0 held actions)' : `${(rate * 100).toFixed(1)}%`;
 }
 
+/** Render a matrix as its markdown report, with its commit and date. */
 export function renderGateMatrix(evidence: GateMatrixEvidence): string {
   const lines = [
     '# Gate-accuracy confusion matrix',
