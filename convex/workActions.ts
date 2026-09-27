@@ -470,12 +470,14 @@ async function evaluateWorkItemHandler(
   if (item.state !== 'discovered') {
     return { decision: `noop-state=${item.state}` };
   }
+  let claimedAt: number | undefined;
   if (SURFACE_MODE === 'real') {
     const claim = await ctx.runMutation(internal.work.claimLoopStep, {
       workItemId: args.workItemId,
       step: 'evaluation',
     });
     if (!claim.claimed) return { decision: `noop-${claim.reason}` };
+    claimedAt = claim.claimedAt;
   }
   const charterRow = internalCaller
     ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
@@ -573,6 +575,7 @@ async function evaluateWorkItemHandler(
     await ctx.runMutation(internal.work.recordScopeJudgementUnavailable, {
       workItemId: args.workItemId,
       cause: verdict.cause,
+      ...(claimedAt !== undefined ? { claimedAt } : {}),
     });
     return { decision: SCOPE_JUDGEMENT_UNAVAILABLE };
   }

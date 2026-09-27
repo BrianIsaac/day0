@@ -943,18 +943,24 @@ export const recordScopeAdmission = internalMutation({
 
 /**
  * Record that an evaluation of a row could not get a scope judgement (E-70):
- * the `work.scope-judgement-unavailable` event and, on a row still waiting,
- * the moment, so a row parked after its attempts is parked as unavailable and
- * the charter trigger and Check for new work re-admit it. Internal; the
- * evaluation stage's, real mode.
+ * the `work.scope-judgement-unavailable` event and, on a row still waiting
+ * under the claim that evaluation took, the moment, so a row parked after its
+ * attempts is parked as unavailable and the charter trigger and Check for new
+ * work re-admit it. A late answer from an attempt whose claim lapsed marks
+ * nothing, so it cannot speak for a later attempt. Internal; the evaluation
+ * stage's, real mode.
  */
 export const recordScopeJudgementUnavailable = internalMutation({
-  args: { workItemId: v.id('workItems'), cause: v.string() },
+  args: { workItemId: v.id('workItems'), cause: v.string(), claimedAt: v.optional(v.number()) },
   handler: async (ctx, args): Promise<void> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return;
     const at = Date.now();
-    if (row.state === 'discovered') {
+    if (
+      row.state === 'discovered' &&
+      args.claimedAt !== undefined &&
+      row.evaluationClaimedAt === args.claimedAt
+    ) {
       await ctx.db.patch(row._id, { evaluationUnavailableAt: at });
     }
     await appendEvent(ctx, {

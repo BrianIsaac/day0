@@ -4883,7 +4883,7 @@ describe('the owner-wide claim before the model call and on parked verdicts', ()
 
     await expect(
       harness.mutation(internal.work.claimLoopStep, { workItemId: mateoRow, step: 'evaluation' }),
-    ).resolves.toEqual({ claimed: true });
+    ).resolves.toEqual({ claimed: true, claimedAt: expect.any(Number) });
     expect((await readItem(harness, mateoRow)).state).toBe('discovered');
   });
 });

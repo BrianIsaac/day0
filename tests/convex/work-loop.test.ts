@@ -749,9 +749,9 @@ describe('the loop under load (P9-1)', (): void => {
     }
 
     expect(claims).toEqual([
-      { claimed: true },
-      { claimed: true },
-      { claimed: true },
+      { claimed: true, claimedAt: expect.any(Number) },
+      { claimed: true, claimedAt: expect.any(Number) },
+      { claimed: true, claimedAt: expect.any(Number) },
       { claimed: false, reason: 'queued' },
       { claimed: false, reason: 'queued' },
     ]);
@@ -920,6 +920,41 @@ describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void
     expect(evaluated.state).toBe('plan-pending');
     expect(evaluated).not.toHaveProperty('evaluationAttempts');
     expect(evaluated).not.toHaveProperty('evaluationUnavailableAt');
+  });
+
+  it('marks a row unavailable only for the attempt that holds its claim, never from a late answer of a lapsed one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-86');
+    const first = await harness.mutation(internal.work.claimLoopStep, {
+      workItemId,
+      step: 'evaluation',
+    });
+    if (!first.claimed) throw new Error('the first attempt claims');
+    vi.advanceTimersByTime(STEP_LEASE_MS + 1);
+    const second = await harness.mutation(internal.work.claimLoopStep, {
+      workItemId,
+      step: 'evaluation',
+    });
+    if (!second.claimed) throw new Error('the second attempt claims once the first lapsed');
+
+    await harness.mutation(internal.work.recordScopeJudgementUnavailable, {
+      workItemId,
+      cause: 'provider answered 503',
+      claimedAt: first.claimedAt,
+    });
+    expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationUnavailableAt');
+    await harness.mutation(internal.work.recordScopeJudgementUnavailable, {
+      workItemId,
+      cause: 'provider answered 503',
+      claimedAt: second.claimedAt,
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      evaluationAttempts: 2,
+      evaluationUnavailableAt: expect.any(Number),
+    });
   });
 
   it('gives the free slot at cap one to the next row while an evaluation that died twice waits behind it', async (): Promise<void> => {

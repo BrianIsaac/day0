@@ -117,8 +117,8 @@ export function holdsLiveStepClaim(
   return claimedAt !== undefined && now - claimedAt < STEP_LEASE_MS;
 }
 
-/** Why a step was not claimed: the row moved on, or another run holds it. */
-export type StepClaim = { claimed: true } | { claimed: false; reason: string };
+/** Why a step was not claimed: the row moved on, or another run holds it; when claimed, the claim's time. */
+export type StepClaim = { claimed: true; claimedAt: number } | { claimed: false; reason: string };
 
 /**
  * Claim one step of one row, or report why not.
@@ -160,10 +160,10 @@ export async function claimLoopStepInTransaction(
       evaluationClaimedAt: now,
       evaluationAttempts: (row.evaluationAttempts ?? 0) + 1,
     });
-    return { claimed: true };
+    return { claimed: true, claimedAt: now };
   }
   await ctx.db.patch(workItemId, { [CLAIM_FIELD[step]]: now });
-  return { claimed: true };
+  return { claimed: true, claimedAt: now };
 }
 
 /** Whether an earlier verdict queued the row at the work-in-progress cap; it waits in `discovered` like any unevaluated row. */
