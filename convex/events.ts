@@ -37,7 +37,9 @@ export const autonomyChanges = query({
     await assertOwnsAgent(ctx, args.agentId);
     const events = await ctx.db
       .query('events')
-      .withIndex('by_agent_type', (q) => q.eq('agentId', args.agentId).eq('type', 'agent.autonomy-changed'))
+      .withIndex('by_agent_type', (q) =>
+        q.eq('agentId', args.agentId).eq('type', 'agent.autonomy-changed'),
+      )
       .collect();
     return events.map((event) => ({
       at: event.createdAt,
@@ -109,8 +111,11 @@ export const exportForAgent = internalQuery({
         .collect(),
     ]);
     const credentials = await Promise.all(
-      [...new Set(surfaces.flatMap((surface) => (surface.credentialId ? [surface.credentialId] : [])))]
-        .map(async (credentialId) => await ctx.db.get(credentialId)),
+      [
+        ...new Set(
+          surfaces.flatMap((surface) => (surface.credentialId ? [surface.credentialId] : [])),
+        ),
+      ].map(async (credentialId) => await ctx.db.get(credentialId)),
     );
     return {
       version: 1,

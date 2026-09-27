@@ -19,7 +19,13 @@
  * row redacts them, and the guard keeps a model from doing so by accident.
  */
 
-export const REDACTION_CONTEXTS = ['documentation', 'outcome', 'record', 'prompt', 'export'] as const;
+export const REDACTION_CONTEXTS = [
+  'documentation',
+  'outcome',
+  'record',
+  'prompt',
+  'export',
+] as const;
 export type RedactionContext = (typeof REDACTION_CONTEXTS)[number];
 
 export const ENTITY_KINDS = [
@@ -83,7 +89,9 @@ export const MODEL_THRESHOLD = Math.min(...Object.values(THRESHOLDS));
  * addresses, government and account identifiers and dates of birth are never
  * working material.
  */
-export const ENTITY_POLICY: Readonly<Record<RedactionContext, Readonly<Record<EntityKind, Disposition>>>> = {
+export const ENTITY_POLICY: Readonly<
+  Record<RedactionContext, Readonly<Record<EntityKind, Disposition>>>
+> = {
   documentation: {
     secret: 'redact',
     person: 'keep',

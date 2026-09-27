@@ -32,7 +32,11 @@ import { formatMetricDuration } from '../../app/metric-format';
 import type { AgentMetrics } from '../../convex/metrics';
 import type { Doc } from '../../convex/_generated/dataModel';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
-import { AUTONOMY_WARNING, HELD_BEFORE_AUTONOMY_NOTE, HELD_WHILE_SUPERVISED_NOTE } from '../../src/work/autonomy';
+import {
+  AUTONOMY_WARNING,
+  HELD_BEFORE_AUTONOMY_NOTE,
+  HELD_WHILE_SUPERVISED_NOTE,
+} from '../../src/work/autonomy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import type { MockAction, ReplyTarget } from '../../src/work/types';
 
@@ -63,7 +67,9 @@ const dm: MockAction = {
 
 function render(
   actions: MockAction[],
-  verdicts: ActionVerdict[] = actions.map((): ActionVerdict => ({ disposition: 'held', reason: HELD_MUTATION })),
+  verdicts: ActionVerdict[] = actions.map(
+    (): ActionVerdict => ({ disposition: 'held', reason: HELD_MUTATION }),
+  ),
   replyTarget?: ReplyTarget,
   autonomousActions = false,
 ): string {
@@ -102,14 +108,22 @@ describe('dashboard exact-action gate', (): void => {
       ],
     );
     expect(html).toContain(longBody);
-    expect(html).toContain('1 action awaiting your approval · 1 refused by the gate · nothing has reached a surface');
+    expect(html).toContain(
+      '1 action awaiting your approval · 1 refused by the gate · nothing has reached a surface',
+    );
     // The card says plainly why the row is waiting.
     expect(html).toContain(HELD_WHILE_SUPERVISED_NOTE);
     expect(html).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
     // The plain line comes first, the reason on the same line, and the literal payload is folded away.
-    expect(html).toMatch(/<p[^>]*>Send Brian a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/);
-    expect(html).toMatch(/<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · refused · no grant \(slack:write\)<\/span><\/p>/);
-    expect(html.indexOf('Send Brian a Slack DM')).toBeLessThan(html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'));
+    expect(html).toMatch(
+      /<p[^>]*>Send Brian a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/,
+    );
+    expect(html).toMatch(
+      /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · refused · no grant \(slack:write\)<\/span><\/p>/,
+    );
+    expect(html.indexOf('Send Brian a Slack DM')).toBeLessThan(
+      html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'),
+    );
     expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
     expect(html).not.toMatch(/<details[^>]*open/);
     expect(html).toContain('{{secret}}');
@@ -127,21 +141,34 @@ describe('dashboard exact-action gate', (): void => {
     };
     const reply: MockAction = {
       tool: 'http.request',
-      args: { ...dm.args, body: JSON.stringify({ channel: 'C0BSF04TZ19', thread_ts: '1787746453.202809', text: 'Covered.' }) },
+      args: {
+        ...dm.args,
+        body: JSON.stringify({
+          channel: 'C0BSF04TZ19',
+          thread_ts: '1787746453.202809',
+          text: 'Covered.',
+        }),
+      },
     };
     const verdicts: ActionVerdict[] = [
       { disposition: 'auto' },
       { disposition: 'auto' },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ];
-    const html = render([read, dm, reply], verdicts, { channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' });
+    const html = render([read, dm, reply], verdicts, {
+      channel: 'C0BSF04TZ19',
+      channelName: 'revops-asks',
+      threadTs: '1787746453.202809',
+    });
     expect(html).toContain('2 applied automatically · 1 action awaiting your approval');
     expect(html).toContain(HELD_WHILE_SUPERVISED_NOTE);
     // A run held before the switch was turned on still needs the click, and says so.
     const after = render([read, dm, reply], verdicts, undefined, true);
     expect(after).toContain(HELD_BEFORE_AUTONOMY_NOTE);
     expect(after).not.toContain(HELD_WHILE_SUPERVISED_NOTE);
-    expect(render([dm], [{ disposition: 'refused', reason: 'x' }])).not.toContain('held for your approval');
+    expect(render([dm], [{ disposition: 'refused', reason: 'x' }])).not.toContain(
+      'held for your approval',
+    );
     expect(html).not.toContain('Read issue REVOPS-10');
     expect(html).not.toContain('Send Brian a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
@@ -149,48 +176,73 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toMatch(/aria-label="approve action 1"/);
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
-    expect(pendingHeadline(verdicts)).toBe('2 applied automatically · 1 action awaiting your approval');
-    expect(pendingHeadline([{ disposition: 'held', reason: HELD_MUTATION }, { disposition: 'refused', reason: 'x' }])).toBe(
+    expect(pendingHeadline(verdicts)).toBe(
+      '2 applied automatically · 1 action awaiting your approval',
+    );
+    expect(
+      pendingHeadline([
+        { disposition: 'held', reason: HELD_MUTATION },
+        { disposition: 'refused', reason: 'x' },
+      ]),
+    ).toBe(
       '1 action awaiting your approval · 1 refused by the gate · nothing has reached a surface',
     );
   });
 
   it('reads persisted verdicts of either shape and pads a run held before verdicts existed', (): void => {
-    expect(pendingVerdicts([{ held: true, reason: 'no grant (linear:write)' }, { held: false }], 3)).toEqual([
+    expect(
+      pendingVerdicts([{ held: true, reason: 'no grant (linear:write)' }, { held: false }], 3),
+    ).toEqual([
       { disposition: 'refused', reason: 'no grant (linear:write)' },
       { disposition: 'held', reason: 'write held for the manager' },
       { disposition: 'held', reason: 'write held for the manager' },
     ]);
-    expect(pendingVerdicts([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_PUBLIC_POST }], 2)).toEqual([
-      { disposition: 'auto' },
-      { disposition: 'held', reason: HELD_PUBLIC_POST },
-    ]);
+    expect(
+      pendingVerdicts(
+        [{ disposition: 'auto' }, { disposition: 'held', reason: HELD_PUBLIC_POST }],
+        2,
+      ),
+    ).toEqual([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_PUBLIC_POST }]);
   });
 
   it('renders the autonomous-actions switch with its state named plainly, off and on', (): void => {
     const off = renderToStaticMarkup(
-      createElement(AutonomyControl, { on: false, tone: 'tone', onChange: vi.fn(async (): Promise<void> => {}) }),
+      createElement(AutonomyControl, {
+        on: false,
+        tone: 'tone',
+        onChange: vi.fn(async (): Promise<void> => {}),
+      }),
     );
     expect(off).toContain('Active · Supervised');
     expect(off).toContain('Autonomous actions');
-    expect(off).toMatch(/<button[^>]*role="switch"[^>]*aria-checked="false"[^>]*aria-label="Autonomous actions"/);
+    expect(off).toMatch(
+      /<button[^>]*role="switch"[^>]*aria-checked="false"[^>]*aria-label="Autonomous actions"/,
+    );
     expect(off).not.toContain(AUTONOMY_WARNING);
     expect(off).not.toContain('supervised posture');
     const on = renderToStaticMarkup(
-      createElement(AutonomyControl, { on: true, tone: 'tone', onChange: vi.fn(async (): Promise<void> => {}) }),
+      createElement(AutonomyControl, {
+        on: true,
+        tone: 'tone',
+        onChange: vi.fn(async (): Promise<void> => {}),
+      }),
     );
     expect(on).toContain('Active · Autonomous');
     expect(on).toMatch(/<button[^>]*role="switch"[^>]*aria-checked="true"/);
     expect(on).not.toContain(AUTONOMY_WARNING);
   });
 
-  it('renders the confirmation with the warning in the operator\'s words and its two buttons', (): void => {
+  it("renders the confirmation with the warning in the operator's words and its two buttons", (): void => {
     const html = renderToStaticMarkup(
       createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
     );
-    expect(html).toMatch(/<div[^>]*role="alertdialog"[^>]*aria-modal="true"[^>]*aria-label="Turn on autonomous actions"/);
+    expect(html).toMatch(
+      /<div[^>]*role="alertdialog"[^>]*aria-modal="true"[^>]*aria-label="Turn on autonomous actions"/,
+    );
     expect(html).toContain('Turn on autonomous actions?');
-    expect(html).toContain('The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.');
+    expect(html).toContain(
+      'The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.',
+    );
     expect(html).toContain('Turn this on only after its behaviour has been what you want.');
     expect(html).toContain('Skills and connections still need your approval either way.');
     expect(html).toMatch(/<button[^>]*>Turn on<\/button>/);
@@ -198,33 +250,51 @@ describe('dashboard exact-action gate', (): void => {
     expect(cancelsAutonomyConfirm('Escape', false)).toBe(true);
     expect(cancelsAutonomyConfirm('Enter', false)).toBe(false);
     expect(cancelsAutonomyConfirm('Escape', true)).toBe(false);
-    expect(renderToStaticMarkup(createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn(), busy: true }))).toMatch(
-      /<button[^>]*disabled=""[^>]*>Turn on<\/button>/,
-    );
+    expect(
+      renderToStaticMarkup(
+        createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn(), busy: true }),
+      ),
+    ).toMatch(/<button[^>]*disabled=""[^>]*>Turn on<\/button>/);
   });
 
   it('names how many landed changes applied under the switch', (): void => {
-    expect(landedHeadline([{ authority: 'autonomous' }, { authority: 'autonomous' }, { authority: 'autonomous' }])).toBe(
-      '3 changes reached the work environment · 3 applied autonomously',
+    expect(
+      landedHeadline([
+        { authority: 'autonomous' },
+        { authority: 'autonomous' },
+        { authority: 'autonomous' },
+      ]),
+    ).toBe('3 changes reached the work environment · 3 applied autonomously');
+    expect(
+      landedHeadline([
+        { authority: 'standing' },
+        { authority: 'manager' },
+        { authority: 'autonomous' },
+      ]),
+    ).toBe('3 changes reached the work environment · 1 applied autonomously');
+    expect(landedHeadline([{ authority: 'manager' }])).toBe(
+      '1 change reached the work environment',
     );
-    expect(landedHeadline([{ authority: 'standing' }, { authority: 'manager' }, { authority: 'autonomous' }])).toBe(
-      '3 changes reached the work environment · 1 applied autonomously',
-    );
-    expect(landedHeadline([{ authority: 'manager' }])).toBe('1 change reached the work environment');
     expect(landedHeadline([{}, {}])).toBe('2 changes reached the work environment');
   });
 
   it('explains a cancelled item from its recorded reason, else from what it was doing', (): void => {
-    expect(cancelledReason({ skipReason: 'skill proposal "linear-action-revops-6" rejected by the manager' })).toBe(
-      'skill proposal "linear-action-revops-6" rejected by the manager',
-    );
+    expect(
+      cancelledReason({
+        skipReason: 'skill proposal "linear-action-revops-6" rejected by the manager',
+      }),
+    ).toBe('skill proposal "linear-action-revops-6" rejected by the manager');
     expect(
       cancelledReason({
         verdict: { decision: 'needs-skill', suggestedSkillName: 'linear-action-revops-6' },
       }),
     ).toBe('skill proposal "linear-action-revops-6" rejected by the manager');
-    expect(cancelledReason({ verdict: { decision: 'needs-skill' } })).toBe('skill proposal rejected by the manager');
-    expect(cancelledReason({ verdict: { decision: 'claim' }, plan: { summary: 'x' } })).toBe('plan cancelled by the manager');
+    expect(cancelledReason({ verdict: { decision: 'needs-skill' } })).toBe(
+      'skill proposal rejected by the manager',
+    );
+    expect(cancelledReason({ verdict: { decision: 'claim' }, plan: { summary: 'x' } })).toBe(
+      'plan cancelled by the manager',
+    );
     expect(cancelledReason({})).toBe('cancelled by the manager');
   });
 
@@ -261,9 +331,7 @@ describe('dashboard exact-action gate', (): void => {
         surfaceName: 'Company chat',
       }),
     ).toBe('rejected from the day0 dashboard');
-    expect(
-      decisionAttribution({ surfaceName: 'Slack' }),
-    ).toBeUndefined();
+    expect(decisionAttribution({ surfaceName: 'Slack' })).toBeUndefined();
   });
 
   it('shows every fenced provider entry and requires explicit verification', (): void => {
@@ -378,7 +446,10 @@ describe('the supervision metrics card', (): void => {
     expect(none).not.toContain('replayed');
     const replayed = renderToStaticMarkup(
       createElement(MetricsCard, {
-        metrics: { ...completeMetrics, actions: { ...completeMetrics.actions, sessionRestores: 3 } },
+        metrics: {
+          ...completeMetrics,
+          actions: { ...completeMetrics.actions, sessionRestores: 3 },
+        },
       }),
     );
     expect(replayed).toContain('4 actions automatic');
@@ -450,7 +521,20 @@ describe('the cross-item approval panel', (): void => {
       externalId: id,
       observedAt: 1,
       contentRefs: [],
-      output: { draft: '', notes: '', actions: [dm, { ...dm, args: { ...dm.args, body: JSON.stringify({ channel: 'C0PUBLIC', text: `Reply for ${title}` }) } }] },
+      output: {
+        draft: '',
+        notes: '',
+        actions: [
+          dm,
+          {
+            ...dm,
+            args: {
+              ...dm.args,
+              body: JSON.stringify({ channel: 'C0PUBLIC', text: `Reply for ${title}` }),
+            },
+          },
+        ],
+      },
       actionVerdicts: verdicts,
     }) as unknown as Doc<'workItems'>;
   const heldPost: ActionVerdict = { disposition: 'held', reason: HELD_PUBLIC_POST };
@@ -459,11 +543,24 @@ describe('the cross-item approval panel', (): void => {
   it('reads one member per parked item with held rows, keeping the run and the indexes', (): void => {
     const members = pendingDecisionMembers([
       parked('w1', 'Answer #revops', [auto, heldPost]),
-      parked('w2', 'Answer #finance', [{ disposition: 'refused', reason: 'no grant (slack:write)' }, heldPost]),
-      { ...parked('w3', 'Done already', [auto, heldPost]), approvedIndexes: [1] } as Doc<'workItems'>,
+      parked('w2', 'Answer #finance', [
+        { disposition: 'refused', reason: 'no grant (slack:write)' },
+        heldPost,
+      ]),
+      {
+        ...parked('w3', 'Done already', [auto, heldPost]),
+        approvedIndexes: [1],
+      } as Doc<'workItems'>,
       { ...parked('w4', 'Not parked', [auto, heldPost]), state: 'executing' } as Doc<'workItems'>,
     ]);
-    expect(members.map((member) => [member.workItemId, member.pendingRunId, member.heldIndexes, member.refused])).toEqual([
+    expect(
+      members.map((member) => [
+        member.workItemId,
+        member.pendingRunId,
+        member.heldIndexes,
+        member.refused,
+      ]),
+    ).toEqual([
       ['w1', 'run-w1', [1], 0],
       ['w2', 'run-w2', [1], 1],
     ]);
@@ -473,7 +570,10 @@ describe('the cross-item approval panel', (): void => {
     const onApproveBatch = vi.fn(async (): Promise<void> => {});
     const members = pendingDecisionMembers([
       parked('w1', 'Answer #revops', [auto, heldPost]),
-      parked('w2', 'Answer #finance', [{ disposition: 'refused', reason: 'no grant (slack:write)' }, heldPost]),
+      parked('w2', 'Answer #finance', [
+        { disposition: 'refused', reason: 'no grant (slack:write)' },
+        heldPost,
+      ]),
     ]);
     const html = renderToStaticMarkup(
       createElement(PendingDecisionsPanel, { members, surfaces: [connectedSlack], onApproveBatch }),
@@ -490,7 +590,11 @@ describe('the cross-item approval panel', (): void => {
   it('stays out of the way while only one item is waiting', (): void => {
     const members = pendingDecisionMembers([parked('w1', 'Answer #revops', [auto, heldPost])]);
     const html = renderToStaticMarkup(
-      createElement(PendingDecisionsPanel, { members, surfaces: [connectedSlack], onApproveBatch: vi.fn(async (): Promise<void> => {}) }),
+      createElement(PendingDecisionsPanel, {
+        members,
+        surfaces: [connectedSlack],
+        onApproveBatch: vi.fn(async (): Promise<void> => {}),
+      }),
     );
     expect(html).toBe('');
   });
@@ -499,7 +603,10 @@ describe('the cross-item approval panel', (): void => {
 describe('the manager DM mode control', (): void => {
   it('offers per-run and hourly digest, with the current mode selected', (): void => {
     const html = renderToStaticMarkup(
-      createElement(NotificationModeControl, { mode: 'digest', onChange: async (): Promise<void> => undefined }),
+      createElement(NotificationModeControl, {
+        mode: 'digest',
+        onChange: async (): Promise<void> => undefined,
+      }),
     );
     expect(html).toContain('Manager DMs');
     expect(html).toContain('<option value="per-run">per run</option>');
@@ -521,7 +628,11 @@ describe('manager feedback on the card', (): void => {
   it('shows a rejection reason and a retry note in every state, and says when a run addressed it', (): void => {
     const rejection = renderToStaticMarkup(
       createElement(ManagerFeedbackNote, {
-        feedback: { reason: 'Quote the three checks.', at: Date.parse('2026-09-14T12:55:00Z'), kind: 'rejection' },
+        feedback: {
+          reason: 'Quote the three checks.',
+          at: Date.parse('2026-09-14T12:55:00Z'),
+          kind: 'rejection',
+        },
       }),
     );
     expect(rejection).toContain('Rejection reason');
@@ -551,7 +662,7 @@ describe('manager feedback on the card', (): void => {
 });
 
 describe('plan execution ledger on the card', (): void => {
-  it('says when a step was satisfied on the manager\'s word', (): void => {
+  it("says when a step was satisfied on the manager's word", (): void => {
     const html = renderToStaticMarkup(
       createElement(PlanExecutionLedger, {
         outcomes: [
@@ -565,7 +676,9 @@ describe('plan execution ledger on the card', (): void => {
         ],
       }),
     );
-    expect(html).toContain('Step 1 · satisfied by manager feedback - Manager: REVOPS-7 is owned by Priya.');
+    expect(html).toContain(
+      'Step 1 · satisfied by manager feedback - Manager: REVOPS-7 is owned by Priya.',
+    );
     expect(html).toContain('Step 2 · satisfied - save_comment landed.');
   });
 });

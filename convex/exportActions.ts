@@ -21,7 +21,9 @@ export const exportForAgent = action({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<AgentTrace> => {
     const agent = await assertOwnsAgentAction(ctx, args.agentId);
-    const trace: AgentTrace = await ctx.runQuery(internal.events.exportForAgent, { agentId: args.agentId });
+    const trace: AgentTrace = await ctx.runQuery(internal.events.exportForAgent, {
+      agentId: args.agentId,
+    });
     const known = agent.userId ? await ownerKnownValues(ctx, agent.userId) : [];
     return scrubKnownValues(trace, known);
   },
