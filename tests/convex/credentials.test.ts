@@ -14,6 +14,7 @@ import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
+import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 
 /** The Linear writes the MCP transport received, with the bearer it was opened with. */
 const mcpCalls = vi.hoisted(() => [] as Array<{ bearer?: string; tool: string }>);
@@ -609,6 +610,10 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
     harness: TestConvex<typeof schema>,
     surface: 'slack' | 'linear',
     credentialId: Id<'credentials'>,
+    slack: { managerDm: string; channel: string } = {
+      managerDm: 'D0MANAGER',
+      channel: 'D0MANAGER',
+    },
   ): Promise<Id<'workItems'>> {
     const { workItemId, runId } = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
@@ -640,7 +645,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
               path: 'documented-api',
               toolAllowlist: ['chat.postMessage'],
               toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
-              managerDmChannelId: 'D0MANAGER',
+              managerDmChannelId: slack.managerDm,
               managerUserId: 'UMANAGER',
               credentialId,
               ...live,
@@ -692,7 +697,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
               method: 'POST',
               path: '/chat.postMessage',
               headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
-              body: JSON.stringify({ channel: 'D0MANAGER', text: 'The close summary is ready.' }),
+              body: JSON.stringify({ channel: slack.channel, text: 'The close summary is ready.' }),
             },
           }
         : {
@@ -766,6 +771,53 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
     expect(refused.applied.ok).toBe(false);
     expect(refused.applied.reason).toContain('Credential is unavailable');
     expect(posts).toHaveLength(1);
+  });
+
+  it("records the fake Slack's own refusal, and lands what it accepts", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { internal: liveInternal } = await import('../../convex/_generated/api');
+    const fake = await startFakeSlack();
+    try {
+      // The transport resolves Slack to the compose alias; the alias is this spawned service.
+      vi.stubEnv('DAY0_TEST_SLACK_API_URL', 'http://fake-slack/api/');
+      const network = globalThis.fetch;
+      vi.stubGlobal(
+        'fetch',
+        async (input: URL | string, init?: RequestInit): Promise<Response> =>
+          await network(String(input).replace('http://fake-slack', fake.base), init),
+      );
+      const harness = convexTest(schema, allConvexModules());
+      const credentialId = await harness.action(liveInternal.credentials.store, {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        plaintext: FAKE_BOT_TOKEN,
+        source: 'entered',
+      });
+
+      const dm = await approvedWrite(harness, 'slack', credentialId, {
+        managerDm: 'D_DAY0_MANAGER',
+        channel: 'D_DAY0_MANAGER',
+      });
+      await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: dm });
+      expect(await landed(harness, dm)).toMatchObject({
+        state: 'completed',
+        applied: { ok: true },
+      });
+
+      const elsewhere = await approvedWrite(harness, 'slack', credentialId, {
+        managerDm: 'D_DAY0_MANAGER',
+        channel: 'C_ELSEWHERE',
+      });
+      await harness.action(liveInternal.workActions.applyApprovedActions, {
+        workItemId: elsewhere,
+      });
+      const refused = await landed(harness, elsewhere);
+      expect(refused.applied.ok).toBe(false);
+      expect(refused.applied.reason).toContain('not_in_channel');
+    } finally {
+      fake.stop();
+    }
   });
 
   it('opens the Linear client with the value the row decrypts to, and opens none once the row is revoked', async (): Promise<void> => {
