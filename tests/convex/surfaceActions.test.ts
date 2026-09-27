@@ -1155,12 +1155,15 @@ describe('probing a documented API that is not Slack', (): void => {
     );
     expect(outcome).toEqual({
       verdict: 'connected',
-      toolAllowlist: ['issues', 'comments'],
+      toolAllowlist: ['GET issues', 'POST comments'],
       channelsNotJoined: [],
       managerDmReady: false,
     });
     expect(connected).toEqual([
-      expect.objectContaining({ toolAllowlist: ['issues', 'comments'], toolArguments: [] }),
+      expect.objectContaining({
+        toolAllowlist: ['GET issues', 'POST comments'],
+        toolArguments: [],
+      }),
     ]);
     expect(tracker.urls).toEqual(['https://tracker.example.com/api/v2/issues']);
     expect(probeSlack).not.toHaveBeenCalled();

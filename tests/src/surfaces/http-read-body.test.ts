@@ -60,7 +60,7 @@ const northstar: SurfaceRecord = {
   lastVerifiedAt: now,
   endpoint: 'https://northstar.example.test/api/',
   path: 'documented-api',
-  toolAllowlist: ['issues.list', 'v1/search'],
+  toolAllowlist: ['issues.list', 'GET v1/search'],
   credentialId: 'cred-northstar',
   credentialKind: 'value',
 };

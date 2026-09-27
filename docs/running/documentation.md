@@ -126,15 +126,18 @@ The Tracker API base is https://tracker.example.com/api/v2/.
 - An operation is a verb (`GET`, `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE`) and a path in
   backticks, written from the base (`GET /issues`) or as a full address under it
   (`GET https://tracker.example.com/api/v2/projects`). A query string is ignored.
-- Paths are matched exactly. An operation whose path has a placeholder segment (`{id}`, `:id` or
-  `<id>`) is left out, because no real request would ever match it: `GET /issues/{id}` in the
-  example above is not callable. Until placeholders are supported, document a per-record read
-  with the id in the query (`GET /issues?id=`) if the API offers one.
+- The verb is part of the operation. Documenting `GET /issues` lets the employee list issues and
+  nothing else at that path: a `DELETE /issues` or a `PATCH /issues` is refused. Document each
+  verb the employee may use.
+- A path segment that stands for a value is written `{id}` (`:id` and `<id>` are read the same
+  way). It matches any one segment of a request: `GET /issues/{id}` admits `GET /issues/ENG-12`,
+  but not `GET /issues/ENG-12/comments`, which needs its own line. A placeholder must be a whole
+  segment; `/issues/{id}.json` matches nothing.
 - The key's header is the first header in backticks that carries `{{secret}}`
   (`X-Api-Key: {{secret}}`, `Authorization: Token {{secret}}`), or an `Authorization` header
   with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token.
-- day0 checks the key with the first documented `GET` that only reads, never one that changes
-  anything, and does not follow a redirect. A page with no operation, or no read among them,
+- day0 checks the key with the first documented `GET` without a `{id}` segment that only reads,
+  never one that changes anything, and does not follow a redirect. A page with no operation, or no read among them,
   leaves the system unconnected with a card that says so; that is day0's limitation, not
   evidence that the system is unavailable.
 - The base address follows the same rule as an MCP endpoint: public `https`, or a host the

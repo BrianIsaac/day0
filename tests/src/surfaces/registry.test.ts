@@ -719,7 +719,7 @@ describe('applying surface actions', (): void => {
       class: 'crm',
       endpoint: 'https://crm.day0.local/api/',
       path: 'documented-api',
-      toolAllowlist: ['records/1'],
+      toolAllowlist: ['PATCH records/1'],
       credentialId: 'cred-crm',
     };
     const httpRecorded: Recorded = { mcp: [], http: [] };
@@ -1883,7 +1883,7 @@ describe('a browser session across the apply invocations of one run', (): void =
         slug: 'ticket-api',
         endpoint: 'https://tickets.example/api/',
         path: 'documented-api',
-        toolAllowlist: ['issues/iss-1/comments'],
+        toolAllowlist: ['POST issues/iss-1/comments'],
         credentialKind: 'oauth',
       };
       const ticketComment: MockAction = {

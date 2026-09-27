@@ -6,11 +6,14 @@ import { checkMcpAddress, McpAddressRefusal, pinnedFetch } from './mcp-address';
 import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
   actionIntent,
+  allowlistEntry,
+  canonicalOperation,
   documentedRpcRead,
+  operationRefusal,
+  operationUnderBase,
   parseSurfaceAction,
   resolveRequestUrl,
   surfaceRefusal,
-  TOOL_NOT_ALLOWED,
   type HttpMethod,
   type ParsedHttpRequest,
 } from './policy';
@@ -176,9 +179,6 @@ export function providerIdFrom(payload: unknown): string | undefined {
 /** A verb and path the documentation gives for one operation, as `` `GET /issues` ``. */
 const DOCUMENTED_OPERATION = /`\s*(GET|HEAD|POST|PUT|PATCH|DELETE)\s+([^\s`]+)\s*`/g;
 
-/** A path segment that stands for a value: `{id}`, `:id` or `<id>`. */
-const PATH_PARAMETER = /(?:^|\/)(?:\{[^/}]*\}|:[A-Za-z_][\w-]*|<[^/>]*>)(?=\/|$)/;
-
 /**
  * A header the documentation shows the credential in: `` `X-Api-Key: {{secret}}` ``,
  * `` `Authorization: Token {{secret}}` `` or, without the placeholder,
@@ -241,14 +241,28 @@ function operationUnder(base: URL, written: string): string | undefined {
   return target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
 }
 
+/** The documented base as the operations are read under it, or undefined when it is not a URL. */
+function documentedBase(endpoint: string): URL | undefined {
+  let base: URL;
+  try {
+    base = new URL(endpoint);
+  } catch {
+    // An endpoint that is not a URL names no operation; the probe says so.
+    return undefined;
+  }
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  return base;
+}
+
 /**
  * Read the operations a surface's documentation names on its API.
  *
  * An operation is a backticked verb and path, written relative to the
- * documented base (`` `GET /issues` ``) or as an address under it. A path with
- * a parameter segment is left out: the HTTP rung and the gate compare a
- * request's path with the allowlist exactly, so a template could never match
- * the request it describes. The query is not part of an operation.
+ * documented base (`` `GET /issues` ``) or as an address under it. A segment
+ * that stands for a value (`{id}`, `:id` or `<id>`) is kept as `{id}` and
+ * matches any one segment of a request, so `GET /issues/{id}` admits
+ * `GET /issues/ENG-12` and nothing longer. The query is not part of an
+ * operation.
  *
  * @param documentation - The surface's own documentation.
  * @param endpoint - The documented API base the surface was approved with.
@@ -258,23 +272,17 @@ export function documentedApiOperations(
   documentation: string,
   endpoint: string,
 ): DocumentedApiOperation[] {
-  let base: URL;
-  try {
-    base = new URL(endpoint);
-  } catch {
-    // An endpoint that is not a URL names no operation; the probe says so.
-    return [];
-  }
-  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  const base = documentedBase(endpoint);
+  if (!base) return [];
   const found = new Map<string, DocumentedApiOperation>();
   for (const match of documentation.matchAll(DOCUMENTED_OPERATION)) {
     const written = match[2].split(/[?#]/, 1)[0];
-    if (PATH_PARAMETER.test(written)) continue;
     const operation = operationUnder(base, written);
     if (!operation) continue;
     const method = match[1] as HttpMethod;
-    const key = `${method} ${operation}`;
-    if (!found.has(key)) found.set(key, { method, operation });
+    const entry = { method, operation: canonicalOperation(operation) };
+    const key = allowlistEntry(entry.method, entry.operation);
+    if (!found.has(key)) found.set(key, entry);
   }
   return [...found.values()];
 }
@@ -349,6 +357,7 @@ export async function probeDocumentedApi(
   const read = operations.find(
     (entry: DocumentedApiOperation): boolean =>
       entry.method === 'GET' &&
+      !entry.operation.includes('{') &&
       actionIntent({
         kind: 'http.request',
         surface: '',
@@ -401,9 +410,9 @@ export async function probeDocumentedApi(
     throw new Error(`${label} answered ok: false${detail}.`);
   }
   return {
-    toolAllowlist: [
-      ...new Set(operations.map((entry: DocumentedApiOperation): string => entry.operation)),
-    ],
+    toolAllowlist: operations.map((entry: DocumentedApiOperation): string =>
+      allowlistEntry(entry.method, entry.operation),
+    ),
     toolArguments: [],
   };
 }
@@ -504,17 +513,12 @@ export class HttpAdapter implements SurfaceAdapter {
     } catch (error) {
       return { tool: action.tool, ok: false, reason: (error as Error).message, idempotencyKey };
     }
-    const base = new URL(transportEndpoint);
-    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
-    const operation = url.pathname.slice(base.pathname.length).replace(/^\/+/, '');
-    if (!surface.toolAllowlist?.includes(operation)) {
-      return {
-        tool: action.tool,
-        ok: false,
-        reason: `${TOOL_NOT_ALLOWED} (${operation})`,
-        idempotencyKey,
-      };
-    }
+    const unlisted = operationRefusal(
+      surface.toolAllowlist,
+      request.method,
+      operationUnderBase(url, transportEndpoint),
+    );
+    if (unlisted) return { tool: action.tool, ok: false, reason: unlisted, idempotencyKey };
     if (!surface.credentialId) {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }

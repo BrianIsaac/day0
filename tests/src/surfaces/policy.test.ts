@@ -3,7 +3,9 @@ import {
   ACTION_JSON_LIMIT_BYTES,
   actionClass,
   actionIntent,
+  allowlistEntry,
   applyProvenance,
+  canonicalOperation,
   containsProvenanceTrailer,
   describeAction,
   grantingScopes,
@@ -23,6 +25,7 @@ import {
   needsStandingGrant,
   NOT_AUTOMATIC,
   normaliseActionVerdict,
+  operationRefusal,
   parseSurfaceAction,
   provenanceTrailer,
   requiredScope,
@@ -1700,5 +1703,62 @@ describe('a replayed browser call under the authority it first landed with', ():
         revokedScopes: new Set(['looker:read']),
       }),
     ).toBe('no grant (looker:read)');
+  });
+});
+
+describe('the operations a documented API allowlist admits', (): void => {
+  const tracker: SurfaceRecord = {
+    slug: 'tracker',
+    displayName: 'Tracker',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialLanded: true,
+    endpoint: 'https://tracker.example.com/api/v2/',
+    path: 'documented-api',
+    toolAllowlist: [allowlistEntry('GET', 'issues'), allowlistEntry('PATCH', 'issues/{id}')],
+    credentialId: 'cred-tracker',
+    credentialKind: 'value',
+  };
+  const http = (method: string, path: string) => {
+    const parsed = parseSurfaceAction({
+      tool: 'http.request',
+      args: { surface: 'tracker', method, path, headersJson: '{}' },
+    } as MockAction);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    return parsed.action;
+  };
+
+  it('keeps the verb with the path, so GET /issues never admits DELETE /issues (review M3)', (): void => {
+    expect(toolRefusal(http('GET', '/issues'), tracker)).toBeUndefined();
+    expect(toolRefusal(http('DELETE', '/issues'), tracker)).toBe(
+      'tool not in the surface allowlist (DELETE issues)',
+    );
+    expect(toolRefusal(http('POST', '/issues'), tracker)).toBeDefined();
+  });
+
+  it('matches a template segment against exactly one segment of the request', (): void => {
+    expect(toolRefusal(http('PATCH', '/issues/ENG-12'), tracker)).toBeUndefined();
+    expect(toolRefusal(http('PATCH', '/issues/ENG-12?notify=false'), tracker)).toBeUndefined();
+    expect(toolRefusal(http('PATCH', '/issues/ENG-12/labels'), tracker)).toBeDefined();
+    expect(toolRefusal(http('PATCH', '/issues'), tracker)).toBeDefined();
+    expect(toolRefusal(http('GET', '/issues/ENG-12'), tracker)).toBeDefined();
+    expect(operationRefusal(['GET issues/{id}'], 'GET', 'issues/')).toBeDefined();
+  });
+
+  it('keeps an RPC method path-only, and admits nothing for a bare REST path', (): void => {
+    expect(operationRefusal(['chat.postMessage'], 'POST', 'chat.postMessage')).toBeUndefined();
+    expect(operationRefusal(['chat.postMessage'], 'GET', 'chat.postMessage')).toBeUndefined();
+    // An entry written before the verb was kept admits no verb at all.
+    expect(operationRefusal(['issues'], 'GET', 'issues')).toBe(
+      'tool not in the surface allowlist (GET issues)',
+    );
+  });
+
+  it('writes every spelling of a value segment one way, however a URL encoded it', (): void => {
+    expect(canonicalOperation('issues/%7Bid%7D')).toBe('issues/{id}');
+    expect(canonicalOperation('issues/:id/comments')).toBe('issues/{id}/comments');
+    expect(canonicalOperation('issues/%3Ckey%3E')).toBe('issues/{key}');
+    expect(canonicalOperation('issues/{id}.json')).toBe('issues/{id}.json');
+    expect(canonicalOperation('issues/%E0%A4%A')).toBe('issues/%E0%A4%A');
   });
 });

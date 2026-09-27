@@ -40,15 +40,6 @@ function example(name: string): string {
   return found[1]!;
 }
 
-/** The documented-API grammar's readers, present once the HTTP rung reads a page. */
-const apiGrammar = http as unknown as {
-  documentedApiOperations?: (
-    documentation: string,
-    endpoint: string,
-  ) => Array<{ method: string; operation: string }>;
-  documentedCredentialHeader?: (documentation: string) => { name: string; scheme?: string };
-};
-
 /** One synced page, as orientation reads it. */
 function page(ref: string, markdown: string): Doc<'docPages'> {
   return {
@@ -153,20 +144,15 @@ describe('the documentation author guide', (): void => {
     );
   });
 
-  // prettier-ignore
-  it.skipIf(apiGrammar.documentedApiOperations === undefined)( // skipped until the documented-API probe (wave 3 U6) lands its grammar
-    'admits the documented operations, leaves the placeholder path out and finds the key header',
-    (): void => {
-      const text = example('api-operations');
-      expect(
-        apiGrammar.documentedApiOperations!(text, 'https://tracker.example.com/api/v2/'),
-      ).toEqual([
-        { method: 'GET', operation: 'issues' },
-        { method: 'POST', operation: 'comments' },
-      ]);
-      expect(apiGrammar.documentedCredentialHeader!(text)).toEqual({ name: 'X-Api-Key' });
-    },
-  );
+  it('admits each documented operation with its verb, the value segment kept, and finds the key header', (): void => {
+    const text = example('api-operations');
+    expect(http.documentedApiOperations(text, 'https://tracker.example.com/api/v2/')).toEqual([
+      { method: 'GET', operation: 'issues' },
+      { method: 'POST', operation: 'comments' },
+      { method: 'GET', operation: 'issues/{id}' },
+    ]);
+    expect(http.documentedCredentialHeader(text)).toEqual({ name: 'X-Api-Key' });
+  });
 
   it('finds the manifest block', (): void => {
     const manifest = example('manifest');

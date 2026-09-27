@@ -515,14 +515,17 @@ describe('the operations a documented API offers', (): void => {
       { method: 'GET', operation: 'issues' },
       { method: 'GET', operation: 'projects' },
       { method: 'POST', operation: 'comments' },
+      { method: 'GET', operation: 'issues/{id}' },
     ]);
   });
 
-  // The HTTP rung and the gate compare a request's path with the allowlist
-  // exactly, so a templated path could never match a real request.
-  it('leaves out a path with a parameter segment, which no request matches exactly', (): void => {
-    const page = '`GET /issues/{id}` `GET /issues/:id/comments` `PATCH /issues/<id>`';
-    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  it('keeps a value segment as one template segment, whichever way the page spells it', (): void => {
+    const page = '`GET /issues/{id}` `GET /issues/:id/comments` `PATCH /issues/<key>`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([
+      { method: 'GET', operation: 'issues/{id}' },
+      { method: 'GET', operation: 'issues/{id}/comments' },
+      { method: 'PATCH', operation: 'issues/{key}' },
+    ]);
   });
 
   it('leaves out an address on another host or above the documented base', (): void => {
@@ -575,7 +578,7 @@ describe('the header a documented API takes its credential in', (): void => {
 });
 
 describe('probing a documented API that is not Slack', (): void => {
-  it('checks the credential with the first documented read and admits every documented path', async (): Promise<void> => {
+  it('checks the credential with the first documented read and admits every operation with its verb', async (): Promise<void> => {
     const tracker = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
     const discovery = await probeDocumentedApi(
       TRACKER,
@@ -584,7 +587,7 @@ describe('probing a documented API that is not Slack', (): void => {
       tracker.connect,
     );
     expect(discovery).toEqual({
-      toolAllowlist: ['issues', 'projects', 'comments'],
+      toolAllowlist: ['GET issues', 'GET projects', 'POST comments', 'GET issues/{id}'],
       toolArguments: [],
     });
     expect(tracker.calls).toHaveLength(1);
@@ -713,5 +716,62 @@ describe('probing a documented API that is not Slack', (): void => {
     expect(row).toMatchObject({ ok: true, effect: expect.stringContaining('Renewal call') });
     expect(fake.calls[0].url).toBe('https://tracker.example.com/api/v2/issues');
     expect(new Headers(fake.calls[0].init.headers).get('x-api-key')).toBe('tracker-key');
+  });
+});
+
+describe('the HTTP rung on a documented API that is not Slack', (): void => {
+  const tracker: SurfaceRecord = {
+    slug: 'tracker',
+    displayName: 'Tracker',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: TRACKER,
+    path: 'documented-api',
+    toolAllowlist: ['GET issues', 'GET issues/{id}', 'POST comments'],
+    credentialId: 'cred-tracker',
+    credentialKind: 'value',
+  };
+
+  const request = (method: string, path: string, body?: string): MockAction => ({
+    tool: 'http.request',
+    args: {
+      surface: 'tracker',
+      method,
+      path,
+      headersJson: JSON.stringify({ 'X-Api-Key': '{{secret}}' }),
+      ...(body === undefined ? {} : { body }),
+    },
+  });
+
+  it('refuses DELETE /issues when only GET /issues is documented (review M3)', async (): Promise<void> => {
+    const sent = fakeFetch(() => Response.json({}));
+    const rung = adapter(sent, [tracker], 'tracker-key');
+    for (const method of ['DELETE', 'PATCH', 'PUT']) {
+      await expect(rung.apply(ctx, run, request(method, '/issues'), 0, 'k')).resolves.toMatchObject(
+        { ok: false, reason: `tool not in the surface allowlist (${method} issues)` },
+      );
+    }
+    expect(sent.calls).toEqual([]);
+    await expect(rung.apply(ctx, run, request('GET', '/issues'), 0, 'k')).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('matches a templated operation one segment for one segment', async (): Promise<void> => {
+    const sent = fakeFetch(() => Response.json({ id: 'TRK-7' }));
+    const rung = adapter(sent, [tracker], 'tracker-key');
+    await expect(
+      rung.apply(ctx, run, request('GET', '/issues/TRK-7'), 0, 'k'),
+    ).resolves.toMatchObject({ ok: true, providerId: 'TRK-7' });
+    for (const path of ['/issues/TRK-7/comments', '/issues/', '/issues/TRK-7/../admin']) {
+      await expect(rung.apply(ctx, run, request('GET', path), 0, 'k')).resolves.toMatchObject({
+        ok: false,
+      });
+    }
+    expect(sent.calls.map((call) => call.url)).toEqual([
+      'https://tracker.example.com/api/v2/issues/TRK-7',
+    ]);
   });
 });
