@@ -306,6 +306,21 @@ export const charterChangeValidator = v.union(
     }),
   }),
   v.object({ kind: v.literal('remove-system'), name: v.string() }),
+  v.object({
+    kind: v.literal('edit-adjacent-role'),
+    index: v.number(),
+    role: v.object({ who: v.string(), staysOutOfTheirLaneBy: v.string() }),
+  }),
+  v.object({
+    kind: v.literal('edit-collaborator'),
+    index: v.number(),
+    collaborator: v.object({
+      name: v.string(),
+      topic: v.string(),
+      introPath: v.union(v.literal('manager'), v.literal('self'), v.literal('tbd')),
+    }),
+  }),
+  v.object({ kind: v.literal('set-approval-chain'), boss: v.string() }),
 );
 
 /** Who sent an amendment. */
