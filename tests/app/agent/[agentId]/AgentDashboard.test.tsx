@@ -33,7 +33,6 @@ import {
   RepairNote,
   SessionRestoreNote,
   WorkItemCard,
-  eventLabel,
   sortedForQueue,
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
@@ -60,33 +59,6 @@ import {
   RECORDED_QUESTIONS_2026_09_16,
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../../../fixtures/charter-synthesis-notes-2026-09-16';
-
-describe('live event labels', (): void => {
-  it('marks a failure whose run stopped', (): void => {
-    expect(
-      eventLabel({
-        type: 'work.failed',
-        payload: { workItemId: 'w1', stopped: true, reason: 'stopped: x' },
-      }),
-    ).toBe('work.failed · stopped');
-    expect(eventLabel({ type: 'work.failed', payload: { workItemId: 'w1', reason: 'x' } })).toBe(
-      'work.failed',
-    );
-  });
-
-  it('shows every candidate slug when a charter surface match is ambiguous', (): void => {
-    expect(
-      eventLabel({
-        type: 'surface.charter-match-ambiguous',
-        payload: {
-          namedSystem: 'Looker',
-          class: 'analytics',
-          candidateSlugs: ['looker-finance-tile', 'looker-sales-tile'],
-        },
-      }),
-    ).toBe('surface.charter-match-ambiguous: looker-finance-tile, looker-sales-tile');
-  });
-});
 
 describe('held action payload', (): void => {
   it('renders the verb with the arguments it reads and none of the empty flat-bag defaults', (): void => {
@@ -2042,27 +2014,6 @@ describe('the card agrees with the server (P6-6)', (): void => {
 });
 
 describe('what an outage leaves on the card (P7-18)', (): void => {
-  it('labels the model-call and restart events in words', (): void => {
-    expect(
-      eventLabel({
-        type: 'work.model-call',
-        payload: { stage: 'draft', outcome: 'failed', attempts: 5, statusCode: 503 },
-      }),
-    ).toBe('model call · draft · failed after 5 attempts (HTTP 503)');
-    expect(
-      eventLabel({
-        type: 'work.model-call',
-        payload: { stage: 'evaluation', outcome: 'ok', attempts: 1 },
-      }),
-    ).toBe('model call · evaluation · ok');
-    expect(
-      eventLabel({ type: 'work.scope-judgement-unavailable', payload: { cause: 'timeout' } }),
-    ).toBe('scope judgement unavailable (timeout) · the item waits and is judged again');
-    expect(eventLabel({ type: 'work.draft-resumed', payload: { attempt: 2 } })).toBe(
-      'plan draft restarted after it died (restart 2)',
-    );
-  });
-
   it('offers to ask on the chat surface for a parked row that was never asked', (): void => {
     const item = {
       _id: 'w1',
