@@ -381,9 +381,14 @@ const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
  * A user name or e-mail box is not one: it shows what is typed into it, so the
  * credential would sit on the page in clear text. The accessibility snapshot
  * does not say an input is `type=password`, so the field's name is what marks
- * it, and `credentialSlots` also requires the page to offer a text box.
+ * it, and `credentialSlots` also requires the page to offer a text box. The
+ * sign-in replay and the probe read the same names, so a fill the apply would
+ * refuse is never taken for a sign-in.
  */
-const CREDENTIAL_FIELD = /^(?:password|passcode|access code|secret|api key|token)$/i;
+export const CREDENTIAL_FIELD = /^(?:password|passcode|access code|secret|api key|token)$/i;
+
+/** The names a login form gives the field the account is named in, beside the credential. */
+export const LOGIN_NAME_FIELD = /^(?:user ?name|e-?mail(?: address)?)$/i;
 
 /** Whether any string anywhere in a tool-argument tree names the credential. */
 export function carriesSecretPlaceholder(value: unknown): boolean {
@@ -441,10 +446,20 @@ export function unknownPlaceholderRefusal(toolArgs: unknown): string | undefined
   return `unknown placeholder {{${found.name}}} in ${found.path || 'the arguments'}: a value was left unfilled, so the call was not sent`;
 }
 
-/** Whether a field or element description names a credential field. */
-function isCredentialField(description: unknown): boolean {
+/**
+ * Whether a field or element description names a credential field, role words
+ * aside: "Password field" and "Password" are the same field.
+ */
+export function isCredentialField(description: unknown): boolean {
   return (
     typeof description === 'string' && CREDENTIAL_FIELD.test(normaliseDescription(description))
+  );
+}
+
+/** Whether a field or element description names the account field of a login form. */
+export function isLoginNameField(description: unknown): boolean {
+  return (
+    typeof description === 'string' && LOGIN_NAME_FIELD.test(normaliseDescription(description))
   );
 }
 

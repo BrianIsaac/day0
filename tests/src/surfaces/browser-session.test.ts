@@ -6,6 +6,7 @@ import {
   type EarlierRows,
   type SessionRecipeStep,
 } from '../../../src/surfaces/browser-session';
+import { secretPlacementRefusal } from '../../../src/surfaces/browser';
 import type { ActionAuthority, AppliedAction } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
@@ -289,9 +290,9 @@ describe('the steps that re-establish a browser session', (): void => {
     ]);
   });
 
-  it('replays every credential fill of a sign-in that spans two pages', (): void => {
+  it('replays every fill of a sign-in that spans two pages', (): void => {
     const username = call('browser_fill_form', {
-      fields: [{ name: 'Email', value: '{{secret:looker}}' }],
+      fields: [{ name: 'Email', value: 'revops@kestrel.example' }],
     });
     const next = call('browser_click', { element: 'Next' });
     const recipe = sessionRecipe(
@@ -305,6 +306,85 @@ describe('the steps that re-establish a browser session', (): void => {
       ['browser_click', 'wi:run:2'],
       ['browser_fill_form', 'wi:run:3'],
       ['browser_click', 'wi:run:4'],
+    ]);
+  });
+
+  it('replays every click between the sign-in and the last navigate, reads stepped past', (): void => {
+    const acceptCookies = call('browser_click', { element: 'Accept cookies' });
+    const staySignedIn = call('browser_click', { element: 'Yes, stay signed in' });
+    const reports = navigate('http://looker-tile:8080/reports');
+    const recipe = sessionRecipe(
+      'looker',
+      run([
+        navigate(),
+        signIn,
+        clickSignIn,
+        acceptCookies,
+        snapshot,
+        staySignedIn,
+        reports,
+        snapshot,
+      ]),
+      ENDPOINT,
+    );
+    expect(tools(recipe)).toEqual([
+      ['browser_navigate', 'wi:run:0'],
+      ['browser_fill_form', 'wi:run:1'],
+      ['browser_click', 'wi:run:2'],
+      ['browser_click', 'wi:run:3'],
+      ['browser_click', 'wi:run:5'],
+      ['browser_navigate', 'wi:run:6'],
+    ]);
+    expect(recipe.map((step) => step.authority)).toEqual(Array(6).fill('autonomous'));
+  });
+
+  it('replays a navigate between two such clicks, so each click meets its own page', (): void => {
+    const menu = navigate('http://looker-tile:8080/menu');
+    const openPipeline = call('browser_click', { element: 'Pipeline' });
+    const reports = navigate('http://looker-tile:8080/reports');
+    const recipe = sessionRecipe(
+      'looker',
+      run([navigate(), signIn, clickSignIn, menu, openPipeline, reports]),
+      ENDPOINT,
+    );
+    expect(tools(recipe)).toEqual([
+      ['browser_navigate', 'wi:run:0'],
+      ['browser_fill_form', 'wi:run:1'],
+      ['browser_click', 'wi:run:2'],
+      ['browser_navigate', 'wi:run:3'],
+      ['browser_click', 'wi:run:4'],
+      ['browser_navigate', 'wi:run:5'],
+    ]);
+  });
+
+  it("stops at the run's first own write, so a Save before the last navigate is never sent again", (): void => {
+    const dismiss = call('browser_click', { element: 'Dismiss' });
+    const reports = navigate('http://looker-tile:8080/reports');
+    const recipe = sessionRecipe(
+      'looker',
+      run([navigate(), signIn, clickSignIn, dismiss, fillCoverage, clickSave, reports, snapshot]),
+      ENDPOINT,
+    );
+    expect(tools(recipe)).toEqual([
+      ['browser_navigate', 'wi:run:0'],
+      ['browser_fill_form', 'wi:run:1'],
+      ['browser_click', 'wi:run:2'],
+      ['browser_click', 'wi:run:3'],
+      ['browser_navigate', 'wi:run:6'],
+    ]);
+  });
+
+  it('replays no click after the sign-in when the run never navigated after it', (): void => {
+    const staySignedIn = call('browser_click', { element: 'Yes, stay signed in' });
+    const recipe = sessionRecipe(
+      'looker',
+      run([navigate(), signIn, clickSignIn, staySignedIn, snapshot]),
+      ENDPOINT,
+    );
+    expect(tools(recipe)).toEqual([
+      ['browser_navigate', 'wi:run:0'],
+      ['browser_fill_form', 'wi:run:1'],
+      ['browser_click', 'wi:run:2'],
     ]);
   });
 
@@ -368,7 +448,9 @@ describe('telling a sign-in from any other fill', (): void => {
     expect(signsIn(signIn, 'looker')).toBe(true);
     expect(
       signsIn(
-        call('browser_fill_form', { fields: [{ name: 'Email', value: '{{ secret:looker }}' }] }),
+        call('browser_fill_form', {
+          fields: [{ name: 'Password field', value: '{{ secret:looker }}' }],
+        }),
         'looker',
       ),
     ).toBe(true);
@@ -382,5 +464,28 @@ describe('telling a sign-in from any other fill', (): void => {
     expect(signsIn(clickSignIn, 'looker')).toBe(false);
     expect(signsIn(signIn, 'other')).toBe(false);
     expect(signsIn(undefined, 'looker')).toBe(false);
+  });
+
+  it('agrees with the apply: the credential in an account field is no sign-in (review m1)', (): void => {
+    const emailSecret = call('browser_fill_form', {
+      fields: [{ name: 'Email', value: '{{secret}}' }],
+    });
+    const userSecret = call('browser_fill_form', {
+      fields: [
+        { name: 'Username', value: '{{secret}}' },
+        { name: 'Password', value: '{{secret}}' },
+      ],
+    });
+    for (const fill of [emailSecret, userSecret]) {
+      expect(signsIn(fill, 'looker')).toBe(false);
+      const args = JSON.parse(String(fill.args.toolArgsJson)) as Record<string, unknown>;
+      expect(secretPlacementRefusal('browser_fill_form', args, 'looker')).toBeDefined();
+    }
+    const args = JSON.parse(String(signIn.args.toolArgsJson)) as Record<string, unknown>;
+    expect(secretPlacementRefusal('browser_fill_form', args, 'looker')).toBeUndefined();
+    // So the replay never picks a recipe the apply would refuse at its first step.
+    expect(
+      tools(sessionRecipe('looker', run([navigate(), emailSecret, clickSignIn]), ENDPOINT)),
+    ).toEqual([['browser_navigate', 'wi:run:0']]);
   });
 });

@@ -10,6 +10,8 @@ import {
   browserPageTitle,
   browserTitleMarker,
   carriesSecretPlaceholder,
+  isCredentialField,
+  isLoginNameField,
   DEFAULT_BROWSER_MCP_URL,
   elementDescriptions,
   navigationRefusal,
@@ -521,6 +523,21 @@ describe('a placeholder left in a tool argument', (): void => {
 describe('where a browser action may carry the credential', (): void => {
   const password: SnapshotElement = { name: 'Password', ref: 'e14', role: 'textbox' };
   const notes: SnapshotElement = { name: 'Password notes', ref: 'e30', role: 'textbox' };
+
+  it('names a credential field and an account field apart, role words aside', (): void => {
+    for (const name of ['Password', 'Password field', 'passcode', 'API key', 'Access code box']) {
+      expect(isCredentialField(name)).toBe(true);
+      expect(isLoginNameField(name)).toBe(false);
+    }
+    for (const name of ['Username', 'User name', 'E-mail address', 'Email field']) {
+      expect(isLoginNameField(name)).toBe(true);
+      expect(isCredentialField(name)).toBe(false);
+    }
+    for (const name of ['Password notes', 'Pipeline coverage', 42]) {
+      expect(isCredentialField(name)).toBe(false);
+      expect(isLoginNameField(name)).toBe(false);
+    }
+  });
 
   it('finds a placeholder anywhere in an argument tree', (): void => {
     expect(carriesSecretPlaceholder({ fields: [{ value: '{{ secret }}' }] })).toBe(true);
