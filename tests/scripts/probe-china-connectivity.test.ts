@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hasHostTools } from '../setup/host-tools';
+import { temporaryDirectories } from '../setup/temporary-directories';
+
+const temporary = temporaryDirectories();
 
 const SCRIPT = resolve('scripts/probe-china-connectivity.sh');
 
@@ -21,7 +23,7 @@ function runProbe(
   args: string[],
   env: Record<string, string> = {},
 ): { status: number | null; stdout: string; stderr: string } {
-  const directory = mkdtempSync(join(tmpdir(), 'day0-probe-china-'));
+  const directory = temporary('day0-probe-china-');
   const result = spawnSync('bash', [SCRIPT, ...args], {
     cwd: directory,
     encoding: 'utf8',
@@ -43,7 +45,7 @@ describe.skipIf(!hasHostTools('bash', 'curl'))(
     });
 
     it('reads the key from an env file without printing it', (): void => {
-      const directory = mkdtempSync(join(tmpdir(), 'day0-probe-china-env-'));
+      const directory = temporary('day0-probe-china-env-');
       const envFile = join(directory, '.env.local');
       const secret = ['fl', 'test', 'secret-value-9f1a'].join('-');
       writeFileSync(envFile, `OTHER=1\nFEATHERLESS_API_KEY="${secret}"\n`, 'utf8');
