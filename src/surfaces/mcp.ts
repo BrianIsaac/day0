@@ -288,10 +288,17 @@ export function interpretToolResult(result: unknown): InterpretedToolResult {
     const text = textBlocks[0]?.text ?? '';
     const errorMessage =
       providerErrorMessage(JSON.stringify(record.structuredContent) ?? '') ??
-      textBlocks.map((block) => providerErrorMessage(block.text)).find((message) => message !== undefined);
+      textBlocks
+        .map((block) => providerErrorMessage(block.text))
+        .find((message) => message !== undefined);
     const providerId =
       firstStringDeep(record.structuredContent, idKeys) ?? providerIdFromText(text, idKeys);
-    return withBodyError({ isError: record.isError === true || errorMessage !== undefined, text, providerId, errorMessage });
+    return withBodyError({
+      isError: record.isError === true || errorMessage !== undefined,
+      text,
+      providerId,
+      errorMessage,
+    });
   }
   const text = JSON.stringify(result);
   const errorMessage = providerErrorMessage(JSON.stringify(record.structuredContent) ?? '');
@@ -479,7 +486,10 @@ export class McpAdapter implements SurfaceAdapter {
   ): Promise<AppliedAction> {
     void index;
     return await this.send(
-      ctx, run, action, idempotencyKey,
+      ctx,
+      run,
+      action,
+      idempotencyKey,
       transportAuthority ? { authority: transportAuthority } : undefined,
     );
   }
@@ -516,7 +526,8 @@ export class McpAdapter implements SurfaceAdapter {
     const steps: SessionRestoreStep[] = [];
     for (const [n, step] of recipe.entries()) {
       const parsed = parseSurfaceAction(step.action);
-      const onSurface = parsed.ok && parsed.action.kind === 'mcp.call' && parsed.action.surface === surface.slug;
+      const onSurface =
+        parsed.ok && parsed.action.kind === 'mcp.call' && parsed.action.surface === surface.slug;
       const outcome = onSurface
         ? await this.send(ctx, run, step.action, `${baseKey}.session-${n}`, {
             authority: step.authority,
@@ -535,7 +546,8 @@ export class McpAdapter implements SurfaceAdapter {
         action: step.action,
       });
       if (!landed) {
-        const tool = parsed.ok && parsed.action.kind === 'mcp.call' ? parsed.action.tool : step.action.tool;
+        const tool =
+          parsed.ok && parsed.action.kind === 'mcp.call' ? parsed.action.tool : step.action.tool;
         return {
           ok: false,
           steps,
@@ -693,7 +705,12 @@ export class McpAdapter implements SurfaceAdapter {
             replay ? surface.endpoint : undefined,
           );
           if ('reason' in resolved) {
-            const redacted = await redactOutcome(resolved.reason, bearer, this.deps.spanModel, this.deps.knownValues);
+            const redacted = await redactOutcome(
+              resolved.reason,
+              bearer,
+              this.deps.spanModel,
+              this.deps.knownValues,
+            );
             return {
               tool: action.tool,
               ok: false,
@@ -709,12 +726,22 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
-        const redacted = await redactOutcome(result.text, bearer, this.deps.spanModel, this.deps.knownValues);
+        const redacted = await redactOutcome(
+          result.text,
+          bearer,
+          this.deps.spanModel,
+          this.deps.knownValues,
+        );
         const text = redacted.text;
         const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
         if (result.isError) {
           const errorResult = result.errorMessage
-            ? await redactOutcome(result.errorMessage, bearer, this.deps.spanModel, this.deps.knownValues)
+            ? await redactOutcome(
+                result.errorMessage,
+                bearer,
+                this.deps.spanModel,
+                this.deps.knownValues,
+              )
             : redacted;
           const reason = errorResult.text;
           return {
@@ -736,19 +763,39 @@ export class McpAdapter implements SurfaceAdapter {
             if (!page) {
               const snapshotTool = (await client.listTools())[`${surface.slug}_browser_snapshot`];
               if (!snapshotTool?.execute) {
-                return { tool: action.tool, ok: false, reason: 'the browser driver does not expose browser_snapshot', idempotencyKey };
+                return {
+                  tool: action.tool,
+                  ok: false,
+                  reason: 'the browser driver does not expose browser_snapshot',
+                  idempotencyKey,
+                };
               }
               const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
               if (snapshot.isError) {
-                return { tool: action.tool, ok: false, reason: 'browser_snapshot failed after the replayed click', idempotencyKey };
+                return {
+                  tool: action.tool,
+                  ok: false,
+                  reason: 'browser_snapshot failed after the replayed click',
+                  idempotencyKey,
+                };
               }
               page = browserPageUrl(snapshot.text);
             }
             if (!page) {
-              return { tool: action.tool, ok: false, reason: 'the browser driver reported no final page URL', idempotencyKey };
+              return {
+                tool: action.tool,
+                ok: false,
+                reason: 'the browser driver reported no final page URL',
+                idempotencyKey,
+              };
             }
             if (!surface.endpoint || !withinDocumentedSurface(page, surface.endpoint)) {
-              return { tool: action.tool, ok: false, reason: `the page is outside the approved surface (${surface.endpoint ?? 'no documented address'})`, idempotencyKey };
+              return {
+                tool: action.tool,
+                ok: false,
+                reason: `the page is outside the approved surface (${surface.endpoint ?? 'no documented address'})`,
+                idempotencyKey,
+              };
             }
           }
         }
@@ -757,7 +804,12 @@ export class McpAdapter implements SurfaceAdapter {
             ? browserSnapshotEvidence(text)
             : undefined;
         const identifier = result.providerId
-          ? await redactOutcome(result.providerId, bearer, this.deps.spanModel, this.deps.knownValues)
+          ? await redactOutcome(
+              result.providerId,
+              bearer,
+              this.deps.spanModel,
+              this.deps.knownValues,
+            )
           : undefined;
         return {
           tool: action.tool,
@@ -788,7 +840,9 @@ export class McpAdapter implements SurfaceAdapter {
               this.deps.spanModel,
               this.deps.knownValues,
             );
-      const reason = failure ? clipEffect(failure.text, EFFECT_LENGTH) : BROWSER_DRIVER_ABSENT_REASON;
+      const reason = failure
+        ? clipEffect(failure.text, EFFECT_LENGTH)
+        : BROWSER_DRIVER_ABSENT_REASON;
       return {
         tool: action.tool,
         ok: false,

@@ -200,7 +200,8 @@ export function buildSlackManifest(input: {
   template: string;
 }): BuiltSlackManifest {
   const agentName = input.agentName.trim();
-  if (!agentName) throw new ManifestTemplateError('The employee has no name to register an app for.');
+  if (!agentName)
+    throw new ManifestTemplateError('The employee has no name to register an app for.');
   const origin = publicOrigin(input.publicUrl);
 
   let parsed: unknown;

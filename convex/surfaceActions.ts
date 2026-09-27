@@ -189,10 +189,7 @@ async function day0Step<T>(what: string, step: () => Promise<T>): Promise<T> {
 const ACCESS_REFUSAL =
   /\b(?:HTTP\s+)?(?:401|403)\b|\bunauthori[sz]ed\b|\bforbidden\b|invalid[_ -]?(?:auth|token|credential)|token[_ -]?expired|missing[_ -]?scope|not[_ -]?authed|not a member|no manager email|deactivated|own bot user/i;
 
-function probeFailureVerdict(
-  error: unknown,
-  safeReason: string,
-): 'ungranted' | 'listed-dead' {
+function probeFailureVerdict(error: unknown, safeReason: string): 'ungranted' | 'listed-dead' {
   if (error instanceof Day0ProbeLimitation || safeReason.includes(BROWSER_DRIVER_ABSENT)) {
     return 'ungranted';
   }
@@ -520,14 +517,14 @@ async function assertPublicMcpAddresses(
       'Day0 could not resolve the approved MCP hostname; its own resolver did not answer.',
     );
   }
-  if (addresses.length === 0) throw new Error('The approved MCP endpoint hostname did not resolve.');
+  if (addresses.length === 0)
+    throw new Error('The approved MCP endpoint hostname did not resolve.');
   const hasNonPublicAddress = addresses.some((address: string): boolean => {
     const family = isIP(address);
     if (family === 4) return NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv4');
     if (family === 6) {
       return (
-        !GLOBAL_UNICAST_V6.check(address, 'ipv6') ||
-        NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv6')
+        !GLOBAL_UNICAST_V6.check(address, 'ipv6') || NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv6')
       );
     }
     return true;
@@ -1054,10 +1051,13 @@ export async function runSurfaceProbe(
   ): Promise<ProbeOutcome | undefined> => {
     const attemptedAt = dependencies.now();
     if (descend) {
-      const demoted: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
-        internal.surfaces.demoteAfterProbeFailure,
-        { surfaceId, generation, reason, attemptedAt },
-      );
+      const demoted: { surface: Doc<'surfaces'>; generation: number } | null =
+        await ctx.runMutation(internal.surfaces.demoteAfterProbeFailure, {
+          surfaceId,
+          generation,
+          reason,
+          attemptedAt,
+        });
       if (demoted) {
         surface = demoted.surface;
         generation = demoted.generation;

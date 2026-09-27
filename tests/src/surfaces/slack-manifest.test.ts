@@ -51,11 +51,13 @@ describe('the manifest template on the policy page', (): void => {
   });
 
   it('is absent from a page that documents no procedure', (): void => {
-    expect(extractManifestTemplate('# Linear automation\n\nEndpoint: https://mcp.linear.app/mcp')).toBeUndefined();
+    expect(
+      extractManifestTemplate('# Linear automation\n\nEndpoint: https://mcp.linear.app/mcp'),
+    ).toBeUndefined();
   });
 });
 
-describe('building one employee\'s manifest', (): void => {
+describe("building one employee's manifest", (): void => {
   it('takes the name from the agent and the redirect from the public URL', (): void => {
     const built = buildSlackManifest({
       agentName: 'ops worker',

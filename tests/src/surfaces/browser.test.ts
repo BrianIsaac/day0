@@ -63,7 +63,7 @@ describe('a driver that is not listening', (): void => {
     expect(isDriverUnreachable('getaddrinfo ENOTFOUND playwright-mcp')).toBe(true);
   });
 
-  it('reads the MCP client\'s own wording, which hides the cause', (): void => {
+  it("reads the MCP client's own wording, which hides the cause", (): void => {
     // Verbatim from a live probe against a stopped component.
     expect(
       isDriverUnreachable(
@@ -224,9 +224,9 @@ describe('checking where a browser navigation landed', (): void => {
   });
 
   it('reads only an explicit backticked title marker from documentation', (): void => {
-    expect(
-      browserTitleMarker('- Probe marker: page title `Pipeline coverage - Looker`.'),
-    ).toBe('Pipeline coverage - Looker');
+    expect(browserTitleMarker('- Probe marker: page title `Pipeline coverage - Looker`.')).toBe(
+      'Pipeline coverage - Looker',
+    );
     expect(browserTitleMarker('Open the browser and look for Pipeline coverage.')).toBeUndefined();
   });
 
@@ -326,7 +326,9 @@ describe('resolving an element a skill named', (): void => {
   });
 
   it('still resolves a field whose name adds a unit to the description', (): void => {
-    const page = ['- generic [ref=e4]: L', '- textbox "Pipeline coverage (%)" [ref=e24]'].join('\n');
+    const page = ['- generic [ref=e4]: L', '- textbox "Pipeline coverage (%)" [ref=e24]'].join(
+      '\n',
+    );
     expect(resolveElementRef(page, 'Pipeline coverage')).toEqual({
       name: 'Pipeline coverage (%)',
       ref: 'e24',

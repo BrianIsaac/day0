@@ -159,7 +159,9 @@ function containsWords(outer: string, inner: string): boolean {
   const needle = words(inner);
   if (needle.length === 0 || needle.length > haystack.length) return false;
   for (let start = 0; start + needle.length <= haystack.length; start += 1) {
-    if (needle.every((word: string, offset: number): boolean => haystack[start + offset] === word)) {
+    if (
+      needle.every((word: string, offset: number): boolean => haystack[start + offset] === word)
+    ) {
       return true;
     }
   }
@@ -204,7 +206,9 @@ export function resolveElementRef(
   );
   if (exact) return exact;
   const normalised = preferInteractive(
-    elements.filter((e: SnapshotElement): boolean => normaliseDescription(e.name) === loose && canUseShortName(e)),
+    elements.filter(
+      (e: SnapshotElement): boolean => normaliseDescription(e.name) === loose && canUseShortName(e),
+    ),
   );
   if (normalised) return normalised;
   return preferInteractive(

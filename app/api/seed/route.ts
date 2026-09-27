@@ -5,11 +5,7 @@ import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import {
-  DEV_NO_AUTH_COOKIE,
-  isDevNoAuthSecret,
-  mintDevNoAuthToken,
-} from '@/lib/dev-auth-server';
+import { DEV_NO_AUTH_COOKIE, isDevNoAuthSecret, mintDevNoAuthToken } from '@/lib/dev-auth-server';
 
 /**
  * Seeds the demo environment for the just-deployed agent. Called from
