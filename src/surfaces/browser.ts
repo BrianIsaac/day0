@@ -344,6 +344,52 @@ export function carriesSecretPlaceholder(value: unknown): boolean {
   return false;
 }
 
+/** Any `{{...}}` placeholder, capturing what it names. */
+const ANY_PLACEHOLDER = /\{\{\s*([^{}]*?)\s*\}\}/g;
+
+/** What a placeholder of the `{{secret}}` family names, bare or qualified. */
+const SECRET_NAME = /^secret(?:[:.][A-Za-z0-9_-]+)?$/;
+
+/** The first placeholder outside the `{{secret}}` family in an argument tree, with its dotted path. */
+function firstUnknownPlaceholder(
+  value: unknown,
+  path: string,
+): { path: string; name: string } | undefined {
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(ANY_PLACEHOLDER)) {
+      if (!SECRET_NAME.test(match[1])) return { path, name: match[1] };
+    }
+    return undefined;
+  }
+  const entries: Array<[string, unknown]> = Array.isArray(value)
+    ? value.map((entry: unknown, index: number): [string, unknown] => [String(index), entry])
+    : value && typeof value === 'object'
+      ? Object.entries(value as Record<string, unknown>)
+      : [];
+  for (const [key, entry] of entries) {
+    const found = firstUnknownPlaceholder(entry, path ? `${path}.${key}` : key);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Why a tool call may not be sent because an argument still carries a
+ * placeholder other than `{{secret}}`, or undefined when none does.
+ *
+ * Only the credential is ever substituted, and only where a credential field
+ * takes it. A model that wrote `{{figure}}` meant a value it did not fill in,
+ * and posting the braces would put a half-written message in front of a
+ * colleague, so the MCP and browser rungs refuse it as the HTTP rung does.
+ *
+ * @param toolArgs - The tool's arguments as the skill emitted them.
+ */
+export function unknownPlaceholderRefusal(toolArgs: unknown): string | undefined {
+  const found = firstUnknownPlaceholder(toolArgs, '');
+  if (!found) return undefined;
+  return `unknown placeholder {{${found.name}}} in ${found.path || 'the arguments'}: a value was left unfilled, so the call was not sent`;
+}
+
 /** Whether a field or element description names a credential field. */
 function isCredentialField(description: unknown): boolean {
   return (
