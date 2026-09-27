@@ -453,21 +453,22 @@ function summariseDecisions(totals: DecisionTotals): AgentMetrics['decisions'] {
 
 /**
  * One held, refused, approved or rejected action's key: the run and the
- * index, with `closing` between them for a closing set. A closing set's
- * indexes start again at 0 under the same run, so without the phase its rows
- * would take phase one's keys. A run is in its closing phase from its
- * `work.dependent-authoring` event on, which also covers the second pending
- * event a closing set writes without the flag. A single phase keeps the key
- * the ledger's idempotency keys give, so a refusal both saw is one refusal.
+ * action's durable index, the one its idempotency key carries, so a refusal
+ * the hold and the ledger both saw is one refusal. A closing set's indexes
+ * start again at 0 while its idempotency keys continue after phase one's
+ * actions, so its index is offset by the prerequisite count its run's
+ * `work.dependent-authoring` event records; that also covers the second
+ * pending event a closing set writes without the flag.
  */
 function eventActionKey(
   payload: UnknownRecord,
   index: number,
-  closingRuns: ReadonlySet<string>,
+  closingOffsets: ReadonlyMap<string, number>,
 ): string {
   const run = asString(payload.runId) ?? asString(payload.workItemId) ?? 'unknown';
-  const closing = payload.dependentPhase === true || closingRuns.has(run);
-  return closing ? `${run}:closing:${index}` : `${run}:${index}`;
+  const offset = closingOffsets.get(run);
+  if (offset !== undefined) return `${run}:${offset + index}`;
+  return payload.dependentPhase === true ? `${run}:closing:${index}` : `${run}:${index}`;
 }
 
 /** What an automatic row did: read, told the manager, or wrote to a system. */
@@ -501,27 +502,28 @@ function actionMetrics(
   const refused = new Set<string>();
   const refusalObservations = new Map<string, { reason: string; at: number }>();
   const lastPending = new Map<string, { payload: UnknownRecord; at: number }>();
-  const closingRuns = new Set<string>();
+  const closingOffsets = new Map<string, number>();
   for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     if (!payload) continue;
     if (event.type === 'work.dependent-authoring') {
       const run = asString(payload.runId);
-      if (run) closingRuns.add(run);
+      const offset = payload.prerequisiteActionCount;
+      if (run) closingOffsets.set(run, Number.isInteger(offset) ? (offset as number) : 0);
       continue;
     }
     if (event.type === 'work.actions-auto-applying' || event.type === 'work.actions-pending') {
       for (const index of asIndexes(payload.heldIndexes))
-        held.add(eventActionKey(payload, index, closingRuns));
+        held.add(eventActionKey(payload, index, closingOffsets));
       for (const index of asIndexes(payload.refusedIndexes))
-        refused.add(eventActionKey(payload, index, closingRuns));
+        refused.add(eventActionKey(payload, index, closingOffsets));
       if (Array.isArray(payload.refusals)) {
         for (const value of payload.refusals) {
           const row = asRecord(value);
           const index = row?.index;
           const reason = asString(row?.reason);
           if (!Number.isInteger(index) || (index as number) < 0 || !reason) continue;
-          const key = eventActionKey(payload, index as number, closingRuns);
+          const key = eventActionKey(payload, index as number, closingOffsets);
           const existing = refusalObservations.get(key);
           if (!existing || event.createdAt < existing.at) {
             refusalObservations.set(key, { reason, at: event.createdAt });
@@ -539,13 +541,13 @@ function actionMetrics(
       const heldUnder = (workItemId ? lastPending.get(workItemId)?.payload : undefined) ?? payload;
       const approvedIndexes = asIndexes(payload.approvedIndexes);
       for (const index of approvedIndexes)
-        approved.add(eventActionKey(heldUnder, index, closingRuns));
+        approved.add(eventActionKey(heldUnder, index, closingOffsets));
       const rejectedIndexes =
         approvedIndexes.length > 0
           ? asIndexes(payload.rejectedIndexes)
           : [...asIndexes(payload.rejectedIndexes), ...asIndexes(heldUnder.heldIndexes)];
       for (const index of rejectedIndexes)
-        rejected.add(eventActionKey(heldUnder, index, closingRuns));
+        rejected.add(eventActionKey(heldUnder, index, closingOffsets));
       continue;
     }
     if (event.type !== 'work.actions-rejected') continue;
@@ -553,7 +555,7 @@ function actionMetrics(
     const pending = workItemId ? lastPending.get(workItemId) : undefined;
     if (!pending) continue;
     for (const index of asIndexes(pending.payload.heldIndexes)) {
-      rejected.add(eventActionKey(pending.payload, index, closingRuns));
+      rejected.add(eventActionKey(pending.payload, index, closingOffsets));
     }
   }
 
@@ -669,12 +671,13 @@ function pilotTotals(
       const proposedFor = asString(payload?.proposedFor);
       const first = firstItemOfSkill.get(skillId);
       if (first === undefined) firstItemOfSkill.set(skillId, workItemId);
-      if (
-        (proposedFor !== undefined && proposedFor !== workItemId) ||
-        (first ?? workItemId) !== workItemId
-      ) {
-        reused += 1;
-      }
+      // The item a skill was made for decides; a builtin, made for none,
+      // is reused from its second item on.
+      const reuse =
+        proposedFor !== undefined
+          ? proposedFor !== workItemId
+          : (first ?? workItemId) !== workItemId;
+      if (reuse) reused += 1;
       continue;
     }
     if (event.type === 'work.discovered' && workItemId && !discoveredAt.has(workItemId)) {

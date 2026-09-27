@@ -1130,6 +1130,23 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(computeAgentMetrics(events, [], []).actions).toMatchObject({ held: 2, approved: 2 });
   });
 
+  it('counts a closing refusal the hold and the ledger both saw once, by its durable index', (): void => {
+    const events = [
+      event('work.dependent-authoring', { workItemId: 'wi', runId: 'run-1', prerequisiteActionCount: 2 }, 1_000),
+      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [], refusedIndexes: [0], dependentPhase: true, refusals: [{ index: 0, reason: 'no grant (linear:write)' }] }, 2_000),
+    ];
+    const output = { applied: [row('wi:run-1:2', { ok: false, reason: 'no grant (linear:write)' })] };
+    expect(computeAgentMetrics(events, [item('wi', { state: 'failed', output })], []).actions.refused).toBe(1);
+  });
+
+  it('counts a skill as reused only on an item it was not made for, whichever item ran it first', (): void => {
+    const events = [
+      event('work.execution-claimed', { workItemId: 'a', skillId: 's1', proposedFor: 'b' }, 1_000),
+      event('work.execution-claimed', { workItemId: 'b', skillId: 's1', proposedFor: 'b' }, 2_000),
+    ];
+    expect(computeAgentMetrics(events, [], []).pilot.skillReuse).toEqual({ runs: 2, reused: 1, rate: 0.5 });
+  });
+
   it('counts approving none of the held actions as a rejection of the decision and of each held action', (): void => {
     const events = [
       event('work.decision-requesting', { workItemId: 'wi', decisionId: 'a1', kind: 'actions' }, 1_000),
