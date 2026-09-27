@@ -43,6 +43,8 @@ import {
   type TicketSnapshot,
 } from '../src/work/ticket-ownership';
 import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
+import { accessEnded, accessEndedReason } from '../src/work/surface-access';
+import { agentZone } from '../src/lib/zone';
 
 const PROVIDER_TIMEOUT_MS = 10_000;
 /**
@@ -1921,6 +1923,16 @@ export async function runIntakeSweep(
         skipped += 1;
         continue;
       }
+      // The end date is the boundary, not the hourly sweep that ends the row.
+      if (surface.expiresAt !== undefined && accessEnded(surface, now())) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: accessEndedReason(surface.expiresAt, agentZone(agent)),
+        });
+        skipped += 1;
+        continue;
+      }
       const readScope = `${surface.slug}:read`;
       if (!granted.has(readScope)) {
         await runtime.recordIntake({
@@ -2109,6 +2121,7 @@ export async function runDecisionSweep(
   for (const surface of surfaces) {
     if (
       surface.verdict !== 'connected' ||
+      accessEnded(surface, now()) ||
       !surface.credentialId ||
       !surface.managerDmChannelId ||
       !surface.managerUserId

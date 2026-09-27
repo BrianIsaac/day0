@@ -3570,6 +3570,73 @@ describe('the read grant (Q7, N2)', (): void => {
   });
 });
 
+describe('the access end date as a hard boundary (wave 2 review D4, M21)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('reads nothing from a surface whose end date passed before the hourly sweep ended it', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-linear');
+    const endsAt = Date.parse('2026-10-11T10:05:00.000Z');
+    const linear = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId,
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+      expiresAt: endsAt,
+    });
+    const harness = runtimeHarness(
+      [linear],
+      [pageRow('linear.md', 'Linear automation', LINEAR)],
+      new Map([[String(credentialId), 'linear-test-value']]),
+    );
+    const makeMcpClient = vi.fn();
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => endsAt + 5 * 60_000,
+        makeMcpClient,
+      }),
+    ).resolves.toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(harness.records).toEqual([
+      {
+        surfaceId: linear._id,
+        waterfallPosition: 1,
+        skipReason: 'access ended on 2026-10-11; the manager renews it on the card',
+      },
+    ]);
+    expect(harness.decrypted).toEqual([]);
+    expect(makeMcpClient).not.toHaveBeenCalled();
+  });
+
+  it('reads no manager reply through a chat surface whose end date passed', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-slack');
+    const endsAt = Date.parse('2026-10-11T10:05:00.000Z');
+    const slack = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.history'],
+      providerIdentityId: 'UBOT',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      expiresAt: endsAt,
+    });
+    const harness = runtimeHarness([slack], [], new Map([[String(credentialId), 'slack-value']]));
+    harness.openRequests.set(String(slack._id), [{ ts: '1790000000.000100' }]);
+    const fetcher = vi.fn();
+
+    await expect(
+      runDecisionSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => endsAt,
+        fetcher,
+      }),
+    ).resolves.toEqual({ mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(harness.decrypted).toEqual([]);
+  });
+});
+
 describe('the Linear list order (P9-1)', (): void => {
   it('asks for creation order when the schema offers it, so a ticket updated mid-walk keeps its page', (): void => {
     const request = (orderBy: Record<string, unknown> | undefined): Record<string, unknown> =>
