@@ -1,10 +1,10 @@
 # Changelog
 
-Version maintenance record for Day0, from the git history, grouped by the milestones the project has shipped against. Releases are tagged with semantic versions from 27 September 2026: `v0.1.0` is the finals build (the commit the `goai-final` tag also names, kept as an alias because the finals submission cites it); each engineering wave that reaches `main` takes the next minor, a hotfix on a release the next patch, and `v1.0.0` is the pilot release. Hashes are the commits on `main`, 1,607 of them at `f739614`; a merge of a job branch is listed by the substantive commits it carried, and counts are by author date. Every commit follows conventional-commit style, so `git log --no-merges --format='%ad %h %s' --date=short` is the full record and this file is its digest.
+Version maintenance record for Day0, from the git history, grouped by the milestones the project has shipped against. Releases are tagged with semantic versions from 27 September 2026: `v0.1.0` is the build of 19 September 2026 (the tag `goai-final` that once named it was retired on 27 September 2026); each engineering wave that reaches `main` takes the next minor, a hotfix on a release the next patch, and `v1.0.0` is the pilot release. Hashes are the commits on `main`, 1,607 of them at `f739614`; a merge of a job branch is listed by the substantive commits it carried, and counts are by author date. Every commit follows conventional-commit style, so `git log --no-merges --format='%ad %h %s' --date=short` is the full record and this file is its digest.
 
-## v0.1.0 (`goai-final`): the finals build, 16 to 19 September 2026
+## v0.1.0: the finals build, 16 to 19 September 2026
 
-The tags `v0.1.0` and `goai-final` mark this release at `7f59973`. The recording ran on `f739614`, the last commit dated 19 September, and the hosted halves were brought to it on 20 September 2026: the cloud Convex functions first (293 functions, three new empty tables, no row of the protected office changed), then the app at `day0-olive.vercel.app`. 415 commits dated 17 to 19 September; 3,517 tests in 252 files.
+The tag `v0.1.0` marks this release at `7f59973`. The recording ran on `f739614`, the last commit dated 19 September, and the hosted halves were brought to it on 20 September 2026: the cloud Convex functions first (293 functions, three new empty tables, no row of the protected office changed), then the app at `day0-olive.vercel.app`. 415 commits dated 17 to 19 September; 3,517 tests in 252 files.
 
 ### 19 September 2026
 
@@ -57,7 +57,7 @@ The tags `v0.1.0` and `goai-final` mark this release at `7f59973`. The recording
 
 ## Before v0.1.0: the finals build, 4 to 16 September 2026
 
-The tag `goai-final` stood at `5fac642` on 16 September 2026 and `day0-olive.vercel.app` was deployed from it; both moved on with the entry above. 440 commits dated 4 to 16 September.
+The release pointer (then a tag named `goai-final`) stood at `5fac642` on 16 September 2026 and `day0-olive.vercel.app` was deployed from it; both moved on with the entry above. 440 commits dated 4 to 16 September.
 
 ### 16 September 2026
 
