@@ -16,6 +16,7 @@ import {
   fetchWithBackoff,
   PROVIDER_BACKOFF,
   TransientProviderError,
+  type BackoffPolicy,
 } from '../src/lib/transport-error';
 import type { McpConnection } from '../src/surfaces/mcp';
 import { browserComponentRefusal } from '../src/surfaces/browser';
@@ -805,13 +806,18 @@ const LINEAR_MCP_ENDPOINT = 'https://mcp.linear.app/mcp';
  *
  * @param endpoint - The validated endpoint.
  * @param credential - The decrypted bearer, kept inside the Node action.
+ * A request the server answers with a 429 or a 5xx is tried again under the
+ * provider backoff, keeping the client's own signal.
+ *
  * @param connection - The resolver and transport; a test supplies its own.
+ * @param backoff - How a rate-limited request waits; a test records the waits.
  * @returns The bounded client contract intake uses, connected on first use.
  */
 export function createMcpClient(
   endpoint: URL,
   credential: string,
   connection: McpConnection = { resolveHostname },
+  backoff: BackoffPolicy = PROVIDER_BACKOFF,
 ): McpIntakeClient {
   let created: Promise<McpIntakeClient> | undefined;
   const create = async (): Promise<McpIntakeClient> => {
@@ -822,7 +828,7 @@ export function createMcpClient(
         surface: {
           url: checked.url,
           allowedHosts: [checked.url.host],
-          fetch: pinnedFetch(checked, connection.request),
+          fetch: fetchWithBackoff(pinnedFetch(checked, connection.request), undefined, backoff),
           requestInit: { headers: { Authorization: `Bearer ${credential}` } },
         },
       },

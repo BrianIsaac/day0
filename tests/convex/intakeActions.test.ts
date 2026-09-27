@@ -29,6 +29,7 @@ vi.mock('@mastra/mcp', () => ({
   },
 }));
 import { internal } from '../../convex/_generated/api';
+import { PROVIDER_BACKOFF } from '../../src/lib/transport-error';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
@@ -3353,6 +3354,43 @@ describe('the Linear intake client reaches only the address it checked (M16)', (
     );
     expect(mastra.configs).toEqual([]);
     await expect(client.disconnect()).resolves.toBeUndefined();
+  });
+
+  it('waits out a 429 from the Linear MCP server and sends the request again', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const statuses = [429, 200];
+    const waits: number[] = [];
+    const client = createMcpClient(
+      endpoint,
+      'lin-secret',
+      {
+        resolveHostname: async (): Promise<string[]> => ['93.184.216.34'],
+        request: (_url, _options, callback) => ({
+          on: (): void => undefined,
+          end: (): void => {
+            const statusCode = statuses.shift() ?? 200;
+            const response = Object.assign(new PassThrough(), {
+              statusCode,
+              headers: statusCode === 429 ? { 'retry-after': '3' } : {},
+            });
+            callback(response as unknown as IncomingMessage);
+            response.end('{}');
+          },
+        }),
+      },
+      { ...PROVIDER_BACKOFF, sleep: async (ms: number): Promise<void> => void waits.push(ms) },
+    );
+    await client.listToolDefinitionsWithErrors();
+    const config = mastra.configs[0] as {
+      servers: Record<string, { fetch: (url: string, init?: RequestInit) => Promise<Response> }>;
+    };
+    const response = await config.servers.surface.fetch('https://mcp.linear.app/mcp', {
+      method: 'POST',
+      body: '{}',
+    });
+    expect(response.status).toBe(200);
+    expect(waits).toEqual([3_000]);
+    expect(statuses).toEqual([]);
   });
 
   it('connects to the address it checked, not to a later answer', async (): Promise<void> => {
