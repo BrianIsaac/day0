@@ -830,6 +830,41 @@ describe('documentation sources in real mode', (): void => {
     expect(mirrors.map((mirror) => mirror.slug)).toEqual([mirroredDocSlug(sourceId, 'Café.md')]);
   });
 
+  it('keeps an old-slug mirror while it is the only copy of a listed page the sync could not read (adversarial pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const oldSlug = `source-${String(sourceId).slice(-10).toLowerCase()}-caf-md`;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: oldSlug,
+        title: 'Café, as v0.4.0 keyed it',
+        body: '# Café',
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'Café.md',
+        updatedAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await finishGeneration(harness, sourceId, runId, {
+      refs: ['page.md', 'Café.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    const mirrors = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(mirrors.map((mirror) => mirror.slug)).toContain(oldSlug);
+  });
+
   it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

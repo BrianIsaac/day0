@@ -1138,7 +1138,7 @@ export const prunePages = internalMutation({
  * Internal. A mirror is kept only for a listed page and only under the slug
  * `mirroredDocSlug` gives it now: one an earlier slug rule keyed (a
  * non-ASCII reference before v0.5.0) is a second copy beside the one this
- * sync wrote (review M20).
+ * sync wrote (review M20), and is kept while it is the only copy.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
@@ -1155,12 +1155,18 @@ export const pruneMirrors = internalMutation({
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
-      if (
-        mirror.sourceRef &&
-        current.has(mirror.sourceRef) &&
-        mirror.slug === mirroredDocSlug(args.sourceId, mirror.sourceRef)
-      ) {
-        continue;
+      if (mirror.sourceRef && current.has(mirror.sourceRef)) {
+        const slug = mirroredDocSlug(args.sourceId, mirror.sourceRef);
+        if (mirror.slug === slug) continue;
+        // An old-slug copy is the employee's only one until the page is
+        // mirrored under its own slug, which a page this sync could not read is not.
+        const own = await ctx.db
+          .query('mockDocs')
+          .withIndex('by_agent_slug', (index) =>
+            index.eq('agentId', mirror.agentId).eq('slug', slug),
+          )
+          .first();
+        if (own === null) continue;
       }
       await ctx.db.delete(mirror._id);
       removed += 1;
