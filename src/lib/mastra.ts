@@ -16,6 +16,7 @@ import {
   StructuredContractError,
 } from './structured-fallback';
 
+/** The typed refusals `agentJson` and `agentText` throw, for their callers to recognise. */
 export { ModelRefusalError, ModelReplyCutError } from './structured-fallback';
 
 /**

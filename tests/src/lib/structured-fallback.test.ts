@@ -177,3 +177,19 @@ describe('itemBoundModelFailure', (): void => {
     expect(itemBoundModelFailure(insideOk({ error: { message: 'busy' } }))).toBeUndefined();
   });
 });
+
+describe('what moderation is not', (): void => {
+  it('leaves a rate limit or an outage that mentions moderation transient', (): void => {
+    const outage = apiError({
+      statusCode: 503,
+      responseBody: '{"error":{"message":"moderation service unavailable"}}',
+    });
+
+    expect(moderationRefusal(outage)).toBeUndefined();
+    expect(itemBoundModelFailure(outage)).toBeUndefined();
+  });
+
+  it('reads a 200 whose error field is null as no error', (): void => {
+    expect(errorInsideOk(insideOk({ error: null, choices: [] }))).toBeUndefined();
+  });
+});

@@ -169,7 +169,7 @@ function okBodyError(node: unknown): ErrorInsideOk | undefined {
     outer.code,
     outer.status_code,
   );
-  if (outer.error === undefined && status === undefined) return undefined;
+  if (!outer.error && status === undefined) return undefined;
   return {
     ...(status !== undefined ? { status } : {}),
     text: failureText(bodyMessage(outer) ?? e.responseBody),
@@ -232,6 +232,9 @@ export function moderationRefusal(err: unknown): string | undefined {
   if (err instanceof StructuredContractError) return undefined;
   const facts = gatherFacts(err);
   if (!facts.responded || !MODERATION_REFUSAL.test(facts.diagnosis)) return undefined;
+  // Moderation answers as a request error; a rate limit or an outage that
+  // happens to mention it is still transient and keeps its retries.
+  if (facts.status !== undefined && (facts.status === 429 || facts.status >= 500)) return undefined;
   return failureText(facts.serverText || facts.diagnosis);
 }
 
