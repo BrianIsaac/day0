@@ -3,9 +3,12 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
 import {
   DEV_NO_AUTH_COOKIE,
+  DEV_NO_AUTH_SESSION_SECONDS,
   DEV_NO_AUTH_UNLOCK_PARAM,
   devNoAuthKeyGaps,
   isDevNoAuthSecret,
+  isDevNoAuthSession,
+  mintDevNoAuthSession,
 } from '@/lib/dev-auth-server';
 
 /**
@@ -99,8 +102,6 @@ export default function proxy(...args: Parameters<typeof clerkProxy>) {
   return clerkProxy(...args);
 }
 
-const COOKIE_LIFETIME_SECONDS = 60 * 60 * 24 * 30;
-
 function refuse(message: string, status = 403): NextResponse {
   return new NextResponse(message, {
     status,
@@ -110,11 +111,18 @@ function refuse(message: string, status = 403): NextResponse {
 
 /**
  * Refuses anyone who cannot show the unlock secret. The secret arrives once on
- * the URL `pnpm dev` prints and is kept in an httpOnly cookie from then on;
- * no refusal here ever echoes it back, so a caller guessing at the boundary
- * learns only that it was wrong.
+ * the URL `pnpm dev` prints and is exchanged for a session of this browser's
+ * own, signed with the secret, in an httpOnly cookie; the secret itself is
+ * never stored in the browser. No refusal here ever echoes it back, so a
+ * caller guessing at the boundary learns only that it was wrong.
+ *
+ * The cookie stays `SameSite=Lax` rather than `Strict`: Slack's install
+ * redirect lands the manager back on the dashboard as a cross-site navigation,
+ * which `Strict` would refuse. Lax already keeps the session off cross-site
+ * POSTs, and a page on another localhost port is same-site to either value,
+ * which is why the two POST routes also check `Origin`.
  */
-function devNoAuthGate(request: NextRequest): NextResponse {
+async function devNoAuthGate(request: NextRequest): Promise<NextResponse> {
   const gaps = devNoAuthKeyGaps();
   if (gaps) {
     return refuse(
@@ -133,16 +141,16 @@ function devNoAuthGate(request: NextRequest): NextResponse {
     const cleaned = request.nextUrl.clone();
     cleaned.searchParams.delete(DEV_NO_AUTH_UNLOCK_PARAM);
     const unlocked = NextResponse.redirect(cleaned);
-    unlocked.cookies.set(DEV_NO_AUTH_COOKIE, offered, {
+    unlocked.cookies.set(DEV_NO_AUTH_COOKIE, await mintDevNoAuthSession(), {
       httpOnly: true,
       sameSite: 'lax',
       path: '/',
-      maxAge: COOKIE_LIFETIME_SECONDS,
+      maxAge: DEV_NO_AUTH_SESSION_SECONDS,
     });
     return unlocked;
   }
 
-  if (!isDevNoAuthSecret(request.cookies.get(DEV_NO_AUTH_COOKIE)?.value)) {
+  if (!(await isDevNoAuthSession(request.cookies.get(DEV_NO_AUTH_COOKIE)?.value))) {
     return refuse(
       'NEXT_PUBLIC_DEV_NO_AUTH=true serves every request as one fixed user with no ' +
         'sign-in, so it is refused for callers who cannot show the no-auth key for this ' +

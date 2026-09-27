@@ -1,3 +1,4 @@
+import { NextURL } from 'next/dist/server/web/next-url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -54,6 +55,31 @@ function request(pathname: string): Request & { nextUrl: URL; cookies: unknown }
   return base;
 }
 
+/**
+ * One request from this machine's browser: a localhost host header and,
+ * optionally, the unlock cookie it holds.
+ */
+function localRequest(
+  pathname: string,
+  cookie?: string,
+): Request & { nextUrl: URL; cookies: unknown } {
+  const url = new URL(`http://localhost:3000${pathname}`);
+  const base = new Request(url, { headers: { host: 'localhost:3000' } }) as Request & {
+    nextUrl: URL;
+    cookies: unknown;
+  };
+  Object.defineProperty(base, 'nextUrl', { value: new NextURL(url) });
+  Object.defineProperty(base, 'cookies', {
+    value: { get: (): { value: string } | undefined => (cookie ? { value: cookie } : undefined) },
+  });
+  return base;
+}
+
+/** The session cookie a response sets, as the browser would store it. */
+function sessionCookie(response: Response): string | undefined {
+  return /day0_dev_no_auth=([^;]+)/.exec(response.headers.get('set-cookie') ?? '')?.[1];
+}
+
 async function status(pathname: string): Promise<number> {
   const response = (await proxy(request(pathname))) as Response;
   return response.status;
@@ -79,6 +105,42 @@ describe('the no-auth proxy gate', (): void => {
 
   it('refuses a path that merely starts like the redirect', async (): Promise<void> => {
     expect(await status('/api/oauth-slack')).toBe(403);
+  });
+});
+
+describe('the no-auth unlock session', (): void => {
+  it('exchanges the unlock secret for a session cookie that does not carry it', async (): Promise<void> => {
+    const unlocked = (await proxy(localRequest(`/?day0_key=${'a'.repeat(43)}`))) as Response;
+    expect(unlocked.status).toBe(307);
+    const cookie = sessionCookie(unlocked);
+    expect(cookie).toBeDefined();
+    expect(cookie).not.toContain('a'.repeat(43));
+    const next = (await proxy(localRequest('/agent/j57agent', cookie))) as Response;
+    expect(next.status).toBe(200);
+  });
+
+  it('gives each browser a session of its own', async (): Promise<void> => {
+    const first = sessionCookie(
+      (await proxy(localRequest(`/?day0_key=${'a'.repeat(43)}`))) as Response,
+    );
+    const second = sessionCookie(
+      (await proxy(localRequest(`/?day0_key=${'a'.repeat(43)}`))) as Response,
+    );
+    expect(first).not.toBe(second);
+  });
+
+  it('refuses a cookie that holds the unlock secret itself', async (): Promise<void> => {
+    const response = (await proxy(localRequest('/agent/j57agent', 'a'.repeat(43)))) as Response;
+    expect(response.status).toBe(403);
+  });
+
+  it('ends every session when the unlock secret is rotated', async (): Promise<void> => {
+    const cookie = sessionCookie(
+      (await proxy(localRequest(`/?day0_key=${'a'.repeat(43)}`))) as Response,
+    );
+    vi.stubEnv('DEV_NO_AUTH_SECRET', 'c'.repeat(43));
+    const response = (await proxy(localRequest('/agent/j57agent', cookie))) as Response;
+    expect(response.status).toBe(403);
   });
 });
 
