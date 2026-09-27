@@ -1105,6 +1105,8 @@ export const demoteAfterProbeFailure = internalMutation({
     ) {
       return null;
     }
+    // Past the end date there is no rung to fall to: the access ended.
+    if (await endedBeforeProbeLanded(ctx, surface)) return null;
     const candidates = (surface.pathCandidates ?? []).slice(0, MAX_LADDER_PATHS);
     const currentIndex = candidates.findIndex(
       (candidate): boolean =>

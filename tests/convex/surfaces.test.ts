@@ -2547,6 +2547,41 @@ describe('access expiry (Q5)', (): void => {
     ).resolves.toMatchObject({ generation: expect.any(Number) });
   });
 
+  it('falls to no lower rung when a probe begun before the end date fails after it (M20)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(PROPOSED_AT);
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        fallbackPath: 'browser-driven',
+        pathCandidates: [
+          { path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' },
+          { path: 'browser-driven', endpoint: 'https://linear.app' },
+        ],
+      });
+    });
+    const endsAt = APPROVED_AT + 30 * DAY;
+    vi.setSystemTime(endsAt - 2_000);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    vi.setSystemTime(endsAt + 3_000);
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: probe.generation,
+        reason: 'connect ETIMEDOUT',
+        attemptedAt: endsAt + 3_000,
+      }),
+    ).resolves.toBeNull();
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'approved',
+      reason: 'expired',
+      path: 'mcp',
+    });
+  });
+
   it.each(['connects', 'fails'] as const)(
     'refuses a probe begun before the end date that %s after it (wave 2 review M20)',
     async (outcome): Promise<void> => {
