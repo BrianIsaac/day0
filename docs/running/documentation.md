@@ -151,6 +151,8 @@ The Tracker API base is https://tracker.example.com/api/v2/.
 - The base address follows the same rule as an MCP endpoint: public `https`, or a host the
   operator lists in `DAY0_PRIVATE_HOSTS`. The address is checked again on every request, not only
   when the connection is checked, so a name that later points somewhere private is refused.
+- A rate limit (`429`) or a server error when the key is checked is tried again later, after the
+  wait the API asks for; it never marks the system unavailable on its own.
 - Only the system's own pages are read for its operations. An operation written on another
   system's page is not admitted for this one.
 - A chat system is the exception. day0 reads chat over a documented API only through Slack's Web

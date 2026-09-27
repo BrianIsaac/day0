@@ -2,6 +2,7 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
+import { transientFromResponse } from '../lib/transport-error';
 import { checkMcpAddress, McpAddressRefusal, pinnedFetch } from './mcp-address';
 import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
@@ -382,7 +383,9 @@ export async function connectCheckedApi(endpoint: string): Promise<CheckedApi> {
  * The read is the one the page names for the probe (`documentedProbeRead`),
  * so checking the credential never changes anything on the system. It is sent
  * with the credential in the documented header, follows no redirect, and a
- * 2xx answer without an `ok: false` envelope connects the surface.
+ * 2xx answer without an `ok: false` envelope connects the surface. A 429 or a
+ * 5xx is a `TransientProviderError` carrying the wait the answer asked for,
+ * so the probe tries again rather than marking the system dead.
  *
  * @param endpoint - The documented API base the surface was approved with.
  * @param credential - The surface's decrypted credential.
@@ -430,6 +433,11 @@ export async function probeDocumentedApi(
     throw new Error(
       `${label} could not be reached: ${error instanceof Error ? error.message : String(error)}`,
     );
+  }
+  const transient = transientFromResponse(response, label);
+  if (transient) {
+    await response.body?.cancel();
+    throw transient;
   }
   const bounded = await readBoundedResponse(response);
   if (!response.ok) {

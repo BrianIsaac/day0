@@ -18,6 +18,7 @@ import {
   type ApiConnector,
 } from '../../../src/surfaces/http';
 import { READ_EFFECT_LENGTH } from '../../../src/surfaces/mock';
+import { TransientProviderError } from '../../../src/lib/transport-error';
 import type {
   AdapterRun,
   BeforeSurfaceTransport,
@@ -676,6 +677,19 @@ describe('probing a documented API that is not Slack', (): void => {
     const tracker = trackerConnector(() => new Response('{"error":"bad key"}', { status: 401 }));
     await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
       'GET issues answered HTTP 401',
+    );
+  });
+
+  it('answers a rate limit or a server error as a transient that carries the wait asked for', async (): Promise<void> => {
+    const limited = trackerConnector(
+      () => new Response('slow down', { status: 429, headers: { 'Retry-After': '12' } }),
+    );
+    const failure = probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, limited.connect);
+    await expect(failure).rejects.toBeInstanceOf(TransientProviderError);
+    await expect(failure).rejects.toMatchObject({ status: 429, retryAfterMs: 12_000 });
+    const down = trackerConnector(() => new Response('', { status: 503 }));
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, down.connect)).rejects.toThrow(
+      'GET issues answered HTTP 503.',
     );
   });
 

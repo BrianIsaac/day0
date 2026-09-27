@@ -52,6 +52,11 @@ import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
 import { actionIntent } from '../src/surfaces/policy';
 import { DocumentedApiLimitation, probeDocumentedApi } from '../src/surfaces/http';
+import {
+  PROVIDER_BACKOFF,
+  TransientProviderError,
+  transientFromResponse,
+} from '../src/lib/transport-error';
 
 const SLACK_METHOD_DEFAULTS = [
   'auth.test',
@@ -198,6 +203,38 @@ const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
 export const PROBE_RETRY_WAIT_MS = 5_000;
 
 /**
+ * A provider saying "not now": HTTP 429, Slack's `ratelimited`, or the words
+ * an MCP server or a gateway uses for either. It is an answer about pace, not
+ * about the system or the key, so it never marks a surface dead (Q13).
+ */
+const RATE_LIMITED =
+  /\bratelimited\b|\brate[ _-]?limit(?:ed|ing)?\b|too many requests|\b(?:HTTP|status)\W{0,3}429\b/i;
+
+/** Whether a failed probe call was the provider limiting its rate. */
+function isRateLimited(error: unknown, safeReason: string): boolean {
+  if (error instanceof TransientProviderError && error.status === 429) return true;
+  return RATE_LIMITED.test(safeReason);
+}
+
+/** The wait a rate-limited provider asked for, when it named one. */
+function askedWait(error: unknown): number | undefined {
+  return error instanceof TransientProviderError ? error.retryAfterMs : undefined;
+}
+
+/** The fewest and most milliseconds before a rate-limited card that no hourly sweep covers is probed again. */
+const RATE_LIMITED_REPROBE_MS = { min: 5 * 60_000, max: 60 * 60_000 } as const;
+
+/** A probe the provider rate-limited on its retry as well; the verdict is left as it was. */
+class ProbeRateLimited extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | undefined,
+  ) {
+    super(message);
+  }
+}
+
+/**
  * A connection that never completed, or a provider answering 5xx.
  *
  * The first alternative is the fixed message the MCP client raises when both
@@ -230,12 +267,13 @@ class McpProbeFailure extends Error {
  *   safeReason: Its redacted, clipped text.
  *
  * Returns:
- *   True for a connection-level failure or a provider 5xx.
+ *   True for a connection-level failure, a provider 5xx or a rate limit.
  */
 function isTransientProbeFailure(error: unknown, safeReason: string): boolean {
   if (probeFailureVerdict(error, safeReason) !== 'listed-dead') return false;
   if (error instanceof McpProbeFailure && error.transient) return true;
-  return TRANSIENT_FAILURE.test(safeReason);
+  if (error instanceof TransientProviderError) return true;
+  return TRANSIENT_FAILURE.test(safeReason) || isRateLimited(error, safeReason);
 }
 
 /** A newer probe, or a withdrawn approval, took the surface away while this probe waited to retry. */
@@ -896,6 +934,10 @@ async function callSlack(
   }).catch((error: unknown): never => {
     throw new Error(`Slack ${method} could not be reached: ${transportErrorDetail(error)}.`);
   });
+  // A rate limit or a server error is a pace answer, whatever the body says,
+  // and carries the wait Slack asked for.
+  const transient = transientFromResponse(response, `Slack ${method}`);
+  if (transient) throw transient;
   // A gateway answering for Slack sends HTML. Parsing it would replace the
   // status with a syntax error, and the status is what the reason needs.
   const payload = (await response.json().catch((): Record<string, unknown> => ({}))) as Record<
@@ -1151,33 +1193,81 @@ export async function runSurfaceProbe(
     known: readonly string[],
     call: () => Promise<T>,
   ): Promise<T> => {
+    let first: unknown;
     try {
       return await call();
     } catch (error) {
-      const reason = safeProviderError(error, credential, known);
-      if (!isTransientProbeFailure(error, reason)) throw error;
-      const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
-        surfaceId,
-        generation,
-        reason,
-        retryAfterMs: PROBE_RETRY_WAIT_MS,
-        attemptedAt: dependencies.now(),
-      });
-      if (!recorded) throw new ProbeSuperseded();
-      await (dependencies.wait ?? waitRealTime)(PROBE_RETRY_WAIT_MS);
-      // The second call carries the key, so it is made only for a row that is
-      // still this probe's and still approved.
-      const current = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
-        surfaceId,
-      });
-      if (
-        current?.surface.probeGeneration !== generation ||
-        !PROBEABLE_VERDICTS.includes(current.surface.verdict)
-      ) {
-        throw new ProbeSuperseded();
-      }
-      return await call();
+      first = error;
     }
+    const reason = safeProviderError(first, credential, known);
+    if (!isTransientProbeFailure(first, reason)) throw first;
+    // A rate limit is waited out for as long as the provider asks, within one
+    // bounded backoff; a longer ask is not waited for inside the action.
+    const asked = isRateLimited(first, reason) ? askedWait(first) : undefined;
+    if (asked !== undefined && asked > PROVIDER_BACKOFF.maxWaitMs) {
+      throw new ProbeRateLimited(reason, asked);
+    }
+    const wait = asked ?? PROBE_RETRY_WAIT_MS;
+    const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
+      surfaceId,
+      generation,
+      reason,
+      retryAfterMs: wait,
+      attemptedAt: dependencies.now(),
+    });
+    if (!recorded) throw new ProbeSuperseded();
+    await (dependencies.wait ?? waitRealTime)(wait);
+    // The second call carries the key, so it is made only for a row that is
+    // still this probe's and still approved.
+    const current = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
+      surfaceId,
+    });
+    if (
+      current?.surface.probeGeneration !== generation ||
+      !PROBEABLE_VERDICTS.includes(current.surface.verdict)
+    ) {
+      throw new ProbeSuperseded();
+    }
+    try {
+      return await call();
+    } catch (error) {
+      const again = safeProviderError(error, credential, known);
+      if (isRateLimited(error, again)) throw new ProbeRateLimited(again, askedWait(error));
+      throw error;
+    }
+  };
+
+  /**
+   * Leave the verdict as it was after the provider rate-limited the probe, and
+   * say when Day0 asks again. A connected or dead card is asked again by the
+   * hourly sweep; any other card is not in the sweep, so one probe is
+   * scheduled for when the provider said it could answer, within bounds.
+   */
+  const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> => {
+    const swept = surface.verdict === 'connected' || surface.verdict === 'listed-dead';
+    const next = swept
+      ? RATE_LIMITED_REPROBE_MS.max
+      : Math.min(
+          RATE_LIMITED_REPROBE_MS.max,
+          Math.max(RATE_LIMITED_REPROBE_MS.min, limited.retryAfterMs ?? 0),
+        );
+    const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
+      surfaceId,
+      generation,
+      reason: limited.message,
+      retryAfterMs: next,
+      attemptedAt: dependencies.now(),
+    });
+    if (!recorded) {
+      return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
+    }
+    if (!swept) {
+      await ctx.scheduler.runAfter(next, internal.surfaceActions.probeInternal, { surfaceId });
+    }
+    return {
+      verdict: 'skipped',
+      reason: `The provider is limiting its rate (${limited.message}); the card keeps its verdict and Day0 probes again in ${Math.round(next / 60_000)} minutes.`,
+    };
   };
 
   // The route list is capped to the three actual rungs when orientation stores
@@ -1388,6 +1478,7 @@ export async function runSurfaceProbe(
       if (error instanceof ProbeSuperseded) {
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
+      if (error instanceof ProbeRateLimited) return await leaveRateLimited(error);
       const reason = safeProviderError(error, credential, known);
       const verdict = probeFailureVerdict(error, reason);
       const outcome = await failOrDemote(reason, verdict);

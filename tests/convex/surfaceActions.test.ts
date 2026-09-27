@@ -2695,9 +2695,104 @@ describe('one failed probe does not write listed-dead', (): void => {
     });
 
     expect(outcome.verdict).toBe('listed-dead');
-    expect(outcome.reason).toBe('Slack auth.test returned HTTP 502.');
+    expect(outcome.reason).toBe('Slack auth.test answered HTTP 502.');
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(wait).toHaveBeenCalledOnce();
+  });
+
+  /** A Slack probe of one surface whose every answer is `respond`'s, the scheduler recorded. */
+  async function rateLimitedProbe(
+    harness: TestConvex<typeof schema>,
+    surfaceId: Id<'surfaces'>,
+    respond: () => Response,
+  ) {
+    const wait = vi.fn(async (): Promise<void> => undefined);
+    const fetcher = vi.fn(async (): Promise<Response> => respond());
+    const runAfter = vi.fn(async (): Promise<void> => undefined);
+    const outcome = await runSurfaceProbe(
+      { ...probeContext(harness), scheduler: { runAfter } } as unknown as ActionCtx,
+      surfaceId,
+      {
+        probeMcp: vi.fn(),
+        probeBrowser: vi.fn(),
+        probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+          probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    return { outcome, surface, wait, fetcher, runAfter };
+  }
+
+  const tooManyRequests = (retryAfter: string): Response =>
+    new Response('{"ok":false,"error":"ratelimited"}', {
+      status: 429,
+      headers: { 'Retry-After': retryAfter, 'Content-Type': 'application/json' },
+    });
+
+  it('leaves a connected card connected when the provider rate-limits the probe twice (Q13)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
+    const toolAllowlist = ['auth.test', 'users.lookupByEmail', 'conversations.open'];
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'connected',
+        credentialLanded: true,
+        toolAllowlist,
+        lastVerifiedAt: 500,
+      });
+    });
+    const { outcome, surface, wait, fetcher, runAfter } = await rateLimitedProbe(
+      harness,
+      surfaceId,
+      () => tooManyRequests('2'),
+    );
+    expect(outcome.verdict).toBe('skipped');
+    expect(outcome.reason).toContain('rate limited (HTTP 429)');
+    expect(surface).toMatchObject({ verdict: 'connected', toolAllowlist, lastVerifiedAt: 500 });
+    // The provider's own wait was honoured before the one retry.
+    expect(wait).toHaveBeenCalledWith(2_000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    // The hourly sweep asks a connected card again; nothing else is scheduled.
+    expect(runAfter).not.toHaveBeenCalled();
+    const events = await surfaceEvents(harness);
+    expect(events.map((event) => event.type)).toEqual([
+      'surface.probe-retried',
+      'surface.probe-retried',
+    ]);
+    expect(events[1]!.payload).toMatchObject({ retryAfterMs: 60 * 60_000 });
+  });
+
+  it("reads Slack's ratelimited envelope as a rate limit, not a dead workspace", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
+    const { outcome, surface } = await rateLimitedProbe(harness, surfaceId, () =>
+      slackResponse({ ok: false, error: 'ratelimited' }),
+    );
+    expect(outcome.verdict).toBe('skipped');
+    expect(surface?.verdict).toBe('approved');
+    expect(surface?.probeAttempts?.map((attempt) => attempt.outcome)).toEqual([
+      'retried',
+      'retried',
+    ]);
+  });
+
+  it('does not wait out a long Retry-After inside the action, and probes an approved card again when it ends', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
+    const { outcome, surface, wait, fetcher, runAfter } = await rateLimitedProbe(
+      harness,
+      surfaceId,
+      () => tooManyRequests('900'),
+    );
+    expect(outcome.verdict).toBe('skipped');
+    expect(outcome.reason).toContain('probes again in 15 minutes');
+    expect(surface?.verdict).toBe('approved');
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+    // An approved card is not in the hourly sweep, so its next probe is scheduled.
+    expect(runAfter).toHaveBeenCalledWith(900_000, expect.anything(), { surfaceId });
   });
 
   it('does not retry a Slack token the workspace refused', async (): Promise<void> => {
