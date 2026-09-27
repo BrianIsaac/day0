@@ -93,7 +93,8 @@ import {
   useNow,
 } from './time';
 import { eventLabel } from './event-labels';
-import { agentZone } from '../../../src/lib/zone';
+import { LiveStatus, refusalText, type ChangeOutcome } from './live-status';
+import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
 import {
@@ -629,6 +630,140 @@ export function ManagerLine({
   );
 }
 
+/** The zones the browser knows, UTC first, for the zone field's suggestions. */
+function knownZones(): string[] {
+  const listed =
+    typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  return ['UTC', ...listed.filter((zone) => zone !== 'UTC')];
+}
+
+/**
+ * The employee's day (N12): the zone every time on this page is printed in,
+ * and the control that changes it (`agents.setZone`).
+ *
+ * The line says the zone once so a stamp never needs its own; changing it
+ * moves every stamp here and every day boundary the server draws (the daily
+ * cap, the expiry notice, the digest's "since yesterday"). The outcome is
+ * announced in the line's live region and focus returns to the control.
+ */
+export function ZoneLine({
+  zone,
+  onChange,
+}: {
+  zone: string;
+  onChange: (zone: string) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(zone);
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const zones = useMemo((): string[] => knownZones(), []);
+  const valid = isTimeZone(draft.trim());
+  const close = (): void => {
+    setEditing(false);
+    toggle.current?.focus();
+  };
+  const save = (): void => {
+    const next = draft.trim();
+    setBusy(true);
+    setOutcome(null);
+    onChange(next)
+      .then(() => {
+        setOutcome({
+          tone: 'done',
+          text: `The employee's day is now ${next}; every time on this page is in it.`,
+        });
+        close();
+      })
+      .catch((err: unknown) =>
+        setOutcome({ tone: 'refused', text: refusalText(err, 'The zone was not changed.') }),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="mt-1 text-xs text-[var(--color-muted)]">
+      <p className="flex flex-wrap items-center gap-x-2">
+        <span>
+          Times on this page are in <span className="text-[var(--color-fg)]">{zone}</span>, the
+          employee&apos;s day.
+        </span>
+        <button
+          ref={toggle}
+          type="button"
+          aria-expanded={editing}
+          aria-controls="zone-editor"
+          onClick={() => {
+            setDraft(zone);
+            setOutcome(null);
+            setEditing(!editing);
+          }}
+          className="min-h-11 px-2 rounded border border-[var(--color-border)] text-[var(--color-fg)] hover:border-[var(--color-accent)]"
+        >
+          Change zone
+        </button>
+      </p>
+      {editing ? (
+        <form
+          id="zone-editor"
+          className="mt-1 flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (valid) save();
+          }}
+        >
+          <label htmlFor="agent-zone" className="text-[var(--color-fg)]">
+            Zone
+          </label>
+          <input
+            id="agent-zone"
+            list="agent-zone-options"
+            autoFocus
+            value={draft}
+            disabled={busy}
+            aria-invalid={!valid}
+            aria-describedby="agent-zone-hint"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                close();
+              }
+            }}
+            className="min-h-11 min-w-0 flex-1 font-mono px-2 rounded border border-[var(--color-border)] bg-transparent text-[var(--color-fg)]"
+          />
+          <datalist id="agent-zone-options">
+            {zones.map((option) => (
+              <option key={option} value={option} />
+            ))}
+          </datalist>
+          <button
+            type="submit"
+            disabled={busy || !valid || draft.trim() === zone}
+            className="min-h-11 px-3 rounded bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={close}
+            className="min-h-11 px-3 rounded border border-[var(--color-border)] text-[var(--color-fg)]"
+          >
+            Cancel
+          </button>
+          <p id="agent-zone-hint" className="basis-full">
+            {valid
+              ? 'A zone name such as Europe/London or Asia/Singapore.'
+              : `${draft.trim() || 'An empty name'} is not a zone this browser knows; pick one from the list.`}
+          </p>
+        </form>
+      ) : null}
+      <LiveStatus outcome={outcome} />
+    </div>
+  );
+}
+
 export function DashboardHeader({
   agent,
   charter,
@@ -644,6 +779,7 @@ export function DashboardHeader({
   const setBossEmail = useMutation(api.agents.setBossEmail);
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
+  const setZone = useMutation(api.agents.setZone);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: {
       text: 'Deployed · awaiting Day-1 1:1',
@@ -679,6 +815,10 @@ export function DashboardHeader({
             bossEmail={agent.bossEmail}
             lookupFailure={managerLookupFailure}
             onChange={(bossEmail) => setBossEmail({ agentId: agent._id, bossEmail })}
+          />
+          <ZoneLine
+            zone={agentZone(agent)}
+            onChange={(zone) => setZone({ agentId: agent._id, zone })}
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">

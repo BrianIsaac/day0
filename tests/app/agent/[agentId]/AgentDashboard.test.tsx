@@ -1025,6 +1025,14 @@ describe("the employee's day on the page (N12, review M8)", (): void => {
     createdAt: 1,
   } as unknown as Doc<'agents'>;
 
+  it("names the agent's zone under the manager and offers to change it", (): void => {
+    const markup = renderToStaticMarkup(<DashboardHeader agent={agent} charter={null} />);
+    expect(markup).toContain('Times on this page are in <span');
+    expect(markup).toContain('>Asia/Singapore</span>, the employee&#x27;s day.');
+    expect(markup).toMatch(/<button[^>]*aria-expanded="false"[^>]*>Change zone<\/button>/);
+    expect(markup).toContain('role="status"');
+  });
+
   it('prints the confirmed reconciliation in the agent\u2019s zone, not as a UTC ISO string', (): void => {
     const markup = renderToStaticMarkup(
       <AgentZoneContext value="Asia/Singapore">
