@@ -20,6 +20,7 @@ import { reconcileDocumentedSystems } from './surfaces';
 import { purgeCredential } from './credentials';
 import { restatedScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
+import { appendEvent } from './eventLog';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -762,7 +763,7 @@ export const finishSync = internalMutation({
             channelsNotJoined: undefined,
             lastPolledAt: undefined,
           });
-          await ctx.db.insert('events', {
+          await appendEvent(ctx, {
             agentId: surface.agentId,
             type: 'surface.scope-reapproval-required',
             payload: { surfaceId: surface._id, sourceId: source._id },
