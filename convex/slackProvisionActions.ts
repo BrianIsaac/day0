@@ -27,7 +27,8 @@ type CredentialId = GenericId<'credentials'>;
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const SLACK_API = 'https://slack.com/api/';
-const CONFIGURATION_TOKEN_LABEL = 'Slack app configuration token (12 hours, revoked after use)';
+const CONFIGURATION_TOKEN_LABEL =
+  'Slack app configuration token (12 hours; Day0 asks Slack to revoke it after use)';
 
 const credentialInternal = internal as unknown as {
   credentials: {
@@ -122,7 +123,15 @@ async function callSlack(
     body,
     signal: AbortSignal.timeout(30_000),
   });
-  const payload = (await response.json()) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = (await response.json()) as Record<string, unknown>;
+  } catch {
+    // A proxy's or Slack's own HTML error page: the status is all it says.
+    throw new Error(
+      `Slack ${method} returned HTTP ${response.status} with a body that is not JSON.`,
+    );
+  }
   if (!response.ok || payload.ok !== true) {
     throw new Error(
       typeof payload.error === 'string'
@@ -171,6 +180,40 @@ export function parseOauthAccess(payload: Record<string, unknown>): {
     botUserId: typeof payload.bot_user_id === 'string' ? payload.bot_user_id : undefined,
     teamId: typeof team?.id === 'string' ? team.id : undefined,
   };
+}
+
+/**
+ * Ask Slack to revoke the configuration token and record what Slack answered.
+ *
+ * Day0's own copy is revoked by `credentials.revokeInternal`; the token itself
+ * stays live at Slack for twelve hours unless Slack revokes it (P7-3). Slack
+ * does not document whether `auth.revoke` accepts a configuration token, so
+ * the answer is recorded as `surface.configuration-token-revoked` with
+ * `atProvider` rather than assumed. It never throws: the app the token
+ * registered does not depend on it.
+ */
+async function revokeConfigurationToken(
+  ctx: ActionCtx,
+  fetcher: Fetcher,
+  surface: Doc<'surfaces'>,
+  token: string,
+): Promise<void> {
+  let failure: string | undefined;
+  try {
+    const answer = await callSlack(fetcher, 'auth.revoke', { token, form: {} });
+    if (answer.revoked !== true) failure = 'Slack auth.revoke did not report the token revoked.';
+  } catch (error: unknown) {
+    failure = safeFailureMessage(error, token, 'Slack auth.revoke failed.');
+  }
+  await ctx.runMutation(internal.events.log, {
+    agentId: surface.agentId,
+    type: 'surface.configuration-token-revoked',
+    payload: {
+      surfaceId: surface._id,
+      atProvider: failure === undefined,
+      ...(failure ? { reason: failure } : {}),
+    },
+  });
 }
 
 interface ProvisionDependencies {
@@ -252,6 +295,21 @@ export async function runProvisionApp(
   const built = buildSlackManifest({ agentName: agent.name, publicUrl, template });
 
   const now = dependencies.now();
+  // An app registered and not installed yet is the one this surface uses: a
+  // second click gives a fresh install link for it rather than a second app
+  // in the workspace (P3-17).
+  const existing = surface.provisioning;
+  if (existing && existing.installedAt === undefined) {
+    await revokeConfigurationToken(ctx, dependencies.fetch, surface, token);
+    return await fileInstallLink(ctx, surface, dependencies, now, {
+      appId: existing.appId,
+      appName: existing.appName,
+      clientId: existing.clientId,
+      clientSecretCredentialId: existing.clientSecretCredentialId,
+      redirectUrl: existing.redirectUrl,
+      scopes: existing.scopes,
+    });
+  }
   const configurationCredentialId: CredentialId = await ctx.runAction(
     credentialInternal.credentials.store,
     {
@@ -263,23 +321,40 @@ export async function runProvisionApp(
     },
   );
 
-  let created: { appId: string; clientId: string; clientSecret: string };
+  let reply: Record<string, unknown>;
   try {
     const decrypted: string = await ctx.runAction(credentialInternal.credentials.decrypt, {
       credentialId: configurationCredentialId,
     });
-    created = parseManifestCreate(
-      await callSlack(dependencies.fetch, 'apps.manifest.create', {
-        token: decrypted,
-        form: { manifest: JSON.stringify(built.manifest) },
-      }),
-    );
+    reply = await callSlack(dependencies.fetch, 'apps.manifest.create', {
+      token: decrypted,
+      form: { manifest: JSON.stringify(built.manifest) },
+    });
   } finally {
     // The token is single-purpose and workspace-wide: it stops being ours the
     // moment the call that needed it has returned, success or failure.
     await ctx.runMutation(credentialInternal.credentials.revokeInternal, {
       credentialId: configurationCredentialId,
     });
+    await revokeConfigurationToken(ctx, dependencies.fetch, surface, token);
+  }
+  let created: { appId: string; clientId: string; clientSecret: string };
+  try {
+    created = parseManifestCreate(reply);
+  } catch (error: unknown) {
+    // Slack answered ok, so the app exists; without its credentials Day0
+    // cannot install it and would create another on the next click (P3-17).
+    const appId = typeof reply.app_id === 'string' ? reply.app_id : undefined;
+    await ctx.runMutation(internal.events.log, {
+      agentId: surface.agentId,
+      type: 'surface.app-unrecorded',
+      payload: { surfaceId: surface._id, ...(appId ? { appId } : {}) },
+    });
+    if (!appId) throw error;
+    throw new Error(
+      `Slack created app ${appId} but its reply carried no client credentials, so Day0 cannot ` +
+        `install it; delete app ${appId} in Slack's app settings before provisioning again.`,
+    );
   }
 
   const clientSecretCredentialId: CredentialId = await ctx.runAction(
@@ -294,6 +369,39 @@ export async function runProvisionApp(
     },
   );
 
+  return await fileInstallLink(ctx, surface, dependencies, now, {
+    appId: created.appId,
+    appName: built.appName,
+    clientId: created.clientId,
+    clientSecretCredentialId,
+    redirectUrl: built.redirectUrl,
+    scopes: built.scopes,
+  });
+}
+
+/** A registered app, as the install link is built from it. */
+interface RegisteredApp {
+  appId: string;
+  appName: string;
+  clientId: string;
+  clientSecretCredentialId: Id<'credentials'>;
+  redirectUrl: string;
+  scopes: string[];
+}
+
+/**
+ * Sign a fresh single-use install state for a registered app and file its link.
+ *
+ * Returns:
+ *   The app's id and name and the install link for the administrator.
+ */
+async function fileInstallLink(
+  ctx: ActionCtx,
+  surface: Doc<'surfaces'>,
+  dependencies: ProvisionDependencies,
+  now: number,
+  app: RegisteredApp,
+): Promise<ProvisionOutcome> {
   const nonce = dependencies.newNonce();
   const stateExpiresAt = now + OAUTH_STATE_TTL_MS;
   const state = signOauthState(
@@ -301,27 +409,20 @@ export async function runProvisionApp(
     process.env.DAY0_CREDENTIAL_KEY,
   );
   const installUrl = slackInstallUrl({
-    clientId: created.clientId,
-    redirectUrl: built.redirectUrl,
-    scopes: built.scopes,
+    clientId: app.clientId,
+    redirectUrl: app.redirectUrl,
+    scopes: app.scopes,
     state,
   });
-
   await ctx.runMutation(internal.surfaces.recordProvisionedApp, {
     surfaceId: surface._id,
-    appId: created.appId,
-    appName: built.appName,
-    clientId: created.clientId,
-    clientSecretCredentialId,
+    ...app,
     installUrl,
-    redirectUrl: built.redirectUrl,
-    scopes: built.scopes,
     stateNonce: nonce,
     stateExpiresAt,
     now,
   });
-
-  return { appId: created.appId, appName: built.appName, installUrl };
+  return { appId: app.appId, appName: app.appName, installUrl };
 }
 
 /**

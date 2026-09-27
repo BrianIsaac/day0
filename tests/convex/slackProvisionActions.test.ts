@@ -172,6 +172,7 @@ describe('registering a dedicated app', (): void => {
           body: String(init?.body ?? ''),
           authorization: headers.Authorization,
         });
+        if (String(input).endsWith('/auth.revoke')) return slackResponse({ ok: true, revoked: true });
         return slackResponse({
           ok: true,
           app_id: 'A123',
@@ -198,9 +199,13 @@ describe('registering a dedicated app', (): void => {
     expect(install.searchParams.get('redirect_uri')).toBe(`${PUBLIC_URL}/api/oauth/slack`);
     expect(install.searchParams.get('scope')?.split(',')).toHaveLength(8);
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe('https://slack.com/api/apps.manifest.create');
+    // The create, then Slack asked to revoke the configuration token it used (P7-3).
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://slack.com/api/apps.manifest.create',
+      'https://slack.com/api/auth.revoke',
+    ]);
     expect(calls[0].authorization).toBe(`Bearer ${CONFIG_TOKEN}`);
+    expect(calls[1].authorization).toBe(`Bearer ${CONFIG_TOKEN}`);
     const manifest = JSON.parse(new URLSearchParams(calls[0].body).get('manifest') ?? '{}');
     expect(manifest.display_information.name).toBe('ops worker (Day0)');
     expect(manifest.oauth_config.redirect_urls).toEqual([`${PUBLIC_URL}/api/oauth/slack`]);
@@ -538,5 +543,135 @@ describe('completing the install', (): void => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface?.provisioning?.stateNonce).toBeTruthy();
+  });
+});
+
+describe('the administrator\'s one action (P7-3, P3-17)', (): void => {
+  /** A Slack that answers each method as the case needs. */
+  function slack(answers: Record<string, () => Response>): string[] {
+    const called: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL): Promise<Response> => {
+        const method = String(input).split('/').at(-1) ?? '';
+        called.push(method);
+        const answer = answers[method];
+        if (!answer) throw new Error(`unscripted Slack method ${method}`);
+        return answer();
+      }),
+    );
+    return called;
+  }
+
+  const created = (): Response =>
+    slackResponse({
+      ok: true,
+      app_id: 'A123',
+      credentials: { client_id: '111.222', client_secret: CLIENT_SECRET },
+    });
+
+  async function provision(
+    harness: TestConvex<typeof schema>,
+    surfaceId: Id<'surfaces'>,
+  ): Promise<{ appId: string; installUrl: string }> {
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    return await harness
+      .withIdentity({ subject: 'owner' })
+      .action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      });
+  }
+
+  async function eventPayloads(
+    harness: TestConvex<typeof schema>,
+    type: string,
+  ): Promise<unknown[]> {
+    return (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+      .filter((event) => event.type === type)
+      .map((event) => event.payload);
+  }
+
+  it('records whether Slack revoked the configuration token, and never fails the app for it', async (): Promise<void> => {
+    slack({
+      'apps.manifest.create': created,
+      'auth.revoke': () => slackResponse({ ok: false, error: 'not_allowed_token_type' }),
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedSlackSurface(harness);
+    await expect(provision(harness, surfaceId)).resolves.toMatchObject({ appId: 'A123' });
+    expect(await eventPayloads(harness, 'surface.configuration-token-revoked')).toEqual([
+      {
+        surfaceId,
+        atProvider: false,
+        reason: 'Slack auth.revoke failed: not_allowed_token_type',
+      },
+    ]);
+  });
+
+  it('records a revocation Slack confirmed', async (): Promise<void> => {
+    slack({
+      'apps.manifest.create': created,
+      'auth.revoke': () => slackResponse({ ok: true, revoked: true }),
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedSlackSurface(harness);
+    await provision(harness, surfaceId);
+    expect(await eventPayloads(harness, 'surface.configuration-token-revoked')).toEqual([
+      { surfaceId, atProvider: true },
+    ]);
+  });
+
+  it('gives a fresh install link for the app already registered instead of creating a second', async (): Promise<void> => {
+    const called = slack({
+      'apps.manifest.create': created,
+      'auth.revoke': () => slackResponse({ ok: true, revoked: true }),
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedSlackSurface(harness);
+    const first = await provision(harness, surfaceId);
+    const firstNonce = (await harness.run(async (ctx) => await ctx.db.get(surfaceId)))?.provisioning
+      ?.stateNonce;
+
+    const second = await provision(harness, surfaceId);
+    expect(called.filter((method) => method === 'apps.manifest.create')).toHaveLength(1);
+    expect(second.appId).toBe(first.appId);
+    expect(second.installUrl).not.toBe(first.installUrl);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.provisioning?.appId).toBe('A123');
+    expect(surface?.provisioning?.stateNonce).not.toBe(firstNonce);
+    // The configuration token handed over the second time is still asked back of Slack.
+    expect(called.filter((method) => method === 'auth.revoke')).toHaveLength(2);
+  });
+
+  it('names and records an app Slack created whose reply carried no credentials', async (): Promise<void> => {
+    slack({
+      'apps.manifest.create': () => slackResponse({ ok: true, app_id: 'A999' }),
+      'auth.revoke': () => slackResponse({ ok: true, revoked: true }),
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedSlackSurface(harness);
+    await expect(provision(harness, surfaceId)).rejects.toThrow(
+      /Slack created app A999 .* delete app A999/,
+    );
+    expect(await eventPayloads(harness, 'surface.app-unrecorded')).toEqual([
+      { surfaceId, appId: 'A999' },
+    ]);
+  });
+
+  it('reads an HTML error page from Slack as the failure it is', async (): Promise<void> => {
+    slack({
+      'apps.manifest.create': () =>
+        new Response('<html><body>502 Bad Gateway</body></html>', {
+          status: 502,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      'auth.revoke': () => slackResponse({ ok: true, revoked: true }),
+    });
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedSlackSurface(harness);
+    await expect(provision(harness, surfaceId)).rejects.toThrow(
+      'Slack apps.manifest.create returned HTTP 502 with a body that is not JSON.',
+    );
   });
 });
