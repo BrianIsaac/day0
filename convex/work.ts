@@ -1053,6 +1053,9 @@ const NEVER_CLAIMED_DEAD_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Se
 /** The most work items read for one provider item: one per employee that discovered it. */
 const DISCOVERED_FROM_LIMIT = 32;
 
+/** The verdicts that park a row until a skill or a connection arrives; they check the claim and take none. */
+const PARKING_DECISIONS: ReadonlySet<string> = new Set(['needs-skill', 'defer']);
+
 /**
  * The owner and key a row's provider item is claimed under, if it is claimed at all.
  *
@@ -1084,15 +1087,67 @@ async function externalClaimScope(
   return key === undefined ? undefined : { userId: agent.userId, key };
 }
 
+/** Another work item holding a row's provider item, and the state it is in. */
+interface HeldElsewhere {
+  readonly holder: ClaimHolder;
+  readonly state: string;
+}
+
+/**
+ * Read the live claims on a row's provider item: the row's own, another work
+ * item's, or none. A live claim whose holder is gone, cancelled or skipped
+ * is released here, with what it refused, so a release some path missed
+ * cannot keep the item from the company for good.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item asking.
+ *   scope: The owner and key the row's item is claimed under.
+ *   now: The time of the read.
+ *
+ * Returns:
+ *   'own' when the row holds the claim, the holder when another work item
+ *   does, undefined when nobody does.
+ */
+async function liveClaimOn(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  scope: { userId: string; key: string },
+  now: number,
+): Promise<'own' | HeldElsewhere | undefined> {
+  const live = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_user_key', (q) => q.eq('userId', scope.userId).eq('key', scope.key))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of live) {
+    if (claim.workItemId === row._id) return 'own';
+    const holding = await ctx.db.get(claim.workItemId);
+    if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) {
+      await releaseClaim(ctx, claim, now);
+      continue;
+    }
+    const agent = await ctx.db.get(claim.agentId);
+    return {
+      holder: {
+        claimId: claim._id,
+        agentId: claim.agentId,
+        workItemId: claim.workItemId,
+        name: agent?.name ?? 'another employee',
+        title: holding.title,
+      },
+      state: holding.state,
+    };
+  }
+  return undefined;
+}
+
 /**
  * Take the owner-wide claim on a row's provider item, or name who holds it.
  *
  * The read of the live claims and the insert share the claiming
  * transaction, and Convex serialises transactions that touch the same index
- * range, so of two verdicts on one item exactly one inserts. A live claim
- * whose holder is gone, cancelled or skipped is released here, with what it
- * refused, so a release some path missed cannot keep the item from the
- * company for good.
+ * range, so of two verdicts on one item exactly one inserts.
  *
  * Args:
  *   ctx: Mutation context.
@@ -1107,31 +1162,12 @@ async function takeExternalClaim(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   now: number,
-): Promise<{ key: string; heldBy?: { holder: ClaimHolder; state: string } } | undefined> {
+): Promise<{ key: string; heldBy?: HeldElsewhere } | undefined> {
   const scope = await externalClaimScope(ctx, row);
   if (!scope) return undefined;
-  const live = await ctx.db
-    .query('externalClaims')
-    .withIndex('by_user_key', (q) => q.eq('userId', scope.userId).eq('key', scope.key))
-    .filter((q) => q.eq(q.field('releasedAt'), undefined))
-    .collect();
-  for (const claim of live) {
-    if (claim.workItemId === row._id) return { key: scope.key };
-    const holding = await ctx.db.get(claim.workItemId);
-    if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) {
-      await releaseClaim(ctx, claim, now);
-      continue;
-    }
-    const agent = await ctx.db.get(claim.agentId);
-    const holder: ClaimHolder = {
-      claimId: claim._id,
-      agentId: claim.agentId,
-      workItemId: claim.workItemId,
-      name: agent?.name ?? 'another employee',
-      title: holding.title,
-    };
-    return { key: scope.key, heldBy: { holder, state: holding.state } };
-  }
+  const live = await liveClaimOn(ctx, row, scope, now);
+  if (live === 'own') return { key: scope.key };
+  if (live) return { key: scope.key, heldBy: live };
   await ctx.db.insert('externalClaims', {
     userId: scope.userId,
     key: scope.key,
@@ -1141,6 +1177,56 @@ async function takeExternalClaim(
     claimedAt: now,
   });
   return { key: scope.key };
+}
+
+/**
+ * The other work item holding a row's provider item, without taking a claim.
+ *
+ * What a row that is not about to work the item asks: one whose evaluation
+ * has not begun, so a colleague's hold costs no model call (P8-2), and one
+ * parked for a skill or a connection, so its manager is never asked to
+ * approve a skill for an item a colleague already works. A parked row takes
+ * no claim of its own, so a colleague who can do the work still can.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item asking.
+ *   now: The time of the read.
+ *
+ * Returns:
+ *   The key and the holder, or undefined when the row takes no claim or
+ *   nobody else holds the item.
+ */
+async function externalClaimHeldElsewhere(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<{ key: string; heldBy: HeldElsewhere } | undefined> {
+  const scope = await externalClaimScope(ctx, row);
+  if (!scope) return undefined;
+  const live = await liveClaimOn(ctx, row, scope, now);
+  return live === undefined || live === 'own' ? undefined : { key: scope.key, heldBy: live };
+}
+
+/**
+ * Record that a row was refused the item another work item holds.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The refused work item.
+ *   refused: The claim key and who holds it.
+ */
+async function logClaimRefused(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  refused: { key: string; holder: ClaimHolder },
+): Promise<void> {
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.claim-refused',
+    payload: { workItemId: row._id, key: refused.key, holder: refused.holder },
+    createdAt: Date.now(),
+  });
 }
 
 /**
@@ -1994,14 +2080,18 @@ export async function applyVerdict(
 
   // One work item holds each provider item across the owner's employees: the
   // claim is taken here, in the claiming transaction, or the verdict becomes
-  // a skip naming who holds it.
+  // a skip naming who holds it. A verdict that parks the row for a skill or a
+  // connection takes nothing, but a colleague's hold still skips it.
   let refused: { key: string; holder: ClaimHolder } | undefined;
-  if (effective.decision === 'claim') {
-    const taken = await takeExternalClaim(ctx, row, Date.now());
-    if (taken?.heldBy) {
-      effective = claimRefusedVerdict(row, taken.heldBy.holder, taken.heldBy.state);
-      refused = { key: taken.key, holder: taken.heldBy.holder };
-    }
+  const claimRead =
+    effective.decision === 'claim'
+      ? await takeExternalClaim(ctx, row, Date.now())
+      : PARKING_DECISIONS.has(effective.decision)
+        ? await externalClaimHeldElsewhere(ctx, row, Date.now())
+        : undefined;
+  if (claimRead?.heldBy) {
+    effective = claimRefusedVerdict(row, claimRead.heldBy.holder, claimRead.heldBy.state);
+    refused = { key: claimRead.key, holder: claimRead.heldBy.holder };
   }
 
   // A verdict that waits on a surface or a grant was computed from reads taken
@@ -2064,14 +2154,7 @@ export async function applyVerdict(
       readmission.at,
     );
   }
-  if (refused) {
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.claim-refused',
-      payload: { workItemId, key: refused.key, holder: refused.holder },
-      createdAt: Date.now(),
-    });
-  }
+  if (refused) await logClaimRefused(ctx, row, refused);
   await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
@@ -3255,15 +3338,33 @@ export const cancelPlan = mutation({
 
 /**
  * Claim the evaluation or the draft of one row for the run about to make its
- * model call, in real mode; see `claimLoopStepInTransaction`.
+ * model call, in real mode; see `claimLoopStepInTransaction`. Internal. An
+ * evaluation whose item a colleague already holds is not claimed: the row is
+ * skipped naming the holder, with a `work.claim-refused` event, and no model
+ * call is made.
  */
 export const claimLoopStep = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     step: v.union(v.literal('evaluation'), v.literal('draft')),
   },
-  handler: async (ctx, args): Promise<StepClaim> =>
-    await claimLoopStepInTransaction(ctx, args.workItemId, args.step, Date.now()),
+  handler: async (ctx, args): Promise<StepClaim> => {
+    const now = Date.now();
+    if (args.step === 'evaluation') {
+      const row = await ctx.db.get(args.workItemId);
+      const held =
+        row?.state === 'discovered' ? await externalClaimHeldElsewhere(ctx, row, now) : undefined;
+      if (row && held) {
+        // Two employees on one project each paid a scope call for an item one
+        // of them already held (P8-2); the skip is written without one.
+        const skip = claimRefusedVerdict(row, held.heldBy.holder, held.heldBy.state);
+        await applyVerdict(ctx, row._id, skip);
+        await logClaimRefused(ctx, row, { key: held.key, holder: held.heldBy.holder });
+        return { claimed: false, reason: 'held-elsewhere' };
+      }
+    }
+    return await claimLoopStepInTransaction(ctx, args.workItemId, args.step, now);
+  },
 });
 
 /**
