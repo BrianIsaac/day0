@@ -2886,6 +2886,7 @@ async function plannerCorrections(
     agentId: item.agentId,
     sourceCategory: item.sourceCategory,
     sourceSystem: item.sourceSystem,
+    workItemId: item._id,
   });
   if (selected.length === 0) return { entries: [] };
   return await scrubbedCorrectionEntries(selected, { model: spanModelFromEnv(), known: knownValues });
@@ -2893,7 +2894,8 @@ async function plannerCorrections(
 
 /**
  * The corrections an approved plan applied, as its executor reads them:
- * the plan's own list, this employee's only, scrubbed at prompt assembly. A
+ * the plan's own list, this employee's only apart from the first rejection
+ * of a plan for the same provider item, scrubbed at prompt assembly. A
  * correction kept from this same item whose words are already on the run as
  * its live manager feedback is not repeated. A scrub without the span model
  * is recorded on the timeline.
@@ -2921,6 +2923,7 @@ async function executorCorrections(
   const rows: Doc<'corrections'>[] = await ctx.runQuery(internal.corrections.forPlan, {
     agentId: args.item.agentId,
     ids,
+    workItemId: args.item._id,
   });
   const live = liveManagerFeedback(args.item.managerFeedback);
   const carried = rows.filter((row) => !(row.workItemId === args.item._id && row.text === live));
