@@ -279,7 +279,7 @@ export function AgentDashboard({ agentId }: Props) {
               )
             ) : null}
 
-            {charter ? <CharterCard charter={charter} /> : null}
+            {charter ? <CharterCard charter={charter} manager={agent.bossEmail} /> : null}
 
             <ProposedSkillsPanel
               agentId={agentId}
@@ -1097,7 +1097,21 @@ export function ConstraintList({
   );
 }
 
-export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
+/**
+ * The charter as drafted or approved, with its rules, its notes and, once
+ * approved, the amendment panel.
+ *
+ * The manager it names is the agent row's, the one the header changes
+ * (U9 D3 (b)): the charter has no approval chain of its own to edit here.
+ */
+export function CharterCard({
+  charter,
+  manager,
+}: {
+  charter: Doc<'charters'>;
+  /** The agent row's manager, who approves this employee's work. */
+  manager?: string;
+}) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
@@ -1180,6 +1194,12 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             Boundaries · collaborators · open questions
           </summary>
           <div className="mt-2 space-y-2 pl-3 border-l border-[var(--color-border)]">
+            <BoundaryList
+              label="Reports to"
+              items={
+                manager ? [`${manager}, the manager named in the header; change it there`] : []
+              }
+            />
             <BoundaryList label="Will do" items={body.proposedBoundaries.willDo} />
             <BoundaryList label="Will NOT do" items={body.proposedBoundaries.willNotDo} />
             <BoundaryList

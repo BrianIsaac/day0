@@ -1592,6 +1592,17 @@ describe('amending an approved charter from the card', (): void => {
     expect(markup).toContain('>Remove<');
   });
 
+  it("offers no approval chain of its own: the manager is the agent row's, changed from the header (U9 D3 (b))", (): void => {
+    const panel = renderToStaticMarkup(
+      <AmendCharterPanel charter={charter} body={body} error={null} onAmend={async () => true} />,
+    );
+    expect(panel.toLowerCase()).not.toMatch(/approval chain|approver|who approves/);
+    const card = renderToStaticMarkup(
+      <CharterCard charter={{ ...charter, body }} manager="ana@kestrel.example" />,
+    );
+    expect(card).toContain('ana@kestrel.example, the manager named in the header; change it there');
+  });
+
   it('shows the refusal the backend returned', (): void => {
     const markup = renderToStaticMarkup(
       <AmendCharterPanel
