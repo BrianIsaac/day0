@@ -327,9 +327,9 @@ describe('surface persistence', (): void => {
         current: true,
       }),
     ]);
-    await expect(harness.run(async (ctx) => await ctx.db.get(deferredItemId))).resolves.toMatchObject(
-      { state: 'discovered' },
-    );
+    await expect(
+      harness.run(async (ctx) => await ctx.db.get(deferredItemId)),
+    ).resolves.toMatchObject({ state: 'discovered' });
   });
 
   it('mints a qualified charter mention beside the bare documented product', async (): Promise<void> => {
@@ -442,7 +442,11 @@ describe('surface persistence', (): void => {
     const { tileId, aliasId, workItemId } = await harness.run(
       async (
         ctx,
-      ): Promise<{ tileId: Id<'surfaces'>; aliasId: Id<'surfaces'>; workItemId: Id<'workItems'> }> => {
+      ): Promise<{
+        tileId: Id<'surfaces'>;
+        aliasId: Id<'surfaces'>;
+        workItemId: Id<'workItems'>;
+      }> => {
         const tileId = await ctx.db.insert('surfaces', {
           agentId,
           slug: 'looker-pipeline-tile',
@@ -456,7 +460,8 @@ describe('surface persistence', (): void => {
             {
               kind: 'documentation',
               ref: 'systems/looker-pipeline-tile.md',
-              quote: '- The Looker pipeline tile is reached through its web UI only, at `http://looker-tile:8080/`.',
+              quote:
+                '- The Looker pipeline tile is reached through its web UI only, at `http://looker-tile:8080/`.',
               current: true,
               firstSeenAt: 1,
               lastSeenAt: 1,
@@ -530,7 +535,10 @@ describe('surface persistence', (): void => {
       'documentation',
       'charter',
     ]);
-    expect(result.alias).toMatchObject({ verdict: 'declared', reason: 'Rejected by the operator.' });
+    expect(result.alias).toMatchObject({
+      verdict: 'declared',
+      reason: 'Rejected by the operator.',
+    });
     expect(result.alias?.discoveryEvidence).toHaveLength(1);
     expect(result.item).toMatchObject({ state: 'discovered' });
     const types = await eventTypes(harness);
@@ -608,9 +616,9 @@ describe('surface persistence', (): void => {
           .collect(),
     );
     expect(rows).toHaveLength(2);
-    expect(rows.find((row) => row._id === tileId)?.discoveryEvidence?.map((item) => item.kind)).toEqual(
-      ['documentation', 'charter'],
-    );
+    expect(
+      rows.find((row) => row._id === tileId)?.discoveryEvidence?.map((item) => item.kind),
+    ).toEqual(['documentation', 'charter']);
     expect(await eventTypes(harness)).not.toContain('surface.charter-match-ambiguous');
   });
 
@@ -1254,7 +1262,10 @@ describe('surface probe generations', (): void => {
           observedAt: 1,
           createdAt: 1,
           state: 'skipped',
-          verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+          verdict: {
+            decision: 'skip',
+            reason: 'out-of-scope: no charter or current documented-system overlap',
+          },
           skipReason: 'out-of-scope: no charter or current documented-system overlap',
         }),
     );
@@ -1273,8 +1284,8 @@ describe('surface probe generations', (): void => {
       reevaluation: { trigger: 'surface', key: `surface:${surfaceId}:100`, at: 100 },
     });
     expect(row?.skipReason).toBeUndefined();
-    const requeued = await harness.run(
-      async (ctx) => (await ctx.db.query('events').collect()).filter((event) => event.type === 'work.requeued'),
+    const requeued = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter((event) => event.type === 'work.requeued'),
     );
     expect(requeued.map((event) => event.payload)).toEqual([
       {
@@ -1511,9 +1522,7 @@ describe('surface probe generations', (): void => {
           class: 'analytics',
           verdict: 'approved',
           endpoint: 'http://looker-tile:8080/',
-          whereFound: [
-            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
-          ],
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
           discoveryEvidence: [
             {
               kind: 'documentation',
@@ -1939,9 +1948,7 @@ describe('surface approval state machine', (): void => {
           class: 'analytics',
           verdict: 'connected',
           endpoint: 'http://looker-tile:8080/',
-          whereFound: [
-            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
-          ],
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
           discoveryEvidence: [
             {
               kind: 'documentation',
