@@ -2119,6 +2119,19 @@ describe('the exact-action gate', (): void => {
     expect(claims[1]?.settledAt).toEqual(expect.any(Number));
   });
 
+  it('keeps a plan rejection from before the rejection stamp existed as the first rejection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await pend(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { planRejectedAt: 5 }));
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'wrong issue' });
+
+    expect((await readItem(harness, workItemId)).rejectedAt).toBe(5);
+  });
+
   it('rejects to failed with the reason, keeps the draft, and retries from plan-approved', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

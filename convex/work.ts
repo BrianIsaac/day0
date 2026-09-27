@@ -2876,7 +2876,9 @@ async function cancelPlanInTransaction(
   await ctx.db.patch(row._id, {
     state: 'cancelled',
     skipReason,
-    ...(SURFACE_MODE === 'real' ? { planRejectedAt: now, rejectedAt: row.rejectedAt ?? now } : {}),
+    ...(SURFACE_MODE === 'real'
+      ? { planRejectedAt: now, rejectedAt: row.rejectedAt ?? row.planRejectedAt ?? now }
+      : {}),
     // Kept in full, as a rejection reason is, for the plan Retry drafts next.
     ...(feedback
       ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'plan-rejection' as const } }
@@ -4091,7 +4093,7 @@ async function rejectActionsInTransaction(
   await ctx.db.patch(args.workItemId, {
     state: 'failed',
     skipReason,
-    ...(SURFACE_MODE === 'real' ? { rejectedAt: row.rejectedAt ?? now } : {}),
+    ...(SURFACE_MODE === 'real' ? { rejectedAt: row.rejectedAt ?? row.planRejectedAt ?? now } : {}),
     ...(output !== undefined ? { output } : {}),
     ...(feedback
       ? {
