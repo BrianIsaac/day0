@@ -80,9 +80,12 @@ export const PROVIDER_LABELS: ReadonlySet<string> = new Set(
  * stay in the clear: they are the address the runbook needs, and only the
  * password is the credential.
  */
-export const CONNECTION_PASSWORD = /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<>]*:([^\s/@`'"<>]+)@/gi;
-const PEM_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----\s*([\s\S]*?)\s*-----END [A-Z ]*PRIVATE KEY-----/g;
-const JSON_WEB_TOKEN = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g;
+export const CONNECTION_PASSWORD =
+  /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<>]*:([^\s/@`'"<>]+)@/gi;
+const PEM_BLOCK =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----\s*([\s\S]*?)\s*-----END [A-Z ]*PRIVATE KEY-----/g;
+const JSON_WEB_TOKEN =
+  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g;
 /**
  * The value after an `Authorization` scheme word. Eight characters keeps
  * "Bearer header." in prose out; a placeholder (`Bearer <token>`,
@@ -91,7 +94,8 @@ const JSON_WEB_TOKEN = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]
 const AUTHORIZATION_VALUE = /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+([^\s,;"'`<>\\]+)/gi;
 const HEADER_VALUE = /\b(?:Bearer|Basic)\s+([^\s,;"'`<>\\]{8,})/g;
 /** A named credential header: `X-Api-Key: value`, `Api-Key: value`, `X-Auth-Token: value`. */
-const CREDENTIAL_HEADER = /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\]{8,})/gi;
+const CREDENTIAL_HEADER =
+  /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\]{8,})/gi;
 /** curl's `-u user:password` and `--user user:password`. */
 const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"']+)/g;
 /**
@@ -136,7 +140,8 @@ export function nationalIdVerifies(series: string, digits: string, check: string
   const rule = NATIONAL_ID_CHECK[series];
   if (!rule) return false;
   const sum = [...digits].reduce(
-    (total: number, digit: string, index: number): number => total + Number(digit) * NATIONAL_ID_WEIGHTS[index]!,
+    (total: number, digit: string, index: number): number =>
+      total + Number(digit) * NATIONAL_ID_WEIGHTS[index]!,
     rule.offset,
   );
   return rule.letters[sum % 11] === check;
@@ -164,7 +169,12 @@ export function structuralSpans(text: string): StructuralSpan[] {
   for (const match of text.matchAll(CONNECTION_PASSWORD)) {
     if (match.index === undefined || REFERENCE_START.test(match[2])) continue;
     const start = match.index + match[0].lastIndexOf(`${match[2]}@`);
-    spans.push({ start, end: start + match[2].length, label: 'connection password', kind: 'secret' });
+    spans.push({
+      start,
+      end: start + match[2].length,
+      label: 'connection password',
+      kind: 'secret',
+    });
   }
   for (const match of text.matchAll(PEM_BLOCK)) {
     if (match.index === undefined || !match[1]) continue;
@@ -173,7 +183,12 @@ export function structuralSpans(text: string): StructuralSpan[] {
   }
   for (const match of text.matchAll(JSON_WEB_TOKEN)) {
     if (match.index === undefined) continue;
-    spans.push({ start: match.index, end: match.index + match[0].length, label: 'json web token', kind: 'secret' });
+    spans.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      label: 'json web token',
+      kind: 'secret',
+    });
   }
   for (const match of text.matchAll(PROVIDER_PREFIX)) {
     if (match.index === undefined) continue;
@@ -185,7 +200,8 @@ export function structuralSpans(text: string): StructuralSpan[] {
     for (const match of text.matchAll(pattern)) {
       if (match.index === undefined) continue;
       const value = match[1].replace(TRAILING_PUNCTUATION, '');
-      if (REFERENCE_START.test(value) || UPPER_NAME.test(value) || value.startsWith('<credential:')) continue;
+      if (REFERENCE_START.test(value) || UPPER_NAME.test(value) || value.startsWith('<credential:'))
+        continue;
       const start = match.index + match[0].lastIndexOf(match[1]);
       spans.push({ start, end: start + value.length, label: 'header value', kind: 'secret' });
     }
@@ -202,13 +218,23 @@ export function structuralSpans(text: string): StructuralSpan[] {
     const quoted = match[1] ?? match[2] ?? match[3];
     const raw = quoted ?? match[4] ?? '';
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
-    if (!value || guardReason(value, { assigned: true }) || (quoted === undefined && LOWERCASE_WORD.test(value))) continue;
+    if (
+      !value ||
+      guardReason(value, { assigned: true }) ||
+      (quoted === undefined && LOWERCASE_WORD.test(value))
+    )
+      continue;
     const start = match.index + match[0].lastIndexOf(raw);
     spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }
   for (const match of text.matchAll(NATIONAL_ID)) {
     if (match.index === undefined || !nationalIdVerifies(match[1], match[2], match[3])) continue;
-    spans.push({ start: match.index, end: match.index + match[0].length, label: 'national id', kind: 'id-number' });
+    spans.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      label: 'national id',
+      kind: 'id-number',
+    });
   }
   return mergeSpans(spans);
 }

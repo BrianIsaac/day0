@@ -70,7 +70,12 @@ export interface GuardContext {
 }
 
 /** The shapes that are names, and so do not apply under an explicit assignment. */
-const NAME_SHAPES: ReadonlySet<string> = new Set(['permission scope', 'channel reference', 'hostname', 'dotted identifier']);
+const NAME_SHAPES: ReadonlySet<string> = new Set([
+  'permission scope',
+  'channel reference',
+  'hostname',
+  'dotted identifier',
+]);
 
 /**
  * Whether one shape rejects a value where it sits.
@@ -118,10 +123,14 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
   { name: 'masked', pattern: /^(.)\1{3,}$/ },
   {
     name: 'label word',
-    pattern: /^(?:password|passwd|pwd|passcode|passphrase|pin|token|secret|key|api key|credential|credentials|login|username|user|account|bearer|basic|authorization)$/i,
+    pattern:
+      /^(?:password|passwd|pwd|passcode|passphrase|pin|token|secret|key|api key|credential|credentials|login|username|user|account|bearer|basic|authorization)$/i,
   },
   /** A provider prefix with nothing after it but a mode word: a placeholder, not a key. */
-  { name: 'placeholder', pattern: /^[a-z]{1,4}[-_](?:test|live|example|sample|dummy|placeholder|changeme)$/i },
+  {
+    name: 'placeholder',
+    pattern: /^[a-z]{1,4}[-_](?:test|live|example|sample|dummy|placeholder|changeme)$/i,
+  },
   /** Dot-separated lowercase labels ending in an alphabetic top label: an address, not a value. */
   { name: 'hostname', pattern: /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/ },
   { name: 'dotted identifier', pattern: DOTTED_IDENTIFIER },
@@ -163,16 +172,22 @@ const QUOTE = '(?:\\\\?[`\'"])?';
  * cell. Prose that only mentions a label ("no token value is on this page")
  * has no separator and is not one.
  */
-const SECRET_ASSIGNMENT = new RegExp(`${SECRET_LABEL}${QUOTE}\\s*(?:[:=：|]|\\bis\\b|是|为)\\s*${QUOTE}$`, 'i');
+const SECRET_ASSIGNMENT = new RegExp(
+  `${SECRET_LABEL}${QUOTE}\\s*(?:[:=：|]|\\bis\\b|是|为)\\s*${QUOTE}$`,
+  'i',
+);
 const SECRET_LABEL_WORD = new RegExp(`(?:^|[^A-Za-z])${SECRET_LABEL}(?:$|[^A-Za-z])`, 'i');
-const PASSWORD_ASSIGNMENT = /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
-const ASSIGNED_VALUE = /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
+const PASSWORD_ASSIGNMENT =
+  /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
+const ASSIGNED_VALUE =
+  /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
 /**
  * A label with a short phrase before its separator ("PIN for the shared
  * phone: 0419"); only a value with a digit is taken this way, so "password
  * policy: rotate quarterly" stays prose.
  */
-const PHRASED_ASSIGNED_VALUE = /^(?:[ \t]+[^\s:=：]+){1,4}[ \t]*[:=：][ \t]*([^\s`'"，。<>\\]*\d[^\s`'"，。<>\\]*)/i;
+const PHRASED_ASSIGNED_VALUE =
+  /^(?:[ \t]+[^\s:=：]+){1,4}[ \t]*[:=：][ \t]*([^\s`'"，。<>\\]*\d[^\s`'"，。<>\\]*)/i;
 /** `user / password` in one span: the model read the pair as one name. */
 const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
 /**
@@ -180,9 +195,11 @@ const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
  * "username: revops", "user = revops". A `login:` assignment is not here; the
  * grammar reads it as the credential unless it is a user / password pair.
  */
-const USERNAME_DESIGNATOR = /(?:\blogin[ \t]+is|(?:\buser ?name|\buser|\baccount)[ \t]*(?:\bis\b|[:=：]))[ \t]*[`'"]?$/i;
+const USERNAME_DESIGNATOR =
+  /(?:\blogin[ \t]+is|(?:\buser ?name|\buser|\baccount)[ \t]*(?:\bis\b|[:=：]))[ \t]*[`'"]?$/i;
 /** JSON keys whose string values are identifiers by construction. */
-const IDENTIFIER_KEY = /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
+const IDENTIFIER_KEY =
+  /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
 const IDENTIFIER_KEY_ASSIGNMENT = /\b(?:channel|method)[ \t]+key[ \t]*[:=][ \t]*[`'"]?$/i;
 const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
 /** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
@@ -220,8 +237,8 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const tokenStart = start - (text.slice(0, start).match(/[A-Za-z0-9_:.-]+$/)?.[0].length ?? 0);
   const tokenEnd = end + (text.slice(end).match(/^[A-Za-z0-9_:.-]+/)?.[0].length ?? 0);
   const scope = isPermissionScope(text.slice(tokenStart, tokenEnd));
-  const scopeContext = /[\[,'"`]\s*$/.test(text.slice(0, tokenStart)) ||
-    /^\s*[\],'"`]/.test(text.slice(tokenEnd));
+  const scopeContext =
+    /[\[,'"`]\s*$/.test(text.slice(0, tokenStart)) || /^\s*[\],'"`]/.test(text.slice(tokenEnd));
   const assignedAt = (index: number): boolean =>
     SECRET_ASSIGNMENT.test(text.slice(0, index)) || PASSWORD_ASSIGNMENT.test(text.slice(0, index));
   const columnAssigned = inCredentialColumn(text, start, end);
@@ -233,13 +250,24 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const token = text.slice(tokenStart, tokenEnd);
   const hashed = text[tokenStart - 1] === '#' && !/[A-Za-z0-9_#]/.test(text[tokenStart - 2] ?? '');
   const wholeToken = hashed ? `#${token}` : token;
-  if (IDENTIFIER_KEY_ASSIGNMENT.test(text.slice(0, hashed ? tokenStart - 1 : tokenStart)) &&
-    (CHANNEL_REFERENCE.test(wholeToken) || DOTTED_IDENTIFIER.test(token))) return undefined;
-  if (hashed && CHANNEL_REFERENCE.test(`#${token}`) && !assignedAt(tokenStart - 1) && !columnAssigned) return undefined;
+  if (
+    IDENTIFIER_KEY_ASSIGNMENT.test(text.slice(0, hashed ? tokenStart - 1 : tokenStart)) &&
+    (CHANNEL_REFERENCE.test(wholeToken) || DOTTED_IDENTIFIER.test(token))
+  )
+    return undefined;
+  if (
+    hashed &&
+    CHANNEL_REFERENCE.test(`#${token}`) &&
+    !assignedAt(tokenStart - 1) &&
+    !columnAssigned
+  )
+    return undefined;
   if (DOTTED_IDENTIFIER.test(token) && !assigned) return undefined;
   const assignedTokenStart = hashed ? tokenStart - 1 : tokenStart;
-  if ((assignedAt(assignedTokenStart) || columnAssigned) &&
-    (start > assignedTokenStart || end < tokenEnd)) {
+  if (
+    (assignedAt(assignedTokenStart) || columnAssigned) &&
+    (start > assignedTokenStart || end < tokenEnd)
+  ) {
     start = assignedTokenStart;
     end = tokenEnd;
     value = text.slice(start, end);
@@ -272,25 +300,38 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     return undefined;
   }
   const padding = /^={1,2}(?![=A-Za-z0-9+/])/.exec(text.slice(end));
-  if (padding && /^[A-Za-z0-9+/]{8,}$/.test(value) && (value.length + padding[0].length) % 4 === 0) {
+  if (
+    padding &&
+    /^[A-Za-z0-9+/]{8,}$/.test(value) &&
+    (value.length + padding[0].length) % 4 === 0
+  ) {
     end += padding[0].length;
     value = text.slice(start, end);
   }
   if (end <= start) return undefined;
   const before = text.slice(0, start);
-  if (!explicitPassword && (USERNAME_DESIGNATOR.test(before) || IDENTIFIER_KEY.test(before))) return undefined;
+  if (!explicitPassword && (USERNAME_DESIGNATOR.test(before) || IDENTIFIER_KEY.test(before)))
+    return undefined;
   // Tool names and prose are not credentials merely because a detector
   // labels them as such. Explicit assignments still protect weak passwords.
   const wholeWord = !/[A-Za-z0-9_]$/.test(before) && !/^[A-Za-z0-9_]/.test(text.slice(end));
-  if (wholeWord && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value) &&
-    !SECRET_ASSIGNMENT.test(before) && !inCredentialColumn(text, start, end)) {
+  if (
+    wholeWord &&
+    RUNBOOK_WORD.test(value) &&
+    !opaqueRunbookWord(value) &&
+    !SECRET_ASSIGNMENT.test(before) &&
+    !inCredentialColumn(text, start, end)
+  ) {
     return undefined;
   }
   if (NEVER_REDACT.has(value)) return undefined;
   const assignedValue = assignedAt(start) || columnAssigned;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (shape.name === 'permission scope') return false;
-    if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
+    if (
+      explicitPassword &&
+      (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))
+    ) {
       return false;
     }
     return shapeRejects(shape, value, assignedValue);
@@ -301,7 +342,11 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
 /** Preserve the explicit page context that a generated credential label cannot encode. */
 export function explicitlyAssignedCredential(text: string, start: number, end: number): boolean {
   const before = text.slice(0, start);
-  return SECRET_ASSIGNMENT.test(before) || PASSWORD_ASSIGNMENT.test(before) || inCredentialColumn(text, start, end);
+  return (
+    SECRET_ASSIGNMENT.test(before) ||
+    PASSWORD_ASSIGNMENT.test(before) ||
+    inCredentialColumn(text, start, end)
+  );
 }
 
 /**
@@ -354,7 +399,9 @@ function inCredentialColumn(text: string, start: number, end: number): boolean {
  *   The two halves, or undefined when the span is not such a pair or the
  *   password half is a shape a secret never has.
  */
-export function splitUserPasswordPair(value: string): { username: string; password: string } | undefined {
+export function splitUserPasswordPair(
+  value: string,
+): { username: string; password: string } | undefined {
   const pair = USER_PASSWORD_PAIR.exec(value);
   if (!pair) return undefined;
   const password = pair[2].replace(TRAILING_PUNCTUATION, '');
@@ -363,7 +410,18 @@ export function splitUserPasswordPair(value: string): { username: string; passwo
 }
 
 /** Shapes an identifier has and personal data does not: the working ids of a ticket queue. */
-const WORKING_IDENTIFIER = new Set(['reference', 'marker or placeholder inside', 'issue key', 'url', 'uuid', 'hex id', 'slack id', 'date', 'figure', 'too short']);
+const WORKING_IDENTIFIER = new Set([
+  'reference',
+  'marker or placeholder inside',
+  'issue key',
+  'url',
+  'uuid',
+  'hex id',
+  'slack id',
+  'date',
+  'figure',
+  'too short',
+]);
 const DIGITS = /\d/g;
 
 /**
@@ -383,7 +441,8 @@ const DIGITS = /\d/g;
  */
 export function personalDataGuardReason(kind: string, value: string): string | undefined {
   const identifier = NEVER_A_SECRET.find(
-    (shape: NeverASecret): boolean => WORKING_IDENTIFIER.has(shape.name) && shape.pattern.test(value),
+    (shape: NeverASecret): boolean =>
+      WORKING_IDENTIFIER.has(shape.name) && shape.pattern.test(value),
   );
   if (identifier) return identifier.name;
   const digits = (value.match(DIGITS) ?? []).length;
@@ -410,6 +469,7 @@ export function guardReason(value: string, context: GuardContext = {}): string |
     shapeRejects(candidate, value, context.assigned === true),
   )?.name;
   if (shape) return shape;
-  if (!context.assigned && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value)) return 'runbook word';
+  if (!context.assigned && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value))
+    return 'runbook word';
   return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;
 }

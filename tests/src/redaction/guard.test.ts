@@ -35,16 +35,21 @@ describe('the guard between a model span and the stored text', (): void => {
     expect(guardSecretSpan(value, { start: 0, end: value.length }, 'access token')).toBeUndefined();
   });
 
-  it.each(['hunter2', 'pipeline-tile-local', 'P@ssw0rd!', 'Tr0ub4dor&3', 'Sunny-Day-42', '0419', 'q7Mz2Kv9'])(
-    'passes %s through',
-    (value: string): void => {
-      expect(guardReason(value)).toBeUndefined();
-      expect(guardSecretSpan(value, { start: 0, end: value.length }, 'password')).toEqual({
-        start: 0,
-        end: value.length,
-      });
-    },
-  );
+  it.each([
+    'hunter2',
+    'pipeline-tile-local',
+    'P@ssw0rd!',
+    'Tr0ub4dor&3',
+    'Sunny-Day-42',
+    '0419',
+    'q7Mz2Kv9',
+  ])('passes %s through', (value: string): void => {
+    expect(guardReason(value)).toBeUndefined();
+    expect(guardSecretSpan(value, { start: 0, end: value.length }, 'password')).toEqual({
+      start: 0,
+      end: value.length,
+    });
+  });
 
   it('narrows a span that swallowed its label to the value', (): void => {
     for (const [text, value] of [
@@ -53,7 +58,10 @@ describe('the guard between a model span and the stored text', (): void => {
       ['Looker password: `revops2026`', 'revops2026'],
       ['密码：hunter2，请勿写入工单', 'hunter2'],
     ]) {
-      const swallowed = spanOf(text, text.slice(text.search(/password|密码/), spanOf(text, value).end));
+      const swallowed = spanOf(
+        text,
+        text.slice(text.search(/password|密码/), spanOf(text, value).end),
+      );
       const narrowed = guardSecretSpan(text, swallowed, 'password');
       expect(narrowed).toEqual(spanOf(text, value));
     }
@@ -61,14 +69,20 @@ describe('the guard between a model span and the stored text', (): void => {
 
   it('trims whitespace and enclosing punctuation and drops a span that is prose', (): void => {
     const text = 'Use (hunter2), then rotate it.';
-    expect(guardSecretSpan(text, spanOf(text, ' (hunter2),'), 'password')).toEqual(spanOf(text, 'hunter2'));
+    expect(guardSecretSpan(text, spanOf(text, ' (hunter2),'), 'password')).toEqual(
+      spanOf(text, 'hunter2'),
+    );
     const prose = 'Session: token, valid for one hour.';
-    expect(guardSecretSpan(prose, spanOf(prose, 'valid for one hour'), 'access token')).toBeUndefined();
+    expect(
+      guardSecretSpan(prose, spanOf(prose, 'valid for one hour'), 'access token'),
+    ).toBeUndefined();
   });
 
   it('keeps the whitespace of a private key block', (): void => {
     const text = 'key\nAAAA\nBBBB\nend';
-    expect(guardSecretSpan(text, spanOf(text, 'AAAA\nBBBB'), 'private key')).toEqual(spanOf(text, 'AAAA\nBBBB'));
+    expect(guardSecretSpan(text, spanOf(text, 'AAAA\nBBBB'), 'private key')).toEqual(
+      spanOf(text, 'AAAA\nBBBB'),
+    );
   });
 });
 
@@ -84,34 +98,51 @@ describe('explicit password assignments', () => {
     expect(guardSecretSpan(text, spanOf(text, candidate), 'password')).toEqual(spanOf(text, value));
   });
 
-  it.each(['{{secret}}', '<credential: looker password, stored>', '74%', 'https://example.test', 'REVOPS-7'])(
-    'keeps working material after a label: %s', (value) => {
-      const text = `Password: ${value}`;
-      expect(guardSecretSpan(text, spanOf(text, 'Password'), 'password')).toBeUndefined();
-    },
-  );
+  it.each([
+    '{{secret}}',
+    '<credential: looker password, stored>',
+    '74%',
+    'https://example.test',
+    'REVOPS-7',
+  ])('keeps working material after a label: %s', (value) => {
+    const text = `Password: ${value}`;
+    expect(guardSecretSpan(text, spanOf(text, 'Password'), 'password')).toBeUndefined();
+  });
 });
 
 it('retains base64 padding when a detected credential ends immediately before it', () => {
   const text = 'Credential: cmV2b3BzMjAyNg==';
-  expect(guardSecretSpan(text, spanOf(text, 'cmV2b3BzMjAyNg'), 'credential'))
-    .toEqual(spanOf(text, 'cmV2b3BzMjAyNg=='));
+  expect(guardSecretSpan(text, spanOf(text, 'cmV2b3BzMjAyNg'), 'credential')).toEqual(
+    spanOf(text, 'cmV2b3BzMjAyNg=='),
+  );
 });
 
 describe('label-only spans and pairs', (): void => {
   it('extends a PIN or passcode label across a short phrase to a numeric value, and stops at sentence punctuation', (): void => {
     const pin = 'PIN for the shared phone: 0419, rotated monthly';
     expect(guardSecretSpan(pin, spanOf(pin, 'PIN'), 'password')).toEqual(spanOf(pin, '0419'));
-    const prose = 'The tile login is revops and the password is hunter2; the operations lead rotates it.';
-    expect(guardSecretSpan(prose, spanOf(prose, 'password'), 'password')).toEqual(spanOf(prose, 'hunter2'));
+    const prose =
+      'The tile login is revops and the password is hunter2; the operations lead rotates it.';
+    expect(guardSecretSpan(prose, spanOf(prose, 'password'), 'password')).toEqual(
+      spanOf(prose, 'hunter2'),
+    );
     const policy = 'password policy: rotate quarterly';
     expect(guardSecretSpan(policy, spanOf(policy, 'password'), 'password')).toBeUndefined();
   });
 
   it('reads a user / password pair as a username and a secret', (): void => {
-    expect(splitUserPasswordPair('revops / hunter2')).toEqual({ username: 'revops', password: 'hunter2' });
-    expect(splitUserPasswordPair('revops / sunshine')).toEqual({ username: 'revops', password: 'sunshine' });
-    expect(splitUserPasswordPair('revops/Sunny-Day-42')).toEqual({ username: 'revops', password: 'Sunny-Day-42' });
+    expect(splitUserPasswordPair('revops / hunter2')).toEqual({
+      username: 'revops',
+      password: 'hunter2',
+    });
+    expect(splitUserPasswordPair('revops / sunshine')).toEqual({
+      username: 'revops',
+      password: 'sunshine',
+    });
+    expect(splitUserPasswordPair('revops/Sunny-Day-42')).toEqual({
+      username: 'revops',
+      password: 'Sunny-Day-42',
+    });
     expect(splitUserPasswordPair('docs / runbooks / archive')).toBeUndefined();
     expect(splitUserPasswordPair('Looker tile')).toBeUndefined();
     expect(splitUserPasswordPair('revops / {{secret}}')).toBeUndefined();
@@ -133,44 +164,68 @@ describe('working material the model mistakes for a secret', (): void => {
     expect(guardReason(value)).toBe(reason);
   });
 
-  it.each(['hunter2.local1', 'Sunny-Day-42', 'pipeline-tile-local', 'warehouse-read-only', 'sk-test-9Xq2', 'q7Mz2Kv9'])(
-    'still passes %s',
-    (value: string): void => {
-      expect(guardReason(value)).toBeUndefined();
-    },
-  );
+  it.each([
+    'hunter2.local1',
+    'Sunny-Day-42',
+    'pipeline-tile-local',
+    'warehouse-read-only',
+    'sk-test-9Xq2',
+    'q7Mz2Kv9',
+  ])('still passes %s', (value: string): void => {
+    expect(guardReason(value)).toBeUndefined();
+  });
 
   it('keeps a value a username designator introduces and a value under an identifier key', (): void => {
     const prose = 'The tile login is revops and the password is hunter2.';
     expect(guardSecretSpan(prose, spanOf(prose, 'revops'), 'api key')).toBeUndefined();
-    expect(guardSecretSpan(prose, spanOf(prose, 'hunter2'), 'password')).toEqual(spanOf(prose, 'hunter2'));
+    expect(guardSecretSpan(prose, spanOf(prose, 'hunter2'), 'password')).toEqual(
+      spanOf(prose, 'hunter2'),
+    );
     const labelled = 'username: revops, password: Tr0ub4dor&3';
     expect(guardSecretSpan(labelled, spanOf(labelled, 'revops'), 'credential')).toBeUndefined();
-    expect(guardSecretSpan(labelled, spanOf(labelled, 'Tr0ub4dor&3'), 'credential')).toEqual(spanOf(labelled, 'Tr0ub4dor&3'));
-    const record = '{"id":"iss-9Xq2","identifier":"REVOPS-7","token":"Tr0ub4dor&3","url":"https://x.example/a"}';
+    expect(guardSecretSpan(labelled, spanOf(labelled, 'Tr0ub4dor&3'), 'credential')).toEqual(
+      spanOf(labelled, 'Tr0ub4dor&3'),
+    );
+    const record =
+      '{"id":"iss-9Xq2","identifier":"REVOPS-7","token":"Tr0ub4dor&3","url":"https://x.example/a"}';
     expect(guardSecretSpan(record, spanOf(record, 'iss-9Xq2'), 'access token')).toBeUndefined();
-    expect(guardSecretSpan(record, spanOf(record, 'Tr0ub4dor&3'), 'access token')).toEqual(spanOf(record, 'Tr0ub4dor&3'));
+    expect(guardSecretSpan(record, spanOf(record, 'Tr0ub4dor&3'), 'access token')).toEqual(
+      spanOf(record, 'Tr0ub4dor&3'),
+    );
   });
 
   it('never redacts a value on the policy list', (): void => {
     for (const value of NEVER_REDACT) {
       expect(guardReason(value), value).toBeDefined();
-      expect(guardSecretSpan(`token: ${value}`, { start: 7, end: 7 + value.length }, 'access token')).toBeUndefined();
+      expect(
+        guardSecretSpan(`token: ${value}`, { start: 7, end: 7 + value.length }, 'access token'),
+      ).toBeUndefined();
     }
   });
 });
 
-
-it.each(['channels:history', 'im:write', 'im:history', 'users:read.email', 'linear:read', 'slack:write', 'repo:status', 'verbs:get'])(
-  'keeps scope %s and partial spans in scope lists', (value) => {
-    for (const text of [`["${value}"]`, `'${value}', 'other:read'`, `Use \`${value}\``, `${value}, other:read`]) {
-      expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toBeUndefined();
-      const tail = value.split(':')[1];
-      expect(guardSecretSpan(text, spanOf(text, tail), 'credential')).toBeUndefined();
-    }
-    expect(guardReason(value)).toBe('permission scope');
-  },
-);
+it.each([
+  'channels:history',
+  'im:write',
+  'im:history',
+  'users:read.email',
+  'linear:read',
+  'slack:write',
+  'repo:status',
+  'verbs:get',
+])('keeps scope %s and partial spans in scope lists', (value) => {
+  for (const text of [
+    `["${value}"]`,
+    `'${value}', 'other:read'`,
+    `Use \`${value}\``,
+    `${value}, other:read`,
+  ]) {
+    expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toBeUndefined();
+    const tail = value.split(':')[1];
+    expect(guardSecretSpan(text, spanOf(text, tail), 'credential')).toBeUndefined();
+  }
+  expect(guardReason(value)).toBe('permission scope');
+});
 
 it('keeps a scope-shaped value under an explicit password or secret assignment as the credential', () => {
   for (const [text, value, label] of [
@@ -191,12 +246,21 @@ it('keeps a scope-shaped value under an explicit password or secret assignment a
 });
 
 it('keeps long and versioned permission identifiers without treating opaque halves as scopes', () => {
-  for (const value of ['organization:read_all_repository_members_and_permissions', 'version2026:read']) {
+  for (const value of [
+    'organization:read_all_repository_members_and_permissions',
+    'version2026:read',
+  ]) {
     const text = `["${value}"]`;
     expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toBeUndefined();
     expect(guardReason(value)).toBe('permission scope');
   }
-  for (const value of ['scope:a1b2c3d4e5f6g7h8', 'scope:q7mz2kv9r5tp8wn4', 'scope:qwertyuiopasdfghj', 'scope:123456789', 'scope:MixedCase9Token']) {
+  for (const value of [
+    'scope:a1b2c3d4e5f6g7h8',
+    'scope:q7mz2kv9r5tp8wn4',
+    'scope:qwertyuiopasdfghj',
+    'scope:123456789',
+    'scope:MixedCase9Token',
+  ]) {
     const text = `["${value}"]`;
     expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toEqual(spanOf(text, value));
     expect(guardReason(value)).toBeUndefined();
@@ -213,12 +277,20 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     ['admin.conversations.ekm.listOriginalConnectedChannelInfo', 'dotted identifier'],
     ['process.env.HOME', 'dotted identifier'],
     ['README.md', 'dotted identifier'],
-  ])('rejects %s as %s wherever it sits without a credential label', (value: string, reason: string): void => {
-    expect(guardReason(value)).toBe(reason);
-    for (const text of [`Use \`${value}\` for that.`, `${value}, then the rest`, `(${value})`, `| ${value} | all teams |`]) {
-      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), text).toBeUndefined();
-    }
-  });
+  ])(
+    'rejects %s as %s wherever it sits without a credential label',
+    (value: string, reason: string): void => {
+      expect(guardReason(value)).toBe(reason);
+      for (const text of [
+        `Use \`${value}\` for that.`,
+        `${value}, then the rest`,
+        `(${value})`,
+        `| ${value} | all teams |`,
+      ]) {
+        expect(guardSecretSpan(text, spanOf(text, value), 'access token'), text).toBeUndefined();
+      }
+    },
+  );
 
   it('rejects an all-lowercase method name by the hostname shape, which comes first', (): void => {
     for (const value of ['auth.test', 'oauth.v2.access', 'conversations.history']) {
@@ -233,16 +305,24 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
       const listed = `Call \`${value}\` first.`;
       expect(guardSecretSpan(listed, spanOf(listed, value), 'access token'), value).toBeUndefined();
       const labelled = `token: ${value}`;
-      expect(guardSecretSpan(labelled, spanOf(labelled, value), 'access token'), value).toEqual(spanOf(labelled, value));
+      expect(guardSecretSpan(labelled, spanOf(labelled, value), 'access token'), value).toEqual(
+        spanOf(labelled, value),
+      );
     }
   });
 
   it('rejects a partial span of either: the name without its hash, one segment of a method', (): void => {
     const channel = 'Requests arrive in `#ops-requests` and `#revops`.';
-    expect(guardSecretSpan(channel, spanOf(channel, 'ops-requests'), 'access token')).toBeUndefined();
+    expect(
+      guardSecretSpan(channel, spanOf(channel, 'ops-requests'), 'access token'),
+    ).toBeUndefined();
     const method = 'Call `users.lookupByEmail` first, then `conversations.open`.';
-    expect(guardSecretSpan(method, spanOf(method, 'lookupByEmail'), 'access token')).toBeUndefined();
-    expect(guardSecretSpan(method, spanOf(method, 'conversations'), 'access token')).toBeUndefined();
+    expect(
+      guardSecretSpan(method, spanOf(method, 'lookupByEmail'), 'access token'),
+    ).toBeUndefined();
+    expect(
+      guardSecretSpan(method, spanOf(method, 'conversations'), 'access token'),
+    ).toBeUndefined();
   });
 
   it('keeps every token-shaped value, dots and digits included, with or without a label', (): void => {
@@ -258,7 +338,9 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
       expect(guardReason(value), value).toBeUndefined();
       expect(guardReason(value, { assigned: true }), value).toBeUndefined();
       const text = `Use \`${value}\` for that.`;
-      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), value).toEqual(spanOf(text, value));
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), value).toEqual(
+        spanOf(text, value),
+      );
     }
   });
 
@@ -272,19 +354,27 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
       [`Looker password: \`${dotted}\``, dotted, 'password'],
       [`password = ${dotted}`, dotted, 'password'],
       ['token: "#summer2026"', '#summer2026', 'credential'],
-      [`Slack bot token: ${CORPUS_SLOTS.slack_bot_token}`, CORPUS_SLOTS.slack_bot_token, 'access token'],
+      [
+        `Slack bot token: ${CORPUS_SLOTS.slack_bot_token}`,
+        CORPUS_SLOTS.slack_bot_token,
+        'access token',
+      ],
     ] as const) {
       expect(guardSecretSpan(text, spanOf(text, value), label), text).toEqual(spanOf(text, value));
     }
     // A label that swallowed the value narrows to it and still keeps it.
     const swallowed = `password: ${dotted}`;
-    expect(guardSecretSpan(swallowed, { start: 0, end: swallowed.length }, 'password')).toEqual(spanOf(swallowed, dotted));
+    expect(guardSecretSpan(swallowed, { start: 0, end: swallowed.length }, 'password')).toEqual(
+      spanOf(swallowed, dotted),
+    );
   });
 
   it('keeps a name-shaped token in a credential table column', (): void => {
     const value = ['#', 'cobalt', 'harbor'].join('');
     const table = `| Service | Service token |\n|---|---|\n| Bot | ${value} |`;
-    expect(guardSecretSpan(table, spanOf(table, value), 'access token')).toEqual(spanOf(table, value));
+    expect(guardSecretSpan(table, spanOf(table, value), 'access token')).toEqual(
+      spanOf(table, value),
+    );
   });
 
   it('keeps a lowercase dotted password when its label assigns it explicitly', (): void => {
@@ -298,24 +388,32 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
   it('keeps the full assigned secret when a span covers only its part after a hash or dot', (): void => {
     const hashed = ['#', 'cobalt-harbor'].join('');
     const hashText = `token: ${hashed}`;
-    expect(guardSecretSpan(hashText, spanOf(hashText, 'cobalt-harbor'), 'access token'))
-      .toEqual(spanOf(hashText, hashed));
+    expect(guardSecretSpan(hashText, spanOf(hashText, 'cobalt-harbor'), 'access token')).toEqual(
+      spanOf(hashText, hashed),
+    );
     const dotted = ['Cobalt', 'Harbor', 'Winter'].join('.');
     const dotText = `token: ${dotted}`;
-    expect(guardSecretSpan(dotText, spanOf(dotText, 'Winter'), 'access token'))
-      .toEqual(spanOf(dotText, dotted));
+    expect(guardSecretSpan(dotText, spanOf(dotText, 'Winter'), 'access token')).toEqual(
+      spanOf(dotText, dotted),
+    );
   });
 
   it('keeps long opaque camelCase and snake_case secret values without a label', (): void => {
     const alphabet = 'abcdefghijklmnopqrstuvwxyz';
     const letters = (offset: number, count: number): string =>
-      Array.from({ length: count }, (_, index) => alphabet[(offset + index * 7) % alphabet.length]).join('');
+      Array.from(
+        { length: count },
+        (_, index) => alphabet[(offset + index * 7) % alphabet.length],
+      ).join('');
     const camel = [letters(0, 7), letters(1, 6), letters(2, 6), letters(3, 6), letters(4, 6)]
-      .map((part, index) => index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`).join('');
+      .map((part, index) => (index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`))
+      .join('');
     const snake = [letters(5, 14), letters(9, 14)].join('_');
     for (const value of [camel, snake]) {
       const text = `Use ${value} for the integration.`;
-      expect(guardSecretSpan(text, spanOf(text, value), 'access token')).toEqual(spanOf(text, value));
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token')).toEqual(
+        spanOf(text, value),
+      );
     }
     for (const name of ['postMessage', 'save_comment', 'listOriginalConnectedChannelInfo']) {
       const text = `Call ${name} for the workflow.`;
