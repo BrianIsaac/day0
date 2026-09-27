@@ -215,6 +215,22 @@ describe('plan drafter grounding', (): void => {
     expect(planUserPrompt({ candidate, charter })).not.toContain('Owner:');
   });
 
+  it("puts the manager's answers to the charter's questions in the plan prompt", (): void => {
+    const answered = {
+      ...charter,
+      answeredQuestions: [
+        {
+          question: 'Which dashboard counts as the source of truth?',
+          answer: 'The Looker tile.',
+          answeredAt: '2026-09-20T00:00:00.000Z',
+        },
+      ],
+    };
+    expect(planUserPrompt({ candidate, charter: answered })).toContain(
+      '  - Which dashboard counts as the source of truth? The Looker tile.',
+    );
+  });
+
   it('keeps the prompt as it was when no surfaces or documentation are given', async (): Promise<void> => {
     await draftExecutionPlan({ candidate, charter, autonomousActions: false, surfaceMode: 'mock' });
     const user = planRecorded.users[0];

@@ -86,10 +86,14 @@ vi.mock('../../src/lib/mastra', () => ({
     const name = args.agent.name;
     if (name.endsWith('-dependent') && name.includes('c0c2u2ujutu')) {
       return args.schema.parse({
-        draft: 'The tile was refreshed and read back in the same session.', notes: '', actions: [], procedureTrails: [],
+        draft: 'The tile was refreshed and read back in the same session.',
+        notes: '',
+        openQuestion: null,
+        actions: [],
+        procedureTrails: [],
         planStepOutcomes: [
-          { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile' },
-          { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 5: the snapshot with the visible figure' },
+          { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile', charterClause: null },
+          { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 5: the snapshot with the visible figure', charterClause: null },
         ],
       }) as T;
     }
@@ -100,13 +104,14 @@ vi.mock('../../src/lib/mastra', () => ({
       await hook?.();
       const answer = recorded.closingAnswers.shift();
       if (!answer) throw new Error(`no scripted closing answer left for ${name}`);
-      return args.schema.parse(answer) as T;
+      return args.schema.parse((await import('./fakes/executor-reply')).asCurrentExecutorReply(answer)) as T;
     }
     if (!name.endsWith('-initial')) throw new Error(`unscripted agent ${name}`);
     const holder = name.includes('c0c2u2ujutu');
     return args.schema.parse({
       draft: holder ? 'Signing in to the tile, entering 74%, saving and reading it back.' : 'Opening the tile and reading it before anything is written.',
       notes: '',
+      openQuestion: null,
       needsDependentPhase: !holder,
       deferredActions: [],
       actions: holder ? HOLDER_SEQUENCE : revopsAsksPhaseOne,

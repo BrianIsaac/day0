@@ -59,10 +59,14 @@ vi.mock('../../src/lib/mastra', () => ({
   agentJson: async <T>(args: { agent: { name: string }; user: string; schema: { parse(value: unknown): unknown } }): Promise<T> => {
     if (args.agent.name.endsWith('-dependent')) {
       return args.schema.parse({
-        draft: 'The tile was read back in the same session.', notes: '', actions: [], procedureTrails: [],
+        draft: 'The tile was read back in the same session.',
+        notes: '',
+        openQuestion: null,
+        actions: [],
+        procedureTrails: [],
         planStepOutcomes: [
-          { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile' },
-          { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 5: the snapshot with the visible figure' },
+          { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile', charterClause: null },
+          { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 5: the snapshot with the visible figure', charterClause: null },
         ],
       }) as T;
     }
@@ -73,6 +77,7 @@ vi.mock('../../src/lib/mastra', () => ({
       notes: '',
       needsDependentPhase: false,
       deferredActions: [],
+      openQuestion: null,
       actions: TILE_SEQUENCE,
       procedureTrails: [],
     }) as T;

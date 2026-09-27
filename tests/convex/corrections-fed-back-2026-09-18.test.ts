@@ -97,6 +97,7 @@ vi.mock('../../src/lib/mastra', () => ({
         notes: '',
         needsDependentPhase: false,
         deferredActions: [],
+        openQuestion: null,
         procedureTrails: [],
         actions: [
           {

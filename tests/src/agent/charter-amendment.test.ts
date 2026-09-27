@@ -52,21 +52,37 @@ describe('applying charter changes', (): void => {
       { kind: 'edit-function', text: '  Own routine  RevOps work. ' },
       { kind: 'edit-clause', field: 'willNotDo', index: 1, text: 'Change ticket priority.' },
       { kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' },
-      { kind: 'edit-clause', field: 'willDo', index: 0, text: 'Handle Linear tickets in the Q3 close project.' },
+      {
+        kind: 'edit-clause',
+        field: 'willDo',
+        index: 0,
+        text: 'Handle Linear tickets in the Q3 close project.',
+      },
     ]);
     expect(charter.proposedFunction).toBe('Own routine RevOps work.');
     expect(charter.proposedBoundaries.willNotDo).toEqual(['Change ticket priority.']);
-    expect(charter.proposedBoundaries.willDo).toEqual(['Handle Linear tickets in the Q3 close project.']);
+    expect(charter.proposedBoundaries.willDo).toEqual([
+      'Handle Linear tickets in the Q3 close project.',
+    ]);
     // The phrase left every clause, so the confirmed constraint no longer claims it.
     expect(charter.constraints?.[0]?.wording).toEqual([]);
     expect(charter.constraints?.[0]?.struck).toBeUndefined();
   });
 
   it('strikes a constraint the way approval does and records the strike', (): void => {
-    const { charter } = applyCharterChanges(approvedBody(), [{ kind: 'strike-constraint', index: 0 }]);
-    expect(charter.proposedFunction).toBe('Own routine revenue operations work from Linear tickets.');
-    expect(charter.proposedBoundaries.willDo).toEqual(['Handle Linear tickets in the Q3 close project.']);
-    expect(charter.constraints?.[0]).toMatchObject({ struck: true, wording: ['owned, prioritized'] });
+    const { charter } = applyCharterChanges(approvedBody(), [
+      { kind: 'strike-constraint', index: 0 },
+    ]);
+    expect(charter.proposedFunction).toBe(
+      'Own routine revenue operations work from Linear tickets.',
+    );
+    expect(charter.proposedBoundaries.willDo).toEqual([
+      'Handle Linear tickets in the Q3 close project.',
+    ]);
+    expect(charter.constraints?.[0]).toMatchObject({
+      struck: true,
+      wording: ['owned, prioritized'],
+    });
     expect(() => applyCharterChanges(charter, [{ kind: 'strike-constraint', index: 0 }])).toThrow(
       /already struck/,
     );
@@ -76,7 +92,11 @@ describe('applying charter changes', (): void => {
     const { charter } = applyCharterChanges(approvedBody(), [
       {
         kind: 'add-constraint',
-        constraint: { kind: 'system-boundary', quote: 'Never edit the forecast sheet.', clause: 'willNotDo' },
+        constraint: {
+          kind: 'system-boundary',
+          quote: 'Never edit the forecast sheet.',
+          clause: 'willNotDo',
+        },
       },
     ]);
     expect(charter.proposedBoundaries.willNotDo).toEqual([
@@ -95,7 +115,13 @@ describe('applying charter changes', (): void => {
     const now = new Date('2026-09-15T10:00:00.000Z');
     const { charter } = applyCharterChanges(
       approvedBody(),
-      [{ kind: 'answer-question', question: 'whether northstar crm access will be granted', answer: 'Yes, next week.' }],
+      [
+        {
+          kind: 'answer-question',
+          question: 'whether northstar crm access will be granted',
+          answer: 'Yes, next week.',
+        },
+      ],
       now,
     );
     expect(charter.openQuestions).toEqual([]);
@@ -107,13 +133,18 @@ describe('applying charter changes', (): void => {
       },
     ]);
     expect(() =>
-      applyCharterChanges(charter, [{ kind: 'answer-question', question: 'Who owns Looker?', answer: 'x' }]),
+      applyCharterChanges(charter, [
+        { kind: 'answer-question', question: 'Who owns Looker?', answer: 'x' },
+      ]),
     ).toThrow(/not open/);
   });
 
   it('adds and removes named systems and reports them', (): void => {
     const added = applyCharterChanges(approvedBody(), [
-      { kind: 'add-system', system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile.' } },
+      {
+        kind: 'add-system',
+        system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile.' },
+      },
     ]);
     expect(added.systemsAdded).toEqual([
       { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile.' },
@@ -121,7 +152,10 @@ describe('applying charter changes', (): void => {
     expect(added.charter.namedSystems).toHaveLength(2);
     expect(() =>
       applyCharterChanges(added.charter, [
-        { kind: 'add-system', system: { name: 'looker', class: 'analytics', whereMentioned: 'again' } },
+        {
+          kind: 'add-system',
+          system: { name: 'looker', class: 'analytics', whereMentioned: 'again' },
+        },
       ]),
     ).toThrow(/already a named system/);
     const removed = applyCharterChanges(added.charter, [{ kind: 'remove-system', name: 'linear' }]);
@@ -129,21 +163,25 @@ describe('applying charter changes', (): void => {
       { name: 'Linear', class: 'kanban', whereMentioned: 'Work is in Linear.' },
     ]);
     expect(removed.charter.namedSystems).toEqual(added.systemsAdded);
-    expect(() => applyCharterChanges(removed.charter, [{ kind: 'remove-system', name: 'Jira' }])).toThrow(
-      /not a named system/,
-    );
+    expect(() =>
+      applyCharterChanges(removed.charter, [{ kind: 'remove-system', name: 'Jira' }]),
+    ).toThrow(/not a named system/);
   });
 
   it('refuses empty text, a bad index and no changes at all', (): void => {
     expect(() => applyCharterChanges(approvedBody(), [])).toThrow(/at least one change/);
-    expect(() => applyCharterChanges(approvedBody(), [{ kind: 'edit-function', text: '  ' }])).toThrow(
-      /cannot be empty/,
-    );
     expect(() =>
-      applyCharterChanges(approvedBody(), [{ kind: 'edit-clause', field: 'willDo', index: 3, text: 'x' }]),
+      applyCharterChanges(approvedBody(), [{ kind: 'edit-function', text: '  ' }]),
+    ).toThrow(/cannot be empty/);
+    expect(() =>
+      applyCharterChanges(approvedBody(), [
+        { kind: 'edit-clause', field: 'willDo', index: 3, text: 'x' },
+      ]),
     ).toThrow(/no willDo clause at index 3/);
     expect(() =>
-      applyCharterChanges(approvedBody(), [{ kind: 'edit-clause', field: 'willDo', index: 1, text: '' }]),
+      applyCharterChanges(approvedBody(), [
+        { kind: 'edit-clause', field: 'willDo', index: 1, text: '' },
+      ]),
     ).toThrow(/cannot be empty/);
   });
 });
@@ -163,5 +201,155 @@ describe('charter diff', (): void => {
       before: 'Own routine revenue operations work from owned, prioritized Linear tickets.',
       after: 'Own routine revenue operations work from Linear tickets.',
     });
+  });
+});
+
+describe('amending the people fields', (): void => {
+  it('adds, rewrites and removes an adjacent role, and reports the change in the diff', (): void => {
+    const before = approvedBody();
+    const added = applyCharterChanges(before, [
+      {
+        kind: 'edit-adjacent-role',
+        index: 0,
+        role: { who: '  Finance  ops ', staysOutOfTheirLaneBy: 'leaving journal entries to them' },
+      },
+    ]).charter;
+    const rewritten = applyCharterChanges(added, [
+      {
+        kind: 'edit-adjacent-role',
+        index: 0,
+        role: { who: 'Finance ops', staysOutOfTheirLaneBy: 'never posting journal entries' },
+      },
+    ]).charter;
+    const removed = applyCharterChanges(rewritten, [
+      { kind: 'edit-adjacent-role', index: 0, role: { who: '', staysOutOfTheirLaneBy: '' } },
+    ]).charter;
+
+    expect(added.adjacentRoles).toEqual([
+      { who: 'Finance ops', staysOutOfTheirLaneBy: 'leaving journal entries to them' },
+    ]);
+    expect(rewritten.adjacentRoles).toEqual([
+      { who: 'Finance ops', staysOutOfTheirLaneBy: 'never posting journal entries' },
+    ]);
+    expect(removed.adjacentRoles).toEqual([]);
+    expect(charterDiff(before, added).map((entry) => entry.field)).toEqual(['adjacentRoles']);
+  });
+
+  it('refuses an adjacent role with no lane, or at an index the list does not have', (): void => {
+    expect(() =>
+      applyCharterChanges(approvedBody(), [
+        {
+          kind: 'edit-adjacent-role',
+          index: 0,
+          role: { who: 'Finance ops', staysOutOfTheirLaneBy: ' ' },
+        },
+      ]),
+    ).toThrow(/how Day0 stays out of their lane cannot be empty/);
+    expect(() =>
+      applyCharterChanges(approvedBody(), [
+        {
+          kind: 'edit-adjacent-role',
+          index: 2,
+          role: { who: 'Finance ops', staysOutOfTheirLaneBy: 'x' },
+        },
+      ]),
+    ).toThrow(/no adjacent role at index 2/);
+  });
+
+  it('adds and removes a named collaborator with an introduction path', (): void => {
+    const added = applyCharterChanges(approvedBody(), [
+      {
+        kind: 'edit-collaborator',
+        index: 0,
+        collaborator: { name: 'Aiko', topic: 'the close calendar', introPath: 'manager' },
+      },
+    ]).charter;
+    const removed = applyCharterChanges(added, [
+      {
+        kind: 'edit-collaborator',
+        index: 0,
+        collaborator: { name: '', topic: '', introPath: 'tbd' },
+      },
+    ]).charter;
+
+    expect(added.namedCollaborators).toEqual([
+      { name: 'Aiko', topic: 'the close calendar', introPath: 'manager' },
+    ]);
+    expect(removed.namedCollaborators).toEqual([]);
+    expect(() =>
+      applyCharterChanges(approvedBody(), [
+        {
+          kind: 'edit-collaborator',
+          index: 0,
+          collaborator: { name: 'Aiko', topic: 'x', introPath: 'email' as 'tbd' },
+        },
+      ]),
+    ).toThrow(/no introduction path named email/);
+  });
+
+  it('sets who approves as the manager said it, with high confidence', (): void => {
+    const body = {
+      ...approvedBody(),
+      approvalChain: { boss: 'the finance lead', confidence: 'low' as const },
+    };
+
+    const { charter } = applyCharterChanges(body, [
+      { kind: 'set-approval-chain', boss: ' Priya  Shah ' },
+    ]);
+
+    expect(charter.approvalChain).toEqual({ boss: 'Priya Shah', confidence: 'high' });
+    expect(() => applyCharterChanges(body, [{ kind: 'set-approval-chain', boss: '' }])).toThrow(
+      /who approves cannot be empty/,
+    );
+  });
+});
+
+describe('editing a bounding clause (P8-9)', (): void => {
+  const ruled = (): Charter => ({
+    ...approvedBody(),
+    proposedBoundaries: {
+      ...approvedBody().proposedBoundaries,
+      willNotDo: ['Post to public Slack channels.', 'Never edit the forecast sheet.'],
+    },
+    constraints: [
+      ...(approvedBody().constraints ?? []),
+      {
+        kind: 'system-boundary',
+        quote: 'Never touch the forecast sheet.',
+        wording: ['forecast sheet'],
+        origin: 'manager',
+      },
+    ],
+  });
+
+  it('refuses an edit that deletes or rewords away the only clause enforcing a standing rule', (): void => {
+    expect(() =>
+      applyCharterChanges(ruled(), [
+        { kind: 'edit-clause', field: 'willNotDo', index: 1, text: '' },
+      ]),
+    ).toThrow(/edit refused: .* is the only clause that enforces .Never touch the forecast sheet/);
+    expect(() =>
+      applyCharterChanges(ruled(), [
+        { kind: 'edit-clause', field: 'willNotDo', index: 1, text: 'Never edit the budget.' },
+      ]),
+    ).toThrow(/edit refused/);
+  });
+
+  it('lets an edit keep the rule enforced, and lets the manager remove a clause that only names a system', (): void => {
+    const reworded = applyCharterChanges(ruled(), [
+      {
+        kind: 'edit-clause',
+        field: 'willNotDo',
+        index: 1,
+        text: 'Never edit or share the forecast sheet.',
+      },
+    ]).charter;
+    expect(reworded.proposedBoundaries.willNotDo[1]).toBe(
+      'Never edit or share the forecast sheet.',
+    );
+    const removed = applyCharterChanges(ruled(), [
+      { kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' },
+    ]).charter;
+    expect(removed.proposedBoundaries.willNotDo).toEqual(['Never edit the forecast sheet.']);
   });
 });

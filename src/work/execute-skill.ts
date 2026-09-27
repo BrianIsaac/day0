@@ -4,6 +4,8 @@ import { agentJson, MODEL_CONFIG, MODEL_PROVIDER_MAX_RETRIES } from '../lib/mast
 import type { Charter } from '../agent/charter';
 import {
   type ArgumentRepairAttempt,
+  CHARTER_CLAUSE_FIELDS,
+  type CharterClauseRef,
   CLOSING_SET_CAP,
   DEFERRED_SEQUENCE_ALLOWANCE,
   DEPENDENT_ACTION_CAP,
@@ -37,13 +39,30 @@ import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { closingPhaseOwed } from './obligations';
+import { answeredQuestionLines } from './charter-answers';
 import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
-import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
+import {
+  isChatMessage,
+  itemEvidence,
+  unsupportedClaimFindings,
+  unsupportedClaimIssues,
+  type ClaimEvidence,
+  type ClaimFinding,
+  type GroundingRead,
+} from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
-import { heldElsewhereLines, heldElsewhereRows, heldItemReplyFindings, withHeldItemsSaid, withheldByClaim, withheldWithClaimedWrite, type HeldExternalItem } from './claim-key';
+import {
+  heldElsewhereLines,
+  heldElsewhereRows,
+  heldItemReplyFindings,
+  withHeldItemsSaid,
+  withheldByClaim,
+  withheldWithClaimedWrite,
+  type HeldExternalItem,
+} from './claim-key';
 
 export { replyTargetLine };
 
@@ -109,6 +128,13 @@ const REAL_PROCEDURE_TRAIL_OUTPUT =
   '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read, snapshot, or prior write that the plan or runbook orders before this action) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
+/**
+ * The executor declares the question a withheld write waits on (decision
+ * N20), so the hold reads a declaration rather than the wording of a
+ * message: the question in either language, with or without a mark.
+ */
+const OPEN_QUESTION_OUTPUT_REAL =
+  '  5. Open question - `openQuestion`: the question the manager must answer before a write the plan leaves to their answer can land, exactly as you put it to them (in the manager DM, or in `notes` when no chat surface is connected) and in the language you asked it in. Set it whenever this response asks the manager for an answer, a decision or a confirmation that such a write waits on, whether or not the sentence ends in a question mark: "Please confirm which template the notice should use." is a question. Set it to null when nothing waits on the manager, and for a rhetorical question, a closing line such as "Let me know if anything else is needed", a question quoted from the ticket or the requester, a report, or a draft put to the manager to decide (their decision is its own answer).';
 
 /**
  * Only the real path runs a second, result-dependent authoring phase. The
@@ -430,6 +456,7 @@ const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
   REAL_PROCEDURE_TRAIL_OUTPUT,
+  OPEN_QUESTION_OUTPUT_REAL,
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
@@ -442,20 +469,20 @@ const REAL_PREAMBLE = [
   '',
   'Discipline:',
   '  - Stay inside charter boundaries.',
-  '  - Two kinds of evidence: the applied ledger is the only evidence of what happened, and the loaded documentation below is citable for documented facts, procedures and checklists. When the candidate, the plan or the manager\'s feedback asks for documented content, quote it from the loaded documentation and name the page; say in `notes` when the documentation does not contain it.',
-  "  - A comment, reply or DM asserts nothing the applied ledger, the loaded documentation and the manager's feedback do not carry: quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask. \"The close checks are complete\" over a ledger that shows no check is a false report even when the manager asked for that sentence; the closing phase refuses a message that asserts an unsupported fact.",
+  "  - Two kinds of evidence: the applied ledger is the only evidence of what happened, and the loaded documentation below is citable for documented facts, procedures and checklists. When the candidate, the plan or the manager's feedback asks for documented content, quote it from the loaded documentation and name the page; say in `notes` when the documentation does not contain it.",
+  '  - A comment, reply or DM asserts nothing the applied ledger, the loaded documentation and the manager\'s feedback do not carry: quote the ledger row, the page or the manager\'s words that show it, or write that you could not confirm it and ask. "The close checks are complete" over a ledger that shows no check is a false report even when the manager asked for that sentence; the closing phase refuses a message that asserts an unsupported fact.',
   "  - An audit note that lists numbered checks with their evidence and closes with a not-confirmed line derives that line from the checks' own evidence: every check whose evidence reads as unmet (a not-confirmed or pending phrase, no evidence at all, a state other than the one the check requires or an open state where the check asks for a close, a read that could not be made) is named there. The manager's acceptance of an unconfirmed check is recorded beside the evidence, never in place of it; the closing phase refuses a note whose closing line omits an unmet check.",
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
   '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. Only a plan step marked advisory or checking a candidate property that neither the candidate nor a loaded procedure requires is advisory: report what the data shows and never let it hold back the documented sequence.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
-  "  - The text of a reply, a DM or a comment never carries a raw channel id or thread timestamp, even when a skill says to cite the record id and the record id is that pair: they go in `channel` and `thread_ts`, a reader in the thread needs no reference to it, and anywhere else you name the ask in words (the ask in #channel). Ticket ids such as FIN-1 are names people read and stay.",
+  '  - The text of a reply, a DM or a comment never carries a raw channel id or thread timestamp, even when a skill says to cite the record id and the record id is that pair: they go in `channel` and `thread_ts`, a reader in the thread needs no reference to it, and anywhere else you name the ask in words (the ask in #channel). Ticket ids such as FIN-1 are names people read and stay.',
   '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it. The gate itself tells the manager what needs their decision and what landed, so never send a note that only reports what the actions do.',
   '',
   'Closing the loop:',
   "  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook's comment tool, and only after it, if the work is complete, the state change with the runbook's state argument. A status change is never the only trace of who acted.",
   '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
   '  - When blocked work needs a manager answer, emit only the question or escalation DM in the closing set; do not bundle it with a failure audit comment or a completion note.',
-  '  - When a chat surface is connected and you have a question or an escalation for the manager, send it as the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id; with nothing to ask, send no DM. When none is connected, put the question in `notes` instead of substituting another channel.',
+  '  - When a chat surface is connected and you have a question or an escalation for the manager, send it as the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id; with nothing to ask, send no DM. When none is connected, put the question in `notes` instead of substituting another channel. Either way the question also goes in `openQuestion`.',
   '  - Each provider mutation is its own action so it can be decided and applied on its own.',
 ].join('\n');
 
@@ -637,6 +664,7 @@ const realPlanStepOutcomeSchema = z
     status: z.enum(['satisfied', 'blocked', 'not-verifiable']),
     evidence: z.string().min(1),
     basis: z.enum(['ledger', 'manager-feedback']),
+    charterClause: z.string().nullable(),
   })
   .strict();
 
@@ -715,12 +743,30 @@ function requiredActionFloor(
   return effects.size;
 }
 
-const deferredActionsSchema = z.array(z.object({
-  description: z.string().min(1),
-  reason: z.string().min(1),
-  dependsOnActionIndex: z.number().int().nonnegative().nullable(),
-  dependsOnField: z.string().min(1).nullable(),
-}).strict()).nullable();
+const deferredActionsSchema = z
+  .array(
+    z
+      .object({
+        description: z.string().min(1),
+        reason: z.string().min(1),
+        dependsOnActionIndex: z.number().int().nonnegative().nullable(),
+        dependsOnField: z.string().min(1).nullable(),
+      })
+      .strict(),
+  )
+  .nullable();
+
+/** The question the set waits on the manager for, or null; required-but-nullable for strict providers. */
+const openQuestionSchema = z.string().nullable();
+
+/**
+ * The executor's declared question as the output keeps it: the trimmed text,
+ * or null when it declared none or only whitespace.
+ */
+function declaredQuestionOf(raw: unknown): string | null {
+  const question = openQuestionSchema.parse(raw ?? null)?.trim();
+  return question ? question : null;
+}
 
 /** Bind the runtime-loaded trail ids and exact inventory size into the provider schema. */
 export function executeSchemaForProcedureContract(
@@ -730,7 +776,9 @@ export function executeSchemaForProcedureContract(
   mode: SurfaceMode = 'mock',
 ) {
   return executeSchema.extend({
-    ...(mode === 'real' ? { deferredActions: deferredActionsSchema } : {}),
+    ...(mode === 'real'
+      ? { deferredActions: deferredActionsSchema, openQuestion: openQuestionSchema }
+      : {}),
     actions:
       mode === 'mock'
         ? z.array(generatedActionSchema).min(requiredActionFloor(contract, candidate, plan))
@@ -773,6 +821,7 @@ export function dependentExecuteSchemaForProcedureContract(
   cap: number = DEPENDENT_ACTION_CAP,
 ) {
   return dependentExecuteSchema.extend({
+    ...(mode === 'real' ? { openQuestion: openQuestionSchema } : {}),
     actions: z.array(generatedActionSchema).max(cap),
     procedureTrails:
       mode === 'mock'
@@ -803,7 +852,8 @@ export function advisoryPlanSteps(
   charter?: Charter,
 ): number[] {
   const flagged = new Set<number>(plan.advisorySteps ?? []);
-  for (const step of planPreconditionAudit(plan, candidate, documents, charter).flagged) flagged.add(step);
+  for (const step of planPreconditionAudit(plan, candidate, documents, charter).flagged)
+    flagged.add(step);
   return [...flagged].sort((a, b) => a - b);
 }
 
@@ -837,9 +887,35 @@ export function normalisePlanStepOutcomes(
   });
 }
 
+/**
+ * What the closing phase is told about the clause a decision was taken under.
+ * The quote is checked against the charter and kept with the outcome.
+ */
+const CHARTER_CLAUSE_RULE =
+  "When a charter clause decides a step's outcome (a willNotDo clause or an escalation trigger that blocks or withholds it, or the willDo clause that puts it in the role), quote that clause exactly as the charter words it in the step's `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.";
+
+/**
+ * A closing outcome as it is kept: the basis only when it is not the ledger,
+ * and the charter clause only when the charter carries the model's quote.
+ */
+function recordedPlanStepOutcome(
+  outcome: Omit<PlanStepOutcome, 'basis' | 'charterClause'> & {
+    basis?: 'ledger' | 'manager-feedback';
+    charterClause?: string | null;
+  },
+  charter: Charter,
+): PlanStepOutcome {
+  const { charterClause, ...rest } = outcome;
+  const clause = charterClause ? charterClauseOf(charter, charterClause) : undefined;
+  const recorded = recordedPlanStepBasis(rest);
+  return clause ? { ...recorded, charterClause: clause } : recorded;
+}
+
 /** The persisted outcome names its basis only when it is not the ledger. */
 function recordedPlanStepBasis(
-  outcome: PlanStepOutcome | (Omit<PlanStepOutcome, 'basis'> & { basis?: 'ledger' | 'manager-feedback' }),
+  outcome:
+    | PlanStepOutcome
+    | (Omit<PlanStepOutcome, 'basis'> & { basis?: 'ledger' | 'manager-feedback' }),
 ): PlanStepOutcome {
   const { basis, ...rest } = outcome;
   return basis === 'manager-feedback' ? { ...rest, basis } : rest;
@@ -951,6 +1027,75 @@ export interface RunSkillArgs {
 }
 
 /**
+ * The charter as an executor prompt reads it. The mock prompt keeps the role
+ * and the two boundary lists it always had; the real prompt adds the
+ * escalation triggers, the adjacent roles, the named systems and
+ * collaborators, who approves, and the questions the manager has answered,
+ * so both phases see the whole contract they are told to stay inside (P8-9).
+ * The constraints are not repeated: their wording lives in the clauses.
+ *
+ * @param charter - The approved charter.
+ * @param mode - The deployment's surface mode.
+ * @returns The prompt lines.
+ */
+export function executorCharterLines(charter: Charter, mode: SurfaceMode): string[] {
+  const boundaries = charter.proposedBoundaries;
+  const lines = [
+    `Role: ${charter.proposedFunction}`,
+    '',
+    `Charter willDo: ${boundaries.willDo.join(' | ')}`,
+    `Charter willNotDo: ${boundaries.willNotDo.join(' | ')}`,
+  ];
+  if (mode !== 'real') return lines;
+  const clauses = (values: readonly string[]): string =>
+    values.length > 0 ? values.join(' | ') : '(none)';
+  return [
+    ...lines,
+    `Charter escalationTriggers: ${clauses(boundaries.escalationTriggers)}`,
+    `Charter adjacentRoles: ${clauses((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
+    `Charter namedSystems: ${clauses((charter.namedSystems ?? []).map((system) => system.name))}`,
+    `Charter namedCollaborators: ${clauses((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
+    `Charter approvalChain: ${charter.approvalChain?.boss ?? '(none)'}`,
+    ...answeredQuestionLines(charter),
+  ];
+}
+
+/** The shortest stretch of a clause that names it, so a quoted fragment such as "customer" does not. */
+const CLAUSE_STRETCH_CHARS = 24;
+
+/** Clause text compared as the manager would read it: case, spacing and a closing stop aside. */
+function comparableClause(text: string): string {
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/[.。]\s*$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The charter clause a closing decision quotes, if the charter carries it:
+ * the quote matches a clause, or is a stretch of one long enough to name it.
+ *
+ * @param charter - The approved charter the executor read.
+ * @param quote - The clause the model says it acted under.
+ * @returns The clause as the charter words it, or undefined when no clause carries the quote.
+ */
+export function charterClauseOf(charter: Charter, quote: string): CharterClauseRef | undefined {
+  const wanted = comparableClause(quote);
+  if (wanted === '') return undefined;
+  // The limits first: a stretch two lists share is read as the limit it sets.
+  const clauses = [...CHARTER_CLAUSE_FIELDS]
+    .reverse()
+    .flatMap((field) => (charter.proposedBoundaries[field] ?? []).map((text) => ({ field, text })));
+  const found =
+    clauses.find((clause) => comparableClause(clause.text) === wanted) ??
+    (wanted.length >= CLAUSE_STRETCH_CHARS
+      ? clauses.find((clause) => comparableClause(clause.text).includes(wanted))
+      : undefined);
+  return found ? { ...found, charterVersion: charter.version } : undefined;
+}
+
+/**
  * The prompt lines that put the manager's answers at approval in front of the run.
  *
  * Args:
@@ -1054,7 +1199,11 @@ export interface AuditRefusal {
 
 type CorrectableOutput = Pick<
   ExecutionOutput,
-  'actions' | 'procedureTrails' | 'procedureTrailLimitations' | 'deferredActions' | 'withheldActions'
+  | 'actions'
+  | 'procedureTrails'
+  | 'procedureTrailLimitations'
+  | 'deferredActions'
+  | 'withheldActions'
 >;
 
 /**
@@ -1069,36 +1218,49 @@ function dropActions<T extends CorrectableOutput>(
   trailFor: (trailId: string, actionIndex: number) => ProcedureTrailAttestation,
 ): T {
   const removed = new Set(indices);
-  const reindex = (index: number): number => index - indices.filter(removedIndex => removedIndex < index).length;
+  const reindex = (index: number): number =>
+    index - indices.filter((removedIndex) => removedIndex < index).length;
   return {
     ...output,
     actions: output.actions.filter((_, index) => !removed.has(index)),
     ...(output.procedureTrailLimitations
       ? {
           procedureTrailLimitations: output.procedureTrailLimitations
-            .filter(row => !removed.has(row.actionIndex))
-            .map(row => ({ ...row, actionIndex: reindex(row.actionIndex) })),
+            .filter((row) => !removed.has(row.actionIndex))
+            .map((row) => ({ ...row, actionIndex: reindex(row.actionIndex) })),
         }
       : {}),
-    procedureTrails: output.procedureTrails?.map(row => {
+    procedureTrails: output.procedureTrails?.map((row) => {
       const state = procedureTrailState(row);
       if (state.state === 'mapped') {
         return removed.has(state.actionIndex)
           ? trailFor(row.trailId, state.actionIndex)
-          : { trailId: row.trailId, state: 'mapped' as const, actionIndex: reindex(state.actionIndex) };
+          : {
+              trailId: row.trailId,
+              state: 'mapped' as const,
+              actionIndex: reindex(state.actionIndex),
+            };
       }
       if ('dependsOnActionIndex' in row && typeof row.dependsOnActionIndex === 'number') {
-        return { ...row, dependsOnActionIndex: removed.has(row.dependsOnActionIndex) ? null : reindex(row.dependsOnActionIndex) };
+        return {
+          ...row,
+          dependsOnActionIndex: removed.has(row.dependsOnActionIndex)
+            ? null
+            : reindex(row.dependsOnActionIndex),
+        };
       }
       return row;
     }),
     ...(output.deferredActions !== undefined
       ? {
-          deferredActions: output.deferredActions?.map(row => ({
-            ...row,
-            dependsOnActionIndex: row.dependsOnActionIndex === null || removed.has(row.dependsOnActionIndex)
-              ? null : reindex(row.dependsOnActionIndex),
-          })) ?? null,
+          deferredActions:
+            output.deferredActions?.map((row) => ({
+              ...row,
+              dependsOnActionIndex:
+                row.dependsOnActionIndex === null || removed.has(row.dependsOnActionIndex)
+                  ? null
+                  : reindex(row.dependsOnActionIndex),
+            })) ?? null,
         }
       : {}),
   };
@@ -1124,12 +1286,19 @@ export function withholdActions<T extends CorrectableOutput>(
 ): T {
   if (refusals.length === 0) return output;
   const reasons = new Map(refusals.map(({ index, reason }) => [index, reason]));
-  const withheld: WithheldAction[] = refusals.map(({ index, reason }) => ({ action: output.actions[index]!, reason }));
-  const dropped = dropActions(output, refusals.map(({ index }) => index), (trailId, actionIndex) => ({
-    trailId,
-    state: 'inapplicable' as const,
-    reason: `the action this trail mapped to was withheld ${by}: ${reasons.get(actionIndex) ?? ''}`,
+  const withheld: WithheldAction[] = refusals.map(({ index, reason }) => ({
+    action: output.actions[index]!,
+    reason,
   }));
+  const dropped = dropActions(
+    output,
+    refusals.map(({ index }) => index),
+    (trailId, actionIndex) => ({
+      trailId,
+      state: 'inapplicable' as const,
+      reason: `the action this trail mapped to was withheld ${by}: ${reasons.get(actionIndex) ?? ''}`,
+    }),
+  );
   return { ...dropped, withheldActions: [...(output.withheldActions ?? []), ...withheld] };
 }
 
@@ -1139,8 +1308,12 @@ export function withholdActions<T extends CorrectableOutput>(
  */
 function refusalsOf(findings: readonly ClaimFinding[]): AuditRefusal[] {
   const reasons = new Map<number, string[]>();
-  for (const { index, issue } of findings) reasons.set(index, [...(reasons.get(index) ?? []), issue]);
-  return [...reasons].map(([index, issues]) => ({ index, reason: [...new Set(issues)].join('; ') }));
+  for (const { index, issue } of findings)
+    reasons.set(index, [...(reasons.get(index) ?? []), issue]);
+  return [...reasons].map(([index, issues]) => ({
+    index,
+    reason: [...new Set(issues)].join('; '),
+  }));
 }
 
 /**
@@ -1185,7 +1358,9 @@ async function sayHeldItems<T extends CorrectableOutput>(
   firstResponse: readonly MockAction[],
 ): Promise<T> {
   const surfaces = args.surfaces ?? [];
-  const owed = heldItemReplyFindings(firstResponse, args.heldElsewhere, surfaces).map((finding) => finding.item);
+  const owed = heldItemReplyFindings(firstResponse, args.heldElsewhere, surfaces).map(
+    (finding) => finding.item,
+  );
   const findings = heldItemReplyFindings(output.actions, args.heldElsewhere, surfaces, owed);
   if (findings.length === 0) return output;
   const actions = withHeldItemsSaid(output.actions, findings, surfaces, args.candidate.replyTarget);
@@ -1208,7 +1383,9 @@ function commentTargetKey(action: MockAction): string | undefined {
 }
 
 /** The tickets that already carry a landed audit comment: phase one's, and earlier runs' of this item. */
-function landedCommentTargets(args: Pick<RunDependentSkillArgs, 'initialOutput' | 'initialLedger' | 'landedWrites'>): Set<string> {
+function landedCommentTargets(
+  args: Pick<RunDependentSkillArgs, 'initialOutput' | 'initialLedger' | 'landedWrites'>,
+): Set<string> {
   const landed = new Set<string>();
   const consider = (action: MockAction, row: AppliedAction | undefined): void => {
     if (!row?.ok || row.held) return;
@@ -1218,7 +1395,9 @@ function landedCommentTargets(args: Pick<RunDependentSkillArgs, 'initialOutput' 
     const key = commentTargetKey(action);
     if (key) landed.add(key);
   };
-  args.initialOutput.actions.forEach((action, index) => consider(action, args.initialLedger[index]));
+  args.initialOutput.actions.forEach((action, index) =>
+    consider(action, args.initialLedger[index]),
+  );
   for (const write of args.landedWrites ?? []) consider(write.action, write.applied);
   return landed;
 }
@@ -1233,13 +1412,17 @@ function landedCommentTargets(args: Pick<RunDependentSkillArgs, 'initialOutput' 
  * whose ticket already carries a landed comment, from phase one or an
  * earlier run, or a comment still standing before it, is not touched.
  */
-function orphanedStatusChanges(output: CorrectableOutput, landed: ReadonlySet<string>): AuditRefusal[] {
+function orphanedStatusChanges(
+  output: CorrectableOutput,
+  landed: ReadonlySet<string>,
+): AuditRefusal[] {
   const withheldComments = new Map<string, MockAction>();
   for (const row of output.withheldActions ?? []) {
     if (!isSurfaceTool(row.action.tool)) continue;
     const parsed = parseSurfaceAction(row.action);
     const key = commentTargetKey(row.action);
-    if (parsed.ok && isAuditComment(parsed.action) && key && !withheldComments.has(key)) withheldComments.set(key, row.action);
+    if (parsed.ok && isAuditComment(parsed.action) && key && !withheldComments.has(key))
+      withheldComments.set(key, row.action);
   }
   if (withheldComments.size === 0) return [];
   const refusals: AuditRefusal[] = [];
@@ -1309,7 +1492,9 @@ export function refusedClosingLines(refused: RefusedClosing): string[] {
     ...(refused.withheldActions && refused.withheldActions.length > 0
       ? [
           `Actions the evidence check withheld from that set before the gate read it (${refused.withheldActions.length}), each with why:`,
-          ...refused.withheldActions.map((row, index) => `  ${index}. ${describeWithheldAction(row.action)}: ${row.reason}`),
+          ...refused.withheldActions.map(
+            (row, index) => `  ${index}. ${describeWithheldAction(row.action)}: ${row.reason}`,
+          ),
         ]
       : []),
     'Correct what the refusal names and keep what it does not; the prerequisite ledger above is the same evidence.',
@@ -1317,7 +1502,12 @@ export function refusedClosingLines(refused: RefusedClosing): string[] {
 }
 
 function agentIdentityPart(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'unknown'
+  );
 }
 
 export function skillAgentName(
@@ -1362,8 +1552,7 @@ function procedureTrailApplies(
 
 function completionConditionedTrail(trail: ProcedureContract['trails'][number]): boolean {
   return (
-    trail.effect.statusTransition !== null ||
-    trail.effect.destination.kind === 'manager-channel'
+    trail.effect.statusTransition !== null || trail.effect.destination.kind === 'manager-channel'
   );
 }
 
@@ -1595,7 +1784,10 @@ function realProcedureActionResolution(
   if (!isSurfaceTool(action.tool)) return { kind: 'contradiction' };
   const parsed = parseSurfaceAction(action);
   if (!parsed.ok) {
-    return { kind: 'unknown', detail: 'the transport arguments are not structurally interpretable' };
+    return {
+      kind: 'unknown',
+      detail: 'the transport arguments are not structurally interpretable',
+    };
   }
   const surface = surfaces.find((row) => row.slug === parsed.action.surface);
   if (!surface) {
@@ -1829,7 +2021,8 @@ const SURFACE_ACTION_VERB = new RegExp(
   'gi',
 );
 /** A negation that governs the verb it stands at most two words before. */
-const GOVERNING_NEGATION = /\b(?:do not|don't|never|avoid|without|hold|withhold|skip|not)\s+(?:\w+\s+){0,2}$/i;
+const GOVERNING_NEGATION =
+  /\b(?:do not|don't|never|avoid|without|hold|withhold|skip|not)\s+(?:\w+\s+){0,2}$/i;
 
 /**
  * Whether a clause commits to acting on the surface it names.
@@ -1890,18 +2083,24 @@ const RECORD_ACTION_VERB = new RegExp(
 );
 
 /** A quoted span: the value a plan fixes for a payload. */
-const QUOTED_LITERAL = /"([^"\n]{2,})"|\u201c([^\u201d\n]{2,})\u201d|\u2018([^\u2019\n]{2,})\u2019|(?<![A-Za-z])'([^'\n]{2,})'(?![A-Za-z])/g;
+const QUOTED_LITERAL =
+  /"([^"\n]{2,})"|\u201c([^\u201d\n]{2,})\u201d|\u2018([^\u2019\n]{2,})\u2019|(?<![A-Za-z])'([^'\n]{2,})'(?![A-Za-z])/g;
 /** A quoted span that names a record rather than carrying a value. */
-const TITLE_BEFORE = /\b(?:ticket|issue|request|message|thread|page|channel)\s+(?:(?:titled|called|named)\s+)?$/i;
+const TITLE_BEFORE =
+  /\b(?:ticket|issue|request|message|thread|page|channel)\s+(?:(?:titled|called|named)\s+)?$/i;
 const TITLE_AFTER = /^\s+(?:ticket|issue|request|message|thread|page|channel|title)\b/i;
 /** A step that only drafts or holds text does not commit to sending it. */
-const NOT_A_WRITE = /\b(?:draft(?:s|ed|ing)?|prepar(?:e|es|ed|ing)|propos(?:e|es|ed|ing)|hold(?:s|ing)?|held|wait(?:s|ed|ing)?)\b/i;
+const NOT_A_WRITE =
+  /\b(?:draft(?:s|ed|ing)?|prepar(?:e|es|ed|ing)|propos(?:e|es|ed|ing)|hold(?:s|ing)?|held|wait(?:s|ed|ing)?)\b/i;
 
 /**
  * The values a plan clause fixes for a write: its quoted spans, less those
  * that name a record (a title) or the candidate itself.
  */
-function fixedPayloadLiterals(clause: string, candidate: Pick<WorkCandidate, 'externalId'>): string[] {
+function fixedPayloadLiterals(
+  clause: string,
+  candidate: Pick<WorkCandidate, 'externalId'>,
+): string[] {
   const literals: string[] = [];
   for (const match of clause.matchAll(QUOTED_LITERAL)) {
     const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? '';
@@ -1981,7 +2180,10 @@ function describeSurfaceAction(parsed: ParsedSurfaceAction): string {
 function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displayName'>): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(surface.slug.toLowerCase())) return true;
-  const phrase = surface.displayName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const phrase = surface.displayName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
   return phrase.length > 0 && ` ${lower.replace(/[^a-z0-9]+/g, ' ')} `.includes(` ${phrase} `);
 }
 
@@ -2003,18 +2205,30 @@ function orderedWriteDependency(
   if (!new RegExp(`\\b${escape(prior.surface)}\\b`, 'i').test(description)) return false;
   const nextTool = description.match(/\b(?:save|update|create|post|delete|add)[_.][a-z_]+\b/i)?.[0];
   const status = /\b(?:save_issue|update_issue|done|status|state change)\b/i.test(description);
-  const before = isAuditComment(prior) ? '(?:comment|save_comment|create_comment)' : escape(prior.tool);
+  const before = isAuditComment(prior)
+    ? '(?:comment|save_comment|create_comment)'
+    : escape(prior.tool);
   const after = status
     ? '(?:save_issue|update_issue|(?:move|mark|set|change)[^.;\\n]{0,60}(?:done|status|state)|state change)'
-    : nextTool ? escape(nextTool) : undefined;
+    : nextTool
+      ? escape(nextTool)
+      : undefined;
   if (!after) return false;
-  const ordered = new RegExp(`\\b${before}\\b[^.;\\n]{0,100}\\b(?:then|before)\\b[^.;\\n]{0,100}\\b${after}\\b|\\b(?:after|once|when)\\b[^.;\\n]{0,50}\\b${before}\\b[^.;\\n]{0,100}\\b${after}\\b`, 'i');
+  const ordered = new RegExp(
+    `\\b${before}\\b[^.;\\n]{0,100}\\b(?:then|before)\\b[^.;\\n]{0,100}\\b${after}\\b|\\b(?:after|once|when)\\b[^.;\\n]{0,50}\\b${before}\\b[^.;\\n]{0,100}\\b${after}\\b`,
+    'i',
+  );
   const texts = [...context.plan.steps, ...context.skillBody.split(/\n/)];
-  if (texts.some(text => !/\b(?:do not|never|don't)\b/i.test(text) && ordered.test(text))) return true;
+  if (texts.some((text) => !/\b(?:do not|never|don't)\b/i.test(text) && ordered.test(text)))
+    return true;
   return context.plan.steps.some((step, index) => {
     const next = context.plan.steps[index + 1];
-    return next !== undefined && !/\b(?:do not|never|don't)\b/i.test(`${step} ${next}`) &&
-      new RegExp(`\\b${before}\\b`, 'i').test(step) && new RegExp(`\\b${after}\\b`, 'i').test(next);
+    return (
+      next !== undefined &&
+      !/\b(?:do not|never|don't)\b/i.test(`${step} ${next}`) &&
+      new RegExp(`\\b${before}\\b`, 'i').test(step) &&
+      new RegExp(`\\b${after}\\b`, 'i').test(next)
+    );
   });
 }
 
@@ -2042,27 +2256,36 @@ function orderedWriteDependency(
  *   One issue per unjustified deferral; empty when the output may stand.
  */
 export function deferralAudit(
-  output: Pick<ExecutionOutput, 'actions' | 'notes' | 'procedureTrails' | 'needsDependentPhase' | 'deferredActions'>,
+  output: Pick<
+    ExecutionOutput,
+    'actions' | 'notes' | 'procedureTrails' | 'needsDependentPhase' | 'deferredActions'
+  >,
   candidate: WorkCandidate,
   context: DeferralAuditContext,
   prewrittenIndices: number[] = [],
 ): string[] {
   if (context.mode === 'mock' || output.needsDependentPhase !== true) return [];
   const issues: string[] = [];
-  const fixedBrowserWork = context.surfaces.some((surface) =>
-    surface.path === 'browser-driven' &&
-    verdictFor(surface, context.now) === 'connected' &&
-    context.plan.steps.some((step) => step.split(/[.;\n]/).some((clause) =>
-      namesSurface(clause, surface) && affirmsSurfaceAction(clause, surface))) &&
-    !output.actions.some((action) => {
-      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
-      return parsed?.ok && parsed.action.surface === surface.slug;
-    }),
+  const fixedBrowserWork = context.surfaces.some(
+    (surface) =>
+      surface.path === 'browser-driven' &&
+      verdictFor(surface, context.now) === 'connected' &&
+      context.plan.steps.some((step) =>
+        step
+          .split(/[.;\n]/)
+          .some((clause) => namesSurface(clause, surface) && affirmsSurfaceAction(clause, surface)),
+      ) &&
+      !output.actions.some((action) => {
+        const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+        return parsed?.ok && parsed.action.surface === surface.slug;
+      }),
   );
   const deferredRows: ProcedureTrailAttestation[] = [
     ...(output.procedureTrails ?? []),
     ...(output.deferredActions ?? []).map((row) => ({
-      ...row, trailId: row.description, state: 'deferred' as const,
+      ...row,
+      trailId: row.description,
+      state: 'deferred' as const,
     })),
   ];
   for (const row of deferredRows) {
@@ -2070,12 +2293,19 @@ export function deferralAudit(
     if (state.state !== 'deferred') continue;
     const index = 'dependsOnActionIndex' in row ? row.dependsOnActionIndex : null;
     const field = 'dependsOnField' in row ? row.dependsOnField?.trim() : undefined;
-    const action = typeof index === 'number' && Number.isInteger(index) && index >= 0
-      ? output.actions[index] : undefined;
+    const action =
+      typeof index === 'number' && Number.isInteger(index) && index >= 0
+        ? output.actions[index]
+        : undefined;
     const parsed = action && isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
-    if (field && parsed?.ok && !fixedBrowserWork && (
-      actionIntent(parsed.action) === 'read' || orderedWriteDependency(row.trailId, parsed.action, context)
-    )) continue;
+    if (
+      field &&
+      parsed?.ok &&
+      !fixedBrowserWork &&
+      (actionIntent(parsed.action) === 'read' ||
+        orderedWriteDependency(row.trailId, parsed.action, context))
+    )
+      continue;
     issues.push(
       `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}"; declare dependsOnActionIndex pointing at a read or snapshot, or a prior write the plan or runbook orders before this action, in this response and dependsOnField naming its result field; work whose payload is already fixed by the candidate, runbook and surface record must be emitted now`,
     );
@@ -2112,10 +2342,13 @@ export function deferralAudit(
     if (!parsed?.ok) return;
     const surface = context.surfaces.find((row) => row.slug === parsed.action.surface);
     if (!surface || !isClosingAction(parsed.action, surface, candidate)) return;
-    const body = parsed.action.kind === 'mcp.call'
-      ? parsed.action.toolArgs.body
-      : parsed.action.bodyJson?.text;
-    const fixedBody = !isStatusChange(parsed.action) && typeof body === 'string' &&
+    const body =
+      parsed.action.kind === 'mcp.call'
+        ? parsed.action.toolArgs.body
+        : parsed.action.bodyJson?.text;
+    const fixedBody =
+      !isStatusChange(parsed.action) &&
+      typeof body === 'string' &&
       context.plan.steps
         .flatMap((step) => step.split(/[.;\n]|,?\s+then\s+/i))
         .some((clause) => {
@@ -2259,9 +2492,8 @@ export function surfaceInstructions(
     if (surface.path) detail.push(`path ${surface.path}`);
     if (surface.endpoint) detail.push(`endpoint ${surface.endpoint}`);
     const tools = (surface.toolAllowlist ?? []).map((tool: string): string => {
-      const probed = mode === 'real'
-        ? surface.toolArguments?.find((entry) => entry.tool === tool)
-        : undefined;
+      const probed =
+        mode === 'real' ? surface.toolArguments?.find((entry) => entry.tool === tool) : undefined;
       if (!probed) return tool;
       argumentNamesShown = true;
       return `${tool}(${probed.arguments.join(', ')})`;
@@ -2274,7 +2506,7 @@ export function surfaceInstructions(
   }
   if (argumentNamesShown) {
     lines.push(
-      "  The names in parentheses after a tool are its probed argument names: the keys of `toolArgsJson` for that tool are drawn from that list and no other, whatever a runbook example for a different tool shows.",
+      '  The names in parentheses after a tool are its probed argument names: the keys of `toolArgsJson` for that tool are drawn from that list and no other, whatever a runbook example for a different tool shows.',
     );
   }
   lines.push(
@@ -2290,7 +2522,6 @@ export function surfaceInstructions(
   );
   return lines.join('\n');
 }
-
 
 function renderProcedureContract(contract: ProcedureContract): string {
   if (contract.trails.length === 0) {
@@ -2376,12 +2607,16 @@ export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
-export function removePrewrittenClosingActions(output: ExecutionOutput, indices: readonly number[]): ExecutionOutput {
+export function removePrewrittenClosingActions(
+  output: ExecutionOutput,
+  indices: readonly number[],
+): ExecutionOutput {
   return {
     ...dropActions(output, indices, (trailId) => ({
       trailId,
       state: 'deferred' as const,
-      reason: 'Audit removed the prewritten closing action; author it from the applied prerequisite ledger.',
+      reason:
+        'Audit removed the prewritten closing action; author it from the applied prerequisite ledger.',
     })),
     needsDependentPhase: true,
   };
@@ -2433,15 +2668,24 @@ export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from t
  * pair for a Slack mention; the action's own `channel` and `thread_ts` keep
  * it for everything that reads it, and the correction is recorded.
  */
-async function withoutOwnThreadReferencesRecorded<T extends { actions: ExecutionOutput['actions'] }>(
+async function withoutOwnThreadReferencesRecorded<
+  T extends { actions: ExecutionOutput['actions'] },
+>(
   output: T,
   args: Pick<RunSkillArgs, 'mode' | 'surfaces' | 'candidate' | 'onAuditCorrection'>,
 ): Promise<T> {
   if ((args.mode ?? 'mock') !== 'real') return output;
-  const scrubbed = withoutOwnThreadReferences(output.actions, args.surfaces ?? [], args.candidate.replyTarget);
+  const scrubbed = withoutOwnThreadReferences(
+    output.actions,
+    args.surfaces ?? [],
+    args.candidate.replyTarget,
+  );
   if (scrubbed.changed.length === 0) return output;
   // Nothing was removed or withheld, so no index is reported as removed; the reason names the rows whose text changed.
-  await args.onAuditCorrection?.([], `${OWN_THREAD_REFERENCE_REMOVED} (action ${scrubbed.changed.join(', ')})`);
+  await args.onAuditCorrection?.(
+    [],
+    `${OWN_THREAD_REFERENCE_REMOVED} (action ${scrubbed.changed.join(', ')})`,
+  );
   return { ...output, actions: [...scrubbed.actions] };
 }
 
@@ -2474,10 +2718,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   const runtimeSchema = executeSchemaForProcedureContract(procedureContract, candidate, plan, mode);
 
   const userPrompt = [
-    `Role: ${charter.proposedFunction}`,
-    '',
-    `Charter willDo: ${charter.proposedBoundaries.willDo.join(' | ')}`,
-    `Charter willNotDo: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
+    ...executorCharterLines(charter, mode),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
@@ -2531,7 +2772,12 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     needsDependentPhase: closingPhase(raw.needsDependentPhase),
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
-    ...(mode === 'real' ? { deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null) } : {}),
+    ...(mode === 'real'
+      ? {
+          deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null),
+          declaredQuestion: declaredQuestionOf(raw.openQuestion),
+        }
+      : {}),
   };
   if (mode !== 'mock') {
     const deferralContext: DeferralAuditContext = {
@@ -2555,7 +2801,9 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
         ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
         ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
       ].join('\n'),
-      documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
+      documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(
+        (page) => `${page.title}\n${page.body}`,
+      ),
       managerFeedback: [
         ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
         ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
@@ -2564,7 +2812,9 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     };
     const chatSurfaces = args.surfaces ?? [];
     const claimIssues = (actions: readonly MockAction[]): string[] =>
-      unsupportedClaimIssues(actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces));
+      unsupportedClaimIssues(actions, claimEvidence, (action) =>
+        isChatMessage(action, chatSurfaces),
+      );
     const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
       mode,
       surfaces: args.surfaces ?? [],
@@ -2574,7 +2824,9 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       ...trailAttention.issues,
       ...deferralAudit(output, candidate, deferralContext),
       ...claimIssues(output.actions),
-      ...heldItemReplyFindings(output.actions, args.heldElsewhere, chatSurfaces).map((finding) => finding.issue),
+      ...heldItemReplyFindings(output.actions, args.heldElsewhere, chatSurfaces).map(
+        (finding) => finding.issue,
+      ),
     ];
     if (issues.length === 0) {
       return trailAttention.limitations.length > 0
@@ -2607,6 +2859,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       actions: repairedRaw.actions.map(materialiseGeneratedAction),
       procedureTrails: repairedRaw.procedureTrails,
       deferredActions: deferredActionsSchema.parse(repairedRaw.deferredActions ?? null),
+      declaredQuestion: declaredQuestionOf(repairedRaw.openQuestion),
     };
     const remaining = procedureTrailAttentionIssues(repaired, candidate, procedureContract, {
       mode,
@@ -2625,7 +2878,9 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     // message that still asserts what nothing carries is withheld with the
     // reason on the row. Each correction is recorded.
     let corrected: ExecutionOutput =
-      remaining.limitations.length > 0 ? { ...repaired, procedureTrailLimitations: remaining.limitations } : repaired;
+      remaining.limitations.length > 0
+        ? { ...repaired, procedureTrailLimitations: remaining.limitations }
+        : repaired;
     const prewrittenIndices: number[] = [];
     const deferralIssues = deferralAudit(repaired, candidate, deferralContext, prewrittenIndices);
     if (prewrittenIndices.length > 0) {
@@ -2638,7 +2893,10 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     }
     const supported = await withholdUnsupported(
       corrected,
-      (actions) => unsupportedClaimFindings(actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces)),
+      (actions) =>
+        unsupportedClaimFindings(actions, claimEvidence, (action) =>
+          isChatMessage(action, chatSurfaces),
+        ),
       args.onAuditCorrection,
     );
     return await sayHeldItems(supported, args, output.actions);
@@ -2703,7 +2961,10 @@ export function appliedLedgerPrompt(
       // A row withheld for a claim says whose work it is: a set authored
       // from this ledger has to be able to say so.
       const claimed = withheldByClaim(entry) || withheldWithClaimedWrite(entry);
-      const detail = claimed && entry.effect ? `${entry.effect} · ${entry.reason}` : (entry.effect ?? entry.reason ?? '(no provider detail)');
+      const detail =
+        claimed && entry.effect
+          ? `${entry.effect} · ${entry.reason}`
+          : (entry.effect ?? entry.reason ?? '(no provider detail)');
       const target = action
         ? JSON.stringify({ tool: action.tool, args: action.args })
         : JSON.stringify({ tool: entry.tool });
@@ -2855,15 +3116,22 @@ function argumentValue(value: unknown): string {
   return JSON.stringify(value, (_key, entry: unknown) =>
     entry && typeof entry === 'object' && !Array.isArray(entry)
       ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b)))
-      : entry);
+      : entry,
+  );
 }
 
 function preservesWriteValues(row: RepairableCall, replacement: ParsedMcpCall): boolean {
   if (replacement.surface !== row.call.surface || replacement.tool !== row.call.tool) return false;
-  const names = row.surface.toolArguments?.find((entry) => entry.tool === row.call.tool)?.arguments ?? [];
+  const names =
+    row.surface.toolArguments?.find((entry) => entry.tool === row.call.tool)?.arguments ?? [];
   const original = Object.entries(row.call.toolArgs);
-  if (original.some(([key, value]) => names.includes(key) &&
-    argumentValue(replacement.toolArgs[key]) !== argumentValue(value))) return false;
+  if (
+    original.some(
+      ([key, value]) =>
+        names.includes(key) && argumentValue(replacement.toolArgs[key]) !== argumentValue(value),
+    )
+  )
+    return false;
   const values = (args: Record<string, unknown>) => Object.values(args).map(argumentValue).sort();
   return JSON.stringify(values(row.call.toolArgs)) === JSON.stringify(values(replacement.toolArgs));
 }
@@ -3155,7 +3423,7 @@ async function authorDependentSkillRun(
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
-    ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback)] : []),
+    ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback), CHARTER_CLAUSE_RULE] : []),
     ...(advisory.length > 0
       ? [
           `Advisory plan steps: ${advisory.join(', ')}. Each checks a property of the candidate (ownership, priority, age) that the ledger cannot carry and nothing asked for. Report such a step as not-verifiable with what the data showed, never as blocked, and never let it hold back the documented steps, the audit comment or the state change the work earned.`,
@@ -3173,7 +3441,7 @@ async function authorDependentSkillRun(
   });
   const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode, cap);
   const userPrompt = [
-    `Role: ${charter.proposedFunction}`,
+    ...executorCharterLines(charter, mode),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
@@ -3203,15 +3471,18 @@ async function authorDependentSkillRun(
     '',
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
-    ...(args.initialFailure ? ['', `${args.resumedClosing ? 'Previous closing attempt failure (prerequisites succeeded; retry the closing set)' : 'Prerequisite phase failure'}: ${args.initialFailure}`] : []),
+    ...(args.initialFailure
+      ? [
+          '',
+          `${args.resumedClosing ? 'Previous closing attempt failure (prerequisites succeeded; retry the closing set)' : 'Prerequisite phase failure'}: ${args.initialFailure}`,
+        ]
+      : []),
     ...(args.refusedClosing ? ['', ...refusedClosingLines(args.refusedClosing)] : []),
     '',
     'Produce the truthful closing draft, notes, plan-step outcomes, procedure-trail accounting, and at most one bounded set of closing actions now.',
   ].join('\n');
 
-  function materialiseDependent(
-    raw: z.infer<typeof runtimeSchema>,
-  ): DependentExecutionOutput {
+  function materialiseDependent(raw: z.infer<typeof runtimeSchema>): DependentExecutionOutput {
     const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
     if (
       ordered.length !== plan.steps.length ||
@@ -3224,7 +3495,11 @@ async function authorDependentSkillRun(
       notes: raw.notes,
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
-      planStepOutcomes: normalisePlanStepOutcomes(ordered.map(recordedPlanStepBasis), advisory),
+      planStepOutcomes: normalisePlanStepOutcomes(
+        ordered.map((outcome) => recordedPlanStepOutcome(outcome, charter)),
+        advisory,
+      ),
+      ...(mode === 'real' ? { declaredQuestion: declaredQuestionOf(raw.openQuestion) } : {}),
     };
   }
 
@@ -3242,7 +3517,9 @@ async function authorDependentSkillRun(
       ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
       ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
     ].join('\n'),
-    documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
+    documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(
+      (page) => `${page.title}\n${page.body}`,
+    ),
     managerFeedback: [
       ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
       ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
@@ -3251,7 +3528,8 @@ async function authorDependentSkillRun(
   };
   const claimFindings = (actions: readonly MockAction[]): ClaimFinding[] =>
     mode === 'real' ? unsupportedClaimFindings(actions, claimEvidence) : [];
-  const gateIssues = (candidate: DependentExecutionOutput): string[] => args.closingGate?.(candidate) ?? [];
+  const gateIssues = (candidate: DependentExecutionOutput): string[] =>
+    args.closingGate?.(candidate) ?? [];
 
   let output = materialiseDependent(raw);
   const firstResponse = output.actions;
@@ -3265,7 +3543,9 @@ async function authorDependentSkillRun(
     ...claimFindings(output.actions).map((finding) => finding.issue),
     ...gateIssues(output),
     ...(mode === 'real'
-      ? heldItemReplyFindings(output.actions, args.heldElsewhere, args.surfaces ?? []).map((finding) => finding.issue)
+      ? heldItemReplyFindings(output.actions, args.heldElsewhere, args.surfaces ?? []).map(
+          (finding) => finding.issue,
+        )
       : []),
   ];
   if (issues.length > 0) {
@@ -3302,7 +3582,9 @@ async function authorDependentSkillRun(
     // After the one repair: a set the obligation gate still refuses stops
     // the run with the set on the row; a message the evidence check still
     // refuses is withheld with the reason and the rest of the set goes on.
-    const withLimitations = (candidateOutput: DependentExecutionOutput): DependentExecutionOutput =>
+    const withLimitations = (
+      candidateOutput: DependentExecutionOutput,
+    ): DependentExecutionOutput =>
       trailAttention.limitations.length > 0
         ? { ...candidateOutput, procedureTrailLimitations: trailAttention.limitations }
         : candidateOutput;

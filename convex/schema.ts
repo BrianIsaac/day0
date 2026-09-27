@@ -588,19 +588,27 @@ export default defineSchema({
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),
-    /** A manager rejected an earlier plan for this item; its redraft needs explicit approval. */
+    /**
+     * A manager rejected an earlier plan for this item; its own redraft needs
+     * explicit approval. A plan rejection also sets `rejectedAt`, which is
+     * what a sibling's plan is held on (N3); this field stands in for it only
+     * on a row rejected before `rejectedAt` existed.
+     */
     planRejectedAt: v.optional(v.number()),
+    /**
+     * Real mode: when the manager first rejected this row's plan or its held
+     * actions. Another employee's plan for the same provider item then waits
+     * for the manager with the first rejection's reason, never for autonomy
+     * (N3). Set once; optional and not backfilled.
+     */
+    rejectedAt: v.optional(v.number()),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),
         confirmedAt: v.number(),
         entries: v.array(
           v.object({
-            phase: v.union(
-              v.literal('single'),
-              v.literal('prerequisite'),
-              v.literal('closing'),
-            ),
+            phase: v.union(v.literal('single'), v.literal('prerequisite'), v.literal('closing')),
             actionIndex: v.number(),
             tool: v.string(),
             outcome: v.union(v.literal('landed'), v.literal('outcome-unknown')),
@@ -691,7 +699,16 @@ export default defineSchema({
     .index('by_extId', ['sourceSystem', 'externalId'])
     /** Every work item discovered from one provider item, across employees, by either of its names. */
     .index('by_claim_key', ['externalClaimKey'])
-    .index('by_claim_alias', ['externalClaimAlias']),
+    .index('by_claim_alias', ['externalClaimAlias'])
+    /**
+     * The rejected rows of one provider item, first rejection first, so the
+     * sibling check (N3) reads rejections only. The `planRejectedAt` pair
+     * serves rows rejected before `rejectedAt` existed.
+     */
+    .index('by_claim_key_rejected', ['externalClaimKey', 'rejectedAt'])
+    .index('by_claim_alias_rejected', ['externalClaimAlias', 'rejectedAt'])
+    .index('by_claim_key_plan_rejected', ['externalClaimKey', 'planRejectedAt'])
+    .index('by_claim_alias_plan_rejected', ['externalClaimAlias', 'planRejectedAt']),
 
   /**
    * Which employee holds an item of the owner's own systems: one live row per

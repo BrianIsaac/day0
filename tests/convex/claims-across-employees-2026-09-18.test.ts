@@ -600,6 +600,71 @@ describe('releasing a claim', (): void => {
     expect(heldEvent?.payload).not.toHaveProperty('rejection');
   });
 
+  it("holds the colleague's plan for the manager with autonomous actions on when the holder's held actions are rejected", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { priya, mateo, held, refused } = await heldAndRefused(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(mateo, { autonomousActions: true }));
+    // Priya's plan was approved and her run parked its actions for the manager.
+    const pendingRunId = await harness.run(async (ctx) => {
+      const runId = await ctx.db.insert('events', {
+        agentId: priya,
+        type: 'work.execution-started',
+        payload: { workItemId: held },
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(held, { state: 'actions-pending', pendingRunId: runId });
+      return runId;
+    });
+
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.work.rejectActions, {
+      workItemId: held,
+      pendingRunId,
+      reason: 'the notice goes to finance first',
+    });
+    await drain(harness);
+
+    const rejected = await readItem(harness, held);
+    expect(rejected.state).toBe('failed');
+    expect(rejected.rejectedAt).toEqual(expect.any(Number));
+    expect(rejected.planRejectedAt).toBeUndefined();
+    expect((await readItem(harness, refused)).state).toBe('plan-pending');
+    expect(await eventsOf(harness, 'work.plan-approved', mateo)).toEqual([]);
+    expect(await eventsOf(harness, 'work.plan-held', mateo)).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          workItemId: refused,
+          reason: 'plan-rejected-for-this-item',
+          rejectedWorkItemId: held,
+          rejection: 'the notice goes to finance first',
+        }),
+      }),
+    ]);
+    expect(recorded.planCorrections.at(-1)).toEqual(['the notice goes to finance first']);
+  });
+
+  it('stamps the first rejection on a plan the manager cancels, and keeps it through a later one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { held } = await heldAndRefused(harness);
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
+    const first = await readItem(harness, held);
+    expect(first.rejectedAt).toEqual(expect.any(Number));
+    expect(first.rejectedAt).toBe(first.planRejectedAt);
+    vi.advanceTimersByTime(60_000);
+    await harness.run(async (ctx) => await ctx.db.patch(held, { state: 'plan-pending' }));
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.work.cancelPlan, { workItemId: held, reason: 'still no' });
+
+    expect((await readItem(harness, held)).rejectedAt).toBe(first.rejectedAt);
+  });
+
   it('returns only the rows the released claim refused, not a colleague who skipped at scope', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

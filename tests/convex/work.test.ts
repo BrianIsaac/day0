@@ -2081,6 +2081,57 @@ describe('the exact-action gate', (): void => {
     expect(await scheduledFunctionNames(harness)).toEqual([]);
   });
 
+  it('stamps the rejection and lets go of the item, keeping the claim on a page field the run wrote', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await pend(harness);
+    const [itemClaim, fieldClaim] = await harness.run(async (ctx) => [
+      await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-7',
+        agentId,
+        workItemId,
+        claimedAt: 1,
+      }),
+      await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'looker:tile',
+        agentId,
+        workItemId,
+        claimedAt: 1,
+        writeTarget: { surface: 'looker', field: 'tile' },
+      }),
+    ]);
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'wrong issue' });
+
+    const failed = await readItem(harness, workItemId);
+    expect(failed.rejectedAt).toEqual(expect.any(Number));
+    expect(failed.planRejectedAt).toBeUndefined();
+    const claims = await harness.run(async (ctx) => [
+      await ctx.db.get(itemClaim!),
+      await ctx.db.get(fieldClaim!),
+    ]);
+    expect(claims[0]?.releasedAt).toEqual(expect.any(Number));
+    expect(claims[1]?.releasedAt).toBeUndefined();
+    expect(claims[1]?.settledAt).toEqual(expect.any(Number));
+  });
+
+  it('keeps a plan rejection from before the rejection stamp existed as the first rejection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await pend(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { planRejectedAt: 5 }));
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'wrong issue' });
+
+    expect((await readItem(harness, workItemId)).rejectedAt).toBe(5);
+  });
+
   it('rejects to failed with the reason, keeps the draft, and retries from plan-approved', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

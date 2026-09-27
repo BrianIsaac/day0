@@ -37,6 +37,7 @@ import {
   type ArgumentRepairAttempt,
   type DependentExecutionOutput,
   type ExecutionPlan,
+  type DeclaredQuestion,
   type ManagerAnswer,
   type MockAction,
   type PlanStepOutcome,
@@ -47,12 +48,16 @@ import {
 import {
   closingPhaseOwed,
   declaredReads,
+  managerDmReachable,
+  managerMessageTexts,
   openManagerQuestion,
   openQuestionStopReason,
   transitionPromised,
   withheldForAnswerReason,
+  writesAwaitingAnswer,
   type DeclaredRead,
 } from '../src/work/obligations';
+import { judgeManagerQuestion } from '../src/work/question-judgement';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
@@ -127,7 +132,6 @@ import {
   NOT_AUTOMATIC,
   mcpEndpointRefusal,
   parseSurfaceAction,
-  type ParsedSurfaceAction,
   pathRefusal,
   replayAuthorityRefusal,
   surfaceRefusal,
@@ -1020,10 +1024,10 @@ async function holdDay0Actions(
       : repairedStaged;
     const stagedOutput =
       SURFACE_MODE === 'real'
-        ? withOpenQuestionHeld(auditedOutput, {
+        ? await withOpenQuestionHeld(auditedOutput, {
             plan: args.plan,
             surfaces,
-            answered: managerHasAnswered(args.item, args.plan),
+            answered: managerHasAnswered(args.item),
             // A question an earlier run landed and nobody answered is still the open one.
             askedEarlier: (args.landedWrites ?? []).map((write) => write.action),
           })
@@ -1255,26 +1259,25 @@ export function prerequisiteOutput(output: ExecutionOutput, plan: ExecutionPlan)
 }
 
 /**
- * Whether the ledger shows the manager's word on this item already: a live
- * rejection reason or retry note, answers given when the plan was approved,
- * or a kept correction the approved plan applied. A write the plan left to
- * the manager's answer is then no longer waiting on a question.
+ * Whether the row shows the manager's word on this item already: a live
+ * rejection reason or retry note, or answers given when the plan was
+ * approved. A write the plan left to the manager's answer is then no longer
+ * waiting on a question. A kept correction is not an answer (review D4): it
+ * was written about earlier work, and on a sibling it is another employee's
+ * rejection, never a reply to the question this run asked.
  *
  * Args:
  *   item: The work item as the run read it.
- *   plan: Its approved plan.
  *
  * Returns:
- *   True when the manager has spoken on the item or a kept correction is in scope.
+ *   True when the manager has spoken on the item itself.
  */
 export function managerHasAnswered(
   item: Pick<Doc<'workItems'>, 'managerFeedback' | 'managerAnswers'>,
-  plan: Pick<ExecutionPlan, 'appliedCorrections'>,
 ): boolean {
   return (
     liveManagerFeedback(item.managerFeedback) !== undefined ||
-    (item.managerAnswers ?? []).length > 0 ||
-    (plan.appliedCorrections ?? []).length > 0
+    (item.managerAnswers ?? []).length > 0
   );
 }
 
@@ -1286,48 +1289,149 @@ function actionName(action: MockAction): string {
   return `${action.tool} ${String(action.args.surface ?? '')} · ${String(verb)}`;
 }
 
+/** Reads whether a message that declared nothing asks the manager something; see `judgeManagerQuestion`. */
+export type QuestionJudge = (text: string) => Promise<string | null>;
+
 /** A set that may carry a question to the manager beside the writes that wait on its answer. */
 type QuestionableOutput = Parameters<typeof withholdActions>[0] & {
   argumentRepairs?: ArgumentRepairAttempt[];
   openQuestion?: ExecutionOutput['openQuestion'];
+  declaredQuestion?: DeclaredQuestion;
+  earlierQuestion?: string | null;
   /** Where the executor asks when no chat surface can carry the manager DM. */
   notes?: string;
-  /** The phase before a closing set, whose notes may have asked already. */
-  initial?: { notes?: string } | null;
+  /** The phase before a closing set: its declaration or, from before the field, what it landed and noted. */
+  initial?: {
+    notes?: string;
+    declaredQuestion?: DeclaredQuestion;
+    earlierQuestion?: string | null;
+    actions?: readonly MockAction[];
+    applied?: readonly (Partial<AppliedAction> | undefined)[];
+  } | null;
 };
 
 /**
- * The set with the writes the approved plan left to the manager's answer
- * withheld, when the run asks the manager a question nobody has answered
- * (`openManagerQuestion`), in the manager DM or, with no chat surface to carry
- * one, in the notes of this set or the phase before it. The question and
- * everything else in the set go on;
- * the withheld writes stay on the output with their reason, and the open
- * question is recorded so the run stops with it once the rest has settled.
+ * The question this run has put to the manager and nobody has answered, if any.
+ *
+ * The executor's declaration is read first (decision N20): this set's
+ * `openQuestion`, then the phase before it. A set authored before the field
+ * existed is read through the model judgement: its manager DMs, and its notes
+ * when no chat surface could carry a DM. A manager message an earlier run of
+ * the item landed carries no declaration either, so the judgement reads it
+ * too, once per run: the answer is kept on the output as `earlierQuestion`
+ * and a later phase of the run reads it from there.
  *
  * Args:
  *   output: The set as it would reach the gate.
- *   context: The plan, the surfaces, whether the manager has answered, and
- *     the manager messages this run already landed.
+ *   context: The surfaces, the manager messages earlier runs landed, the judgement and the clock.
  *
  * Returns:
- *   The same output when nothing waits on a question.
+ *   The question, and the earlier runs' question when it was judged or read here.
  */
-export function withOpenQuestionHeld<T extends QuestionableOutput>(
+async function questionPutToManager(
+  output: QuestionableOutput,
+  context: {
+    surfaces: readonly SurfaceRecord[];
+    askedEarlier?: readonly MockAction[];
+    judge: QuestionJudge;
+    now: number;
+  },
+): Promise<{ question?: string; earlierQuestion?: string | null }> {
+  const judged = async (texts: readonly string[]): Promise<string | undefined> => {
+    for (const text of texts) {
+      const question = await context.judge(text);
+      if (question) return question;
+    }
+    return undefined;
+  };
+  const undeclared = (actions: readonly MockAction[], notes: string | undefined): string[] => [
+    ...managerMessageTexts(actions, context.surfaces),
+    ...(notes?.trim() && !managerDmReachable(context.surfaces, context.now) ? [notes] : []),
+  ];
+  if (typeof output.declaredQuestion === 'string') return { question: output.declaredQuestion };
+  if (output.declaredQuestion === undefined) {
+    const question = await judged(undeclared(output.actions, output.notes));
+    if (question) return { question };
+  }
+  const initial = output.initial;
+  if (initial) {
+    if (typeof initial.declaredQuestion === 'string') return { question: initial.declaredQuestion };
+    if (initial.declaredQuestion === undefined) {
+      const landed = (initial.actions ?? []).filter(
+        (_action, index) =>
+          initial.applied?.[index]?.ok === true && initial.applied[index]?.held !== true,
+      );
+      const question = await judged(undeclared(landed, initial.notes));
+      if (question) return { question };
+    }
+  }
+  const kept =
+    output.earlierQuestion !== undefined ? output.earlierQuestion : initial?.earlierQuestion;
+  const earlierQuestion =
+    kept !== undefined
+      ? kept
+      : ((await judged(managerMessageTexts(context.askedEarlier ?? [], context.surfaces))) ?? null);
+  return earlierQuestion ? { question: earlierQuestion, earlierQuestion } : { earlierQuestion };
+}
+
+/**
+ * The set with the writes the approved plan left to the manager's answer
+ * withheld, when the run has put a question to the manager that nobody has
+ * answered (`questionPutToManager`), in the manager DM or, with no chat
+ * surface to carry one, in its notes. The question and everything else in
+ * the set go on; the withheld writes stay on the output with their reason,
+ * and the open question is recorded so the run stops with it once the rest
+ * has settled. Nothing is judged when no write waits on an answer.
+ *
+ * Args:
+ *   output: The set as it would reach the gate.
+ *   context: The plan, the surfaces, whether the manager has answered, the
+ *     manager messages earlier runs landed, and the judgement (the model's
+ *     unless a test injects one).
+ *
+ * Returns:
+ *   The same output when nothing waits on a question, or it with the earlier
+ *   runs' question kept when only that was read.
+ */
+export async function withOpenQuestionHeld<T extends QuestionableOutput>(
   output: T,
   context: {
     plan: ExecutionPlan;
     surfaces: readonly SurfaceRecord[];
     answered: boolean;
     askedEarlier?: readonly MockAction[];
+    judge?: QuestionJudge;
   },
-): T {
-  const notes = [output.notes, output.initial?.notes].filter((text): text is string => typeof text === 'string');
-  const open = openManagerQuestion({ ...context, actions: output.actions, notes, now: Date.now() });
-  if (!open) return output;
+): Promise<T> {
+  if (context.answered) return output;
+  if (
+    writesAwaitingAnswer({
+      plan: context.plan,
+      actions: output.actions,
+      surfaces: context.surfaces,
+    }).length === 0
+  ) {
+    return output;
+  }
+  const asked = await questionPutToManager(output, {
+    surfaces: context.surfaces,
+    askedEarlier: context.askedEarlier,
+    judge: context.judge ?? judgeManagerQuestion,
+    now: Date.now(),
+  });
+  const read: T =
+    asked.earlierQuestion !== undefined && output.earlierQuestion === undefined
+      ? { ...output, earlierQuestion: asked.earlierQuestion }
+      : output;
+  const open = openManagerQuestion({
+    ...context,
+    actions: output.actions,
+    question: asked.question,
+  });
+  if (!open) return read;
   const removed = new Set(open.withheld.map((row) => row.index));
   const withheld = withholdActions(
-    output,
+    read,
     open.withheld.map(({ index, step }) => ({ index, reason: withheldForAnswerReason(step) })),
     "for the manager's answer",
   );
@@ -1635,6 +1739,10 @@ function flattenedDependentOutput(
     ...(output.openQuestion ?? output.initial.openQuestion
       ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
       : {}),
+    // Kept on the finished row, so a retry that resumes at the closing phase
+    // still reads the question the run declared rather than judging its notes.
+    ...carriedDeclaration(output.declaredQuestion, output.initial.declaredQuestion),
+    ...carriedEarlierQuestion(output),
   };
 }
 
@@ -1682,6 +1790,95 @@ export function replyStillOwed(
     const row = run.applied[index];
     return row?.ok === true && row.held !== true && answersTheAsker(action, reply);
   });
+}
+
+/**
+ * The prerequisites a closing round is authored from: the phase before the
+ * first closing set, with that set's actions and ledger added, and the
+ * question it put to the manager with its notes carried, so a round that
+ * does not ask again still holds what waits on the answer (review M10).
+ *
+ * Args:
+ *   output: The first closing set as it was applied.
+ *   flattened: The run's whole action set and ledger after that apply.
+ *   round: Why the set is authored once more.
+ *
+ * Returns:
+ *   The output `prepareDependentPhase` stores for the round.
+ */
+export function closingRoundPrerequisites(
+  output: DependentPendingOutput,
+  flattened: Pick<
+    ReturnType<typeof flattenedDependentOutput>,
+    'actions' | 'applied' | 'prerequisiteCount'
+  >,
+  round: ClosingRoundReason,
+): DependentAuthoringOutput {
+  const withheldActions = [
+    ...(output.initial.withheldActions ?? []),
+    ...(output.withheldActions ?? []),
+  ];
+  const openQuestion = output.openQuestion ?? output.initial.openQuestion;
+  const notes = [output.initial.notes, output.notes]
+    .filter((text) => text.trim() !== '')
+    .join('\n');
+  // The phase before's own declaration is replaced by the carried one, which may be none at all.
+  const before: DependentAuthoringOutput = { ...output.initial };
+  delete before.declaredQuestion;
+  return {
+    ...before,
+    actions: flattened.actions,
+    applied: flattened.applied,
+    needsDependentPhase: true,
+    notes,
+    ...carriedDeclaration(output.declaredQuestion, output.initial.declaredQuestion),
+    ...(openQuestion ? { openQuestion } : {}),
+    ...carriedEarlierQuestion(output),
+    ...(withheldActions.length > 0 ? { withheldActions } : {}),
+    closingRound: { reason: round, prerequisiteCount: flattened.prerequisiteCount },
+  };
+}
+
+/**
+ * The earlier runs' question a closing set or the phase before it read, to
+ * ride on whatever is built from them, so it is not judged again.
+ *
+ * Args:
+ *   output: The closing set with the phase before it.
+ *
+ * Returns:
+ *   The field to spread, or nothing when neither read it.
+ */
+function carriedEarlierQuestion(
+  output: Pick<DependentPendingOutput, 'earlierQuestion' | 'initial'>,
+): { earlierQuestion?: string | null } {
+  const earlierQuestion =
+    output.earlierQuestion !== undefined ? output.earlierQuestion : output.initial.earlierQuestion;
+  return earlierQuestion !== undefined ? { earlierQuestion } : {};
+}
+
+/**
+ * The declared question a closing round carries from the first closing set
+ * and the phase before it: a question either declared, else none when both
+ * declared none, else nothing, so a set from before the field is still read
+ * by the judgement.
+ *
+ * Args:
+ *   closing: The first closing set's declaration.
+ *   before: The phase before it's.
+ *
+ * Returns:
+ *   The field to spread onto the carried prerequisites.
+ */
+function carriedDeclaration(
+  closing: DeclaredQuestion | undefined,
+  before: DeclaredQuestion | undefined,
+): { declaredQuestion?: DeclaredQuestion } {
+  const question = [closing, before].find(
+    (declared): declared is string => typeof declared === 'string',
+  );
+  if (question !== undefined) return { declaredQuestion: question };
+  return closing === null && before === null ? { declaredQuestion: null } : {};
 }
 
 /**
@@ -1816,22 +2013,27 @@ export function blockedPlanReason(
 }
 
 /**
- * A manager message that puts something to the manager: a question, or an
- * ask for a decision, in English or in Chinese. A note that only reports is
- * not a way to unblock the work, so a stop still withholds it. The Chinese
- * forms carry no word boundary: `\b` only sees Latin letters and digits, and
- * 请 is an ask except where it opens 请求, the noun a report uses.
+ * Whether a closing set asks the manager something: its declared question
+ * or, for a set that declared nothing, the model judgement of its manager DMs.
+ *
+ * Args:
+ *   output: The closing set.
+ *   surfaces: The agent's surfaces.
+ *   judge: The judgement; the model's unless a test injects one.
+ *
+ * Returns:
+ *   True when the set puts a question to the manager.
  */
-const MANAGER_ASK =
-  /[?？]|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b|请(?!求)|能否|可否|是否|麻烦|告知|确认|批准|决定|需要/i;
-
-/** The text a manager message carries, whichever transport it takes. */
-function managerMessageText(parsed: ParsedSurfaceAction): string {
-  if (parsed.kind === 'mcp.call') {
-    const text = ['text', 'message', 'body'].map((key) => parsed.toolArgs[key]).find((value) => typeof value === 'string');
-    return typeof text === 'string' ? text : '';
+export async function closingSetAsks(
+  output: Pick<DependentExecutionOutput, 'actions' | 'declaredQuestion'>,
+  surfaces: readonly SurfaceRecord[],
+  judge: QuestionJudge = judgeManagerQuestion,
+): Promise<boolean> {
+  if (output.declaredQuestion !== undefined) return output.declaredQuestion !== null;
+  for (const text of managerMessageTexts(output.actions, surfaces)) {
+    if (await judge(text)) return true;
   }
-  return typeof parsed.bodyJson?.text === 'string' ? parsed.bodyJson.text : '';
+  return false;
 }
 
 /**
@@ -1843,10 +2045,14 @@ function managerMessageText(parsed: ParsedSurfaceAction): string {
  * Putting the closing set to the manager then would ask for a decision that
  * changes nothing; the record carries the reason instead and no message is
  * sent for it. Once work has landed the run goes on as before, because the
- * closing set may be the audit of what landed.
+ * closing set may be the audit of what landed. A set of manager DMs alone
+ * goes on when it asks the manager something (`asksManager`, from the
+ * executor's declared question or, for a set that declared nothing, the
+ * model judgement): the answer is what could still complete the plan.
  *
  * Args:
- *   run: The prerequisite ledger, the closing actions and the outcomes.
+ *   run: The prerequisite ledger, the closing actions, the outcomes, and
+ *     whether the closing set asks the manager something.
  *
  * Returns:
  *   The stop reason, or undefined when the closing set should reach the gate.
@@ -1861,19 +2067,22 @@ export function closingStopReason(run: {
   surfaces: readonly SurfaceRecord[];
   /** The items other work items hold, as the closing executor was told. */
   heldElsewhere?: readonly HeldExternalItem[];
+  asksManager: boolean;
 }): string | undefined {
   const landed = landedWork(
     { actions: run.initialActions, applied: run.initialApplied },
     run.surfaces,
   );
   if (landed.length > 0) return undefined;
-  const escalationOnly = run.closingActions.length > 0 && run.closingActions.every(action => {
-    const parsed = parseSurfaceAction(action);
-    if (!parsed.ok) return false;
-    const surface = run.surfaces.find(row => row.slug === parsed.action.surface);
-    return surface !== undefined && isManagerDm(parsed.action, surface) &&
-      MANAGER_ASK.test(managerMessageText(parsed.action));
-  });
+  const escalationOnly =
+    run.asksManager &&
+    run.closingActions.length > 0 &&
+    run.closingActions.every((action) => {
+      const parsed = parseSurfaceAction(action);
+      if (!parsed.ok) return false;
+      const surface = run.surfaces.find((row) => row.slug === parsed.action.surface);
+      return surface !== undefined && isManagerDm(parsed.action, surface);
+    });
   if (escalationOnly) return undefined;
   if (run.initialFailure) return run.initialFailure;
   const asIfLanded = run.closingActions.map((): Partial<AppliedAction> => ({ ok: true }));
@@ -2161,6 +2370,7 @@ export const authorDependentActions = internalAction({
         initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
         surfaces,
         heldElsewhere,
+        asksManager: await closingSetAsks(held, surfaces),
       });
       if (stop) {
         const offset = initial.actions.length;
@@ -2190,14 +2400,14 @@ export const authorDependentActions = internalAction({
           payload: { workItemId: args.workItemId, runId: args.runId, removedIndices: [], reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}` },
         });
       }
-      // A question this run put to the manager, here or in phase one, that
-      // nobody has answered: the writes the plan left to the answer wait.
-      const asked = [
-        ...initial.actions.filter((_action, index) => initial!.applied[index]?.ok === true && initial!.applied[index]?.held !== true),
-        ...(initial.landedWrites ?? []).map((write) => write.action),
-      ];
-      const gated = withOpenQuestionHeld(dependent, {
-        plan, surfaces, answered: managerHasAnswered(item, plan), askedEarlier: asked,
+      // A question this run put to the manager, here, in phase one or in an
+      // earlier run, that nobody has answered: the writes the plan left to
+      // the answer wait.
+      const gated = await withOpenQuestionHeld(dependent, {
+        plan,
+        surfaces,
+        answered: managerHasAnswered(item),
+        askedEarlier: (initial.landedWrites ?? []).map((write) => write.action),
       });
       await recordConditionalWritesWithheld(
         ctx, { agentId: item.agentId, workItemId: args.workItemId, runId: args.runId, phase: 'closing' }, dependent, gated,
@@ -3088,19 +3298,11 @@ async function finishRun(
     const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, { workItemId });
     const round = reason ? undefined : closingRoundOwed(output, settled, item);
     if (round && item) {
-      const withheldActions = [...(output.initial.withheldActions ?? []), ...(output.withheldActions ?? [])];
       const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
         workItemId,
         runId: claim.runId,
         applyAttemptId: claim.applyAttemptId,
-        output: {
-          ...output.initial,
-          actions: finalOutput.actions,
-          applied: finalOutput.applied,
-          needsDependentPhase: true,
-          ...(withheldActions.length > 0 ? { withheldActions } : {}),
-          closingRound: { reason: round, prerequisiteCount: finalOutput.prerequisiteCount },
-        } satisfies DependentAuthoringOutput,
+        output: closingRoundPrerequisites(output, finalOutput, round),
       });
       if (!prepared.prepared) {
         return { ok: false, reason: 'the run moved on before its closing set could be authored once more' };

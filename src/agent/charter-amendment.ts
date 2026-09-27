@@ -1,7 +1,15 @@
-import type { AnsweredQuestion, Charter, NamedSystem } from './charter';
+import type {
+  AdjacentRole,
+  AnsweredQuestion,
+  Charter,
+  IntroPath,
+  NamedCollaborator,
+  NamedSystem,
+} from './charter';
 import { SYSTEM_CLASSES } from './system-classes';
 import {
   CONSTRAINT_KINDS,
+  assertEditKeepsBoundaries,
   clauseTexts,
   withoutConstraints,
   wordingPresent,
@@ -17,7 +25,9 @@ import { questionKey } from './manager-questions';
  * applied, one minor bump, and the per-field diff recorded beside the changes
  * as sent. The clauses stay the only thing downstream reads; a constraint
  * added here enters a clause as its own wording, and one struck here leaves
- * the clauses the way a strike before approval does.
+ * the clauses the way a strike before approval does. The people fields
+ * (adjacent roles, named collaborators, who approves) change only through
+ * their own kinds, so what `IDENTITY.md` renders is what the manager approved.
  *
  * No model dependency: this module is imported by Convex mutations.
  */
@@ -41,7 +51,15 @@ export type CharterChange =
     }
   | { kind: 'strike-constraint'; index: number }
   | { kind: 'add-system'; system: NamedSystem }
-  | { kind: 'remove-system'; name: string };
+  | { kind: 'remove-system'; name: string }
+  /** `index` equal to the list length appends; an empty `who` removes. */
+  | { kind: 'edit-adjacent-role'; index: number; role: AdjacentRole }
+  /** `index` equal to the list length appends; an empty `name` removes. */
+  | { kind: 'edit-collaborator'; index: number; collaborator: NamedCollaborator }
+  /** Who approves, as the manager named them. */
+  | { kind: 'set-approval-chain'; boss: string };
+
+const INTRO_PATHS: readonly IntroPath[] = ['manager', 'self', 'tbd'];
 
 export interface FieldDiff {
   field: string;
@@ -130,13 +148,67 @@ function requireText(value: string, what: string): string {
   return text;
 }
 
+/**
+ * One edit to a list the charter keeps, with the clause lists' rule: an index
+ * equal to the length appends, an absent item removes the one at the index.
+ *
+ * Raises:
+ *   Error: When the index is outside the list, or an append carries nothing.
+ */
+function editListItem<T>(
+  items: readonly T[],
+  index: number,
+  next: T | undefined,
+  what: string,
+): T[] {
+  if (!Number.isInteger(index) || index < 0 || index > items.length) {
+    throw new Error(`no ${what} at index ${index}`);
+  }
+  const edited = [...items];
+  if (next === undefined) {
+    if (index === items.length) throw new Error(`a new ${what} cannot be empty`);
+    edited.splice(index, 1);
+  } else {
+    edited[index] = next;
+  }
+  return edited;
+}
+
+function adjacentRoleOf(role: AdjacentRole): AdjacentRole | undefined {
+  const who = role.who.replace(/\s+/g, ' ').trim();
+  if (!who) return undefined;
+  return {
+    who,
+    staysOutOfTheirLaneBy: requireText(
+      role.staysOutOfTheirLaneBy,
+      'how Day0 stays out of their lane',
+    ),
+  };
+}
+
+function collaboratorOf(collaborator: NamedCollaborator): NamedCollaborator | undefined {
+  const name = collaborator.name.replace(/\s+/g, ' ').trim();
+  if (!name) return undefined;
+  if (!INTRO_PATHS.includes(collaborator.introPath)) {
+    throw new Error(`no introduction path named ${String(collaborator.introPath)}`);
+  }
+  return {
+    name,
+    topic: requireText(collaborator.topic, 'what they work with Day0 on'),
+    introPath: collaborator.introPath,
+  };
+}
+
 function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAmendment {
   const added: NamedSystem[] = [];
   const removed: NamedSystem[] = [];
   switch (change.kind) {
     case 'edit-function':
       return {
-        charter: { ...charter, proposedFunction: requireText(change.text, 'the proposed function') },
+        charter: {
+          ...charter,
+          proposedFunction: requireText(change.text, 'the proposed function'),
+        },
         systemsAdded: added,
         systemsRemoved: removed,
       };
@@ -156,14 +228,12 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       } else {
         items.splice(change.index, 1);
       }
-      return {
-        charter: {
-          ...charter,
-          proposedBoundaries: { ...charter.proposedBoundaries, [change.field]: items },
-        },
-        systemsAdded: added,
-        systemsRemoved: removed,
+      const edited: Charter = {
+        ...charter,
+        proposedBoundaries: { ...charter.proposedBoundaries, [change.field]: items },
       };
+      assertEditKeepsBoundaries(charter, edited);
+      return { charter: edited, systemsAdded: added, systemsRemoved: removed };
     }
     case 'answer-question': {
       const key = questionKey(change.question);
@@ -231,7 +301,9 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       if (!SYSTEM_CLASSES.includes(change.system.class)) {
         throw new Error(`no system class named ${String(change.system.class)}`);
       }
-      if ((charter.namedSystems ?? []).some((s: NamedSystem): boolean => sameSystem(s.name, name))) {
+      if (
+        (charter.namedSystems ?? []).some((s: NamedSystem): boolean => sameSystem(s.name, name))
+      ) {
         throw new Error(`${name} is already a named system`);
       }
       const system: NamedSystem = {
@@ -255,12 +327,51 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       return {
         charter: {
           ...charter,
-          namedSystems: (charter.namedSystems ?? []).filter((s: NamedSystem): boolean => s !== target),
+          namedSystems: (charter.namedSystems ?? []).filter(
+            (s: NamedSystem): boolean => s !== target,
+          ),
         },
         systemsAdded: added,
         systemsRemoved: removed,
       };
     }
+    case 'edit-adjacent-role':
+      return {
+        charter: {
+          ...charter,
+          adjacentRoles: editListItem(
+            charter.adjacentRoles,
+            change.index,
+            adjacentRoleOf(change.role),
+            'adjacent role',
+          ),
+        },
+        systemsAdded: added,
+        systemsRemoved: removed,
+      };
+    case 'edit-collaborator':
+      return {
+        charter: {
+          ...charter,
+          namedCollaborators: editListItem(
+            charter.namedCollaborators,
+            change.index,
+            collaboratorOf(change.collaborator),
+            'named collaborator',
+          ),
+        },
+        systemsAdded: added,
+        systemsRemoved: removed,
+      };
+    case 'set-approval-chain':
+      return {
+        charter: {
+          ...charter,
+          approvalChain: { boss: requireText(change.boss, 'who approves'), confidence: 'high' },
+        },
+        systemsAdded: added,
+        systemsRemoved: removed,
+      };
     default: {
       const unknown: never = change;
       throw new Error(`unknown charter change ${JSON.stringify(unknown)}`);
@@ -281,15 +392,16 @@ function reconcileConstraints(charter: Charter): Charter {
   const clauses = clauseTexts(charter);
   return {
     ...charter,
-    constraints: charter.constraints.map((constraint: CharterConstraint): CharterConstraint =>
-      constraint.struck
-        ? constraint
-        : {
-            ...constraint,
-            wording: constraint.wording.filter((phrase: string): boolean =>
-              wordingPresent(phrase, clauses),
-            ),
-          },
+    constraints: charter.constraints.map(
+      (constraint: CharterConstraint): CharterConstraint =>
+        constraint.struck
+          ? constraint
+          : {
+              ...constraint,
+              wording: constraint.wording.filter((phrase: string): boolean =>
+                wordingPresent(phrase, clauses),
+              ),
+            },
     ),
   };
 }

@@ -2,7 +2,7 @@ import { reusedLedger } from './landed-writes';
 import { actionIntent, isAuditComment, isStatusChange, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import { declaredReads, readingSteps } from './obligations';
-import type { ExecutionOutput, ExecutionPlan, LandedWrite, PlanStepOutcome, RefusedClosing } from './types';
+import type { DeclaredQuestion, ExecutionOutput, ExecutionPlan, LandedWrite, PlanStepOutcome, RefusedClosing } from './types';
 
 export interface ClosingResume extends ExecutionOutput {
   phase: 'dependent-authoring';
@@ -49,6 +49,21 @@ function declaredSurfacesRead(actions: readonly ExecutionOutput['actions'][numbe
  * authored set, that set with its reason. The prerequisites landed, so the
  * retry authors the closing set again from the same ledger.
  */
+/**
+ * The question a failed row's run declared, and the earlier runs' question it
+ * read, to ride on the resume it becomes: the resumed closing set is held on
+ * the declaration, never on a judgement of notes that only report.
+ */
+function carriedQuestions(row: {
+  declaredQuestion?: DeclaredQuestion;
+  earlierQuestion?: string | null;
+}): { declaredQuestion?: DeclaredQuestion; earlierQuestion?: string | null } {
+  return {
+    ...(row.declaredQuestion !== undefined ? { declaredQuestion: row.declaredQuestion } : {}),
+    ...(row.earlierQuestion !== undefined ? { earlierQuestion: row.earlierQuestion } : {}),
+  };
+}
+
 /** The landed writes a failed row carries, to ride on the resume it becomes. */
 function carriedWrites(row: { landedWrites?: unknown }): { landedWrites: LandedWrite[] } | Record<string, never> {
   return Array.isArray(row.landedWrites) && row.landedWrites.length > 0 ? { landedWrites: row.landedWrites as LandedWrite[] } : {};
@@ -69,6 +84,7 @@ function gateRefusalResume(row: ExecutionOutput & { phase?: unknown; applied?: A
     previousClosing: { actions: refused?.actions ?? [], applied: [] },
     ...(refused ? { refusedClosing: refused } : {}),
     ...carriedWrites(row),
+    ...carriedQuestions(row),
   };
 }
 
@@ -121,6 +137,7 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
     initialFailure: failure,
     previousClosing: { actions: closingActions, applied: closingApplied },
     ...carriedWrites(row),
+    ...carriedQuestions(row),
   };
 }
 
