@@ -12,7 +12,7 @@ There is no bounty. You can expect an acknowledgement within a week and a fix or
 
 ## Supported versions
 
-The tag the finals submission names, `goai-final`, and the tip of `main`. Earlier commits are history and receive no fixes.
+The latest `v*` release tag (`v0.1.0` is the finals build, which the finals submission names as `goai-final`) and the tip of `main`. Earlier releases are history and receive no fixes.
 
 ## Key and data boundaries
 
