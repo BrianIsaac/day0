@@ -1,11 +1,12 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { AGENT_KEYED_TABLES, RETIRE_RECORD_TABLES } from '../../convex/reset';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { browserFieldId, providerItemKey } from '../../src/work/claim-key';
 import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -317,6 +318,7 @@ describe('retire in real mode', (): void => {
   });
 
   afterEach((): void => {
+    vi.useRealTimers();
     restoreSurfaceMode();
   });
 
@@ -605,6 +607,7 @@ describe('retire in real mode', (): void => {
   });
 
   it('releases a retired employee’s claim on work it had not begun to write, and wakes the colleague it refused (review M8)', async (): Promise<void> => {
+    vi.useFakeTimers();
     const { harness, retiring, sibling } = await seedRealOwner();
     const refused = await harness.run(async (ctx) => {
       const holding = await ctx.db.insert('workItems', {
@@ -633,6 +636,7 @@ describe('retire in real mode', (): void => {
     await harness
       .withIdentity({ subject: 'owner' })
       .mutation(api.reset.deleteMyData, { agentId: retiring });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
     expect(await harness.run(async (ctx) => await ctx.db.get(refused))).toMatchObject({
@@ -678,6 +682,104 @@ describe('retire in real mode', (): void => {
     expect(held).toMatchObject([
       { workItemId: planned, reason: 'plan-rejected-for-this-item', rejectedAt: 5 },
     ]);
+  });
+
+  it('keeps a retired employee’s claim on a page field it wrote, so a colleague’s older work neither claims the field nor writes it (review M14)', async (): Promise<void> => {
+    const { harness, retiring, sibling } = await seedRealOwner();
+    const tile = {
+      displayName: 'Looker tile',
+      class: 'dashboard',
+      path: 'browser-driven',
+      endpoint: 'http://looker-tile:8080/',
+      verdict: 'connected' as const,
+      whereFound: [],
+      credentialLanded: true,
+      createdAt: 1,
+    };
+    const key = providerItemKey(
+      { ...tile, slug: 'looker-tile' },
+      { sourceSystem: 'looker-tile', externalId: browserFieldId('Pipeline coverage') },
+      'real',
+    );
+    if (key === undefined) throw new Error('a browser field has a key');
+    const writer = await harness.run(async (ctx) => {
+      const held = await ctx.db.insert('workItems', {
+        ...workItemFields(retiring, 'REVOPS-20', 'Refresh the pipeline coverage'),
+        state: 'completed',
+      });
+      await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key,
+        agentId: retiring,
+        workItemId: held,
+        writeTarget: { surface: 'looker-tile', field: 'Pipeline coverage' },
+        claimedAt: 1,
+      });
+      await ctx.db.insert('surfaces', { ...tile, agentId: sibling, slug: 'looker-tile' });
+      return await ctx.db.insert('workItems', {
+        ...workItemFields(sibling, 'REVOPS-21', 'Refresh the pipeline coverage too'),
+        state: 'plan-approved',
+      });
+    });
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.reset.deleteMyData, { agentId: retiring });
+
+    expect((await retirementsOf(harness))[0].claims).toMatchObject([
+      { key, writeTarget: { field: 'Pipeline coverage' }, settledAt: expect.any(Number) },
+    ]);
+    await expect(
+      harness.mutation(internal.work.takeWriteTargetClaims, {
+        workItemId: writer,
+        targets: [{ surfaceSlug: 'looker-tile', field: 'Pipeline coverage' }],
+      }),
+    ).resolves.toEqual([]);
+    expect(
+      await harness.query(internal.work.writeClaimHolder, {
+        workItemId: writer,
+        surfaceSlug: 'looker-tile',
+        targets: ['pipeline coverage'],
+      }),
+    ).toMatchObject({ holderName: 'retiring (retired)', state: 'completed' });
+  });
+
+  it('releases a failed holder’s claim when it landed nothing, so the colleague it refused wakes (review M8)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const { harness, retiring, sibling } = await seedRealOwner();
+    const refused = await harness.run(async (ctx) => {
+      const holding = await ctx.db.insert('workItems', {
+        ...workItemFields(retiring, 'REVOPS-22', 'Close REVOPS-22'),
+        state: 'failed',
+        skipReason: 'stopped: the plan draft died 4 times without an answer',
+      });
+      const claimId = await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-22',
+        agentId: retiring,
+        workItemId: holding,
+        claimedAt: 1,
+      });
+      return await ctx.db.insert('workItems', {
+        ...workItemFields(sibling, 'REVOPS-22', 'Close REVOPS-22'),
+        state: 'skipped',
+        verdict: {
+          decision: 'skip',
+          reason: 'claimed-by-colleague: retiring holds it (Close REVOPS-22)',
+          claimedBy: { claimId },
+        },
+      });
+    });
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.reset.deleteMyData, { agentId: retiring });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await retirementsOf(harness))[0].claims).toEqual([]);
+    expect(await harness.run(async (ctx) => await ctx.db.get(refused))).toMatchObject({
+      state: 'discovered',
+    });
   });
 
   it('lets the claims and rejections go with the live ones when every employee retires', async (): Promise<void> => {

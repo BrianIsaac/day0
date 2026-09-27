@@ -1531,14 +1531,18 @@ export const writeClaimHolder = internalQuery({
         .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
         .filter((q) => q.eq(q.field('releasedAt'), undefined))
         .collect();
-      if (live.some((claim) => claim.workItemId === row._id)) continue;
+      const retired = await retiredClaimOn(ctx, userId, key);
+      const own = live.find((claim) => claim.workItemId === row._id);
+      // The row's own claim holds unless a retired employee's claim on the
+      // item came first and still holds against it.
+      if (own && !(retired && retired.claim.claimedAt < own.claimedAt)) continue;
       for (const claim of live) {
+        if (claim.workItemId === row._id) continue;
         const holding = await ctx.db.get(claim.workItemId);
         if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) continue;
         if (!holdsAgainst(claim, row)) continue;
         return await holderOf(target, holding, false);
       }
-      const retired = await retiredClaimOn(ctx, userId, key);
       if (retired && holdsAgainst(retired.claim, row)) {
         return {
           target,
@@ -1685,6 +1689,10 @@ export const takeWriteTargetClaims = internalMutation({
         taken = true;
       }
       if (taken) continue;
+      // A retired employee's claim on the field still holds against work that
+      // existed when it settled (review M14).
+      const retired = await retiredClaimOn(ctx, userId, key);
+      if (retired && holdsAgainst(retired.claim, row)) continue;
       await ctx.db.insert('externalClaims', {
         userId,
         key,

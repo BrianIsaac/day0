@@ -8,7 +8,8 @@ import { purgeCredential, purgeOwnedCredentials } from './credentials';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
 import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
-import { reevaluatePendingInTransaction } from './work';
+import { internal } from './_generated/api';
+import { landedWritesOf } from '../src/work/landed-writes';
 
 /**
  * Every table whose rows belong to one agent through an `agentId` field.
@@ -52,17 +53,30 @@ export const RETIRE_RECORD_TABLES = ['retirements'] as const;
 export const AGENT_RETIRED_EVENT = 'agent.retired';
 
 /**
- * The states of a work item that may already have written its provider item.
- * Its claim outlives a single employee's retire: a colleague taking the item
- * could repeat what landed (review M14). A claim held in any other state is
+ * The states of a work item that may be writing its provider item or have
+ * written it. Its claim outlives a single employee's retire: a colleague
+ * taking the item could repeat what landed (review M14). A failed item holds
+ * only when something it wrote landed; a claim held in any other state is
  * released instead, so the colleague it refused wakes (review M8).
  */
 const WRITING_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
   'executing',
   'actions-pending',
   'completed',
-  'failed',
 ]);
+
+/**
+ * Whether a retiring employee's item may have written its provider item.
+ *
+ * @param item - The holding work item.
+ */
+function mayHaveWritten(item: Doc<'workItems'>): boolean {
+  if (WRITING_HOLDER_STATES.has(item.state)) return true;
+  return item.state === 'failed' && landedWritesOf(item.output).length > 0;
+}
+
+/** The longest item title a kept claim carries, for the holder's name in a refusal. */
+const RETIRED_TITLE_LENGTH = 200;
 
 /**
  * The most claims and rejections one retirement keeps: far past any
@@ -112,7 +126,11 @@ function credentialsBoundBy(surfaces: readonly Doc<'surfaces'>[]): Set<Id<'crede
  * @returns What its retirement keeps, and the claims to release.
  * @throws ConvexError when there are more than one retirement can keep.
  */
-async function boundariesOf(ctx: MutationCtx, agent: Doc<'agents'>): Promise<Boundaries> {
+async function boundariesOf(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<Boundaries> {
   const items = await ctx.db
     .query('workItems')
     .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
@@ -134,7 +152,7 @@ async function boundariesOf(ctx: MutationCtx, agent: Doc<'agents'>): Promise<Bou
       .filter((q) => q.eq(q.field('releasedAt'), undefined))
       .collect();
     for (const claim of live) {
-      if (!WRITING_HOLDER_STATES.has(item.state)) {
+      if (!mayHaveWritten(item)) {
         released.push(claim._id);
         continue;
       }
@@ -143,10 +161,13 @@ async function boundariesOf(ctx: MutationCtx, agent: Doc<'agents'>): Promise<Bou
         key: claim.key,
         ...(claim.aliases ? { aliases: claim.aliases } : {}),
         workItemId: item._id,
-        title: item.title,
+        title: item.title.slice(0, RETIRED_TITLE_LENGTH),
         state: item.state,
-        ...(claim.writeTarget ? { writeTarget: claim.writeTarget } : {}),
-        ...(claim.settledAt !== undefined ? { settledAt: claim.settledAt } : {}),
+        // A page field outlives the work that wrote it: its holder is done
+        // once retired, so later work may write the field again (holdsAgainst).
+        ...(claim.writeTarget
+          ? { writeTarget: claim.writeTarget, settledAt: claim.settledAt ?? now }
+          : {}),
         claimedAt: claim.claimedAt,
       });
     }
@@ -161,18 +182,18 @@ async function boundariesOf(ctx: MutationCtx, agent: Doc<'agents'>): Promise<Bou
 
 /**
  * Wake what each released claim refused: a colleague's row skipped because
- * the retired employee held its item is evaluated again.
+ * the retired employee held its item is evaluated again. Each colleague and
+ * claim is its own scheduled pass, so a retire that releases many claims
+ * never reads every colleague's parked rows in its own transaction.
  *
  * @param ctx - The retire's mutation context.
  * @param userId - The owner.
  * @param released - The claims the retire let go.
- * @param now - The retire time.
  */
 async function wakeReleasedClaims(
   ctx: MutationCtx,
   userId: string,
   released: readonly Id<'externalClaims'>[],
-  now: number,
 ): Promise<void> {
   if (released.length === 0) return;
   const employees = await ctx.db
@@ -181,11 +202,10 @@ async function wakeReleasedClaims(
     .collect();
   for (const claimId of released) {
     for (const employee of employees) {
-      await reevaluatePendingInTransaction(ctx, {
+      await ctx.scheduler.runAfter(0, internal.work.reevaluatePending, {
         agentId: employee._id,
         trigger: 'claim-released',
         key: claimId,
-        now,
       });
     }
   }
@@ -358,7 +378,7 @@ export const deleteMyData = mutation({
     const single = args.agentId !== undefined && SURFACE_MODE === 'real';
     const boundaries = new Map<Id<'agents'>, Boundaries>();
     for (const agent of agents) {
-      boundaries.set(agent._id, single ? await boundariesOf(ctx, agent) : NO_BOUNDARIES);
+      boundaries.set(agent._id, single ? await boundariesOf(ctx, agent, now) : NO_BOUNDARIES);
     }
     const retired = new Map<Id<'agents'>, Retired>();
     for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
@@ -394,7 +414,7 @@ export const deleteMyData = mutation({
           payload: { retirementId, agentId: agent._id, retiredAt: now },
           createdAt: now,
         });
-        await wakeReleasedClaims(ctx, userId, held.released, now);
+        await wakeReleasedClaims(ctx, userId, held.released);
       }
     }
     return { deleted: agents.length, unlinkedSources };
