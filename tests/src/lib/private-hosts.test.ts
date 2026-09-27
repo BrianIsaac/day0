@@ -29,6 +29,27 @@ describe('the private-host allowlist', (): void => {
     }
   });
 
+  it('refuses this machine and every address day0 never dials, whatever the list says', (): void => {
+    for (const entry of [
+      '127.0.0.1',
+      '169.254.169.254',
+      '0.0.0.0',
+      '224.0.0.1',
+      '[::1]',
+      'fe80::1',
+      '::ffff:127.0.0.1',
+      'localhost',
+      'LocalHost.',
+      'app.localhost',
+      '.localhost',
+    ]) {
+      expect(() => privateHostAllowlist(`git.corp.internal, ${entry}`), entry).toThrow(
+        'an address day0 never dials',
+      );
+    }
+    expect(privateHostAllowlist('10.0.0.5 fd12::5').names).toEqual(['10.0.0.5', 'fd12::5']);
+  });
+
   it('admits a named host and every host under a suffix, but not the suffix itself', (): void => {
     const allowlist = privateHostAllowlist('mcp.corp.internal .git.corp.internal');
     expect(isPrivateHostAllowed('MCP.corp.internal.', allowlist)).toBe(true);
