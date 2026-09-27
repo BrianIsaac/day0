@@ -38,8 +38,10 @@ import {
   sortedForQueue,
   phasedLedger,
   PermissionsCard,
+  planApprovalRequest,
   scopeUnavailableCauses,
   TICKET_REREAD_STOP,
+  typedEstimateMinutes,
   waitingLine,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import {
@@ -2470,5 +2472,38 @@ describe('a stop with a question open that is not the question stop (wave 1.5 m1
     ).toBe(
       'stopped before its question could be answered, and a note does not answer it on this stop; retry, then answer the question when it is asked again: the model call failed after 5 attempts',
     );
+  });
+});
+
+describe("the plan card's minutes field (N11)", (): void => {
+  it('asks for the manual estimate beside the approval, optional and labelled', (): void => {
+    const markup = renderToStaticMarkup(
+      <PlanApprovalForm
+        riskNotes=""
+        questions={[]}
+        onApprove={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    expect(markup).toMatch(/<label for="[^"]+">This would have taken me about<\/label>/);
+    expect(markup).toContain('type="number"');
+    expect(markup).toContain('>minutes</span>');
+    expect(markup).toContain(
+      'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.',
+    );
+  });
+
+  it('sends the minutes with the approval only when given, and reads the field as the server does', (): void => {
+    const workItemId = 'w1' as Id<'workItems'>;
+    expect(planApprovalRequest(workItemId, { answers: [], manualEstimateMinutes: 45 })).toEqual({
+      workItemId,
+      manualEstimateMinutes: 45,
+    });
+    expect(planApprovalRequest(workItemId, { answers: [] })).toEqual({ workItemId });
+    expect(typedEstimateMinutes('')).toBeUndefined();
+    expect(typedEstimateMinutes(' 45 ')).toBe(45);
+    expect(typedEstimateMinutes('0')).toBeNull();
+    expect(typedEstimateMinutes('1.5')).toBeNull();
+    expect(typedEstimateMinutes('-3')).toBeNull();
   });
 });

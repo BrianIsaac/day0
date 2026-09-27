@@ -6,7 +6,7 @@ import {
   QUALITY_FIT_SKIP_PREFIX,
 } from '@/work/types';
 import Link from 'next/link';
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
@@ -3406,10 +3406,13 @@ export function PendingActions({
 export interface PlanApproval {
   answers: Array<{ questionId: Id<'managerQuestions'>; text: string }>;
   note?: string;
+  /** N11: "this would have taken me about N minutes", when the manager gave it. */
+  manualEstimateMinutes?: number;
 }
 
 /**
- * What the approval form sends: the item, the answers given and the note.
+ * What the approval form sends: the item, the answers given, the note and the
+ * manager's estimate.
  *
  * Args:
  *   workItemId: The plan-pending item.
@@ -3421,12 +3424,40 @@ export interface PlanApproval {
 export function planApprovalRequest(
   workItemId: Id<'workItems'>,
   decision: PlanApproval,
-): { workItemId: Id<'workItems'>; answers?: PlanApproval['answers']; note?: string } {
+): {
+  workItemId: Id<'workItems'>;
+  answers?: PlanApproval['answers'];
+  note?: string;
+  manualEstimateMinutes?: number;
+} {
   return {
     workItemId,
     ...(decision.answers.length > 0 ? { answers: decision.answers } : {}),
     ...(decision.note ? { note: decision.note } : {}),
+    ...(decision.manualEstimateMinutes !== undefined
+      ? { manualEstimateMinutes: decision.manualEstimateMinutes }
+      : {}),
   };
+}
+
+/**
+ * The minutes the manager typed into the plan card's estimate, read as the
+ * server takes it: a whole number of minutes from 1, or nothing when the field
+ * is empty.
+ *
+ * Args:
+ *   typed: The field as typed.
+ *
+ * Returns:
+ *   The minutes, undefined for an empty field, or null for text the server
+ *   would refuse.
+ */
+export function typedEstimateMinutes(typed: string): number | undefined | null {
+  const text = typed.trim();
+  if (text === '') return undefined;
+  if (!/^\d+$/.test(text)) return null;
+  const minutes = Number(text);
+  return minutes >= 1 ? minutes : null;
 }
 
 /**
@@ -3456,8 +3487,11 @@ export function PlanApprovalForm({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [cancelReason, setCancelReason] = useState('');
+  const [estimate, setEstimate] = useState('');
   const open = questions.filter((question) => !question.answer);
   const planNote = riskNotes.trim();
+  const minutes = typedEstimateMinutes(estimate);
+  const estimateId = useId();
   function decision(): PlanApproval {
     return {
       answers: open.flatMap((question) => {
@@ -3465,6 +3499,7 @@ export function PlanApprovalForm({
         return text ? [{ questionId: question._id, text }] : [];
       }),
       ...(note.trim() ? { note: note.trim() } : {}),
+      ...(typeof minutes === 'number' ? { manualEstimateMinutes: minutes } : {}),
     };
   }
   return (
@@ -3525,10 +3560,35 @@ export function PlanApprovalForm({
         aria-label="reason for cancelling the plan"
         className="w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
       />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-fg)]">
+        <label htmlFor={estimateId}>This would have taken me about</label>
+        <input
+          id={estimateId}
+          type="number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          value={estimate}
+          disabled={busy}
+          onChange={(event) => setEstimate(event.target.value)}
+          aria-describedby={`${estimateId}-hint`}
+          aria-invalid={minutes === null}
+          className="min-h-11 w-20 px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+        />
+        <span>minutes</span>
+        <span
+          id={`${estimateId}-hint`}
+          className="basis-full text-[10px] text-[var(--color-muted)]"
+        >
+          {minutes === null
+            ? 'A whole number of minutes, or leave it empty.'
+            : 'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.'}
+        </span>
+      </div>
       <div className="flex gap-2">
         <button
           onClick={() => onApprove(decision())}
-          disabled={busy}
+          disabled={busy || minutes === null}
           className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
         >
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
