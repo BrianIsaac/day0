@@ -27,10 +27,10 @@ const DISCOVERY_BATCH_SIZE = 25;
 /** Pages one window of the fingerprint walk reads; a window also stops at its byte bound. */
 const FINGERPRINT_WINDOW = 100;
 /**
- * How long one invocation keeps classifying before it hands the rest to a
- * scheduled continuation. A model call may take its own timeout
- * (`MODEL_CALL_TIMEOUT_MS`, five minutes) past this, which still ends inside
- * an action's ten.
+ * How long one invocation, from its start, keeps classifying before it hands
+ * the rest to a scheduled continuation. The model call in flight when the
+ * budget runs out may still take its own timeout (`MODEL_CALL_TIMEOUT_MS`,
+ * five minutes) past this; one that retries beyond that is not bounded here.
  */
 const CLASSIFY_BUDGET_MS = 4 * 60 * 1000;
 /** The most candidate mentions a continuation carries, well inside a scheduled argument's 8,192 elements. */
@@ -54,24 +54,28 @@ const progressValidator = v.object({
 
 /** Where a discovery stands between two invocations. */
 interface DiscoveryProgress {
-  fingerprint: string;
+  readonly fingerprint: string;
   /** Where the next window of the generation starts; `null` before the first. */
-  cursor: string | null;
-  structural: DiscoveredSystemCandidate[];
-  inferred: DiscoveredSystemCandidate[];
+  readonly cursor: string | null;
+  readonly structural: readonly DiscoveredSystemCandidate[];
+  readonly inferred: readonly DiscoveredSystemCandidate[];
 }
 
 /** What one invocation of `discoverSource` reports. */
 interface DiscoveryOutcome {
-  applied: boolean;
-  systems: number;
-  unchanged?: boolean;
-  reason?: string;
+  readonly applied: boolean;
+  readonly systems: number;
+  readonly unchanged?: boolean;
+  readonly reason?: string;
   /** The rest of the generation was handed to a scheduled continuation. */
-  continued?: boolean;
+  readonly continued?: boolean;
 }
 
-type DiscoveryArgs = { sourceId: Id<'docSources'>; runId: Id<'docSyncRuns'> };
+/** The generation one discovery is for. */
+interface DiscoveryArgs {
+  readonly sourceId: Id<'docSources'>;
+  readonly runId: Id<'docSyncRuns'>;
+}
 
 /** One window of the generation, as `documentationDiscovery.context` reads it. */
 type GenerationWindow = FunctionReturnType<typeof internal.documentationDiscovery.context>;
@@ -84,11 +88,22 @@ function isSystemClass(value: string): value is SystemClass {
   return (SYSTEM_CLASSES as readonly string[]).includes(value);
 }
 
-/** Candidates read back from a continuation's arguments, typed again. */
+/**
+ * Candidates read back from a continuation's arguments, typed again.
+ *
+ * @throws Error when a class is not one this deployment knows: the arguments
+ *   were written by an earlier invocation, so that is a deploy that changed
+ *   the classes mid-discovery, and the discovery is recorded as failed.
+ */
 function restoredCandidates(
   rows: ReadonlyArray<{ name: string; class: string; ref: string; quote: string; url?: string }>,
 ): DiscoveredSystemCandidate[] {
-  return rows.flatMap((row) => (isSystemClass(row.class) ? [{ ...row, class: row.class }] : []));
+  return rows.map((row) => {
+    if (!isSystemClass(row.class)) {
+      throw new Error(`Documentation discovery carried an unknown system class: ${row.class}.`);
+    }
+    return { ...row, class: row.class };
+  });
 }
 
 const discoveryAgent = makeAgent(
@@ -262,8 +277,8 @@ async function classify(
   ctx: ActionCtx,
   args: DiscoveryArgs,
   progress: DiscoveryProgress,
+  startedAt: number,
 ): Promise<DiscoveryOutcome> {
-  const started = Date.now();
   let { cursor, inferred } = progress;
   for (;;) {
     const window: GenerationWindow = await ctx.runQuery(internal.documentationDiscovery.context, {
@@ -293,14 +308,14 @@ async function classify(
       throw new Error('Documentation discovery repeated its read cursor.');
     }
     cursor = window.continueCursor;
-    if (Date.now() - started >= CLASSIFY_BUDGET_MS) {
+    if (Date.now() - startedAt >= CLASSIFY_BUDGET_MS) {
       await ctx.scheduler.runAfter(0, internal.documentationDiscoveryActions.discoverSource, {
         ...args,
         progress: {
           fingerprint: progress.fingerprint,
           cursor,
-          structural: progress.structural,
-          inferred,
+          structural: [...progress.structural],
+          inferred: [...inferred],
         },
       });
       return { applied: false, systems: 0, continued: true };
@@ -320,13 +335,20 @@ export const discoverSource = internalAction({
     progress: v.optional(progressValidator),
   },
   handler: async (ctx, { progress, ...args }): Promise<DiscoveryOutcome> => {
+    // The budget covers the whole invocation, the fingerprint walk included.
+    const startedAt = Date.now();
     try {
       if (progress) {
-        return await classify(ctx, args, {
-          ...progress,
-          structural: restoredCandidates(progress.structural),
-          inferred: restoredCandidates(progress.inferred),
-        });
+        return await classify(
+          ctx,
+          args,
+          {
+            ...progress,
+            structural: restoredCandidates(progress.structural),
+            inferred: restoredCandidates(progress.inferred),
+          },
+          startedAt,
+        );
       }
       const generation = await readGeneration(ctx, args);
       if (!generation) return { applied: false, systems: 0 };
@@ -340,12 +362,17 @@ export const discoverSource = internalAction({
         });
         return { applied, systems: 0, unchanged: true };
       }
-      return await classify(ctx, args, {
-        fingerprint: generation.fingerprint,
-        cursor: null,
-        structural: generation.structural,
-        inferred: [],
-      });
+      return await classify(
+        ctx,
+        args,
+        {
+          fingerprint: generation.fingerprint,
+          cursor: null,
+          structural: generation.structural,
+          inferred: [],
+        },
+        startedAt,
+      );
     } catch (error) {
       // A read that fails would otherwise throw out of a scheduled function
       // nothing is watching: record why instead.

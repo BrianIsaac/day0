@@ -220,12 +220,13 @@ describe('the documentation discovery action', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, runId } = await seedGeneration(harness, 0);
     await harness.run(async (ctx): Promise<void> => {
-      for (let index = 0; index < 5; index += 1) {
+      for (let index = 0; index < 6; index += 1) {
         await ctx.db.insert('docPages', {
           sourceId,
           ref: `large-${index}.md`,
           title: `Large ${index}`,
-          markdown: `# Large ${index}\n${'x'.repeat(1_500_000)}`,
+          // Each under a Convex document's one-mebibyte limit, together past one window.
+          markdown: `# Large ${index}\n${'x'.repeat(900_000)}`,
           updatedAt: 1,
         });
       }
@@ -236,7 +237,7 @@ describe('the documentation discovery action', (): void => {
       harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
     ).resolves.toMatchObject({ applied: true, systems: 1 });
     expect(await currentDiscoveries(harness, sourceId)).toEqual(['Looker']);
-    // Six pages in windows of at most four mebibytes: more than one read.
+    // Seven pages in windows of at most four mebibytes: more than one read.
     expect(model.calls).toBeGreaterThan(1);
   });
 
