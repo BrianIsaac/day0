@@ -33,13 +33,6 @@ export interface DocumentationReader extends DocSourceReader {
 }
 
 /**
- * The longest reason a reader hands back for one unread page: long enough
- * that the sync redacts the whole of any secret in it before the record
- * cuts it to one line (`withUnreadPages`).
- */
-const MAX_UNREAD_REASON = 4_000;
-
-/**
  * Word a page's read failure for the sync, which redacts it and puts it on one line.
  *
  * @param error - What reading the page threw.
@@ -59,8 +52,8 @@ export function unreadReason(error: unknown): string {
     cause instanceof Error && cause.message && cause.message !== message
       ? `${message} (${cause.message})`
       : message;
-  const reason = full.trim() === '' ? 'the page could not be read' : full;
-  return reason.slice(0, MAX_UNREAD_REASON);
+  // Not cut here: the sync redacts the whole text, then the record bounds it.
+  return full.trim() === '' ? 'the page could not be read' : full;
 }
 
 /**
