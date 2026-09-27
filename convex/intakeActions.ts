@@ -642,7 +642,7 @@ export function linearIntakeRefusal(
  *
  * Args:
  *   client: The connected MCP client.
- *   catalog: The tools the server listed.
+ *   tools: The tools the server listed.
  *   allowlist: The tools the surface's approval allows.
  *   credential: The decrypted bearer, kept out of any logged reason.
  *
@@ -652,11 +652,11 @@ export function linearIntakeRefusal(
  */
 async function linearKeyOwner(
   client: McpIntakeClient,
-  catalog: Record<string, McpToolDefinition> | undefined,
+  tools: Record<string, McpToolDefinition> | undefined,
   allowlist: readonly string[] | undefined,
   credential: string,
 ): Promise<ReadonlySet<string> | undefined> {
-  const definition = catalog?.get_user;
+  const definition = tools?.get_user;
   if (!definition || !allowlist?.includes('get_user')) return undefined;
   const argument = discoveredArgument(schemaProperties(definition.inputSchema), [
     'query',
