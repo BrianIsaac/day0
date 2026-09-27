@@ -685,7 +685,14 @@ export function documentedEndpoints(
       ? undefined
       : { endpoint: refused.endpoint, reason: refused.reason };
   const api = safe.find((url: string): boolean => url !== mcp && API_BASE.test(url));
-  const webUi = urls.find((url: string): boolean => url !== mcp && url !== api);
+  // A refused MCP address is not a web UI either: the browser rung would reach
+  // the same unlisted host the probe refused.
+  const refusedAddresses = new Set(
+    judged.filter(({ reason }): boolean => reason !== undefined).map(({ endpoint }) => endpoint),
+  );
+  const webUi = urls.find(
+    (url: string): boolean => url !== mcp && url !== api && !refusedAddresses.has(url),
+  );
   return { mcp, api, webUi, insecure, refusedMcp };
 }
 

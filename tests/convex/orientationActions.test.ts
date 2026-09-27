@@ -699,6 +699,7 @@ describe('URL attribution', (): void => {
     expect(unlisted.mcp).toBeUndefined();
     expect(unlisted.refusedMcp?.endpoint).toBe('https://mcp.corp.internal/mcp');
     expect(unlisted.refusedMcp?.reason).toContain('DAY0_PRIVATE_HOSTS');
+    expect(unlisted.webUi).toBeUndefined();
     // Listed but plaintext: the probe sends a bearer over https only.
     expect(
       documentedEndpoints(
