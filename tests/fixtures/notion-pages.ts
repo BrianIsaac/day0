@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { credentialMarker } from '../../src/docs/redaction';
 
-/** The handbook pages the operator pastes into Notion, committed as twins of `docs/submission/notion-pages/`. */
+/** The handbook pages the operator pastes into Notion, committed as twins of `docs/private/notion-pages/`. */
 export type NotionPageName =
   | 'onboarding'
   | 'linear-automation'
