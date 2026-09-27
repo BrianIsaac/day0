@@ -568,7 +568,7 @@ A real-mode installation is durable: the data volume holds the credentials, the 
 
 **`backup`** stops the backend for the copy, because a tar of a live database is not a backup, and starts it again after. It writes `<project>-<time>.tar.gz` beside a `.sha256` and a `.json` naming the release, the commit and the time, under `~/day0-backups/<project>/` or wherever `--to <dir>` says, and refuses a directory inside the checkout, which a `git clean` or a deleted clone would take with it. The tar holds the deployment's env as well as its rows, `DAY0_CREDENTIAL_KEY` among it: it is written readable only by you, and it belongs where you keep secrets.
 
-**`restore`** checks the file against its checksum, asks, takes the project down, replaces the data volume and resumes on it. Before the env sync it adopts the restored deployment's credential key into `.env.local`, so the credentials the backup holds stay readable. It refuses while `.env.local` points Slack at the test double (`DAY0_TEST_SLACK_API_URL`): that is the demo bed's own restore, `pnpm demo:bed restore`, which stays demo-only. A restore rewinds everything to the moment of the backup, the intake checkpoints included, so work that landed on your systems after it is unknown to the restored rows and can be picked up again; read the queue before you approve anything.
+**`restore`** checks the file against its checksum, asks, backs up the data volume it is about to replace (under a name of its own, beside the others), takes the project down, replaces the volume and resumes on it. Before the env sync it adopts the restored deployment's credential key into `.env.local`, so the credentials the backup holds stay readable. It refuses while `.env.local` points Slack at the test double (`DAY0_TEST_SLACK_API_URL`): that is the demo bed's own restore, `pnpm demo:bed restore`, which stays demo-only. A restore rewinds everything to the moment of the backup, the intake checkpoints included, so work that landed on your systems after it is unknown to the restored rows and can be picked up again; read the queue before you approve anything.
 
 **`upgrade`** is what to run after a `git pull`. It takes a backup first, installs the dependencies the new lockfile names, and resumes, and the resume on a volume that already holds a deployment does the upgrade in this order:
 
@@ -1603,7 +1603,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 
 **`backup`** 在复制期间停止 backend（运行中的数据库打出的 tar 不算备份），完成后再启动。它在 `~/day0-backups/<project>/`（或 `--to <dir>` 指定的目录）写出 `<project>-<时间>.tar.gz`，旁边是 `.sha256` 和记录版本、commit 与时间的 `.json`；它拒绝写入 checkout 内部的目录，因为 `git clean` 或删除克隆会把它一起带走。tar 里既有数据，也有 deployment 的 env，其中包括 `DAY0_CREDENTIAL_KEY`：文件只对你可读，应放在保管密钥的地方。
 
-**`restore`** 先按校验和检查文件，然后询问、停下项目、替换数据卷并在其上 resume。在同步 env 之前，它会把恢复出的 deployment 的凭据密钥写入 `.env.local`，使备份中的凭据仍可读取。若 `.env.local` 把 Slack 指向测试替身（`DAY0_TEST_SLACK_API_URL`），它会拒绝：那是演示环境自己的恢复 `pnpm demo:bed restore`，仍只用于演示。恢复会把一切回退到备份时刻，包括 intake 的检查点，因此备份之后已在你的系统上落地的工作不为恢复出的数据所知，可能被再次领取；批准任何操作前请先查看队列。
+**`restore`** 先按校验和检查文件，然后询问，先备份即将被替换的数据卷（使用独立的文件名，与其他备份放在一起），再停下项目、替换数据卷并在其上 resume。在同步 env 之前，它会把恢复出的 deployment 的凭据密钥写入 `.env.local`，使备份中的凭据仍可读取。若 `.env.local` 把 Slack 指向测试替身（`DAY0_TEST_SLACK_API_URL`），它会拒绝：那是演示环境自己的恢复 `pnpm demo:bed restore`，仍只用于演示。恢复会把一切回退到备份时刻，包括 intake 的检查点，因此备份之后已在你的系统上落地的工作不为恢复出的数据所知，可能被再次领取；批准任何操作前请先查看队列。
 
 **`upgrade`** 用于 `git pull` 之后。它先备份，再安装新 lockfile 指定的依赖，然后 resume；在已有 deployment 的数据卷上，resume 按以下顺序升级：
 
