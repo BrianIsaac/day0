@@ -462,9 +462,11 @@ const RECORDED_ASKS = [
   '请确认通知使用哪个模板',
 ];
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     if (args.agent.name !== 'day0-manager-question') throw new Error('model unavailable in tests');
     recorded.questionJudgements.push(args.user);
     if (recorded.questionJudgementFails) throw new Error('model unavailable in tests');
@@ -479,7 +481,7 @@ vi.mock('../../src/lib/mastra', () => ({
     return asked.length > 0
       ? { asks: true, question: question.trim() }
       : { asks: false, question: null };
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 

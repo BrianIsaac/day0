@@ -61,11 +61,12 @@ vi.mock('../../src/lib/mastra', () => ({
     recorded.model.push({ agent: args.agent.name, user: args.user });
     const name = args.agent.name;
     if (name === 'day0-scope-judgement') {
-      return {
+      return args.schema.parse({
         inScope: true,
         fit: true,
         reason: 'shipment exceptions are the logistics desk work',
-      } as T;
+        exclusion: { kind: 'none', quote: '' },
+      }) as T;
     }
     if (name === 'day0-plan') {
       // The scripted planner applies every correction it was offered, and
@@ -84,12 +85,12 @@ vi.mock('../../src/lib/mastra', () => ({
       }) as T;
     }
     if (name === 'day0-plan-obligations') {
-      return {
+      return args.schema.parse({
         steps: [{ step: 1, kind: 'write', reads: [], writes: ['slack'], reason: 'the manager DM' }],
         transition: 'none',
         transitionStep: null,
         reason: 'the plan leaves the ticket state alone',
-      } as T;
+      }) as T;
     }
     if (name.startsWith('day0-skill-') && name.endsWith('-initial')) {
       return args.schema.parse({

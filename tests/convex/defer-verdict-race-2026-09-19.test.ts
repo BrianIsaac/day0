@@ -24,16 +24,23 @@ const recorded = vi.hoisted(() => ({
   scopeGate: undefined as Promise<void> | undefined,
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
       await recorded.scopeGate;
-      return { inScope: true, fit: true, reason: 'the pipeline tile is revenue operations work' };
+      return {
+        inScope: true,
+        fit: true,
+        reason: 'the pipeline tile is revenue operations work',
+        exclusion: { kind: 'none', quote: '' },
+      };
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 

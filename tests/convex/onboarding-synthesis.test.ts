@@ -28,12 +28,14 @@ const scripted = vi.hoisted(() => ({
   draft: undefined as unknown,
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string, instructions: string): { name: string } => {
     scripted.systemPrompts[name] = instructions;
     return { name };
   },
-  agentJson: async ({ agent, user }: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async ({ agent, user }): Promise<unknown> => {
     if (agent.name === 'day0-question-labeller') {
       const topics = [
         'why-this-hire',
@@ -73,7 +75,7 @@ vi.mock('../../src/lib/mastra', () => ({
       };
     }
     throw new Error(`unexpected agent ${agent.name}`);
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 

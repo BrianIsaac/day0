@@ -23,18 +23,20 @@ const RUN_REASON =
 
 const recorded = vi.hoisted(() => ({
   scopeCalls: [] as string[],
-  answer: { inScope: false, fit: true, reason: '' },
+  answer: { inScope: false, fit: true, reason: '', exclusion: { kind: 'none', quote: '' } },
 }));
+
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
       return recorded.answer;
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 
@@ -44,7 +46,12 @@ const STRANGER = { subject: 'stranger' };
 
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
-  recorded.answer = { inScope: false, fit: true, reason: '' };
+  recorded.answer = {
+    inScope: false,
+    fit: true,
+    reason: '',
+    exclusion: { kind: 'none', quote: '' },
+  };
   restoreSurfaceMode();
 });
 
@@ -117,7 +124,12 @@ async function rowOf(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc
 describe('a queued-read trial row and the scope stage', (): void => {
   it('reaches the permission gate when the scope model would call it out of scope', async (): Promise<void> => {
     useSurfaceMode('real');
-    recorded.answer = { inScope: false, fit: true, reason: RUN_REASON };
+    recorded.answer = {
+      inScope: false,
+      fit: true,
+      reason: RUN_REASON,
+      exclusion: { kind: 'none', quote: '' },
+    };
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness, 'eval-revocation-2026-09-18t22-01-22z@day0.local');
     const owner = harness.withIdentity(OWNER);
@@ -142,7 +154,12 @@ describe('a queued-read trial row and the scope stage', (): void => {
 
   it('reaches it too when a good-habits memory would let the model fail the fit', async (): Promise<void> => {
     useSurfaceMode('real');
-    recorded.answer = { inScope: true, fit: false, reason: 'not the kind of work the memory describes' };
+    recorded.answer = {
+      inScope: true,
+      fit: false,
+      reason: 'not the kind of work the memory describes',
+      exclusion: { kind: 'none', quote: '' },
+    };
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness, 'eval-revocation-2026-09-18t22-01-22z@day0.local');
     const owner = harness.withIdentity(OWNER);
@@ -250,7 +267,12 @@ describe('who can put a row past the scope stage this way', (): void => {
 
   it('leaves a row the trial agent did not seed to the scope judgement', async (): Promise<void> => {
     useSurfaceMode('real');
-    recorded.answer = { inScope: false, fit: true, reason: RUN_REASON };
+    recorded.answer = {
+      inScope: false,
+      fit: true,
+      reason: RUN_REASON,
+      exclusion: { kind: 'none', quote: '' },
+    };
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness, 'eval-revocation-intake@day0.local');
     const workItemId = await harness.run(
