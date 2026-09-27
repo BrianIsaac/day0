@@ -1,4 +1,5 @@
 import { containsTokenShape } from './redact';
+import { structuralSystemCandidates } from '../docs/system-discovery';
 
 /**
  * The queues one employee reads on a work-bearing surface.
@@ -403,7 +404,65 @@ export function sentenceScopePicks(
     .map(({ number }): ScopePick => ({ candidate: number }));
 }
 
-/** Keep candidate lines under the handbook identified by the charter's role and queue words. */
+/** Words too common in a role to say which team it belongs to. */
+const ROLE_STOP_WORDS: ReadonlySet<string> = new Set([
+  'about',
+  'after',
+  'before',
+  'their',
+  'these',
+  'those',
+  'would',
+  'could',
+  'should',
+  'coordinator',
+  'manager',
+  'employee',
+]);
+
+/** The top directory of a page reference, or the reference itself at the top. */
+function scopeRoot(ref: string): string {
+  return ref.includes('/') ? ref.split('/')[0]! : ref;
+}
+
+/**
+ * The words of a role that can say which team it belongs to.
+ *
+ * A documented system's name is dropped: "record in Linear and post in Slack"
+ * names the tools every team shares, and the revops runbook headings name
+ * them too, so they would tie a logistics role with revenue operations.
+ */
+function roleWordsFor(role: string | undefined, pages: readonly ScopePage[]): string[] {
+  const systemWords = new Set(
+    structuralSystemCandidates(
+      pages.map((page) => ({
+        ref: page.ref,
+        title: /^#\s+(.+)$/m.exec(page.markdown)?.[1] ?? page.ref,
+        markdown: page.markdown,
+      })),
+    ).flatMap((system): string[] => system.name.toLowerCase().match(/[a-z0-9]+/g) ?? []),
+  );
+  return [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
+    .filter((word): boolean => word.length >= 5 && !ROLE_STOP_WORDS.has(word))
+    .filter((word): boolean => !systemWords.has(word))
+    .map((word): string => (word.length >= 6 ? word.replace(/s$/, '') : word));
+}
+
+/**
+ * Keep candidate lines under the handbook identified by the charter's role and queue words.
+ *
+ * Roles are matched against whole teams, not single pages: each top
+ * directory is scored by the role words its own name and its handbook-level
+ * headings carry, then by the words its runbooks carry, then by the queue
+ * values the manager's sentences name. A tie between two teams returns
+ * nothing, so intake never guesses between two handbooks.
+ *
+ * @param pages - Every synced page the candidates were read from.
+ * @param candidates - Every documented queue line for the surface.
+ * @param role - The charter's role for the employee.
+ * @param sentences - The manager's sentences about the system.
+ * @returns The candidates under the one team the role names, or none.
+ */
 export function roleScopeCandidates(
   pages: readonly ScopePage[],
   candidates: readonly ScopeCandidate[],
@@ -412,46 +471,34 @@ export function roleScopeCandidates(
 ): ScopeCandidate[] {
   const refs = [...new Set(candidates.map((candidate): string => candidate.ref))];
   if (refs.length <= 1) return [...candidates];
-  const namedByRef = new Map<string, Set<string>>();
+  const namedByRoot = new Map<string, Set<string>>();
   for (const pick of sentenceScopePicks(sentences, candidates)) {
     const named = candidates[pick.candidate - 1];
-    const values = namedByRef.get(named.ref) ?? new Set<string>();
+    const values = namedByRoot.get(scopeRoot(named.ref)) ?? new Set<string>();
     values.add(`${named.field}\0${named.value}`);
-    namedByRef.set(named.ref, values);
+    namedByRoot.set(scopeRoot(named.ref), values);
   }
-  const roleWords = [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])].filter(
-    (word): boolean =>
-      word.length >= 5 &&
-      ![
-        'about',
-        'after',
-        'before',
-        'their',
-        'these',
-        'those',
-        'would',
-        'could',
-        'should',
-        'coordinator',
-        'manager',
-        'employee',
-      ].includes(word),
-  );
-  const scores = refs.map((ref) => {
-    const page = pages.find((candidate): boolean => candidate.ref === ref);
-    const heading = /^#\s+(.+)$/m.exec(page?.markdown ?? '')?.[1] ?? '';
-    const identity = `${ref} ${heading}`.toLowerCase();
-    const roleHits = roleWords.filter((word): boolean => identity.includes(word)).length;
-    return { ref, score: roleHits * 1_000 + (namedByRef.get(ref)?.size ?? 0) };
+  const roleWords = roleWordsFor(role, pages);
+  const identity = (page: ScopePage): string =>
+    `${page.ref} ${/^#\s+(.+)$/m.exec(page.markdown)?.[1] ?? ''}`.toLowerCase();
+  const hits = (text: string): number =>
+    roleWords.filter((word): boolean => text.includes(word)).length;
+  const scores = [...new Set(refs.map(scopeRoot))].map((root) => {
+    const own = pages.filter((page): boolean => scopeRoot(page.ref) === root);
+    const handbook = own.filter((page): boolean => page.ref.split('/').length <= 2);
+    const runbooks = own.filter((page): boolean => page.ref.split('/').length > 2);
+    const primary = hits(`${root} ${handbook.map(identity).join(' ')}`);
+    const secondary = hits(runbooks.map(identity).join(' '));
+    return {
+      root,
+      score: primary * 1_000_000 + secondary * 1_000 + (namedByRoot.get(root)?.size ?? 0),
+    };
   });
   const highest = Math.max(...scores.map((item): number => item.score));
   if (highest === 0) return [];
   const top = scores.filter((item): boolean => item.score === highest);
-  const root = (ref: string): string => (ref.includes('/') ? ref.split('/')[0] : ref);
-  const roots = new Set(top.map((item): string => root(item.ref)));
-  if (roots.size !== 1) return [];
-  const selected = root(top[0].ref);
-  return candidates.filter((candidate): boolean => root(candidate.ref) === selected);
+  if (top.length !== 1) return [];
+  return candidates.filter((candidate): boolean => scopeRoot(candidate.ref) === top[0]!.root);
 }
 
 /**

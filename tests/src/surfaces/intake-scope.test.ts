@@ -16,7 +16,7 @@ import {
   type ScopeField,
   type ScopePage,
 } from '../../../src/surfaces/intake-scope';
-import { companyPage } from '../../fixtures/company-bed';
+import { companyPage, companyPages } from '../../fixtures/company-bed';
 
 const REVOPS = companyPage('revops/handbook.md');
 const FINANCE = companyPage('finance/handbook.md');
@@ -174,6 +174,31 @@ describe('intake scope candidates', (): void => {
         'Do not read #revops-asks; that is RevOps work.',
       ]).map((candidate): string => candidate.ref),
     ).toEqual(['finance/handbook.md', 'finance/handbook.md']);
+  });
+
+  it('ties each role to its own handbook over all thirteen company pages, whatever tools it names', (): void => {
+    const folder = companyPages()
+      .filter((page): boolean => page.source === 'folder')
+      .map((page) => ({ ref: page.ref, markdown: page.markdown }));
+    expect(folder).toHaveLength(13);
+    const roots = (role: string, fields: ScopeField[]): string[] => [
+      ...new Set(
+        roleScopeCandidates(folder, scopeCandidates(folder, fields), role, []).map(
+          (candidate): string => candidate.ref.split('/')[0]!,
+        ),
+      ),
+    ];
+    for (const fields of [['team', 'project'], ['channel']] as ScopeField[][]) {
+      expect(roots('Logistics exceptions: record in Linear and post in Slack', fields)).toEqual([
+        'logistics',
+      ]);
+      expect(roots('Shipment exceptions analyst posting Slack updates', fields)).toEqual([
+        'logistics',
+      ]);
+      expect(roots('Close coordinator', fields)).toEqual(['finance']);
+      expect(roots('Revenue operations analyst', fields)).toEqual(['revops']);
+      expect(roots('Assistant', fields)).toEqual([]);
+    }
   });
 
   it('ignores quoted runbook examples and another team’s channels mentioned in prose', (): void => {
