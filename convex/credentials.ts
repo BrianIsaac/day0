@@ -812,12 +812,35 @@ export async function credentialKeyCounts(ctx: QueryCtx): Promise<CredentialKeyC
   return { byKeyId, unkeyed, atLeast: rows.length > KEY_COUNT_SCAN_LIMIT };
 }
 
+/** Rows one page of `keyCounts` reads. */
+const KEY_COUNT_PAGE = 1_000;
+
 /**
- * The stored values counted by the key that sealed them. Internal; the key
- * rotation reads it to confirm no row is left on the old key before it drops
- * that key from the deployment.
+ * One page of the stored values counted by the key that sealed them.
+ * Internal; the key rotation sums the pages to confirm no row is left on the
+ * old key before it drops that key from the deployment.
  */
 export const keyCounts = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<CredentialKeyCounts> => await credentialKeyCounts(ctx),
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    byKeyId: Record<string, number>;
+    unkeyed: number;
+    cursor: string;
+    isDone: boolean;
+  }> => {
+    const page = await ctx.db
+      .query('credentials')
+      .paginate({ cursor: args.cursor, numItems: KEY_COUNT_PAGE });
+    const byKeyId: Record<string, number> = {};
+    let unkeyed = 0;
+    for (const row of page.page) {
+      if (row.ciphertext === undefined) continue;
+      if (row.keyId === undefined) unkeyed += 1;
+      else byKeyId[row.keyId] = (byKeyId[row.keyId] ?? 0) + 1;
+    }
+    return { byKeyId, unkeyed, cursor: page.continueCursor, isDone: page.isDone };
+  },
 });
