@@ -197,3 +197,28 @@ describe('provenance suffixes on clauses', (): void => {
     });
   });
 });
+
+describe('the workspace a synthesised charter seeds', (): void => {
+  it('fills AGENTS.md with the one line that there is no good-habits memory, and promises no research (review m8, D3)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await deployAgent(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.action(api.onboarding.synthesiseFromTranscript, {
+      agentId,
+      bossLabel: 'Brian',
+      transcript: DAY_ONE_TRANSCRIPT_2026_09_14,
+    });
+
+    const agentsMd = await owner.query(api.workspace.readFile, { agentId, fileName: 'AGENTS.md' });
+    expect(agentsMd).toBe('# AGENTS\n\nNo good-habits memory on this deployment.\n');
+    // Neither reader takes the line for the memory block it looks for.
+    expect(agentsMd).not.toMatch(/## Good-habits memory/i);
+    const bootstrap = await owner.query(api.workspace.readFile, {
+      agentId,
+      fileName: 'BOOTSTRAP.md',
+    });
+    expect(bootstrap).toContain('write IDENTITY.md and TOOLS.md');
+    expect(bootstrap).not.toMatch(/research/i);
+  });
+});

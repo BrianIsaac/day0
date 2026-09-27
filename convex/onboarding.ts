@@ -226,7 +226,7 @@ async function attributeTranscript(transcript: string): Promise<AttributedTransc
 const CHARTER_VERSION = '0.0';
 
 /**
- * Everything the commit needs, computed before it: two model calls and seven
+ * Everything the commit needs, computed before it: two model calls and eight
  * rendered files, none of them touching the database. Keeping the model work
  * outside the transaction is what lets the transaction be the only writer.
  *
@@ -254,6 +254,8 @@ async function draftCharter(args: {
     charter,
     rejectedEvidence: reviewed.rejected.map((e) => e.text),
     workspaceFiles: [
+      // Nothing writes a good-habits memory since N19; the line keeps the first file from reading empty.
+      { fileName: 'AGENTS.md', content: '# AGENTS\n\nNo good-habits memory on this deployment.\n' },
       { fileName: 'SOUL.md', content: defaultSoul() },
       { fileName: 'IDENTITY.md', content: identityFromCharter(charter) },
       { fileName: 'TOOLS.md', content: toolsFromCharter(charter) },
