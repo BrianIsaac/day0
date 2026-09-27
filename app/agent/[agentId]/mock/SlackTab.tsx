@@ -10,11 +10,7 @@ import { clockTime, clockTimeWithSeconds } from '../time';
  * render it, so it has no real-mode copy to show. */
 export const EMPTY_CHANNELS = 'no channels seeded';
 
-export function SlackTab({
-  agentId,
-}: {
-  agentId: Id<'agents'>;
-}) {
+export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
   const channels = useQuery(api.mock.listChannels, { agentId });
   const [pickedSlug, setPickedSlug] = useState<string | null>(null);
 

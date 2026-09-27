@@ -56,7 +56,11 @@ const COLUMNS: readonly Column[] = [
   { label: 'Charter', unit: 'approved after', definition: DEFINITIONS.charter, width: 'w-[17rem]' },
   { label: 'Decisions', unit: 'approved / rejected', definition: DEFINITIONS.decisions },
   { label: 'Decision wait', unit: 'median / p90', definition: DEFINITIONS.wait },
-  { label: 'Actions', unit: 'automatic · approved · held · rejected · refused', definition: DEFINITIONS.actions },
+  {
+    label: 'Actions',
+    unit: 'automatic · approved · held · rejected · refused',
+    definition: DEFINITIONS.actions,
+  },
   { label: 'Audit trail', unit: 'complete', definition: DEFINITIONS.audit },
 ];
 

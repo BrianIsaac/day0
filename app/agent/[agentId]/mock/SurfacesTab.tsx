@@ -140,14 +140,15 @@ export function DiscoveryProvenance({
  *   The line, each backticked span in a code element.
  */
 export function PageLine({ text }: { text: string }): React.ReactNode {
-  return text.split(/(`[^`]+`)/).map((part: string, index: number): React.ReactNode =>
-    /^`[^`]+`$/.test(part) ? (
-      <code key={index} className="rounded bg-[var(--color-border)] px-1 font-mono">
-        {part.slice(1, -1)}
-      </code>
-    ) : (
-      part
-    ),
+  return text.split(/(`[^`]+`)/).map(
+    (part: string, index: number): React.ReactNode =>
+      /^`[^`]+`$/.test(part) ? (
+        <code key={index} className="rounded bg-[var(--color-border)] px-1 font-mono">
+          {part.slice(1, -1)}
+        </code>
+      ) : (
+        part
+      ),
   );
 }
 
@@ -172,11 +173,12 @@ export interface IntakeScopeRowProps {
 export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
   const presentation = presentIntakeScope(props.system, props.surfaceClass, props.scope);
   const changed = presentScopeDrift(props.scope, props.drift);
-  const queues = props.surfaceClass === 'kanban'
-    ? [props.scope.project, ...(props.scope.projects ?? [])].filter(
-        (value): value is ScopeValue => value !== undefined,
-      ).map((value): string => `Project ${value.value}`)
-    : (props.scope.channels ?? []).map((value): string => `#${value.value}`);
+  const queues =
+    props.surfaceClass === 'kanban'
+      ? [props.scope.project, ...(props.scope.projects ?? [])]
+          .filter((value): value is ScopeValue => value !== undefined)
+          .map((value): string => `Project ${value.value}`)
+      : (props.scope.channels ?? []).map((value): string => `#${value.value}`);
   // The reads line already names a single queue; the list is for telling several apart.
   const listed = queues.length > 1 ? queues : [];
   return (
@@ -184,7 +186,13 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
       <p className={presentation.empty ? 'font-medium text-[var(--color-warn)]' : 'font-medium'}>
         {presentation.line}
       </p>
-      {listed.length > 0 ? <ul className="mt-1 space-y-1">{listed.map((queue) => <li key={queue}>{queue}</li>)}</ul> : null}
+      {listed.length > 0 ? (
+        <ul className="mt-1 space-y-1">
+          {listed.map((queue) => (
+            <li key={queue}>{queue}</li>
+          ))}
+        </ul>
+      ) : null}
       {presentation.quotes.map((value: ScopeValue, index: number): React.ReactNode => {
         const source =
           (value.sourceId && props.sourceLabels.get(value.sourceId)) || 'documentation';
@@ -491,25 +499,27 @@ export function SurfaceLadder({ candidates, attempts }: SurfaceLadderProps): Rea
       ) : null}
       {attempts?.length ? (
         <ol className="mt-1 space-y-1">
-          {attempts.map((attempt, index): React.ReactNode => (
-            <li key={`${attempt.attemptedAt}-${attempt.path}-${index}`}>
-              <span className="font-medium">
-                {attempt.outcome === 'retried'
-                  ? `${attempt.path} first probe failed: `
-                  : `${attempt.path} attempt failed: `}
-              </span>
-              {attempt.reason}{' '}
-              <span className="text-[var(--color-muted)]">
-                {attempt.outcome === 'retried'
-                  ? `Retried after ${Math.round((attempt.retryAfterMs ?? 0) / 1_000)} s.`
-                  : attempt.outcome === 'demoted'
-                    ? 'Fell to the next approved rung.'
-                    : attempt.outcome === 'ungranted'
-                      ? 'Waiting on Day0 or approved access.'
-                      : 'No approved fallback connected.'}
-              </span>
-            </li>
-          ))}
+          {attempts.map(
+            (attempt, index): React.ReactNode => (
+              <li key={`${attempt.attemptedAt}-${attempt.path}-${index}`}>
+                <span className="font-medium">
+                  {attempt.outcome === 'retried'
+                    ? `${attempt.path} first probe failed: `
+                    : `${attempt.path} attempt failed: `}
+                </span>
+                {attempt.reason}{' '}
+                <span className="text-[var(--color-muted)]">
+                  {attempt.outcome === 'retried'
+                    ? `Retried after ${Math.round((attempt.retryAfterMs ?? 0) / 1_000)} s.`
+                    : attempt.outcome === 'demoted'
+                      ? 'Fell to the next approved rung.'
+                      : attempt.outcome === 'ungranted'
+                        ? 'Waiting on Day0 or approved access.'
+                        : 'No approved fallback connected.'}
+                </span>
+              </li>
+            ),
+          )}
         </ol>
       ) : null}
     </div>
@@ -539,9 +549,12 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     );
     const scopeSourceIds = (surfaces ?? []).flatMap((surface) => {
       const scope = surface.intakeScope;
-      return [scope?.team, scope?.project, ...(scope?.projects ?? []), ...(scope?.channels ?? [])].flatMap((value): string[] =>
-        value?.sourceId ? [value.sourceId] : [],
-      );
+      return [
+        scope?.team,
+        scope?.project,
+        ...(scope?.projects ?? []),
+        ...(scope?.channels ?? []),
+      ].flatMap((value): string[] => (value?.sourceId ? [value.sourceId] : []));
     });
     return [
       ...new Set([

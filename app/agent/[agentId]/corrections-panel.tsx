@@ -44,7 +44,9 @@ function appliedToText(
   retired: boolean,
 ): string {
   if (appliedTo.length === 0) {
-    return retired ? 'never applied' : 'not applied yet: it reaches the next plan for work of the same kind';
+    return retired
+      ? 'never applied'
+      : 'not applied yet: it reaches the next plan for work of the same kind';
   }
   const named = appliedTo.map((id) => {
     const title = titles.get(id);
@@ -93,11 +95,15 @@ export function KeptCorrectionsPanel({
             className={`p-2 rounded-md border border-[var(--color-border)] text-xs ${retired ? 'opacity-60' : ''}`}
           >
             <p className="text-[10px] text-[var(--color-muted)] mb-0.5">
-              <span className="uppercase tracking-wider">{managerFeedbackLabel(correction)}</span> · from “
-              {correction.itemTitle}” ·{' '}
-              <span title={clockTimeWithSeconds(correction.createdAt)}>{clockTime(correction.createdAt)}</span>
+              <span className="uppercase tracking-wider">{managerFeedbackLabel(correction)}</span> ·
+              from “{correction.itemTitle}” ·{' '}
+              <span title={clockTimeWithSeconds(correction.createdAt)}>
+                {clockTime(correction.createdAt)}
+              </span>
             </p>
-            <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">{correction.text}</p>
+            <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">
+              {correction.text}
+            </p>
             <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
               {appliedToText(correction.appliedTo, titles, retired)}
             </p>
@@ -155,7 +161,9 @@ export function AppliedCorrectionsLine({
         return (
           <p key={correction._id} className="text-[var(--color-fg)]">
             Applies the manager&apos;s correction from {source} (
-            <span title={clockTimeWithSeconds(correction.createdAt)}>{clockTime(correction.createdAt)}</span>
+            <span title={clockTimeWithSeconds(correction.createdAt)}>
+              {clockTime(correction.createdAt)}
+            </span>
             ): ‘{correction.text}’
           </p>
         );

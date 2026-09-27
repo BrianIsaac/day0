@@ -526,10 +526,12 @@ describe('SurfacesTab and what each employee reads', (): void => {
     const slack = renderToStaticMarkup(
       <IntakeScopeRow
         drift={[]}
-        scope={{ channels: [
-          scopeValue('finance-close', '- Channels: #finance-close, #ops-requests'),
-          scopeValue('ops-requests', '- Channels: #finance-close, #ops-requests'),
-        ] }}
+        scope={{
+          channels: [
+            scopeValue('finance-close', '- Channels: #finance-close, #ops-requests'),
+            scopeValue('ops-requests', '- Channels: #finance-close, #ops-requests'),
+          ],
+        }}
         sourceLabels={new Map()}
         surfaceClass="chat"
         system="Slack"
@@ -582,8 +584,13 @@ describe('SurfacesTab and what each employee reads', (): void => {
         drift={[]}
         scope={{
           team: scopeValue('REVOPS', '- Team: `REVOPS`'),
-          project: scopeValue('Q3 close', 'Linear, team `REVOPS`, project `Q3 close`: an odd ` tick'),
-          notes: ['Dropped pick 4: team `FIN` was not kept; intake reads one team, and `REVOPS` was picked first.'],
+          project: scopeValue(
+            'Q3 close',
+            'Linear, team `REVOPS`, project `Q3 close`: an odd ` tick',
+          ),
+          notes: [
+            'Dropped pick 4: team `FIN` was not kept; intake reads one team, and `REVOPS` was picked first.',
+          ],
         }}
         sourceLabels={new Map()}
         surfaceClass="kanban"

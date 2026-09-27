@@ -27,7 +27,8 @@ import {
  * one taking effect on item two.
  */
 
-const NOTE = 'Use the Delay notice B template for customs holds and follow up with the carrier in 48 hours.';
+const NOTE =
+  'Use the Delay notice B template for customs holds and follow up with the carrier in 48 hours.';
 const noop = (): void => undefined;
 const resolved = async (): Promise<void> => undefined;
 
@@ -60,7 +61,11 @@ describe('the kept corrections panel', (): void => {
 
   it('says a correction not yet applied is waiting for later work of its kind', (): void => {
     const markup = renderToStaticMarkup(
-      <KeptCorrectionsPanel corrections={[{ ...kept, appliedTo: [] }]} titles={titles} onRetire={resolved} />,
+      <KeptCorrectionsPanel
+        corrections={[{ ...kept, appliedTo: [] }]}
+        titles={titles}
+        onRetire={resolved}
+      />,
     );
     expect(markup).toContain('not applied yet');
   });
@@ -80,29 +85,35 @@ describe('the kept corrections panel', (): void => {
   });
 
   it('explains what it will hold before anything is kept', (): void => {
-    const markup = renderToStaticMarkup(<KeptCorrectionsPanel corrections={[]} titles={titles} onRetire={resolved} />);
+    const markup = renderToStaticMarkup(
+      <KeptCorrectionsPanel corrections={[]} titles={titles} onRetire={resolved} />,
+    );
     expect(markup).toContain('No corrections kept yet');
     expect(keptCorrectionsTitle([])).toBe('Kept corrections');
   });
 
   it('counts the corrections still fed back in its title', (): void => {
-    expect(keptCorrectionsTitle([kept, { ...kept, _id: 'c2' as Id<'corrections'>, retiredAt: 5 }])).toBe(
-      'Kept corrections · 1 active',
-    );
+    expect(
+      keptCorrectionsTitle([kept, { ...kept, _id: 'c2' as Id<'corrections'>, retiredAt: 5 }]),
+    ).toBe('Kept corrections · 1 active');
   });
 });
 
 describe('the plan card line for an applied correction', (): void => {
   it('names the item the correction came from, when, and quotes it', (): void => {
     const markup = renderToStaticMarkup(
-      <AppliedCorrectionsLine ids={['c1']} corrections={[kept]} workItemId={'w2' as Id<'workItems'>} />,
+      <AppliedCorrectionsLine
+        ids={['c1']}
+        corrections={[kept]}
+        workItemId={'w2' as Id<'workItems'>}
+      />,
     );
     expect(markup.replace(/<[^>]+>/g, '')).toMatch(
       /Applies the manager&#x27;s correction from Exception: SH-4471 held at customs \(\d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2}\): ‘Use the Delay notice B template/,
     );
   });
 
-  it('says so when the correction came from the same item\'s earlier plan', (): void => {
+  it("says so when the correction came from the same item's earlier plan", (): void => {
     const markup = renderToStaticMarkup(
       <AppliedCorrectionsLine
         ids={['c1']}
@@ -110,15 +121,29 @@ describe('the plan card line for an applied correction', (): void => {
         workItemId={'w1' as Id<'workItems'>}
       />,
     );
-    expect(markup).toContain('Applies the manager&#x27;s correction from this item&#x27;s earlier plan');
+    expect(markup).toContain(
+      'Applies the manager&#x27;s correction from this item&#x27;s earlier plan',
+    );
   });
 
   it('renders nothing for a plan that applied none, or for an id it cannot resolve', (): void => {
     expect(
-      renderToStaticMarkup(<AppliedCorrectionsLine ids={[]} corrections={[kept]} workItemId={'w2' as Id<'workItems'>} />),
+      renderToStaticMarkup(
+        <AppliedCorrectionsLine
+          ids={[]}
+          corrections={[kept]}
+          workItemId={'w2' as Id<'workItems'>}
+        />,
+      ),
     ).toBe('');
     expect(
-      renderToStaticMarkup(<AppliedCorrectionsLine ids={['gone']} corrections={[kept]} workItemId={'w2' as Id<'workItems'>} />),
+      renderToStaticMarkup(
+        <AppliedCorrectionsLine
+          ids={['gone']}
+          corrections={[kept]}
+          workItemId={'w2' as Id<'workItems'>}
+        />,
+      ),
     ).toBe('');
   });
 
@@ -160,20 +185,25 @@ describe('the plan card line for an applied correction', (): void => {
         onResendDecision={resolved}
       />,
     );
-    expect(markup).toContain('Applies the manager&#x27;s correction from Exception: SH-4471 held at customs');
+    expect(markup).toContain(
+      'Applies the manager&#x27;s correction from Exception: SH-4471 held at customs',
+    );
     expect(markup).toContain(NOTE.slice(0, 40));
   });
 });
 
 describe('cancelling a plan with a reason, and retrying it', (): void => {
-  it('gives the plan card\'s cancel a reason field, and sends the reason only when one is written', (): void => {
+  it("gives the plan card's cancel a reason field, and sends the reason only when one is written", (): void => {
     const markup = renderToStaticMarkup(
       <PlanApprovalForm riskNotes="" questions={[]} onApprove={noop} onCancel={noop} />,
     );
     expect(markup).toContain('aria-label="reason for cancelling the plan"');
     expect(markup).toContain('>Cancel<');
     const workItemId = 'w5' as Id<'workItems'>;
-    expect(cancelPlanRequest(workItemId, 'Comment instead.')).toEqual({ workItemId, reason: 'Comment instead.' });
+    expect(cancelPlanRequest(workItemId, 'Comment instead.')).toEqual({
+      workItemId,
+      reason: 'Comment instead.',
+    });
     expect(cancelPlanRequest(workItemId, '   ')).toEqual({ workItemId });
   });
 
@@ -265,7 +295,9 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
 
   it('labels a plan rejection reason as its own kind of feedback', (): void => {
     const markup = renderToStaticMarkup(
-      <ManagerFeedbackNote feedback={{ reason: 'Comment on the ticket instead.', at: 2, kind: 'plan-rejection' }} />,
+      <ManagerFeedbackNote
+        feedback={{ reason: 'Comment on the ticket instead.', at: 2, kind: 'plan-rejection' }}
+      />,
     );
     expect(markup).toContain('Plan rejection reason');
   });

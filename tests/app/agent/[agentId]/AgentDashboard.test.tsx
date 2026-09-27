@@ -38,7 +38,10 @@ import {
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
-import { HELD_BEFORE_AUTONOMY_NOTE, HELD_WITHHELD_TRANSITION_NOTE } from '../../../../src/work/autonomy';
+import {
+  HELD_BEFORE_AUTONOMY_NOTE,
+  HELD_WITHHELD_TRANSITION_NOTE,
+} from '../../../../src/work/autonomy';
 import { HELD_WITHHELD_TRANSITION } from '../../../../src/surfaces/policy';
 import { strikeOutcome, strikePreview } from '../../../../src/agent/charter-constraints';
 import type { Charter } from '../../../../src/agent/charter';
@@ -46,7 +49,10 @@ import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026
 import { slackPhaseOne } from '../../../fixtures/browser-phase-split-2026-09-16';
 import { REFUSED_CREATE_RUN } from '../../../fixtures/refused-ticket-create-2026-09-19';
 import { gateRefusalStop } from '../../../../src/work/stop';
-import { log1FirstStopRefusedClosing, log1RefusedClosing } from '../../../fixtures/work/full-run-3-2026-09-19-log-1';
+import {
+  log1FirstStopRefusedClosing,
+  log1RefusedClosing,
+} from '../../../fixtures/work/full-run-3-2026-09-19-log-1';
 import { log1PhaseOne as sitting4Log1PhaseOne } from '../../../fixtures/work/full-run-4-2026-09-19-log-1';
 import { openQuestionStopReason, withheldForAnswerReason } from '../../../../src/work/obligations';
 import {
@@ -58,9 +64,14 @@ import {
 describe('live event labels', (): void => {
   it('marks a failure whose run stopped', (): void => {
     expect(
-      eventLabel({ type: 'work.failed', payload: { workItemId: 'w1', stopped: true, reason: 'stopped: x' } }),
+      eventLabel({
+        type: 'work.failed',
+        payload: { workItemId: 'w1', stopped: true, reason: 'stopped: x' },
+      }),
     ).toBe('work.failed · stopped');
-    expect(eventLabel({ type: 'work.failed', payload: { workItemId: 'w1', reason: 'x' } })).toBe('work.failed');
+    expect(eventLabel({ type: 'work.failed', payload: { workItemId: 'w1', reason: 'x' } })).toBe(
+      'work.failed',
+    );
   });
 
   it('shows every candidate slug when a charter surface match is ambiguous', (): void => {
@@ -73,9 +84,7 @@ describe('live event labels', (): void => {
           candidateSlugs: ['looker-finance-tile', 'looker-sales-tile'],
         },
       }),
-    ).toBe(
-      'surface.charter-match-ambiguous: looker-finance-tile, looker-sales-tile',
-    );
+    ).toBe('surface.charter-match-ambiguous: looker-finance-tile, looker-sales-tile');
   });
 });
 
@@ -113,7 +122,11 @@ describe('a write re-authored once before the hold', (): void => {
   const first = '{"issueId":"REVOPS-7","comment":"Set to 74%."}';
   const held = {
     tool: 'mcp.call' as const,
-    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","body":"Set to 74%."}' },
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-7","body":"Set to 74%."}',
+    },
   };
   const resolved = async (): Promise<void> => undefined;
 
@@ -128,9 +141,13 @@ describe('a write re-authored once before the hold', (): void => {
         onReject={resolved}
       />,
     );
-    expect(markup).toContain('arguments re-authored once before the hold · this payload is the second attempt');
+    expect(markup).toContain(
+      'arguments re-authored once before the hold · this payload is the second attempt',
+    );
     expect(markup).toContain('the schema accepts issueId, body');
-    expect(markup).toContain('first attempt: {&quot;issueId&quot;:&quot;REVOPS-7&quot;,&quot;comment&quot;');
+    expect(markup).toContain(
+      'first attempt: {&quot;issueId&quot;:&quot;REVOPS-7&quot;,&quot;comment&quot;',
+    );
     expect(markup).toContain('Set to 74%.');
   });
 
@@ -157,10 +174,14 @@ describe('a ticket state change the plan withholds', (): void => {
   const resolved = async (): Promise<void> => undefined;
   const done = {
     tool: 'mcp.call' as const,
-    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"REVOPS-5","state":"Done"}' },
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-5","state":"Done"}',
+    },
   };
 
-  it('says the move is the manager\'s call, not that the run predates the switch', (): void => {
+  it("says the move is the manager's call, not that the run predates the switch", (): void => {
     const markup = renderToStaticMarkup(
       <PendingActions
         actions={[done]}
@@ -184,14 +205,18 @@ describe('a question at plan approval', (): void => {
     agentId: 'a1',
     key: 'who owns the looker pipeline tile',
     question: 'Who owns the Looker pipeline tile.',
-    context: { touchedBy: 'plan', text: 'Refresh the Looker pipeline tile.', words: ['looker', 'pipeline', 'tile'] },
+    context: {
+      touchedBy: 'plan',
+      text: 'Refresh the Looker pipeline tile.',
+      words: ['looker', 'pipeline', 'tile'],
+    },
     askedAt: 1,
     workItemId: 'w1',
     charterId: 'c1',
   } as unknown as Doc<'managerQuestions'>;
   const noop = (): void => undefined;
 
-  it('shows the question with where it came from, an answer field, the planner\'s note, and one approve button', (): void => {
+  it("shows the question with where it came from, an answer field, the planner's note, and one approve button", (): void => {
     const markup = renderToStaticMarkup(
       <PlanApprovalForm
         riskNotes="The runbook does not say which figure to enter if the deck and the sheet disagree."
@@ -220,7 +245,12 @@ describe('a question at plan approval', (): void => {
     const answered = renderToStaticMarkup(
       <PlanApprovalForm
         riskNotes=""
-        questions={[{ ...question, answer: { text: 'Priya.', answeredAt: 2, via: 'dashboard' } } as Doc<'managerQuestions'>]}
+        questions={[
+          {
+            ...question,
+            answer: { text: 'Priya.', answeredAt: 2, via: 'dashboard' },
+          } as Doc<'managerQuestions'>,
+        ]}
         onApprove={noop}
         onCancel={noop}
       />,
@@ -238,13 +268,20 @@ describe('refused closing set', (): void => {
           actions: [
             {
               tool: 'mcp.call',
-              args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","body":"Refreshed the tile to 74%."}' },
+              args: {
+                surface: 'linear',
+                tool: 'save_comment',
+                toolArgsJson: '{"issueId":"REVOPS-7","body":"Refreshed the tile to 74%."}',
+              },
             },
           ],
-          planStepOutcomes: [{ step: 3, status: 'satisfied', evidence: 'the audit comment in this response' }],
+          planStepOutcomes: [
+            { step: 3, status: 'satisfied', evidence: 'the audit comment in this response' },
+          ],
           draft: 'd',
           notes: '',
-          reason: 'approved plan step 3 promised a Linear read, but no landed read or blocking ledger reason was recorded',
+          reason:
+            'approved plan step 3 promised a Linear read, but no landed read or blocking ledger reason was recorded',
           at: 1,
         }}
       />,
@@ -258,9 +295,11 @@ describe('refused closing set', (): void => {
   });
 });
 
-describe('the employee\'s own blocked steps beside the gate\'s reason (SH-4471, 19 September)', (): void => {
+describe("the employee's own blocked steps beside the gate's reason (SH-4471, 19 September)", (): void => {
   it('shows each step the refused closing phase recorded as blocked, in the open, with its reason', (): void => {
-    const markup = renderToStaticMarkup(<RefusedBlockedSteps refused={log1FirstStopRefusedClosing} />);
+    const markup = renderToStaticMarkup(
+      <RefusedBlockedSteps refused={log1FirstStopRefusedClosing} />,
+    );
     expect(markup).not.toContain('<details');
     expect(markup).toContain('The employee recorded 2 steps as blocked');
     expect(markup).toContain('Step 3 · blocked - No manager answer is in the applied ledger');
@@ -273,13 +312,18 @@ describe('the employee\'s own blocked steps beside the gate\'s reason (SH-4471, 
     const [first, , third] = log1FirstStopRefusedClosing.planStepOutcomes;
     const markup = renderToStaticMarkup(
       <RefusedBlockedSteps
-        refused={{ ...log1FirstStopRefusedClosing, planStepOutcomes: [{ ...first!, status: 'not-verifiable' }, third!] }}
+        refused={{
+          ...log1FirstStopRefusedClosing,
+          planStepOutcomes: [{ ...first!, status: 'not-verifiable' }, third!],
+        }}
       />,
     );
     expect(markup).toContain('The employee recorded 2 steps as blocked or not verifiable');
     expect(markup).toContain('Step 1 · not-verifiable - ');
     const one = renderToStaticMarkup(
-      <RefusedBlockedSteps refused={{ ...log1FirstStopRefusedClosing, planStepOutcomes: [third!] }} />,
+      <RefusedBlockedSteps
+        refused={{ ...log1FirstStopRefusedClosing, planStepOutcomes: [third!] }}
+      />,
     );
     expect(one).toContain('The employee recorded 1 step as blocked');
   });
@@ -292,7 +336,9 @@ describe('the employee\'s own blocked steps beside the gate\'s reason (SH-4471, 
   it('is shown for a refused set with no actions at all, where the disclosure shows nothing', (): void => {
     const empty = { ...log1FirstStopRefusedClosing, actions: [] };
     expect(renderToStaticMarkup(<RefusedClosingDetails refused={empty} />)).toBe('');
-    expect(renderToStaticMarkup(<RefusedBlockedSteps refused={empty} />)).toContain('Step 3 · blocked');
+    expect(renderToStaticMarkup(<RefusedBlockedSteps refused={empty} />)).toContain(
+      'Step 3 · blocked',
+    );
   });
 });
 
@@ -304,9 +350,16 @@ describe('actions an audit withheld', (): void => {
           {
             action: {
               tool: 'http.request',
-              args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: '{"channel":"D0MANAGER","text":"REVOPS-5 audit comment posted with the three checks."}' },
+              args: {
+                surface: 'slack',
+                method: 'POST',
+                path: '/chat.postMessage',
+                headersJson: '{}',
+                body: '{"channel":"D0MANAGER","text":"REVOPS-5 audit comment posted with the three checks."}',
+              },
             },
-            reason: 'asserted a fact the ledger, the documentation and the manager\'s feedback do not carry: action 6 (http.request slack · POST /chat.postMessage) says "REVOPS-5 audit comment posted with the three checks"',
+            reason:
+              'asserted a fact the ledger, the documentation and the manager\'s feedback do not carry: action 6 (http.request slack · POST /chat.postMessage) says "REVOPS-5 audit comment posted with the three checks"',
           },
         ]}
       />,
@@ -318,24 +371,40 @@ describe('actions an audit withheld', (): void => {
     expect(renderToStaticMarkup(<WithheldActionsDetails withheld={undefined} />)).toBe('');
   });
 
-  it('sets writes that wait on the manager\'s answer apart from the evidence check\'s, and says how to answer', (): void => {
+  it("sets writes that wait on the manager's answer apart from the evidence check's, and says how to answer", (): void => {
     const [, , comment, done] = sitting4Log1PhaseOne.actions;
-    const waiting = [comment!, done!].map((action, index) => ({ action, reason: withheldForAnswerReason(index + 2) }));
+    const waiting = [comment!, done!].map((action, index) => ({
+      action,
+      reason: withheldForAnswerReason(index + 2),
+    }));
     const markup = renderToStaticMarkup(<WithheldActionsDetails withheld={waiting} />);
     expect(markup).toContain('Waiting on your answer · 2 actions · never sent');
     expect(markup).not.toContain('evidence check');
     expect(markup).toContain('leaves step 2 to the manager&#x27;s answer');
     expect(markup).toContain('Retry with a note answers it');
     const mixed = renderToStaticMarkup(
-      <WithheldActionsDetails withheld={[...waiting, { action: comment!, reason: 'asserted a fact the ledger does not carry' }]} />,
+      <WithheldActionsDetails
+        withheld={[
+          ...waiting,
+          { action: comment!, reason: 'asserted a fact the ledger does not carry' },
+        ]}
+      />,
     );
     expect(mixed).toContain('Waiting on your answer · 2 actions · never sent');
     expect(mixed).toContain('Withheld by the evidence check · 1 action · never sent');
   });
 
   it('reads a stop with the question open as one the manager answers with Retry', (): void => {
-    const reason = openQuestionStopReason({ question: 'Which template should the notice use?', steps: [2, 3] });
-    expect(failedItemReason({ skipReason: `stopped: ${reason}`, output: { openQuestion: { question: 'q', steps: [2, 3] } } })).toBe(
+    const reason = openQuestionStopReason({
+      question: 'Which template should the notice use?',
+      steps: [2, 3],
+    });
+    expect(
+      failedItemReason({
+        skipReason: `stopped: ${reason}`,
+        output: { openQuestion: { question: 'q', steps: [2, 3] } },
+      }),
+    ).toBe(
       `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${reason}`,
     );
     expect(failedItemReason({ skipReason: `stopped: ${reason}`, output: {} })).toBe(
@@ -347,10 +416,22 @@ describe('actions an audit withheld', (): void => {
     expect(failedItemReason({ skipReason: 'stopped: the read did not land' })).toBe(
       'stopped, nothing landed and nothing to decide: the read did not land',
     );
-    expect(failedItemReason({
-      skipReason: 'stopped: dependent phase omitted the approved ticket state transition without a blocked plan step',
-      output: { refusedClosing: { actions: [], planStepOutcomes: [], draft: '', notes: '', reason: 'r', at: 1 } },
-    })).toBe(
+    expect(
+      failedItemReason({
+        skipReason:
+          'stopped: dependent phase omitted the approved ticket state transition without a blocked plan step',
+        output: {
+          refusedClosing: {
+            actions: [],
+            planStepOutcomes: [],
+            draft: '',
+            notes: '',
+            reason: 'r',
+            at: 1,
+          },
+        },
+      }),
+    ).toBe(
       'stopped at the closing gate, the prerequisites landed and Retry resumes there: dependent phase omitted the approved ticket state transition without a blocked plan step',
     );
   });
@@ -379,7 +460,12 @@ describe('a run with two phases', (): void => {
   const twoPhase = {
     draft: 'Verified the tile and closed REVOPS-7.',
     notes: '',
-    actions: [{ tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{}' } }],
+    actions: [
+      {
+        tool: 'mcp.call' as const,
+        args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{}' },
+      },
+    ],
     applied: [{ tool: 'mcp.call', ok: true, effect: 'save_issue on linear · Done' }],
     initial: {
       applied: [{ tool: 'mcp.call', ok: true, effect: 'browser_snapshot on looker · 74%' }],
@@ -429,7 +515,9 @@ describe('a browser signed in again before a row', (): void => {
         }}
       />,
     );
-    expect(markup).toContain('signed in again first: navigate, fill, click (replays of rows 0 to 2)');
+    expect(markup).toContain(
+      'signed in again first: navigate, fill, click (replays of rows 0 to 2)',
+    );
     expect(markup).toContain(
       'Day0 sent the page restoration calls shown above before this row; this row&#x27;s action was not replayed.',
     );
@@ -438,21 +526,27 @@ describe('a browser signed in again before a row', (): void => {
   it('says when the page was opened from the surface itself because the run never navigated', (): void => {
     const markup = renderToStaticMarkup(
       <SessionRestoreNote
-        restore={{ steps: [step(navigate), step(signIn, 'wi:run:0'), step(clickSignIn, 'wi:run:1')] }}
+        restore={{
+          steps: [step(navigate), step(signIn, 'wi:run:0'), step(clickSignIn, 'wi:run:1')],
+        }}
       />,
     );
     expect(markup).toContain(
-      "signed in again first: navigate, fill, click (the surface&#x27;s own page, then replays of rows 0 to 1)",
+      'signed in again first: navigate, fill, click (the surface&#x27;s own page, then replays of rows 0 to 1)',
     );
   });
 
   it('says where a replay stopped and why', (): void => {
     const markup = renderToStaticMarkup(
       <SessionRestoreNote
-        restore={{ steps: [step(navigate, 'wi:run:0'), step(signIn, 'wi:run:1', 'no grant (looker:write)')] }}
+        restore={{
+          steps: [step(navigate, 'wi:run:0'), step(signIn, 'wi:run:1', 'no grant (looker:write)')],
+        }}
       />,
     );
-    expect(markup).toContain('could not sign in again first: navigate, fill (replays of rows 0 to 1)');
+    expect(markup).toContain(
+      'could not sign in again first: navigate, fill (replays of rows 0 to 1)',
+    );
     expect(markup).toContain('stopped at fill: no grant (looker:write)');
     expect(markup).toContain('this row and the rest on the surface were not sent');
     expect(markup).not.toContain('were sent again');
@@ -471,7 +565,12 @@ describe('a browser signed in again before a row', (): void => {
   });
 
   it('shows the note under the closing row that needed the page, on the item card', (): void => {
-    const landed = (effect: string, key: string) => ({ tool: 'mcp.call', ok: true, effect, idempotencyKey: key });
+    const landed = (effect: string, key: string) => ({
+      tool: 'mcp.call',
+      ok: true,
+      effect,
+      idempotencyKey: key,
+    });
     const row = {
       _id: 'w1',
       _creationTime: 1,
@@ -487,12 +586,18 @@ describe('a browser signed in again before a row', (): void => {
       output: {
         draft: 'Refreshed the tile to 74%.',
         notes: '',
-        initial: { applied: [landed('browser_snapshot on looker · visible figure 68%', 'wi:run:3')] },
+        initial: {
+          applied: [landed('browser_snapshot on looker · visible figure 68%', 'wi:run:3')],
+        },
         applied: [
           {
             ...landed('browser_fill_form on looker · ok', 'wi:run:4'),
             sessionRestore: {
-              steps: [step(navigate, 'wi:run:0'), step(signIn, 'wi:run:1'), step(clickSignIn, 'wi:run:2')],
+              steps: [
+                step(navigate, 'wi:run:0'),
+                step(signIn, 'wi:run:1'),
+                step(clickSignIn, 'wi:run:2'),
+              ],
             },
           },
           landed('browser_click on looker · ok', 'wi:run:5'),
@@ -515,8 +620,12 @@ describe('a browser signed in again before a row', (): void => {
       />,
     );
     expect(markup.match(/signed in again first/g)).toHaveLength(1);
-    expect(markup.indexOf('browser_fill_form on looker')).toBeLessThan(markup.indexOf('signed in again first'));
-    expect(markup.indexOf('signed in again first')).toBeLessThan(markup.indexOf('browser_click on looker'));
+    expect(markup.indexOf('browser_fill_form on looker')).toBeLessThan(
+      markup.indexOf('signed in again first'),
+    );
+    expect(markup.indexOf('signed in again first')).toBeLessThan(
+      markup.indexOf('browser_click on looker'),
+    );
   });
 });
 
@@ -584,11 +693,23 @@ describe('sending a finished item back', (): void => {
     actions: [
       {
         tool: 'http.request' as const,
-        args: { surface: 'slack', method: 'POST', path: 'chat.postMessage', headersJson: '{}', body: '{}' },
+        args: {
+          surface: 'slack',
+          method: 'POST',
+          path: 'chat.postMessage',
+          headersJson: '{}',
+          body: '{}',
+        },
       },
     ],
     applied: [
-      { tool: 'http.request', ok: true, effect: 'sent the manager DM', providerId: 'dm-1', idempotencyKey: 'dm' },
+      {
+        tool: 'http.request',
+        ok: true,
+        effect: 'sent the manager DM',
+        providerId: 'dm-1',
+        idempotencyKey: 'dm',
+      },
     ],
   };
   const item = (state: 'completed' | 'failed'): Doc<'workItems'> =>
@@ -625,7 +746,14 @@ describe('sending a finished item back', (): void => {
     );
 
   it('shows what the plan declares it owes, who declared it, and when the judgement could not be reached', (): void => {
-    const plan = { summary: 'Audit note.', steps: ['Check 1', 'Check 3', 'Check 2', 'Comment', 'Done'], riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' };
+    const plan = {
+      summary: 'Audit note.',
+      steps: ['Check 1', 'Check 3', 'Check 2', 'Comment', 'Done'],
+      riskNotes: '',
+      reversibility: 'r',
+      estimatedMinutes: 1,
+      expectedOutputType: 'ticket-update',
+    };
     const judged = render({
       ...item('completed'),
       plan: {
@@ -638,7 +766,9 @@ describe('sending a finished item back', (): void => {
             { kind: 'write', reads: [], writes: ['linear'] },
             { kind: 'conditional-write', reads: [], writes: ['linear'] },
           ],
-          transition: 'conditional-on-manager', transitionStep: 5, basis: 'judgement',
+          transition: 'conditional-on-manager',
+          transitionStep: 5,
+          basis: 'judgement',
         },
       },
     } as unknown as Doc<'workItems'>);
@@ -651,20 +781,43 @@ describe('sending a finished item back', (): void => {
     const noSurface = { kind: 'report', reads: [], writes: [] };
     const disagreed = render({
       ...item('completed'),
-      plan: { ...plan, obligations: { steps: plan.steps.map(() => noSurface), transition: 'conditional-on-evidence', transitionStep: 5, basis: 'judgement', plannerTransition: 'withheld' } },
+      plan: {
+        ...plan,
+        obligations: {
+          steps: plan.steps.map(() => noSurface),
+          transition: 'conditional-on-evidence',
+          transitionStep: 5,
+          basis: 'judgement',
+          plannerTransition: 'withheld',
+        },
+      },
     } as unknown as Doc<'workItems'>);
     expect(disagreed).toContain('The planner declared the ticket state left where it is');
     expect(disagreed).toContain('held for your decision');
 
     const unchecked = render({
       ...item('completed'),
-      plan: { ...plan, obligations: { steps: [], transition: 'withheld', transitionStep: 5, basis: 'planner', failedOpen: 'provider unavailable' } },
+      plan: {
+        ...plan,
+        obligations: {
+          steps: [],
+          transition: 'withheld',
+          transitionStep: 5,
+          basis: 'planner',
+          failedOpen: 'provider unavailable',
+        },
+      },
     } as unknown as Doc<'workItems'>);
     expect(unchecked).toContain('unchecked');
     expect(unchecked).toContain('could not be reached (provider unavailable)');
 
-    const open = render({ ...item('completed'), plan: { ...plan, obligationsFailedOpen: 'the judgement reply did not satisfy the schema' } } as unknown as Doc<'workItems'>);
-    expect(open).toContain('Obligations not settled: the judgement reply did not satisfy the schema');
+    const open = render({
+      ...item('completed'),
+      plan: { ...plan, obligationsFailedOpen: 'the judgement reply did not satisfy the schema' },
+    } as unknown as Doc<'workItems'>);
+    expect(open).toContain(
+      'Obligations not settled: the judgement reply did not satisfy the schema',
+    );
     expect(open).toContain('verify no read or ticket state change for this plan');
 
     const mock = render({ ...item('completed'), plan } as unknown as Doc<'workItems'>);
@@ -673,44 +826,103 @@ describe('sending a finished item back', (): void => {
   });
 
   it('says a planner and judgement disagreement holds the state change only when the gate holds it (19 Sep run)', (): void => {
-    const base = { summary: 'Close status note.', riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' };
+    const base = {
+      summary: 'Close status note.',
+      riskNotes: '',
+      reversibility: 'r',
+      estimatedMinutes: 1,
+      expectedOutputType: 'ticket-update',
+    };
     const read = { kind: 'read', reads: ['linear'], writes: [] };
     const report = { kind: 'report', reads: [], writes: [] };
     const slackWrite = { kind: 'write', reads: [], writes: ['slack'] };
     const linearWrite = { kind: 'write', reads: [], writes: ['linear'] };
     const linearMove = { kind: 'conditional-write', reads: [], writes: ['linear'] };
     const card = (steps: string[], obligations: Record<string, unknown>): string =>
-      render({ ...item('completed'), plan: { ...base, steps, obligations: { basis: 'judgement', ...obligations } } } as unknown as Doc<'workItems'>);
+      render({
+        ...item('completed'),
+        plan: { ...base, steps, obligations: { basis: 'judgement', ...obligations } },
+      } as unknown as Doc<'workItems'>);
 
     // FIN-1: planner `promised`, judgement `conditional-on-evidence`; the move to Done landed autonomously.
-    const fin1 = card(['Read the step tickets', 'Compose the note', 'Comment on FIN-1', 'Move FIN-1 to Done', 'Answer close questions'], {
-      steps: [read, report, linearWrite, { ...linearMove, reads: ['linear'] }, { kind: 'conditional-write', reads: ['slack'], writes: ['slack'] }],
-      transition: 'conditional-on-evidence', transitionStep: 4, plannerTransition: 'promised',
-    });
+    const fin1 = card(
+      [
+        'Read the step tickets',
+        'Compose the note',
+        'Comment on FIN-1',
+        'Move FIN-1 to Done',
+        'Answer close questions',
+      ],
+      {
+        steps: [
+          read,
+          report,
+          linearWrite,
+          { ...linearMove, reads: ['linear'] },
+          { kind: 'conditional-write', reads: ['slack'], writes: ['slack'] },
+        ],
+        transition: 'conditional-on-evidence',
+        transitionStep: 4,
+        plannerTransition: 'promised',
+      },
+    );
     expect(fin1).toContain('The planner declared the ticket state moved by the plan');
-    expect(fin1).toContain('the judgement read it as moved when what the run reads shows the condition holds');
-    expect(fin1).toContain('Neither reading leaves the state change to you, so it is not held on that account');
-    expect(fin1).toContain('a state change it makes goes through the autonomy switch like any other write');
+    expect(fin1).toContain(
+      'the judgement read it as moved when what the run reads shows the condition holds',
+    );
+    expect(fin1).toContain(
+      'Neither reading leaves the state change to you, so it is not held on that account',
+    );
+    expect(fin1).toContain(
+      'a state change it makes goes through the autonomy switch like any other write',
+    );
     expect(fin1).not.toContain('held for you');
 
     // The `#finance-close` ask: the planner left the move to the manager, the judgement did not; the gate held it.
-    const ask = card(['Read the close tickets', 'Draft to the manager', 'Reply in the thread', 'Comment on the status ticket', 'Move it to Done'], {
-      steps: [read, slackWrite, slackWrite, linearWrite, linearMove],
-      transition: 'conditional-on-evidence', transitionStep: 5, plannerTransition: 'conditional-on-manager',
-    });
-    expect(ask).toContain('The planner declared the ticket state moved only on your approval, held for you');
-    expect(ask).toContain('One of the two readings leaves the state change to you, so a state change the run makes is held for your decision');
+    const ask = card(
+      [
+        'Read the close tickets',
+        'Draft to the manager',
+        'Reply in the thread',
+        'Comment on the status ticket',
+        'Move it to Done',
+      ],
+      {
+        steps: [read, slackWrite, slackWrite, linearWrite, linearMove],
+        transition: 'conditional-on-evidence',
+        transitionStep: 5,
+        plannerTransition: 'conditional-on-manager',
+      },
+    );
+    expect(ask).toContain(
+      'The planner declared the ticket state moved only on your approval, held for you',
+    );
+    expect(ask).toContain(
+      'One of the two readings leaves the state change to you, so a state change the run makes is held for your decision',
+    );
 
     // LOG-2: the judgement left the move to the manager, the planner did not; the gate held it.
-    const log2 = card(['Draft the notice', 'Draft to the manager', 'Comment on LOG-2', 'Move LOG-2 to Done'], {
-      steps: [report, slackWrite, linearMove, linearMove],
-      transition: 'conditional-on-manager', transitionStep: 4, plannerTransition: 'promised',
-    });
+    const log2 = card(
+      ['Draft the notice', 'Draft to the manager', 'Comment on LOG-2', 'Move LOG-2 to Done'],
+      {
+        steps: [report, slackWrite, linearMove, linearMove],
+        transition: 'conditional-on-manager',
+        transitionStep: 4,
+        plannerTransition: 'promised',
+      },
+    );
     expect(log2).toContain('a retry note from you that names the state is that decision');
-    expect(log2).toContain('One of the two readings leaves the state change to you, so a state change the run makes is held for your decision');
+    expect(log2).toContain(
+      'One of the two readings leaves the state change to you, so a state change the run makes is held for your decision',
+    );
 
     // Obligations that no longer line up with the steps hold nothing at the gate, so the card claims no hold.
-    const unusable = card(['One step'], { steps: [], transition: 'conditional-on-evidence', transitionStep: 1, plannerTransition: 'withheld' });
+    const unusable = card(['One step'], {
+      steps: [],
+      transition: 'conditional-on-evidence',
+      transitionStep: 1,
+      plannerTransition: 'withheld',
+    });
     expect(unusable).not.toContain('held for your decision');
     expect(unusable).toContain('no longer line up with the plan');
   });
@@ -718,8 +930,17 @@ describe('sending a finished item back', (): void => {
   it('shows what the manager answered at approval once the plan is running', (): void => {
     const row = {
       ...item('completed'),
-      plan: { summary: 'Refresh the tile.', steps: ['Refresh'], riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' },
-      managerAnswers: [{ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.', answeredAt: 2 }],
+      plan: {
+        summary: 'Refresh the tile.',
+        steps: ['Refresh'],
+        riskNotes: '',
+        reversibility: 'r',
+        estimatedMinutes: 1,
+        expectedOutputType: 'ticket-update',
+      },
+      managerAnswers: [
+        { question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.', answeredAt: 2 },
+      ],
     } as unknown as Doc<'workItems'>;
     const markup = render(row);
     expect(markup).toContain('Answered at approval');
@@ -737,7 +958,10 @@ describe('sending a finished item back', (): void => {
         applied: [
           {
             ...landedDm.applied[0]!,
-            repair: { reason: 'unknown argument comment for save_comment on linear', toolArgsJson: '{"comment":"x"}' },
+            repair: {
+              reason: 'unknown argument comment for save_comment on linear',
+              toolArgsJson: '{"comment":"x"}',
+            },
           },
         ],
       },
@@ -751,9 +975,19 @@ describe('sending a finished item back', (): void => {
   it('distinguishes degraded provider evidence in both successful and failed runs', () => {
     for (const state of ['completed', 'failed'] as const) {
       const row = item(state);
-      const markup = render({ ...row, output: { ...landedDm, applied: [{
-        ...landedDm.applied[0], ok: state === 'completed', redaction: 'structural-only',
-      }] } });
+      const markup = render({
+        ...row,
+        output: {
+          ...landedDm,
+          applied: [
+            {
+              ...landedDm.applied[0],
+              ok: state === 'completed',
+              redaction: 'structural-only',
+            },
+          ],
+        },
+      });
       expect(markup).toContain('Limited redaction');
       expect(markup).toContain('may still contain secrets or personal data');
       expect(render(row)).not.toContain('Limited redaction');
@@ -765,7 +999,9 @@ describe('sending a finished item back', (): void => {
     expect(markup).toContain('note for the retry');
     expect(markup).toContain('Retry with a note sends this finished work back');
     expect(markup).not.toContain('Provider reconciliation required');
-    expect(markup).not.toContain('Retry remains disabled until provider reconciliation is recorded');
+    expect(markup).not.toContain(
+      'Retry remains disabled until provider reconciliation is recorded',
+    );
   });
 
   it('still asks a failed run with a landed write to reconcile before Retry', (): void => {
@@ -869,11 +1105,14 @@ describe('retrying a skipped item', (): void => {
       ...skipped('unused'),
       state: 'failed',
       verdict: undefined,
-      skipReason: 'stopped: 1 of 1 actions did not change the work environment: mcp.call (snapshot timed out)',
+      skipReason:
+        'stopped: 1 of 1 actions did not change the work environment: mcp.call (snapshot timed out)',
     } as unknown as Doc<'workItems'>);
     expect(markup).toContain('>stopped<');
     expect(markup).not.toContain('>failed<');
-    expect(markup).toContain('stopped, nothing landed and nothing to decide: 1 of 1 actions did not change');
+    expect(markup).toContain(
+      'stopped, nothing landed and nothing to decide: 1 of 1 actions did not change',
+    );
     expect(markup).toContain('Retry');
   });
 
@@ -895,7 +1134,7 @@ describe('retrying a skipped item', (): void => {
     expect(markup).not.toContain('nothing landed and nothing to decide');
   });
 
-  it('offers Retry on an out-of-scope skip as the manager\'s scope decision', (): void => {
+  it("offers Retry on an out-of-scope skip as the manager's scope decision", (): void => {
     const markup = render(skipped('out-of-scope: no charter or current documented-system overlap'));
     expect(markup).toContain('>Take it anyway<');
     expect(markup).toContain('Take it anyway re-evaluates this item as in scope, on your decision');
@@ -923,7 +1162,9 @@ describe('retrying a skipped item', (): void => {
         },
       },
     } as unknown as Doc<'workItems'>);
-    expect(markup).toMatch(/another employee holds this: <a [^>]*href="\/agent\/a2"[^>]*>Priya<\/a>/);
+    expect(markup).toMatch(
+      /another employee holds this: <a [^>]*href="\/agent\/a2"[^>]*>Priya<\/a>/,
+    );
     expect(markup).not.toContain('claimed-by-colleague:');
     expect(markup).not.toContain('>Retry<');
   });
@@ -943,7 +1184,12 @@ describe('phone approval delivery', (): void => {
       externalId: 'REVOPS-7',
       observedAt: 1,
       contentRefs: [],
-      plan: { summary: 'Post it.', steps: ['Post.'], estimatedMinutes: 5, reversibility: 'reversible' },
+      plan: {
+        summary: 'Post it.',
+        steps: ['Post.'],
+        estimatedMinutes: 5,
+        reversibility: 'reversible',
+      },
       decision: {
         id: 'ab3xyz',
         kind: 'plan',
@@ -975,7 +1221,13 @@ describe('phone approval delivery', (): void => {
     const stale = render(parked({ requestedAt: Date.now() - DECISION_REQUEST_RECOVERY_MS - 1 }));
     expect(stale).toContain('request not delivered');
     expect(stale).toContain('Resend');
-    const failed = render(parked({ requestedAt: Date.now(), requestFailedAt: Date.now(), requestFailure: 'no grant (boss:message)' }));
+    const failed = render(
+      parked({
+        requestedAt: Date.now(),
+        requestFailedAt: Date.now(),
+        requestFailure: 'no grant (boss:message)',
+      }),
+    );
     expect(failed).toContain('request not delivered');
     expect(failed).toContain('no grant (boss:message)');
     expect(failed).toContain('Resend');
@@ -1011,7 +1263,7 @@ describe('charter confirm-or-strike list', (): void => {
     },
   ];
 
-  it('shows each rule in the manager\'s words beside the clause phrase, with Strike and Restore before approval', (): void => {
+  it("shows each rule in the manager's words beside the clause phrase, with Strike and Restore before approval", (): void => {
     const markup = renderToStaticMarkup(
       <ConstraintList
         constraints={constraints}
@@ -1031,7 +1283,9 @@ describe('charter confirm-or-strike list', (): void => {
   });
 
   it('keeps the list as a record after approval; Strike amends, nothing restores', (): void => {
-    const record = renderToStaticMarkup(<ConstraintList constraints={constraints} approved={true} />);
+    const record = renderToStaticMarkup(
+      <ConstraintList constraints={constraints} approved={true} />,
+    );
     expect(record).toContain('Rules this charter enforces');
     expect(record).toContain('struck');
     expect(record).not.toContain('>Strike<');
@@ -1057,7 +1311,8 @@ describe('charter confirm-or-strike list', (): void => {
       createdAt: 1,
       body: {
         whyThisHire: 'Close week.',
-        proposedFunction: 'Own routine revenue operations work from owned, prioritized Linear tickets.',
+        proposedFunction:
+          'Own routine revenue operations work from owned, prioritized Linear tickets.',
         shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
         proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
         namedCollaborators: [],
@@ -1087,14 +1342,18 @@ describe('charter confirm-or-strike list', (): void => {
           index === 0
             ? {
                 removedClauses: ['Handle owned, prioritized Linear tickets.'],
-                rewrittenClauses: [{ from: 'Own the close checklist.', to: 'Run the close checklist.' }],
+                rewrittenClauses: [
+                  { from: 'Own the close checklist.', to: 'Run the close checklist.' },
+                ],
               }
             : { removedClauses: [], rewrittenClauses: [] }
         }
       />,
     );
     expect(markup).toContain('strikes the clause: “Handle owned, prioritized Linear tickets.”');
-    expect(markup).toContain('rewrites the clause: “Own the close checklist.” to “Run the close checklist.”');
+    expect(markup).toContain(
+      'rewrites the clause: “Own the close checklist.” to “Run the close checklist.”',
+    );
     expect(markup).not.toContain('disabled=""');
 
     const refused = renderToStaticMarkup(
@@ -1102,11 +1361,19 @@ describe('charter confirm-or-strike list', (): void => {
         constraints={constraints}
         approved={false}
         onStrike={() => undefined}
-        previewStrike={() => ({ removedClauses: [], rewrittenClauses: [], refusal: 'strike refused: the only clause that bounds Linear' })}
+        previewStrike={() => ({
+          removedClauses: [],
+          rewrittenClauses: [],
+          refusal: 'strike refused: the only clause that bounds Linear',
+        })}
       />,
     );
-    expect(refused).toContain('cannot be struck: strike refused: the only clause that bounds Linear');
-    expect(refused).toMatch(/<button[^>]*disabled=""[^>]*title="strike refused: the only clause that bounds Linear"[^>]*>Strike<\/button>/);
+    expect(refused).toContain(
+      'cannot be struck: strike refused: the only clause that bounds Linear',
+    );
+    expect(refused).toMatch(
+      /<button[^>]*disabled=""[^>]*title="strike refused: the only clause that bounds Linear"[^>]*>Strike<\/button>/,
+    );
 
     const plain = renderToStaticMarkup(
       <ConstraintList
@@ -1154,7 +1421,9 @@ describe('the charter card and the strikes approval can honour', (): void => {
 
   it('refuses up front the strike that would drop the only clause bounding a system', (): void => {
     const body = strikeRefusalBody(false);
-    body.proposedBoundaries.willNotDo = ['Take ownership of Northstar CRM-dependent work that Brain must handle.'];
+    body.proposedBoundaries.willNotDo = [
+      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+    ];
     body.proposedBoundaries.escalationTriggers = [];
     const markup = renderToStaticMarkup(<CharterCard charter={draft(body)} />);
     expect(markup).toContain(
@@ -1165,7 +1434,9 @@ describe('the charter card and the strikes approval can honour', (): void => {
 
   it('enables exactly the strikes whose toggled charter approval would apply', (): void => {
     const bounded = strikeRefusalBody(false);
-    bounded.proposedBoundaries.willNotDo = ['Take ownership of Northstar CRM-dependent work that Brain must handle.'];
+    bounded.proposedBoundaries.willNotDo = [
+      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+    ];
     bounded.proposedBoundaries.escalationTriggers = [];
     for (const body of [strikeRefusalBody(false), bounded]) {
       const markup = renderToStaticMarkup(<CharterCard charter={draft(body)} />);
@@ -1227,11 +1498,17 @@ describe("the synthesiser's notes on the charter card", (): void => {
   it('files a note an older charter recorded as a question under the notes, not the questions', (): void => {
     const legacy = {
       ...charter,
-      body: { ...(charter.body as object), openQuestions: [...RECORDED_QUESTIONS_2026_09_16], synthesisNotes: undefined },
+      body: {
+        ...(charter.body as object),
+        openQuestions: [...RECORDED_QUESTIONS_2026_09_16],
+        synthesisNotes: undefined,
+      },
     } as unknown as Doc<'charters'>;
     const markup = renderToStaticMarkup(<CharterCard charter={legacy} />);
     expect(markup.split('>Answer<').length - 1).toBe(OPEN_QUESTIONS_2026_09_16.length);
-    expect(markup.slice(markup.indexOf('Notes from drafting'))).toContain('Evidence check: 1 clause');
+    expect(markup.slice(markup.indexOf('Notes from drafting'))).toContain(
+      'Evidence check: 1 clause',
+    );
   });
 });
 
@@ -1260,7 +1537,9 @@ describe('amending an approved charter from the card', (): void => {
     namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'Work is in Linear.' }],
     priorityReading: [],
     openQuestions: ['Whether Northstar CRM access will be granted.'],
-    answeredQuestions: [{ question: 'Who owns the Looker tile.', answer: 'Priya.', answeredAt: 'x' }],
+    answeredQuestions: [
+      { question: 'Who owns the Looker tile.', answer: 'Priya.', answeredAt: 'x' },
+    ],
   };
 
   it('offers every typed change: the function, each clause list, the open questions, a rule and the systems', (): void => {
@@ -1404,12 +1683,22 @@ describe('what Retry does to an unregistered skill', (): void => {
       verificationLog: `verification in the local sandbox failed - smoke test exited 1. stderr: ${carets} AssertionError`,
     } as unknown as Doc<'skills'>;
     const markup = panel([traceback]);
-    expect(markup).toMatch(/<div class="flex-1 min-w-0"><div class="font-medium[^"]*">refresh-the-tile</);
-    expect(markup).toMatch(new RegExp(`<div class="[^"]*\\bbreak-words\\b[^"]*">verification in the local sandbox failed[^<]*\\^{56}`));
+    expect(markup).toMatch(
+      /<div class="flex-1 min-w-0"><div class="font-medium[^"]*">refresh-the-tile</,
+    );
+    expect(markup).toMatch(
+      new RegExp(
+        `<div class="[^"]*\\bbreak-words\\b[^"]*">verification in the local sandbox failed[^<]*\\^{56}`,
+      ),
+    );
   });
 
   it('says Revise is the one that always authors again', (): void => {
-    const registered = { ...base, state: 'registered', body: '# Refresh' } as unknown as Doc<'skills'>;
+    const registered = {
+      ...base,
+      state: 'registered',
+      body: '# Refresh',
+    } as unknown as Doc<'skills'>;
     const markup = renderToStaticMarkup(
       <RegisteredSkillsPanel
         skills={[registered]}
@@ -1427,27 +1716,66 @@ describe('what Retry does to an unregistered skill', (): void => {
   // them the author never declared.
   describe('the inputs a skill declares, and which of them the system declared for its author', (): void => {
     const authored = declareUndeclaredInputs(
-      ['# Close', '', '## Inputs', '', '- `<record-id>`: the ticket.', '', '## Procedure', '', 'Set `<record-id>` to `<closing-state>`.'].join('\n'),
+      [
+        '# Close',
+        '',
+        '## Inputs',
+        '',
+        '- `<record-id>`: the ticket.',
+        '',
+        '## Procedure',
+        '',
+        'Set `<record-id>` to `<closing-state>`.',
+      ].join('\n'),
     ).body;
 
     it('lists them on a registered skill and marks the one Day0 added, saying so', (): void => {
-      const registered = { ...base, state: 'registered', body: authored } as unknown as Doc<'skills'>;
+      const registered = {
+        ...base,
+        state: 'registered',
+        body: authored,
+      } as unknown as Doc<'skills'>;
       const markup = renderToStaticMarkup(
-        <RegisteredSkillsPanel skills={[registered]} unregistered={[]} authoringFailure={null} onAuthoringAttempt={noop} />,
+        <RegisteredSkillsPanel
+          skills={[registered]}
+          unregistered={[]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+        />,
       );
       expect(markup).toMatch(/>inputs<\/span>[^&]*<code[^>]*>&lt;record-id&gt;<\/code>/);
       expect(markup).toMatch(/<code[^>]*>&lt;closing-state&gt;<\/code> \(added by Day0\)/);
       // A placeholder never wraps inside its own name.
-      expect(markup).toMatch(/<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;record-id&gt;<\/code>/);
-      expect(markup).toContain('The author used the input marked &quot;added by Day0&quot; without declaring it');
-      expect(markup).toContain('the executor reads it from the candidate or its runbook at run time');
+      expect(markup).toMatch(
+        /<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;record-id&gt;<\/code>/,
+      );
+      expect(markup).toContain(
+        'The author used the input marked &quot;added by Day0&quot; without declaring it',
+      );
+      expect(markup).toContain(
+        'the executor reads it from the candidate or its runbook at run time',
+      );
     });
 
     it('says nothing was added when the author declared everything, and nothing at all for a builtin', (): void => {
-      const complete = { ...base, state: 'registered', body: '# Close\n\n## Inputs\n\n- `<record-id>`: the ticket.\n' } as unknown as Doc<'skills'>;
-      const builtin = { ...complete, _id: 'skill-3', sourceType: 'builtin', body: '# See docs' } as unknown as Doc<'skills'>;
+      const complete = {
+        ...base,
+        state: 'registered',
+        body: '# Close\n\n## Inputs\n\n- `<record-id>`: the ticket.\n',
+      } as unknown as Doc<'skills'>;
+      const builtin = {
+        ...complete,
+        _id: 'skill-3',
+        sourceType: 'builtin',
+        body: '# See docs',
+      } as unknown as Doc<'skills'>;
       const markup = renderToStaticMarkup(
-        <RegisteredSkillsPanel skills={[complete, builtin]} unregistered={[]} authoringFailure={null} onAuthoringAttempt={noop} />,
+        <RegisteredSkillsPanel
+          skills={[complete, builtin]}
+          unregistered={[]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+        />,
       );
       expect(markup).toContain('&lt;record-id&gt;');
       expect(markup).not.toContain('added by Day0');
@@ -1464,8 +1792,22 @@ describe('what Retry does to an unregistered skill', (): void => {
   // `<reply-surface>` was taught still runs, because the executor binds the
   // input for it in real mode; the inputs line says so.
   describe('the reply surface on the inputs line', (): void => {
-    const before = ['# Close', '', '## Inputs', '', '- `<record-id>`: the ticket.', '- `<reply-channel>` and `<reply-thread>`: the Reply target line.', '', '## Procedure', '', 'Comment on `<record-id>`, then reply to `<reply-channel>` in `<reply-thread>`.'].join('\n');
-    const taught = before.replace('## Procedure', '- `<reply-surface>`: the chat surface.\n\n## Procedure');
+    const before = [
+      '# Close',
+      '',
+      '## Inputs',
+      '',
+      '- `<record-id>`: the ticket.',
+      '- `<reply-channel>` and `<reply-thread>`: the Reply target line.',
+      '',
+      '## Procedure',
+      '',
+      'Comment on `<record-id>`, then reply to `<reply-channel>` in `<reply-thread>`.',
+    ].join('\n');
+    const taught = before.replace(
+      '## Procedure',
+      '- `<reply-surface>`: the chat surface.\n\n## Procedure',
+    );
     const render = (body: string, surfaceMode?: 'mock' | 'real'): string =>
       renderToStaticMarkup(
         <RegisteredSkillsPanel
@@ -1479,7 +1821,9 @@ describe('what Retry does to an unregistered skill', (): void => {
 
     it('lists the input Day0 binds for a skill registered before it was taught, in real mode', (): void => {
       const markup = render(before, 'real');
-      expect(markup).toMatch(/<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;reply-surface&gt;<\/code> \(bound by Day0\)/);
+      expect(markup).toMatch(
+        /<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;reply-surface&gt;<\/code> \(bound by Day0\)/,
+      );
       expect(markup).toContain(
         'This skill was registered before Day0 taught the input marked &quot;bound by Day0&quot;: the executor binds it from the Reply target, so the reply goes to the chat surface the ask came from.',
       );
@@ -1488,7 +1832,13 @@ describe('what Retry does to an unregistered skill', (): void => {
     it('says nothing of the kind on a failed attempt, which was never registered and is authored again on Retry', (): void => {
       const failed = { ...refused, body: '', refusedBody: before } as unknown as Doc<'skills'>;
       const markup = renderToStaticMarkup(
-        <RegisteredSkillsPanel skills={[]} unregistered={[failed]} authoringFailure={null} onAuthoringAttempt={noop} surfaceMode="real" />,
+        <RegisteredSkillsPanel
+          skills={[]}
+          unregistered={[failed]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+          surfaceMode="real"
+        />,
       );
       expect(markup).toContain('&lt;reply-channel&gt;');
       expect(markup).not.toContain('bound by Day0');
@@ -1518,14 +1868,26 @@ describe('what Retry does to an unregistered skill', (): void => {
       const block = /<div class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(markup);
       expect(block).not.toBeNull();
       const classes = block![1]!.split(' ');
-      expect(classes).toEqual(expect.arrayContaining(['whitespace-pre-wrap', 'break-words', 'max-h-40', 'overflow-y-auto', 'font-mono']));
-      expect(block![2]).toContain('failed - smoke test exited 1\n\nstderr:\nsmoke harness: run() raised KeyError on case 2\n  File');
+      expect(classes).toEqual(
+        expect.arrayContaining([
+          'whitespace-pre-wrap',
+          'break-words',
+          'max-h-40',
+          'overflow-y-auto',
+          'font-mono',
+        ]),
+      );
+      expect(block![2]).toContain(
+        'failed - smoke test exited 1\n\nstderr:\nsmoke harness: run() raised KeyError on case 2\n  File',
+      );
     });
 
     it('leaves a one-line reason as the prose it was', (): void => {
       const markup = panel([refused]);
       expect(markup).not.toContain('data-skill-log="multiline"');
-      expect(markup).toMatch(/<div class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/);
+      expect(markup).toMatch(
+        /<div class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/,
+      );
     });
   });
 });
@@ -1688,11 +2050,14 @@ describe('what an outage leaves on the card (P7-18)', (): void => {
       }),
     ).toBe('model call · draft · failed after 5 attempts (HTTP 503)');
     expect(
-      eventLabel({ type: 'work.model-call', payload: { stage: 'evaluation', outcome: 'ok', attempts: 1 } }),
+      eventLabel({
+        type: 'work.model-call',
+        payload: { stage: 'evaluation', outcome: 'ok', attempts: 1 },
+      }),
     ).toBe('model call · evaluation · ok');
-    expect(eventLabel({ type: 'work.scope-judgement-unavailable', payload: { cause: 'timeout' } })).toBe(
-      'scope judgement unavailable (timeout) · the item waits and is judged again',
-    );
+    expect(
+      eventLabel({ type: 'work.scope-judgement-unavailable', payload: { cause: 'timeout' } }),
+    ).toBe('scope judgement unavailable (timeout) · the item waits and is judged again');
     expect(eventLabel({ type: 'work.draft-resumed', payload: { attempt: 2 } })).toBe(
       'plan draft restarted after it died (restart 2)',
     );
@@ -1746,7 +2111,12 @@ describe('what an outage leaves on the card (P7-18)', (): void => {
 describe('dashboard decisions on the supervision card (P6-9)', (): void => {
   it('counts decisions made on the dashboard when nothing was asked on a chat surface', (): void => {
     const metrics = {
-      charter: { timeToFirstDraftedMs: 1, timeToFirstApprovedMs: 2, revisions: 0, requestChanges: 0 },
+      charter: {
+        timeToFirstDraftedMs: 1,
+        timeToFirstApprovedMs: 2,
+        revisions: 0,
+        requestChanges: 0,
+      },
       decisions: {
         requested: 0,
         approved: 2,
@@ -1813,12 +2183,17 @@ describe('the charter card carries what step 4 stored (U18 carried members)', ()
     expect(markup).toContain('Finance ops - never touching invoices');
   });
 
-  it('says a rule no clause carries is not verified, and marks derived wording as the charter\'s', (): void => {
+  it("says a rule no clause carries is not verified, and marks derived wording as the charter's", (): void => {
     const markup = renderToStaticMarkup(
       <ConstraintList
         approved={true}
         constraints={[
-          { kind: 'candidate-property', quote: 'Only owned tickets.', wording: [], origin: 'synthesis' },
+          {
+            kind: 'candidate-property',
+            quote: 'Only owned tickets.',
+            wording: [],
+            origin: 'synthesis',
+          },
           {
             kind: 'system-boundary',
             quote: 'Post to public Slack channels.',
@@ -1828,7 +2203,9 @@ describe('the charter card carries what step 4 stored (U18 carried members)', ()
         ]}
       />,
     );
-    expect(markup).toContain('not verified: no clause carries these words, so striking it changes nothing');
+    expect(markup).toContain(
+      'not verified: no clause carries these words, so striking it changes nothing',
+    );
     expect(markup).not.toContain('no clause carries it<');
     expect(markup).toContain('the charter&#x27;s wording, not a sentence of yours');
     expect(markup).not.toContain('&ldquo;Post to public Slack channels.&rdquo;');
