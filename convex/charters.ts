@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   mutation,
   query,
@@ -452,7 +452,13 @@ async function scheduleReevaluation(
   });
 }
 
-/** Amend the owner's approved charter from the dashboard. */
+/**
+ * Amend the owner's approved charter from the dashboard.
+ *
+ * Public, owner-guarded. A refused change (an edit that removes a boundary a
+ * confirmed rule stands on, a change that changes nothing, a draft) is thrown
+ * as a `ConvexError` whose data is the refusal, so the card can show it.
+ */
 export const amend = mutation({
   args: {
     agentId: v.id('agents'),
@@ -461,13 +467,20 @@ export const amend = mutation({
   },
   handler: async (ctx, args): Promise<{ charterId: Id<'charters'>; version: string }> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const result = await amendCharterInTransaction(ctx, {
-      agentId: args.agentId,
-      changes: args.changes,
-      via: 'dashboard',
-      reason: args.reason,
-    });
-    return { charterId: result.charterId, version: result.version };
+    try {
+      const result = await amendCharterInTransaction(ctx, {
+        agentId: args.agentId,
+        changes: args.changes,
+        via: 'dashboard',
+        reason: args.reason,
+      });
+      return { charterId: result.charterId, version: result.version };
+    } catch (error: unknown) {
+      // A refused change is the card's to show; in production the backend
+      // strips every other error's text before it reaches the page (6.3).
+      if (error instanceof ConvexError) throw error;
+      throw new ConvexError(error instanceof Error ? error.message : String(error));
+    }
   },
 });
 

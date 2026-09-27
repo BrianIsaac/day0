@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
+import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import { clipRoleLine } from '../../convex/agents';
@@ -780,3 +781,21 @@ describe('approval seeds the work on the server (P5-6, P9-10)', (): void => {
   });
 });
 
+describe('an amendment refusal reaches the card (step 4, 6.3)', (): void => {
+  it('throws a refused change as a ConvexError whose data is the refusal', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const refusal = await owner
+      .mutation(api.charters.amend, {
+        agentId,
+        changes: [{ kind: 'edit-function', text: runThroughBody().proposedFunction }],
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(refusal).toBeInstanceOf(ConvexError);
+    expect((refusal as ConvexError<string>).data).toMatch(/changes nothing/);
+  });
+});
