@@ -1056,6 +1056,9 @@ export function executorCharterLines(charter: Charter, mode: SurfaceMode): strin
   ];
 }
 
+/** The shortest stretch of a clause that names it, so a quoted fragment such as "customer" does not. */
+const CLAUSE_STRETCH_CHARS = 24;
+
 /** Clause text compared as the manager would read it: case, spacing and a closing stop aside. */
 function comparableClause(text: string): string {
   return text
@@ -1086,9 +1089,6 @@ export function charterClauseOf(charter: Charter, quote: string): CharterClauseR
       : undefined);
   return found ? { ...found, charterVersion: charter.version } : undefined;
 }
-
-/** The shortest stretch of a clause that names it, so a quoted fragment such as "customer" does not. */
-const CLAUSE_STRETCH_CHARS = 24;
 
 /**
  * The prompt lines that put the manager's answers at approval in front of the run.
