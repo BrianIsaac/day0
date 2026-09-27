@@ -8,6 +8,7 @@ import {
 import Link from 'next/link';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
+import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
@@ -43,6 +44,7 @@ import {
   HELD_WHILE_SUPERVISED_NOTE,
   SUPERVISED_LABEL,
 } from '../../../src/work/autonomy';
+import { isManagerLookupFailure } from '../../../src/surfaces/manager-lookup';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
@@ -213,7 +215,15 @@ export function AgentDashboard({ agentId }: Props) {
 
   return (
     <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
-      <DashboardHeader agent={agent} charter={charter ?? null} />
+      <DashboardHeader
+        agent={agent}
+        charter={charter ?? null}
+        managerLookupFailure={
+          (surfaceRows ?? []).find(
+            (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
+          )?.reason
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 space-y-4">
@@ -477,15 +487,130 @@ export function NotificationModeControl({
   );
 }
 
+/**
+ * Who the agent reports to, and the control that changes it (Q6).
+ *
+ * The address is the one the chat surface looks up to find the manager's DM,
+ * so a manager who left, or whose account Slack no longer finds, is replaced
+ * here rather than by a reset. When a chat surface failed on that lookup the
+ * line says so, because the card beside it would otherwise blame the credential.
+ */
+export function ManagerLine({
+  bossEmail,
+  lookupFailure,
+  onChange,
+}: {
+  bossEmail: string;
+  /** The stored reason of a chat surface whose probe could not find the manager. */
+  lookupFailure?: string;
+  onChange: (bossEmail: string) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(bossEmail);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = (): void => {
+    setBusy(true);
+    setError(null);
+    onChange(draft)
+      .then(() => setEditing(false))
+      .catch((err: unknown) =>
+        setError(
+          err instanceof ConvexError
+            ? String(err.data)
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        ),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div>
+      {editing ? (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+        >
+          <label className="text-2xl font-semibold tracking-tight" htmlFor="manager-email">
+            Agent reporting to
+          </label>
+          <input
+            id="manager-email"
+            type="email"
+            value={draft}
+            disabled={busy}
+            onChange={(event) => setDraft(event.target.value)}
+            className="font-mono text-sm px-2 py-1 rounded border border-[var(--color-border)] bg-transparent"
+          />
+          <button
+            type="submit"
+            disabled={busy || draft.trim() === ''}
+            className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-50"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setEditing(false);
+              setDraft(bossEmail);
+              setError(null);
+            }}
+            className="text-xs px-2 py-1 rounded border border-[var(--color-border)]"
+          >
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Agent reporting to <span className="font-mono text-[var(--color-accent)]">{bossEmail}</span>{' '}
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(bossEmail);
+              setEditing(true);
+            }}
+            className="align-middle text-xs font-normal px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-muted)]"
+          >
+            Change manager
+          </button>
+        </h1>
+      )}
+      {editing ? (
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
+          Decisions waiting in the previous manager&apos;s DM are sent again to the new one once
+          the chat surface finds them.
+        </p>
+      ) : null}
+      {lookupFailure && !editing ? (
+        <p className="mt-1 text-xs text-[var(--color-warn)]">
+          The chat surface could not find this manager: {lookupFailure.replace(/\.$/, '')}. The
+          credential still works; change the manager to someone the workspace knows.
+        </p>
+      ) : null}
+      {error ? <p className="mt-1 text-xs text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 export function DashboardHeader({
   agent,
   charter,
+  managerLookupFailure,
 }: {
   agent: Doc<'agents'>;
   /** What the page is showing, which outranks the row when the two disagree. */
   charter: Doc<'charters'> | null;
+  /** A chat surface's failure reason when its probe could not find the manager. */
+  managerLookupFailure?: string;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
+  const setBossEmail = useMutation(api.agents.setBossEmail);
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
@@ -515,9 +640,11 @@ export function DashboardHeader({
           <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1">
             Day0
           </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Agent reporting to <span className="font-mono text-[var(--color-accent)]">{agent.bossEmail}</span>
-          </h1>
+          <ManagerLine
+            bossEmail={agent.bossEmail}
+            lookupFailure={managerLookupFailure}
+            onChange={(bossEmail) => setBossEmail({ agentId: agent._id, bossEmail })}
+          />
         </div>
         <div className="flex items-center gap-2">
           <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">

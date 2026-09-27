@@ -16,6 +16,7 @@ import {
   ConstraintList,
   DashboardHeader,
   DraftDetails,
+  ManagerLine,
   PendingActions,
   PlanApprovalForm,
   PlanExecutionLedger,
@@ -794,6 +795,33 @@ describe('header state pill', (): void => {
     expect(markup).toContain('Active · Supervised');
     expect(markup).not.toContain('cold-start');
     expect(markup).not.toContain('posture');
+  });
+});
+
+describe('the manager line', (): void => {
+  it('names the manager and offers the change on the header', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine bossEmail="boss@day0.local" onChange={async () => undefined} />,
+    );
+    expect(markup).toContain('Agent reporting to');
+    expect(markup).toContain('boss@day0.local');
+    expect(markup).toContain('Change manager');
+    expect(markup).not.toContain('could not find this manager');
+  });
+
+  it('says a failed manager lookup is the manager, not the credential', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine
+        bossEmail="left@day0.local"
+        lookupFailure="the manager email left@day0.local is not a member of this Slack workspace (users_not_found)."
+        onChange={async () => undefined}
+      />,
+    );
+    expect(markup).toContain(
+      'could not find this manager: the manager email left@day0.local is not a member of this Slack workspace (users_not_found). The',
+    );
+    expect(markup).toContain('credential still works; change the manager');
+    expect(markup).not.toContain('..');
   });
 });
 
