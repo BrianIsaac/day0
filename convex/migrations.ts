@@ -34,6 +34,7 @@ import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
+import { mirroredDocSlug } from '../src/docs/types';
 import { deploymentZone } from '../src/lib/zone';
 
 /**
@@ -52,6 +53,7 @@ export const MIGRATION_NAMES = [
   'surfaces-approved-tools',
   'surfaces-access-set-by',
   'agents-avatar-digest',
+  'mirrors-rekey',
 ] as const;
 
 /** One migration's name. */
@@ -115,6 +117,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'rewrites an avatar id the gallery no longer lists, the handle-keyed ids of earlier builds, to the face the dashboard already shows for it',
     thenRemoves: 'nothing: avatarById keeps its digest fallback for an id a client sends',
+  },
+  'mirrors-rekey': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'moves each documentation mirror an earlier slug rule keyed onto its own slug, and deletes it where a sync already wrote the page there',
+    thenRemoves: 'nothing: finishSync keeps every mirror on its own slug from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -384,6 +391,31 @@ async function rewriteAvatarIds(ctx: MutationCtx, cursor: string | null): Promis
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
+/**
+ * Put every documentation mirror on the slug `mirroredDocSlug` gives its page
+ * (review M20). Before v0.5.0 a non-ASCII reference collapsed to its ASCII
+ * part, so a sync under v0.5.0 wrote a second row beside the old one; the old
+ * row is deleted where the new one exists, and moved onto the new slug where
+ * no sync has written it yet, so the employee never loses the page.
+ */
+async function rekeyMirrors(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('mockDocs').paginate({ cursor, numItems: MIGRATION_PAGE });
+  let changed = 0;
+  for (const mirror of page.page) {
+    if (mirror.sourceId === undefined || mirror.sourceRef === undefined) continue;
+    const slug = mirroredDocSlug(mirror.sourceId, mirror.sourceRef);
+    if (mirror.slug === slug) continue;
+    const current = await ctx.db
+      .query('mockDocs')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', mirror.agentId).eq('slug', slug))
+      .first();
+    if (current) await ctx.db.delete(mirror._id);
+    else await ctx.db.patch(mirror._id, { slug });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
 /** Each migration's page, keyed by name, so a name with no page fails the typecheck. */
 const MIGRATION_PAGES: Readonly<
   Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
@@ -396,6 +428,7 @@ const MIGRATION_PAGES: Readonly<
   'surfaces-approved-tools': copyApprovedTools,
   'surfaces-access-set-by': async (ctx, cursor) => await backfillAccessSetByPage(ctx, cursor),
   'agents-avatar-digest': rewriteAvatarIds,
+  'mirrors-rekey': rekeyMirrors,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
 };

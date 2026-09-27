@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS } from '../../scripts/releases';
 import { avatarById } from '../../src/agent/avatar-pets';
+import { mirroredDocSlug } from '../../src/docs/types';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -461,6 +462,54 @@ describe('the avatar id rewrite (U15 D1 (a), N6)', (): void => {
       release: '0.6.0',
       read: 3,
       changed: 1,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the mirror re-key (review M20)', (): void => {
+  it('deletes a mirror an earlier slug rule keyed where a sync wrote the page again, and moves one no sync has reached', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const sourceId = await source(harness, 'owner');
+    const legacySlug = (ref: string): string =>
+      `source-${String(sourceId).slice(-10).toLowerCase()}-${ref === 'Café.md' ? 'caf-md' : 'md'}`;
+    await harness.run(async (ctx) => {
+      const mirror = async (slug: string, sourceRef: string): Promise<void> => {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug,
+          title: sourceRef,
+          body: `# ${sourceRef}`,
+          category: 'team-doc',
+          sourceId,
+          sourceRef,
+          updatedAt: 1,
+        });
+      };
+      await mirror(legacySlug('Café.md'), 'Café.md');
+      await mirror(mirroredDocSlug(sourceId, 'Café.md'), 'Café.md');
+      await mirror(legacySlug('运营手册.md'), '运营手册.md');
+      await mirror(mirroredDocSlug(sourceId, 'handbook.md'), 'handbook.md');
+    });
+
+    await runAll(harness);
+
+    const slugs = await harness.run(async (ctx) =>
+      (await ctx.db.query('mockDocs').collect()).map((row) => row.slug).sort(),
+    );
+    expect(slugs).toEqual(
+      [
+        mirroredDocSlug(sourceId, 'Café.md'),
+        mirroredDocSlug(sourceId, '运营手册.md'),
+        mirroredDocSlug(sourceId, 'handbook.md'),
+      ].sort(),
+    );
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'mirrors-rekey')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
       completedAt: expect.any(Number),
     });
   });
