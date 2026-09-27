@@ -41,7 +41,7 @@ function defaultOutPath(now = new Date()): string {
     .toISOString()
     .replace(/\.\d{3}Z$/, 'Z')
     .replace(/:/g, '-');
-  return `evaluation/results/${stamp}/semifinal.json`;
+  return `evaluation/results/${stamp}/comparison.json`;
 }
 const DEFAULT_APPROVAL_DELAY_MS = 750;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -225,12 +225,12 @@ export function selectEvaluationTasks(
 }
 
 function usage(): string {
-  return `Usage: pnpm eval:semifinal -- [options]
+  return `Usage: pnpm eval:comparison -- [options]
 
   --arms day0,baseline     arms to run (default both)
   --runs N                 paired run count per arm (default 3)
   --tasks id,id            task ids or EVAL external ids (default all 15)
-  --out path.json          raw evidence path (default evaluation/results/<timestamp>/semifinal.json);
+  --out path.json          raw evidence path (default evaluation/results/<timestamp>/comparison.json);
                            pass an earlier path to resume that run
   --regrade path.json      re-score a retained run into a new output; makes no model calls
   --approval-delay-ms N    simulated human decision delay (default 750)
@@ -960,7 +960,7 @@ function regradeTask(
 async function readRegradeSource(
   options: CliOptions,
 ): Promise<{ sourcePath: string; outPath: string; source: EvidenceWithProgress }> {
-  if (!options.regrade) throw new Error('--regrade requires an existing semifinal.json path');
+  if (!options.regrade) throw new Error('--regrade requires an existing evidence JSON path');
   const sourcePath = resolve(options.regrade);
   const outPath = resolve(options.out);
   if (sourcePath === outPath) {

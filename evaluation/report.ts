@@ -237,7 +237,7 @@ function taskRows(
  * tickets and differ on the four ticket-backed tasks.
  */
 const LEGACY_TASK_DEFINITIONS: readonly EvaluationTask[] = loadEvaluationTasksSync(
-  new URL('./tasks/semifinal-2026-09-02.json', import.meta.url),
+  new URL('./tasks/comparison-2026-09-02.json', import.meta.url),
 );
 
 /**

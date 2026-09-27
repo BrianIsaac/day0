@@ -27,7 +27,7 @@ const directories: string[] = [];
 async function evidenceDirectory(): Promise<{ evidencePath: string; logsPath: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'structured-output-'));
   directories.push(directory);
-  const evidencePath = join(directory, 'semifinal.json');
+  const evidencePath = join(directory, 'comparison.json');
   const logsPath = join(directory, 'function-logs.jsonl');
   await writeFile(evidencePath, JSON.stringify(evidence), 'utf8');
   await writeFile(logsPath, '', 'utf8');
@@ -44,7 +44,7 @@ describe('the structured-output command', (): void => {
   it('writes the record beside the evidence file', async (): Promise<void> => {
     const { evidencePath, logsPath } = await evidenceDirectory();
     const { output, record } = writeStructuredOutputRecord(evidencePath, logsPath);
-    expect(output).toBe(evidencePath.replace(/semifinal\.json$/, 'structured-output.json'));
+    expect(output).toBe(evidencePath.replace(/comparison\.json$/, 'structured-output.json'));
     expect(JSON.parse(await readFile(output, 'utf8'))).toEqual(record);
     expect(record.rows).toEqual([
       expect.objectContaining({ runId: 'baseline-r1', coverage: 'not-used-by-tool-loop' }),
@@ -53,7 +53,7 @@ describe('the structured-output command', (): void => {
 
   it('refuses to overwrite a record already in the evidence directory', async (): Promise<void> => {
     const { evidencePath, logsPath } = await evidenceDirectory();
-    const existing = evidencePath.replace(/semifinal\.json$/, 'structured-output.json');
+    const existing = evidencePath.replace(/comparison\.json$/, 'structured-output.json');
     await writeFile(existing, '{"frozen":true}\n', 'utf8');
     expect(() => writeStructuredOutputRecord(evidencePath, logsPath)).toThrow(
       `a structured-output record already exists at ${existing}`,

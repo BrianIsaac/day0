@@ -15,7 +15,7 @@ import type { EvaluationEvidence } from '../evaluation/report';
  * An evidence directory is frozen once written, so an existing record is
  * never replaced: the write is exclusive and fails when the file is there.
  *
- * @param evidencePath - The `semifinal.json` the record describes.
+ * @param evidencePath - The evidence JSON the record describes.
  * @param logsPath - The function-log capture covering the run.
  * @returns The path written and the record it holds.
  * @throws when a structured-output record already exists beside the evidence.
@@ -44,7 +44,7 @@ function main(): void {
   const [evidencePath, logsPath] = process.argv.slice(2);
   if (!evidencePath || !logsPath) {
     throw new Error(
-      'Usage: tsx scripts/eval-structured-output.ts <semifinal.json> <function-logs.jsonl>',
+      'Usage: tsx scripts/eval-structured-output.ts <evidence.json> <function-logs.jsonl>',
     );
   }
   const { output, record } = writeStructuredOutputRecord(evidencePath, logsPath);
