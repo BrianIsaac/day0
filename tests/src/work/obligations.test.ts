@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { openManagerQuestion } from '../../../src/work/obligations';
+import {
+  isOpenQuestionStop,
+  managerDmReachable,
+  managerMessageTexts,
+  openManagerQuestion,
+  openQuestionStopReason,
+} from '../../../src/work/obligations';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 import { log1PhaseOne, log1Plan } from '../../fixtures/work/full-run-4-2026-09-19-log-1';
@@ -40,92 +46,58 @@ const dm = (text: string): MockAction => ({
 });
 const [, , comment, done] = log1PhaseOne.actions;
 
-describe('openManagerQuestion over a Chinese manager DM', () => {
-  const ask = (text: string) =>
-    openManagerQuestion({
-      plan: log1Plan,
-      actions: [dm(text), comment!, done!],
-      surfaces: [slack, linear],
-      answered: false,
-    });
+describe('the hold over a Chinese manager DM', () => {
+  const ASKED =
+    'SH-4471 在巴生港滞留，承运商没有给出新的到港时间。请问通知应使用哪个模板？下次更新时间定在几点？';
 
-  it('reads a question that ends with the full-width question mark and withholds the writes that wait on it', (): void => {
-    const open = ask(
-      'SH-4471 在巴生港滞留，承运商没有给出新的到港时间。请问通知应使用哪个模板？下次更新时间定在几点？',
-    );
-    expect(open?.withheld).toEqual([
-      { index: 1, step: 2 },
-      { index: 2, step: 3 },
-    ]);
-    expect(open?.question).toBe('请问通知应使用哪个模板？下次更新时间定在几点？');
+  it('hands the whole Chinese message to the reader of questions, not a sentence a mark picked out', (): void => {
+    expect(managerMessageTexts([dm(ASKED), comment!, done!], [slack, linear])).toEqual([ASKED]);
   });
 
-  it('takes nothing from a Chinese note that only reports', (): void => {
-    expect(ask('异常评论已记录，状态变更等待您的批准。')).toBeUndefined();
+  it('withholds the writes that wait on a Chinese question, with or without the full-width mark', (): void => {
+    for (const question of ['请问通知应使用哪个模板？', '请确认通知使用哪个模板。']) {
+      const open = openManagerQuestion({
+        plan: log1Plan,
+        actions: [dm(ASKED), comment!, done!],
+        surfaces: [slack, linear],
+        question,
+        answered: false,
+      });
+      expect(open?.withheld).toEqual([
+        { index: 1, step: 2 },
+        { index: 2, step: 3 },
+      ]);
+      expect(open?.question).toBe(question);
+    }
   });
 });
 
-describe('openManagerQuestion over the notes when no chat surface can carry the manager DM', () => {
-  const NOTES =
-    'The template is not documented for an unconfirmed ETA. Which template should the notice use?';
-  const ask = (surfaces: readonly SurfaceRecord[], notes: readonly string[], now = 1) =>
-    openManagerQuestion({
-      plan: log1Plan,
-      actions: [comment!, done!],
-      surfaces,
-      answered: false,
-      notes,
-      now,
-    });
-
-  it('takes the question from the notes and withholds the writes that wait on it', (): void => {
-    const open = ask([linear], [NOTES]);
-    expect(open?.question).toBe('Which template should the notice use?');
-    expect(open?.withheld).toEqual([
-      { index: 0, step: 2 },
-      { index: 1, step: 3 },
-    ]);
+describe('managerDmReachable', () => {
+  it('reaches the manager through a connected chat surface with a manager DM channel', (): void => {
+    expect(managerDmReachable([slack, linear], 1)).toBe(true);
   });
 
-  it('reads the notes of the phase before when this set says nothing', (): void => {
-    expect(ask([linear], ['', NOTES])?.steps).toEqual([2, 3]);
-  });
-
-  it('reads the notes when the chat surface has gone stale, since the executor was not offered it', (): void => {
-    const stale = 7 * 60 * 60 * 1_000;
-    expect(ask([slack, linear], [NOTES], stale)?.question).toBe(
-      'Which template should the notice use?',
-    );
-  });
-
-  it('reads the notes when the chat surface has no manager DM channel to post to', (): void => {
-    const blank = { ...slack, managerDmChannelId: '' } as SurfaceRecord;
-    expect(ask([blank, linear], [NOTES])?.question).toBe('Which template should the notice use?');
-  });
-
-  it('ignores the notes while a connected chat surface carries the manager DM', (): void => {
-    expect(ask([slack, linear], [NOTES])).toBeUndefined();
-  });
-
-  it('holds nothing for notes that ask nothing or that nobody asked for', (): void => {
-    expect(ask([linear], ['The notice is left pending.'])).toBeUndefined();
+  it('does not when no chat surface exists, it has gone stale, or it has no manager DM channel', (): void => {
+    expect(managerDmReachable([linear], 1)).toBe(false);
+    expect(managerDmReachable([slack, linear], 7 * 60 * 60 * 1_000)).toBe(false);
     expect(
-      openManagerQuestion({
-        plan: log1Plan,
-        actions: [comment!, done!],
-        surfaces: [linear],
-        answered: false,
-      }),
-    ).toBeUndefined();
+      managerDmReachable([{ ...slack, managerDmChannelId: '' } as SurfaceRecord, linear], 1),
+    ).toBe(false);
+  });
+});
+
+describe('isOpenQuestionStop', (): void => {
+  it('recognises the stop a run records with its question open, and no other (review D2)', (): void => {
     expect(
-      openManagerQuestion({
-        plan: log1Plan,
-        actions: [comment!, done!],
-        surfaces: [linear],
-        answered: true,
-        notes: [NOTES],
-        now: 1,
-      }),
-    ).toBeUndefined();
+      isOpenQuestionStop(
+        openQuestionStopReason({ question: '请确认通知使用哪个模板。', steps: [2, 3] }),
+      ),
+    ).toBe(true);
+    expect(
+      isOpenQuestionStop(
+        'withheld before the first write: LOG-1 changed since the plan was made: it changed hands: it is assigned to another person. Nothing was sent.',
+      ),
+    ).toBe(false);
+    expect(isOpenQuestionStop('the closing phase asked the manager for evidence')).toBe(false);
   });
 });

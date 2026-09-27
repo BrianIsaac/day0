@@ -26,18 +26,29 @@ import type { ExecutionPlan } from '../src/work/types';
  * the ones its approved plan applied through `forPlan`, and the dashboard
  * lists and retires them. Selection is `src/work/corrections.ts`.
  *
- * One correction crosses employees: the first plan rejection on a provider
- * item, which every other employee of the same owner that drafts a plan for
- * that item reads (decision N3), through `firstTicketRejection`.
+ * One correction crosses employees: the first rejection of a plan or of held
+ * actions on a provider item, which every other employee of the same owner
+ * that drafts a plan for that item reads (decision N3), through
+ * `firstTicketRejection`.
  */
 
 /** The most corrections the dashboard returns per employee, newest first. */
 export const CORRECTIONS_READ = 200;
 
-/** The most work items read per name of a provider item: one per employee that discovered it. */
+/**
+ * The most rejected work items read per name of a provider item and per
+ * index, first rejection first. Only rejected rows are read, so the rows an
+ * item gathers over its life never crowd a rejection out.
+ */
 const TICKET_ROWS_READ = 32;
 
-/** The first time the manager rejected a plan for a provider item, as a sibling reads it. */
+/** The correction kinds a rejection keeps the manager's words under. */
+const REJECTION_KINDS: ReadonlySet<Doc<'corrections'>['kind']> = new Set([
+  'plan-rejection',
+  'rejection',
+]);
+
+/** The first time the manager rejected a plan or held actions for a provider item, as a sibling reads it. */
 export interface TicketRejection {
   readonly workItemId: Id<'workItems'>;
   readonly agentId: Id<'agents'>;
@@ -46,16 +57,61 @@ export interface TicketRejection {
   readonly correction?: Doc<'corrections'>;
 }
 
+/** When a row was first rejected; a row rejected before `rejectedAt` existed has only `planRejectedAt`. */
+function rejectionTime(row: Doc<'workItems'>): number | undefined {
+  return row.rejectedAt ?? row.planRejectedAt;
+}
+
 /**
- * The first plan rejection on the same provider item as a work item, by any
- * employee of the same owner, on any other work item.
+ * The rejected work items one name of a provider item reaches, as a key or
+ * as an alias, each index read first rejection first.
+ */
+async function rejectedRowsNamed(
+  ctx: Pick<QueryCtx, 'db'>,
+  name: string,
+): Promise<Doc<'workItems'>[]> {
+  const reads = await Promise.all([
+    ctx.db
+      .query('workItems')
+      .withIndex('by_claim_key_rejected', (q) => q.eq('externalClaimKey', name).gt('rejectedAt', 0))
+      .take(TICKET_ROWS_READ),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_claim_alias_rejected', (q) =>
+        q.eq('externalClaimAlias', name).gt('rejectedAt', 0),
+      )
+      .take(TICKET_ROWS_READ),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_claim_key_plan_rejected', (q) =>
+        q.eq('externalClaimKey', name).gt('planRejectedAt', 0),
+      )
+      .take(TICKET_ROWS_READ),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_claim_alias_plan_rejected', (q) =>
+        q.eq('externalClaimAlias', name).gt('planRejectedAt', 0),
+      )
+      .take(TICKET_ROWS_READ),
+  ]);
+  return reads.flat();
+}
+
+/**
+ * The first rejection on the same provider item as a work item, of a plan
+ * or of held actions, by any employee of the same owner, on any other work
+ * item.
  *
- * Rejecting a plan releases the item, and another employee may then take it
- * (N3: "release, but never to autonomy"). That employee's plan needs a human
- * decision, and the manager's first reason reaches its planner and executor
- * though it was kept against the employee whose plan was rejected. The item
- * is matched on the claim key and alias captured at intake; a row without
- * either (mock mode, or a row seeded before keys existed) matches nothing.
+ * Rejecting a plan or held actions releases the item, and another employee
+ * may then take it (N3: "release, but never to autonomy"). That employee's
+ * plan needs a human decision, and the manager's first reason reaches its
+ * planner and executor though it was kept against the employee who was
+ * rejected. The item is matched on the claim key and alias captured at
+ * intake; a row without either (mock mode, or a row seeded before keys
+ * existed) matches nothing. Only rejected rows are read, through indexes
+ * ordered by the rejection time; another owner's rows are skipped after the
+ * read, so the read can miss this owner's rejection only behind more than
+ * `TICKET_ROWS_READ` other owners' rejections of the same item.
  *
  * Args:
  *   ctx: Query or mutation context.
@@ -75,39 +131,30 @@ export async function firstTicketRejection(
   if (names.length === 0) return undefined;
   const owner = (await ctx.db.get(row.agentId))?.userId;
   if (!owner) return undefined;
-  const candidates: Doc<'workItems'>[] = [];
-  for (const name of names) {
-    candidates.push(
-      ...(await ctx.db
-        .query('workItems')
-        .withIndex('by_claim_key', (q) => q.eq('externalClaimKey', name))
-        .take(TICKET_ROWS_READ)),
-      ...(await ctx.db
-        .query('workItems')
-        .withIndex('by_claim_alias', (q) => q.eq('externalClaimAlias', name))
-        .take(TICKET_ROWS_READ)),
-    );
-  }
-  let first: { row: Doc<'workItems'>; rejectedAt: number } | undefined;
+  const read = (await Promise.all(names.map((name) => rejectedRowsNamed(ctx, name)))).flat();
+  const candidates = read
+    .filter((other, at) => read.findIndex((seen) => seen._id === other._id) === at)
+    .sort((a, b) => (rejectionTime(a) ?? 0) - (rejectionTime(b) ?? 0));
+  const owners = new Map<Id<'agents'>, string | undefined>();
   for (const other of candidates) {
-    const rejectedAt = other.planRejectedAt;
-    if (other._id === row._id || rejectedAt === undefined) continue;
-    if (first && first.rejectedAt <= rejectedAt) continue;
-    if (isRevocationTrialRow(other)) continue;
-    if ((await ctx.db.get(other.agentId))?.userId !== owner) continue;
-    first = { row: other, rejectedAt };
+    const rejectedAt = rejectionTime(other);
+    if (other._id === row._id || rejectedAt === undefined || isRevocationTrialRow(other)) continue;
+    if (!owners.has(other.agentId))
+      owners.set(other.agentId, (await ctx.db.get(other.agentId))?.userId);
+    if (owners.get(other.agentId) !== owner) continue;
+    const correction = await firstRejectionCorrection(ctx, other);
+    return {
+      workItemId: other._id,
+      agentId: other.agentId,
+      rejectedAt,
+      ...(correction ? { correction } : {}),
+    };
   }
-  if (!first) return undefined;
-  const correction = await firstPlanRejectionCorrection(ctx, first.row);
-  return {
-    workItemId: first.row._id,
-    agentId: first.row.agentId,
-    rejectedAt: first.rejectedAt,
-    ...(correction ? { correction } : {}),
-  };
+  return undefined;
 }
 
-async function firstPlanRejectionCorrection(
+/** The manager's first kept words rejecting a plan or held actions on one work item, while not retired. */
+async function firstRejectionCorrection(
   ctx: Pick<QueryCtx, 'db'>,
   rejected: Doc<'workItems'>,
 ): Promise<Doc<'corrections'> | undefined> {
@@ -120,7 +167,7 @@ async function firstPlanRejectionCorrection(
     .filter(
       (correction) =>
         correction.workItemId === rejected._id &&
-        correction.kind === 'plan-rejection' &&
+        REJECTION_KINDS.has(correction.kind) &&
         correction.retiredAt === undefined,
     )
     .reduce<
@@ -130,7 +177,7 @@ async function firstPlanRejectionCorrection(
 
 /**
  * Whether a correction may reach a work item's plan: the employee's own, or
- * the first rejection of a plan for the same provider item.
+ * the first rejection of a plan or held actions for the same provider item.
  */
 async function sharedTicketCorrectionId(
   ctx: Pick<QueryCtx, 'db'>,
@@ -233,8 +280,8 @@ export const listForAgent = query({
 /**
  * The newest matching corrections, with the prompt bound applied during the
  * indexed scan. Internal; read by the planner. Given the work item, the first
- * rejection of a plan for the same provider item comes first, whichever
- * employee it was kept against.
+ * rejection of a plan or held actions for the same provider item comes first,
+ * whichever employee it was kept against.
  */
 export const selectedForCandidate = internalQuery({
   args: {
@@ -275,7 +322,7 @@ export const selectedForCandidate = internalQuery({
  * The corrections an approved plan applied, for its executor: the plan's
  * own snapshot, so one retired after the plan was approved still reaches
  * the run the manager approved with it. Internal. Never another employee's,
- * except the first rejection of a plan for the work item's provider item.
+ * except the first rejection of a plan or held actions for the work item's provider item.
  */
 export const forPlan = internalQuery({
   args: {

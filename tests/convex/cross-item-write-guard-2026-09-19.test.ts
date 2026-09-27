@@ -58,13 +58,14 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
     createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['list_issues', 'save_comment', 'save_issue'].map((tool) => [
+          ['get_issue', 'list_issues', 'save_comment', 'save_issue'].map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
                 recorded.mcp.push({ server: options.serverName, tool, args });
                 if (tool === 'save_comment') return text(JSON.stringify({ id: SECOND_NOTE_ID }));
                 if (tool === 'save_issue') return text(JSON.stringify({ id: 'FIN-1', state: { name: 'Done' } }));
+                if (tool === 'get_issue') return text(JSON.stringify({ id: 'FIN-1', status: 'Todo', statusType: 'unstarted' }));
                 return text('FIN-1 Post the September close status note (Todo); FIN-2 Accruals booked for September (Done); FIN-3 Bank reconciliation for September (In Progress)');
               },
             },
@@ -132,8 +133,11 @@ async function seedEmployee(harness: Harness, options: { name: string; userId?: 
     await ctx.db.insert('surfaces', {
       agentId, slug: 'linear', displayName: 'Linear', class: 'kanban', verdict: 'connected',
       endpoint: 'https://mcp.linear.app/mcp', path: 'mcp',
-      toolAllowlist: ['list_issues', 'save_comment', 'save_issue'],
+      // The run's allowlist carried no get_issue; the re-read before the first
+      // write on a ticket (Q11) needs it, and withholds every write without it.
+      toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'],
       toolArguments: [
+        { tool: 'get_issue', arguments: ['id'] },
         { tool: 'list_issues', arguments: ['team', 'project', 'limit'] },
         { tool: 'save_comment', arguments: ['issueId', 'body', 'id', 'parentId'] },
         { tool: 'save_issue', arguments: ['id', 'state', 'title', 'description'] },

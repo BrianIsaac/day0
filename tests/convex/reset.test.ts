@@ -95,7 +95,7 @@ describe('reset transient verification state', (): void => {
 });
 
 describe('reset completeness', (): void => {
-  it('keeps the README table and reset counts aligned with the schema', (): void => {
+  it('keeps the README table and the README and SECURITY reset counts aligned with the schema', (): void => {
     const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
     const total = Object.keys(schema.tables).length;
     const agentOwned = agentKeyedTables().length + 1;
@@ -103,6 +103,9 @@ describe('reset completeness', (): void => {
     expect(readme).toContain(`The schema contains ${total} tables: ${agentOwned} carry per-agent or agent-owned runtime state`);
     expect(readme).toContain(`from ${enumerated} explicitly enumerated related tables`);
     expect(readme).toContain(`in ${enumerated} enumerated related tables`);
+    // SECURITY.md is where the README sends a reader for what a reset deletes (review m9).
+    const security = readFileSync(new URL('../../SECURITY.md', import.meta.url), 'utf8');
+    expect(security).toContain(`in the ${enumerated} enumerated related tables`);
     expect(readme).toContain('| `externalClaims` |');
     expect(readme).toContain('| `corrections` |');
   });

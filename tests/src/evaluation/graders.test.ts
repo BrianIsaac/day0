@@ -76,7 +76,7 @@ describe('the graded office', (): void => {
   });
 });
 
-describe('semi-final task fixtures', (): void => {
+describe('comparison task fixtures', (): void => {
   it('loads 15 unique tasks split evenly across the three categories', async (): Promise<void> => {
     const tasks = await loadEvaluationTasks();
     expect(tasks).toHaveLength(15);

@@ -144,7 +144,12 @@ export interface PlanObligations {
 export interface ExecutionPlan {
   summary: string;
   steps: string[];
-  expectedOutputType: 'message' | 'doc-update' | 'spreadsheet-update' | 'ticket-update' | 'draft-document';
+  expectedOutputType:
+    | 'message'
+    | 'doc-update'
+    | 'spreadsheet-update'
+    | 'ticket-update'
+    | 'draft-document';
   riskNotes: string;
   reversibility: string;
   estimatedMinutes: number;
@@ -237,7 +242,13 @@ export interface MockProcedureTrailAttestation {
 export type RealProcedureTrailAttestation =
   | { trailId: string; state: 'mapped'; actionIndex: number }
   | { trailId: string; state: 'inapplicable'; reason: string }
-  | { trailId: string; state: 'deferred'; reason: string; dependsOnActionIndex?: number | null; dependsOnField?: string | null };
+  | {
+      trailId: string;
+      state: 'deferred';
+      reason: string;
+      dependsOnActionIndex?: number | null;
+      dependsOnField?: string | null;
+    };
 
 export type ProcedureTrailAttestation =
   | MockProcedureTrailAttestation
@@ -314,6 +325,15 @@ export interface OpenQuestion {
   steps: number[];
 }
 
+/**
+ * The question the executor declared its set waits on, in its `openQuestion`
+ * field (decision N20): the text as it put it to the manager, in the manager
+ * DM or, with no chat surface, in its notes; null when it declared none.
+ * Real mode only. Absent on a set authored before the field existed, whose
+ * question the model judgement reads instead.
+ */
+export type DeclaredQuestion = string | null;
+
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
@@ -321,6 +341,15 @@ export interface ExecutionOutput {
   withheldActions?: WithheldAction[];
   /** Server-derived: the question to the manager this set's withheld writes wait on; see `OpenQuestion`. */
   openQuestion?: OpenQuestion;
+  /** See `DeclaredQuestion`. */
+  declaredQuestion?: DeclaredQuestion;
+  /**
+   * Server-derived, real mode: the question a manager message landed by an
+   * earlier run of this item asks, as the model judgement read it, or null
+   * when none asks. Kept so the closing phase and a closing round read it
+   * without asking again; absent when nothing waited on an answer.
+   */
+  earlierQuestion?: string | null;
   /** Writes earlier runs of this item landed; server-derived on a retry, absent on a first run. */
   landedWrites?: LandedWrite[];
   draft: string;
@@ -358,6 +387,21 @@ export const DEFERRED_SEQUENCE_ALLOWANCE = 6;
 /** The fixed upper bound on the one result-dependent phase of a run: the closing set plus one deferred sequence. */
 export const DEPENDENT_ACTION_CAP = CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE;
 
+/** The charter clause lists a closing decision can be taken under. */
+export const CHARTER_CLAUSE_FIELDS = ['willDo', 'willNotDo', 'escalationTriggers'] as const;
+
+/**
+ * A charter clause a closing-phase decision was taken under (backlog step 4):
+ * the clause as the approved charter words it, which list it is in, and the
+ * version of the charter the executor read. Only a clause the charter carries
+ * is kept; the model's quote is checked against it.
+ */
+export interface CharterClauseRef {
+  field: (typeof CHARTER_CLAUSE_FIELDS)[number];
+  text: string;
+  charterVersion: string;
+}
+
 /** How one approved plan step is accounted for after real action results exist. */
 export interface PlanStepOutcome {
   /** One-based position in the approved plan. */
@@ -369,6 +413,8 @@ export interface PlanStepOutcome {
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   /** A ledger effect, provider failure or explicit reason the step could not run. */
   evidence: string;
+  /** The charter clause the closing phase decided this step under, when one did; see `CharterClauseRef`. */
+  charterClause?: CharterClauseRef;
   /**
    * What the evidence rests on. Absent means the ledger; `manager-feedback`
    * means a fact the manager stated in a rejection reason or retry note,
@@ -403,6 +449,10 @@ export interface DependentExecutionOutput {
   withheldActions?: WithheldAction[];
   /** Server-derived: the question to the manager this set's withheld writes wait on; see `OpenQuestion`. */
   openQuestion?: OpenQuestion;
+  /** See `DeclaredQuestion`. */
+  declaredQuestion?: DeclaredQuestion;
+  /** Server-derived: as `ExecutionOutput.earlierQuestion`, when the closing phase read it. */
+  earlierQuestion?: string | null;
   /** The one repair each held write earned before the hold; absent when none was needed. */
   argumentRepairs?: ArgumentRepairAttempt[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */

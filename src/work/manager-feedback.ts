@@ -16,6 +16,8 @@ export interface ManagerFeedback {
   kind?: ManagerFeedbackKind;
   /** When a run completed with this feedback as its direction. */
   addressedAt?: number;
+  /** Set on a Retry note given on a run that stopped with a question open: the note answers it (review D2). */
+  answersQuestion?: boolean;
 }
 
 /**

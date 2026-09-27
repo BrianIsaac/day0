@@ -132,7 +132,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     await t.mutation(internal.work.setPlan, { workItemId, plan });
     const [question] = await owner.query(api.managerQuestions.openForAgent, { agentId });
     await owner.mutation(api.charters.amend, {
-      agentId, changes: [{ kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' }],
+      agentId, changes: [{ kind: 'edit-clause', field: 'willNotDo', index: 1, text: 'Never edit the forecast sheet.' }],
     });
     expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toHaveLength(1);
     await owner.mutation(api.work.approvePlan, planApprovalRequest(workItemId, {

@@ -99,15 +99,33 @@ describe('structured-output evaluation record', () => {
   });
 });
 
+/**
+ * A frozen report as the renderer writes it today. The frozen files were
+ * rendered before the harness was renamed on 27 September 2026, and the title
+ * and the task-file path are the only text that names it, each exactly once.
+ */
+function asRenderedToday(frozen: string): string {
+  const renamed: ReadonlyArray<readonly [string, string]> = [
+    ['# Semi-final controlled comparison\n', '# Controlled comparison\n'],
+    ['`evaluation/tasks/semifinal.json`', '`evaluation/tasks/comparison.json`'],
+  ];
+  return renamed.reduce((text, [recorded, current]) => {
+    expect(text.split(recorded)).toHaveLength(2);
+    return text.replace(recorded, current);
+  }, frozen);
+}
+
 it.each([
   '2026-09-02T13-59-20Z-v3-terra',
   '2026-09-02T14-28-33Z-v3-sol',
   '2026-09-02T08-35-22Z-v2-qwen8b',
   '2026-09-12T06-33-21Z-v4-glm53flash',
-])('renders frozen %s evidence byte-for-byte without a missing repair setting', (bed) => {
+])('renders frozen %s evidence byte-for-byte apart from the renamed title and task file', (bed) => {
   const directory = `evaluation/results/${bed}`;
   const frozen = JSON.parse(
     readFileSync(`${directory}/semifinal.json`, 'utf8'),
   ) as EvaluationEvidence;
-  expect(renderEvaluationReport(frozen)).toBe(readFileSync(`${directory}/semifinal.md`, 'utf8'));
+  expect(renderEvaluationReport(frozen)).toBe(
+    asRenderedToday(readFileSync(`${directory}/semifinal.md`, 'utf8')),
+  );
 });

@@ -1,8 +1,18 @@
 # Changelog
 
-Version maintenance record for Day0, from the git history, grouped by the milestones the project has shipped against. Releases are tagged with semantic versions from 27 September 2026: `v0.1.0` is the build of 19 September 2026 (the tag `goai-final` that once named it was retired on 27 September 2026); each engineering wave that reaches `main` takes the next minor, a hotfix on a release the next patch, and `v1.0.0` is the pilot release. Hashes are the commits on `main`, 1,607 of them at `f739614`; a merge of a job branch is listed by the substantive commits it carried, and counts are by author date. Every commit follows conventional-commit style, so `git log --no-merges --format='%ad %h %s' --date=short` is the full record and this file is its digest.
+Version maintenance record for Day0, from the git history, grouped by release. Releases are tagged with semantic versions from 27 September 2026: `v0.1.0` is the build of 19 September 2026, and the work before it is grouped by date under "Before v0.1.0"; each engineering wave that reaches `main` takes the next minor, a hotfix on a release the next patch, and `v1.0.0` is the pilot release. Hashes are the commits on `main`, 1,607 of them at `f739614`; a merge of a job branch is listed by the substantive commits it carried, and counts are by author date. Every commit follows conventional-commit style, so `git log --no-merges --format='%ad %h %s' --date=short` is the full record and this file is its digest.
 
-## v0.2.0: wave 1 of the post-review engineering, 27 September 2026
+## v0.3.0, 27 September 2026
+
+Four units the first wave's handovers and review called for, one pane each, landed on `staging` with the gate on every merge, reviewed as one change, plus the fixes that review asked for before the tag. 80 commits; 3,866 tests.
+
+- **The charter reaches the closing phase, and questions are declared (U18).** The executor's closing prompt carries the charter and a clause-bound decision records its clause; an action rejection holds a sibling's plan for the manager as a plan rejection does (`rejectedAt`); a question for the manager is a field the model declares in its output, with one model judgement for older output, and the word list is gone from the hold path (decision N20).
+- **The ticket is re-read before the first write (U19).** An apply whose ticket changed hands, state or label since the plan is withheld with a named reason; a re-listed ticket's row follows the tracker and a withdrawn ticket withdraws its waiting row; two status changes on one ticket keep the last and a reused write says which run sent it; a Linear server whose fields cannot be read holds the checkpoint; the two remaining MCP clients connect only through the checked address; a rotated credential value no longer lifts a person's revoke.
+- **Exa leaves the product (U20, decision N19).** No search key, no client, no web research step after charter approval; provider-native research is a roadmap line.
+- **The repository reads as a product (U21, decision N21).** The controlled comparison harness is named for what it measures; the README and the evaluation page carry the numbers, the method, the caveat and how to reproduce; the frozen evidence keeps its recorded file names.
+- **From the review.** A refused listing is never the re-read's baseline and a claimed row is withdrawn on a refusal; a record naming another ticket or none of the compared fields withholds; a Retry excuses an open state only, never a do-not-automate label or a close; a Retry note answers a declared question only when the stop was a question stop; the declared-question mapping has a test per phase.
+
+## v0.2.0, 27 September 2026
 
 The first release cut from `staging` under the engineering plan (`docs/plans/engineering-plan-2026-09-27.md`): units U1, U2, U4, U5 and U11 of the consolidated backlog, one pane each, landed with the four-command gate on every merge, reviewed as one change, plus two fixes from that review. 101 commits; 3,761 tests in 267 files.
 
@@ -13,9 +23,9 @@ The first release cut from `staging` under the engineering plan (`docs/plans/eng
 - **The evaluation figures (U11).** No grader reads text the harness wrote; the frozen results carry their task definitions; the gate matrix carries a commit; the published comparison carries a caveat naming the five ways the task set favoured one arm (decision N16); superseded result directories moved to the private archive.
 - **From the review.** A cut good-habits reply no longer aborts the steps after charter approval; the MCP and browser rungs refuse any placeholder other than the credential's before sending.
 
-## v0.1.0: the finals build, 16 to 19 September 2026
+## v0.1.0, 16 to 19 September 2026
 
-The tag `v0.1.0` marks this release at `7f59973`. The recording ran on `f739614`, the last commit dated 19 September, and the hosted halves were brought to it on 20 September 2026: the cloud Convex functions first (293 functions, three new empty tables, no row of the protected office changed), then the app at `day0-olive.vercel.app`. 415 commits dated 17 to 19 September; 3,517 tests in 252 files.
+The tag `v0.1.0` marks this release at `7f59973`. The recorded demo run ran on `f739614`, the last commit dated 19 September, and the hosted halves were brought to it on 20 September 2026: the cloud Convex functions first (293 functions, three new empty tables, no row of the protected office changed), then the app at `day0-olive.vercel.app`. 415 commits dated 17 to 19 September; 3,517 tests in 252 files.
 
 ### 19 September 2026
 
@@ -61,14 +71,14 @@ The tag `v0.1.0` marks this release at `7f59973`. The recording ran on `f739614`
 ### 17 September 2026
 
 - `e6a9807`, `5bd1fe1`, `52d90b0`, `aaa8978`, `49b0375`, `fccb167`, `65be688`, `c63a3d6`, `de5952a` feat(setup): `./setup.sh` is the one entry, real mode by default, with a local or Featherless model route, a model picker on the local route, and stop, resume and clear verbs; `--reset` does not read its own ports as taken
-- `c570265`, `181ba4a`, `275f799`, `766d77b` feat(setup-page, landing): the three ways to run it by the deck's names, real mode's first success; Try the demo goes through sign-in to the hosted mock office and the recording gets its own button
+- `c570265`, `181ba4a`, `275f799`, `766d77b` feat(setup-page, landing): the three ways to run it by the README's names, real mode's first success; Try the demo goes through sign-in to the hosted mock office and the recording gets its own button
 - `561e6b5`, `4fc50f7`, `030c6fa`, `454a611`, `c8ca560`, `5d1a2ff`, `7c44291`, `2c5b528`, `d63da6f` docs(readme): the three ways to run it with real mode as the local route, each run section opening with its one command; the disclosures, the evidence map and the interface pointer; the recorded run and demo video are the 17 September recording, both halves
 - `0f0d8a1`, `38c0bd2`, `d9254c5`, `27d80ad` docs: this changelog, the security policy, the reuse interfaces page, the contribution guide with issue forms and a pull request template
 - `bb18035` chore(evaluation): remove the 14B local bed and every mention of it
 
-## Before v0.1.0: the finals build, 4 to 16 September 2026
+## Before v0.1.0, 4 to 16 September 2026
 
-The release pointer (then a tag named `goai-final`) stood at `5fac642` on 16 September 2026 and `day0-olive.vercel.app` was deployed from it; both moved on with the entry above. 440 commits dated 4 to 16 September.
+The release pointer stood at `5fac642` on 16 September 2026 and `day0-olive.vercel.app` was deployed from it; both moved on with the entry above. 440 commits dated 4 to 16 September.
 
 ### 16 September 2026
 
@@ -161,13 +171,13 @@ The release pointer (then a tag named `goai-final`) stood at `5fac642` on 16 Sep
 
 - `e1cb539` chore(docs): untrack internal planning handovers from the public repo
 
-## Semi-final freeze, 2 to 3 September 2026
+## Before v0.1.0, 2 to 3 September 2026
 
-Submitted snapshot `cc4e7a5`, 3 September 2026 (no tag). The recorded real-mode run and the README's documented run are both on `a41fd94`, 3 September. 89 commits dated 2 to 3 September.
+The evaluation freeze: snapshot `cc4e7a5`, 3 September 2026 (no tag). The recorded real-mode run and the README's documented run are both on `a41fd94`, 3 September. 89 commits dated 2 to 3 September.
 
 ### 3 September 2026
 
-- `cc4e7a5` docs(submission): publish the data-source and compliance statement
+- `cc4e7a5` docs: publish the data-source and compliance statement (no longer tracked since 27 September 2026; the README's Disclosures state the data sources, and `SECURITY.md` the credential, redaction and deletion handling)
 - `c2ca7c7` docs(readme): one full real-mode run and its README section, 16 screenshots
 - `2ffeaa0` docs(readme): set the manager email in the real-mode setup, which Slack needs
 - `abb0f0b` feat(model): default to `gpt-5.6-terra`
@@ -185,7 +195,7 @@ Submitted snapshot `cc4e7a5`, 3 September 2026 (no tag). The recorded real-mode 
 - `10d1e5b` feat(ui): cursor toggle for recordings
 - Revocation trials: `evaluation/results/revocation-2026-09-02T12-17-54Z/`
 
-## Real mode and the controlled evaluation, 25 August to 1 September 2026
+## Before v0.1.0, 25 August to 1 September 2026
 
 No tag. 407 commits dated 25 August to 1 September. The real-mode surface layer, the exact-action gate, credentials and redaction, the evaluation harness and the first frozen beds.
 
@@ -194,7 +204,7 @@ No tag. 407 commits dated 25 August to 1 September. The real-mode surface layer,
 - `29d2900` feat(evaluation): add fixed tasks and programmatic graders
 - `d59a92c` feat(evaluation): add ordinary-agent control arm
 - `5431e18`, `fdbafe5`, `de3f5d1`, `3728c1a`, `1dcf75d` feat(evaluation): gate day0 mock writes; expose task seeding and grader snapshots; share non-zero model temperature; the evidence report contract; timestamp the first correct task effect
-- `30d4404`, `8dc77cc`, `48e630d` feat(evaluation): the resumable semi-final driver; record the backend's model and write each run to its own directory; regrade retained evidence without models
+- `30d4404`, `8dc77cc`, `48e630d` feat(evaluation): the resumable comparison driver; record the backend's model and write each run to its own directory; regrade retained evidence without models
 - `1f0354a` feat(evaluation): measure exact-action gate accuracy
 - `bd85d15` feat(evaluation): add live revocation harness
 - `f768d9e`, `3a791c0` feat(evaluation): recognise documented procedure effects; score documented procedure adherence
@@ -228,9 +238,9 @@ No tag. 407 commits dated 25 August to 1 September. The real-mode surface layer,
 - `1ac293c` perf(intake): read chat rows by index for the minute-by-minute decision poll
 - `29536b6`, `253c196`, `d247d15`, `b152a54`, `cfb1b0c`, `45ee96c` fix(surfaces, discovery): the evidence-backed fallback ladder; keep the browser rung on documented evidence; judge documentation by its evidence
 
-## Standing as an open-source project, 12 to 13 August 2026
+## Before v0.1.0, 12 to 13 August 2026
 
-No tag. 122 commits dated 12 to 13 August. The account-free route and the local sandbox.
+No tag. 122 commits dated 12 to 13 August. Standing as an open-source project: the account-free route and the local sandbox.
 
 - `b8f31bc` feat(model): support any OpenAI-compatible endpoint via `OPENAI_BASE_URL`
 - `ee00718` feat: add a self-hosted Convex backend for local development
@@ -248,9 +258,9 @@ No tag. 122 commits dated 12 to 13 August. The account-free route and the local 
 - `9ce0219` docs: show the product in the README, restructure to run-first
 - `986fd6d` docs: credit the source of the pixel-art builder avatars
 
-## Hackathon build, 9 May 2026
+## Before v0.1.0, 9 May 2026
 
-No tag; last commit of the day `2d4b82c`. 42 commits dated 9 May, at the AI Engineer Hackathon, Singapore.
+No tag; last commit of the day `2d4b82c`. 42 commits dated 9 May: the first build.
 
 - `02b9ddd` feat: scaffold Next.js 16 and Tailwind v4 shell
 - `1356dd3` feat: add Clerk auth with sign-in and sign-up routes

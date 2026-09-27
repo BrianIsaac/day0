@@ -593,6 +593,62 @@ describe('amending an approved charter', (): void => {
   });
 });
 
+describe('editing the clause that enforces a rule', (): void => {
+  it('refuses to delete the only clause that enforces a standing rule, and keeps the charter as it was', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApproved(harness);
+
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+        agentId,
+        changes: [{ kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' }],
+      }),
+    ).rejects.toThrow(/edit refused: .* is the only clause that enforces/);
+    expect((await latestCharter(harness, agentId))._id).toBe(charterId);
+  });
+});
+
+describe('amending the people fields', (): void => {
+  it('takes an adjacent role, a collaborator and who approves through the dashboard, and IDENTITY.md shows the collaborator', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    const changes = [
+      {
+        kind: 'edit-adjacent-role' as const,
+        index: 0,
+        role: { who: 'Finance ops', staysOutOfTheirLaneBy: 'never posting journal entries' },
+      },
+      {
+        kind: 'edit-collaborator' as const,
+        index: 0,
+        collaborator: { name: 'Aiko', topic: 'the close calendar', introPath: 'manager' as const },
+      },
+      { kind: 'set-approval-chain' as const, boss: 'Priya Shah' },
+    ];
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.charters.amend, { agentId, changes });
+
+    const body = (await latestCharter(harness, agentId)).body as Charter;
+    expect(body.adjacentRoles[0]).toEqual({
+      who: 'Finance ops',
+      staysOutOfTheirLaneBy: 'never posting journal entries',
+    });
+    expect(body.namedCollaborators[0]).toEqual({
+      name: 'Aiko',
+      topic: 'the close calendar',
+      introPath: 'manager',
+    });
+    expect(body.approvalChain).toEqual({ boss: 'Priya Shah', confidence: 'high' });
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toContain('Aiko');
+    const event = (await eventsOf(harness, agentId)).find((e) => e.type === 'charter.amended');
+    expect(
+      (event?.payload as { diff: Array<{ field: string }> }).diff.map((entry) => entry.field),
+    ).toEqual(expect.arrayContaining(['adjacentRoles', 'namedCollaborators', 'approvalChain']));
+  });
+});
+
 describe('amending the named systems', (): void => {
   it('in real mode declares an added system and orients that surface only', async (): Promise<void> => {
     useSurfaceMode('real');

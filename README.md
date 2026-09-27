@@ -28,7 +28,7 @@ Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) show
 
 Three things to know before the rest of this file. Each is repeated where it applies; this is the one place they are stated together.
 
-**What is simulated and what is real.** Every route in this README except real mode runs against a seeded mock office: the documents, spreadsheet, channels, tickets and social feed are fixtures shipped in this repository, seeded per agent, and nothing the agent does leaves your machine. In that setting the model calls, the sandbox, the state machine and the approval gates are still real. Real mode, which is local-only by construction, reads the documentation you link and acts on your own systems. The run this README documents, and the run the demo video shows, both ran in real mode against the operator's own demonstration Linear and Slack workspaces, an operator-owned Notion workspace and the synthetic Looker-style tile this repository ships, all holding synthetic content; no production, customer, employee or personal data was involved, and none is needed to reproduce anything here. The [controlled comparison](evaluation/README.md) ran in mock mode, on the seeded office. Day0 has no users and no production deployment, and the supervision figures in this file are counts from single runs, not rates. The full statement, including credential handling and retention, is [`docs/submission/compliance.md`](docs/submission/compliance.md).
+**What is simulated and what is real.** Every route in this README except real mode runs against a seeded mock office: the documents, spreadsheet, channels, tickets and social feed are fixtures shipped in this repository, seeded per agent, and nothing the agent does leaves your machine. In that setting the model calls, the sandbox, the state machine and the approval gates are still real. Real mode, which is local-only by construction, reads the documentation you link and acts on your own systems. The run this README documents, and the run the demo video shows, both ran in real mode against the operator's own demonstration Linear and Slack workspaces, an operator-owned Notion workspace and the synthetic Looker-style tile this repository ships, all holding synthetic content; no production, customer, employee or personal data was involved, and none is needed to reproduce anything here. The [controlled comparison](evaluation/README.md) ran in mock mode, on the seeded office. Day0 has no users and no production deployment, and the supervision figures in this file are counts from single runs, not rates. How credentials are handled, what is stored and what a reset deletes are stated in [`SECURITY.md`](SECURITY.md).
 
 **Third-party dependencies.** Day0's own code is the onboarding pipeline, the charter and the work loop, the skill lifecycle and its static gate, the surface layer and the exact-action gate, the redaction layer, the evaluation harness and the dashboard. It depends on:
 
@@ -36,7 +36,7 @@ Three things to know before the rest of this file. Each is repeated where it app
 - **Convex** for the backend: the open-source self-hosted binary on the local routes, the cloud service on the hosted route.
 - **Clerk** for sign-in on the hosted route. The local routes replace it with the no-auth mode and one fixed local user.
 - **A span model for redaction**, `urchade/gliner_multi_pii-v1` (Apache-2.0), run locally in the `redactor` component in real mode. Its weights are downloaded on first start and pinned by digest; inference makes no external call.
-- **Optional services, absent without their keys:** ElevenLabs for the voice mode, Exa for good-habits research, Daytona as the hosted alternative to the bundled verification sandbox. Without them voice is greyed out, the research step is skipped and the local sandbox verifies skills.
+- **Optional services, absent without their keys:** ElevenLabs for the voice mode, Daytona as the hosted alternative to the bundled verification sandbox. Without them voice is greyed out and the local sandbox verifies skills.
 - **Your own systems, in real mode.** The recorded run used Linear over its MCP endpoint, Slack over its documented API and Notion through its MCP server, each as the operator's own test workspace.
 
 The container images for the backend, the model service, the sandbox, the redactor and the components are pinned by digest in `docker-compose.yml`; the package versions are in `package.json` and the [Stack](#stack) table. Provider-side processing and retention of anything sent to a hosted model or workspace follow your own account terms with that provider.
@@ -53,7 +53,7 @@ The container images for the backend, the model service, the sandbox, the redact
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Controlled evaluation](evaluation/README.md) · [Reproduce the evidence](#reproduce-the-evidence) · [Evaluation quick start](#evaluation-quick-start) · [Evaluation and the mock office](#evaluation-and-the-mock-office) · [API and interface documentation](#api-and-interface-documentation) · [Data and compliance](docs/submission/compliance.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Credits](#credits) · [Licence](#licence)
+**Project** · [Evaluation](#evaluation) · [The evaluation page](evaluation/README.md) · [Evaluation quick start](#evaluation-quick-start) · [Evaluation and the mock office](#evaluation-and-the-mock-office) · [API and interface documentation](#api-and-interface-documentation) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Credits](#credits) · [Licence](#licence)
 
 ## Quick start
 
@@ -234,9 +234,11 @@ The footer of the same card reads 8 decisions requested, 0 partial, 31 actions a
 
 Day0 is a working demonstration rather than a product and has no users. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
 
+Day0 does bounded operational work under an approved charter. It makes no financial, employment, legal, medical, safety-critical or customer-credit decision and replaces no qualified professional, manager or institution. A request outside the approved role, its permissions or the connected systems is meant to be refused, deferred or escalated, and the [evaluation](#evaluation) measures how often it is; a person stays accountable for final decisions and for every external effect.
+
 The reproducible demo and controlled evaluation work inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue and a social feed - seeded per agent. That environment makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust; the model calls, sandbox, state machine and approval gates are still real. A separate local-only real mode reads linked team documentation, discovers the systems it names and connects to them only through visible approval gates. Both local ways run in it; it is documented in [Real mode](#real-mode).
 
-The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible endpoint, so the full loop runs against a model on your own machine with no account anywhere and nothing metered. The sandbox that verifies an authored skill is bundled too, so skill creation finishes on that route rather than stopping one step short of a callable skill. Voice and web research are optional third-party services; without their keys the loop degrades visibly rather than failing silently. [Three ways to run it](#local-dev) are set out below, and `pnpm check:setup` reports which of them the machine you are on is currently set up for.
+The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible endpoint, so the full loop runs against a model on your own machine with no account anywhere and nothing metered. The sandbox that verifies an authored skill is bundled too, so skill creation finishes on that route rather than stopping one step short of a callable skill. Voice is an optional third-party service; without its keys the loop degrades visibly rather than failing silently. A future enhancement: web research for good habits through the model provider's own tools, when offered. [Three ways to run it](#local-dev) are set out below, and `pnpm check:setup` reports which of them the machine you are on is currently set up for.
 
 ## Local dev
 
@@ -252,7 +254,7 @@ The two local ways are one command, `./setup.sh --route featherless` (or `--rout
 
 Every way needs a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. With `OPENAI_BASE_URL` unset, the shared model route uses the OpenAI Responses API at `api.openai.com`; setting a custom `OPENAI_BASE_URL` switches it to that endpoint's OpenAI-compatible chat-completions API, including keyless local runtimes. Both arms of an evaluation bed use the same selected route.
 
-Both local ways also need somewhere to verify an authored skill, and that is bundled as well: `pnpm sandbox:up` starts a local sandbox on either of them, and Daytona is the hosted alternative. Only Exa is genuinely account-only, and its absence costs the good-habits research rather than the loop.
+Both local ways also need somewhere to verify an authored skill, and that is bundled as well: `pnpm sandbox:up` starts a local sandbox on either of them, and Daytona is the hosted alternative.
 
 Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the five setups - backend, auth, model, sandbox, voice - separately, and fails only on the states that are actually broken rather than merely incomplete. `pnpm --silent check:setup --report > day0-setup-report.json` writes the same checks as one JSON document for support instead: the tool versions, the pinned images and which run, the digests of the redactor's locks and model manifest, every outbound host the configuration names, and each section's status. It carries no key and nothing your documentation says; the model, Daytona and Clerk addresses from `.env.local` appear as hostnames only, which an egress list is made of.
 
@@ -310,7 +312,7 @@ Three things are the cloud-model way's own:
 
 - **The key is asked for, never pasted.** It is read in a hidden prompt, written to `.env.local` with owner-only permissions, never printed and never passed to another program as an argument; `pnpm sync:env` pushes it to the deployment, and a rerun keeps the key already in the file.
 - **Coming from the local-model way, both addresses are cleared for you on the key route.** The setup writes `OPENAI_BASE_URL` and `CONVEX_OPENAI_BASE_URL` empty and `pnpm sync:env` clears the deployment's copy when both are empty, which is the one case where "unset" is a value rather than an omission: a deployment still holding `http://model:11434/v1` would call a model server you have since stopped, and only the actions would fail. The restart that follows is what makes the backend read it, because a module keeps whatever env it was first evaluated with.
-- **This way meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.6-terra` a demo run is cents rather than dollars, but it is not zero, which the local-model way is.
+- **This way meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.6-terra` a demo run is cents rather than dollars, but it is not zero, which the local-model way is.
 
 ## Local, local model
 
@@ -322,7 +324,7 @@ pnpm install --frozen-lockfile
 pnpm dev                           # prints an unlock URL - open that, not localhost:3000
 ```
 
-The choice this way offers is the model. The setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the semi-final local bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again. A tested model that would have to be pulled is the default only when it fits the free memory on your GPU whole: with no NVIDIA GPU, or too little free, there is no default, and `--yes` stops and says so, so that a 5 GB pull that then runs on the CPU is something you chose with `--model` rather than something that happened. `--model-port <n>` moves the model server off 11434 when a native `ollama serve` holds it. Everything else - the flags, `stop`, `resume` and `clear`, the components and the first day in the browser - is the same as [Local, cloud model](#local-cloud-model) above and [Real mode](#real-mode) below.
+The choice this way offers is the model. The setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the local evaluation bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again. A tested model that would have to be pulled is the default only when it fits the free memory on your GPU whole: with no NVIDIA GPU, or too little free, there is no default, and `--yes` stops and says so, so that a 5 GB pull that then runs on the CPU is something you chose with `--model` rather than something that happened. `--model-port <n>` moves the model server off 11434 when a native `ollama serve` holds it. Everything else - the flags, `stop`, `resume` and `clear`, the components and the first day in the browser - is the same as [Local, cloud model](#local-cloud-model) above and [Real mode](#real-mode) below.
 
 How fast that is has nothing to do with Day0. This route sets a custom `OPENAI_BASE_URL`, so the agent core makes ordinary OpenAI-compatible chat-completions calls; the wait is a property of the endpoint you pointed it at. The same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, while the key route of the cloud-model way uses the Responses API and answers as fast as OpenAI does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
 
@@ -504,7 +506,7 @@ Closing actions carry a different approval identity from phase one, so a delayed
 
 ### The company bed
 
-The finals demo runs three digital employees in one synthetic company, Kestrel Supply Co.: revenue operations, finance close and a logistics desk. Everything about the company that can live in a repository is in `bed/company/`; nothing there is a secret, and every page says the company is synthetic.
+The company bed runs three digital employees in one synthetic company, Kestrel Supply Co.: revenue operations, finance close and a logistics desk. Everything about the company that can live in a repository is in `bed/company/`; nothing there is a secret, and every page says the company is synthetic.
 
 | Path | What it is |
 |---|---|
@@ -536,7 +538,7 @@ pnpm bed:company check    # every hand step read back; each gap says how to clos
 pnpm bed:company seed     # tickets created or put back, the bed's bot messages deleted, the tile back at 68%
 ```
 
-`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` uses tickets whose descriptions end in `day0-demo-key: <key>` and refuses active marked tickets from another clone. It deletes comments with the server's provenance trailer and attempts to delete the bot's trailer messages posted since this clone's first seed. Run it before every take. A sitting that runs one task per employee files only its tickets: `pnpm bed:company seed --set one-each` files `fin-status`, `log-sh4471` and the two September close step tickets the status note reads, `fin-accruals` and `fin-bankrec` (the `sets` in `bed/company/linear.json`), archives every other bed ticket a fuller seed left active, and still restarts the Looker tile at its starting figure. Revenue operations' task in that sitting is not a ticket but the standing `#ops-requests` ask (refresh the pipeline tile to the standup figure): one employee claims it, the other two leave it at scope, and it is answered in its thread. `pnpm bed:company check --set one-each` reads the bed for that set: it says which tickets it expects, expects exactly that one standing ask, and reports its absence, or any other standing message that mentions the bot, as a gap naming the channel and text. `pnpm bed:company check` for the full run expects all three asks. During the run, `pnpm bed:company post log-sh4480` files the one late ticket at its step; afterwards, `pnpm bed:company teardown` archives only tickets this clone activated, and any ticket a run filed in the bed's teams since this clone's first seed (an employee whose charter says to triage asks into tickets files one, and its description ends with the server's provenance trailer; `check` names such a ticket as a gap), and attempts to delete its bot messages. Slack refuses `chat.delete` for posts with a customised employee name or icon. Teardown names each refused channel message and timestamp, keeps the clone's state, and exits with a gap; delete those exact messages by hand in Slack, then run teardown again. Earlier runs' messages remain outside this clone's cleanup window.
+`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` uses tickets whose descriptions end in `day0-demo-key: <key>` and refuses active marked tickets from another clone. It deletes comments with the server's provenance trailer and attempts to delete the bot's trailer messages posted since this clone's first seed. Run it before each sitting. A sitting that runs one task per employee files only its tickets: `pnpm bed:company seed --set one-each` files `fin-status`, `log-sh4471` and the two September close step tickets the status note reads, `fin-accruals` and `fin-bankrec` (the `sets` in `bed/company/linear.json`), archives every other bed ticket a fuller seed left active, and still restarts the Looker tile at its starting figure. Revenue operations' task in that sitting is not a ticket but the standing `#ops-requests` ask (refresh the pipeline tile to the standup figure): one employee claims it, the other two leave it at scope, and it is answered in its thread. `pnpm bed:company check --set one-each` reads the bed for that set: it says which tickets it expects, expects exactly that one standing ask, and reports its absence, or any other standing message that mentions the bot, as a gap naming the channel and text. `pnpm bed:company check` for the full run expects all three asks. During the run, `pnpm bed:company post log-sh4480` files the one late ticket at its step; afterwards, `pnpm bed:company teardown` archives only tickets this clone activated, and any ticket a run filed in the bed's teams since this clone's first seed (an employee whose charter says to triage asks into tickets files one, and its description ends with the server's provenance trailer; `check` names such a ticket as a gap), and attempts to delete its bot messages. Slack refuses `chat.delete` for posts with a customised employee name or icon. Teardown names each refused channel message and timestamp, keeps the clone's state, and exits with a gap; delete those exact messages by hand in Slack, then run teardown again. Earlier runs' messages remain outside this clone's cleanup window.
 
 On `/documentation`, link the folder (`.`) and the Notion source. Thirteen folder pages and three Notion pages (the parent and its two) sync; the only credentials taken from the pages are the tile's login, on its two pages, and the Linear token from the Notion page, and the Notion source's own connection secret is stored beside them, from the field you typed it into.
 
@@ -607,7 +609,6 @@ Copy `.env.example` to `.env.local` and fill in:
 | `OPENAI_JSON_MODE` | `auto` (default), `native` or `prompt`. `auto` starts on `response_format` and falls back to prompt injection only when dropping the parameter is what fixed it |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat runs the identical 1:1 |
 | `ELEVENLABS_WEBHOOK_SECRET` | Signs the post-call webhook. A **separate** setup from the two above: without it voice still connects and only post-call finalisation is refused. See [Voice](#elevenlabs-agent-setup) |
-| `EXA_API_KEY` | Good-habits research |
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL` | The hosted skill-verification sandbox. Optional: without a key the [bundled local sandbox](#the-local-skill-sandbox) does the same job, and with neither an authored skill stops at `authoring` and stays uncallable |
 | `SKILL_SANDBOX_SOCKET`, `SKILL_SANDBOX_TIMEOUT_SECONDS` | The local sandbox. Both have working defaults and the bundled stack needs neither. See [The local skill sandbox](#the-local-skill-sandbox) |
 | `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted backend instead of Convex cloud. Written by `./setup.sh` and `pnpm setup:local` ([Local dev](#local-dev)) |
@@ -623,7 +624,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `DAY0_REDACTOR_URL` | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only` |
 | `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
 
-Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `EXA_API_KEY`, `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
+Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
 
 **Deployment env is read once, when a function module is first evaluated.** A backend that has already run an action keeps the values it started with, so changing them afterwards leaves `npx convex env list` reporting the new value while the running action still uses the old one. Push the env *before* the first function push, and if you change it later restart the backend: `pnpm convex:restart` self-hosted, or `npx convex deploy` on cloud.
 
@@ -740,7 +741,7 @@ It resolves values the way the running app does, which matters more than it soun
    - Voice: `GET /api/voice/elevenlabs/start` returns a signed URL; ElevenLabs's post-call webhook hits `POST /api/voice/elevenlabs/webhook`.
    - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
 3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
-4. **Approval** — the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (Exa + the configured model → `## Good-habits memory` block in `AGENTS.md`). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
+4. **Approval** — the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (real mode declares the named systems and runs orientation, mock mode seeds the generated work items; no web-research call and no search key). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
 5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Real mode](#real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
 6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** one distinct stdout line per representative input set (two), whichever ran. In real mode the author writes only `run()` and `CASES`, its two input sets, and the sandbox runs a harness around them (`src/work/smoke-harness.ts`) that calls `run()` once per case and prints the lines itself. It holds what `run()` returned against the skill it stands for: every action is `mcp.call` or `http.request` on a surface the author was shown as connected, with a tool that surface allows and `SKILL.md` names; at least two cases emit actions and one acts on the skill's target surface; each case's action arguments carry a value that case supplied, including the record and the reply target when the case gives them; and the action arguments, not only the outputs, differ between cases. It is still a check of the author's mimic and not of a provider's answer; the author's `assert` statements are never compiled, so no assertion it writes about its own output can fail the check. Before any sandbox runs, a static gate refuses a body or smoke test that repeats the identifiers, figures or quoted phrases of the work item that proposed the skill; the reason lands on the row for the retry. An input the body uses without declaring it is refused as well in mock mode; real mode declares it for the author, as read from the candidate or its runbook, and the verification log says so. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not registered · not callable" with a retry.
 7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 22 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
@@ -754,7 +755,6 @@ It resolves values the way the running app does, which matters more than it soun
 | Auth | Clerk (`@clerk/nextjs` 7) with `ConvexProviderWithClerk` |
 | LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.6-terra`. Hosted OpenAI uses Responses; custom base URLs use chat completions. Streaming chat via AI SDK 6; raw OpenAI SDK 6 available. |
 | Voice | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5) |
-| Search | Exa (`exa-js` 2) for good-habits role research |
 | Sandboxes | `python:3.12-slim` for skill smoke tests, in a [bundled local sandbox](#the-local-skill-sandbox) or in Daytona (`@daytona/sdk`) |
 | Validation | Zod 4 |
 
@@ -813,7 +813,7 @@ It resolves values the way the running app does, which matters more than it soun
 | `corrections.ts` | The manager's corrections kept per employee: the writer the retry, rejection and cancel transitions call, the dashboard's list and Retire, the planner's read of the active ones and the executor's read of those its plan applied |
 | `skills.ts` | Seven-state skill registry keyed by surface class and operation, including rejected/failed states, fenced authoring claims and `retireUnshaped` for rows that predate shapes |
 | `skillActions.ts` (Node) | `authorAndRegisterSkill` — configured-model authoring of a parameterised procedure, the static gate on the body, sandbox verification and registration |
-| `onboarding.ts` (Node) | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (Exa research + good-habits merge) |
+| `onboarding.ts` (Node) | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (surfaces and orientation in real mode, generated work items in mock mode) |
 | `mock.ts` | Mock environment CRUD (docs, spreadsheets, slack, twitter, tickets) |
 | `mockSeed.ts` | Idempotent demo seed (4 team docs, 4 how-to guides, Q4 spreadsheet, 5 channels, 1 tweet, 3 tickets) |
 | `coworker.ts` | Auto-reply mutation scheduled 3.5–6 s after the agent posts to Slack |
@@ -865,7 +865,6 @@ The schema contains 29 tables: 23 carry per-agent or agent-owned runtime state, 
 | `src/lib/mastra.ts` | Shared configured-model agents, structured-output ladder, 300-second call abort and five-attempt transient retry |
 | `src/lib/openai.ts` | Shared model resolver: hosted OpenAI through Responses, custom base URLs through chat completions, plus raw JSON/text helpers |
 | `src/lib/structured-fallback.ts` | Classifies a structured-output failure and decides whether the native `response_format` rung may be demoted to the prompt rung |
-| `src/lib/exa.ts` | `searchRole(role)` — fixed query for role best-practices, 8 results × 1200-char snippets |
 | `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** one distinct stdout line per representative input set |
 | `src/lib/local-sandbox.ts` | Client for the bundled sandbox service, over a unix socket because that container has no network |
 | `src/lib/daytona.ts` | The Daytona backend — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
@@ -880,7 +879,6 @@ The schema contains 29 tables: 23 carry per-agent or agent-owned runtime state, 
 | `src/agent/charter-constraints.ts`, `src/agent/charter-amendment.ts` | The rules derived from the transcript and their removal on a strike; the seven amendment kinds, version bump and per-field diff |
 | `src/agent/manager-questions.ts` | The question record shape, its stable key and the content-word rule that decides which plan first asks it |
 | `src/agent/day-one-prompts.ts` | `DAY_ONE_TOPIC_SPECS`, `DAY_ONE_WELCOME`, `defaultSoul`, `day1Script` |
-| `src/agent/good-habits.ts` | `researchAndDistil(role)`, `mergeGoodHabits(existing, fragment)` |
 | `src/agent/work-generator.ts` | Schema and prompt that turn an approved charter into mock-mode work candidates |
 | `src/docs/` | Documentation component checks, folder/git/MCP/URL readers, page normalisation, credential redaction and evidence-backed system discovery |
 | `src/evaluation/` | Ordinary-agent control loop, arm-parity checks, shared mock-office scopes and terminal-state definitions |
@@ -910,35 +908,9 @@ The contracts a third party calls, reuses or extends are documented in [`docs/ru
 
 The optional components, what each is for and what it never sees, are in [`docs/running/components.md`](docs/running/components.md). The environment contract is `.env.example`, and [Environment](#environment) explains each variable.
 
-## Reproduce the evidence
+## Evaluation
 
-Every number the submission quotes comes from a file in this repository or from a run of the product, and each has a command that regenerates it. The method and its limits are in [`evaluation/README.md`](evaluation/README.md); the commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below, and are not repeated here.
-
-| Quoted | Where it comes from | Regenerate with |
-|---|---|---|
-| The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` | `pnpm eval:semifinal` with the bed's model in `.env.local`; `pnpm eval:semifinal -- --regrade <path>` re-scores a directory with no model call |
-| The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
-| The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
-| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of the 17 September 2026 real-mode run recorded for the final, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is delivered among the submission's engineering materials rather than in this repository | Run [either local way](#local-dev); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#real-mode) |
-| This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), the route's documented run on `gpt-5.6-terra` at an earlier commit, paced for screenshots | The same |
-
-The two real-mode runs are single observations of the same route a fortnight apart, on different commits, different models and different human pacing; the README run exercised a rejection and a revocation and the recorded run did not, so its blocked-after-revocation figure has no value. Neither is a distribution, and the submission names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
-
-
-## Evaluation quick start
-
-The controlled comparison runs the same model, the same non-zero temperature, the same 15 fixed tasks and the same seeded mock office through two arms - `day0`, which has been onboarded, and `baseline`, an ordinary agent - three times each, for 90 task outcomes. Every metric is graded by reading persisted state programmatically; there is no LLM judge. The method, the frozen evidence and the limits are in [`evaluation/README.md`](evaluation/README.md).
-
-**Harness v2** standardises both routes and both arms on four numbers, and stamps `harnessVersion: 2` into every evidence file it writes:
-
-| | |
-|---|---|
-| 300 s | abort on any single model call (`MODEL_CALL_TIMEOUT_MS`) |
-| 15 min | deadline per task, the same for all 15 |
-| 6 | skill-authoring attempts per task-run, then the run fails with `skill-authoring-attempts-exhausted` |
-| local | the networkless skill sandbox is required; a deployment that would select Daytona is refused before the first task |
-
-Evidence written by an earlier harness is not resumable under v2 and the v1 directories are kept immutable, so a mixed run cannot happen by accident.
+Day0 is measured by a controlled comparison: the same model, the same non-zero temperature, the same 15 fixed tasks and the same seeded mock office, run through two arms - `day0`, which has been onboarded, and `baseline`, an ordinary agent with the same tools and no onboarding - three times each, for 90 task outcomes per bed. Every metric is graded by reading persisted state programmatically; there is no LLM judge. Two further measurements cover permissions: revocation trials, in which a grant is revoked while an action is queued, and a model-free matrix of the exact-action gate's verdicts. The method, every bed, the findings and their limits are on the [evaluation page](evaluation/README.md).
 
 `D` is Day0 and `O` is the ordinary arm:
 
@@ -952,7 +924,37 @@ Evidence written by an earlier harness is not resumable under v2 and the v1 dire
 | Out-of-scope pass | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 |
 | Supervision on writes | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 |
 
-The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, while the frontier Terra and Sol arms exercise the hosted Responses API; both arms now complete tool-calling work on that fixed route. Day0 leads the ordinary arm on task pass, a-priori procedure adherence, prohibited-action freedom and out-of-scope pass in all three beds, but it does not pass every task-run (44/45 on each hosted model), and this controlled mock-office comparison does not establish universal performance. The ordinary arm is the same model with no onboarding.
+The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, while the frontier Terra and Sol arms exercise the hosted Responses API; both arms now complete tool-calling work on that fixed route. Day0 leads the ordinary arm on task pass, a-priori procedure adherence, prohibited-action freedom and out-of-scope pass in all three beds, but it does not pass every task-run (44/45 on each hosted model), and this controlled mock-office comparison does not establish universal performance. The ordinary arm is the same model with no onboarding. A fourth frozen bed, `GLM 5.3 Flash` through Featherless, is on the [evaluation page](evaluation/README.md): Day0 15/15 and 44/45 against the ordinary arm's 11/15 and 34/45.
+
+**Caveat (27 September 2026, decision N16).** These figures were graded before five task-set mechanisms were fixed and are not re-graded, so some passes may have been met by fixed text rather than the agent's own reasoning: a requester label shown only to Day0 was one of its own task's reason words; the fixed Day-1 transcript, given only to Day0, carried out-of-scope reason words and the citation titles; three product strings meet reason words on Day0's skips and deferrals; five tasks left `slack.postMessage` off their prohibited tools, so an extra post passed on them; and two documentation tasks carried their own citation or required words in text both arms see. No published number changes; the fixes land for the next bed, and the [evaluation page](evaluation/README.md#evidence-status) states each one.
+
+Every figure this README quotes comes from a file in this repository or from a run of the product, and each has a command that regenerates it. The commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below.
+
+| Figure | Where it comes from | Regenerate with |
+|---|---|---|
+| The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` (the harness's earlier file names, which these recorded directories keep) | `pnpm eval:comparison` with the bed's model in `.env.local`; `pnpm eval:comparison -- --regrade <path>` re-scores a directory with no model call while its run's mock backend is kept; these directories' backends were not retained, so they cannot be re-scored from a clone |
+| The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
+| The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
+| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of a recorded 17 September 2026 real-mode run of the same route, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is not in this repository | Run [either local way](#local-dev); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#real-mode) |
+| This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), the route's documented run on `gpt-5.6-terra` at an earlier commit, paced for screenshots | The same |
+
+The two real-mode runs are single observations of the same route a fortnight apart, on different commits, different models and different human pacing; the README run exercised a rejection and a revocation and the recorded run did not, so its blocked-after-revocation figure has no value. Neither is a distribution, and the table above names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
+
+
+## Evaluation quick start
+
+How to run the comparison yourself. What it measures and what it found are under [Evaluation](#evaluation) above and on the [evaluation page](evaluation/README.md).
+
+**Harness v2** standardises both routes and both arms on four numbers, and stamps `harnessVersion: 2` into every evidence file it writes:
+
+| | |
+|---|---|
+| 300 s | abort on any single model call (`MODEL_CALL_TIMEOUT_MS`) |
+| 15 min | deadline per task, the same for all 15 |
+| 6 | skill-authoring attempts per task-run, then the run fails with `skill-authoring-attempts-exhausted` |
+| local | the networkless skill sandbox is required; a deployment that would select Daytona is refused before the first task |
+
+Evidence written by an earlier harness is not resumable under v2 and the v1 directories are kept immutable, so a mixed run cannot happen by accident.
 
 It wants Node 22+, pnpm, a self-hosted backend in **mock** mode and the local sandbox, which is the stack `pnpm setup:local --route local` prepares ([Evaluation and the mock office](#evaluation-and-the-mock-office) below). The model is whatever `OPENAI_MODEL` names, and the harness checks that the deployment agrees with `.env.local` before it starts - the two disagreeing is the failure this check exists to catch. With the bundled `qwen3:8b`, keep `OLLAMA_CONTEXT_LENGTH=16384`; changing it means rebuilding the model service and confirming the context in its startup log.
 
@@ -969,20 +971,20 @@ pnpm sync:env                    # the deployment must carry the same model sett
 pnpm convex:restart
 pnpm exec convex dev --once --typecheck disable
 
-pnpm eval:semifinal
+pnpm eval:comparison
 ```
 
-The run writes `evaluation/results/<timestamp>/semifinal.json` atomically after every state transition, and regenerates `semifinal.md` beside it as it goes. An interrupted run resumes from that JSON; a resume is refused when the commit, model, temperature, arms, task set, run count, approval delay, polling interval, harness version, sandbox backend or authoring cap has changed:
+The run writes `evaluation/results/<timestamp>/comparison.json` atomically after every state transition, and regenerates `comparison.md` beside it as it goes. An interrupted run resumes from that JSON; a resume is refused when the commit, model, temperature, arms, task set, run count, approval delay, polling interval, harness version, sandbox backend or authoring cap has changed:
 
 ```bash
-pnpm eval:semifinal -- --out evaluation/results/<timestamp>/semifinal.json      # resume
-pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json  # re-grade, no model calls
-pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               # a subset
+pnpm eval:comparison -- --out evaluation/results/<timestamp>/comparison.json      # resume
+pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json  # re-grade, no model calls
+pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
 `pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
 
-The three frozen evidence directories the submission quotes, and their numbers, are listed in [`evaluation/README.md`](evaluation/README.md); earlier directories are kept as superseded audit history and are not used for any conclusion.
+The frozen evidence directories this README quotes, and their numbers, are listed on the [evaluation page](evaluation/README.md). They were written before 27 September 2026 and keep the file names the harness wrote then, `semifinal.json` and `semifinal.md`; a new run writes `comparison.json` and `comparison.md`. Earlier directories are kept as superseded audit history and are not used for any conclusion.
 
 ## Evaluation and the mock office
 
@@ -1053,7 +1055,7 @@ You still need a model - a native `ollama serve` on 11434, or `pnpm model:up` an
 
 ## 中文说明
 
-本节为评审提供与上述英文说明并行的简体中文版本，涵盖项目定位、目录、三条运行路径、真实模式和受控评测入口。命令、环境变量、路径与技术标识均保持原样。
+本节提供与上述英文说明并行的简体中文版本，涵盖项目定位、目录、三条运行路径、真实模式和受控评测入口。命令、环境变量、路径与技术标识均保持原样。
 
 ### 项目简介
 
@@ -1079,7 +1081,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 以下三点请在阅读其余内容之前了解。它们在相关章节各自出现，这里是集中说明的唯一位置。
 
-**哪些是模拟的，哪些是真实的。** 除 real mode 之外，本文件中的每条路径都运行在预置的 mock office 上：文档、表格、频道、工单和社交信息流都是随本仓库提供、按 Agent 单独写入的 fixture，Agent 的任何操作都不会离开你的机器。在这一设定下，模型调用、沙箱、状态机和审批门仍然是真实运行的。real mode 从构造上就只限本机，它读取你链接的文档并操作你自己的系统。本文件记录的那次运行，以及演示视频展示的那次运行，都在 real mode 下进行，连接的是操作者本人的 Linear 与 Slack 演示 workspace、操作者拥有的 Notion workspace，以及本仓库自带的合成 Looker 式 tile，其中全部为合成内容；过程中不涉及任何生产、客户、员工或个人数据，复现本文件的任何部分也不需要这些数据。[受控比较](evaluation/README.md)在 mock mode 下、于预置 office 上运行。Day0 目前没有用户，也没有生产部署；本文件中的监督数字是单次运行的计数，不是比率。完整声明（含凭据处理与保留）见 [`docs/submission/compliance.md`](docs/submission/compliance.md)。
+**哪些是模拟的，哪些是真实的。** 除 real mode 之外，本文件中的每条路径都运行在预置的 mock office 上：文档、表格、频道、工单和社交信息流都是随本仓库提供、按 Agent 单独写入的 fixture，Agent 的任何操作都不会离开你的机器。在这一设定下，模型调用、沙箱、状态机和审批门仍然是真实运行的。real mode 从构造上就只限本机，它读取你链接的文档并操作你自己的系统。本文件记录的那次运行，以及演示视频展示的那次运行，都在 real mode 下进行，连接的是操作者本人的 Linear 与 Slack 演示 workspace、操作者拥有的 Notion workspace，以及本仓库自带的合成 Looker 式 tile，其中全部为合成内容；过程中不涉及任何生产、客户、员工或个人数据，复现本文件的任何部分也不需要这些数据。[受控比较](evaluation/README.md)在 mock mode 下、于预置 office 上运行。Day0 目前没有用户，也没有生产部署；本文件中的监督数字是单次运行的计数，不是比率。凭据如何处理、保存哪些内容以及重置会删除什么，见 [`SECURITY.md`](SECURITY.md)。
 
 **第三方依赖。** Day0 自己的代码包括入职流程、章程与工作循环、技能生命周期及其静态门、surface 层与 exact-action gate、脱敏层、评测 harness 和 dashboard。它依赖：
 
@@ -1087,7 +1089,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - **Convex** 作为后端：本地路径使用开源的自托管二进制，托管路径使用云服务。
 - **Clerk** 用于托管路径的登录。本地路径以无认证模式和一个固定的本地用户替代它。
 - **用于脱敏的 span 模型** `urchade/gliner_multi_pii-v1`（Apache-2.0），在 real mode 下于 `redactor` 组件中本地运行。权重在首次启动时下载并按 digest 固定；推理不发出任何外部调用。
-- **可选服务，缺少 key 时即不启用：** ElevenLabs（语音模式）、Exa（good-habits 检索）、Daytona（随附验证沙箱的托管替代）。缺少它们时，语音选项置灰、检索步骤跳过、技能由本地沙箱验证。
+- **可选服务，缺少 key 时即不启用：** ElevenLabs（语音模式）、Daytona（随附验证沙箱的托管替代）。缺少它们时，语音选项置灰、技能由本地沙箱验证。
 - **real mode 下你自己的系统。** 记录的运行通过 MCP endpoint 使用 Linear，通过文档化 API 使用 Slack，通过其 MCP server 使用 Notion，均为操作者本人的测试 workspace。
 
 后端、模型服务、沙箱、redactor 与各组件的容器镜像在 `docker-compose.yml` 中按 digest 固定；软件包版本见 `package.json` 与[技术栈](#stack)表。发送给托管模型或 workspace 的内容，其服务商侧处理与保留遵循你与该服务商的账户条款。
@@ -1104,7 +1106,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **工作原理** · [运行流程](#runtime-flow) · [技术栈](#stack) · [路由](#routes) · [Convex 后端](#convex-backend-convex) · [数据结构](#schema-convexschemats) · [领域逻辑](#domain-logic-src)
 
-**项目** · [受控评测](evaluation/README.md) · [复现证据](#复现证据) · [评测快速开始](#评测快速开始) · [评测与 mock office](#评测与-mock-office) · [接口与 API 文档](#接口与-api-文档) · [数据来源与合规](docs/submission/compliance.md) · [贡献指南](CONTRIBUTING.md) · [安全](SECURITY.md) · [变更记录](CHANGELOG.md) · [致谢](#credits) · [许可证](#licence)
+**项目** · [评测](#评测) · [评测页面](evaluation/README.md) · [评测快速开始](#评测快速开始) · [评测与 mock office](#评测与-mock-office) · [接口与 API 文档](#接口与-api-文档) · [贡献指南](CONTRIBUTING.md) · [安全](SECURITY.md) · [变更记录](CHANGELOG.md) · [致谢](#credits) · [许可证](#licence)
 
 ### 快速开始
 
@@ -1284,9 +1286,11 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 Day0 是一个可运行的演示，而不是已投入生产的产品，目前没有用户。它的量化结论刻意限定在很窄的范围内：仓库提供一项[受控且由程序评分的比较](evaluation/README.md)，让完成入职的 Day0 与普通 Agent 在相同的 15 项陌生 mock-office 任务上运行。该基准不用于预测所有真实团队的工作表现。
 
-可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，评审可以在自己的机器上复现结果，而不必依赖无法核验的截图；模型调用、沙箱、状态机和审批门仍按真实路径运行。另有一条仅限本机的 real mode：它读取链接的团队文档、发现其中记录的系统，并只在可见审批门之后建立连接。两种本地方式都运行在这一模式下，详见[真实模式](#真实模式)。
+Day0 在已批准的章程内执行有边界的运营工作。它不做财务、雇佣、法律、医疗、安全攸关或客户信用方面的决定，也不取代合格的专业人员、经理或机构。超出已批准角色、其权限或已连接系统的请求应当被拒绝、延后或上报，[评测](#评测)衡量了它做到这一点的频率；最终决定与每一项外部影响仍由人负责。
 
-Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 留空时，共享模型路径通过 OpenAI Responses API 调用 `api.openai.com`；设置自定义 `OPENAI_BASE_URL` 时，则改用该 endpoint 的 OpenAI-compatible chat-completions API，因此无需任何账户也能在本机模型上运行完整流程。一个 evaluation bed 的两个 arm 始终使用同一条已选择路径。用于验证 Agent 自行编写技能的沙箱也随项目提供，因此该路径可以完成技能创建，而不会停在“尚不可调用”的中间状态。语音和网络检索是可选的第三方服务；缺少相应 key 时，系统会明确降级，而不会静默失败。下文给出[三种运行方式](#local-dev)，`pnpm check:setup` 会报告当前机器已经满足哪一种配置。
+可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，任何人都可以在自己的机器上复现结果，而不必依赖无法核验的截图；模型调用、沙箱、状态机和审批门仍按真实路径运行。另有一条仅限本机的 real mode：它读取链接的团队文档、发现其中记录的系统，并只在可见审批门之后建立连接。两种本地方式都运行在这一模式下，详见[真实模式](#真实模式)。
+
+Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 留空时，共享模型路径通过 OpenAI Responses API 调用 `api.openai.com`；设置自定义 `OPENAI_BASE_URL` 时，则改用该 endpoint 的 OpenAI-compatible chat-completions API，因此无需任何账户也能在本机模型上运行完整流程。一个 evaluation bed 的两个 arm 始终使用同一条已选择路径。用于验证 Agent 自行编写技能的沙箱也随项目提供，因此该路径可以完成技能创建，而不会停在“尚不可调用”的中间状态。语音是可选的第三方服务；缺少相应 key 时，系统会明确降级，而不会静默失败。后续增强：在模型服务商提供相应工具时，通过其自带的网络检索为 good-habits 做检索。下文给出[三种运行方式](#local-dev)，`pnpm check:setup` 会报告当前机器已经满足哪一种配置。
 
 ### 托管演示
 
@@ -1340,7 +1344,7 @@ key 路线上两个模型地址归并为同一个默认值。变量留空表示 
 
 - **key 通过询问获得，而不是粘贴。** 它通过隐藏输入读取，以仅本人可读的权限写入 `.env.local`，从不打印，也从不作为参数传给其他程序；`pnpm sync:env` 把它推送到 deployment，再次运行时保留文件中已有的 key。
 - **从本地模型方式切换过来时，key 路线上两个地址会自动清空。** setup 把 `OPENAI_BASE_URL` 和 `CONVEX_OPENAI_BASE_URL` 写为空，两者都为空时 `pnpm sync:env` 会清除 deployment 中此前保存的地址；这是"未设置"作为一个值而非遗漏的唯一情形：仍保存着 `http://model:11434/v1` 的 deployment 会去调用一个你早已停掉的模型服务，而且只有 action 会失败。随后的重启才让 backend 读到新值，因为 module 会保留首次求值时的 env。
-- **这种方式会产生模型费用。** 完整流程包括一对一的七个主题、章程生成、good-habits 检索、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
+- **这种方式会产生模型费用。** 完整流程包括一对一的七个主题、章程生成、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
 
 ### 本地运行，本地模型
 
@@ -1352,7 +1356,7 @@ pnpm install --frozen-lockfile
 pnpm dev                           # prints an unlock URL - open that, not localhost:3000
 ```
 
-这种方式的选择是模型。setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，半决赛本地 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。需要拉取的已测试模型，只有在 GPU 空闲显存足以完整容纳它时才是默认项：没有 NVIDIA GPU 或空闲显存不足时没有默认项，`--yes` 会停下并说明原因，这样一次 5 GB 的拉取随后在 CPU 上运行，是你用 `--model` 选择的结果，而不是意外发生。`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口。其余一切，包括参数、`stop`、`resume`、`clear`、各组件以及浏览器中的第一天，都与上文的[本地运行，云端模型](#本地运行云端模型)和下文的[真实模式](#真实模式)相同。
+这种方式的选择是模型。setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，本地评测 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。需要拉取的已测试模型，只有在 GPU 空闲显存足以完整容纳它时才是默认项：没有 NVIDIA GPU 或空闲显存不足时没有默认项，`--yes` 会停下并说明原因，这样一次 5 GB 的拉取随后在 CPU 上运行，是你用 `--model` 选择的结果，而不是意外发生。`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口。其余一切，包括参数、`stop`、`resume`、`clear`、各组件以及浏览器中的第一天，都与上文的[本地运行，云端模型](#本地运行云端模型)和下文的[真实模式](#真实模式)相同。
 
 响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。本路径设置了自定义 `OPENAI_BASE_URL`，因此 Agent 核心执行普通的 OpenAI-compatible chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟。云端模型方式的 key 路线则通过 Responses API 调用 OpenAI，延迟取决于 OpenAI。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
 
@@ -1506,7 +1510,7 @@ secrets 文件（权限 0600）保存 `LINEAR_API_KEY` 和 `SLACK_BOT_TOKEN`；�
 
 #### 公司演示环境
 
-决赛演示在一家合成公司 Kestrel Supply Co. 中运行三名数字员工：收入运营（revenue operations）、财务结账（finance close）和物流调度台（logistics desk）。这家公司中凡是能放进仓库的内容都在 `bed/company/` 下；其中没有任何秘密，每个页面都注明公司是合成的。
+公司演示环境在一家合成公司 Kestrel Supply Co. 中运行三名数字员工：收入运营（revenue operations）、财务结账（finance close）和物流调度台（logistics desk）。这家公司中凡是能放进仓库的内容都在 `bed/company/` 下；其中没有任何秘密，每个页面都注明公司是合成的。
 
 | 路径 | 内容 |
 |---|---|
@@ -1567,34 +1571,9 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 
 各可选组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。环境变量契约是 `.env.example`，[环境变量](#environment)一节解释每个变量。
 
-### 复现证据
+### 评测
 
-提交材料引用的每个数字都来自本仓库中的某个文件或产品的一次运行，并且都有对应的再生成命令。方法与其限制见 [`evaluation/README.md`](evaluation/README.md)；命令及其准备步骤见下文[评测快速开始](#评测快速开始)，此处不再重复。
-
-| 引用的数字 | 来源 | 再生成方式 |
-|---|---|---|
-| 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS` | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:semifinal`；`pnpm eval:semifinal -- --regrade <path>` 在不调用模型的情况下重新评分 |
-| 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
-| exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
-| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 为决赛录制的 2026 年 9 月 17 日 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出随提交材料中的工程材料交付，不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `exportActions:exportForAgent` 命令导出 ledger |
-| 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢 | 同上 |
-
-两次 real-mode 运行是同一路径相隔两周的单次观察，commit、模型与人工节奏均不同；README 运行经历了一次驳回与一次撤权，录制运行没有，因此其撤权后阻断一项没有数值。两者都不是分布，提交材料会说明每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
-
-### 评测快速开始
-
-受控比较使用同一模型、同一非零 temperature、相同的 15 项固定任务和相同的 seeded mock office，分别运行完成入职的 `day0` arm 与普通 `baseline` arm。默认配置为每项任务在每个 arm 上运行三次，共 90 个 task outcomes；所有指标均由程序读取持久化状态评分，不使用 LLM judge。完整方法、最终证据和限制见 [`evaluation/README.md`](evaluation/README.md)。
-
-**Harness v2** 让两条路径、两个 arm 使用同一组数值，并在写出的每个证据文件中标记 `harnessVersion: 2`：
-
-| | |
-|---|---|
-| 300 s | 单次模型调用的中止上限（`MODEL_CALL_TIMEOUT_MS`） |
-| 15 min | 每项任务的截止时间，15 项完全一致 |
-| 6 | 每个 task-run 的技能编写尝试上限，超出后以 `skill-authoring-attempts-exhausted` 失败 |
-| local | 必须使用无网络的本地技能沙箱；会选择 Daytona 的 deployment 在第一项任务之前即被拒绝 |
-
-早期 harness 写出的证据在 v2 下不可恢复，v1 目录保持不可变，因此不会意外混用两个版本。
+Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature、相同的 15 项固定任务和相同的 seeded mock office，分别运行完成入职的 `day0` arm 与普通 `baseline` arm（工具相同、不经过入职），每个 arm 运行三次，每个评测环境共 90 个 task outcomes。所有指标均由程序读取持久化状态评分，不使用 LLM judge。另有两项权限测量：撤权试验（在 action 排队期间撤销授权）以及不调用模型的 exact-action gate 判定矩阵。方法、各评测环境、结论与限制见[评测页面](evaluation/README.md)。
 
 `D` 表示 Day0，`O` 表示普通 arm：
 
@@ -1608,7 +1587,36 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 | 超范围任务通过 | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 |
 | 写操作受到监督 | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 |
 
-自托管 8B 的两个 arm 使用 OpenAI-compatible chat-completions 路由，前沿模型 Terra 与 Sol 的两个 arm 使用托管 Responses API；修复路由后，两边都能完成工具调用。三个环境中，Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上都领先普通 arm；但 Day0 并非每个 task-run 都通过（两个托管模型均为 44/45），这项受控 mock-office 比较也不能证明普遍性能。普通 arm 使用同一模型，只是不经过入职流程。
+自托管 8B 的两个 arm 使用 OpenAI-compatible chat-completions 路由，前沿模型 Terra 与 Sol 的两个 arm 使用托管 Responses API；修复路由后，两边都能完成工具调用。三个环境中，Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上都领先普通 arm；但 Day0 并非每个 task-run 都通过（两个托管模型均为 44/45），这项受控 mock-office 比较也不能证明普遍性能。普通 arm 使用同一模型，只是不经过入职流程。第四个冻结评测环境（经 Featherless 的 `GLM 5.3 Flash`）见[评测页面](evaluation/README.md)：Day0 为 15/15 与 44/45，普通 arm 为 11/15 与 34/45。
+
+**注意（2026 年 9 月 27 日，决定 N16）。** 上述数字在五项任务集机制修正之前评分，且未重新评分，因此部分通过可能由固定文本而非 Agent 自身的推理满足：仅向 Day0 显示的请求方标签本身是该任务的原因词；仅提供给 Day0 的固定 Day-1 记录含超范围原因词与引用标题；三个产品字符串命中 Day0 跳过与延后时的原因词；五项任务未把 `slack.postMessage` 列为禁止工具，多发一条消息也能通过；两项文档任务在两个 arm 都能看到的文本中自带引用或必需词。已发布的数字均不改变；修正将用于下一个评测环境，[评测页面](evaluation/README.md#evidence-status)逐项说明。
+
+本文件引用的每个数字都来自本仓库中的某个文件或产品的一次运行，并且都有对应的再生成命令。命令及其准备步骤见下文[评测快速开始](#评测快速开始)。
+
+| 数字 | 来源 | 再生成方式 |
+|---|---|---|
+| 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS`（harness 早期的文件名，这些已记录的目录保留原名） | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:comparison`；`pnpm eval:comparison -- --regrade <path>` 在保留该次运行 mock 后端的前提下不调用模型重新评分；这些目录的后端未保留，无法从克隆重新评分 |
+| 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
+| exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
+| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `exportActions:exportForAgent` 命令导出 ledger |
+| 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢 | 同上 |
+
+两次 real-mode 运行是同一路径相隔两周的单次观察，commit、模型与人工节奏均不同；README 运行经历了一次驳回与一次撤权，录制运行没有，因此其撤权后阻断一项没有数值。两者都不是分布，上表说明了每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
+
+### 评测快速开始
+
+如何自行运行这项比较。它衡量什么、得出了什么结论，见上文[评测](#评测)与[评测页面](evaluation/README.md)。
+
+**Harness v2** 让两条路径、两个 arm 使用同一组数值，并在写出的每个证据文件中标记 `harnessVersion: 2`：
+
+| | |
+|---|---|
+| 300 s | 单次模型调用的中止上限（`MODEL_CALL_TIMEOUT_MS`） |
+| 15 min | 每项任务的截止时间，15 项完全一致 |
+| 6 | 每个 task-run 的技能编写尝试上限，超出后以 `skill-authoring-attempts-exhausted` 失败 |
+| local | 必须使用无网络的本地技能沙箱；会选择 Daytona 的 deployment 在第一项任务之前即被拒绝 |
+
+早期 harness 写出的证据在 v2 下不可恢复，v1 目录保持不可变，因此不会意外混用两个版本。
 
 需要 Node 22+、pnpm、处于 **mock** 模式的自托管 backend 和本地 sandbox，也就是 `pnpm setup:local --route local` 所准备的 stack（见下文[评测与 mock office](#评测与-mock-office)）。模型由 `OPENAI_MODEL` 指定；harness 在开始前会检查 deployment 与 `.env.local` 是否一致，这项检查正是为了捕捉两者不一致的情况。使用内置 `qwen3:8b` 时必须保留 `OLLAMA_CONTEXT_LENGTH=16384`，修改后需重建 model service，并在启动日志中确认 context。
 
@@ -1625,20 +1633,20 @@ pnpm sync:env                    # the deployment must carry the same model sett
 pnpm convex:restart
 pnpm exec convex dev --once --typecheck disable
 
-pnpm eval:semifinal
+pnpm eval:comparison
 ```
 
-运行过程会把 `evaluation/results/<timestamp>/semifinal.json` 原子写入磁盘，并在同一目录持续生成 `semifinal.md`。若运行中断，可从原 JSON 恢复；当 commit、model、temperature、arms、task set、run count、approval delay、polling interval、harness 版本、sandbox backend 或技能编写上限不一致时，恢复会被拒绝：
+运行过程会把 `evaluation/results/<timestamp>/comparison.json` 原子写入磁盘，并在同一目录持续生成 `comparison.md`。若运行中断，可从原 JSON 恢复；当 commit、model、temperature、arms、task set、run count、approval delay、polling interval、harness 版本、sandbox backend 或技能编写上限不一致时，恢复会被拒绝：
 
 ```bash
-pnpm eval:semifinal -- --out evaluation/results/<timestamp>/semifinal.json      # resume
-pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json  # re-grade, no model calls
-pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               # a subset
+pnpm eval:comparison -- --out evaluation/results/<timestamp>/comparison.json      # resume
+pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json  # re-grade, no model calls
+pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
 `pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
 
-最终提交所引用的三个冻结证据目录及其数字列在 [`evaluation/README.md`](evaluation/README.md)；更早的目录仅保留为 superseded audit history，不用于最终结论。
+本文件引用的冻结证据目录及其数字列在[评测页面](evaluation/README.md)。这些目录写于 2026 年 9 月 27 日之前，保留 harness 当时写出的文件名 `semifinal.json` 与 `semifinal.md`；新的运行写出 `comparison.json` 与 `comparison.md`。更早的目录仅保留为 superseded audit history，不用于任何结论。
 
 ### 评测与 mock office
 

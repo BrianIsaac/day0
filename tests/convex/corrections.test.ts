@@ -44,6 +44,7 @@ async function employee(
     userId?: string;
     state?: Doc<'workItems'>['state'];
     planRejectedAt?: number;
+    rejectedAt?: number;
     key?: { externalClaimKey?: string; externalClaimAlias?: string };
   },
 ): Promise<Employee> {
@@ -66,6 +67,7 @@ async function employee(
       contentRefs: [],
       state: options.state ?? 'claimed',
       ...(options.planRejectedAt !== undefined ? { planRejectedAt: options.planRejectedAt } : {}),
+      ...(options.rejectedAt !== undefined ? { rejectedAt: options.rejectedAt } : {}),
       observedAt: 1,
       createdAt: 1,
     });
@@ -142,6 +144,54 @@ describe('firstTicketRejection', (): void => {
       agentId: first.agentId,
       rejectedAt: 10,
       correction: expect.objectContaining({ _id: words, text: 'finance owns this ask' }),
+    });
+  });
+
+  it("names a colleague's rejected actions as the first rejection, with the manager's words", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const planRejected = await employee(harness, {
+      name: 'Aiko',
+      state: 'cancelled',
+      planRejectedAt: 20,
+      rejectedAt: 20,
+    });
+    await keep(harness, planRejected, {
+      kind: 'plan-rejection',
+      text: 'not this week',
+      createdAt: 20,
+    });
+    const actionsRejected = await employee(harness, {
+      name: 'Priya',
+      state: 'failed',
+      rejectedAt: 10,
+    });
+    const words = await keep(harness, actionsRejected, {
+      kind: 'rejection',
+      text: 'the notice goes to finance first',
+      createdAt: 10,
+    });
+    const sibling = await employee(harness, { name: 'Mateo' });
+
+    expect(await rejectionFor(harness, sibling.workItemId)).toMatchObject({
+      workItemId: actionsRejected.workItemId,
+      rejectedAt: 10,
+      correction: expect.objectContaining({ _id: words, text: 'the notice goes to finance first' }),
+    });
+  });
+
+  it("finds the owner's rejection behind more rows for the item than one read takes", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    for (let row = 0; row < 40; row += 1) {
+      await employee(harness, { name: `Earlier ${row}`, state: 'completed' });
+    }
+    const rejected = await employee(harness, { name: 'Priya', state: 'failed', rejectedAt: 50 });
+    const sibling = await employee(harness, { name: 'Mateo' });
+
+    expect(await rejectionFor(harness, sibling.workItemId)).toMatchObject({
+      workItemId: rejected.workItemId,
+      rejectedAt: 50,
     });
   });
 

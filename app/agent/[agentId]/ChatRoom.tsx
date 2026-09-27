@@ -405,8 +405,8 @@ export function ChatRoom({
  *
  * The bubble renders the model's text verbatim, and some models write the
  * topic label as `**Topic 4:**`. Terra's recorded run wrote none, so the
- * markers only became visible once another model was configured - and a judge
- * reads this transcript closely. Rendering the emphasis is model-agnostic and
+ * markers only became visible once another model was configured - and a
+ * manager reads this transcript closely. Rendering the emphasis is model-agnostic and
  * changes nothing that is sent: the transcript the charter is synthesised from
  * is still the model's own text.
  *

@@ -23,8 +23,8 @@ export { ModelRefusalError, ModelReplyCutError } from './structured-fallback';
  * Mastra-fronted agent helpers.
  *
  * Each domain function (charter synthesis, quality-fit, plan drafting,
- * skill execution, skill authoring, transcript extraction, good-habits
- * distillation) constructs a named Mastra Agent at module load. This
+ * skill execution, skill authoring, transcript extraction) constructs a
+ * named Mastra Agent at module load. This
  * makes the named agents visible in Mastra observability + Langfuse
  * traces so the framework's role in the call graph is concrete rather
  * than incidental.

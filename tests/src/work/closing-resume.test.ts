@@ -130,6 +130,44 @@ describe('resuming after a closing gate refusal', () => {
     expect(closingResume(gateRefusal, plan, refused.reason, surfaces)).not.toHaveProperty('landedWrites');
   });
 
+  it("carries the question the run declared and the earlier runs' question it read through the resume on both paths", () => {
+    const asked = {
+      declaredQuestion: 'Please confirm which template the notice should use.',
+      earlierQuestion: null,
+    };
+    expect(
+      closingResume({ ...gateRefusal, ...asked }, plan, refused.reason, surfaces),
+    ).toMatchObject({ resumedClosing: true, ...asked });
+    const prerequisites = [action('looker', 'browser_snapshot'), action('linear', 'list_issues')];
+    expect(
+      closingResume(
+        {
+          draft: '',
+          notes: 'Left for the answer.',
+          prerequisiteCount: 2,
+          ...asked,
+          actions: [...prerequisites, action('linear', 'save_comment')],
+          applied: [
+            landed,
+            landed,
+            { tool: 'mcp.call', ok: false, reason: 'Failed to connect to MCP server linear' },
+          ],
+          planStepOutcomes: [1, 2].map((step) => ({
+            step,
+            status: 'satisfied',
+            evidence: 'ledger row 1: the issues',
+          })),
+        },
+        plan,
+        'Failed to connect to MCP server linear',
+        surfaces,
+      ),
+    ).toMatchObject({ resumedClosing: true, ...asked });
+    expect(closingResume(gateRefusal, plan, refused.reason, surfaces)).not.toHaveProperty(
+      'declaredQuestion',
+    );
+  });
+
   it('resumes on the run 2 REVOPS-7 plan from its declared tile read, whatever the steps say', () => {
     // The run's own words: step 2 names no surface, and the declared obligations say the read-back is of the tile.
     const runPlan: ExecutionPlan = refreshPlan;

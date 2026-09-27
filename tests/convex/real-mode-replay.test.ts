@@ -252,7 +252,11 @@ vi.mock('../../src/lib/mastra', () => ({
         ) as T;
       throw new Error(`unscripted agent ${name}`);
     };
-    return args.schema.parse(reply()) as T;
+    // The recorded executor replies predate the declared question; they declare none.
+    const executor = args.agent.name.endsWith('-initial') || args.agent.name.endsWith('-dependent');
+    return args.schema.parse(
+      executor ? (await import('./fakes/executor-reply')).asCurrentExecutorReply(reply()) : reply(),
+    ) as T;
   },
   agentText: async (): Promise<string> => '',
 }));
@@ -299,7 +303,8 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                           isError: false,
                           ...text(JSON.stringify({ error: true, message: VALIDATION })),
                         }
-                      : text(JSON.stringify(UNASSIGNED_ISSUE));
+                      : // The ticket asked for, so the re-read compares its own record (review M1).
+                        text(JSON.stringify({ ...UNASSIGNED_ISSUE, identifier: record.id }));
                   }
                   if (tool === 'save_comment') return text(JSON.stringify({ id: 'comment-91' }));
                   if (tool === 'save_issue') {
@@ -583,7 +588,8 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const completed = await readItem(t, workItemId);
     expect(completed.state).toBe('completed');
-    expect(recorded.mcp.map(call => call.tool)).toEqual(commentLanded ? ['save_issue'] : ['save_comment', 'save_issue']);
+    // The retry reads the ticket again before its first write on it (Q11).
+    expect(recorded.mcp.map(call => call.tool)).toEqual(commentLanded ? ['get_issue', 'save_issue'] : ['get_issue', 'save_comment', 'save_issue']);
     if (commentLanded && !omitComment) {
       expect(ledger(completed)[6]).toMatchObject({ ok: true, effect: 'comment-91', reason: expect.stringContaining('already landed') });
       expect(ledger(completed)[6]!.idempotencyKey).toBe(`${workItemId}:${resumed.executionRunId}:6`);
@@ -807,14 +813,16 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       'get_issue',
       'get_issue',
       'get_issue',
+      // The re-read before the first write on the ticket (Q11).
+      'get_issue',
       'save_comment',
       'save_issue',
     ]);
-    const commentBody = (linearCalls[3]!.args as { body: string }).body;
+    const commentBody = (linearCalls[4]!.args as { body: string }).body;
     expect(commentBody).toContain('visible figure 74%');
     expect(commentBody).toContain('Last updated by revops at 2026-09-14 12:41:02 UTC');
     expect(commentBody).toContain('Priya');
-    expect((linearCalls[4]!.args as { state: string }).state).toBe('Done');
+    expect((linearCalls[5]!.args as { state: string }).state).toBe('Done');
     const finalOutput = done.output as ExecutionOutput & {
       planStepOutcomes: Array<{ step: number; status: string }>;
     };

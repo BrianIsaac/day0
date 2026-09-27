@@ -41,12 +41,12 @@ const QWEN3_8B_MANIFEST = manifestLine(
 );
 
 describe('the curated list', (): void => {
-  it('names qwen3:8b as tested on the semi-final local bed, in one place', (): void => {
+  it('names qwen3:8b as tested on the local evaluation bed, in one place', (): void => {
     expect(CURATED_MODELS.map((model) => model.id)).toEqual(['qwen3:8b']);
-    expect(CURATED_MODELS[0].tested).toContain('semi-final local bed');
+    expect(CURATED_MODELS[0].tested).toContain('local evaluation bed');
     expect(CURATED_MODELS[0].downloadLabel).toContain('5.2 GB');
     // The tested note lives in scripts/models.ts and nowhere else in the setup.
-    expect(readFileSync('scripts/setup.ts', 'utf8')).not.toContain('semi-final local bed');
+    expect(readFileSync('scripts/setup.ts', 'utf8')).not.toContain('local evaluation bed');
   });
 });
 
@@ -106,7 +106,7 @@ describe('the menu', (): void => {
       { id: 'qwen3:8b', sizeLabel: '5.2 GB' },
     ]);
     expect(withTested.map((entry) => entry.id)).toEqual(['qwen3:8b', 'qwen3:4b']);
-    expect(withTested[0].tested).toContain('semi-final');
+    expect(withTested[0].tested).toContain('local evaluation bed');
     expect(withTested[0].mark).toBe('present, 5.2 GB');
   });
 

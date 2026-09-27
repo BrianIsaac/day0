@@ -117,6 +117,6 @@ export function day1Script(): string {
     '6. Anything immediate',
     '7. Open questions',
     '',
-    'After the conversation I synthesise a charter v0.0 with provenance tagging, write IDENTITY.md and TOOLS.md, kick off good-habits research, and surface the work queue.',
+    'After the conversation I synthesise a charter v0.0 with provenance tagging, write IDENTITY.md and TOOLS.md, and surface the work queue.',
   ].join('\n');
 }

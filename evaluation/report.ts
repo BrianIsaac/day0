@@ -64,10 +64,26 @@ export interface EvaluationRun {
   error?: string;
 }
 
+/** The experiment every new comparison evidence file records. */
+export const COMPARISON_EXPERIMENT = 'day0-controlled-comparison';
+
+/**
+ * The experiment id evidence recorded before 27 September 2026 carries, from
+ * the harness's earlier name. It is read so frozen evidence stays renderable
+ * and re-gradable. A fresh run never writes it; a re-grade keeps the id its
+ * source carries.
+ */
+export const RECORDED_COMPARISON_EXPERIMENT = 'day0-semifinal-controlled-comparison';
+
+/** Whether a value names the controlled comparison, under its current or recorded id. */
+export function isComparisonExperiment(value: unknown): value is EvaluationEvidence['experiment'] {
+  return value === COMPARISON_EXPERIMENT || value === RECORDED_COMPARISON_EXPERIMENT;
+}
+
 /** A comparison's evidence file: its configuration and every run. */
 export interface EvaluationEvidence {
   schemaVersion: 1;
-  experiment: 'day0-semifinal-controlled-comparison';
+  experiment: typeof COMPARISON_EXPERIMENT | typeof RECORDED_COMPARISON_EXPERIMENT;
   generatedAt: string;
   configuration: {
     /** Execution-harness revision, distinct from the backwards-compatible JSON schema. */
@@ -237,7 +253,7 @@ function taskRows(
  * tickets and differ on the four ticket-backed tasks.
  */
 const LEGACY_TASK_DEFINITIONS: readonly EvaluationTask[] = loadEvaluationTasksSync(
-  new URL('./tasks/semifinal-2026-09-02.json', import.meta.url),
+  new URL('./tasks/comparison-2026-09-02.json', import.meta.url),
 );
 
 /**
@@ -660,7 +676,7 @@ The scripted manager approves every held action after a fixed delay and never re
 
 Day0 onboarding uses ${configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
 
-Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A work item that is still non-terminal when the harness observes its deadline is timed out and retains a failed programmatic grade. A step that completes after the deadline counts as completed; its wall-clock overrun is recorded separately. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
+Per-task timeouts are defined in \`evaluation/tasks/comparison.json\`; each provider call has a shared ${(configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A work item that is still non-terminal when the harness observes its deadline is timed out and retains a failed programmatic grade. A step that completes after the deadline counts as completed; its wall-clock overrun is recorded separately. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
 
 `;
 }
@@ -689,7 +705,7 @@ export function renderEvaluationReport(
   const expectedRuns =
     evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
 
-  return `# Semi-final controlled comparison
+  return `# Controlled comparison
 
 Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\` with harness v${evidence.configuration.harnessVersion ?? 1}. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${provenanceLines(evidence, options)}
 

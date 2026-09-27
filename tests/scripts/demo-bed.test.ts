@@ -630,7 +630,7 @@ describe("a restored volume carries the recording bed's deployment env", (): voi
     const keys = syncScriptKeys(SYNC_SCRIPT);
     expect(keys).toContain('OPENAI_API_KEY');
     expect(keys).toContain('DAYTONA_API_KEY');
-    expect(keys).toContain('EXA_API_KEY');
+    expect(keys).toContain('SKILL_SANDBOX_SOCKET');
     expect(keys).not.toContain('NEXT_PUBLIC_DEV_NO_AUTH');
     expect(syncScriptKeys('KEYS=(\n  A\n  B # note\n)\n')).toEqual(['A', 'B']);
     expect(() => syncScriptKeys('nothing')).toThrow('KEYS');
@@ -646,7 +646,7 @@ describe("a restored volume carries the recording bed's deployment env", (): voi
           OPENAI_MODEL: 'gpt',
           DAY0_SURFACE_MODE: 'real',
         },
-        ['OPENAI_API_KEY', 'DAYTONA_API_KEY', 'OPENAI_MODEL', 'EXA_API_KEY'],
+        ['OPENAI_API_KEY', 'DAYTONA_API_KEY', 'OPENAI_MODEL', 'DAYTONA_API_URL'],
       ),
     ).toEqual(['OPENAI_API_KEY', 'DAYTONA_API_KEY']);
   });

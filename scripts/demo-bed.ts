@@ -733,8 +733,8 @@ export function revocationSummary(report: string): string[] {
  * The keys `scripts/sync-convex-env.sh` pushes, read off the script itself.
  *
  * The sync script skips a key that is empty in the file, which is right for a
- * fresh deployment and wrong for a restored one: the recording bed's OpenAI,
- * Daytona and Exa keys stay on the deployment, and the first is then sent to
+ * fresh deployment and wrong for a restored one: the recording bed's OpenAI
+ * and Daytona keys stay on the deployment, and the first is then sent to
  * whichever host `OPENAI_BASE_URL` names. `up` clears those; this is the list
  * it clears from, so the two scripts cannot drift apart.
  *

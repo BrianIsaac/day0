@@ -59,12 +59,18 @@ function credentialPlaintext(kind: CredentialKind, plaintext?: string): string {
   return plaintext;
 }
 
+/** The reason a rotated row keeps a person's revoke, shown with the credential. */
+export const REVOKE_STANDS_REASON =
+  'Revoked by a person. The page now holds a different value; it stays revoked until a person lands or approves one.';
+
 /**
  * Store encrypted credential bytes, upserting page-derived rows by source.
+ * Internal; written by `store`.
  *
- * A changed source value is a rotation and reactivates its stable row. An
- * unchanged value never clears revocation, so periodic sync cannot undo an
- * explicit owner decision.
+ * A changed source value is a rotation: the stable row takes the new value
+ * and its usage restarts. Only a person sets `revokedAt`, so neither a
+ * rotation nor an unchanged value clears it; a sync can never undo a
+ * person's revoke, and a revoked row that rotates says so in its reason.
  */
 export const persistEncrypted = internalMutation({
   args: {
@@ -76,7 +82,7 @@ export const persistEncrypted = internalMutation({
     explicitlyAssigned: v.optional(v.boolean()),
     source: credentialSource,
     appId: v.optional(v.string()),
-    reactivate: v.boolean(),
+    rotated: v.boolean(),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const sourced = pageSource(args.source);
@@ -119,10 +125,9 @@ export const persistEncrypted = internalMutation({
       iv: args.iv,
       explicitlyAssigned: args.explicitlyAssigned,
       appId: args.appId,
-      lastUsedAt: args.reactivate ? undefined : existing.lastUsedAt,
-      revokedAt: args.reactivate ? undefined : existing.revokedAt,
+      lastUsedAt: args.rotated ? undefined : existing.lastUsedAt,
       status: undefined,
-      statusReason: undefined,
+      statusReason: existing.revokedAt && args.rotated ? REVOKE_STANDS_REASON : undefined,
     });
     return existing._id;
   },
@@ -131,7 +136,7 @@ export const persistEncrypted = internalMutation({
 /**
  * Update non-secret metadata without changing revocation or usage state.
  * Internal. Clears the status, so a row a sync superseded is live again once
- * its value is found again; a person's revoke stays.
+ * its value is found again; a person's revoke stays, and so does its reason.
  */
 export const updateMetadata = internalMutation({
   args: {
@@ -142,13 +147,14 @@ export const updateMetadata = internalMutation({
     explicitlyAssigned: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<void> => {
+    const row = await ctx.db.get(args.credentialId);
     await ctx.db.patch(args.credentialId, {
       kind: args.kind,
       label: args.label,
       appId: args.appId,
       explicitlyAssigned: args.explicitlyAssigned,
       status: undefined,
-      statusReason: undefined,
+      statusReason: row?.revokedAt && !row.status ? row.statusReason : undefined,
     });
   },
 });
@@ -492,7 +498,7 @@ export const store = internalAction({
       source: args.source,
       ...metadata,
       ...encrypted,
-      reactivate: existing !== null,
+      rotated: existing !== null,
     });
   },
 });

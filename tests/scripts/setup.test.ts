@@ -963,12 +963,12 @@ describe('writing the file', (): void => {
   });
 
   it('replaces a value, keeps every other line and leaves the file private', (): void => {
-    const directory = checkout('# a comment\nEXA_API_KEY=exa-1\nCONVEX_PORT=3210\n');
+    const directory = checkout('# a comment\nREADER_OWN_SETTING=kept-1\nCONVEX_PORT=3210\n');
     const path = join(directory, '.env.local');
     writeEnvValues(path, { CONVEX_PORT: '46210', COMPOSE_PROJECT_NAME: 'day0-setup-abc' });
     const text = readFileSync(path, 'utf8');
     expect(text).toContain('# a comment');
-    expect(text).toContain('EXA_API_KEY=exa-1');
+    expect(text).toContain('READER_OWN_SETTING=kept-1');
     expect(text).toContain('CONVEX_PORT=46210');
     expect(text).toContain('COMPOSE_PROJECT_NAME=day0-setup-abc');
     expect(text.endsWith('\n')).toBe(true);
@@ -1286,7 +1286,7 @@ describe('running it a second time', (): void => {
     const { io, commands, directory } = harness({
       envLocal: [
         '# kept by the reader',
-        'EXA_API_KEY=exa-1',
+        'READER_OWN_SETTING=kept-1',
         'COMPOSE_PROJECT_NAME=day0-setup-test',
         'CONVEX_PORT=46210',
         'CONVEX_SITE_PROXY_PORT=46211',
@@ -1305,7 +1305,7 @@ describe('running it a second time', (): void => {
     expect(status).toBe(0);
     const written = readFileSync(join(directory, '.env.local'), 'utf8');
     expect(written).toContain('# kept by the reader');
-    expect(written).toContain('EXA_API_KEY=exa-1');
+    expect(written).toContain('READER_OWN_SETTING=kept-1');
     expect(written).toContain('OPENAI_API_KEY=sk-existing');
     expect(written).toContain('DEV_NO_AUTH_SECRET=already-generated');
     expect(commands.map((entry) => entry.args.join(' ')).join('\n')).not.toContain('--force');

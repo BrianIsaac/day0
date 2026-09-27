@@ -41,9 +41,10 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { transitionWithheld } from '../src/work/obligations';
+import { isOpenQuestionStop, transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
+import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import {
   AUTONOMOUS_WIP_LIMIT,
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
@@ -326,7 +327,12 @@ async function rememberExternalAlias(
   externalAlias: string | undefined,
   externalClaimAlias: string | undefined,
 ): Promise<void> {
-  if (externalAlias === undefined || !externalClaimAlias || existing.externalClaimAlias !== undefined) return;
+  if (
+    externalAlias === undefined ||
+    !externalClaimAlias ||
+    existing.externalClaimAlias !== undefined
+  )
+    return;
   if (existing.externalClaimKey === externalClaimAlias) return;
   await ctx.db.patch(existing._id, { externalAlias, externalClaimAlias });
   const held = await ctx.db
@@ -341,19 +347,310 @@ async function rememberExternalAlias(
   }
 }
 
-/** Share intake's idempotency boundary with fixed evaluation task batches. */
-export async function seedItemInTransaction(
+/** The ticket as a listing showed it, for the re-read before apply to compare with. */
+const trackerSnapshot = v.object({
+  assigned: v.boolean(),
+  assigneeId: v.optional(v.string()),
+  assigneeEmail: v.optional(v.string()),
+  state: v.optional(v.string()),
+  stateType: v.optional(v.string()),
+  doNotAutomate: v.boolean(),
+});
+
+/** The event that keeps each listing's snapshot of a ticket. */
+export const WORK_LISTED_EVENT = 'work.listed';
+
+/** A listing as it was kept: the ticket, and why intake refused it on that poll, if it did. */
+interface KeptListing {
+  readonly tracker: TicketSnapshot;
+  readonly refused?: string;
+}
+
+/**
+ * The latest listing kept for an item, at or before a time.
+ *
+ * The read is the agent's listing events, newest first, down to the item's;
+ * an item's listings are kept only when its ticket changed, so they are few,
+ * and none is lost behind other tickets' listings.
+ *
+ * @param row - The item and its agent.
+ * @param before - The latest listing time that counts.
+ * @param acceptedOnly - Whether to pass over a listing intake refused.
+ * @returns The listing, or undefined when the item was never listed by then.
+ */
+async function keptListingAt(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  before: number,
+  acceptedOnly: boolean,
+): Promise<KeptListing | undefined> {
+  // A later listing is its own event; the first rides on the discovery, and
+  // a refused ticket is never discovered.
+  for (const type of [WORK_LISTED_EVENT, 'work.discovered']) {
+    const listing = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
+      .order('desc')
+      .filter((q) =>
+        q.and(
+          q.eq(q.field('payload.workItemId'), row._id),
+          q.lte(q.field('createdAt'), before),
+          acceptedOnly ? q.eq(q.field('payload.refused'), undefined) : true,
+        ),
+      )
+      .first();
+    const payload = listing?.payload as Partial<KeptListing> | undefined;
+    if (payload?.tracker !== undefined) {
+      return {
+        tracker: payload.tracker,
+        ...(payload.refused !== undefined ? { refused: payload.refused } : {}),
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The latest snapshot a listing intake took the ticket on kept for an item,
+ * at or before a time. A listing intake refused is never a baseline (review
+ * B1): the refusal is a change the re-read must find, not the ticket the plan
+ * was made for.
+ *
+ * @param row - The item and its agent.
+ * @param before - The latest listing time that counts.
+ * @returns The snapshot, or undefined when no accepted listing was kept by then.
+ */
+async function listedSnapshotAt(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  before: number,
+): Promise<TicketSnapshot | undefined> {
+  return (await keptListingAt(ctx, row, before, true))?.tracker;
+}
+
+/** The snapshot fields, in one order, so two snapshots compare by value. */
+const SNAPSHOT_FIELDS = [
+  'assigned',
+  'assigneeId',
+  'assigneeEmail',
+  'state',
+  'stateType',
+  'doNotAutomate',
+] as const;
+
+/** Whether two snapshots say the same about a ticket, whatever order their fields were stored in. */
+function sameSnapshot(left: TicketSnapshot, right: TicketSnapshot): boolean {
+  return SNAPSHOT_FIELDS.every((field) => left[field] === right[field]);
+}
+
+/**
+ * Keep the ticket as this listing showed it, when it differs from the last
+ * listing kept or intake's refusal of it changed, so the re-read before
+ * apply can tell what changed since the plan was made. The first listing is
+ * kept on the discovery event, so the live feed gains a row only when a
+ * ticket changes.
+ *
+ * @param refused - Why intake refused the ticket on this poll, when it did.
+ */
+async function recordListing(
   ctx: MutationCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  tracker: TicketSnapshot | undefined,
+  refused?: string,
+): Promise<void> {
+  if (tracker === undefined) return;
+  const now = Date.now();
+  const last = await keptListingAt(ctx, row, now, false);
+  if (
+    last !== undefined &&
+    sameSnapshot(last.tracker, tracker) &&
+    (last.refused === undefined) === (refused === undefined)
+  ) {
+    return;
+  }
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: WORK_LISTED_EVENT,
+    payload: { workItemId: row._id, tracker, ...(refused !== undefined ? { refused } : {}) },
+    createdAt: now,
+  });
+}
+
+/**
+ * The ticket as the listing a plan was made under showed it (the latest
+ * listing intake took it on, at or before the given time), and as the
+ * latest such listing showed it when the manager last pressed Retry after
+ * that time, which the manager has seen. A listing intake refused is
+ * neither. Internal; read by the apply.
+ */
+export const listedSnapshot = internalQuery({
+  args: { workItemId: v.id('workItems'), before: v.number() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ planned: TicketSnapshot | null; acknowledged: TicketSnapshot | null }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) return { planned: null, acknowledged: null };
+    const retry = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', 'work.retry'))
+      .order('desc')
+      .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
+      .first();
+    const retriedAt = retry && retry.createdAt > args.before ? retry.createdAt : undefined;
+    return {
+      planned: (await listedSnapshotAt(ctx, row, args.before)) ?? null,
+      acknowledged:
+        retriedAt === undefined ? null : ((await listedSnapshotAt(ctx, row, retriedAt)) ?? null),
+    };
+  },
+});
+
+/** How many of an item's runs the run numbering reads, oldest first. */
+const RUN_SCAN_LIMIT = 200;
+
+/**
+ * An item's runs, oldest first, so a reused ledger row can name the run
+ * that sent what it reuses ("reused from run 2"). Internal; read by the apply.
+ */
+export const executionRunIds = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<Array<Id<'events'>>> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) return [];
+    const claims = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (q) =>
+        q.eq('agentId', row.agentId).eq('type', 'work.execution-claimed'),
+      )
+      .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
+      .take(RUN_SCAN_LIMIT);
+    return claims.map((claim) => claim._id);
+  },
+});
+
+/** How a row intake withdrew says so on the card; its return is found by the same words. */
+export const WITHDRAWN_FROM_QUEUE_PREFIX = 'withdrawn from the queue on the tracker: ';
+
+/**
+ * The states a withdrawal moves to `cancelled`: work that is only waiting,
+ * and a `claimed` row whose plan is still being drafted, so the window
+ * closes at intake (review B1): `setPlan` stores a plan only on a `claimed`
+ * row, so none is stored for a ticket that left the queue. A row with a
+ * plan, a decision or a run in flight is left to the re-read before apply,
+ * which withholds its first write; a finished row stays as it finished.
+ */
+const WITHDRAWABLE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'discovered',
+  'deferred',
+  'needs-skill',
+  'claimed',
+]);
+
+/** The states whose row no longer follows the tracker: the work is done or given up. */
+const SETTLED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['completed', 'cancelled']);
+
+/** The fields a re-listing brings up to date, as the tracker now shows them. */
+const LISTED_FIELDS = [
+  'title',
+  'contentSummary',
+  'contentRefs',
+  'priority',
+  'requesterLabel',
+  'owner',
+  'requester',
+] as const;
+
+/**
+ * Bring an existing row up to what the tracker lists now (Q11): the fields
+ * that changed are patched on a row still being worked or waiting, and a
+ * row intake withdrew is cancelled with the reason, or returned to
+ * `discovered` when its ticket is back in the queue.
+ *
+ * @param existing - The row the ticket already has.
+ * @param args - The ticket as this poll listed it.
+ * @param leftQueue - Why the ticket left the queue, when this poll refused it.
+ */
+async function refreshListedItem(
+  ctx: MutationCtx,
+  existing: Doc<'workItems'>,
   args: WorkItemSeedInput,
-): Promise<Id<'workItems'>> {
-  const existing = await ctx.db
+  leftQueue: string | undefined,
+): Promise<void> {
+  const withdrawn =
+    existing.state === 'cancelled' && existing.skipReason?.startsWith(WITHDRAWN_FROM_QUEUE_PREFIX);
+  if (SETTLED_STATES.has(existing.state) && !withdrawn) return;
+  const changed = Object.fromEntries(
+    LISTED_FIELDS.flatMap((field) =>
+      JSON.stringify(existing[field]) === JSON.stringify(args[field]) ? [] : [[field, args[field]]],
+    ),
+  ) as Partial<Pick<Doc<'workItems'>, (typeof LISTED_FIELDS)[number]>>;
+  const now = Date.now();
+  if (leftQueue !== undefined && WITHDRAWABLE_STATES.has(existing.state)) {
+    const skipReason = `${WITHDRAWN_FROM_QUEUE_PREFIX}${leftQueue}`;
+    await ctx.db.patch(existing._id, { ...changed, state: 'cancelled', skipReason });
+    await releaseExternalClaim(ctx, existing._id, now);
+    await ctx.db.insert('events', {
+      agentId: existing.agentId,
+      type: 'work.withdrawn',
+      payload: { workItemId: existing._id, reason: skipReason, fromState: existing.state },
+      createdAt: now,
+    });
+    await scheduleNextStep(ctx, { ...existing, state: 'cancelled' });
+    return;
+  }
+  if (leftQueue !== undefined && withdrawn) {
+    const skipReason = `${WITHDRAWN_FROM_QUEUE_PREFIX}${leftQueue}`;
+    await ctx.db.patch(existing._id, { ...changed, skipReason });
+    return;
+  }
+  if (leftQueue === undefined && withdrawn) {
+    await ctx.db.patch(existing._id, {
+      ...changed,
+      state: 'discovered',
+      skipReason: undefined,
+      evaluationClaimedAt: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: existing.agentId,
+      type: 'work.returned',
+      payload: { workItemId: existing._id, title: args.title },
+      createdAt: now,
+    });
+    await scheduleNextStep(ctx, { ...existing, state: 'discovered' });
+    return;
+  }
+  if (Object.keys(changed).length > 0) await ctx.db.patch(existing._id, changed);
+}
+
+/** The row an agent already holds for a listed item, if any. */
+async function listedRow(
+  ctx: MutationCtx,
+  args: Pick<WorkItemSeedInput, 'agentId' | 'sourceSystem' | 'externalId'>,
+): Promise<Doc<'workItems'> | null> {
+  return await ctx.db
     .query('workItems')
     .withIndex('by_extId', (q) =>
       q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
     )
     .filter((q) => q.eq(q.field('agentId'), args.agentId))
     .first();
-  // An existing row is read again only while it still lacks the other name.
+}
+
+/**
+ * Seed one listed item, or bring its existing row up to the listing.
+ * Shares intake's idempotency boundary with fixed evaluation task batches.
+ */
+export async function seedItemInTransaction(
+  ctx: MutationCtx,
+  { tracker, ...args }: WorkItemSeedInput & { tracker?: TicketSnapshot },
+): Promise<Id<'workItems'>> {
+  const existing = await listedRow(ctx, args);
+  if (existing) {
+    await refreshListedItem(ctx, existing, args, undefined);
+    await recordListing(ctx, existing, tracker);
+  }
+  // An existing row is read again for its other name only while it still lacks it.
   if (existing && (args.externalAlias === undefined || existing.externalClaimAlias !== undefined)) {
     return existing._id;
   }
@@ -362,7 +659,9 @@ export async function seedItemInTransaction(
   if (SURFACE_MODE === 'real') {
     const surface = await ctx.db
       .query('surfaces')
-      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.sourceSystem))
+      .withIndex('by_agent_slug', (q) =>
+        q.eq('agentId', args.agentId).eq('slug', args.sourceSystem),
+      )
       .first();
     if (surface) {
       externalClaimKey = providerItemKey(surface, args, SURFACE_MODE);
@@ -383,7 +682,9 @@ export async function seedItemInTransaction(
   const id = await ctx.db.insert('workItems', {
     ...seed,
     ...(externalClaimKey ? { externalClaimKey } : {}),
-    ...(externalAlias !== undefined && externalClaimAlias ? { externalAlias, externalClaimAlias } : {}),
+    ...(externalAlias !== undefined && externalClaimAlias
+      ? { externalAlias, externalClaimAlias }
+      : {}),
     state: 'discovered',
     observedAt: Date.now(),
     createdAt: Date.now(),
@@ -391,7 +692,7 @@ export async function seedItemInTransaction(
   await ctx.db.insert('events', {
     agentId: args.agentId,
     type: 'work.discovered',
-    payload: { workItemId: id, title: args.title },
+    payload: { workItemId: id, title: args.title, ...(tracker ? { tracker } : {}) },
     createdAt: Date.now(),
   });
   await scheduleNextStep(ctx, {
@@ -404,10 +705,33 @@ export async function seedItemInTransaction(
   return id;
 }
 
+/** Seed one listed item or bring its row up to the listing. Internal; called by intake. */
 export const seedItem = internalMutation({
-  args: { agentId: v.id('agents'), ...workItemSeedFields },
-  handler: async (ctx, args): Promise<Id<'workItems'>> =>
-    await seedItemInTransaction(ctx, args),
+  args: { agentId: v.id('agents'), ...workItemSeedFields, tracker: v.optional(trackerSnapshot) },
+  handler: async (ctx, args): Promise<Id<'workItems'>> => await seedItemInTransaction(ctx, args),
+});
+
+/**
+ * Bring the row of a ticket intake refused on this poll up to the listing
+ * and withdraw it when it is only waiting. Internal; called by intake. A
+ * ticket with no row gets none.
+ *
+ * @returns The ticket's row, or null when it never had one.
+ */
+export const withdrawListedItem = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    ...workItemSeedFields,
+    leftQueue: v.string(),
+    tracker: v.optional(trackerSnapshot),
+  },
+  handler: async (ctx, { leftQueue, tracker, ...listed }): Promise<Id<'workItems'> | null> => {
+    const existing = await listedRow(ctx, listed);
+    if (!existing) return null;
+    await refreshListedItem(ctx, existing, listed, leftQueue);
+    await recordListing(ctx, existing, tracker, leftQueue);
+    return existing._id;
+  },
 });
 
 /**
@@ -825,7 +1149,8 @@ async function takeExternalClaim(
  * A retry resumes a cancelled row that has a plan past evaluation, so no
  * verdict takes the claim on the way; a colleague may have taken the item
  * since the cancel released it. A failed or completed row still holds its
- * claim and takes nothing new.
+ * claim and takes nothing new, except a row whose held actions were rejected,
+ * which released it.
  *
  * Args:
  *   ctx: Mutation context of the retry.
@@ -1290,7 +1615,8 @@ async function releaseClaim(ctx: MutationCtx, claim: Doc<'externalClaims'>, now:
  * Release the claim a work item holds, with what it refused.
  *
  * A row that holds no live claim releases nothing. Called where a holder is
- * cancelled; completed and failed rows keep their claim.
+ * cancelled; completed and failed rows keep their claim, except a row whose
+ * held actions the manager rejected (`releaseItemClaim`).
  *
  * Args:
  *   ctx: Mutation context of the transition.
@@ -2787,7 +3113,19 @@ export const retryFailed = mutation({
       ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
       ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
       ...(feedback
-        ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
+        ? {
+            managerFeedback: {
+              reason: feedback,
+              at: Date.now(),
+              kind: 'retry-note' as const,
+              // Only a note on a question stop answers the question (review D2).
+              ...(row.state === 'failed' &&
+              row.skipReason !== undefined &&
+              isOpenQuestionStop(stopDetail(row.skipReason))
+                ? { answersQuestion: true }
+                : {}),
+            },
+          }
         : {}),
       // A retry starts every step afresh; no claim from an earlier attempt holds it back.
       ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
@@ -2870,10 +3208,13 @@ async function cancelPlanInTransaction(
   const skipReason = planCancelledReason(reason);
   const feedback = managerText(reason);
   if (feedback) await keepCorrectionInTransaction(ctx, row, 'plan-rejection', feedback);
+  const now = Date.now();
   await ctx.db.patch(row._id, {
     state: 'cancelled',
     skipReason,
-    ...(SURFACE_MODE === 'real' ? { planRejectedAt: Date.now() } : {}),
+    ...(SURFACE_MODE === 'real'
+      ? { planRejectedAt: now, rejectedAt: row.rejectedAt ?? row.planRejectedAt ?? now }
+      : {}),
     // Kept in full, as a rejection reason is, for the plan Retry drafts next.
     ...(feedback
       ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'plan-rejection' as const } }
@@ -4013,7 +4354,11 @@ async function approveActionsInTransaction(
  * Refuse the held actions. The row fails with the manager's reason and the
  * draft is kept. Rows the auto phase already applied stay in the ledger, so
  * Retry is fenced by them; a run nothing landed for resumes from
- * `plan-approved` and runs the skill again.
+ * `plan-approved` and runs the skill again. In real mode the rejection is
+ * stamped (`rejectedAt`) and the claim on the provider item is released, as
+ * a plan rejection releases it: another employee may take the item, and its
+ * plan then waits for the manager with this reason (N3). A claim on a page
+ * field the run wrote is settled, not released. Retry takes the claim again.
  */
 export const rejectActions = mutation({
   args: { workItemId: v.id('workItems'), pendingRunId: v.id('events'), reason: v.string() },
@@ -4022,6 +4367,30 @@ export const rejectActions = mutation({
     return await rejectActionsInTransaction(ctx, row, args, 'dashboard');
   },
 });
+
+/**
+ * Release the claim a work item holds on the provider item it was discovered
+ * from, with what it refused, leaving any claim on a page field it wrote.
+ *
+ * Args:
+ *   ctx: Mutation context of the rejection.
+ *   workItemId: The rejected work item.
+ *   now: The release time.
+ */
+async function releaseItemClaim(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  now: number,
+): Promise<void> {
+  const held = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of held) {
+    if (claim.writeTarget === undefined) await releaseClaim(ctx, claim, now);
+  }
+}
 
 async function rejectActionsInTransaction(
   ctx: MutationCtx,
@@ -4055,10 +4424,12 @@ async function rejectActionsInTransaction(
           ),
         }
       : undefined;
-  await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
+  const now = Date.now();
+  await settleWriteTargetClaims(ctx, args.workItemId, now);
   await ctx.db.patch(args.workItemId, {
     state: 'failed',
     skipReason,
+    ...(SURFACE_MODE === 'real' ? { rejectedAt: row.rejectedAt ?? row.planRejectedAt ?? now } : {}),
     ...(output !== undefined ? { output } : {}),
     ...(feedback
       ? {
@@ -4080,6 +4451,7 @@ async function rejectActionsInTransaction(
     ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
   });
   if (feedback) await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
+  await releaseItemClaim(ctx, args.workItemId, now);
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.actions-rejected',

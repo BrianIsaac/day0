@@ -1,5 +1,5 @@
 {
-  "provenance": "The mock office every semi-final task is graded against, frozen from the rows convex/mockSeed.ts seedMockEnvironment inserts, with its clock fields dropped. The graders read this copy and never the live seed, so a change to the mock seed cannot move a grade (decision N5).",
+  "provenance": "The mock office every comparison task is graded against, frozen from the rows convex/mockSeed.ts seedMockEnvironment inserts, with its clock fields dropped. The graders read this copy and never the live seed, so a change to the mock seed cannot move a grade (decision N5).",
   "commit": "dbdde979a35a5068252f347c762593f9a9053432",
   "frozenAt": "2026-09-27",
   "docs": [

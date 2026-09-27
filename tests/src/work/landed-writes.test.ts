@@ -6,6 +6,7 @@ import {
   landedWriteLines,
   landedWritesOf,
   reusedLedger,
+  withReusedRunNumbers,
   writeTarget,
 } from '../../../src/work/landed-writes';
 import type { LandedWrite, MockAction } from '../../../src/work/types';
@@ -403,6 +404,99 @@ describe('the writes earlier runs landed', () => {
         surfaces,
       }),
     ).toEqual([undefined]);
+  });
+
+  it('keeps two status changes an earlier run set on one ticket, so the last it set is the one reused (M3)', () => {
+    const inProgress = call('linear', 'save_issue', { id: 'REVOPS-5', state: 'In Progress' });
+    // A landed save_issue carries the ticket as its provider id, so both rows share it.
+    const earlier = {
+      actions: [inProgress, done],
+      applied: [
+        row({ providerId: 'REVOPS-5', idempotencyKey: 'work:first:0' }),
+        row({ providerId: 'REVOPS-5', idempotencyKey: 'work:first:1' }),
+      ],
+    };
+    const landedBefore = landedWritesOf(earlier);
+    expect(landedBefore.map((write) => write.applied.idempotencyKey)).toEqual([
+      'work:first:0',
+      'work:first:1',
+    ]);
+    expect(reusedLedger([done], landedBefore, run, { surfaces })[0]?.reason).toContain(
+      'reused landed status change to Done',
+    );
+    expect(reusedLedger([inProgress], landedBefore, run, { surfaces })).toEqual([undefined]);
+  });
+
+  it('tracks the state this run sets, so a later change back to a state an earlier run set is sent (M3)', () => {
+    const inProgress = call('linear', 'save_issue', { id: 'REVOPS-5', state: 'In Progress' });
+    const sources: LandedWrite[] = [
+      { action: done, applied: row({ providerId: 'REVOPS-5', idempotencyKey: 'work:first:1' }) },
+    ];
+    // In Progress is sent, so the ticket is no longer Done when this run reaches its Done.
+    expect(reusedLedger([inProgress, done], sources, run, { surfaces })).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("counts a status change this run's earlier phase landed as the ticket's state, so the closing phase's change is sent (M3)", () => {
+    const inProgress = call('linear', 'save_issue', { id: 'REVOPS-5', state: 'In Progress' });
+    const sources: LandedWrite[] = [
+      { action: done, applied: row({ providerId: 'REVOPS-5', idempotencyKey: 'work:first:1' }) },
+    ];
+    const phaseOne: LandedWrite[] = [
+      {
+        action: inProgress,
+        applied: row({ providerId: 'REVOPS-5', idempotencyKey: 'work:retry:0' }),
+      },
+      {
+        action: comment,
+        applied: row({ providerId: 'comment-2', idempotencyKey: 'work:retry:1' }),
+      },
+    ];
+    expect(reusedLedger([done], sources, run, { surfaces, thisRun: phaseOne })).toEqual([
+      undefined,
+    ]);
+    // Only its status changes count: this run's own comment is never a reuse source.
+    expect(reusedLedger([comment], [], run, { surfaces, thisRun: phaseOne })).toEqual([undefined]);
+  });
+
+  it('marks a reused row with the landed row it reuses, and counts the two once across runs', () => {
+    const sources: LandedWrite[] = [
+      { action: done, applied: row({ providerId: 'REVOPS-5', idempotencyKey: 'work:first:1' }) },
+    ];
+    const [reused] = reusedLedger([done], sources, run, { surfaces });
+    expect(reused).toMatchObject({ idempotencyKey: 'work:retry:6', reusedFrom: 'work:first:1' });
+    // A third run reusing the second run's reuse still names the run that sent it.
+    const second = { landedWrites: sources, actions: [done], applied: [reused] };
+    const carried = landedWritesOf(second);
+    expect(carried.map((write) => write.applied.idempotencyKey)).toEqual(['work:first:1']);
+    const [again] = reusedLedger([done], landedWritesOf({ ...second, applied: [reused] }), {
+      ...run,
+      runId: 'third',
+    });
+    expect(again).toMatchObject({ reusedFrom: 'work:first:1' });
+    // The reuse is kept when the row it reused is not carried, so nothing landed is forgotten.
+    expect(
+      landedWritesOf({ actions: [done], applied: [reused] }).map(
+        (write) => write.applied.idempotencyKey,
+      ),
+    ).toEqual(['work:retry:6']);
+  });
+
+  it('numbers a reused row by the run that sent what it reuses', () => {
+    const sources: LandedWrite[] = [
+      { action: done, applied: row({ providerId: 'REVOPS-5', idempotencyKey: 'work:second:1' }) },
+    ];
+    const [reused] = reusedLedger([done], sources, run, { surfaces });
+    const sent = row({ idempotencyKey: 'work:retry:7' });
+    expect(withReusedRunNumbers([reused, sent, undefined], ['first', 'second', 'retry'])).toEqual([
+      { ...reused, reusedFromRun: 2 },
+      sent,
+      undefined,
+    ]);
+    // A run outside the numbering leaves the row as it was.
+    expect(withReusedRunNumbers([reused], ['retry'])).toEqual([reused]);
   });
 
   it("sends a landed status change again when the manager's note directs that state, and not when it declines it", () => {

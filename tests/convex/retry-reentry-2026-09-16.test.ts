@@ -78,10 +78,10 @@ vi.mock('../../src/lib/mastra', () => ({
   }): Promise<T> => {
     recorded.model.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name.endsWith('-dependent') && recorded.closingReply) {
-      return args.schema.parse(recorded.closingReply) as T;
+      return args.schema.parse((await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.closingReply)) as T;
     }
     if (args.agent.name.endsWith('-initial') && recorded.initialReply) {
-      return args.schema.parse(recorded.initialReply) as T;
+      return args.schema.parse((await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.initialReply)) as T;
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
   },
@@ -118,6 +118,11 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                 }
                 if (tool === 'browser_navigate') return text('- Page URL: http://looker-tile:8080/');
                 if (tool === 'browser_snapshot') return text(TILE_SNAPSHOT);
+                // The re-read before the first write on the ticket reads a record.
+                if (tool === 'get_issue') {
+                  const { id } = args as { id?: string };
+                  return text(JSON.stringify({ id, status: 'In Progress', statusType: 'started' }));
+                }
                 return text('ok');
               },
             },
@@ -334,7 +339,7 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     // The retry's phase one signed in and read again: an earlier run's browser
     // writes are not "already landed" for a new session, whatever their payload.
     const retryCalls = recorded.mcp.slice(recorded.mcp.findIndex((call) => call.tool === 'save_comment') + 1).map((call) => call.tool);
-    expect(retryCalls).toEqual(['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_snapshot', 'browser_click', 'browser_snapshot', 'list_issues', 'save_issue']);
+    expect(retryCalls).toEqual(['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_snapshot', 'browser_click', 'browser_snapshot', 'list_issues', 'get_issue', 'save_issue']);
     expect(rows.slice(0, 5).map((row) => row.reason ?? '')).toEqual(['', '', '', '', '']);
 
     // The retry went back through phase one, then authored the closing set: both prompts name the landed comment.

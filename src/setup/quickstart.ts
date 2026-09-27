@@ -44,8 +44,8 @@ export const QUICKSTART_BLOCK: string = ['```bash', ...QUICKSTART_COMMANDS, '```
 export const SETUP_SCRIPT = './setup.sh';
 
 /**
- * The three ways to run it, as the deck's page 22, the README, the `/setup`
- * page, the setup's own text and `pnpm check:setup` name them. The two local
+ * The three ways to run it, as the README, the `/setup` page, the setup's
+ * own text and `pnpm check:setup` name them. The two local
  * ways are real mode and differ in one thing only: where the model runs.
  */
 export const WAY_NAMES = {
@@ -72,7 +72,8 @@ export type SetupRouteName = 'key' | 'local' | 'featherless' | 'endpoint' | 'non
  *   The way's name, the mock-mode clause, or undefined when nothing applies.
  */
 export function wayOfSetup(mode: string, route: SetupRouteName): string | undefined {
-  if (mode === 'mock') return 'the seeded mock office, for the evaluation harness and the hosted demo';
+  if (mode === 'mock')
+    return 'the seeded mock office, for the evaluation harness and the hosted demo';
   if (mode !== 'real' || route === 'none') return undefined;
   return route === 'local' ? WAY_NAMES.local : WAY_NAMES.cloud;
 }
@@ -104,12 +105,12 @@ export interface RunWay {
 }
 
 /**
- * The three ways to run it, in the deck's order and with the deck's names.
+ * The three ways to run it, in the README's order and with its names.
  * The hosted demo needs nothing installed; the two local ways are real mode,
  * on the reader's own documentation and systems, and differ in one thing
  * only, where the model runs. Each local way carries a complete command list
- * rather than a diff against the quick start, because a reader arriving from
- * the deck copies one block and runs it. Every command here is checked
+ * rather than a diff against the quick start, because a reader arriving at
+ * one way copies one block and runs it. Every command here is checked
  * against `package.json` and the repository root in
  * `tests/src/setup/quickstart.test.ts`.
  */
@@ -126,7 +127,7 @@ export const RUN_WAYS: readonly RunWay[] = [
   {
     id: 'cloud',
     title: WAY_NAMES.cloud,
-    body: 'Real mode on this machine, with the model at a provider. The backend, the sandbox, a span model that redacts credentials out of what is stored and a browser for systems that have no API run here in Docker, pointed at a documentation folder you provide and the systems it records. One command from a clean clone, and one choice, the provider: a hosted model through Featherless, with a Featherless key asked for in a hidden prompt or read from FEATHERLESS_API_KEY; --route key for OpenAI or any OpenAI-compatible key, asked for the same way; --route endpoint for a server you already run. Nothing is downloaded beyond the container images and the redactor\'s model, and there is no GPU question. Your chat and relevant content from your documentation are sent to the provider, which charges per token.',
+    body: "Real mode on this machine, with the model at a provider. The backend, the sandbox, a span model that redacts credentials out of what is stored and a browser for systems that have no API run here in Docker, pointed at a documentation folder you provide and the systems it records. One command from a clean clone, and one choice, the provider: a hosted model through Featherless, with a Featherless key asked for in a hidden prompt or read from FEATHERLESS_API_KEY; --route key for OpenAI or any OpenAI-compatible key, asked for the same way; --route endpoint for a server you already run. Nothing is downloaded beyond the container images and the redactor's model, and there is no GPU question. Your chat and relevant content from your documentation are sent to the provider, which charges per token.",
     commands: [
       'git clone https://github.com/BrianIsaac/day0.git',
       'cd day0',
@@ -154,12 +155,12 @@ export const RUN_WAYS: readonly RunWay[] = [
 ];
 
 /**
- * What both local ways are, said once under the two of them: the deck's
- * "your own workspaces" block, plus the two facts a reader needs before the
- * first run (link the documentation first; the redactor's first download).
+ * What both local ways are, said once under the two of them: that they
+ * work on the reader's own workspaces, plus the two facts a reader needs
+ * before the first run (link the documentation first; the redactor's first download).
  */
 export const REAL_MODE_NOTE =
-  'Both local ways are real mode: link your documentation on the documentation page before you deploy, and the agent connects to the systems it names through approval cards on the Surfaces tab; those systems still need authorised access. Real mode is local only by construction: a hosted deployment refuses it. The redactor\'s first start on the CPU downloads about 251 MB of wheels and 1.16 GB of weights; --warm-from <project> copies another installation\'s volumes instead.';
+  "Both local ways are real mode: link your documentation on the documentation page before you deploy, and the agent connects to the systems it names through approval cards on the Surfaces tab; those systems still need authorised access. Real mode is local only by construction: a hosted deployment refuses it. The redactor's first start on the CPU downloads about 251 MB of wheels and 1.16 GB of weights; --warm-from <project> copies another installation's volumes instead.";
 
 /** Stop for the day, come back, or throw it away, on either local way. */
 export const REAL_MODE_VERBS: readonly RunWayVerb[] = [
@@ -188,7 +189,7 @@ export const RUN_WAY_VERBS_NOTE =
  */
 export const MOCK_OFFICE_NOTE = {
   title: 'Evaluation and the mock office',
-  body: 'pnpm setup:local is the same setup in mock mode: the seeded office of documents, a spreadsheet, channels, tickets and a feed that the hosted demo works in and the controlled evaluation ran on, with nothing of yours read. It is there for the evaluation harness and the hosted demo\'s workspace, not as a way to run Day0 on your own systems; the README\'s Evaluation and the mock office section has its command and what it does.',
+  body: "pnpm setup:local is the same setup in mock mode: the seeded office of documents, a spreadsheet, channels, tickets and a feed that the hosted demo works in and the controlled evaluation ran on, with nothing of yours read. It is there for the evaluation harness and the hosted demo's workspace, not as a way to run Day0 on your own systems; the README's Evaluation and the mock office section has its command and what it does.",
 } as const;
 
 /** A tool the machine needs before any of it starts. */
@@ -211,7 +212,8 @@ export const PREREQUISITES: readonly Prerequisite[] = [
   },
   {
     name: 'pnpm 9 or newer',
-    detail: 'If Corepack is installed, the command below downloads and activates pnpm. Otherwise install pnpm before continuing.',
+    detail:
+      'If Corepack is installed, the command below downloads and activates pnpm. Otherwise install pnpm before continuing.',
     fix: 'corepack enable && corepack prepare pnpm@9 --activate',
   },
   {
@@ -261,7 +263,7 @@ export const MODEL_ROUTES: readonly ModelRoute[] = [
     needs:
       'A Featherless key for the tested cloud route, or an OpenAI or any OpenAI-compatible key with --route key. The setup command reads it in a hidden prompt and saves it in .env.local with owner-only permissions. Model requests send the key and prompt content to the provider. For an endpoint you already run, use the advanced endpoint route below.',
     gives:
-      'No model weights to download and no GPU requirement. Container images and the redactor\'s model are still needed. The model runs at the provider, which charges per token.',
+      "No model weights to download and no GPU requirement. Container images and the redactor's model are still needed. The model runs at the provider, which charges per token.",
     flag: './setup.sh --route featherless',
   },
   {
@@ -300,9 +302,10 @@ export const FIRST_SUCCESS: readonly FirstSuccessStep[] = [
       'A folder source takes a path relative to the mount, and `.` is the whole of DAY0_DOCS_HOST_DIR. A Notion source takes http://docs-notion-mcp:3000/mcp and your own integration token. Each source shows synced and a page count once read.',
   },
   {
-    action: 'Deploy an agent with those sources ticked, hold the Day-1 1:1 in chat, and approve the charter.',
+    action:
+      'Deploy an agent with those sources ticked, hold the Day-1 1:1 in chat, and approve the charter.',
     detail:
-      'Use the tickets\' own words in the 1:1; the charter records what you said, and the systems the documentation names are the systems that exist. Approving the charter is what fills the work queue.',
+      "Use the tickets' own words in the 1:1; the charter records what you said, and the systems the documentation names are the systems that exist. Approving the charter is what fills the work queue.",
   },
   {
     action: 'Approve the connection cards on the Surfaces tab.',
