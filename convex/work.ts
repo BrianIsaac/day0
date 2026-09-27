@@ -71,6 +71,7 @@ import {
   batchDecisionNoticeText,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
+  MANAGER_FEEDBACK_MAX_CHARS,
   undeliveredDecisionReason,
 } from '../src/work/manager-channel';
 import {
@@ -109,8 +110,7 @@ export const DEPENDENT_AUTHORING_INTERRUPTED_REASON =
 export const NOTHING_TO_DECIDE_REASON = 'the run held nothing for a decision';
 /** Parked rows examined per state in one re-evaluation call; the rest continue by schedule. */
 export const REEVALUATION_BATCH = 100;
-/** The longest rejection reason kept in full for the retry to read. */
-export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
+export { MANAGER_FEEDBACK_MAX_CHARS };
 
 /** The manager's words as kept: whitespace collapsed and capped at `MANAGER_FEEDBACK_MAX_CHARS`. */
 function managerText(text: string | undefined): string {
