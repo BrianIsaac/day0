@@ -24,6 +24,8 @@ export const store = internalAction({
       v.literal('entered'),
     ),
     appId: v.optional(v.string()),
+    /** The sync generation that found the value, as the real store takes it. */
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (_ctx, args): Promise<GenericId<'credentials'>> => {
     fakeCredentialState().storeCalls.push({
