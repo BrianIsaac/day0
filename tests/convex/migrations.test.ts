@@ -491,6 +491,70 @@ describe('the approved tool list backfill (U10 D2 (b))', (): void => {
   });
 });
 
+describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {
+  it('records who set each end date from its newest access-set event, and the upgrade where none says', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [byManager, byUpgrade, unrecorded, noClock] = await harness.run(async (ctx) => {
+      const card = async (
+        slug: string,
+        verdict: Doc<'surfaces'>['verdict'],
+        expiresAt?: number,
+      ): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict,
+          whereFound: [],
+          credentialLanded: verdict === 'connected',
+          createdAt: 1,
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
+        });
+      // The proposal-started clock of the code before 0.4.0 is on a proposed
+      // card with no event; the access-clock migration leaves it alone.
+      const ids = await Promise.all([
+        card('linear', 'connected', 100),
+        card('jira', 'connected', 200),
+        card('asana', 'proposed', 300),
+        card('notion', 'declared'),
+      ]);
+      const set = async (surfaceId: Id<'surfaces'>, by: string, at: number): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'surface.access-set',
+          payload: { surfaceId, by, days: 90, expiresAt: at },
+          createdAt: at,
+        });
+      };
+      await set(ids[0], 'approval', 10);
+      await set(ids[0], 'manager', 20);
+      await set(ids[1], 'upgrade', 30);
+      return ids;
+    });
+
+    await runAll(harness);
+
+    const setters = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [byManager, byUpgrade, unrecorded, noClock].map(
+            async (id) => (await ctx.db.get(id))?.accessSetBy ?? null,
+          ),
+        ),
+    );
+    expect(setters).toEqual(['manager', 'upgrade', 'upgrade', null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-access-set-by')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 3,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
 describe('the release stamp', (): void => {
   it('is refused while a migration is unfinished, then kept once per release and commit', async (): Promise<void> => {
     const harness = limitedHarness();

@@ -29,7 +29,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { migrateSandboxIdPage } from './skills';
-import { restartAccessClocksPage } from './surfaces';
+import { backfillAccessSetByPage, restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
@@ -55,6 +55,7 @@ export const MIGRATION_NAMES = [
   'agents-zone',
   'retirements-from-tombstones',
   'surfaces-approved-tools',
+  'surfaces-access-set-by',
 ] as const;
 
 /** One migration's name. */
@@ -133,6 +134,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'copies the tool list of each card that stores one into its approved list, which every later probe is frozen against and only the manager widens',
     thenRemoves: 'the fallback to toolAllowlist in surfaces.frozenTools',
+  },
+  'surfaces-access-set-by': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'records on each card with an access end date who set it, from its newest surface.access-set event, or the upgrade when it has none',
+    thenRemoves: 'nothing: accessSetBy is written wherever the clock is set from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -498,6 +504,7 @@ const MIGRATION_PAGES: Readonly<
   'agents-zone': stampZoneAndMode,
   'retirements-from-tombstones': copyRetirements,
   'surfaces-approved-tools': copyApprovedTools,
+  'surfaces-access-set-by': async (ctx, cursor) => await backfillAccessSetByPage(ctx, cursor),
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
 };
