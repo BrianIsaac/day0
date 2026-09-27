@@ -70,7 +70,8 @@ export const COMPARISON_EXPERIMENT = 'day0-controlled-comparison';
 /**
  * The experiment id evidence recorded before 27 September 2026 carries, from
  * the harness's earlier name. It is read so frozen evidence stays renderable
- * and re-gradable, and never written.
+ * and re-gradable. A fresh run never writes it; a re-grade keeps the id its
+ * source carries.
  */
 export const RECORDED_COMPARISON_EXPERIMENT = 'day0-semifinal-controlled-comparison';
 

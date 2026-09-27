@@ -603,6 +603,7 @@ describe('read-only evidence re-grading', (): void => {
     );
 
     expect(calls).toEqual(['config:surfaceMode', 'evaluation:snapshot']);
+    expect(evidence.experiment).toBe(RECORDED_COMPARISON_EXPERIMENT);
     expect(evidence.regradedFrom).toEqual({
       path: sourcePath,
       commit: 'run-commit',
