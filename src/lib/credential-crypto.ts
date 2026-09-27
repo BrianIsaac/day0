@@ -1,4 +1,10 @@
-import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
@@ -124,32 +130,129 @@ export function decrypt(
   }
 }
 
+/** What derives a key's public id from the key, so the id never serves as key material. */
+const KEY_ID_DERIVATION_LABEL = 'day0-credential-key-id-v1';
+
+/** Hex characters of the derived digest a key id keeps: 64 bits, enough to tell a deployment's keys apart. */
+const KEY_ID_LENGTH = 16;
+
 /**
- * Open a credential value stored on one owner's row.
+ * The public id of a credential key, written on every row it seals.
  *
- * A value sealed bound to the owner opens only for that owner. A value sealed
- * without associated data opens unbound; that fallback is the one way a moved
- * value still opens. It can end only once a re-seal (not built yet) has bound
- * every row and a marker on the row says so. `convex/credentials.ts` seals
- * with the owner and opens as the row's owner; a bound value never opens
- * through an unbound call.
+ * Derived one way from the key, so the id is safe to store and print and says
+ * which key a row needs without trying to open it.
  *
- * @param encrypted - The row's ciphertext and IV.
- * @param keyBase64 - The deployment's credential key.
- * @param userId - The row's owner.
+ * @param keyBase64 - Standard base64 containing exactly 32 key bytes.
+ * @throws Error when the key is not canonical 32-byte base64.
+ */
+export function credentialKeyId(keyBase64: string): string {
+  return createHmac('sha256', decodeKey(keyBase64))
+    .update(KEY_ID_DERIVATION_LABEL)
+    .digest('hex')
+    .slice(0, KEY_ID_LENGTH);
+}
+
+/**
+ * The keys a deployment can open stored values with: the current one, which
+ * seals every new value, and during a rotation the one before it, until the
+ * rotation's re-seal has moved every row onto the current key.
+ */
+export interface CredentialKeyring {
+  readonly current: string;
+  readonly previous?: string;
+}
+
+/** A value sealed for its owner, with the id of the key that sealed it. */
+export interface SealedCredential extends EncryptedCredential {
+  keyId: string;
+}
+
+/** The parts of a stored credential row that opening its value reads. */
+export interface StoredSeal {
+  readonly ciphertext: string;
+  readonly iv: string;
+  readonly userId: string;
+  /** Absent on a row sealed before key ids existed, which may also be unbound. */
+  readonly keyId?: string;
+}
+
+/**
+ * Seal a value for its owner under the keyring's current key.
+ *
+ * @param plaintext - Credential value to protect.
+ * @param keyring - The deployment's keys; only the current one seals.
+ * @param userId - The owner of the row the value is stored on.
+ */
+export function sealForOwner(
+  plaintext: string,
+  keyring: CredentialKeyring,
+  userId: string,
+): SealedCredential {
+  return {
+    ...encrypt(plaintext, keyring.current, credentialOwnerBinding(userId)),
+    keyId: credentialKeyId(keyring.current),
+  };
+}
+
+/**
+ * The keyring's key with this id, if it holds one.
+ *
+ * @param keyring - The deployment's keys.
+ * @param keyId - A row's `keyId`.
+ */
+function keyWithId(keyring: CredentialKeyring, keyId: string): string | undefined {
+  return [keyring.current, keyring.previous].find(
+    (key): key is string => key !== undefined && credentialKeyId(key) === keyId,
+  );
+}
+
+/**
+ * Open the value on one stored row, as its owner.
+ *
+ * A row with a key id was sealed bound to its owner under that key (by the
+ * store or the re-seal), so it opens only with that key and only bound to its
+ * own owner. A row without one was sealed before key ids existed, perhaps
+ * unbound; it is tried under each key, bound and then unbound, but only while
+ * `allowUnbound` holds, which is until the deployment's re-seal has bound
+ * every row (decision Q15). After that an unbound value can only have been
+ * put there since, and it is refused.
+ *
+ * @param stored - The row's ciphertext, IV, owner and key id.
+ * @param keyring - The deployment's keys.
+ * @param options.allowUnbound - Whether a row without a key id may still open.
  * @returns The plaintext.
- * @throws Error naming `CREDENTIAL_KEY_CHANGED_MESSAGE` when neither opens it.
+ * @throws Error naming `CREDENTIAL_KEY_CHANGED_MESSAGE` when the row's key is
+ *   not in the keyring, or no permitted way opens it.
  */
 export function openOwnedCredential(
-  encrypted: EncryptedCredential,
-  keyBase64: string,
-  userId: string,
+  stored: StoredSeal,
+  keyring: CredentialKeyring,
+  options: { readonly allowUnbound: boolean },
 ): string {
-  try {
-    return decrypt(encrypted, keyBase64, credentialOwnerBinding(userId));
-  } catch {
-    // Not bound to this owner: either sealed before binding existed, which the
-    // unbound open below reads, or not this owner's value, which it refuses.
-    return decrypt(encrypted, keyBase64);
+  const sealed = { ciphertext: stored.ciphertext, iv: stored.iv };
+  const binding = credentialOwnerBinding(stored.userId);
+  if (stored.keyId !== undefined) {
+    const key = keyWithId(keyring, stored.keyId);
+    if (key === undefined) {
+      throw new Error(`Credential decryption failed: ${CREDENTIAL_KEY_CHANGED_MESSAGE}.`);
+    }
+    return decrypt(sealed, key, binding);
   }
+  if (!options.allowUnbound) {
+    throw new Error(`Credential decryption failed: ${CREDENTIAL_KEY_CHANGED_MESSAGE}.`);
+  }
+  const keys = [keyring.current, keyring.previous].filter(
+    (key): key is string => key !== undefined,
+  );
+  for (const key of keys) {
+    for (const associatedData of [binding, undefined]) {
+      try {
+        return decrypt(sealed, key, associatedData);
+      } catch {
+        // Not this key or not this binding: a legacy row may be either, so the
+        // next pair is tried; the last failure is the error below.
+      }
+    }
+  }
+  throw new Error(`Credential decryption failed: ${CREDENTIAL_KEY_CHANGED_MESSAGE}.`);
 }

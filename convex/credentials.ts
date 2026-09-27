@@ -7,6 +7,7 @@ import {
   query,
   type ActionCtx,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -77,6 +78,39 @@ async function fenceSyncWrite(
   await assertCurrentGeneration(ctx, sourceId, syncRunId);
 }
 
+/**
+ * The migration that re-seals every stored value bound to its owner under the
+ * current key and writes its key id (decision Q15). Its completion is the
+ * switch that ends the unbound open of a row without a key id.
+ */
+export const CREDENTIAL_RESEAL_MIGRATION = 'credentials-reseal';
+
+/**
+ * Whether a row without a key id may still open unbound: true until the
+ * re-seal has run to the end, so no legacy row stops opening part-way through,
+ * and false from then on, so an unbound value put on a row since is refused.
+ *
+ * @param ctx - A query or mutation context.
+ */
+export async function unboundOpenAllowed(ctx: QueryCtx): Promise<boolean> {
+  const reseal = await ctx.db
+    .query('migrations')
+    .withIndex('by_name', (index) => index.eq('name', CREDENTIAL_RESEAL_MIGRATION))
+    .unique();
+  return reseal?.completedAt === undefined;
+}
+
+/**
+ * How the Node side may open a stored value right now. Internal; read by
+ * `credentialCryptoActions.open` before it decrypts.
+ */
+export const openingPolicy = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<{ allowUnbound: boolean }> => ({
+    allowUnbound: await unboundOpenAllowed(ctx),
+  }),
+});
+
 /** The reason a rotated row keeps a person's revoke, shown with the credential. */
 export const REVOKE_STANDS_REASON =
   'Revoked by a person. The page now holds a different value; it stays revoked until a person lands or approves one.';
@@ -97,6 +131,8 @@ export const persistEncrypted = internalMutation({
     label: v.string(),
     ciphertext: v.string(),
     iv: v.string(),
+    /** The id of the key that sealed `ciphertext`, bound to `userId`. */
+    keyId: v.string(),
     explicitlyAssigned: v.optional(v.boolean()),
     quoted: v.optional(v.boolean()),
     source: credentialSource,
@@ -133,6 +169,7 @@ export const persistEncrypted = internalMutation({
         label: args.label,
         ciphertext: args.ciphertext,
         iv: args.iv,
+        keyId: args.keyId,
         explicitlyAssigned: args.explicitlyAssigned,
         quoted: args.quoted,
         source: args.source,
@@ -145,6 +182,7 @@ export const persistEncrypted = internalMutation({
       label: args.label,
       ciphertext: args.ciphertext,
       iv: args.iv,
+      keyId: args.keyId,
       explicitlyAssigned: args.explicitlyAssigned,
       quoted: args.quoted,
       appId: args.appId,
@@ -239,10 +277,12 @@ export const activeValuesForOwner = internalQuery({
     args,
   ): Promise<{
     overflow: boolean;
+    allowUnbound: boolean;
     rows: Array<{
       _id: Id<'credentials'>;
       ciphertext: string;
       iv: string;
+      keyId?: string;
       label: string;
       pageDerived: boolean;
       explicitlyAssigned?: boolean;
@@ -257,10 +297,12 @@ export const activeValuesForOwner = internalQuery({
     return {
       overflow:
         scanned.length > OWNER_CREDENTIAL_SCAN_LIMIT || active.length > OWNER_KNOWN_VALUE_CAP,
+      allowUnbound: await unboundOpenAllowed(ctx),
       rows: active.slice(0, OWNER_KNOWN_VALUE_CAP + 1).map((row) => ({
         _id: row._id,
         ciphertext: row.ciphertext,
         iv: row.iv,
+        keyId: row.keyId,
         label: row.label,
         pageDerived: typeof row.source !== 'string',
         explicitlyAssigned: row.explicitlyAssigned,
@@ -436,7 +478,7 @@ export const moveToRef = internalMutation({
  */
 async function storedValue(
   ctx: ActionCtx,
-  row: Pick<Doc<'credentials'>, 'ciphertext' | 'iv' | 'userId'>,
+  row: Pick<Doc<'credentials'>, 'ciphertext' | 'iv' | 'userId' | 'keyId'>,
 ): Promise<string | undefined> {
   if (row.ciphertext === undefined || row.iv === undefined) return undefined;
   try {
@@ -444,6 +486,7 @@ async function storedValue(
       ciphertext: row.ciphertext,
       iv: row.iv,
       userId: row.userId,
+      keyId: row.keyId,
     });
   } catch {
     // Sealed under a rotated DAY0_CREDENTIAL_KEY, or bound to another owner:
@@ -571,6 +614,7 @@ export const decrypt = internalAction({
       ciphertext: credential.ciphertext,
       iv: credential.iv,
       userId: credential.userId,
+      keyId: credential.keyId,
     });
     if (!plaintext) throw new Error('Credential does not contain a landed value.');
     await ctx.runMutation(internal.credentials.touch, args);

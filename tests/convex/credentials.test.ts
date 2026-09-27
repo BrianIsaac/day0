@@ -13,7 +13,11 @@ import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
-import { decrypt as decryptCredential, openOwnedCredential } from '../../src/lib/credential-crypto';
+import {
+  credentialKeyId,
+  decrypt as decryptCredential,
+  openOwnedCredential,
+} from '../../src/lib/credential-crypto';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
@@ -247,9 +251,20 @@ describe('credential contract', (): void => {
     });
     const sealed = await harness.run(async (ctx) => await ctx.db.get(credentialId));
     const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
-    const material = { ciphertext: sealed?.ciphertext ?? '', iv: sealed?.iv ?? '' };
+    const material = {
+      ciphertext: sealed?.ciphertext ?? '',
+      iv: sealed?.iv ?? '',
+      keyId: sealed?.keyId ?? '',
+    };
+    expect(material.keyId).toBe(credentialKeyId(key));
     expect(() => decryptCredential(material, key)).toThrow();
-    expect(openOwnedCredential(material, key, 'owner')).toBe(SECRET);
+    expect(
+      openOwnedCredential(
+        { ...material, userId: 'owner' },
+        { current: key },
+        { allowUnbound: false },
+      ),
+    ).toBe(SECRET);
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
       SECRET,
     );
@@ -285,6 +300,7 @@ describe('credential contract', (): void => {
       label: 'linear service token',
       ciphertext: sealed?.ciphertext ?? '',
       iv: sealed?.iv ?? '',
+      keyId: sealed?.keyId ?? '',
       source,
       rotated: false,
     });
@@ -315,6 +331,7 @@ describe('credential contract', (): void => {
       label: 'linear service token',
       ciphertext: Buffer.from('sealed-under-another-key-0123456789').toString('base64'),
       iv: Buffer.alloc(12, 1).toString('base64'),
+      keyId: '0000000000000000',
       source,
       rotated: false,
     });
@@ -374,7 +391,7 @@ describe('credential contract', (): void => {
     }
   });
 
-  it('refuses decrypt without the deployment key, with the wrong key and for a deleted row', async (): Promise<void> => {
+  it('refuses decrypt without the deployment key, with the wrong key, with a malformed key named as such and for a deleted row', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const credentialId = await harness.action(internal.credentials.store, {
       userId: 'owner',
@@ -389,7 +406,7 @@ describe('credential contract', (): void => {
     );
     vi.stubEnv('DAY0_CREDENTIAL_KEY', 'not-a-key');
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
-      'decryption failed',
+      'must be a base64-encoded 32-byte key',
     );
     vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
@@ -637,6 +654,7 @@ describe('credential persistence after unlink', () => {
         source: { sourceId, ref: 'page' },
         ciphertext: 'late-ciphertext',
         iv: 'late-iv',
+        keyId: '0000000000000000',
         rotated: true,
       };
       if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);

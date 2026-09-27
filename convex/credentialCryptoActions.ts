@@ -3,12 +3,14 @@
 import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
-  credentialOwnerBinding,
   decrypt as decryptCredential,
-  encrypt as encryptCredential,
   openOwnedCredential,
+  sealForOwner,
+  type CredentialKeyring,
+  type SealedCredential,
 } from '../src/lib/credential-crypto';
 import { log } from '../src/lib/logger';
 import { assignedByLabel, guardReason } from '../src/redaction/guard';
@@ -33,35 +35,53 @@ export function requireCredentialKey(): string {
 }
 
 /**
- * Encrypt plaintext inside the Convex Node runtime. Internal; writes nothing.
+ * The deployment's keys: `DAY0_CREDENTIAL_KEY`, and while a rotation is under
+ * way `DAY0_CREDENTIAL_KEY_PREVIOUS`, the key it replaced, which
+ * `scripts/rotate-credential-key.ts` sets before the new key and removes once
+ * no row needs it.
  *
- * Given the owner, the value is bound to them with associated data
- * (`credentialOwnerBinding`), so it opens only on that owner's row. Without
- * one it is sealed unbound, as every value was before binding existed.
+ * @throws Error when the deployment has no credential key.
+ */
+export function credentialKeyring(): CredentialKeyring {
+  const previous = process.env.DAY0_CREDENTIAL_KEY_PREVIOUS;
+  return {
+    current: requireCredentialKey(),
+    ...(previous ? { previous } : {}),
+  };
+}
+
+/**
+ * Seal plaintext for its owner under the current key. Internal; writes
+ * nothing. The value is bound to the owner with associated data
+ * (`credentialOwnerBinding`), so it opens only on that owner's row, and the
+ * result names the key that sealed it.
  */
 export const seal = internalAction({
-  args: { plaintext: v.string(), userId: v.optional(v.string()) },
-  handler: async (_ctx, args): Promise<{ ciphertext: string; iv: string }> =>
-    encryptCredential(
-      args.plaintext,
-      requireCredentialKey(),
-      args.userId === undefined ? undefined : credentialOwnerBinding(args.userId),
-    ),
+  args: { plaintext: v.string(), userId: v.string() },
+  handler: async (_ctx, args): Promise<SealedCredential> =>
+    sealForOwner(args.plaintext, credentialKeyring(), args.userId),
 });
 
 /**
- * Decrypt ciphertext inside the Convex Node runtime. Internal; writes nothing.
+ * Open a stored row's value as its owner. Internal; writes nothing.
  *
- * Given the owner, a value bound to that owner opens and so does an unbound
- * value sealed before binding existed; a value bound to anyone else does not.
+ * A row with a key id opens only under that key and bound to its owner; a row
+ * without one, sealed before key ids existed, opens unbound only until the
+ * re-seal has finished (`credentials.openingPolicy`).
  */
 export const open = internalAction({
-  args: { ciphertext: v.string(), iv: v.string(), userId: v.optional(v.string()) },
-  handler: async (_ctx, args): Promise<string> => {
-    const sealed = { ciphertext: args.ciphertext, iv: args.iv };
-    return args.userId === undefined
-      ? decryptCredential(sealed, requireCredentialKey())
-      : openOwnedCredential(sealed, requireCredentialKey(), args.userId);
+  args: {
+    ciphertext: v.string(),
+    iv: v.string(),
+    userId: v.string(),
+    keyId: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<string> => {
+    const policy: { allowUnbound: boolean } = await ctx.runQuery(
+      internal.credentials.openingPolicy,
+      {},
+    );
+    return openOwnedCredential(args, credentialKeyring(), policy);
   },
 });
 
@@ -81,12 +101,16 @@ export const ownerValues = internalAction({
   handler: async (ctx, args): Promise<string[]> => {
     const {
       overflow,
+      allowUnbound,
       rows,
     }: {
       overflow: boolean;
+      allowUnbound: boolean;
       rows: Array<{
+        _id: Id<'credentials'>;
         ciphertext: string;
         iv: string;
+        keyId?: string;
         label: string;
         pageDerived: boolean;
         explicitlyAssigned?: boolean;
@@ -103,19 +127,17 @@ export const ownerValues = internalAction({
       throw new Error(OWNER_KNOWN_VALUES_CAP_REASON);
     }
     if (rows.length === 0 || !process.env.DAY0_CREDENTIAL_KEY) return [];
-    const key = requireCredentialKey();
+    const keyring = credentialKeyring();
     const values = new Set<string>();
-    let skipped = 0;
+    const skipped: Id<'credentials'>[] = [];
     for (const row of rows) {
       let plaintext: string;
       try {
-        plaintext = openOwnedCredential(
-          { ciphertext: row.ciphertext, iv: row.iv },
-          key,
-          args.userId,
-        );
+        plaintext = openOwnedCredential({ ...row, userId: args.userId }, keyring, {
+          allowUnbound,
+        });
       } catch {
-        skipped += 1;
+        skipped.push(row._id);
         continue;
       }
       // A false page detection must not perpetuate itself through exact-value redaction.
@@ -132,11 +154,12 @@ export const ownerValues = internalAction({
         values.add(plaintext);
       }
     }
-    if (skipped > 0) {
+    if (skipped.length > 0) {
       log.warn(
         'credentialCryptoActions.ownerValues: stored credentials left out of exact removal',
         {
-          skipped,
+          skipped: skipped.length,
+          credentialIds: skipped,
           reason: CREDENTIAL_KEY_CHANGED_MESSAGE,
         },
       );
@@ -154,23 +177,35 @@ export function storedCredentialGuardReason(row: {
   ciphertext?: string;
   iv?: string;
   userId?: string;
+  keyId?: string;
   label: string;
   explicitlyAssigned?: boolean;
   quoted?: boolean;
 }): string | undefined {
   if (row.ciphertext === undefined || row.iv === undefined)
     return 'credential material unavailable';
+  const sealed = { ciphertext: row.ciphertext, iv: row.iv };
+  let value: string;
   try {
-    const sealed = { ciphertext: row.ciphertext, iv: row.iv };
-    const value =
+    // Only a guard reason leaves this function, so a legacy row is read the
+    // way it was stored; the decrypt that uses a value holds the re-seal's
+    // switch (`open`). A caller that does not say whose row it is gets the
+    // unbound read a row had before owners were bound.
+    value =
       row.userId === undefined
         ? decryptCredential(sealed, requireCredentialKey())
-        : openOwnedCredential(sealed, requireCredentialKey(), row.userId);
-    return guardReason(value, {
-      assigned: row.explicitlyAssigned === true || assignedByLabel(row.label),
-      quoted: row.quoted === true,
-    });
+        : openOwnedCredential(
+            { ...sealed, userId: row.userId, keyId: row.keyId },
+            credentialKeyring(),
+            {
+              allowUnbound: true,
+            },
+          );
   } catch {
-    return 'credential material unreadable';
+    return CREDENTIAL_KEY_CHANGED_MESSAGE;
   }
+  return guardReason(value, {
+    assigned: row.explicitlyAssigned === true || assignedByLabel(row.label),
+    quoted: row.quoted === true,
+  });
 }
