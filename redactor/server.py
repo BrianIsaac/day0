@@ -17,8 +17,16 @@ snapshot already on the volume is never fetched again, so a machine that
 started once on a network starts again without one.
 
 Chunking is done here in overlapping word windows below the detector's
-configured word limit so long lines are never silently truncated. Offsets in
-the reply are UTF-16 code-unit offsets, matching JavaScript string slicing.
+configured word limit so long lines are never silently truncated. A run with
+no space in it, as unspaced Chinese is, is cut after a sentence ender or, with
+none near, by characters, so it windows like any other text instead of
+failing the request. Offsets in the reply are UTF-16 code-unit offsets,
+matching JavaScript string slicing.
+
+The server bounds its own load: at most REDACTOR_MAX_CONNECTIONS connections
+are served at once, a connection past that is answered 503 with Retry-After,
+predictions run one at a time, and an idle socket is closed after
+REDACTOR_SOCKET_TIMEOUT seconds.
 
     GET  /healthz     -> {"ok": true, "model": ..., "device": ..., "manifest": "verified"}
     POST /v1/spans    -> {"text", "labels", "threshold"}
@@ -36,6 +44,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,7 +61,13 @@ MANIFEST = Path(os.environ.get("REDACTOR_MANIFEST", "/opt/day0/models.sha256"))
 DEVICE = os.environ.get("REDACTOR_DEVICE", "cpu")
 MAX_BODY = 1_000_000
 CHUNK_CHARS = 1_400
+# An unbroken run is cut into pieces this long, so a window holds several and
+# consecutive windows overlap across every cut.
+PIECE_CHARS = CHUNK_CHARS // 8
+SENTENCE_ENDERS = re.compile(r"[。！？；…!?;]")
 MAX_LABELS = 25
+MAX_CONNECTIONS = int(os.environ.get("REDACTOR_MAX_CONNECTIONS", "16"))
+SOCKET_TIMEOUT = float(os.environ.get("REDACTOR_SOCKET_TIMEOUT", "30"))
 
 
 def read_manifest() -> dict[str, dict[str, str]]:
@@ -138,17 +153,36 @@ def load_model() -> tuple[Any, str]:
     return model, device
 
 
+def pieces(text: str, start: int, end: int) -> list[tuple[str, int, int]]:
+    """Cut one token longer than a piece after sentence enders, else by characters.
+
+    Returns:
+        The token's pieces as `(text, start, end)`, covering it without a gap.
+    """
+    cut: list[tuple[str, int, int]] = []
+    at = start
+    while end - at > PIECE_CHARS:
+        limit = at + PIECE_CHARS
+        enders = [match.end() for match in SENTENCE_ENDERS.finditer(text, at, limit)]
+        stop = enders[-1] if enders else limit
+        cut.append((text[at:stop], at, stop))
+        at = stop
+    cut.append((text[at:end], at, end))
+    return cut
+
+
 def chunks(text: str, splitter: Any = None, max_words: int = 256) -> list[tuple[int, str]]:
     """Overlap word windows within the detector's limit; retain original offsets."""
-    tokens = list(splitter(text)) if splitter else [
+    words = list(splitter(text)) if splitter else [
         (match.group(), match.start(), match.end()) for match in re.finditer(r"\S+", text)
     ]
+    tokens = [piece for _, start, end in words for piece in pieces(text, start, end)]
     if not tokens:
         return []
     windows: list[tuple[int, str]] = []
     first = 0
     while first < len(tokens):
-        start = 0 if first == 0 else tokens[first][1]
+        start = tokens[first][1]
         stop = first
         while stop < len(tokens) and stop - first < max_words:
             if tokens[stop][2] - start > CHUNK_CHARS:
@@ -166,12 +200,18 @@ def chunks(text: str, splitter: Any = None, max_words: int = 256) -> list[tuple[
 
 class Redactor:
     def __init__(self) -> None:
+        self.lock = threading.Lock()
         started = time.monotonic()
         self.model, self.device = load_model()
         self.loaded_in = time.monotonic() - started
         self.predict("warm up: the password is hunter2", ["password"], 0.3)
 
     def predict(self, text: str, labels: list[str], threshold: float) -> list[dict[str, Any]]:
+        """Every span the model finds in `text`, one prediction at a time."""
+        with self.lock:
+            return self._predict(text, labels, threshold)
+
+    def _predict(self, text: str, labels: list[str], threshold: float) -> list[dict[str, Any]]:
         spans: list[dict[str, Any]] = []
         utf16 = [0]
         for character in text:
@@ -195,6 +235,7 @@ class Redactor:
 
 class Handler(BaseHTTPRequestHandler):
     redactor: Redactor
+    timeout = SOCKET_TIMEOUT
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - BaseHTTPRequestHandler's name
         pass
@@ -232,27 +273,101 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
             return self.reply(400, {"error": str(error)})
         started = time.monotonic()
-        spans = self.redactor.predict(text, labels, threshold)
+        try:
+            spans = self.redactor.predict(text, labels, threshold)
+        except ValueError as error:
+            return self.reply(422, {"error": f"the text could not be scored: {error}"})
+        except Exception as error:  # noqa: BLE001 - one bad page answers 500 and the server keeps serving
+            print(f"redactor: prediction failed: {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+            return self.reply(500, {"error": "prediction failed"})
         self.reply(200, {"spans": spans, "ms": round((time.monotonic() - started) * 1000, 1)})
 
 
+class BoundedServer(ThreadingHTTPServer):
+    """A threading server that serves at most `MAX_CONNECTIONS` connections at once.
+
+    A connection past the bound is answered 503 with Retry-After and closed on
+    the accepting thread, so a flood costs refusals, not threads.
+    """
+
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler], limit: int = MAX_CONNECTIONS):
+        super().__init__(address, handler)
+        self.slots = threading.BoundedSemaphore(limit)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self.slots.acquire(blocking=False):
+            refuse_busy(request)
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Log a client that left before its reply as one line, and anything else in full."""
+        error = sys.exc_info()[1]
+        if isinstance(error, ConnectionError):
+            print(f"redactor: client left before the reply: {type(error).__name__}", file=sys.stderr, flush=True)
+            return
+        super().handle_error(request, client_address)
+
+
+def refuse_busy(request: Any) -> None:
+    """Answer one connection 503 without reading it."""
+    body = json.dumps({"error": "busy: too many connections"}).encode("utf-8")
+    head = (
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\nRetry-After: 1\r\nConnection: close\r\n\r\n"
+    ).encode("ascii")
+    try:
+        request.sendall(head + body)
+    except OSError:
+        pass  # the client left first; there is no one to tell
+
+
+# The health check's second request: unspaced Chinese with no whitespace at
+# all, the shape that once closed the socket instead of answering.
+CHINESE_PROBE = "请把系统密码hunter2发到工单里，不要贴在公开频道。"
+
+
+def post_spans(text: str) -> dict[str, Any]:
+    """POST one text to the running server and return its JSON reply."""
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{PORT}/v1/spans",
+        data=json.dumps({"text": text, "labels": ["password"], "threshold": 0.3}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def probe() -> int:
+    """Exit status for the container's health check: 0 only when both probes pass.
+
+    The English probe must find the password where it is; the Chinese probe
+    must be answered with a span list, whatever the model finds in it.
+    """
     try:
         text = "the password is hunter2"
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{PORT}/v1/spans",
-            data=json.dumps({"text": text, "labels": ["password"], "threshold": 0.3}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+        detected = any(
+            span.get("label") == "password"
+            and span.get("start") == text.index("hunter2")
+            and span.get("end") == len(text)
+            for span in post_spans(text).get("spans", [])
         )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            body = json.loads(response.read().decode("utf-8"))
-            detected = any(
-                span.get("label") == "password"
-                and span.get("start") == text.index("hunter2")
-                and span.get("end") == len(text)
-                for span in body.get("spans", [])
-            )
-            return 0 if detected else 1
+        if not detected:
+            return 1
+        return 0 if isinstance(post_spans(CHINESE_PROBE).get("spans"), list) else 1
     except Exception:  # noqa: BLE001 - any failure is an unhealthy container
         return 1
 
@@ -269,7 +384,7 @@ def main() -> int:
         f"redactor: {MODEL_ID} on {Handler.redactor.device}, loaded in {Handler.redactor.loaded_in:.1f} s, serving on {PORT}",
         flush=True,
     )
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    BoundedServer(("0.0.0.0", PORT), Handler).serve_forever()
     return 0
 
 
