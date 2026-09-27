@@ -17,20 +17,6 @@ vi.mock('../../src/lib/mastra', () => ({
   agentText: async (): Promise<string> => '',
 }));
 
-vi.mock('../../src/agent/good-habits', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../../src/agent/good-habits')>();
-  return {
-    ...original,
-    researchAndDistil: async (): Promise<import('../../src/agent/good-habits').GoodHabitsResult> => ({
-      fragment: '',
-      results: [],
-      norms: 0,
-      skipped: true,
-      skipReason: 'research disabled in tests',
-    }),
-  };
-});
-
 vi.mock('../../src/agent/work-generator', () => ({
   generateWorkItemsFromCharter: async (): Promise<
     import('../../src/agent/work-generator').GeneratedWorkItem[]
@@ -49,6 +35,8 @@ vi.mock('../../src/agent/work-generator', () => ({
 
 afterEach((): void => {
   restoreSurfaceMode();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 /**
@@ -159,7 +147,7 @@ describe('charter approval by surface mode', (): void => {
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(
       owner.action(api.onboarding.postCharterApproval, { agentId, charterId }),
-    ).resolves.toEqual({ norms: 0, workItemsGenerated: 3 });
+    ).resolves.toEqual({ workItemsGenerated: 3 });
     const result = await outcome(harness, agentId);
     expect(result.surfaces).toEqual([]);
     expect(result.workItems).toBe(3);
@@ -175,7 +163,7 @@ describe('charter approval by surface mode', (): void => {
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(
       owner.action(api.onboarding.postCharterApproval, { agentId, charterId }),
-    ).resolves.toEqual({ norms: 0, workItemsGenerated: 0 });
+    ).resolves.toEqual({ workItemsGenerated: 0 });
     const declared = await outcome(harness, agentId);
     expect(declared.surfaces).toEqual(['linear:declared', 'slack:declared']);
     expect(declared.events).not.toContain('surface.oriented');
@@ -186,4 +174,26 @@ describe('charter approval by surface mode', (): void => {
     expect(result.events).not.toContain('work.charter-derived');
     expect(result.events.filter((type) => type === 'surface.oriented')).toHaveLength(2);
   });
+
+  it.each(['mock', 'real'] as const)(
+    'in %s mode completes with no web call and no research step',
+    async (mode): Promise<void> => {
+      vi.useFakeTimers();
+      useSurfaceMode(mode);
+      const fetch = vi.fn(async (): Promise<Response> => {
+        throw new Error('no network in tests');
+      });
+      vi.stubGlobal('fetch', fetch);
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, charterId } = await seedApprovedCharter(harness);
+      const owner = harness.withIdentity({ subject: 'owner' });
+      await owner.action(api.onboarding.postCharterApproval, { agentId, charterId });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      const result = await outcome(harness, agentId);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(result.events.filter((type): boolean => type.startsWith('good-habits'))).toEqual([]);
+      const agentsMd = await owner.query(api.workspace.readFile, { agentId, fileName: 'AGENTS.md' });
+      expect(agentsMd).not.toMatch(/Good-habits memory/i);
+    },
+  );
 });

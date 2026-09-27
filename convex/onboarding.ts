@@ -14,7 +14,6 @@ import {
 } from '../src/agent/charter';
 import type { DayOneTopic } from '../src/agent/charter';
 import { defaultSoul, day1Script, DAY_ONE_TOPIC_SPECS } from '../src/agent/day-one-prompts';
-import { mergeGoodHabits, researchAndDistil } from '../src/agent/good-habits';
 import { generateWorkItemsFromCharter } from '../src/agent/work-generator';
 import type { Charter } from '../src/agent/charter';
 import type { Id } from './_generated/dataModel';
@@ -38,8 +37,8 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
  *   - `recoverFinalisation` — the deployment finishing a call neither client
  *     will come back for. Internal, and scheduled by the database rather
  *     than called by anybody.
- *   - `postCharterApproval` — runs after the boss clicks Approve. Kicks
- *     off Exa good-habits research; distils into AGENTS.md.
+ *   - `postCharterApproval` - runs after the boss clicks Approve. Seeds the
+ *     work the approved charter implies; makes no web call.
  *
  * All wrapped in Convex Node actions because they call external APIs.
  */
@@ -565,42 +564,21 @@ export const recoverFinalisation = internalAction({
   },
 });
 
+/**
+ * Seed the work an approved charter implies. Public; the caller must own the
+ * agent (`assertOwnsAgentAction`). In real mode it declares the charter's named
+ * systems as surfaces and runs orientation; in mock mode it seeds the
+ * generated work items and logs `work.charter-derived`. It makes no web call,
+ * so approval completes on a machine with no search key (decision N19).
+ */
 export const postCharterApproval = action({
   args: { agentId: v.id('agents'), charterId: v.id('charters') },
-  handler: async (ctx, args): Promise<{ norms: number; workItemsGenerated: number }> => {
+  handler: async (ctx, args): Promise<{ workItemsGenerated: number }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
     const charter = await ctx.runQuery(api.charters.latest, { agentId: args.agentId });
     if (!charter) throw new Error('postCharterApproval: no charter');
     const charterBody = charter.body as Charter;
     const role = extractRole(charterBody);
-    // Exa is optional. Without it the loop continues with an unchanged
-    // AGENTS.md and the skip lands in the event feed, so the missing
-    // capability is visible rather than silent.
-    const research = await researchAndDistil(role);
-    const norms = research.norms;
-    if (research.skipped) {
-      await ctx.runMutation(internal.events.log, {
-        agentId: args.agentId,
-        type: 'good-habits.skipped',
-        payload: { role, reason: research.skipReason ?? 'research unavailable' },
-      });
-    } else {
-      const existing = await ctx.runQuery(api.workspace.readFile, {
-        agentId: args.agentId,
-        fileName: 'AGENTS.md',
-      });
-      const merged = mergeGoodHabits(existing ?? '', research.fragment);
-      await ctx.runMutation(internal.workspace.writeFileInternal, {
-        agentId: args.agentId,
-        fileName: 'AGENTS.md',
-        content: merged,
-      });
-      await ctx.runMutation(internal.events.log, {
-        agentId: args.agentId,
-        type: 'good-habits.distilled',
-        payload: { norms, role },
-      });
-    }
 
     // Real mode: the named systems become declared surfaces and orientation
     // files one evidence-backed card per system from the linked docs. Mock
@@ -612,7 +590,7 @@ export const postCharterApproval = action({
         namedSystems: charterBody.namedSystems ?? [],
       });
       await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
-      return { norms, workItemsGenerated: 0 };
+      return { workItemsGenerated: 0 };
     }
 
     // Generate role-specific work items grounded in BOTH the charter AND
@@ -643,6 +621,6 @@ export const postCharterApproval = action({
       payload: { count: workItemsGenerated, role },
     });
 
-    return { norms, workItemsGenerated };
+    return { workItemsGenerated };
   },
 });
