@@ -515,6 +515,63 @@ describe('a browser signed in again before a row', (): void => {
   });
 });
 
+describe('a landed change reused from an earlier run', (): void => {
+  it('says which run sent the change the row reuses', (): void => {
+    const row = {
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'completed',
+      title: 'Close REVOPS-5',
+      contentSummary: 'Add the audit note and close the ticket.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'REVOPS-5',
+      observedAt: 1,
+      contentRefs: [],
+      output: {
+        draft: 'Audited and closed.',
+        notes: '',
+        applied: [
+          {
+            tool: 'mcp.call',
+            ok: true,
+            effect: 'save_comment on linear',
+            idempotencyKey: 'wi:retry:0',
+          },
+          {
+            tool: 'mcp.call',
+            ok: true,
+            effect: 'save_issue on linear',
+            providerId: 'REVOPS-5',
+            idempotencyKey: 'wi:retry:1',
+            reusedFrom: 'wi:first:1',
+            reusedFromRun: 1,
+          },
+        ],
+      },
+    } as unknown as Doc<'workItems'>;
+    const markup = renderToStaticMarkup(
+      <WorkItemCard
+        item={row}
+        surfaces={[]}
+        autonomousActions={true}
+        onApprovePlan={(): void => undefined}
+        onCancelPlan={(): void => undefined}
+        onRetryFailed={(): void => undefined}
+        onReconcileFailed={async (): Promise<void> => undefined}
+        onApproveActions={async (): Promise<void> => undefined}
+        onRejectActions={async (): Promise<void> => undefined}
+        onResendDecision={async (): Promise<void> => undefined}
+      />,
+    );
+    expect(markup.match(/reused from run 1/g)).toHaveLength(1);
+    expect(markup.indexOf('save_issue on linear')).toBeLessThan(
+      markup.indexOf('reused from run 1'),
+    );
+  });
+});
+
 describe('sending a finished item back', (): void => {
   const landedDm = {
     draft: 'Told the manager.',

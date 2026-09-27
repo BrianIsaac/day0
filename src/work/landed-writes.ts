@@ -67,6 +67,79 @@ export function reusedStatusNote(state: string, ticket: string): string {
 export const REUSED_IDENTICAL_NOTE =
   'This closing action already landed in the previous attempt; reused its recorded result.';
 
+/** A ledger row that reports an earlier landed row instead of sending again. */
+export interface ReusedAppliedAction extends AppliedAction {
+  /**
+   * The idempotency key of the row that reached the provider, whose run id
+   * names the run that sent it; a reuse of a reuse names the original.
+   */
+  readonly reusedFrom: string;
+  /** The number of the run that sent it, counting the item's runs from one, when known. */
+  readonly reusedFromRun?: number;
+}
+
+/**
+ * The key of the row a ledger row reused, when it is a reuse.
+ *
+ * @param applied - A ledger row.
+ * @returns The reused row's idempotency key, or undefined for a row that was sent.
+ */
+export function reusedFrom(applied: AppliedAction): string | undefined {
+  const source = (applied as Partial<ReusedAppliedAction>).reusedFrom;
+  return typeof source === 'string' && source !== '' ? source : undefined;
+}
+
+/**
+ * Number each reused row by the run that sent what it reuses.
+ *
+ * @param rows - A phase's ledger rows, reused or not.
+ * @param runIds - The item's runs, oldest first.
+ * @returns The rows, each reuse with `reusedFromRun` when its run is among them.
+ */
+export function withReusedRunNumbers<T extends AppliedAction | undefined>(
+  rows: readonly T[],
+  runIds: readonly string[],
+): T[] {
+  return rows.map((row) => {
+    const source = row ? reusedFrom(row) : undefined;
+    // Keys are `workItemId:runId:actionIndex`, and neither id holds a colon.
+    const index = source === undefined ? -1 : runIds.indexOf(source.split(':')[1] ?? '');
+    return index < 0 ? row : ({ ...row, reusedFromRun: index + 1 } as T);
+  });
+}
+
+/**
+ * Whether a ledger row reports an earlier landed row rather than a send,
+ * whether it names its source or was persisted before reuses did.
+ *
+ * @param applied - A ledger row.
+ */
+export function isReusedRow(applied: AppliedAction): boolean {
+  return reusedFrom(applied) !== undefined || legacyReuse(applied);
+}
+
+/** A reused row persisted before reuses named their source: known only by its note. */
+function legacyReuse(applied: AppliedAction): boolean {
+  return (
+    reusedFrom(applied) === undefined &&
+    (applied.reason === REUSED_IDENTICAL_NOTE ||
+      applied.reason?.startsWith('reused landed ') === true)
+  );
+}
+
+function reuseOf(
+  source: AppliedAction,
+  reason: string,
+  idempotencyKey: string,
+): ReusedAppliedAction {
+  return {
+    ...source,
+    reason,
+    idempotencyKey,
+    reusedFrom: reusedFrom(source) ?? source.idempotencyKey,
+  };
+}
+
 function landed(entry: AppliedAction | undefined): entry is AppliedAction {
   return entry?.ok === true && !entry.held && !entry.awaitingApproval;
 }
@@ -96,16 +169,28 @@ export function landedWritesOf(output: unknown): LandedWrite[] {
       return landed(entry) && parsedWrite(action) ? [{ action, applied: entry }] : [];
     }),
   );
+  // Every write is its own row, keyed by the idempotency key it was sent
+  // under: two status changes on one ticket share the ticket as provider id
+  // and are still two changes (M3). A reuse is the row it reused, so it is
+  // kept only when that row is not carried; a reuse persisted before reuses
+  // named their source is matched by its provider id, as it always was.
   const seen = new Set<string>();
+  const seenProviders = new Set<string>();
   return [...earlier, ...own].filter((row) => {
-    // A reused row carries the provider id of the row it reused under a new
-    // idempotency key, so the provider id is the identity when there is one.
     const surface = parseSurfaceAction(row.action);
-    const key = row.applied.providerId
+    const provider = row.applied.providerId
       ? `${surface.ok ? surface.action.surface : row.action.tool}|${row.applied.providerId}`
-      : row.applied.idempotencyKey || JSON.stringify(row.action);
+      : undefined;
+    const key =
+      (legacyReuse(row.applied) ? provider : undefined) ??
+      reusedFrom(row.applied) ??
+      (row.applied.idempotencyKey || JSON.stringify(row.action));
     if (seen.has(key)) return false;
     seen.add(key);
+    if (provider) {
+      if (legacyReuse(row.applied) && seenProviders.has(provider)) return false;
+      seenProviders.add(provider);
+    }
     return true;
   });
 }
@@ -169,6 +254,28 @@ function statusChange(
     ticket,
     alone: written.length === 1 && written[0]?.[1] === state,
   };
+}
+
+/**
+ * The last state an earlier run of the item set on a ticket, from the
+ * writes it carries; the re-read before apply counts that move as Day0's own.
+ *
+ * @param writes - The landed writes the row carries, oldest first.
+ * @returns The state, or undefined when no earlier run set one.
+ */
+export function lastLandedState(
+  writes: readonly LandedWrite[],
+  surface: string,
+  ticket: string,
+): string | undefined {
+  const ticketKey = `${surface}|status|${ticket.trim().toLowerCase()}`;
+  return writes
+    .flatMap((write) => {
+      const parsed = landed(write.applied) ? parsedWrite(write.action) : undefined;
+      const status = parsed ? statusChange(parsed) : undefined;
+      return status?.ticketKey === ticketKey ? [status.state] : [];
+    })
+    .at(-1);
 }
 
 /**
@@ -288,8 +395,10 @@ function payload(action: MockAction): string | undefined {
  *     run's earlier phases when the caller passes them.
  *   run: The run the reused rows take their identity from.
  *   options: The agent's surfaces (to tell the manager DM from a message),
- *     the manager's note on the retry, and whether identical payloads are
- *     reused (a resumed closing set's previous attempt only).
+ *     the manager's note on the retry, whether identical payloads are
+ *     reused (a resumed closing set's previous attempt only), and the writes
+ *     this run landed in an earlier phase, whose status changes end any
+ *     reuse on their ticket.
  *
  * Returns:
  *   A reused row for each action that has one, undefined elsewhere.
@@ -302,8 +411,9 @@ export function reusedLedger(
     surfaces?: readonly SurfaceRecord[];
     managerFeedback?: string;
     identicalPayloads?: boolean;
+    thisRun?: readonly LandedWrite[];
   } = {},
-): Array<AppliedAction | undefined> {
+): Array<ReusedAppliedAction | undefined> {
   if (sources.length === 0) return actions.map(() => undefined);
   const surfaces = options.surfaces ?? [];
   const correction = correctionRequested(options.managerFeedback);
@@ -322,6 +432,13 @@ export function reusedLedger(
     if (target && !byTarget.has(target.key))
       byTarget.set(target.key, { applied: source.applied, kind: target.kind });
   }
+  // A ticket this run already moved in an earlier phase is in the state this
+  // run set, whatever an earlier run left it in.
+  for (const write of options.thisRun ?? []) {
+    const parsed = landed(write.applied) ? parsedWrite(write.action) : undefined;
+    const status = parsed ? statusChange(parsed) : undefined;
+    if (status) byStatus.delete(status.ticketKey);
+  }
   return actions.map((action, index) => {
     const identity = actionIdempotencyKey({
       workItemId: run.workItemId,
@@ -330,7 +447,7 @@ export function reusedLedger(
     });
     const key = options.identicalPayloads ? payload(action) : undefined;
     const identical = key ? byPayload.get(key) : undefined;
-    if (identical) return { ...identical, reason: REUSED_IDENTICAL_NOTE, idempotencyKey: identity };
+    if (identical) return reuseOf(identical, REUSED_IDENTICAL_NOTE, identity);
     const parsed = parsedWrite(action);
     const status = parsed ? statusChange(parsed) : undefined;
     const setBefore = status ? byStatus.get(status.ticketKey) : undefined;
@@ -341,12 +458,11 @@ export function reusedLedger(
       setBefore.state.toLowerCase() === status.state.toLowerCase() &&
       !stateDirected(options.managerFeedback, status.state)
     ) {
-      return {
-        ...setBefore.applied,
-        reason: reusedStatusNote(status.state, status.ticket),
-        idempotencyKey: identity,
-      };
+      return reuseOf(setBefore.applied, reusedStatusNote(status.state, status.ticket), identity);
     }
+    // This run moves the ticket, so from here on no earlier run's state is
+    // the ticket's state, and a later change on it is sent (M3).
+    if (status) byStatus.delete(status.ticketKey);
     const target = parsed ? writeTarget(parsed, action, surfaces) : undefined;
     const prior = target ? byTarget.get(target.key) : undefined;
     if (!parsed || !prior) return undefined;
@@ -355,11 +471,7 @@ export function reusedLedger(
     // one, as a second comment when it did not. Only an untouched target is
     // reused.
     if (correction) return undefined;
-    return {
-      ...prior.applied,
-      reason: reusedLandedNote(prior.applied.providerId, prior.kind),
-      idempotencyKey: identity,
-    };
+    return reuseOf(prior.applied, reusedLandedNote(prior.applied.providerId, prior.kind), identity);
   });
 }
 

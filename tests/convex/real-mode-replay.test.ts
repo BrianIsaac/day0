@@ -587,7 +587,8 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const completed = await readItem(t, workItemId);
     expect(completed.state).toBe('completed');
-    expect(recorded.mcp.map(call => call.tool)).toEqual(commentLanded ? ['save_issue'] : ['save_comment', 'save_issue']);
+    // The retry reads the ticket again before its first write on it (Q11).
+    expect(recorded.mcp.map(call => call.tool)).toEqual(commentLanded ? ['get_issue', 'save_issue'] : ['get_issue', 'save_comment', 'save_issue']);
     if (commentLanded && !omitComment) {
       expect(ledger(completed)[6]).toMatchObject({ ok: true, effect: 'comment-91', reason: expect.stringContaining('already landed') });
       expect(ledger(completed)[6]!.idempotencyKey).toBe(`${workItemId}:${resumed.executionRunId}:6`);
@@ -811,14 +812,16 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       'get_issue',
       'get_issue',
       'get_issue',
+      // The re-read before the first write on the ticket (Q11).
+      'get_issue',
       'save_comment',
       'save_issue',
     ]);
-    const commentBody = (linearCalls[3]!.args as { body: string }).body;
+    const commentBody = (linearCalls[4]!.args as { body: string }).body;
     expect(commentBody).toContain('visible figure 74%');
     expect(commentBody).toContain('Last updated by revops at 2026-09-14 12:41:02 UTC');
     expect(commentBody).toContain('Priya');
-    expect((linearCalls[4]!.args as { state: string }).state).toBe('Done');
+    expect((linearCalls[5]!.args as { state: string }).state).toBe('Done');
     const finalOutput = done.output as ExecutionOutput & {
       planStepOutcomes: Array<{ step: number; status: string }>;
     };

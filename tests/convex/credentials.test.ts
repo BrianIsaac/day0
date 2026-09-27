@@ -98,7 +98,7 @@ describe('credential contract', (): void => {
     ).resolves.toEqual([]);
   });
 
-  it('upserts a page value on (user, source, ref), keeps a revoke on re-sync and lifts it on rotation', async (): Promise<void> => {
+  it("upserts a page value on (user, source, ref) and keeps a person's revoke on re-sync and on rotation", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'owner');
     const source = { sourceId, ref: 'linear-automation' };
@@ -114,20 +114,43 @@ describe('credential contract', (): void => {
     await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {
       credentialId,
     });
+    const [revoked] = await rows(harness);
     await expect(
       harness.action(internal.credentials.store, { ...args, plaintext: SECRET }),
     ).resolves.toBe(credentialId);
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
       'unavailable',
     );
+
+    // The page now holds another value: the row is re-synced to it, and the
+    // person's revoke stands until a person lands or approves a value.
     await expect(
       harness.action(internal.credentials.store, { ...args, plaintext: ROTATED }),
     ).resolves.toBe(credentialId);
+    const [rotated] = await rows(harness);
     expect(await rows(harness)).toHaveLength(1);
-    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
-      ROTATED,
+    expect(rotated.ciphertext).not.toBe(revoked.ciphertext);
+    expect(rotated.revokedAt).toBe(revoked.revokedAt);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
     );
-    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+    const reason = async (): Promise<string | undefined> => {
+      const [summary] = await harness
+        .withIdentity({ subject: 'owner' })
+        .query(api.credentials.summaryForOwner, {});
+      return summary.statusReason;
+    };
+    expect(await reason()).toBe(
+      'Revoked by a person. The page now holds a different value; it stays revoked until a person lands or approves one.',
+    );
+
+    // The next sync finds the rotated value unchanged: still revoked, and still said.
+    await harness.action(internal.credentials.store, { ...args, plaintext: ROTATED });
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
+    expect(await reason()).toMatch(/stays revoked until a person lands or approves one/);
   });
 
   it("revives a credential a sync superseded when the same value returns, and keeps a person's revoke (P10-1)", async (): Promise<void> => {
@@ -190,7 +213,7 @@ describe('credential contract', (): void => {
       ciphertext: Buffer.from('sealed-under-another-key-0123456789').toString('base64'),
       iv: Buffer.alloc(12, 1).toString('base64'),
       source,
-      reactivate: false,
+      rotated: false,
     });
     await expect(
       harness.action(internal.credentials.decrypt, { credentialId: staleId }),
@@ -511,7 +534,7 @@ describe('credential persistence after unlink', () => {
         source: { sourceId, ref: 'page' },
         ciphertext: 'late-ciphertext',
         iv: 'late-iv',
-        reactivate: true,
+        rotated: true,
       };
       if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);
       await harness

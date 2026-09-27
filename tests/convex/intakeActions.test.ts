@@ -1,13 +1,39 @@
 /** @vitest-environment node */
 
+import type { IncomingMessage } from 'node:http';
+import { PassThrough } from 'node:stream';
 import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { describe, expect, it, vi } from 'vitest';
+
+/** The configurations the production intake client built, when a test reaches it. */
+const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
+
+// Only the address tests reach the production client; every other test injects `makeMcpClient`.
+vi.mock('@mastra/mcp', () => ({
+  MCPClient: class {
+    constructor(config: unknown) {
+      mastra.configs.push(config);
+    }
+
+    __setLogger(): void {}
+
+    async listToolDefinitionsWithErrors(): Promise<{
+      definitions: Record<string, never>;
+      errors: Record<string, string>;
+    }> {
+      return { definitions: {}, errors: {} };
+    }
+
+    async disconnect(): Promise<void> {}
+  },
+}));
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   compareProviderTs,
+  createMcpClient,
   issueProject,
   issueTeamLabels,
   linearCandidate,
@@ -22,6 +48,7 @@ import {
   type LinearListRequest,
 } from '../../convex/intakeActions';
 import type { WorkCandidate } from '../../src/work/types';
+import type { TicketSnapshot } from '../../src/work/ticket-ownership';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 
@@ -36,6 +63,7 @@ interface RecordedIntake {
 
 interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
   agentId: Id<'agents'>;
+  tracker?: TicketSnapshot;
 }
 
 interface RuntimeHarness {
@@ -48,6 +76,8 @@ interface RuntimeHarness {
   openRequests: Map<string, Array<{ ts: string }>>;
   /** Bot identities intake read for rows connected before the probe stored one. */
   botIdentities: Array<{ surfaceId: Id<'surfaces'>; generation: number; providerBotId: string }>;
+  /** Tickets intake refused on a poll, with why they left the queue. */
+  withdrawn: Array<{ externalId: string; leftQueue: string }>;
 }
 
 /**
@@ -169,6 +199,7 @@ function runtimeHarness(
   const seeds = new Map<string, SeededCandidate>();
   const openRequests = new Map<string, Array<{ ts: string }>>();
   const botIdentities: RuntimeHarness['botIdentities'] = [];
+  const withdrawn: RuntimeHarness['withdrawn'] = [];
   const runtime: IntakeRuntime = {
     recordBotIdentity: async (record): Promise<void> => {
       botIdentities.push(record);
@@ -201,6 +232,9 @@ function runtimeHarness(
         candidate,
       );
     },
+    withdraw: async (candidate): Promise<void> => {
+      withdrawn.push({ externalId: candidate.externalId, leftQueue: candidate.leftQueue });
+    },
     resolveDecision: async (reply): Promise<void> => {
       decisions.push(reply);
     },
@@ -222,7 +256,16 @@ function runtimeHarness(
     listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
       openRequests.get(String(surfaceId)) ?? [],
   };
-  return { botIdentities, decisionPolls, decisions, records, runtime, seeds, openRequests };
+  return {
+    botIdentities,
+    decisionPolls,
+    decisions,
+    records,
+    runtime,
+    seeds,
+    openRequests,
+    withdrawn,
+  };
 }
 
 const ONBOARDING = [
@@ -1121,6 +1164,7 @@ describe('real surface intake', (): void => {
       recordIntake: vi.fn(),
       recordDecisionPoll: vi.fn(),
       seed: vi.fn(),
+      withdraw: vi.fn(),
       resolveDecision: vi.fn(),
       listOpenDecisionRequests: vi.fn(async (): Promise<Array<{ ts: string }>> => []),
       recordBotIdentity: vi.fn(),
@@ -1143,7 +1187,7 @@ describe('real surface intake', (): void => {
     expect(runtime.listChatSurfaces).not.toHaveBeenCalled();
   });
 
-  it('relies on seedItem to deduplicate repeated provider identities', async (): Promise<void> => {
+  it('relies on seedItem to deduplicate repeated provider identities and keep the row at the latest listing', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
@@ -1178,7 +1222,7 @@ describe('real surface intake', (): void => {
       _id: first,
       sourceSystem: 'linear',
       externalId: 'issue-stable-id',
-      title: 'First observed title',
+      title: 'Changed provider title',
     });
   });
 
@@ -1228,6 +1272,7 @@ describe('intake provider contracts', (): void => {
       projectEnforced: true,
       teamEnforced: true,
       checkpointEnforced: true,
+      unselectable: [],
     });
     expect(
       linearListArguments(
@@ -1240,6 +1285,7 @@ describe('intake provider contracts', (): void => {
       projectEnforced: false,
       teamEnforced: false,
       checkpointEnforced: false,
+      unselectable: [],
     });
     expect(
       (): LinearListRequest =>
@@ -2416,7 +2462,13 @@ describe('each employee reads its own approved queues', (): void => {
     const properties: Record<string, unknown> = Object.fromEntries(
       liveArguments.map((name) => [name, {}]),
     );
-    properties.fields = { type: 'array', items: { type: 'string', enum: Object.keys(fin1) } };
+    // The enum is built from the printed issue, which is not the live enum
+    // (unverified, review M8); the person fields intake needs are added so
+    // this case still proves the alias.
+    properties.fields = {
+      type: 'array',
+      items: { type: 'string', enum: [...Object.keys(fin1), 'assignee', 'assigneeId'] },
+    };
     const requested: unknown[] = [];
     const harness = runtimeHarness(
       [companySurfaces()[1]],
@@ -2572,9 +2624,12 @@ describe('each employee reads its own approved queues', (): void => {
       expect(records[0]?.skipReason).toContain("the key's owner could not be read");
 
       records.length = 0;
-      await seededFrom([ticket('FIN-1'), ticket('FIN-2', { assignee: 'Ana Lim' })], {
-        owner: KEY_OWNER,
-      });
+      await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' })],
+        {
+          owner: KEY_OWNER,
+        },
+      );
       expect(records[0]?.polledAt).toBe(POLL_AT);
 
       const unanswered = await seededFrom(
@@ -2582,6 +2637,207 @@ describe('each employee reads its own approved queues', (): void => {
         { owner: { error: 'not found' } },
       );
       expect(unanswered).toEqual(['FIN-1']);
+    });
+
+    it('compares the owner by id, then by email, and never takes a ticket on a bare name (M9)', async (): Promise<void> => {
+      const seeded = await seededFrom(
+        [
+          // The same name as the key's owner, and another person's id.
+          ticket('FIN-1', { assignee: 'Kestrel Ops', assigneeId: 'user-ana' }),
+          // A name alone cannot say whose ticket this is.
+          ticket('FIN-2', { assignee: 'Kestrel Ops' }),
+          ticket('FIN-3', { assignee: { name: 'ops', email: 'OPS@kestrel.test' } }),
+          // Both carry an id and they differ: the email does not overrule it.
+          ticket('FIN-4', { assignee: { id: 'user-ana', email: 'ops@kestrel.test' } }),
+          ticket('FIN-5', { assignee: 'ops@kestrel.test' }),
+        ],
+        { owner: KEY_OWNER },
+      );
+      expect(seeded).toEqual(['FIN-3', 'FIN-5']);
+    });
+
+    it('holds the checkpoint for an assignee it can name but not identify, and withdraws no row for it', async (): Promise<void> => {
+      records.length = 0;
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient(
+          [ticket('FIN-1'), ticket('FIN-2', { assignee: 'Kestrel Ops' })],
+          {
+            owner: KEY_OWNER,
+          },
+        ),
+      });
+      expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual(['FIN-1']);
+      expect(harness.withdrawn).toEqual([]);
+      expect(harness.records[0]?.polledAt).toBeUndefined();
+      expect(harness.records[0]?.skipReason).toContain('could not be identified by id or email');
+    });
+
+    it('holds the checkpoint when the key owner answers with a name alone', async (): Promise<void> => {
+      records.length = 0;
+      const seeded = await seededFrom(
+        [ticket('FIN-1'), ticket('FIN-3', { assignee: 'Kestrel Ops', assigneeId: 'user-key' })],
+        { owner: { name: 'Kestrel Ops' } },
+      );
+      expect(seeded).toEqual(['FIN-1']);
+      expect(records[0]?.polledAt).toBeUndefined();
+      expect(records[0]?.skipReason).toContain("the key's owner could not be read");
+    });
+
+    it('withdraws the row of a ticket that left the queue, and never one whose owner is unread', async (): Promise<void> => {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient(
+          [
+            ticket('FIN-1'),
+            ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: 'user-ana' }),
+            ticket('FIN-3', { status: 'Done', statusType: 'completed' }),
+            ticket('FIN-4', { labels: ['do-not-automate'] }),
+          ],
+          { owner: KEY_OWNER },
+        ),
+      });
+      expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual(['FIN-1']);
+      // The ticket as listed is kept with the seed, for the re-read before apply.
+      expect([...harness.seeds.values()][0]?.tracker).toEqual({
+        assigned: false,
+        stateType: 'unstarted',
+        doNotAutomate: false,
+      });
+      expect(harness.withdrawn).toEqual([
+        { externalId: 'FIN-2', leftQueue: 'the ticket is assigned to someone else' },
+        { externalId: 'FIN-3', leftQueue: 'the ticket is completed' },
+        { externalId: 'FIN-4', leftQueue: 'the ticket is labelled do-not-automate' },
+      ]);
+
+      const unread = runtimeHarness(
+        [{ ...finance, toolAllowlist: ['list_issues'] }],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      await runIntakeSweep(unread.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: linearClient([ticket('FIN-2', { assigneeId: 'user-ana' })]),
+      });
+      expect(unread.withdrawn).toEqual([]);
+    });
+
+    it('holds the checkpoint and takes no ticket when the fields selector cannot select who owns it (M8)', async (): Promise<void> => {
+      const finance: Doc<'surfaces'> = {
+        ...companySurfaces()[1],
+        toolAllowlist: ['list_issues', 'get_user'],
+      };
+      const harness = runtimeHarness(
+        [finance],
+        companyPageRows('revops-first'),
+        companyCredentials(),
+        [financeAgent],
+      );
+      const listed: unknown[] = [];
+      const enumWithout = ['id', 'title', 'project', 'team', 'updatedAt', 'labels', 'statusType'];
+      await runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => POLL_AT,
+        makeMcpClient: () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: {
+                list_issues: {
+                  name: 'list_issues',
+                  inputSchema: {
+                    properties: {
+                      project: {},
+                      team: {},
+                      fields: { type: 'array', items: { type: 'string', enum: enumWithout } },
+                    },
+                  },
+                },
+              },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              listed.push(args);
+              return { issues: [ticket('FIN-1'), ticket('FIN-2')] };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+      });
+      expect(harness.seeds.size).toBe(0);
+      expect(listed).toEqual([]);
+      expect(harness.records).toEqual([
+        expect.objectContaining({
+          skipReason:
+            'Day0 cannot see who owns these tickets on this server: its list_issues cannot select an assignee. No ticket is taken until the schema is confirmed.',
+        }),
+      ]);
+      expect(harness.records[0]?.polledAt).toBeUndefined();
+      expect(
+        linearListArguments(
+          {
+            properties: {
+              fields: { type: 'array', items: { type: 'string', enum: ['id', 'title'] } },
+            },
+          },
+          {},
+        ).unselectable,
+      ).toEqual(['an assignee', 'a label', 'a state type']);
+      // A printed name identifies nobody and a status name carries no type.
+      expect(
+        linearListArguments(
+          {
+            properties: {
+              fields: {
+                type: 'array',
+                items: { type: 'string', enum: ['id', 'assignee', 'labels', 'status'] },
+              },
+            },
+          },
+          {},
+        ).unselectable,
+      ).toEqual(['an assignee', 'a state type']);
+      expect(
+        linearListArguments(
+          {
+            properties: {
+              fields: {
+                type: 'array',
+                items: { type: 'string', enum: ['id', 'assigneeId', 'labels', 'state'] },
+              },
+            },
+          },
+          {},
+        ),
+      ).toMatchObject({
+        unselectable: [],
+        args: { fields: ['id', 'assigneeId', 'labels', 'state'] },
+      });
     });
 
     it('honours a do-not-automate label in the shapes the provider returns it', async (): Promise<void> => {
@@ -2977,5 +3233,67 @@ describe('poll on connect', (): void => {
 
     expect(result).toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 0, surfaces: 0 });
     expect(harness.records).toEqual([]);
+  });
+});
+
+describe('the Linear intake client reaches only the address it checked (M16)', (): void => {
+  const endpoint = new URL('https://mcp.linear.app/mcp');
+
+  it('refuses a Linear host that answers with a private address and builds no client', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    const client = createMcpClient(endpoint, 'lin-secret', {
+      resolveHostname: async (): Promise<string[]> => ['10.0.0.7'],
+    });
+    await expect(client.listToolDefinitionsWithErrors()).rejects.toThrow(
+      'resolved to a private, loopback',
+    );
+    expect(mastra.configs).toEqual([]);
+    await expect(client.disconnect()).resolves.toBeUndefined();
+  });
+
+  it('connects to the address it checked, not to a later answer', async (): Promise<void> => {
+    mastra.configs.length = 0;
+    let answers = ['93.184.216.34'];
+    const dialled: unknown[] = [];
+    const client = createMcpClient(endpoint, 'lin-secret', {
+      resolveHostname: async (): Promise<string[]> => answers,
+      request: (_url, options, callback) => ({
+        on: (): void => undefined,
+        end: (): void => {
+          const lookup = options.lookup as unknown as (
+            host: string,
+            opts: { all: boolean },
+            cb: (error: Error | null, addresses: unknown) => void,
+          ) => void;
+          lookup('mcp.linear.app', { all: true }, (_error, addresses): void => {
+            dialled.push(addresses);
+          });
+          const response = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+          callback(response as unknown as IncomingMessage);
+          response.end('{}');
+        },
+      }),
+    });
+    await client.listToolDefinitionsWithErrors();
+    answers = ['127.0.0.1'];
+    const config = mastra.configs[0] as {
+      servers: Record<
+        string,
+        {
+          allowedHosts: string[];
+          requestInit: unknown;
+          fetch: (url: string, init?: RequestInit) => Promise<Response>;
+        }
+      >;
+    };
+    expect(config.servers.surface).toMatchObject({
+      allowedHosts: ['mcp.linear.app'],
+      requestInit: { headers: { Authorization: 'Bearer lin-secret' } },
+    });
+    await config.servers.surface.fetch('https://mcp.linear.app/mcp', {
+      method: 'POST',
+      body: '{}',
+    });
+    expect(dialled).toEqual([[{ address: '93.184.216.34', family: 4 }]]);
   });
 });
