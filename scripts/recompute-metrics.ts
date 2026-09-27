@@ -43,6 +43,7 @@ import {
 } from '../convex/metrics';
 import { exportEntries, exportRows } from './convex-export';
 import { isAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
+import { isEventType, type EventType } from '../src/events/contract';
 
 const USAGE =
   'Usage: pnpm metrics:recompute <trace.json>... | <export.zip|export-directory> [--owner <subject>] [--expect <file.json>] [--json]';
@@ -51,7 +52,7 @@ const METRIC_TABLES = ['agents', 'events', 'workItems', 'charters'] as const;
 const TIMELINE_TABLES = ['docSources', 'docSyncRuns'] as const;
 
 /** The events the timeline names: the run's milestones, as page 12 quotes them. */
-const TIMELINE_EVENTS = new Set([
+const TIMELINE_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   'agent.deployed',
   'charter.drafted',
   'charter.approved',
@@ -184,7 +185,7 @@ function timelineOf(
   const named = records
     .flatMap((record) =>
       record.events
-        .filter((event) => TIMELINE_EVENTS.has(event.type))
+        .filter((event) => isEventType(event.type) && TIMELINE_EVENTS.has(event.type))
         .map((event) => ({ event, employee: record.agent.name })),
     )
     .sort((left, right) => byWriteOrder(left.event, right.event));
