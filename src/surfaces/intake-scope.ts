@@ -423,8 +423,22 @@ const ROLE_STOP_WORDS: ReadonlySet<string> = new Set([
   'employee',
 ]);
 
-/** The top directory of a page reference, or the reference itself at the top. */
+/**
+ * The team a page reference files the page under: its top directory, or the
+ * reference itself at the top. A URL is read by its host and the first
+ * segment of its path, so the pages of one wiki are not all one team
+ * (adversarial pass on review M15).
+ */
 function scopeRoot(ref: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(ref)) {
+    try {
+      const url = new URL(ref);
+      const [first = ''] = url.pathname.split('/').filter(Boolean);
+      return `${url.host}/${first}`;
+    } catch {
+      // Not a URL after all: read the reference as the path it spells.
+    }
+  }
   return ref.includes('/') ? ref.split('/')[0]! : ref;
 }
 

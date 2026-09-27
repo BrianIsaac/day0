@@ -868,6 +868,35 @@ describe('the scope an approved card reads', (): void => {
     expect(moved.scope.channels?.[0]?.ref).toBe('revops/queues.md');
   });
 
+  it('reads a wiki page’s team from its host and first path segment, so a one-value scope stays on its team’s pages', (): void => {
+    const chat: IntakeScope = {
+      channels: [
+        {
+          value: 'ops-requests',
+          sourceId: 'source-1',
+          ref: 'https://wiki.acme.com/revops/handbook',
+          quote: '- Channels: #ops-requests',
+        },
+      ],
+    };
+    const finance: ScopePage = {
+      sourceId: 'source-1',
+      ref: 'https://wiki.acme.com/finance/handbook',
+      markdown: '- Channels: #finance-close, #ops-requests',
+    };
+    expect(restatedScope(chat, [finance]).drift).toEqual([chat.channels![0]]);
+    const moved = restatedScope(chat, [
+      finance,
+      {
+        sourceId: 'source-1',
+        ref: 'https://wiki.acme.com/revops/queues',
+        markdown: '- Channels: #ops-requests',
+      },
+    ]);
+    expect(moved.drift).toEqual([]);
+    expect(moved.scope.channels?.[0]?.ref).toBe('https://wiki.acme.com/revops/queues');
+  });
+
   it('says which changed values intake still reads, and how to take the page as it is now', (): void => {
     expect(presentScopeDrift(finance, [])).toBeUndefined();
     expect(presentScopeDrift(finance, [finance.team!, finance.channels![1]])).toBe(
