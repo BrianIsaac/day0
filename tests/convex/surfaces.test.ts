@@ -1139,6 +1139,49 @@ describe('surface probe generations', (): void => {
     expect(grants).toHaveLength(1);
   });
 
+  it('freezes the tool list the approving probe found: a later probe narrows it and never widens it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const reprobe = async (tools: string[], verifiedAt: number): Promise<void> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: probe.generation,
+        toolAllowlist: tools,
+        toolArguments: tools.map((tool: string) => ({ tool, arguments: [`${tool}-argument`] })),
+        verifiedAt,
+      });
+    };
+    await reprobe(['list_issues', 'save_comment'], 100);
+    await reprobe(['list_issues', 'save_comment', 'delete_issue'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues', 'save_comment'],
+      toolArguments: [
+        { tool: 'list_issues', arguments: ['list_issues-argument'] },
+        { tool: 'save_comment', arguments: ['save_comment-argument'] },
+      ],
+    });
+    await reprobe(['list_issues', 'delete_issue'], 300);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      toolAllowlist: ['list_issues'],
+      toolArguments: [{ tool: 'list_issues', arguments: ['list_issues-argument'] }],
+    });
+    const connected = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type === 'surface.connected')
+        .map((event) => event.payload),
+    );
+    expect(connected).toEqual([
+      { surfaceId },
+      { surfaceId, withheldTools: ['delete_issue'] },
+      { surfaceId, withheldTools: ['delete_issue'] },
+    ]);
+  });
+
   it('schedules one intake poll of the surface the moment it first connects', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
