@@ -1,7 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { loadEvaluationTasks } from '../../evaluation/graders';
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadEvaluationTasks, type EvaluationTask } from '../../evaluation/graders';
+import type { EvaluationEvidence } from '../../evaluation/report';
+import {
+  evaluationHarnessParameters,
+  INTENTIONAL_ARM_DIFFERENCES,
+} from '../../src/evaluation/harness-parity';
+import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../../src/lib/mastra';
+import { MODEL } from '../../src/lib/openai';
 import {
   assertLocalEvaluationSandbox,
+  assertResumeCompatible,
+  EVALUATION_HARNESS_VERSION,
   evaluationTaskTiming,
   isFatalEvaluationInfrastructureError,
   parseCliOptions,
@@ -95,10 +104,55 @@ describe('semi-final evaluation CLI', (): void => {
       deadlineOverrunMs: 0,
     });
   });
+
+  it('refuses to resume evidence whose task definitions differ from the task file', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const options = parseCliOptions(['--out', 'evaluation/results/resume/semifinal.json']);
+    const taskTimeoutMs = Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs]));
+    const recorded = (taskDefinitions: EvaluationTask[]): EvaluationEvidence => ({
+      schemaVersion: 1,
+      experiment: 'day0-semifinal-controlled-comparison',
+      generatedAt: '2026-09-27T00:00:00.000Z',
+      configuration: {
+        harnessVersion: EVALUATION_HARNESS_VERSION,
+        commit: 'resume-commit',
+        model: MODEL,
+        skillSandboxBackend: 'local',
+        skillAuthoringMaxAttempts: MAX_SKILL_AUTHORING_ATTEMPTS,
+        temperature: MODEL_TEMPERATURE,
+        modelCallTimeoutMs: MODEL_CALL_TIMEOUT_MS,
+        surfaceMode: 'mock',
+        arms: options.arms,
+        requestedRuns: options.runs,
+        taskIds: tasks.map((task) => task.id),
+        taskDefinitions,
+        taskTimeoutMs,
+        approvalDelayMs: options.approvalDelayMs,
+        pollIntervalMs: options.pollIntervalMs,
+        noLlmJudge: true,
+        onboardingTranscriptProvenance: 'fixture',
+        harnessParameters: evaluationHarnessParameters(taskTimeoutMs),
+        intentionalArmDifferences: INTENTIONAL_ARM_DIFFERENCES,
+      },
+      runs: [],
+    });
+
+    expect(() =>
+      assertResumeCompatible(recorded(tasks), options, tasks, 'resume-commit'),
+    ).not.toThrow();
+    const edited = tasks.map((task, index) =>
+      index === 0
+        ? { ...task, grader: { ...task.grader, exactCheck: `${task.grader.exactCheck} Edited.` } }
+        : task,
+    );
+    expect(() => assertResumeCompatible(recorded(edited), options, tasks, 'resume-commit')).toThrow(
+      'was created with different code or options',
+    );
+  });
 });
 
 import { getFunctionName } from 'convex/server';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Doc } from '../../convex/_generated/dataModel';
@@ -108,9 +162,27 @@ import {
   MAX_SKILL_AUTHORING_ATTEMPTS,
   runRegrade,
   SKILL_AUTHORING_ATTEMPTS_EXHAUSTED,
+  terminalTimestamp,
   type ActiveTask,
   type HarnessContext,
 } from '../../scripts/eval-semifinal';
+
+const temporaryDirectories: string[] = [];
+
+/** A fresh directory under the system temp root, removed after the test. */
+async function temporaryDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+afterEach(async (): Promise<void> => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 interface RecordedCall {
   kind: 'query' | 'mutation' | 'action';
@@ -127,7 +199,7 @@ async function stubContext(
     calls.push({ kind, name, args });
     return responses[name] ?? {};
   };
-  const dir = await mkdtemp(join(process.env.SCRATCHPAD_DIR ?? tmpdir(), 'eval-'));
+  const dir = await temporaryDirectory('eval-');
   const context = {
     client: { query: respond('query'), mutation: respond('mutation'), action: respond('action') },
     authenticatedAt: Date.now(),
@@ -499,7 +571,7 @@ function retainedSnapshot() {
 
 describe('read-only evidence re-grading', (): void => {
   it('writes a new grade from retained state with provenance and no model calls', async (): Promise<void> => {
-    const dir = await mkdtemp(join(process.env.SCRATCHPAD_DIR ?? tmpdir(), 'regrade-'));
+    const dir = await temporaryDirectory('regrade-');
     const sourcePath = join(dir, 'original.json');
     const outPath = join(dir, 'regraded', 'semifinal.json');
     await writeFile(sourcePath, `${JSON.stringify(regradeFixture(), null, 2)}\n`, 'utf8');
@@ -566,6 +638,9 @@ describe('read-only evidence re-grading', (): void => {
         },
       },
     });
+    expect(evidence.configuration.taskDefinitions).toEqual(
+      (await loadEvaluationTasks()).filter((task) => task.id === 'docs-salesforce-escalation'),
+    );
     expect(await readFile(sourcePath, 'utf8')).toBe(original);
     expect(await readFile(outPath.replace(/\.json$/, '.md'), 'utf8')).toContain(
       'Re-graded from run 2026-08-30T02:14:46.000Z (commit `run-commit`) with graders at commit `grader-commit`; no model calls were made.',
@@ -573,7 +648,7 @@ describe('read-only evidence re-grading', (): void => {
   });
 
   it('refuses when the backend no longer holds a recorded work item', async (): Promise<void> => {
-    const dir = await mkdtemp(join(process.env.SCRATCHPAD_DIR ?? tmpdir(), 'regrade-missing-'));
+    const dir = await temporaryDirectory('regrade-missing-');
     const sourcePath = join(dir, 'original.json');
     const outPath = join(dir, 'new', 'semifinal.json');
     await writeFile(sourcePath, JSON.stringify(regradeFixture()), 'utf8');
@@ -593,5 +668,41 @@ describe('read-only evidence re-grading', (): void => {
       }),
     ).rejects.toThrow('backend does not hold recorded work item work-1 for day0-r1');
     await expect(readFile(outPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('the terminal time of a task', (): void => {
+  const item = (overrides: Partial<Doc<'workItems'>>): Doc<'workItems'> =>
+    ({ _id: 'work-1', state: 'failed', ...overrides }) as Doc<'workItems'>;
+  const snapshot = (events: Array<{ type: string; payload: unknown; createdAt: number }>) =>
+    ({ events }) as unknown as Parameters<typeof terminalTimestamp>[0];
+
+  it('ends a rejected or interrupted apply at its own ledger event, not the poll time', (): void => {
+    for (const type of ['work.actions-rejected', 'work.actions-interrupted']) {
+      expect(
+        terminalTimestamp(
+          snapshot([
+            { type: 'work.actions-pending', payload: { workItemId: 'work-1' }, createdAt: 3_000 },
+            { type, payload: { workItemId: 'work-1' }, createdAt: 5_000 },
+          ]),
+          item({}),
+        ),
+        type,
+      ).toBe(5_000);
+    }
+  });
+
+  it('ends a row cancelled by a skill rejection at the rejection of its own proposal', (): void => {
+    const rejection = (skillId: string) => ({
+      type: 'skill.rejected',
+      payload: { skillId, name: 'update-ticket' },
+      createdAt: 7_000,
+    });
+    const cancelled = item({
+      state: 'cancelled',
+      proposedSkillId: 'skill-1' as Doc<'workItems'>['proposedSkillId'],
+    });
+    expect(terminalTimestamp(snapshot([rejection('skill-1')]), cancelled)).toBe(7_000);
+    expect(terminalTimestamp(snapshot([rejection('skill-2')]), cancelled)).toBeNull();
   });
 });

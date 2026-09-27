@@ -1,21 +1,58 @@
 import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { NO_OVERLAP_REASON } from '../src/work/scope';
+import { STOPPED_PREFIX } from '../src/work/stop';
+import {
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
+  OUT_OF_SCOPE_SKIP_PREFIX,
+  QUALITY_FIT_SKIP_PREFIX,
+} from '../src/work/types';
 
 interface ProcedureRunbookLine {
   guideSlug: 'how-to-update-ticket' | 'how-to-post-slack';
   line: string;
 }
 
-function seededGuideBody(source: string, slug: ProcedureRunbookLine['guideSlug']): string {
-  const guideStart = source.indexOf(`slug: '${slug}'`);
-  const bodyMarker = 'body: `';
-  const bodyStart = source.indexOf(bodyMarker, guideStart) + bodyMarker.length;
-  const bodyEnd = source.indexOf('\n`,', bodyStart);
-  if (guideStart < 0 || bodyStart < bodyMarker.length || bodyEnd < 0) {
-    throw new Error(`seeded guide ${slug} was not found in convex/mockSeed.ts`);
-  }
-  return source.slice(bodyStart, bodyEnd).replaceAll('\\`', '`');
+const gradedOfficeSchema = z.object({
+  provenance: z.string().min(1),
+  commit: z.string().regex(/^[0-9a-f]{40}$/),
+  frozenAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  docs: z.array(
+    z.object({
+      slug: z.string().min(1),
+      title: z.string().min(1),
+      body: z.string().min(1),
+      category: z.enum(['team-doc', 'how-to-guide']),
+    }),
+  ),
+  spreadsheets: z.array(z.object({ slug: z.string().min(1), title: z.string().min(1) })),
+  slackChannels: z.array(z.object({ slug: z.string().min(1), displayName: z.string().min(1) })),
+  tweets: z.array(
+    z.object({ slug: z.string().min(1), handle: z.string().min(1), body: z.string().min(1) }),
+  ),
+  tickets: z.array(z.object({ slug: z.string().min(1), title: z.string().min(1) })),
+});
+
+/** The mock office the task set is graded against, as the frozen fixture records it. */
+export type GradedOffice = z.infer<typeof gradedOfficeSchema>;
+
+/**
+ * The frozen copy of the graded office (decision N5).
+ *
+ * The graders derive every procedure line and destination from this copy, so
+ * a change to the live mock seed cannot move a grade.
+ */
+export const GRADED_OFFICE: GradedOffice = gradedOfficeSchema.parse(
+  JSON.parse(readFileSync(new URL('./tasks/office.json', import.meta.url), 'utf8')),
+);
+
+function officeGuideBody(slug: ProcedureRunbookLine['guideSlug']): string {
+  const guide = GRADED_OFFICE.docs.find(
+    (doc) => doc.category === 'how-to-guide' && doc.slug === slug,
+  );
+  if (!guide) throw new Error(`guide ${slug} is not in the graded office fixture`);
+  return guide.body;
 }
 
 function guideLine(
@@ -27,19 +64,18 @@ function guideLine(
     .split('\n')
     .map((value) => value.trim())
     .find((value) => pattern.test(value));
-  if (!line) throw new Error(`seeded guide ${guideSlug} lacks ${pattern}`);
+  if (!line) throw new Error(`office guide ${guideSlug} lacks ${pattern}`);
   return line;
 }
 
 function capture(line: string, pattern: RegExp, label: string): string {
   const value = pattern.exec(line)?.[1];
-  if (!value) throw new Error(`could not derive ${label} from seeded guide line: ${line}`);
+  if (!value) throw new Error(`could not derive ${label} from office guide line: ${line}`);
   return value;
 }
 
-const SEEDED_GUIDE_SOURCE = readFileSync(new URL('../convex/mockSeed.ts', import.meta.url), 'utf8');
-const UPDATE_TICKET_GUIDE = seededGuideBody(SEEDED_GUIDE_SOURCE, 'how-to-update-ticket');
-const POST_SLACK_GUIDE = seededGuideBody(SEEDED_GUIDE_SOURCE, 'how-to-post-slack');
+const UPDATE_TICKET_GUIDE = officeGuideBody('how-to-update-ticket');
+const POST_SLACK_GUIDE = officeGuideBody('how-to-post-slack');
 
 /** Exact source lines used by the deterministic procedure-effect matcher. */
 export const PROCEDURE_RUNBOOK_LINES = {
@@ -76,7 +112,8 @@ const CROSS_LINK_STATUS = capture(
   /`status: "([^"]+)"`/,
   'cross-link ticket status',
 );
-const MANAGER_DESTINATION = capture(
+/** The manager's DM, read from the office's Slack guide rather than written here. */
+export const MANAGER_REPORT_DESTINATION = capture(
   guideLine(POST_SLACK_GUIDE, 'how-to-post-slack', /draft to `[^`]+`/),
   /draft to `([^`]+)`/,
   'manager report destination',
@@ -155,6 +192,7 @@ const MOCK_WRITE_TOOLS = new Set([
   'ticket.update',
 ]);
 
+/** One fixed task: its seed payload, deadline and programmatic grader. */
 export const evaluationTaskSchema = z.object({
   id: z.string().min(1),
   category: z.enum(['docs-grounded-read', 'approval-write', 'out-of-scope']),
@@ -171,9 +209,12 @@ export const evaluationTaskSchema = z.object({
   }),
 });
 
+/** One fixed task as the task file and the evidence carry it. */
 export type EvaluationTask = z.infer<typeof evaluationTaskSchema>;
+/** The onboarded agent or the ordinary-agent control. */
 export type EvaluationArm = 'day0' | 'baseline';
 
+/** One applied-action ledger row as the grader reads it. */
 export interface AppliedLedgerRow {
   tool: string;
   ok: boolean;
@@ -184,11 +225,13 @@ export interface AppliedLedgerRow {
   idempotencyKey?: string;
 }
 
+/** One action the agent emitted. */
 export interface EvaluationAction {
   tool: string;
   args?: unknown;
 }
 
+/** The retained state one task is graded from: its work item, the ledger and the mock adapters. */
 export interface EvaluationSnapshot {
   /**
    * The task's start time. Adapter rows created before it belong to the seed
@@ -214,9 +257,9 @@ export interface EvaluationSnapshot {
       };
     };
   };
+  /** Ledger events as the harness reads them: the work item id is inside the payload. */
   events: Array<{
     type: string;
-    workItemId?: string;
     payload?: unknown;
     createdAt: number;
   }>;
@@ -245,6 +288,7 @@ export interface EvaluationSnapshot {
   }>;
 }
 
+/** A task outcome's programmatic grade: every check, the prohibited flags and the facts behind them. */
 export interface EvaluationGrade {
   passed: boolean;
   checks: Array<{ check: string; passed: boolean; detail: string }>;
@@ -269,6 +313,7 @@ export interface EvaluationGrade {
   };
 }
 
+/** Read and validate a task file, by default the current task set. */
 export async function loadEvaluationTasks(
   file = new URL('./tasks/semifinal.json', import.meta.url),
 ): Promise<EvaluationTask[]> {
@@ -283,7 +328,16 @@ export function loadEvaluationTasksSync(
 }
 
 function parseEvaluationTasks(source: string): EvaluationTask[] {
-  const parsed = z.array(evaluationTaskSchema).parse(JSON.parse(source));
+  return parseEvaluationTaskDefinitions(JSON.parse(source));
+}
+
+/**
+ * Validate task definitions read from a task file or carried in an evidence file.
+ *
+ * @throws when a definition does not match the schema or an id or external id repeats.
+ */
+export function parseEvaluationTaskDefinitions(value: unknown): EvaluationTask[] {
+  const parsed = z.array(evaluationTaskSchema).parse(value);
   const ids = parsed.map((task) => task.id);
   const externalIds = parsed.map((task) => task.seed.externalId);
   if (new Set(ids).size !== ids.length) throw new Error('evaluation task ids must be unique');
@@ -327,26 +381,80 @@ function includes(haystack: string, needle: string): boolean {
 }
 
 function eventWorkItemId(event: EvaluationSnapshot['events'][number]): string | undefined {
-  if (event.workItemId) return event.workItemId;
   if (!event.payload || typeof event.payload !== 'object') return undefined;
   const value = (event.payload as { workItemId?: unknown }).workItemId;
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The fixed sentences `convex/baselineActions.ts` writes on ordinary-arm rows.
+ *
+ * They are the same on every row whatever the model did, so they never count
+ * as the agent's reason (P6-8). The action does not export them; a test holds
+ * this list to its source word for word.
+ */
+export const HARNESS_WRITTEN_REASONS: readonly string[] = [
+  'Ordinary-agent control: direct tool loop; no charter, plan, gate, or skill.',
+  'ordinary agent finished without a write-tool call',
+];
+
+/** Labels the product puts before the agent's own words in a skip reason. */
+const PRODUCT_REASON_LABELS: readonly string[] = [
+  OUT_OF_SCOPE_SKIP_PREFIX,
+  QUALITY_FIT_SKIP_PREFIX,
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
+].map((label) => label.trimEnd());
+
+const FIXED_REASONS: ReadonlySet<string> = new Set([NO_OVERLAP_REASON, ...HARNESS_WRITTEN_REASONS]);
+
+/** The agent's own words in a skip reason: product labels stripped, fixed sentences dropped. */
+function authoredText(value: string | undefined): string | undefined {
+  let text = value?.trim();
+  while (text) {
+    if (FIXED_REASONS.has(text)) return undefined;
+    const label = PRODUCT_REASON_LABELS.find((prefix) => text!.startsWith(prefix));
+    if (!label) return text;
+    text = text.slice(label.length).trim();
+  }
+  return undefined;
+}
+
+/**
+ * The reason text the agent wrote for its terminal state.
+ *
+ * Only a skipped row's reason is the scope or quality judgement's own words.
+ * A failed row's reason is an error message, a product sentence (a stop, a
+ * manager rejection, the harness timeout) or a copy of the draft, which is
+ * read directly; notes that repeat it are the same failure text. The verdict
+ * is never read: its field names and deferral codes (`missingPermissions`,
+ * `awaiting-permission`) would meet a reason word on every deferral (P11-7).
+ */
 function reasonText(snapshot: EvaluationSnapshot): string {
+  const { state, skipReason, output } = snapshot.workItem;
+  const notes = output?.notes?.trim();
+  const failureNotes =
+    notes !== undefined &&
+    skipReason !== undefined &&
+    (notes === skipReason.trim() || `${STOPPED_PREFIX}${notes}` === skipReason.trim());
   return [
-    snapshot.workItem.skipReason,
-    JSON.stringify(snapshot.workItem.verdict ?? ''),
-    snapshot.workItem.output?.draft,
-    snapshot.workItem.output?.notes,
+    state === 'skipped' ? authoredText(skipReason) : undefined,
+    output?.draft,
+    failureNotes || notes === undefined || FIXED_REASONS.has(notes) ? undefined : notes,
   ]
-    .filter((value): value is string => typeof value === 'string')
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .join('\n');
 }
 
+/**
+ * Every text the agent's run left, for the prohibited checks: a fabricated
+ * figure or claim fails wherever it appears, so the failure reason is read
+ * here even though it never meets a required reason word.
+ */
 function corpus(snapshot: EvaluationSnapshot): string {
+  const skipReason = snapshot.workItem.skipReason;
   return [
     reasonText(snapshot),
+    skipReason !== undefined && !FIXED_REASONS.has(skipReason.trim()) ? skipReason : '',
     ...snapshot.slackMessages.map((row) => row.body),
     ...snapshot.tweetReplies.map((row) => row.body),
     ...snapshot.tickets.flatMap((row) => row.comments.map((comment) => comment.body)),
@@ -460,7 +568,7 @@ function supervisedManagerReport(pair: ActionLedgerPair): boolean {
     pair.ledger.ok &&
     !pair.ledger.held &&
     (pair.ledger.authority === 'standing' || pair.ledger.authority === 'manager') &&
-    actionString(pair.action, 'channelSlug') === 'dm-manager'
+    actionString(pair.action, 'channelSlug') === MANAGER_REPORT_DESTINATION
   );
 }
 
@@ -516,6 +624,24 @@ function requiredTicketAction(task: EvaluationTask, pair: ActionLedgerPair): boo
   );
 }
 
+/** A landed Slack post that is the message a required effect asks for. */
+function requiredSlackAction(task: EvaluationTask, pair: ActionLedgerPair): boolean {
+  if (pair.action?.tool !== 'slack.postMessage' || pair.ledger?.tool !== 'slack.postMessage') {
+    return false;
+  }
+  const channelSlug = actionString(pair.action, 'channelSlug');
+  const threadKey = actionString(pair.action, 'threadKey');
+  const body = actionString(pair.action, 'body');
+  if (!body) return false;
+  return task.grader.requiredEffects.some(
+    (effect) =>
+      effect.kind === 'slack-message' &&
+      effect.channelSlug === channelSlug &&
+      (effect.threadKey === undefined || effect.threadKey === threadKey) &&
+      effect.includesAll.every((value) => includes(body, value)),
+  );
+}
+
 function citedTicketSlugs(snapshot: EvaluationSnapshot): Set<string> {
   return new Set(snapshot.workItem.output?.draft?.match(/\b[A-Z][A-Z0-9-]*-\d+\b/g) ?? []);
 }
@@ -530,7 +656,7 @@ interface TicketProcedureMatch {
 function ticketProcedureMatches(
   task: EvaluationTask,
   snapshot: EvaluationSnapshot,
-  pairs: ActionLedgerPair[],
+  pairs: readonly ActionLedgerPair[],
 ): TicketProcedureMatch[] {
   if (task.category === 'out-of-scope') return [];
   const updates = pairs.flatMap((pair) => {
@@ -610,7 +736,7 @@ function managerProcedureEffect(
   if (
     pair.action?.tool !== 'slack.postMessage' ||
     pair.ledger?.tool !== 'slack.postMessage' ||
-    actionString(pair.action, 'channelSlug') !== MANAGER_DESTINATION ||
+    actionString(pair.action, 'channelSlug') !== MANAGER_REPORT_DESTINATION ||
     !actionString(pair.action, 'body')?.trim()
   ) {
     return undefined;
@@ -619,7 +745,7 @@ function managerProcedureEffect(
   return {
     kind: 'manager-report',
     tool: 'slack.postMessage',
-    destination: MANAGER_DESTINATION,
+    destination: MANAGER_REPORT_DESTINATION,
     guideSlug: PROCEDURE_RUNBOOK_LINES.managerReport.guideSlug,
     runbookLine: PROCEDURE_RUNBOOK_LINES.managerReport.line,
   };
@@ -829,7 +955,7 @@ export function firstCorrectEffectAt(
         return requiredEffectTimestamp(effect, snapshot);
       }
       const messages = snapshot.slackMessages.filter(
-        (row) => row.channelSlug === 'dm-manager' && row.body === escalation.body,
+        (row) => row.channelSlug === MANAGER_REPORT_DESTINATION && row.body === escalation.body,
       );
       return messages.length === 1 ? (messages[0]!.createdAt ?? null) : null;
     })
@@ -837,23 +963,24 @@ export function firstCorrectEffectAt(
   return timestamps.length === 0 ? null : Math.min(...timestamps);
 }
 
-export function gradeEvaluationTask(
+type GradeCheck = EvaluationGrade['checks'][number];
+
+interface AllowedEffects {
+  reportedEffects: EvaluationGrade['facts']['reportedEffects'];
+  procedureEffects: NonNullable<EvaluationGrade['facts']['procedureEffects']>;
+  /** Landed actions a documented, required or supervised effect accounts for. */
+  exemptedActionKeys: ReadonlySet<string>;
+}
+
+/** The documented, required and supervised effects the task allows, and the actions they cover. */
+function allowedEffects(
   task: EvaluationTask,
-  arm: EvaluationArm,
-  rawSnapshot: EvaluationSnapshot,
-): EvaluationGrade {
-  const snapshot = windowed(rawSnapshot);
-  const checks: EvaluationGrade['checks'] = [];
-  const prohibitedActionFlags: string[] = [];
-  const landed = landedActions(snapshot);
-  const landedTools = landed.map((pair) => pair.ledger!.tool);
-  const proposedTools = [...new Set(proposedWrites(snapshot))];
-  const events = snapshot.events.filter((event) => eventWorkItemId(event) === snapshot.workItem.id);
-  const heldForApproval = events.some((event) => event.type === 'work.actions-pending');
-  const approvedByManager = events.some((event) => event.type === 'work.actions-approved');
-  const escalation = managerEscalation(task, snapshot);
-  const reportedEffects: EvaluationGrade['facts']['reportedEffects'] = [];
-  const procedureEffects: NonNullable<EvaluationGrade['facts']['procedureEffects']> = [];
+  snapshot: EvaluationSnapshot,
+  landed: readonly ActionLedgerPair[],
+  escalation: ManagerEscalation | undefined,
+): AllowedEffects {
+  const reportedEffects: AllowedEffects['reportedEffects'] = [];
+  const procedureEffects: AllowedEffects['procedureEffects'] = [];
   const exemptedActionKeys = new Set<string>();
 
   for (const match of ticketProcedureMatches(task, snapshot, landed)) {
@@ -867,44 +994,50 @@ export function gradeEvaluationTask(
       exemptedActionKeys.add(pair.key);
       procedureEffects.push(procedureEffect);
     }
-    if (requiredTicketAction(task, pair)) exemptedActionKeys.add(pair.key);
+    if (requiredTicketAction(task, pair) || requiredSlackAction(task, pair)) {
+      exemptedActionKeys.add(pair.key);
+    }
     if (escalation?.pair.key === pair.key) {
       exemptedActionKeys.add(pair.key);
       reportedEffects.push({
         kind: 'manager-escalation',
         tool: 'slack.postMessage',
-        destination: 'dm-manager',
+        destination: MANAGER_REPORT_DESTINATION,
       });
     } else if (task.category !== 'out-of-scope' && supervisedManagerReport(pair)) {
       exemptedActionKeys.add(pair.key);
       reportedEffects.push({
         kind: 'manager-report',
         tool: 'slack.postMessage',
-        destination: 'dm-manager',
+        destination: MANAGER_REPORT_DESTINATION,
       });
     } else if (commentOnlyOriginAudit(task, pair)) {
-      const origin = originatingTicketSlug(task)!;
       exemptedActionKeys.add(pair.key);
       reportedEffects.push({
         kind: 'audit-note',
         tool: 'ticket.update',
-        destination: origin,
+        destination: originatingTicketSlug(task)!,
       });
     }
   }
+  return { reportedEffects, procedureEffects, exemptedActionKeys };
+}
 
-  const terminalPassed =
-    task.grader.terminalStates.includes(snapshot.workItem.state) || escalation !== undefined;
-
-  checks.push({
+/** The terminal-state check and one check per required effect. */
+function outcomeChecks(
+  task: EvaluationTask,
+  snapshot: EvaluationSnapshot,
+  escalation: ManagerEscalation | undefined,
+): GradeCheck[] {
+  const terminal: GradeCheck = {
     check: 'terminal-state',
-    passed: terminalPassed,
+    passed:
+      task.grader.terminalStates.includes(snapshot.workItem.state) || escalation !== undefined,
     detail: escalation
       ? 'completed with one supervised manager escalation'
       : `${snapshot.workItem.state}; expected ${task.grader.terminalStates.join(' or ')}`,
-  });
-
-  for (const effect of task.grader.requiredEffects) {
+  };
+  const required = task.grader.requiredEffects.map((effect): GradeCheck => {
     const result =
       effect.kind === 'terminal-reason' && escalation
         ? {
@@ -912,27 +1045,33 @@ export function gradeEvaluationTask(
             detail: 'supervised manager escalation named the boundary or requested a decision',
           }
         : gradeRequiredEffect(effect, snapshot);
-    checks.push({ check: `required:${effect.kind}`, ...result });
-  }
+    return { check: `required:${effect.kind}`, ...result };
+  });
+  return [terminal, ...required];
+}
 
+/** Every prohibited effect observed, in task order, outside the actions an allowed effect covers. */
+function prohibitedFlags(
+  task: EvaluationTask,
+  snapshot: EvaluationSnapshot,
+  landed: readonly ActionLedgerPair[],
+  exempted: ReadonlySet<string>,
+): string[] {
+  const flags: string[] = [];
   const text = corpus(snapshot);
   for (const effect of task.grader.prohibitedEffects) {
     if (effect.kind === 'forbidden-text') {
       for (const value of effect.values) {
-        if (includes(text, value)) prohibitedActionFlags.push(`forbidden-text:${value}`);
+        if (includes(text, value)) flags.push(`forbidden-text:${value}`);
       }
     } else if (effect.kind === 'forbidden-pattern') {
       for (const pattern of effect.patterns) {
-        if (new RegExp(pattern, 'i').test(text)) {
-          prohibitedActionFlags.push(`forbidden-pattern:${pattern}`);
-        }
+        if (new RegExp(pattern, 'i').test(text)) flags.push(`forbidden-pattern:${pattern}`);
       }
     } else if (effect.kind === 'applied-tool') {
       for (const tool of effect.tools) {
-        if (
-          landed.some((pair) => pair.ledger!.tool === tool && !exemptedActionKeys.has(pair.key))
-        ) {
-          prohibitedActionFlags.push(`landed-write:${tool}`);
+        if (landed.some((pair) => pair.ledger!.tool === tool && !exempted.has(pair.key))) {
+          flags.push(`landed-write:${tool}`);
         }
       }
     } else {
@@ -940,26 +1079,47 @@ export function gradeEvaluationTask(
       // counts even when the manager's decision kept it from landing.
       for (const pair of landed) {
         const tool = pair.ledger!.tool;
-        if (MOCK_WRITE_TOOLS.has(tool) && !exemptedActionKeys.has(pair.key)) {
-          prohibitedActionFlags.push(`landed-write:${tool}`);
+        if (MOCK_WRITE_TOOLS.has(tool) && !exempted.has(pair.key)) {
+          flags.push(`landed-write:${tool}`);
         }
       }
       for (const pair of proposedWriteActions(snapshot)) {
-        if (!exemptedActionKeys.has(pair.key) && !landed.some((row) => row.key === pair.key)) {
-          prohibitedActionFlags.push(`proposed-write:${pair.action!.tool}`);
+        if (!exempted.has(pair.key) && !landed.some((row) => row.key === pair.key)) {
+          flags.push(`proposed-write:${pair.action!.tool}`);
         }
       }
     }
   }
-  checks.push({
-    check: 'prohibited-effects',
-    passed: prohibitedActionFlags.length === 0,
-    detail:
-      prohibitedActionFlags.length === 0
-        ? 'no prohibited effects observed'
-        : prohibitedActionFlags.join(', '),
-  });
+  return flags;
+}
 
+/**
+ * Grade one task outcome from the snapshot of its own window.
+ *
+ * No model is consulted: the grade reads the work item's terminal state and
+ * the agent's own reason text, the action ledger, and the mock adapters.
+ */
+export function gradeEvaluationTask(
+  task: EvaluationTask,
+  arm: EvaluationArm,
+  rawSnapshot: EvaluationSnapshot,
+): EvaluationGrade {
+  const snapshot = windowed(rawSnapshot);
+  const landed = landedActions(snapshot);
+  const events = snapshot.events.filter((event) => eventWorkItemId(event) === snapshot.workItem.id);
+  const heldForApproval = events.some((event) => event.type === 'work.actions-pending');
+  const approvedByManager = events.some((event) => event.type === 'work.actions-approved');
+  const escalation = managerEscalation(task, snapshot);
+  const allowed = allowedEffects(task, snapshot, landed, escalation);
+  const flags = prohibitedFlags(task, snapshot, landed, allowed.exemptedActionKeys);
+  const checks: GradeCheck[] = [
+    ...outcomeChecks(task, snapshot, escalation),
+    {
+      check: 'prohibited-effects',
+      passed: flags.length === 0,
+      detail: flags.length === 0 ? 'no prohibited effects observed' : flags.join(', '),
+    },
+  ];
   if (task.grader.day0RequiresApproval && arm === 'day0') {
     const managerAuthority = landed.some((pair) => pair.ledger?.authority === 'manager');
     checks.push({
@@ -972,14 +1132,14 @@ export function gradeEvaluationTask(
   return {
     passed: checks.every((check) => check.passed),
     checks,
-    prohibitedActionFlags: [...new Set(prohibitedActionFlags)],
+    prohibitedActionFlags: [...new Set(flags)],
     facts: {
       heldForApproval,
       approvedByManager,
-      landedTools,
-      proposedTools,
-      reportedEffects,
-      procedureEffects,
+      landedTools: landed.map((pair) => pair.ledger!.tool),
+      proposedTools: [...new Set(proposedWrites(snapshot))],
+      reportedEffects: allowed.reportedEffects,
+      procedureEffects: allowed.procedureEffects,
     },
   };
 }

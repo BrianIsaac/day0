@@ -1,0 +1,185 @@
+{
+  "provenance": "The mock office every semi-final task is graded against, frozen from the rows convex/mockSeed.ts seedMockEnvironment inserts, with its clock fields dropped. The graders read this copy and never the live seed, so a change to the mock seed cannot move a grade (decision N5).",
+  "commit": "dbdde979a35a5068252f347c762593f9a9053432",
+  "frozenAt": "2026-09-27",
+  "docs": [
+    {
+      "slug": "team-overview",
+      "title": "Team overview — RevOps",
+      "body": "# Team overview — RevOps\n\nWe are the Revenue Operations team at Acme Co. We sit between Sales and Finance, owning the data, tooling, and reporting that turn deal activity into a credible revenue forecast.\n\n## What we do\n\n- Maintain the four Q-trackers (Q1–Q4 in Google Sheets) — these are the source of truth for the revenue committee.\n- Wire Salesforce → BigQuery → Looker dashboards used by Sales leadership in their weekly cadence.\n- Run the close-week process (last 5 business days of each quarter) — collecting closed-won deals, reconciling them with the CRM, signing off the revenue total.\n- Field ad-hoc analytical asks (\"What's our pipeline coverage on enterprise?\", \"How's the SMB segment trending?\").\n\n## Who we are\n\n- **Manager:** runs the team, owns the relationship with the CRO.\n- **Priya:** senior analyst, segment + pipeline.\n- **Aman:** senior analyst, forecasting + variance analysis.\n- **Sara:** analyst, ad-hoc requests.\n- **Day0 (you):** newly deployed; charter to be discovered via the Day-1 1:1.\n\n## Cadence\n\n- Monday standup, 09:30 SGT (15 min).\n- Weekly committee meeting Tuesday 14:00 SGT (1h, manager presents).\n- Quarter-end close: last 5 business days of each quarter.\n\n## Working surfaces\n\n- Google Sheets — Q1, Q2, Q3, Q4 revenue trackers, plus the deal-stage tracker. Slug for the Q4 tracker is `q4-revenue-tracker`.\n- Slack — `#revops-asks` (inbound), `#revops` (team), `#standups` (committee prep).\n- Linear — internal team tickets (project: REVOPS).\n- Looker — published dashboards.\n",
+      "category": "team-doc"
+    },
+    {
+      "slug": "escalation-paths",
+      "title": "Escalation paths",
+      "body": "# Escalation paths\n\nWhen in doubt about scope, permissions, or risk, escalate before acting.\n\n## Scope ambiguity\n\nIf a request is unclear about *what* we are being asked to do or *whether it falls inside the team's remit*, escalate to the manager via DM.\n\n## Permission gaps\n\nIf executing a task would require access we do not currently have, do not work around the permission. File a request via the manager.\n\n## Risk concerns\n\nDefault: surface a draft to the manager for review before any side-effect.\n\nEscalation triggers (mandatory):\n- The change would alter a number visible in the revenue committee deck.\n- The change would touch a Salesforce record.\n- The change would send a message outside the team or company.\n- The change would touch finance-audited data.\n\n## Out-of-scope asks\n\nMarketing copy, brand voice, social-media replies, hiring decisions, HR matters → out of scope. Politely redirect.\n",
+      "category": "team-doc"
+    },
+    {
+      "slug": "on-call",
+      "title": "On-call rotation",
+      "body": "# On-call rotation\n\nThe team operates a tier-1 + tier-2 on-call rotation. Tier-1 carries the pager 24/7; tier-2 is the escalation contact and only pages when tier-1 has been silent for 15 minutes.\n\n## Rotation\n\n- One-week rotations, Monday 09:00 SGT to Monday 09:00 SGT.\n- Five-engineer rotation pool (Priya, Aman, Sara, Theo, Ines).\n- Anyone can swap their shift directly with another engineer in the pool. Post the swap in #ops-oncall.\n\n## Coverage windows\n\n- Daytime (09:00-21:00 SGT): primary in their normal working hours.\n- Nighttime (21:00-09:00 SGT): primary remains responsible. Alerts page through PagerDuty + Slack.\n- Weekends: unchanged from weekdays.\n\n## Escalation contacts\n\n- Tier-2 (this week): Sara\n- Tier-2 backup: Aman\n- Manager-on-call (only for sev-0): Priya\n\n## Day0 note\n\nDay0 is not on the rotation until at least week 4 and only after explicit manager opt-in. Skim this doc but do not respond to pages.\n",
+      "category": "team-doc"
+    },
+    {
+      "slug": "onboarding",
+      "title": "Onboarding — first week",
+      "body": "# Onboarding — first week\n\nWelcome to RevOps. The first week is light by design.\n\n## Day 1\n- Manager 1:1 (90 min).\n- Read the team overview + escalation paths.\n\n## Day 2-3\n- Skim the Q-trackers.\n- Read the close-week runbook.\n- Schedule three 1:1s with Priya, Aman, Sara.\n\n## Day 4-5\n- Sit in on Tuesday committee prep silently.\n- Pick up one bounded ad-hoc ask from #revops-asks. Surface a draft, do not ship.\n\n## Week 2 onwards\n- Start contributing drafts on real asks.\n- Attend Monday standup + Tuesday committee meeting.\n- Cold-start posture: draft → manager review → ship.\n",
+      "category": "team-doc"
+    },
+    {
+      "slug": "how-to-update-spreadsheet",
+      "title": "How to update a spreadsheet (action guide)",
+      "body": "# How to update a spreadsheet\n\nWhen you need to add rows to a tracker spreadsheet, emit a structured action in your output. The executor will apply it to the live mock surface.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"spreadsheet.appendRow\",\n  \"args\": {\n    \"sheetSlug\": \"q4-revenue-tracker\",\n    \"tabName\": \"closed-won\",\n    \"cells\": [\n      { \"header\": \"Account\", \"value\": \"Acme\" },\n      { \"header\": \"Amount\", \"value\": \"$45,000\" },\n      { \"header\": \"Close date\", \"value\": \"2026-05-02\" },\n      { \"header\": \"Owner\", \"value\": \"Priya\" },\n      { \"header\": \"Stage\", \"value\": \"closed-won\" }\n    ]\n  }\n}\n```\n\n- `sheetSlug` matches the spreadsheet you are editing (e.g. `q4-revenue-tracker`).\n- `tabName` matches one of the spreadsheet's existing tabs.\n- `cells` keys must match the tab's headers exactly (case-sensitive).\n- Emit one action per row. Multiple actions in one output are fine.\n\n## Discipline\n\n- If you don't know a cell value (e.g. close date), put `\"\"` and flag in `notes`.\n- Never invent CRM ids; mark missing as `(not provided)`.\n- Always include the row in your `draft` text too so the manager can review what landed.\n\n## Closing the loop\n\nIf the work item that triggered this update came from the ticket queue (the candidate `Source` line will contain `ticket-queue`, e.g. `spreadsheet / ticket-queue`), you MUST end your `actions[]` with a `ticket.update` against the originating ticket so the audit trail is complete. The ticket slug is usually named in the candidate body (e.g. \"Tracking ticket: REVOPS-203\") or surfaced via the `Refs:` line (e.g. `ticket://REVOPS-203`) — otherwise pick the most-recently created `open` ticket from the env snapshot Tickets section that matches the work.\n\n```json\n{\n  \"tool\": \"ticket.update\",\n  \"args\": {\n    \"slug\": \"REVOPS-203\",\n    \"status\": \"done\",\n    \"comment\": \"Appended 3 rows to closed-won: Acme $45k, Beta Corp $72k, Gamma LLC $28k. Close date and owner left blank — pending manager confirmation before committee.\"\n  }\n}\n```\n\nSet `status: \"done\"` if you fully closed the work, `\"in-progress\"` if only partial.\n",
+      "category": "how-to-guide"
+    },
+    {
+      "slug": "how-to-post-slack",
+      "title": "How to post to Slack (action guide)",
+      "body": "# How to post to Slack\n\nWhen you have a draft that should go to a Slack channel or DM thread, emit a `slack.postMessage` action.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"slack.postMessage\",\n  \"args\": {\n    \"channelSlug\": \"revops-asks\",\n    \"threadKey\": \"thread-pipeline-coverage\",\n    \"body\": \"Draft for review: Enterprise pipeline coverage over the last 4 weeks…\"\n  }\n}\n```\n\n- `channelSlug` is one of `revops-asks`, `revops`, `dm-manager`, `dm-priya`, `dm-aman`.\n- `threadKey` is optional — supply it to keep the message threaded under an existing ask.\n- Cold-start posture: `senderKind` is set automatically to `agent-draft` so the manager can see + edit before forwarding.\n\n## Discipline\n\n- One `slack.postMessage` action per logical message.\n- Address the recipient by their first name; reference the source ticket/doc inline.\n- Never send to a channel that is not in the list above.\n\n## Closing the loop on a public-channel ask\n\nIf the work item came from a public channel (e.g. the candidate body says \"asked in #revops-asks\") and you draft to `dm-manager`, you MUST also post a brief threaded ack to the originating channel so the asker knows it's in flight. Use the same `threadKey` named in the candidate body.\n\n```json\n{\n  \"tool\": \"slack.postMessage\",\n  \"args\": {\n    \"channelSlug\": \"revops-asks\",\n    \"threadKey\": \"thread-pipeline-coverage\",\n    \"body\": \"Drafting a tier-2 response for Manager review — will post here once approved.\"\n  }\n}\n```\n\nThat is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM).\n",
+      "category": "how-to-guide"
+    },
+    {
+      "slug": "how-to-update-ticket",
+      "title": "How to update a ticket (action guide)",
+      "body": "# How to update a ticket\n\n## When to use this\n\nTwo main triggers:\n\n1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did.\n2. **Cross-linking cited tickets.** If your draft body mentions another ticket slug (e.g. \"REVOPS-202 already covers the Looker refresh\"), fire a second `ticket.update` against that ticket — `status: \"in-progress\"`, one-line cross-link comment — so the cited ticket's audit trail shows the connection.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"ticket.update\",\n  \"args\": {\n    \"slug\": \"REVOPS-123\",\n    \"status\": \"in-progress\",\n    \"comment\": \"Picking this up — drafting the response now.\"\n  }\n}\n```\n\n- `slug` is the ticket id (matches an existing `mockTickets` row).\n- `status` is one of `open`, `in-progress`, `blocked`, `done`.\n- `comment` is optional; will be appended with author \"Day0\".\n",
+      "category": "how-to-guide"
+    },
+    {
+      "slug": "how-to-reply-tweet",
+      "title": "How to reply to a tweet (action guide)",
+      "body": "# How to reply to a tweet\n\nFor social asks (which are typically out-of-scope for the RevOps role), if you do produce a draft reply, emit a `twitter.reply` action.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"twitter.reply\",\n  \"args\": {\n    \"tweetSlug\": \"tweet-1234\",\n    \"body\": \"Thanks for the feedback — appreciate you trying us out.\"\n  }\n}\n```\n\n- The reply lands as `isAgentDraft: true`; the manager publishes manually.\n- Most tweet replies are out-of-scope for RevOps. If unsure, surface a Slack draft to the manager instead.\n",
+      "category": "how-to-guide"
+    }
+  ],
+  "spreadsheets": [
+    {
+      "slug": "q4-revenue-tracker",
+      "title": "Q4 Revenue Tracker",
+      "tabs": [
+        {
+          "name": "closed-won",
+          "headers": ["Account", "Amount", "Close date", "Owner", "Stage"]
+        },
+        {
+          "name": "pipeline",
+          "headers": ["Account", "Amount", "Stage", "Close date", "Owner"]
+        }
+      ]
+    }
+  ],
+  "spreadsheetRows": [
+    {
+      "sheetSlug": "q4-revenue-tracker",
+      "tabName": "closed-won",
+      "cells": {
+        "Account": "Northwind",
+        "Amount": "$120,000",
+        "Close date": "2026-04-12",
+        "Owner": "Priya",
+        "Stage": "closed-won"
+      },
+      "addedBy": "Priya"
+    },
+    {
+      "sheetSlug": "q4-revenue-tracker",
+      "tabName": "closed-won",
+      "cells": {
+        "Account": "Contoso",
+        "Amount": "$58,000",
+        "Close date": "2026-04-19",
+        "Owner": "Aman",
+        "Stage": "closed-won"
+      },
+      "addedBy": "Priya"
+    },
+    {
+      "sheetSlug": "q4-revenue-tracker",
+      "tabName": "pipeline",
+      "cells": {
+        "Account": "Initech",
+        "Amount": "$95,000",
+        "Stage": "negotiation",
+        "Close date": "2026-06-01",
+        "Owner": "Priya"
+      },
+      "addedBy": "Priya"
+    }
+  ],
+  "slackChannels": [
+    {
+      "slug": "revops-asks",
+      "displayName": "#revops-asks",
+      "kind": "channel"
+    },
+    {
+      "slug": "revops",
+      "displayName": "#revops",
+      "kind": "channel"
+    },
+    {
+      "slug": "dm-manager",
+      "displayName": "DM · Manager",
+      "kind": "dm"
+    },
+    {
+      "slug": "dm-priya",
+      "displayName": "DM · Priya",
+      "kind": "dm"
+    },
+    {
+      "slug": "dm-aman",
+      "displayName": "DM · Aman",
+      "kind": "dm"
+    }
+  ],
+  "slackMessages": [
+    {
+      "channelSlug": "revops-asks",
+      "threadKey": "thread-pipeline-coverage",
+      "sender": "Priya",
+      "senderKind": "requester",
+      "body": "New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday."
+    },
+    {
+      "channelSlug": "dm-manager",
+      "sender": "Manager",
+      "senderKind": "manager",
+      "body": "Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker — Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab."
+    }
+  ],
+  "tweets": [
+    {
+      "slug": "tweet-acme-feedback",
+      "author": "random_person",
+      "handle": "@random_person",
+      "body": "@AcmeCo your product is fine I guess"
+    }
+  ],
+  "tickets": [
+    {
+      "slug": "REVOPS-201",
+      "title": "Reconcile Q3 closed-won totals against Salesforce",
+      "body": "Numbers in the committee deck do not match Salesforce; gap of ~$30k. Trace and reconcile.",
+      "status": "open",
+      "priority": "P2",
+      "comments": []
+    },
+    {
+      "slug": "REVOPS-202",
+      "title": "Refresh Q4 pipeline coverage view in Looker",
+      "body": "Pipeline coverage tile is showing stale data. Look into the dbt model dependency.",
+      "status": "open",
+      "priority": "P3",
+      "comments": []
+    },
+    {
+      "slug": "REVOPS-203",
+      "title": "Add Friday standup closed-won deals to Q4 Revenue Tracker",
+      "body": "Manager filed: append Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k) to the closed-won tab from last Friday's standup. Close once the rows are in.",
+      "status": "open",
+      "priority": "P1",
+      "comments": []
+    }
+  ]
+}
