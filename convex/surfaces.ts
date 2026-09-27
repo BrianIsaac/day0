@@ -965,8 +965,9 @@ export const beginProbe = internalMutation({
     }
     // A probe that found the provider working would otherwise reconnect an
     // access whose end date has passed; only the manager's renewal does that.
-    if (accessHasEnded(surface, Date.now())) {
-      await endAccessInTransaction(ctx, surface, Date.now());
+    const now = Date.now();
+    if (accessEndDatePassed(surface, now)) {
+      if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
       return null;
     }
     const generation = (surface.probeGeneration ?? 0) + 1;
@@ -1385,11 +1386,10 @@ function approvedAccessDays(request: unknown): number {
   return Math.min(days, SURFACE_ACCESS_MAX_DAYS);
 }
 
-/** Whether an approved surface's access end date has passed and not been renewed. */
-function accessHasEnded(surface: Doc<'surfaces'>, now: number): boolean {
+/** Whether an approved surface's access end date has passed; renewal moves the date. */
+function accessEndDatePassed(surface: Doc<'surfaces'>, now: number): boolean {
   return (
     ACCESS_VERDICTS.includes(surface.verdict) &&
-    surface.reason !== 'expired' &&
     surface.expiresAt !== undefined &&
     surface.expiresAt <= now
   );
@@ -1508,7 +1508,7 @@ export const recordExpired = internalMutation({
   args: { surfaceId: v.id('surfaces'), now: v.number() },
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface || !accessHasEnded(surface, args.now)) return;
+    if (!surface || surface.reason === 'expired' || !accessEndDatePassed(surface, args.now)) return;
     await endAccessInTransaction(ctx, surface, args.now);
   },
 });

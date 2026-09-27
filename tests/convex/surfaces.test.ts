@@ -2431,6 +2431,25 @@ describe('access expiry (Q5)', (): void => {
     });
   });
 
+  it('refuses every probe of an ended access, not only the first, until the manager renews it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const endedAt = APPROVED_AT + 31 * DAY;
+    vi.setSystemTime(endedAt);
+    await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endedAt });
+
+    // A credential landed afterwards schedules a probe; the probe must not reconnect.
+    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toBeNull();
+    expect(await payloads(harness, 'surface.expired')).toHaveLength(1);
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 30 });
+    await expect(
+      harness.mutation(internal.surfaces.beginProbe, { surfaceId }),
+    ).resolves.toMatchObject({ generation: expect.any(Number) });
+  });
+
   it('lets the manager set the length, which restarts the clock and renews an ended access', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
