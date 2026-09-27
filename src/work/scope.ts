@@ -610,7 +610,7 @@ export async function judgeScope(
       ...(first.authority !== undefined ? { citedAuthority: first.authority } : {}),
     });
     // The first reading was a skip that did not stand and the second never
-    // came: nothing judged the item in scope, so it is not admitted (M19).
+    // came: nothing judged the item in scope, so it is not admitted.
     if (!askedAgain.ok) return { admitted: false, basis: 'unavailable', cause: askedAgain.cause };
     judgement = askedAgain.judgement;
     reason = readingOf(judgement);
