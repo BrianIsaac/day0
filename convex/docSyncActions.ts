@@ -28,8 +28,28 @@ export interface PersistedBatch {
 }
 
 /** A directory an author keeps procedures in: `runbooks/`, `how-to/`, `playbooks/`. */
-const PROCEDURE_DIRECTORY = /(?:^|\/)(?:runbooks?|how-?tos?|playbooks?)\//i;
+const PROCEDURE_DIRECTORY = /^(?:runbooks?|how-?tos?|playbooks?)$/i;
 const PROCEDURE_TITLE = /how[- ]to|runbook|playbook/i;
+
+/**
+ * The directories a page reference files the page under, outermost first.
+ *
+ * A URL reference is read by its path alone, so a query or a fragment that
+ * happens to carry `/how-to/` files nothing (review m33); a relative
+ * reference (a folder or git path) is its own path. The last segment is the
+ * page itself, not a directory.
+ */
+function directoriesOf(ref: string): string[] {
+  let path = ref;
+  if (/^https?:\/\//i.test(ref)) {
+    try {
+      path = new URL(ref).pathname;
+    } catch {
+      // Not a URL after all: read the reference as the path it spells.
+    }
+  }
+  return path.split('/').filter(Boolean).slice(0, -1);
+}
 
 /**
  * Classify a page for the Docs tab and the executor prompt, by its path or its title.
@@ -46,7 +66,12 @@ const PROCEDURE_TITLE = /how[- ]to|runbook|playbook/i;
 export function categoryForPage(
   page: Pick<DocPage, 'title' | 'markdown'> & { readonly ref?: string },
 ): 'team-doc' | 'how-to-guide' {
-  if (page.ref !== undefined && PROCEDURE_DIRECTORY.test(page.ref)) return 'how-to-guide';
+  if (
+    page.ref !== undefined &&
+    directoriesOf(page.ref).some((directory): boolean => PROCEDURE_DIRECTORY.test(directory))
+  ) {
+    return 'how-to-guide';
+  }
   const firstHeading = page.markdown
     .split('\n')
     .find((line: string): boolean => /^#\s+/.test(line));

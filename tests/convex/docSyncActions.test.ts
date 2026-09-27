@@ -118,6 +118,26 @@ describe('documentation sync action helpers', (): void => {
     expect(SYNC_BATCH_SIZE).toBe(25);
   });
 
+  it('reads a procedures directory from the path segments of the page, never its query or file name (review m33)', (): void => {
+    const page = { title: 'Refund policy', markdown: '# Refund policy' };
+    for (const ref of [
+      'https://wiki.example/view?p=/how-to/refunds',
+      'https://wiki.example/view#/runbooks/refunds',
+      'https://wiki.example/pages/refunds?from=/playbooks/',
+      'revops/how-to.md',
+      'notes/my-runbooks/refunds.md',
+    ]) {
+      expect(categoryForPage({ ...page, ref }), ref).toBe('team-doc');
+    }
+    for (const ref of [
+      'https://wiki.example/runbooks/refunds',
+      'https://wiki.example/space/How-To/refunds?version=2',
+      'finance/playbooks/refunds.md',
+    ]) {
+      expect(categoryForPage({ ...page, ref }), ref).toBe('how-to-guide');
+    }
+  });
+
   it('redacts explicit and recognisable credential values from errors', (): void => {
     expect(safeSyncError(new Error('failed token-value'), 'token-value')).toBe('failed <redacted>');
     expect(safeSyncError(new Error(`failed xox${'b'}-contract-value`))).toBe('failed <redacted>');
