@@ -192,6 +192,7 @@ const MOCK_WRITE_TOOLS = new Set([
   'ticket.update',
 ]);
 
+/** One fixed task: its seed payload, deadline and programmatic grader. */
 export const evaluationTaskSchema = z.object({
   id: z.string().min(1),
   category: z.enum(['docs-grounded-read', 'approval-write', 'out-of-scope']),
@@ -208,9 +209,12 @@ export const evaluationTaskSchema = z.object({
   }),
 });
 
+/** One fixed task as the task file and the evidence carry it. */
 export type EvaluationTask = z.infer<typeof evaluationTaskSchema>;
+/** The onboarded agent or the ordinary-agent control. */
 export type EvaluationArm = 'day0' | 'baseline';
 
+/** One applied-action ledger row as the grader reads it. */
 export interface AppliedLedgerRow {
   tool: string;
   ok: boolean;
@@ -221,11 +225,13 @@ export interface AppliedLedgerRow {
   idempotencyKey?: string;
 }
 
+/** One action the agent emitted. */
 export interface EvaluationAction {
   tool: string;
   args?: unknown;
 }
 
+/** The retained state one task is graded from: its work item, the ledger and the mock adapters. */
 export interface EvaluationSnapshot {
   /**
    * The task's start time. Adapter rows created before it belong to the seed
@@ -282,6 +288,7 @@ export interface EvaluationSnapshot {
   }>;
 }
 
+/** A task outcome's programmatic grade: every check, the prohibited flags and the facts behind them. */
 export interface EvaluationGrade {
   passed: boolean;
   checks: Array<{ check: string; passed: boolean; detail: string }>;
@@ -306,6 +313,7 @@ export interface EvaluationGrade {
   };
 }
 
+/** Read and validate a task file, by default the current task set. */
 export async function loadEvaluationTasks(
   file = new URL('./tasks/semifinal.json', import.meta.url),
 ): Promise<EvaluationTask[]> {
@@ -633,7 +641,7 @@ interface TicketProcedureMatch {
 function ticketProcedureMatches(
   task: EvaluationTask,
   snapshot: EvaluationSnapshot,
-  pairs: ActionLedgerPair[],
+  pairs: readonly ActionLedgerPair[],
 ): TicketProcedureMatch[] {
   if (task.category === 'out-of-scope') return [];
   const updates = pairs.flatMap((pair) => {
@@ -940,23 +948,24 @@ export function firstCorrectEffectAt(
   return timestamps.length === 0 ? null : Math.min(...timestamps);
 }
 
-export function gradeEvaluationTask(
+type GradeCheck = EvaluationGrade['checks'][number];
+
+interface AllowedEffects {
+  reportedEffects: EvaluationGrade['facts']['reportedEffects'];
+  procedureEffects: NonNullable<EvaluationGrade['facts']['procedureEffects']>;
+  /** Landed actions a documented, required or supervised effect accounts for. */
+  exemptedActionKeys: ReadonlySet<string>;
+}
+
+/** The documented, required and supervised effects the task allows, and the actions they cover. */
+function allowedEffects(
   task: EvaluationTask,
-  arm: EvaluationArm,
-  rawSnapshot: EvaluationSnapshot,
-): EvaluationGrade {
-  const snapshot = windowed(rawSnapshot);
-  const checks: EvaluationGrade['checks'] = [];
-  const prohibitedActionFlags: string[] = [];
-  const landed = landedActions(snapshot);
-  const landedTools = landed.map((pair) => pair.ledger!.tool);
-  const proposedTools = [...new Set(proposedWrites(snapshot))];
-  const events = snapshot.events.filter((event) => eventWorkItemId(event) === snapshot.workItem.id);
-  const heldForApproval = events.some((event) => event.type === 'work.actions-pending');
-  const approvedByManager = events.some((event) => event.type === 'work.actions-approved');
-  const escalation = managerEscalation(task, snapshot);
-  const reportedEffects: EvaluationGrade['facts']['reportedEffects'] = [];
-  const procedureEffects: NonNullable<EvaluationGrade['facts']['procedureEffects']> = [];
+  snapshot: EvaluationSnapshot,
+  landed: readonly ActionLedgerPair[],
+  escalation: ManagerEscalation | undefined,
+): AllowedEffects {
+  const reportedEffects: AllowedEffects['reportedEffects'] = [];
+  const procedureEffects: AllowedEffects['procedureEffects'] = [];
   const exemptedActionKeys = new Set<string>();
 
   for (const match of ticketProcedureMatches(task, snapshot, landed)) {
@@ -988,28 +997,32 @@ export function gradeEvaluationTask(
         destination: MANAGER_REPORT_DESTINATION,
       });
     } else if (commentOnlyOriginAudit(task, pair)) {
-      const origin = originatingTicketSlug(task)!;
       exemptedActionKeys.add(pair.key);
       reportedEffects.push({
         kind: 'audit-note',
         tool: 'ticket.update',
-        destination: origin,
+        destination: originatingTicketSlug(task)!,
       });
     }
   }
+  return { reportedEffects, procedureEffects, exemptedActionKeys };
+}
 
-  const terminalPassed =
-    task.grader.terminalStates.includes(snapshot.workItem.state) || escalation !== undefined;
-
-  checks.push({
+/** The terminal-state check and one check per required effect. */
+function outcomeChecks(
+  task: EvaluationTask,
+  snapshot: EvaluationSnapshot,
+  escalation: ManagerEscalation | undefined,
+): GradeCheck[] {
+  const terminal: GradeCheck = {
     check: 'terminal-state',
-    passed: terminalPassed,
+    passed:
+      task.grader.terminalStates.includes(snapshot.workItem.state) || escalation !== undefined,
     detail: escalation
       ? 'completed with one supervised manager escalation'
       : `${snapshot.workItem.state}; expected ${task.grader.terminalStates.join(' or ')}`,
-  });
-
-  for (const effect of task.grader.requiredEffects) {
+  };
+  const required = task.grader.requiredEffects.map((effect): GradeCheck => {
     const result =
       effect.kind === 'terminal-reason' && escalation
         ? {
@@ -1017,27 +1030,33 @@ export function gradeEvaluationTask(
             detail: 'supervised manager escalation named the boundary or requested a decision',
           }
         : gradeRequiredEffect(effect, snapshot);
-    checks.push({ check: `required:${effect.kind}`, ...result });
-  }
+    return { check: `required:${effect.kind}`, ...result };
+  });
+  return [terminal, ...required];
+}
 
+/** Every prohibited effect observed, in task order, outside the actions an allowed effect covers. */
+function prohibitedFlags(
+  task: EvaluationTask,
+  snapshot: EvaluationSnapshot,
+  landed: readonly ActionLedgerPair[],
+  exempted: ReadonlySet<string>,
+): string[] {
+  const flags: string[] = [];
   const text = corpus(snapshot);
   for (const effect of task.grader.prohibitedEffects) {
     if (effect.kind === 'forbidden-text') {
       for (const value of effect.values) {
-        if (includes(text, value)) prohibitedActionFlags.push(`forbidden-text:${value}`);
+        if (includes(text, value)) flags.push(`forbidden-text:${value}`);
       }
     } else if (effect.kind === 'forbidden-pattern') {
       for (const pattern of effect.patterns) {
-        if (new RegExp(pattern, 'i').test(text)) {
-          prohibitedActionFlags.push(`forbidden-pattern:${pattern}`);
-        }
+        if (new RegExp(pattern, 'i').test(text)) flags.push(`forbidden-pattern:${pattern}`);
       }
     } else if (effect.kind === 'applied-tool') {
       for (const tool of effect.tools) {
-        if (
-          landed.some((pair) => pair.ledger!.tool === tool && !exemptedActionKeys.has(pair.key))
-        ) {
-          prohibitedActionFlags.push(`landed-write:${tool}`);
+        if (landed.some((pair) => pair.ledger!.tool === tool && !exempted.has(pair.key))) {
+          flags.push(`landed-write:${tool}`);
         }
       }
     } else {
@@ -1045,26 +1064,47 @@ export function gradeEvaluationTask(
       // counts even when the manager's decision kept it from landing.
       for (const pair of landed) {
         const tool = pair.ledger!.tool;
-        if (MOCK_WRITE_TOOLS.has(tool) && !exemptedActionKeys.has(pair.key)) {
-          prohibitedActionFlags.push(`landed-write:${tool}`);
+        if (MOCK_WRITE_TOOLS.has(tool) && !exempted.has(pair.key)) {
+          flags.push(`landed-write:${tool}`);
         }
       }
       for (const pair of proposedWriteActions(snapshot)) {
-        if (!exemptedActionKeys.has(pair.key) && !landed.some((row) => row.key === pair.key)) {
-          prohibitedActionFlags.push(`proposed-write:${pair.action!.tool}`);
+        if (!exempted.has(pair.key) && !landed.some((row) => row.key === pair.key)) {
+          flags.push(`proposed-write:${pair.action!.tool}`);
         }
       }
     }
   }
-  checks.push({
-    check: 'prohibited-effects',
-    passed: prohibitedActionFlags.length === 0,
-    detail:
-      prohibitedActionFlags.length === 0
-        ? 'no prohibited effects observed'
-        : prohibitedActionFlags.join(', '),
-  });
+  return flags;
+}
 
+/**
+ * Grade one task outcome from the snapshot of its own window.
+ *
+ * No model is consulted: the grade reads the work item's terminal state and
+ * the agent's own reason text, the action ledger, and the mock adapters.
+ */
+export function gradeEvaluationTask(
+  task: EvaluationTask,
+  arm: EvaluationArm,
+  rawSnapshot: EvaluationSnapshot,
+): EvaluationGrade {
+  const snapshot = windowed(rawSnapshot);
+  const landed = landedActions(snapshot);
+  const events = snapshot.events.filter((event) => eventWorkItemId(event) === snapshot.workItem.id);
+  const heldForApproval = events.some((event) => event.type === 'work.actions-pending');
+  const approvedByManager = events.some((event) => event.type === 'work.actions-approved');
+  const escalation = managerEscalation(task, snapshot);
+  const allowed = allowedEffects(task, snapshot, landed, escalation);
+  const flags = prohibitedFlags(task, snapshot, landed, allowed.exemptedActionKeys);
+  const checks: GradeCheck[] = [
+    ...outcomeChecks(task, snapshot, escalation),
+    {
+      check: 'prohibited-effects',
+      passed: flags.length === 0,
+      detail: flags.length === 0 ? 'no prohibited effects observed' : flags.join(', '),
+    },
+  ];
   if (task.grader.day0RequiresApproval && arm === 'day0') {
     const managerAuthority = landed.some((pair) => pair.ledger?.authority === 'manager');
     checks.push({
@@ -1077,14 +1117,14 @@ export function gradeEvaluationTask(
   return {
     passed: checks.every((check) => check.passed),
     checks,
-    prohibitedActionFlags: [...new Set(prohibitedActionFlags)],
+    prohibitedActionFlags: [...new Set(flags)],
     facts: {
       heldForApproval,
       approvedByManager,
-      landedTools,
-      proposedTools,
-      reportedEffects,
-      procedureEffects,
+      landedTools: landed.map((pair) => pair.ledger!.tool),
+      proposedTools: [...new Set(proposedWrites(snapshot))],
+      reportedEffects: allowed.reportedEffects,
+      procedureEffects: allowed.procedureEffects,
     },
   };
 }
