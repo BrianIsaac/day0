@@ -41,7 +41,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { transitionWithheld } from '../src/work/obligations';
+import { isOpenQuestionStop, transitionWithheld } from '../src/work/obligations';
 import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
@@ -360,8 +360,14 @@ const trackerSnapshot = v.object({
 /** The event that keeps each listing's snapshot of a ticket. */
 export const WORK_LISTED_EVENT = 'work.listed';
 
+/** A listing as it was kept: the ticket, and why intake refused it on that poll, if it did. */
+interface KeptListing {
+  readonly tracker: TicketSnapshot;
+  readonly refused?: string;
+}
+
 /**
- * The latest snapshot a listing kept for an item, at or before a time.
+ * The latest listing kept for an item, at or before a time.
  *
  * The read is the agent's listing events, newest first, down to the item's;
  * an item's listings are kept only when its ticket changed, so they are few,
@@ -369,27 +375,57 @@ export const WORK_LISTED_EVENT = 'work.listed';
  *
  * @param row - The item and its agent.
  * @param before - The latest listing time that counts.
- * @returns The snapshot, or undefined when the item was never listed by then.
+ * @param acceptedOnly - Whether to pass over a listing intake refused.
+ * @returns The listing, or undefined when the item was never listed by then.
  */
-async function listedSnapshotAt(
+async function keptListingAt(
   ctx: QueryCtx,
   row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
   before: number,
-): Promise<TicketSnapshot | undefined> {
-  // A later listing is its own event; the first rides on the discovery.
+  acceptedOnly: boolean,
+): Promise<KeptListing | undefined> {
+  // A later listing is its own event; the first rides on the discovery, and
+  // a refused ticket is never discovered.
   for (const type of [WORK_LISTED_EVENT, 'work.discovered']) {
     const listing = await ctx.db
       .query('events')
       .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
       .order('desc')
       .filter((q) =>
-        q.and(q.eq(q.field('payload.workItemId'), row._id), q.lte(q.field('createdAt'), before)),
+        q.and(
+          q.eq(q.field('payload.workItemId'), row._id),
+          q.lte(q.field('createdAt'), before),
+          acceptedOnly ? q.eq(q.field('payload.refused'), undefined) : true,
+        ),
       )
       .first();
-    const tracker = (listing?.payload as { tracker?: TicketSnapshot } | undefined)?.tracker;
-    if (tracker !== undefined) return tracker;
+    const payload = listing?.payload as Partial<KeptListing> | undefined;
+    if (payload?.tracker !== undefined) {
+      return {
+        tracker: payload.tracker,
+        ...(payload.refused !== undefined ? { refused: payload.refused } : {}),
+      };
+    }
   }
   return undefined;
+}
+
+/**
+ * The latest snapshot a listing intake took the ticket on kept for an item,
+ * at or before a time. A listing intake refused is never a baseline (review
+ * B1): the refusal is a change the re-read must find, not the ticket the plan
+ * was made for.
+ *
+ * @param row - The item and its agent.
+ * @param before - The latest listing time that counts.
+ * @returns The snapshot, or undefined when no accepted listing was kept by then.
+ */
+async function listedSnapshotAt(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  before: number,
+): Promise<TicketSnapshot | undefined> {
+  return (await keptListingAt(ctx, row, before, true))?.tracker;
 }
 
 /** The snapshot fields, in one order, so two snapshots compare by value. */
@@ -409,32 +445,43 @@ function sameSnapshot(left: TicketSnapshot, right: TicketSnapshot): boolean {
 
 /**
  * Keep the ticket as this listing showed it, when it differs from the last
- * listing kept, so the re-read before apply can tell what changed since the
- * plan was made. The first listing is kept on the discovery event, so the
- * live feed gains a row only when a ticket changes.
+ * listing kept or intake's refusal of it changed, so the re-read before
+ * apply can tell what changed since the plan was made. The first listing is
+ * kept on the discovery event, so the live feed gains a row only when a
+ * ticket changes.
+ *
+ * @param refused - Why intake refused the ticket on this poll, when it did.
  */
 async function recordListing(
   ctx: MutationCtx,
   row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
   tracker: TicketSnapshot | undefined,
+  refused?: string,
 ): Promise<void> {
   if (tracker === undefined) return;
   const now = Date.now();
-  const last = await listedSnapshotAt(ctx, row, now);
-  if (last !== undefined && sameSnapshot(last, tracker)) return;
+  const last = await keptListingAt(ctx, row, now, false);
+  if (
+    last !== undefined &&
+    sameSnapshot(last.tracker, tracker) &&
+    (last.refused === undefined) === (refused === undefined)
+  ) {
+    return;
+  }
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: WORK_LISTED_EVENT,
-    payload: { workItemId: row._id, tracker },
+    payload: { workItemId: row._id, tracker, ...(refused !== undefined ? { refused } : {}) },
     createdAt: now,
   });
 }
 
 /**
  * The ticket as the listing a plan was made under showed it (the latest
- * listing kept at or before the given time), and as the latest listing
- * showed it when the manager last pressed Retry after that time, which the
- * manager has seen. Internal; read by the apply.
+ * listing intake took it on, at or before the given time), and as the
+ * latest such listing showed it when the manager last pressed Retry after
+ * that time, which the manager has seen. A listing intake refused is
+ * neither. Internal; read by the apply.
  */
 export const listedSnapshot = internalQuery({
   args: { workItemId: v.id('workItems'), before: v.number() },
@@ -486,15 +533,18 @@ export const executionRunIds = internalQuery({
 export const WITHDRAWN_FROM_QUEUE_PREFIX = 'withdrawn from the queue on the tracker: ';
 
 /**
- * The states a withdrawal moves to `cancelled`: work that is only waiting.
- * A row with a plan, a decision or a run in flight is left to the re-read
- * before apply, which withholds its first write; a finished row stays as it
- * finished.
+ * The states a withdrawal moves to `cancelled`: work that is only waiting,
+ * and a `claimed` row whose plan is still being drafted, so the window
+ * closes at intake (review B1): `setPlan` stores a plan only on a `claimed`
+ * row, so none is stored for a ticket that left the queue. A row with a
+ * plan, a decision or a run in flight is left to the re-read before apply,
+ * which withholds its first write; a finished row stays as it finished.
  */
 const WITHDRAWABLE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
   'discovered',
   'deferred',
   'needs-skill',
+  'claimed',
 ]);
 
 /** The states whose row no longer follows the tracker: the work is done or given up. */
@@ -679,7 +729,7 @@ export const withdrawListedItem = internalMutation({
     const existing = await listedRow(ctx, listed);
     if (!existing) return null;
     await refreshListedItem(ctx, existing, listed, leftQueue);
-    await recordListing(ctx, existing, tracker);
+    await recordListing(ctx, existing, tracker, leftQueue);
     return existing._id;
   },
 });
@@ -3063,7 +3113,19 @@ export const retryFailed = mutation({
       ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
       ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
       ...(feedback
-        ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
+        ? {
+            managerFeedback: {
+              reason: feedback,
+              at: Date.now(),
+              kind: 'retry-note' as const,
+              // Only a note on a question stop answers the question (review D2).
+              ...(row.state === 'failed' &&
+              row.skipReason !== undefined &&
+              isOpenQuestionStop(stopDetail(row.skipReason))
+                ? { answersQuestion: true }
+                : {}),
+            },
+          }
         : {}),
       // A retry starts every step afresh; no claim from an earlier attempt holds it back.
       ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),

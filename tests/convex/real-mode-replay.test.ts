@@ -303,7 +303,8 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                           isError: false,
                           ...text(JSON.stringify({ error: true, message: VALIDATION })),
                         }
-                      : text(JSON.stringify(UNASSIGNED_ISSUE));
+                      : // The ticket asked for, so the re-read compares its own record (review M1).
+                        text(JSON.stringify({ ...UNASSIGNED_ISSUE, identifier: record.id }));
                   }
                   if (tool === 'save_comment') return text(JSON.stringify({ id: 'comment-91' }));
                   if (tool === 'save_issue') {

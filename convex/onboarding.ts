@@ -38,7 +38,8 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
  *     will come back for. Internal, and scheduled by the database rather
  *     than called by anybody.
  *   - `postCharterApproval` - runs after the boss clicks Approve. Seeds the
- *     work the approved charter implies; makes no web call.
+ *     work the approved charter implies; makes no web-research call and
+ *     needs no search key.
  *
  * All wrapped in Convex Node actions because they call external APIs.
  */
@@ -226,7 +227,7 @@ async function attributeTranscript(transcript: string): Promise<AttributedTransc
 const CHARTER_VERSION = '0.0';
 
 /**
- * Everything the commit needs, computed before it: two model calls and seven
+ * Everything the commit needs, computed before it: two model calls and eight
  * rendered files, none of them touching the database. Keeping the model work
  * outside the transaction is what lets the transaction be the only writer.
  *
@@ -254,6 +255,8 @@ async function draftCharter(args: {
     charter,
     rejectedEvidence: reviewed.rejected.map((e) => e.text),
     workspaceFiles: [
+      // Nothing writes a good-habits memory since N19; the line keeps the first file from reading empty.
+      { fileName: 'AGENTS.md', content: '# AGENTS\n\nNo good-habits memory on this deployment.\n' },
       { fileName: 'SOUL.md', content: defaultSoul() },
       { fileName: 'IDENTITY.md', content: identityFromCharter(charter) },
       { fileName: 'TOOLS.md', content: toolsFromCharter(charter) },
@@ -568,8 +571,9 @@ export const recoverFinalisation = internalAction({
  * Seed the work an approved charter implies. Public; the caller must own the
  * agent (`assertOwnsAgentAction`). In real mode it declares the charter's named
  * systems as surfaces and runs orientation; in mock mode it seeds the
- * generated work items and logs `work.charter-derived`. It makes no web call,
- * so approval completes on a machine with no search key (decision N19).
+ * generated work items and logs `work.charter-derived`. It makes no
+ * web-research call and needs no search key, so approval completes on a
+ * machine without one (decision N19).
  */
 export const postCharterApproval = action({
   args: { agentId: v.id('agents'), charterId: v.id('charters') },

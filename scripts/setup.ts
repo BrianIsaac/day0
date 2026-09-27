@@ -10,7 +10,7 @@
  *                                           evaluation harness and the hosted demo
  *
  * `./setup.sh` is `pnpm setup:local --mode real` behind three tool checks, and
- * the two local ways to run Day0 (the deck's "Local, cloud model" and "Local,
+ * the two local ways to run Day0 (the README's "Local, cloud model" and "Local,
  * local model") are that one command; they differ only in `--route`. The
  * spelling of the script is deliberate: plain `pnpm setup` is pnpm's own
  * installation command, so the project script has to be called something else.

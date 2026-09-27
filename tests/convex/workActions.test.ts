@@ -142,6 +142,8 @@ const recorded = vi.hoisted(() => ({
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
   issueRecordText: undefined as string | undefined,
+  /** The state each ticket's last `save_issue` set, as the tracker would show it after. */
+  issueStates: new Map<string, string>(),
   afterCredentialRead: undefined as (() => Promise<void>) | undefined,
   afterToolList: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
@@ -646,6 +648,31 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                     if (tool === 'get_issue' && recorded.issueRecordText !== undefined) {
                       return { content: [{ type: 'text', text: recorded.issueRecordText }] };
                     }
+                    const called = args as Record<string, unknown>;
+                    if (tool === 'save_issue' && typeof called.state === 'string') {
+                      recorded.issueStates.set(String(called.id), called.state);
+                    }
+                    if (tool === 'get_issue') {
+                      // An unassigned record for the ticket asked for, in the state it
+                      // was left in, so every apply that meets the re-read proves
+                      // itself against one (review M1).
+                      const set = recorded.issueStates.get(String(called.id));
+                      return {
+                        content: [
+                          {
+                            type: 'text',
+                            text: JSON.stringify({
+                              id: called.id,
+                              assignee: null,
+                              ...(set === undefined
+                                ? { status: 'Todo', statusType: 'unstarted' }
+                                : { status: set }),
+                              labels: [],
+                            }),
+                          },
+                        ],
+                      };
+                    }
                     const text =
                       tool === 'browser_navigate'
                         ? '- Page URL: http://looker-tile:8080/'
@@ -709,6 +736,7 @@ afterEach((): void => {
   recorded.failMcpAfterRequest = false;
   recorded.failedMcpTool = undefined;
   recorded.issueRecordText = undefined;
+  recorded.issueStates.clear();
   recorded.afterCredentialRead = undefined;
   recorded.afterToolList = undefined;
   recorded.skillSwitches.length = 0;
@@ -2895,7 +2923,12 @@ describe('executing an approved plan through the gate', (): void => {
       // plan is pending; the read itself writes nothing to any surface.
       expect(recorded.http.filter((call) => !call.url.endsWith('/chat.postMessage'))).toEqual([]);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', subject: 'record', text: 'get_issue on linear · {"id":"get_issue-id"}' },
+        {
+          surface: 'linear',
+          tool: 'get_issue',
+          subject: 'record',
+          text: 'get_issue on linear · {"id":"iss-1","assignee":null,"status":"Todo","statusType":"unstarted","labels":[]}',
+        },
       ]);
       const events = await groundingEvents(harness);
       expect(events).toHaveLength(1);
@@ -6583,6 +6616,44 @@ describe('a question asked in the notes when no chat surface can carry the manag
     expect((await readItem(harness, workItemId)).state).toBe('actions-pending');
   });
 
+  it('keeps holding a declared question when the Retry note answered a re-read stop, not a question (review D2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const asked = 'Please confirm which template the notice should use.';
+    recorded.skillOutput = {
+      ...sitting4Log1PhaseOne,
+      notes: `The notice template is not documented for an unconfirmed ETA. ${asked}`,
+      declaredQuestion: asked,
+      actions: [read!, comment!, done!],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedWithoutChat(harness);
+    // The last run stopped because a colleague took the ticket, not on a question.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason:
+          'stopped: withheld before the first write: LOG-1 changed since the plan was made: it changed hands: it is assigned to another person. Nothing was sent.',
+      });
+    });
+    // The run the retry schedules is driven by hand below; its timer is faked so it
+    // never fires beside it (draining it lets the apply's stall check fire first).
+    vi.useFakeTimers();
+    try {
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.work.retryFailed, { workItemId, feedback: 'Ana handed it back to us.' });
+    } finally {
+      vi.useRealTimers();
+    }
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain(`is still open: ${asked}`);
+    expect(ticketWrites()).toEqual([]);
+  });
+
   it('lands the comment and Done for the manager once Retry carries the answer', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = { ...sitting4Log1PhaseOne, notes: ENGLISH, actions: [read!, comment!, done!] };
@@ -6694,6 +6765,67 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
         reason: expect.stringContaining('changed hands'),
       }),
     ]);
+  });
+
+  it('withholds the apply of a row retried after a refused listing withdrew it (review B1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    const taken = { ...asPlanned, assigned: true, assigneeId: 'user-ana' };
+    // A poll refused the ticket, the manager pressed Retry, and the plan was made after both.
+    await harness.run(async (ctx): Promise<void> => {
+      const row = (await ctx.db.get(workItemId))!;
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.listed',
+        payload: { workItemId, tracker: taken, refused: 'the ticket is assigned to someone else' },
+        createdAt: 2,
+      });
+      await ctx.db.patch(workItemId, { planPendingAt: 3 });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      assigneeId: 'user-ana',
+      status: 'Todo',
+      statusType: 'unstarted',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('it changed hands');
+    expect(linearTools()).toEqual(['get_issue']);
+  });
+
+  it('withholds when get_issue answers with none of the compared fields or for another ticket (review M1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const answers = [
+      ['{"issue":null}', 'get_issue answered with no record'],
+      ['{}', 'get_issue answered with neither a state nor an assignee'],
+      ['{"success":true}', 'get_issue answered with neither a state nor an assignee'],
+      [
+        '{"error":"Entity not found: Issue"}',
+        'get_issue answered with neither a state nor an assignee',
+      ],
+      [
+        '{"id":"iss-999","status":"Todo","statusType":"unstarted"}',
+        'get_issue answered for another ticket (iss-999)',
+      ],
+    ] as const;
+    for (const [text, finding] of answers) {
+      recorded.mcp.length = 0;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const workItemId = await atFirstWrite(harness);
+      recorded.issueRecordText = text;
+
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+      const stopped = await readItem(harness, workItemId);
+      expect(stopped.state).toBe('failed');
+      expect(stopped.skipReason).toContain(`iss-1 could not be re-read (${finding})`);
+      expect(linearTools()).toEqual(['get_issue']);
+    }
   });
 
   it('withholds when the state moved since the plan', async (): Promise<void> => {
@@ -6942,6 +7074,81 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
 
     expect((await readItem(harness, workItemId)).state).toBe('completed');
     expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
+  });
+
+  it('withholds a labelled ticket even when the manager pressed Retry after the label (review M2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    const labelled = { ...asPlanned, doNotAutomate: true };
+    await harness.run(async (ctx): Promise<void> => {
+      const row = (await ctx.db.get(workItemId))!;
+      await ctx.db.patch(workItemId, { planPendingAt: 10 });
+      // A person labelled the failed row's ticket, and the manager pressed Retry after.
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.listed',
+        payload: { workItemId, tracker: labelled },
+        createdAt: 20,
+      });
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.retry',
+        payload: { workItemId, resumeState: 'plan-approved', fromState: 'failed' },
+        createdAt: 30,
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'Todo',
+      statusType: 'unstarted',
+      labels: [{ name: 'do-not-automate' }],
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain('it is labelled do-not-automate');
+    expect(linearTools()).toEqual(['get_issue']);
+  });
+
+  it('says what another surface was sent before the re-read held the ticket writes, not that nothing was (review M3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    const post = skillOutput.actions[3]!;
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        approvedIndexes: [0, 1, 2],
+        actionVerdicts: [
+          { disposition: 'auto' as const },
+          { disposition: 'auto' as const },
+          { disposition: 'auto' as const },
+        ],
+        output: { draft: 'Audited and closed.', notes: '', actions: [post, ...closeOut] },
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'In Progress',
+      statusType: 'started',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(recorded.http.filter((call) => call.url.endsWith('/chat.postMessage'))).toHaveLength(1);
+    expect(linearTools()).toEqual(['get_issue']);
+    expect(stopped.skipReason).toBe(
+      'withheld before the first write: iss-1 changed since the plan was made: its state moved from Todo to In Progress. Sent before the re-read: http.request slack · POST /chat.postMessage.',
+    );
+    expect(ledger(stopped)[1]).toMatchObject({
+      held: true,
+      reason:
+        'withheld before the first write: iss-1 changed since the plan was made: its state moved from Todo to In Progress.',
+    });
   });
 
   it("drops a read the gate refused from a run the re-read stopped, as a finished run's ledger does", async (): Promise<void> => {

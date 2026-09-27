@@ -176,7 +176,8 @@ describe('charter approval by surface mode', (): void => {
   });
 
   it.each(['mock', 'real'] as const)(
-    'in %s mode completes with no web call and no research step',
+    // The fetch spy guards nothing reachable here (review M6); the events and AGENTS.md prove it.
+    'in %s mode completes with no research step and writes no good-habits memory',
     async (mode): Promise<void> => {
       vi.useFakeTimers();
       useSurfaceMode(mode);

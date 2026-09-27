@@ -177,20 +177,23 @@ function sameState(left: string, right: string): boolean {
  * What changed on a ticket since the plan was made, by the Q11 primitives,
  * or undefined when it is still the ticket the plan was made for.
  *
- * The state may be the one the listing the plan was made under showed, the
- * one a listing showed when the manager last pressed Retry since (the
+ * The state may be the one the listing the plan was made under showed, an
+ * open one a listing showed when the manager last pressed Retry since (the
  * manager has seen it), or one Day0 set itself; anything else is a move
- * somebody else made. The assignee is compared with the plan's listing
- * alone, since a Retry does not hand a person's ticket to Day0: a ticket
- * assigned since is still the item's only when it is assigned to the key's
- * owner. With no listing to compare with, the rule intake applies decides:
- * nobody or the key's owner assigned, open, and not labelled.
+ * somebody else made. A Retry excuses an open state only (review M2): a
+ * do-not-automate label or a close since the plan withholds whatever the
+ * manager retried after, since a listing is shown nowhere on the card. The
+ * assignee is compared with the plan's listing alone, since a Retry does
+ * not hand a person's ticket to Day0: a ticket assigned since is still the
+ * item's only when it is assigned to the key's owner. With no listing to
+ * compare with, the rule intake applies decides: nobody or the key's owner
+ * assigned, open, and not labelled.
  *
  * @param now - The ticket as it reads now.
  * @param context - The plan's listing, the listing the manager's last
- *   Retry saw, the states Day0 set on the ticket (names, or types when a run
- *   set one by type), and the key's owner, read only when an assignee has
- *   to be compared with it.
+ *   Retry saw (its open state only counts), the states Day0 set on the
+ *   ticket (names, or types when a run set one by type), and the key's
+ *   owner, read only when an assignee has to be compared with it.
  * @returns The named change, or undefined.
  */
 export async function ticketChange(
@@ -203,11 +206,16 @@ export async function ticketChange(
   },
 ): Promise<string | undefined> {
   const { baseline } = context;
-  if (now.doNotAutomate && !baseline?.doNotAutomate && !context.acknowledged?.doNotAutomate) {
+  if (now.doNotAutomate && !baseline?.doNotAutomate) {
     return `it is labelled ${DO_NOT_AUTOMATE_LABEL}`;
   }
   const own = context.ownStates ?? [];
-  const accepted = [baseline?.state, context.acknowledged?.state, ...own].filter(
+  // A closed type is never excused; a close the listing printed without a type is
+  // still caught below when the read shows its type.
+  const acknowledgedOpen = isClosedStateType(context.acknowledged?.stateType)
+    ? undefined
+    : context.acknowledged?.state;
+  const accepted = [baseline?.state, acknowledgedOpen, ...own].filter(
     (state): state is string => state !== undefined,
   );
   const matches = (state: string): boolean =>
@@ -216,11 +224,12 @@ export async function ticketChange(
   if (now.state !== undefined && accepted.length > 0 && !accepted.some(matches)) {
     return `its state moved from ${baseline?.state ?? accepted[0]} to ${now.state}`;
   }
-  // A ticket Day0 closed, or the manager retried once it was closed, is not taken away.
-  const closedKnown =
-    own.some(matches) ||
-    (context.acknowledged?.state !== undefined && matches(context.acknowledged.state));
-  if (!closedKnown && isClosedStateType(now.stateType) && !isClosedStateType(baseline?.stateType)) {
+  // A ticket Day0 closed is not taken away; one somebody else closed is.
+  if (
+    !own.some(matches) &&
+    isClosedStateType(now.stateType) &&
+    !isClosedStateType(baseline?.stateType)
+  ) {
     return `it is ${now.stateType}`;
   }
   if (!now.assigned) {
@@ -268,11 +277,38 @@ export function recordFromText(
     return undefined;
   }
   const record = asRecord(parsed);
-  return asRecord(record?.[key]) ?? record;
+  // A record under its key is the answer, and a null there is no record (review M1).
+  return record !== undefined && key in record ? asRecord(record[key]) : record;
 }
 
 /**
- * Why a run's writes were withheld before the first of them, for the card.
+ * Why a re-read's record cannot stand for the ticket (review M1): it names
+ * another ticket, or it carries neither a state nor an assignee, so a
+ * comparison would find nothing changed whatever the ticket says.
+ *
+ * @param record - The record the single-record read answered with.
+ * @param ticketIds - The ticket's names: its id and the other name it goes by.
+ * @returns The reason, or undefined when the record can be compared.
+ */
+export function ticketRecordRefusal(
+  record: Readonly<Record<string, unknown>>,
+  ticketIds: readonly string[],
+): string | undefined {
+  const ours = new Set(ticketIds.flatMap((id) => personKey(id) ?? []));
+  const named = [record.id, record.identifier, record.uuid].filter(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  );
+  if (named.length > 0 && !named.some((name) => ours.has(personKey(name) ?? ''))) {
+    return `answered for another ticket (${named[0]})`;
+  }
+  const hasState = ticketStateName(record) !== undefined || ticketStateType(record) !== undefined;
+  const hasAssignee = 'assignee' in record || 'assigneeId' in record;
+  return hasState || hasAssignee ? undefined : 'answered with neither a state nor an assignee';
+}
+
+/**
+ * Why a run's writes were withheld before the first of them on the ticket,
+ * for each held row on the card.
  *
  * @param ticket - The ticket's id.
  * @param finding - What changed, or why it could not be read.
@@ -280,6 +316,20 @@ export function recordFromText(
  */
 export function withheldBeforeFirstWrite(ticket: string, finding: string, unread = false): string {
   return unread
-    ? `withheld before the first write: ${ticket} could not be re-read (${finding}). Nothing was sent.`
-    : `withheld before the first write: ${ticket} changed since the plan was made: ${finding}. Nothing was sent.`;
+    ? `withheld before the first write: ${ticket} could not be re-read (${finding}).`
+    : `withheld before the first write: ${ticket} changed since the plan was made: ${finding}.`;
+}
+
+/**
+ * The reason a run the re-read stopped records, saying what it sent first:
+ * a write on another surface, or in an earlier phase, is not held by the
+ * re-read and may have gone before it (review M3).
+ *
+ * @param withheld - The re-read's reason, from `withheldBeforeFirstWrite`.
+ * @param sent - What this run sent before the stop, one name per write.
+ */
+export function ticketRereadStopReason(withheld: string, sent: readonly string[]): string {
+  return sent.length === 0
+    ? `${withheld} Nothing was sent.`
+    : `${withheld} Sent before the re-read: ${sent.join('; ')}.`;
 }

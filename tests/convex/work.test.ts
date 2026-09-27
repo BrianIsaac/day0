@@ -9,6 +9,7 @@ import { allConvexModules } from './all-modules';
 import { PLAN_CANCELLED_REASON, REEVALUATION_BATCH } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
+import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
@@ -1759,6 +1760,8 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
       kind: 'retry-note',
     });
     expect(row.managerFeedback?.addressedAt).toBeUndefined();
+    // The stop asked nothing, so the note is a direction and answers no question (review D2).
+    expect(row.managerFeedback?.answersQuestion).toBeUndefined();
     const retries = await harness.run(
       async (ctx) =>
         (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
@@ -1774,6 +1777,27 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
         feedback: 'The three checks are done; propose Done.',
       },
     ]);
+  });
+
+  it('marks a note given with Retry on a question stop as the answer to it (review D2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: `stopped: ${openQuestionStopReason({ question: 'Which template?', steps: [2] })}`,
+      });
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: 'Use delay notice B.' });
+
+    expect((await readItem(harness, workItemId)).managerFeedback).toMatchObject({
+      reason: 'Use delay notice B.',
+      kind: 'retry-note',
+      answersQuestion: true,
+    });
   });
 
   it('records the eligibility waiver when the manager retries an out-of-scope skip', async (): Promise<void> => {
@@ -3716,6 +3740,103 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     await expect(
       harness.query(internal.work.listedSnapshot, { workItemId, before: Date.now() }),
     ).resolves.toMatchObject({ planned: { state: 'Todo' } });
+  });
+
+  it('withdraws a claimed row whose ticket left the queue, so no plan is stored for it (review B1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const workItemId = await harness.mutation(internal.work.seedItem, listed(agentId));
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'claimed' }));
+
+    await harness.mutation(internal.work.withdrawListedItem, {
+      ...listed(agentId),
+      owner: 'Ana Ruiz',
+      leftQueue: 'the ticket is assigned to someone else',
+    });
+
+    expect(await onlyRow(harness)).toMatchObject({
+      state: 'cancelled',
+      skipReason: 'withdrawn from the queue on the tracker: the ticket is assigned to someone else',
+    });
+    // The plan the in-flight draft finishes is not stored, so nothing reaches an apply.
+    await expect(
+      harness.mutation(internal.work.setPlan, {
+        workItemId,
+        plan: { summary: 'Reconcile it.', steps: ['reconcile'] },
+      }),
+    ).resolves.toEqual({ stored: false });
+    expect((await onlyRow(harness)).plan).toBeUndefined();
+  });
+
+  it('never gives the apply a listing intake refused as the one the plan was made under (review B1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const todo = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: todo,
+    });
+    const taken = { ...todo, assigned: true, assigneeId: 'user-ana' };
+    const refusal = {
+      ...listed(agentId),
+      owner: 'Ana Ruiz',
+      leftQueue: 'the ticket is assigned to someone else',
+      tracker: taken,
+    };
+    await harness.mutation(internal.work.withdrawListedItem, refusal);
+    // The same refusal on the next poll adds no second listing.
+    await harness.mutation(internal.work.withdrawListedItem, refusal);
+    // Retry on the withdrawn row, then a plan made after the refusal.
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'plan-approved' }));
+
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: Date.now() }),
+    ).resolves.toEqual({ planned: todo, acknowledged: null });
+    const listings = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.listed'))
+          .collect(),
+    );
+    expect(listings.map((event) => event.payload)).toEqual([
+      { workItemId, tracker: taken, refused: 'the ticket is assigned to someone else' },
+    ]);
+
+    // Back in the queue as it was: a listing again, and the baseline it gives.
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), tracker: todo });
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: Date.now() }),
+    ).resolves.toEqual({ planned: todo, acknowledged: null });
+  });
+
+  it('acknowledges no listing intake refused when the manager presses Retry after it (review B1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const todo = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: todo,
+    });
+    const planMadeAt = Date.now();
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'failed' }));
+    await harness.mutation(internal.work.withdrawListedItem, {
+      ...listed(agentId),
+      leftQueue: 'the ticket is completed',
+      tracker: { ...todo, state: 'Done', stateType: 'completed' },
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.retry',
+        payload: { workItemId, resumeState: 'plan-approved', fromState: 'failed' },
+        createdAt: Date.now() + 1,
+      });
+    });
+
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: planMadeAt }),
+    ).resolves.toEqual({ planned: todo, acknowledged: todo });
   });
 
   it('leaves a row with a plan or a run to the re-read before apply, and a finished row alone', async (): Promise<void> => {

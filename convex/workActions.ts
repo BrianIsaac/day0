@@ -126,6 +126,8 @@ import {
   personKey,
   recordFromText,
   ticketChange,
+  ticketRecordRefusal,
+  ticketRereadStopReason,
   ticketSnapshot,
   withheldBeforeFirstWrite,
   type PersonIdentity,
@@ -133,6 +135,7 @@ import {
 import type { GroundingRead } from '../src/work/evidence-claims';
 import { carriedDeclaredReads, groundingReadSurfaces, noteReleasesRead } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
+import { ledgerPhases, providerReconciliationEntries } from '../src/work/reconciliation';
 import { redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import {
   grantRefusal,
@@ -1275,25 +1278,26 @@ export function prerequisiteOutput(output: ExecutionOutput, plan: ExecutionPlan)
 
 /**
  * Whether the row shows the manager's word on this item already: a live
- * rejection reason or retry note, or answers given when the plan was
- * approved. A write the plan left to the manager's answer is then no longer
- * waiting on a question. A kept correction is not an answer (review D4): it
- * was written about earlier work, and on a sibling it is another employee's
- * rejection, never a reply to the question this run asked.
+ * rejection reason, a live Retry note given on a run that stopped with its
+ * question open, or answers given when the plan was approved. A write the
+ * plan left to the manager's answer is then no longer waiting on a
+ * question. A Retry note on any other stop, such as the re-read finding the
+ * ticket changed, answers nothing (review D2). A kept correction is not an
+ * answer (review D4): it was written about earlier work, and on a sibling it
+ * is another employee's rejection, never a reply to the question this run
+ * asked.
  *
- * Args:
- *   item: The work item as the run read it.
- *
- * Returns:
- *   True when the manager has spoken on the item itself.
+ * @param item - The work item as the run read it.
+ * @returns True when the manager has spoken on the item itself.
  */
 export function managerHasAnswered(
   item: Pick<Doc<'workItems'>, 'managerFeedback' | 'managerAnswers'>,
 ): boolean {
-  return (
-    liveManagerFeedback(item.managerFeedback) !== undefined ||
-    (item.managerAnswers ?? []).length > 0
-  );
+  const feedback = item.managerFeedback;
+  const answers =
+    liveManagerFeedback(feedback) !== undefined &&
+    (feedback?.kind !== 'retry-note' || feedback.answersQuestion === true);
+  return answers || (item.managerAnswers ?? []).length > 0;
 }
 
 const CONDITIONAL_WRITES_WITHHELD = 'work.conditional-writes-withheld';
@@ -2715,6 +2719,11 @@ async function ticketRereadRefusal(
           true,
         );
       }
+      const unusable = ticketRecordRefusal(record, [
+        ticket,
+        ...(item.externalAlias === undefined ? [] : [item.externalAlias]),
+      ]);
+      if (unusable) return withheldBeforeFirstWrite(ticket, `${read.tool} ${unusable}`, true);
       const listings = await ctx.runQuery(internal.work.listedSnapshot, {
         workItemId: item._id,
         before: item.planPendingAt ?? Date.now(),
@@ -2827,10 +2836,28 @@ function firstHold(...holds: ReadonlyArray<ClaimHold | undefined>): ClaimHold {
 }
 
 /**
+ * What this run sent, named for the card: its own writes that landed or
+ * whose outcome is unknown, in every phase, and never a row reused from an
+ * earlier run, which sent nothing now.
+ */
+function sentThisRun(output: unknown, run: { workItemId: string; runId: string }): string[] {
+  const key = `${run.workItemId}:${run.runId}:`;
+  const phases = ledgerPhases(output);
+  return providerReconciliationEntries(output).flatMap((entry): string[] => {
+    const phase = phases.find((candidate) => candidate.phase === entry.phase);
+    const applied = phase?.applied[entry.actionIndex] as AppliedAction | undefined;
+    if (!entry.idempotencyKey?.startsWith(key) || (applied && isReusedRow(applied))) return [];
+    const action = phase?.actions[entry.actionIndex];
+    const name = action ? actionName(action) : entry.tool;
+    return [entry.outcome === 'landed' ? name : `${name} (outcome unknown)`];
+  });
+}
+
+/**
  * Stop a run whose ticket changed before its first write: the writes the
  * re-read held, and any parked for the manager, carry the reason, nothing
  * after it was sent, and the run fails, as stopped when nothing landed, so
- * Retry stands.
+ * Retry stands. The recorded reason says what the run sent before the hold.
  */
 async function stopForChangedTicket(
   ctx: ActionCtx,
@@ -2843,16 +2870,20 @@ async function stopForChangedTicket(
     knownValues: readonly string[];
   },
 ): Promise<{ ok: false; reason: string }> {
-  const reason = scrubKnownValues(args.reason, args.knownValues);
+  const held = scrubKnownValues(args.reason, args.knownValues);
   // A row parked for the manager before the re-read is withheld with the
   // rest: approving it could not send it.
   // A read the gate refused is accounted for as a finished run's ledger does.
   const applied = withRefusedReadsDropped(args.output.actions ?? [], args.applied).map((entry) =>
-    entry.awaitingApproval ? { ...entry, awaitingApproval: undefined, reason } : entry,
+    entry.awaitingApproval ? { ...entry, awaitingApproval: undefined, reason: held } : entry,
   );
   const output = isDependentPendingOutput(args.output)
     ? flattenedDependentOutput(args.output, applied)
     : { ...args.output, applied };
+  const reason = scrubKnownValues(
+    ticketRereadStopReason(held, sentThisRun(output, args)),
+    args.knownValues,
+  );
   await ctx.runMutation(internal.work.setFailed, {
     workItemId: args.workItemId,
     runId: args.runId,

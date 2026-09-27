@@ -286,10 +286,16 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
   return 0;
 }
 
+/** Where the operator keeps the handbook pages pasted into Notion: ignored, operator-only. */
+const HANDBOOK_PAGES_DIR = 'docs/private/notion-pages';
+
+/** Where the orientation tests read their committed twins of the handbook pages. */
+const HANDBOOK_FIXTURE_DIR = 'tests/fixtures/notion-pages';
+
 /**
  * Name the handbook pages whose committed fixture no longer matches the page.
  *
- * The pages under `docs/submission/notion-pages/` are what the operator pastes
+ * The pages under `docs/private/notion-pages/` are what the operator pastes
  * into Notion; the twins under `tests/fixtures/` are what the orientation tests
  * read. They have to be byte-identical or the suite proves things about a page
  * that is not the one published - which happened once while this check was
@@ -300,8 +306,8 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
  *   The stems of pages that differ, or that exist on only one side.
  */
 function driftedHandbookTwins(): string[] {
-  const pagesDir = 'docs/submission/notion-pages';
-  const fixtureDir = 'tests/fixtures/notion-pages';
+  const pagesDir = HANDBOOK_PAGES_DIR;
+  const fixtureDir = HANDBOOK_FIXTURE_DIR;
   if (!existsSync(pagesDir) || !existsSync(fixtureDir)) return [];
   const drifted: string[] = [];
   for (const file of readdirSync(fixtureDir)) {
@@ -316,6 +322,20 @@ function driftedHandbookTwins(): string[] {
     }
   }
   return drifted;
+}
+
+/**
+ * The setup report's line for handbook twins that drifted, with the copy
+ * that brings each fixture back in line.
+ *
+ * @param drifted - The stems `driftedHandbookTwins` named.
+ */
+export function handbookTwinDriftLine(drifted: readonly string[]): string {
+  return (
+    `Handbook page twins differ from their fixtures: ${drifted.join(', ')}. ` +
+    `Copy ${HANDBOOK_PAGES_DIR}/<page>.md over ${HANDBOOK_FIXTURE_DIR}/<page>.md; ` +
+    'the tests read the fixture, so a stale twin tests a page nobody publishes.'
+  );
 }
 
 /**
@@ -480,11 +500,7 @@ function surfacesSection(values: Values, services: string[] | undefined): Sectio
   ];
   const drifted = driftedHandbookTwins();
   if (drifted.length > 0) {
-    lines.push(
-      `Handbook page twins differ from their fixtures: ${drifted.join(', ')}. ` +
-        'Copy docs/submission/notion-pages/<page>.md over tests/fixtures/notion-pages/<page>.md; ' +
-        'the tests read the fixture, so a stale twin tests a page nobody publishes.',
-    );
+    lines.push(handbookTwinDriftLine(drifted));
   }
   if (
     !backendRunning ||

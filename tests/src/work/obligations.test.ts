@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isOpenQuestionStop,
   managerDmReachable,
   managerMessageTexts,
   openManagerQuestion,
+  openQuestionStopReason,
 } from '../../../src/work/obligations';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
@@ -81,5 +83,21 @@ describe('managerDmReachable', () => {
     expect(
       managerDmReachable([{ ...slack, managerDmChannelId: '' } as SurfaceRecord, linear], 1),
     ).toBe(false);
+  });
+});
+
+describe('isOpenQuestionStop', (): void => {
+  it('recognises the stop a run records with its question open, and no other (review D2)', (): void => {
+    expect(
+      isOpenQuestionStop(
+        openQuestionStopReason({ question: '请确认通知使用哪个模板。', steps: [2, 3] }),
+      ),
+    ).toBe(true);
+    expect(
+      isOpenQuestionStop(
+        'withheld before the first write: LOG-1 changed since the plan was made: it changed hands: it is assigned to another person. Nothing was sent.',
+      ),
+    ).toBe(false);
+    expect(isOpenQuestionStop('the closing phase asked the manager for evidence')).toBe(false);
   });
 });

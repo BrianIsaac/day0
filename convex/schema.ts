@@ -21,7 +21,7 @@ export default defineSchema({
      * before or after the deploy, is inherited. */
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
     /** Clerk user id (`identity.subject`). Optional for legacy rows; new
-     * deploys must populate it. Queries scope by this so each judge's
+     * deploys must populate it. Queries scope by this so each owner's
      * agents are isolated. */
     userId: v.optional(v.string()),
     state: v.union(
@@ -512,6 +512,8 @@ export default defineSchema({
         ),
         /** Set when a run completed with this feedback as its direction; it is then a record, not an instruction. */
         addressedAt: v.optional(v.number()),
+        /** Set on a Retry note given on a run that stopped with a question open: the note answers it (review D2). */
+        answersQuestion: v.optional(v.boolean()),
       }),
     ),
     /**

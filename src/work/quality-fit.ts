@@ -10,8 +10,8 @@ import type { WorkCandidate } from './types';
  * Heuristic short-circuit: if AGENTS.md has no `## Good-habits memory`
  * section yet, returns `pass: true` without a model call. Cold-start
  * posture relies on the boss approval gate at Layer 3 to catch
- * mis-claims; refusing here would starve the agent of work before
- * good-habits research lands.
+ * mis-claims; refusing here would starve the agent of work. Nothing writes
+ * that section since decision N19, so the check passes until one is.
  */
 
 const SYSTEM_PROMPT = [

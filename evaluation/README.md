@@ -10,7 +10,7 @@ actions. The method is under [Controlled arms](#controlled-arms) and
 [Programmatic grading](#programmatic-grading); how to run it again is under
 [Reproduce](#reproduce).
 
-**中文摘要：** Harness v2 的冻结证据包括三个评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。注意（2026 年 9 月 27 日，决定 N16）：上述数字在五项任务集机制修正之前评分，且未重新评分；这些机制在五个方面对 Day0 有利（仅向 Day0 显示的请求方标签本身是原因词、固定 Day-1 记录含原因词与引用标题、三个产品字符串命中原因词、五项任务未禁止 slack.postMessage、两项文档任务自带引用或必需词），数字保持不变，详见下文 Caveat 段。
+**中文摘要：** Harness v2 的冻结证据包括三个评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。注意（2026 年 9 月 27 日，决定 N16）：上述数字在五项任务集机制修正之前评分，且未重新评分；这些机制在五个方面可能使部分通过由固定文本满足（仅向 Day0 显示的请求方标签本身是原因词、固定 Day-1 记录含原因词与引用标题、三个产品字符串命中原因词、五项任务未禁止 slack.postMessage、两项文档任务自带引用或必需词），数字保持不变，详见下文 Caveat 段。
 
 - [Fixed task specifications](tasks/comparison.json) - the 15 tasks, each with its
   seed payload, timeout, required effect, prohibited effects and the exact check in
@@ -641,7 +641,7 @@ pnpm eval:comparison -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
 `--arms` accepts `day0`, `baseline` or both; `--tasks` accepts fixture ids or
 `EVAL-*` external ids. Defaults are both arms, three runs, all tasks, a 750 ms
 approval delay and each task's declared timeout. An event trace for any agent in a
-run can be captured with `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}'`;
+run can be captured with `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'`;
 the export carries no credential material and no personal address.
 
 ## Build provenance

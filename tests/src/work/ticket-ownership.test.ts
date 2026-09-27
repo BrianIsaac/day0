@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  recordFromText,
   samePerson,
   ticketAssignee,
   ticketChange,
+  ticketRecordRefusal,
+  ticketRereadStopReason,
   ticketSnapshot,
+  withheldBeforeFirstWrite,
   type PersonIdentity,
   type TicketSnapshot,
 } from '../../../src/work/ticket-ownership';
@@ -168,5 +172,81 @@ describe('ticket ownership', () => {
         { owner: ownerRead('unread').read },
       ),
     ).resolves.toBe("it is assigned and the key's owner could not be read to confirm it is Day0's");
+  });
+
+  it('reads a null record under its key as no record, not as the wrapper around it (review M1)', () => {
+    expect(recordFromText('{"issue":null}', 'issue')).toBeUndefined();
+    expect(recordFromText('{"user":null}', 'user')).toBeUndefined();
+    expect(recordFromText('{"issue":{"id":"iss-1","status":"Todo"}}', 'issue')).toEqual({
+      id: 'iss-1',
+      status: 'Todo',
+    });
+    expect(recordFromText('{"id":"iss-1","status":"Todo"}', 'issue')).toEqual({
+      id: 'iss-1',
+      status: 'Todo',
+    });
+  });
+
+  it('refuses a record with neither a state nor an assignee, or one for another ticket (review M1)', () => {
+    const ours = ['iss-1', 'REVOPS-9'];
+    for (const text of ['{}', '{"success":true}', '{"error":"Entity not found: Issue"}']) {
+      expect(ticketRecordRefusal(recordFromText(text, 'issue')!, ours)).toBe(
+        'answered with neither a state nor an assignee',
+      );
+    }
+    expect(
+      ticketRecordRefusal({ id: 'iss-999', status: 'Todo', statusType: 'unstarted' }, ours),
+    ).toBe('answered for another ticket (iss-999)');
+    // Either of the ticket's names identifies it, whatever the case.
+    expect(
+      ticketRecordRefusal({ id: 'revops-9', uuid: 'f00d', status: 'Todo' }, ours),
+    ).toBeUndefined();
+    expect(ticketRecordRefusal({ identifier: 'REVOPS-9', assignee: null }, ours)).toBeUndefined();
+    // A record that names no id is still compared by its fields.
+    expect(ticketRecordRefusal({ assigneeId: 'user-ana' }, ours)).toBeUndefined();
+  });
+
+  it('lets a Retry excuse an open state it saw, never a do-not-automate label or a close (review M2)', async () => {
+    const owner = ownerRead();
+    const labelled = { ...todo, doNotAutomate: true };
+    await expect(
+      ticketChange(labelled, { baseline: todo, acknowledged: labelled, owner: owner.read }),
+    ).resolves.toBe('it is labelled do-not-automate');
+    const closed = { ...todo, state: 'Done', stateType: 'completed' };
+    await expect(
+      ticketChange(closed, { baseline: todo, acknowledged: closed, owner: owner.read }),
+    ).resolves.toBe('its state moved from Todo to Done');
+    const cancelled = { ...todo, state: "Won't do", stateType: 'canceled' };
+    await expect(
+      ticketChange(
+        { ...cancelled, stateType: undefined },
+        { baseline: todo, acknowledged: cancelled, owner: owner.read },
+      ),
+    ).resolves.toBe("its state moved from Todo to Won't do");
+    const inReview = { ...todo, state: 'In Review', stateType: 'started' };
+    await expect(
+      ticketChange(inReview, { baseline: todo, acknowledged: inReview, owner: owner.read }),
+    ).resolves.toBeUndefined();
+    // A listing with no state type is no closed type: a Retry still clears the move.
+    const untyped = { ...inReview, stateType: undefined };
+    await expect(
+      ticketChange(untyped, { baseline: todo, acknowledged: untyped, owner: owner.read }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('says nothing was sent only when the run sent nothing before the re-read held it (review M3)', () => {
+    const withheld = withheldBeforeFirstWrite('iss-1', 'it is labelled do-not-automate');
+    expect(withheld).toBe(
+      'withheld before the first write: iss-1 changed since the plan was made: it is labelled do-not-automate.',
+    );
+    expect(ticketRereadStopReason(withheld, [])).toBe(`${withheld} Nothing was sent.`);
+    expect(
+      ticketRereadStopReason(withheld, [
+        'http.request slack · POST /chat.postMessage',
+        'mcp.call notion · update_page',
+      ]),
+    ).toBe(
+      `${withheld} Sent before the re-read: http.request slack · POST /chat.postMessage; mcp.call notion · update_page.`,
+    );
   });
 });

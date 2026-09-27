@@ -167,7 +167,7 @@ The evaluation freeze: snapshot `cc4e7a5`, 3 September 2026 (no tag). The record
 
 ### 3 September 2026
 
-- `cc4e7a5` docs: publish the data-source and compliance statement (no longer tracked since 27 September 2026; `SECURITY.md` states what it did)
+- `cc4e7a5` docs: publish the data-source and compliance statement (no longer tracked since 27 September 2026; the README's Disclosures state the data sources, and `SECURITY.md` the credential, redaction and deletion handling)
 - `c2ca7c7` docs(readme): one full real-mode run and its README section, 16 screenshots
 - `2ffeaa0` docs(readme): set the manager email in the real-mode setup, which Slack needs
 - `abb0f0b` feat(model): default to `gpt-5.6-terra`
