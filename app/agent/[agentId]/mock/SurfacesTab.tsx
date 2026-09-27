@@ -599,7 +599,9 @@ export function AccessRow({
   const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   if (!ACCESS_VERDICTS.has(surface.verdict) || surface.expiresAt === undefined) return null;
-  const ended = surface.reason === 'expired';
+  // The hourly sweep marks an ended card `expired`; until it runs, and on a
+  // card whose reason a later failure replaced, the passed date says it.
+  const ended = surface.reason === 'expired' || surface.expiresAt <= now;
   const endingSoon = !ended && surface.expiresAt - now <= EXPIRY_WARNING_MS;
   const fieldId = `access-days-${surface._id}`;
   const close = (): void => {

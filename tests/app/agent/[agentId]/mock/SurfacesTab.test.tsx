@@ -854,6 +854,19 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
     expect(ended).toMatch(/>Renew access<\/button>/);
   });
 
+  it('says access ended once the date has passed, before the sweep marks it and whatever reason a later failure left', (): void => {
+    const markup = renderAccess(
+      surface({
+        verdict: 'ungranted',
+        reason: 'BROWSER_DRIVER_ABSENT: the browser is not running',
+      }),
+      AT + 60_000,
+    );
+    expect(markup).toContain('Access ended <time');
+    expect(markup).toMatch(/>Renew access<\/button>/);
+    expect(markup).not.toContain('within a week');
+  });
+
   it('is absent before the card is approved, when access has not started', (): void => {
     expect(renderAccess(surface({ verdict: 'proposed', expiresAt: undefined }), AT)).toBe('');
     expect(renderAccess(surface({ verdict: 'declared' }), AT)).toBe('');
