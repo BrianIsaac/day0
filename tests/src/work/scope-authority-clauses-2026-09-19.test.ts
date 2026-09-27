@@ -27,14 +27,16 @@ const model = vi.hoisted(() => ({
   answers: [] as unknown[],
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('../../convex/fakes/mastra'));
+
 vi.mock('../../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     model.calls.push({ agent: args.agent.name, user: args.user });
     const next = model.answers.shift();
     if (next === undefined) throw new Error('unscripted model call');
     return next;
-  },
+  }),
 }));
 
 const AUTHORITY = 'Post the status note without asking until the manager decides otherwise.';

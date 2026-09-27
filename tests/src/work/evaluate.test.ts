@@ -11,12 +11,19 @@ import type { AgentContext, WorkCandidate } from '../../../src/work/types';
 
 const model = vi.hoisted(() => ({ calls: [] as string[] }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('../../convex/fakes/mastra'));
+
 vi.mock('../../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string } }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     model.calls.push(args.agent.name);
-    return { inScope: true, fit: true, reason: 'inside the role' };
-  },
+    return {
+      inScope: true,
+      fit: true,
+      reason: 'inside the role',
+      exclusion: { kind: 'none', quote: '' },
+    };
+  }),
 }));
 
 const NOW = Date.parse('2026-08-26T12:00:00.000Z');

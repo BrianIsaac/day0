@@ -9,21 +9,36 @@ import {
 import { charterJudgementPrompt, judgeScope, type ScopeJudgement } from '../../../src/work/scope';
 import type { WorkCandidate } from '../../../src/work/types';
 
+/** A charter judgement that cites nothing, as the schema requires of an in-scope answer. */
+const NO_EXCLUSION = { kind: 'none', quote: '' } as const;
+
 const model = vi.hoisted(() => ({
   calls: [] as Array<{ agent: string; user: string }>,
-  answer: { inScope: true, fit: true, reason: 'inside the role' } as
-    | { inScope: boolean; fit: boolean; reason: string }
+  answer: {
+    inScope: true,
+    fit: true,
+    reason: 'inside the role',
+    exclusion: { kind: 'none', quote: '' },
+  } as
+    | {
+        inScope: boolean;
+        fit: boolean;
+        reason: string;
+        exclusion: { kind: 'none' | 'will-not-do' | 'absent-system'; quote: string };
+      }
     | Error,
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('../../convex/fakes/mastra'));
+
 vi.mock('../../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     model.calls.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name === 'day0-quality-fit') return { pass: false, reason: 'busywork' };
     if (model.answer instanceof Error) throw model.answer;
     return model.answer;
-  },
+  }),
 }));
 
 const NOW = Date.parse('2026-09-15T02:00:00.000Z');
@@ -138,7 +153,7 @@ describe('one scope judgement for the R6 card', (): void => {
 
   beforeEach((): void => {
     model.calls.length = 0;
-    model.answer = { inScope: true, fit: true, reason: 'inside the role' };
+    model.answer = { inScope: true, fit: true, reason: 'inside the role', exclusion: NO_EXCLUSION };
   });
 
   it('writes one verdict and one description that agree, from the whole charter', async (): Promise<void> => {
@@ -147,6 +162,7 @@ describe('one scope judgement for the R6 card', (): void => {
       fit: true,
       reason:
         'Updating the Q4 Revenue Tracker is outside a role limited to reviewing onboarding docs and routing ownership questions to the manager.',
+      exclusion: NO_EXCLUSION,
     };
     const judgements: ScopeJudgement[] = [];
     const findMatchingSkill = vi.fn(async (): Promise<null> => null);
@@ -253,7 +269,12 @@ describe('one scope judgement for the R6 card', (): void => {
   });
 
   it('counts the fit half only when a good-habits memory exists and the filter is not waived', async (): Promise<void> => {
-    model.answer = { inScope: true, fit: false, reason: 'the role norm says confirm the owner first' };
+    model.answer = {
+      inScope: true,
+      fit: false,
+      reason: 'the role norm says confirm the owner first',
+      exclusion: NO_EXCLUSION,
+    };
 
     await expect(judgeScope(r6Card, context('real'), { provenance: true, namesDocumentedSystem: false })).resolves.toEqual({
       admitted: true,
@@ -275,7 +296,12 @@ describe('one scope judgement for the R6 card', (): void => {
   });
 
   it('honours the eligibility waiver: no call when nothing else is asked, and only the fit half when it is', async (): Promise<void> => {
-    model.answer = { inScope: false, fit: false, reason: 'outside the role and against a norm' };
+    model.answer = {
+      inScope: false,
+      fit: false,
+      reason: 'outside the role and against a norm',
+      exclusion: NO_EXCLUSION,
+    };
 
     await expect(
       judgeScope(r6Card, context('real', { scopeWaived: true }), { provenance: false, namesDocumentedSystem: false }),
@@ -292,7 +318,7 @@ describe('one scope judgement for the R6 card', (): void => {
       basis: 'quality-fit',
       reason: 'quality-fit-fail: outside the role and against a norm',
     });
-    model.answer = { inScope: false, fit: true, reason: 'outside the role' };
+    model.answer = { inScope: false, fit: true, reason: 'outside the role', exclusion: NO_EXCLUSION };
     await expect(
       judgeScope(r6Card, context('real', { scopeWaived: true, agentsMd: GOOD_HABITS }), {
         provenance: false,

@@ -137,6 +137,8 @@ const recorded = vi.hoisted(() => ({
   questionJudgements: [] as string[],
   /** Set to make the manager-question judgement unavailable. */
   questionJudgementFails: false,
+  /** Set to make the charter scope judgement unavailable. */
+  scopeJudgementFails: false,
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; method?: string; authorization: string | undefined; body: unknown }>,
   failMcpAfterRequest: false,
@@ -467,6 +469,15 @@ const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mas
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: schemaChecked(async (args): Promise<unknown> => {
+    if (args.agent.name === 'day0-scope-judgement') {
+      if (recorded.scopeJudgementFails) throw new Error('model unavailable in tests');
+      return {
+        inScope: true,
+        fit: true,
+        reason: 'revenue operations hand-offs are the charter work',
+        exclusion: { kind: 'none', quote: '' },
+      };
+    }
     if (args.agent.name !== 'day0-manager-question') throw new Error('model unavailable in tests');
     recorded.questionJudgements.push(args.user);
     if (recorded.questionJudgementFails) throw new Error('model unavailable in tests');
@@ -733,6 +744,7 @@ afterEach((): void => {
   recorded.planFailure = undefined;
   recorded.questionJudgements.length = 0;
   recorded.questionJudgementFails = false;
+  recorded.scopeJudgementFails = false;
   recorded.mcp.length = 0;
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
@@ -4332,6 +4344,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
 
   it('admits a real-mode item on the lexical inputs and records it when the charter judgement is unavailable', async (): Promise<void> => {
     useSurfaceMode('real');
+    recorded.scopeJudgementFails = true;
     // The claim schedules the server's draft; this test reads the verdict alone.
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
