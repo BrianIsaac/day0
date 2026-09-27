@@ -3,7 +3,12 @@ import { internalQuery, mutation, query, type MutationCtx } from './_generated/s
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { CORRECTIONS_MAX, CORRECTIONS_MAX_CHARS, correctionSurfaces, type CorrectionKind } from '../src/work/corrections';
+import {
+  CORRECTIONS_MAX,
+  CORRECTIONS_MAX_CHARS,
+  correctionSurfaces,
+  type CorrectionKind,
+} from '../src/work/corrections';
 import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
 
@@ -80,7 +85,8 @@ export async function markCorrectionsAppliedInTransaction(
     const id = typeof raw === 'string' ? ctx.db.normalizeId('corrections', raw) : null;
     if (!id || kept.includes(id)) continue;
     const correction = await ctx.db.get(id);
-    if (!correction || correction.agentId !== row.agentId || correction.retiredAt !== undefined) continue;
+    if (!correction || correction.agentId !== row.agentId || correction.retiredAt !== undefined)
+      continue;
     if (!correction.appliedTo.includes(row._id)) {
       await ctx.db.patch(id, { appliedTo: [...correction.appliedTo, row._id] });
     }
