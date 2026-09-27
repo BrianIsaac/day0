@@ -20,6 +20,7 @@ import {
 } from '../src/work/plan';
 import type { ObligationEvent } from '../src/work/plan-obligations';
 import { accessEnded } from '../src/work/surface-access';
+import { log } from '../src/lib/logger';
 import type { ClosingAuthoring, ModelCallStage } from '../src/events/contract';
 import {
   ClosingGateRefusal,
@@ -3926,7 +3927,16 @@ async function claimLandedTicketWrites(
     return targets.length > 0 ? [{ surfaceSlug: surface.slug, targets }] : [];
   });
   if (writes.length === 0) return;
-  await ctx.runMutation(internal.work.claimLandedTicketWrites, { workItemId, writes });
+  try {
+    await ctx.runMutation(internal.work.claimLandedTicketWrites, { workItemId, writes });
+  } catch (error) {
+    // The writes landed; the run's outcome is recorded whatever happens to
+    // the claim, which only keeps a colleague from repeating them.
+    log.warn('landed ticket writes not claimed', {
+      workItemId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** What `finishRun` needs from the apply claim. */
