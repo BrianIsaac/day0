@@ -321,13 +321,13 @@ export interface WorkItemSeedInput {
 
 /**
  * When an item was asked for: the provider's time intake passed, else the
- * `ts` a chat message's id carries (`<channel>:<ts>`), else now. Cycle time
+ * `ts` a Slack message's id carries (`<channel id>:<ts>`), else now. Cycle time
  * (A9) starts here, so a chat ask seen on a later poll still counts from the
  * message.
  */
 function askedAtOf(args: Pick<WorkItemSeedInput, 'askedAt' | 'externalId'>, now: number): number {
   if (args.askedAt !== undefined) return args.askedAt;
-  const ts = /:(\d{9,10}\.\d{1,6})$/.exec(args.externalId)?.[1];
+  const ts = /^[CDG][A-Z0-9]{6,}:(\d{9,10}\.\d{1,6})$/.exec(args.externalId)?.[1];
   const fromTs = ts === undefined ? null : providerTsToMs(ts);
   return fromTs === null ? now : Math.round(fromTs);
 }
