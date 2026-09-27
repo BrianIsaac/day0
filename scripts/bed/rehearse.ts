@@ -18,15 +18,16 @@
  * `--help` prints the options; scripts/bed/rehearsal/run.ts is the phase list.
  */
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { composeDown, type Bed } from './rehearsal/bed';
+import { pathToFileURL } from 'node:url';
 import { connectBackend } from './rehearsal/backend';
 import { UndoLedger } from '../lib/cleanup';
 import { parseLines } from './rehearsal/docker';
 import { PlaywrightDashboard } from './rehearsal/driver';
 import { parseEnvText, parseSecrets } from './rehearsal/env';
+import { finish, sleepUntilCeiling } from './rehearsal/finish';
 import { LinearClient } from '../lib/linear';
 import { parseComposeProjects, parseRehearsalArguments, rehearsalProjectName, USAGE } from './rehearsal/options';
 import { RunDirectory, runDirectory } from './rehearsal/output';
@@ -35,6 +36,9 @@ import { runCommand, startServer } from './rehearsal/process';
 import { runStamp, type RunRecord } from './rehearsal/report';
 import { runPhases, type RehearsalContext } from './rehearsal/run';
 import { SlackClient } from '../lib/slack';
+
+/** How long past the ceiling a phase that never reaches a wait is given before the clean-up runs anyway. */
+const CEILING_GRACE_MINUTES = 5;
 
 function fail(message: string): never {
   process.stderr.write(`error: ${message}\n`);
@@ -142,7 +146,12 @@ async function main(): Promise<number> {
     startServer,
     fetchImpl: fetch,
     now: Date.now,
-    sleep: (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms)),
+    sleep: sleepUntilCeiling(
+      (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms)),
+      Date.now,
+      Date.now() + options.timeoutMinutes * 60_000,
+      options.timeoutMinutes,
+    ),
     linear: new LinearClient(secrets.linearApiKey ?? ''),
     slack: secrets.slackBotToken ? new SlackClient(secrets.slackBotToken) : undefined,
     ledger: new UndoLedger(),
@@ -155,13 +164,23 @@ async function main(): Promise<number> {
     state: { shots: 0 },
   };
 
-  const ceiling = setTimeout(() => {
-    log(`the ${options.timeoutMinutes}-minute ceiling passed; stopping`);
+  // The ceiling ends the run at its next wait (the context's sleep). A phase
+  // stuck on a call with no timeout of its own never reaches one, so past a
+  // grace the clean-up runs beside it: the lesser harm than leaving the
+  // workspaces written and the bed polling them.
+  const backstop = setTimeout(() => {
+    log(`no wait was reached ${CEILING_GRACE_MINUTES} minutes past the ceiling; cleaning up now`);
     record.status = 'failed';
-    record.stoppedAt = `the ${options.timeoutMinutes}-minute ceiling`;
-    void finish(ctx, 1).then((code) => process.exit(code));
-  }, options.timeoutMinutes * 60_000);
-  ceiling.unref();
+    record.stoppedAt = `${CEILING_GRACE_MINUTES} minutes past the ${options.timeoutMinutes}-minute ceiling`;
+    void finish(ctx, 1).then(
+      (code) => process.exit(code),
+      (error: unknown) => {
+        log(`cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      },
+    ); // Both outcomes end the process here; nothing awaits the stuck phase.
+  }, (options.timeoutMinutes + CEILING_GRACE_MINUTES) * 60_000);
+  backstop.unref();
 
   try {
     await runPhases(ctx);
@@ -170,38 +189,10 @@ async function main(): Promise<number> {
     record.stoppedAt = `outside a phase: ${(error as Error).message}`;
     log(record.stoppedAt);
   }
-  clearTimeout(ceiling);
+  clearTimeout(backstop);
   return await finish(ctx, record.status === 'failed' ? 1 : 0);
 }
 
-/** Put the workspaces back, then take the bed down, whatever the run did. */
-async function finish(ctx: RehearsalContext, code: number): Promise<number> {
-  const { record, out, log, state, options } = ctx;
-  log(`cleanup: ${ctx.ledger.pending().length} undo step(s)`);
-  record.cleanup = await ctx.ledger.runAll();
-  for (const step of record.cleanup) log(`  ${step.ok ? 'ok' : 'FAILED'} ${step.label}${step.error ? `: ${step.error}` : ''}`);
-  out.writeRecord(record);
-
-  if (state.dashboard) await state.dashboard.close().catch((error: Error) => log(`browser close: ${error.message}`));
-  if (state.server) {
-    await state.server.stop();
-    out.appendLog(`--- next dev output ---\n${state.server.output()}`);
-  }
-  if (state.bed && !options.keep) {
-    try {
-      composeDown(ctx.runner, state.bed as Bed, true);
-      log(`compose project ${state.bed.project} removed with its volumes`);
-    } catch (error) {
-      log(`teardown: ${(error as Error).message}`);
-      record.notes.push(`Teardown failed; run: docker compose -p ${state.bed.project} down -v`);
-    }
-    rmSync(record.clone, { recursive: true, force: true });
-  } else if (state.bed) {
-    record.notes.push(`--keep: the stack ${state.bed.project} and the clone ${record.clone} are left up.`);
-  }
-  out.writeRecord(record);
-  log(`${record.status}; record at ${out.path}/summary.md`);
-  return record.cleanup.some((step) => !step.ok) ? 1 : code;
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exit(await main());
 }
-
-process.exit(await main());
