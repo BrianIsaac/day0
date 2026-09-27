@@ -9,9 +9,7 @@ export type SurfaceMode = 'mock' | 'real';
  * Returns:
  *   Validated surface mode.
  */
-export function resolveSurfaceMode(
-  values: Partial<NodeJS.ProcessEnv> = process.env,
-): SurfaceMode {
+export function resolveSurfaceMode(values: Partial<NodeJS.ProcessEnv> = process.env): SurfaceMode {
   const mode = values.DAY0_SURFACE_MODE || 'mock';
   if (mode !== 'mock' && mode !== 'real')
     throw new Error('DAY0_SURFACE_MODE must be mock or real.');
@@ -43,6 +41,8 @@ export const SURFACE_MODE: SurfaceMode = resolveSurfaceMode();
  */
 export function assertRealMode(feature: string, mode: SurfaceMode = SURFACE_MODE): void {
   if (mode !== 'real') {
-    throw new Error(`${feature} is a local real-mode feature; this deployment runs in ${mode} mode.`);
+    throw new Error(
+      `${feature} is a local real-mode feature; this deployment runs in ${mode} mode.`,
+    );
   }
 }

@@ -12,8 +12,9 @@ describe('the port pnpm dev serves on', (): void => {
   });
 
   it('is what package.json runs for pnpm dev, so the URL and the server agree', (): void => {
-    const scripts = (JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> })
-      .scripts;
+    const scripts = (
+      JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
+    ).scripts;
     expect(scripts.dev).toBe('tsx scripts/dev.ts');
     const source = readFileSync('scripts/dev.ts', 'utf8');
     expect(source).toContain("['scripts/dev-no-auth-key.ts', 'url']");
