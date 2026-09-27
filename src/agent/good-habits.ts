@@ -1,5 +1,7 @@
+import type { Agent } from '@mastra/core/agent';
 import { agentText, makeAgent } from '../lib/mastra';
-import { searchRole, type ExaResult } from '../lib/exa';
+import { searchRole, type ExaResult, type RoleSearch } from '../lib/exa';
+import { log } from '../lib/logger';
 
 /**
  * Good-habits memory pipeline. Adapted from Protean's
@@ -41,6 +43,8 @@ function formatResults(results: ExaResult[]): string {
 export interface DistilArgs {
   role: string;
   results: ExaResult[];
+  /** The distilling agent; the shared good-habits agent when omitted. */
+  agent?: Agent;
 }
 
 export async function distilGoodHabits(args: DistilArgs): Promise<string> {
@@ -54,7 +58,7 @@ export async function distilGoodHabits(args: DistilArgs): Promise<string> {
   ].join('\n');
 
   const raw = await agentText({
-    agent: goodHabitsAgent,
+    agent: args.agent ?? goodHabitsAgent,
     user: userPrompt,
   });
   return stripFence(raw);
@@ -69,6 +73,12 @@ export interface GoodHabitsResult {
   skipReason?: string;
 }
 
+/** The web search and the distilling agent the research step calls out to. */
+export interface GoodHabitsSources {
+  readonly search: (role: string) => Promise<RoleSearch>;
+  readonly agent: Agent;
+}
+
 /**
  * End-to-end orchestrator: Exa search + Mastra distillation.
  *
@@ -76,9 +86,16 @@ export interface GoodHabitsResult {
  * fragment must carry a source URL, so a source-less run would just
  * invent them. Skipping is the honest degradation: the caller logs it
  * and the onboarding loop continues with AGENTS.md untouched.
+ *
+ * A distillation that fails (a reply cut at the output limit, a content
+ * refusal, any other model error) is skipped the same way, so
+ * `postCharterApproval` still reaches the real-mode seeding.
  */
-export async function researchAndDistil(role: string): Promise<GoodHabitsResult> {
-  const search = await searchRole(role);
+export async function researchAndDistil(
+  role: string,
+  sources: GoodHabitsSources = { search: searchRole, agent: goodHabitsAgent },
+): Promise<GoodHabitsResult> {
+  const search = await sources.search(role);
   if (search.skipped) {
     return {
       fragment: '',
@@ -88,7 +105,14 @@ export async function researchAndDistil(role: string): Promise<GoodHabitsResult>
       skipReason: search.skipReason,
     };
   }
-  const fragment = await distilGoodHabits({ role, results: search.results });
+  let fragment: string;
+  try {
+    fragment = await distilGoodHabits({ role, results: search.results, agent: sources.agent });
+  } catch (err) {
+    const reason = `good-habits distillation failed: ${err instanceof Error ? err.message : String(err)}`;
+    log.warn('good-habits distillation skipped', { role, reason });
+    return { fragment: '', results: search.results, norms: 0, skipped: true, skipReason: reason };
+  }
   return {
     fragment,
     results: search.results,
