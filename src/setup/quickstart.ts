@@ -44,8 +44,8 @@ export const QUICKSTART_BLOCK: string = ['```bash', ...QUICKSTART_COMMANDS, '```
 export const SETUP_SCRIPT = './setup.sh';
 
 /**
- * The three ways to run it, as the deck's page 22, the README, the `/setup`
- * page, the setup's own text and `pnpm check:setup` name them. The two local
+ * The three ways to run it, as the README, the `/setup` page, the setup's
+ * own text and `pnpm check:setup` name them. The two local
  * ways are real mode and differ in one thing only: where the model runs.
  */
 export const WAY_NAMES = {
@@ -104,12 +104,12 @@ export interface RunWay {
 }
 
 /**
- * The three ways to run it, in the deck's order and with the deck's names.
+ * The three ways to run it, in the README's order and with its names.
  * The hosted demo needs nothing installed; the two local ways are real mode,
  * on the reader's own documentation and systems, and differ in one thing
  * only, where the model runs. Each local way carries a complete command list
- * rather than a diff against the quick start, because a reader arriving from
- * the deck copies one block and runs it. Every command here is checked
+ * rather than a diff against the quick start, because a reader arriving at
+ * one way copies one block and runs it. Every command here is checked
  * against `package.json` and the repository root in
  * `tests/src/setup/quickstart.test.ts`.
  */
@@ -154,9 +154,9 @@ export const RUN_WAYS: readonly RunWay[] = [
 ];
 
 /**
- * What both local ways are, said once under the two of them: the deck's
- * "your own workspaces" block, plus the two facts a reader needs before the
- * first run (link the documentation first; the redactor's first download).
+ * What both local ways are, said once under the two of them: that they
+ * work on the reader's own workspaces, plus the two facts a reader needs
+ * before the first run (link the documentation first; the redactor's first download).
  */
 export const REAL_MODE_NOTE =
   'Both local ways are real mode: link your documentation on the documentation page before you deploy, and the agent connects to the systems it names through approval cards on the Surfaces tab; those systems still need authorised access. Real mode is local only by construction: a hosted deployment refuses it. The redactor\'s first start on the CPU downloads about 251 MB of wheels and 1.16 GB of weights; --warm-from <project> copies another installation\'s volumes instead.';

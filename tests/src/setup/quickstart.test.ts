@@ -126,7 +126,7 @@ describe('the README quick starts', (): void => {
 });
 
 describe('the three ways to run it', (): void => {
-  it('are hosted, then local with a cloud model, then local with a local model, by the deck\'s names', (): void => {
+  it('are hosted, then local with a cloud model, then local with a local model, by the README\'s names', (): void => {
     expect(RUN_WAYS.map((way) => way.id)).toEqual(['hosted', 'cloud', 'local']);
     expect(RUN_WAYS.map((way) => way.title)).toEqual([
       'Hosted demo',
