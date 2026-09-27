@@ -33,6 +33,7 @@ import {
 import { runToResume } from '../src/docs/sync-resume';
 import { cardPageRefs } from '../src/docs/card-pages';
 import type { MigrationName } from './migrations';
+import schema from './schema';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -1140,8 +1141,8 @@ export const applyRestatedScope = internalMutation({
     sourceId: v.id('docSources'),
     runId: v.id('docSyncRuns'),
     surfaceId: v.id('surfaces'),
-    read: v.any(),
-    restated: v.any(),
+    read: schema.tables.surfaces.validator.fields.intakeScope,
+    restated: schema.tables.surfaces.validator.fields.intakeScope,
     drifted: v.boolean(),
   },
   handler: async (ctx, args): Promise<'repointed' | 'reapproval' | 'unchanged'> => {
@@ -1156,7 +1157,7 @@ export const applyRestatedScope = internalMutation({
     }
     if (!args.drifted) {
       if (JSON.stringify(args.restated) === JSON.stringify(surface.intakeScope)) return 'unchanged';
-      await ctx.db.patch(surface._id, { intakeScope: surface.intakeScope && args.restated });
+      await ctx.db.patch(surface._id, { intakeScope: args.restated });
       return 'repointed';
     }
     if (
