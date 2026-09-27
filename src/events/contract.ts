@@ -722,8 +722,21 @@ export interface PlanHeldForRejection extends WorkItemNamed {
   readonly rejection?: string;
 }
 
+/**
+ * `work.plan-held` for a plan whose obligations judgement could not be
+ * reached, so its declared reads and writes stand unchecked (E-70 D4).
+ */
+export interface PlanHeldObligationsFailedOpen extends WorkItemNamed {
+  readonly reason: 'obligations-failed-open';
+  /** Why the judgement was not reached, as the settlement recorded it. */
+  readonly failure: string;
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
-export type WorkPlanHeldPayload = PlanHeldSkipOverruled | PlanHeldForRejection;
+export type WorkPlanHeldPayload =
+  | PlanHeldSkipOverruled
+  | PlanHeldForRejection
+  | PlanHeldObligationsFailedOpen;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {

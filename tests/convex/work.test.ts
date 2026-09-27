@@ -623,6 +623,86 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     },
   );
 
+  it.each([
+    [
+      'the planner’s fields standing unchecked',
+      {
+        obligations: {
+          steps: [
+            { reads: [], writes: [], kind: 'read' },
+            { reads: [], writes: ['linear'], kind: 'write' },
+          ],
+          transition: 'none',
+          transitionStep: null,
+          basis: 'planner',
+          failedOpen: 'the judgement reply did not satisfy the schema',
+        },
+      },
+    ],
+    [
+      'no fields at all',
+      { obligationsFailedOpen: 'the judgement reply did not satisfy the schema' },
+    ],
+  ] as const)(
+    'holds an autonomous plan for the manager when its obligations judgement failed open, with %s (E-70 D4)',
+    async (_shape, failedOpen): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await seed(harness, 'claimed', undefined, {
+        autonomousActions: true,
+      });
+      const plan = {
+        summary: 'Check the issue, then update it.',
+        steps: ['check', 'update'],
+        ...failedOpen,
+      };
+
+      await harness.mutation(internal.work.setPlan, { workItemId, plan });
+      expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+        approved: false,
+      });
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+      expect(await eventsOfType(harness, agentId, 'work.plan-approved')).toEqual([]);
+      expect(
+        (await eventsOfType(harness, agentId, 'work.plan-held')).map((event) => event.payload),
+      ).toEqual([
+        {
+          workItemId,
+          reason: 'obligations-failed-open',
+          failure: 'the judgement reply did not satisfy the schema',
+        },
+      ]);
+      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
+      expect(await eventsOfType(harness, agentId, 'work.plan-held')).toHaveLength(1);
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    },
+  );
+
+  it('approves an autonomous plan whose obligations the judgement settled', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'claimed', undefined, { autonomousActions: true });
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: {
+        summary: 'Check the issue, then update it.',
+        steps: ['check', 'update'],
+        obligations: {
+          steps: [
+            { reads: [], writes: [], kind: 'read' },
+            { reads: [], writes: ['linear'], kind: 'write' },
+          ],
+          transition: 'none',
+          transitionStep: null,
+          basis: 'judgement',
+        },
+      },
+    });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+  });
+
   it('re-reads a switch flipped after the plan was stored but before the decision', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

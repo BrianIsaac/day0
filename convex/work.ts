@@ -2634,6 +2634,22 @@ export const setPlan = internalMutation({
 });
 
 /**
+ * Why a stored plan's obligations judgement failed open, if it did.
+ *
+ * Either shape the settlement leaves: the planner's own fields standing
+ * unchecked (`obligations.failedOpen`), or no fields at all
+ * (`obligationsFailedOpen`).
+ *
+ * @param plan - The work item's stored plan.
+ * @returns The recorded reason, or undefined when the judgement answered.
+ */
+function obligationsFailedOpen(plan: unknown): string | undefined {
+  if (typeof plan !== 'object' || plan === null) return undefined;
+  const { obligations, obligationsFailedOpen: none } = plan as Partial<ExecutionPlan>;
+  return obligations?.failedOpen ?? none;
+}
+
+/**
  * Decide whether a freshly drafted plan should continue without a click.
  *
  * This is deliberately separate from `setPlan`. The plan is always persisted
@@ -2646,8 +2662,11 @@ export const setPlan = internalMutation({
  * first time it is held for that reason a `work.plan-held` event names the
  * first rejection. So does the plan of an item the manager took anyway after
  * the agent skipped it (`reason: 'skip-overruled'`): the card promised that
- * plan comes back to them. Internal; called by the drafting action and the
- * stalled-step sweep.
+ * plan comes back to them. So does a plan whose obligations judgement failed
+ * open (`reason: 'obligations-failed-open'`): its declared reads and writes
+ * stand unchecked, and the gates the switch trusts read exactly those
+ * (E-70 D4). Internal; called by the drafting action and the stalled-step
+ * sweep.
  */
 export const decidePlan = internalMutation({
   args: { workItemId: v.id('workItems'), recovery: v.optional(v.boolean()) },
@@ -2674,6 +2693,25 @@ export const decidePlan = internalMutation({
           agentId: row.agentId,
           type: 'work.plan-held',
           payload: { workItemId: args.workItemId, reason: 'skip-overruled', waived },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    // A plan whose obligations judgement failed open carries reads and writes
+    // nobody checked; the switch trusts the gates, and the gates trust those.
+    const unchecked = obligationsFailedOpen(row.plan);
+    if (unchecked !== undefined) {
+      if (!args.recovery) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'obligations-failed-open',
+            failure: unchecked,
+          },
           createdAt: Date.now(),
         });
       }
