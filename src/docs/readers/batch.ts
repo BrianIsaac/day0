@@ -8,6 +8,7 @@
  * batch's retry is for) still fails the batch, which the next sync resumes.
  */
 
+import { shortHash } from '../../lib/short-hash';
 import { TransientProviderError, transportFailureKind } from '../../lib/transport-error';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 
@@ -104,4 +105,52 @@ export function splitPageReads(results: readonly (DocPage | UnreadPage)[]): {
     else unread.push(result);
   }
   return { pages, unread };
+}
+
+/**
+ * A batch cursor taken from a listing that has changed since.
+ *
+ * An offset into a re-read listing (a folder, a git checkout, a server's
+ * resources) points at another page once a page before it is added or
+ * removed: read on, the generation would miss a live page and its final
+ * batch would delete it and supersede its credentials. The sync reads the
+ * source again from page one instead (adversarial pass on step 17).
+ */
+export class ListingChangedError extends Error {
+  constructor() {
+    super(
+      'The documentation listing changed while this sync was reading it, so it reads the source again from the first page.',
+    );
+    this.name = 'ListingChangedError';
+  }
+}
+
+/** The digest of a listing, in the order the reader reads it. */
+function listingDigest(listing: readonly string[]): string {
+  return shortHash(listing.join('\n'));
+}
+
+/**
+ * The cursor that continues a listing at an offset, bound to that listing.
+ *
+ * @param offset - The index of the next page to read.
+ * @param listing - Every page reference, in reading order.
+ */
+export function listingCursor(offset: number, listing: readonly string[]): string {
+  return `${offset}@${listingDigest(listing)}`;
+}
+
+/**
+ * The offset a listing cursor continues at, when the listing is still the one it was taken from.
+ *
+ * @param cursor - The cursor, or nothing for the first batch.
+ * @param listing - Every page reference, as the reader lists them now.
+ * @throws ListingChangedError when the listing differs from the cursor's, or the cursor is not
+ *   one bound to a listing (an offset alone cannot be checked).
+ */
+export function offsetInListing(cursor: string | undefined, listing: readonly string[]): number {
+  if (cursor === undefined) return 0;
+  const match = /^(0|[1-9][0-9]*)@([0-9a-z]{7})$/.exec(cursor);
+  if (!match || match[2] !== listingDigest(listing)) throw new ListingChangedError();
+  return Number(match[1]);
 }

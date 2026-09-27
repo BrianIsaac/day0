@@ -2,6 +2,8 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DocPage, DocSourceRecord } from '../types';
 import {
+  listingCursor,
+  offsetInListing,
   splitPageReads,
   unreadReason,
   type DocumentationReader,
@@ -84,24 +86,6 @@ async function markdownFiles(directory: string): Promise<string[]> {
 }
 
 /**
- * Parse an offset cursor emitted by a filesystem-backed reader.
- *
- * Args:
- *   cursor: Optional decimal offset.
- *
- * Returns:
- *   Non-negative page offset.
- *
- * Raises:
- *   Error: If the cursor is not a canonical non-negative integer.
- */
-export function offsetFromCursor(cursor?: string): number {
-  if (cursor === undefined) return 0;
-  if (!/^(0|[1-9][0-9]*)$/.test(cursor)) throw new Error('Documentation cursor is invalid.');
-  return Number(cursor);
-}
-
-/**
  * Read one bounded batch of Markdown files.
  *
  * A file listed but not readable (removed since the listing, no permission)
@@ -124,7 +108,8 @@ export async function readMarkdownDirectoryBatch(
   limit: number,
 ): Promise<ReadPageBatch> {
   const files = await markdownFiles(directory);
-  const offset = offsetFromCursor(cursor);
+  const refs = files.map((path: string): string => relative(directory, path).split(sep).join('/'));
+  const offset = offsetInListing(cursor, refs);
   const selected = files.slice(offset, offset + limit);
   const reads = await Promise.all(
     selected.map(async (path) => {
@@ -148,7 +133,7 @@ export async function readMarkdownDirectoryBatch(
   const nextOffset = offset + selected.length;
   return {
     ...splitPageReads(reads),
-    nextCursor: nextOffset < files.length ? String(nextOffset) : undefined,
+    nextCursor: nextOffset < files.length ? listingCursor(nextOffset, refs) : undefined,
   };
 }
 

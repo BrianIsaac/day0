@@ -2,13 +2,15 @@ import TurndownService from 'turndown';
 import { fetchWithBackoff, PROVIDER_BACKOFF, type BackoffPolicy } from '../../lib/transport-error';
 import type { DocPage, DocSourceRecord } from '../types';
 import {
+  listingCursor,
+  offsetInListing,
   splitPageReads,
   unreadReason,
   type DocumentationReader,
   type ReadPageBatch,
   type UnreadPage,
 } from './batch';
-import { markdownPageTitle, offsetFromCursor } from './folder';
+import { markdownPageTitle } from './folder';
 import { authorizationHeader } from './mcp';
 
 const MAX_PAGE_BYTES = 2 * 1024 * 1024;
@@ -133,13 +135,14 @@ export class UrlsReader implements DocumentationReader {
   ): Promise<ReadPageBatch> {
     const urls = parseUrlLocator(source.locator);
     const access = pageAccess(urls, secret);
-    const offset = offsetFromCursor(cursor);
+    const listing = urls.map((url: URL): string => url.href);
+    const offset = offsetInListing(cursor, listing);
     const selected = urls.slice(offset, offset + limit);
     const reads = await this.fetchPages(source, selected, access);
     const nextOffset = offset + selected.length;
     return {
       ...splitPageReads(reads),
-      nextCursor: nextOffset < urls.length ? String(nextOffset) : undefined,
+      nextCursor: nextOffset < urls.length ? listingCursor(nextOffset, listing) : undefined,
     };
   }
 

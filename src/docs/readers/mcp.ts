@@ -20,8 +20,10 @@ import {
   withBackoff,
   type BackoffPolicy,
 } from '../../lib/transport-error';
-import { markdownPageTitle, offsetFromCursor } from './folder';
+import { markdownPageTitle } from './folder';
 import {
+  listingCursor,
+  offsetInListing,
   readProviderPage,
   splitPageReads,
   type DocumentationReader,
@@ -895,7 +897,8 @@ export class McpReader implements DocumentationReader {
     if (resources.length === 0) {
       throw new Error('MCP server exposes no resources; escalate this documentation source.');
     }
-    const offset = offsetFromCursor(cursor);
+    const listing = resources.map((resource): string => resource.uri);
+    const offset = offsetInListing(cursor, listing);
     const selected = resources.slice(offset, offset + limit);
     const reads: Array<DocPage | UnreadPage> = [];
     for (const resource of selected) {
@@ -918,7 +921,7 @@ export class McpReader implements DocumentationReader {
     const nextOffset = offset + selected.length;
     return {
       ...splitPageReads(reads),
-      nextCursor: nextOffset < resources.length ? String(nextOffset) : undefined,
+      nextCursor: nextOffset < resources.length ? listingCursor(nextOffset, listing) : undefined,
     };
   }
 }

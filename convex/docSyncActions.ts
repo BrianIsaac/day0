@@ -18,7 +18,7 @@ import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
 import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
-import type { UnreadPage } from '../src/docs/readers/batch';
+import { ListingChangedError, type UnreadPage } from '../src/docs/readers/batch';
 import {
   intakeScopeValues,
   restatedScope,
@@ -437,6 +437,19 @@ export const syncBatch = internalAction({
       });
       return { ok: true, ...counts, complete: false };
     } catch (error) {
+      if (error instanceof ListingChangedError) {
+        const restarted = await ctx.runMutation(internal.docSources.restartSync, {
+          sourceId: source._id,
+          runId: args.runId,
+        });
+        if (restarted !== null) {
+          await ctx.scheduler.runAfter(0, internal.docSyncActions.syncBatch, {
+            sourceId: source._id,
+            runId: restarted,
+          });
+        }
+        return { ok: restarted !== null, pages: 0, redactions: 0, complete: false };
+      }
       // A read cut off mid-batch is recorded as the transient it is, with its cause.
       // A stopped redaction component is a person's to start, not a transient.
       const reason = safeSyncError(

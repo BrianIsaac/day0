@@ -301,7 +301,9 @@ describe('documentation sync batching', (): void => {
     const pending = await scheduled(harness);
     expect(pending).toHaveLength(1);
     expect(pending[0].name).toBe('docSyncActions:syncBatch');
-    expect(pending[0].args).toEqual([{ sourceId, runId: expect.any(String), cursor: '25' }]);
+    expect(pending[0].args).toEqual([
+      { sourceId, runId: expect.any(String), cursor: expect.stringMatching(/^25@[0-9a-z]{7}$/) },
+    ]);
     expect(JSON.stringify(pending)).not.toContain(value);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
@@ -522,7 +524,7 @@ describe('documentation sync batching', (): void => {
     const reads = vi
       .spyOn(FolderReader.prototype, 'listPageBatch')
       .mockImplementation(async function (this: FolderReader, ...args) {
-        if (args[2] === '300' && !cutOff) {
+        if (args[2]?.startsWith('300@') && !cutOff) {
           cutOff = true;
           throw new Error('fetch failed', {
             cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
@@ -540,7 +542,7 @@ describe('documentation sync batching', (): void => {
     await harness.action(internal.docSyncActions.syncSource, { sourceId });
     await harness.finishAllScheduledFunctions(drainScheduled);
 
-    expect(reads.mock.calls.map((call) => call[2])).toEqual([
+    expect(reads.mock.calls.map((call) => call[2]?.split('@')[0])).toEqual([
       '300',
       '325',
       '350',
@@ -558,11 +560,69 @@ describe('documentation sync batching', (): void => {
     );
     expect(completed).toMatchObject({ state: 'completed', pageCount: 500 });
     expect(new Set(completed.refs).size).toBe(500);
-    expect(failed).toMatchObject({ state: 'error', cursor: '300', pageCount: 300 });
+    expect(failed).toMatchObject({
+      state: 'error',
+      cursor: expect.stringMatching(/^300@[0-9a-z]{7}$/),
+      pageCount: 300,
+    });
     expect(failed.reason).toBe(
       'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again. A newer sync of the source took over from its cursor after 300 pages.',
     );
   }, 60_000);
+
+  it('reads the source again from page one when its listing changed under a resumed cursor (adversarial pass, step 17)', async (): Promise<void> => {
+    const root = temporary('day0-sync-listing-');
+    await mkdir(join(root, 'many'));
+    const name = (index: number): string => `page-${String(index).padStart(3, '0')}.md`;
+    for (let index = 1; index <= 100; index += 1) {
+      await writeFile(join(root, 'many', name(index)), `# Page ${index}\n`, 'utf8');
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    const read = FolderReader.prototype.listPageBatch;
+    let cutOff = false;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      if (args[2]?.split('@')[0] === '50' && !cutOff) {
+        cutOff = true;
+        throw new Error('fetch failed', {
+          cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+        });
+      }
+      return await read.apply(this, args);
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    // A page before the cursor goes: the page that was 51st is now 50th.
+    await rm(join(root, 'many', name(10)));
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    const state = await harness.run(async (ctx) => ({
+      pages: await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .collect(),
+      runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+    }));
+    expect(state.pages.map((page) => page.ref).sort()).toEqual(
+      Array.from({ length: 100 }, (_value, index) => name(index + 1)).filter(
+        (ref) => ref !== name(10),
+      ),
+    );
+    expect(state.runs[0]).toMatchObject({ state: 'completed', pageCount: 99 });
+    expect(state.runs[1]).toMatchObject({ state: 'superseded' });
+    expect(state.runs[1].reason).toContain('the listing changed under its cursor');
+  });
 
   it('reads a private wiki with the reader secret it was linked with, and keeps the secret out of every stored reason (E-74)', async (): Promise<void> => {
     const secret = 'wiki-reader-contract-0123456789';

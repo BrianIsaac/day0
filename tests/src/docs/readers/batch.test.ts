@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import {
   isProviderFailure,
+  ListingChangedError,
+  listingCursor,
+  offsetInListing,
   readProviderPage,
   splitPageReads,
   unreadReason,
@@ -52,5 +55,22 @@ describe('one page a reader could not read (P5-11)', (): void => {
       pages: [page, { ...page, ref: 'page-3' }],
       unread: [{ ref: 'page-2', reason: 'HTTP 404' }],
     });
+  });
+});
+
+describe('a cursor bound to the listing it was taken from (adversarial pass, step 17)', (): void => {
+  it('continues the listing it was taken from at its offset', (): void => {
+    const listing = ['a.md', 'b.md', 'c.md'];
+    expect(offsetInListing(undefined, listing)).toBe(0);
+    expect(offsetInListing(listingCursor(2, listing), listing)).toBe(2);
+  });
+
+  it('refuses a cursor once a page before or after it was added or removed, or an offset alone', (): void => {
+    const cursor = listingCursor(2, ['a.md', 'b.md', 'c.md']);
+    expect(() => offsetInListing(cursor, ['b.md', 'c.md'])).toThrow(ListingChangedError);
+    expect(() => offsetInListing(cursor, ['a.md', 'b.md', 'c.md', 'd.md'])).toThrow(
+      ListingChangedError,
+    );
+    expect(() => offsetInListing('2', ['a.md', 'b.md', 'c.md'])).toThrow(ListingChangedError);
   });
 });

@@ -60,7 +60,7 @@ describe('URL documentation reader', (): void => {
     };
     const first = await new UrlsReader().listPageBatch(source, undefined, undefined, 1);
     expect(first.pages.map((page) => page.title)).toEqual(['One']);
-    expect(first.nextCursor).toBe('1');
+    expect(first.nextCursor).toMatch(/^1@[0-9a-z]{7}$/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

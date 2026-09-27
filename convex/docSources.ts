@@ -849,6 +849,50 @@ export const beginSync = internalMutation({
   },
 });
 
+/** Why a run whose listing changed under its cursor ended. */
+const LISTING_CHANGED_REASON =
+  'the listing changed under its cursor, so a new sync reads the source from the first page';
+
+/**
+ * Replace a running generation whose listing changed under its cursor with a fresh one.
+ *
+ * Internal; the sync calls it when a reader finds its offset cursor was taken
+ * from another listing (`ListingChangedError`). Reading on would miss a page
+ * that moved behind the cursor and delete it at the end, so the new run reads
+ * from page one and carries nothing over.
+ *
+ * @returns The new run's id, or null when the run is no longer the source's running one.
+ */
+export const restartSync = internalMutation({
+  args: { sourceId: v.id('docSources'), runId: v.id('docSyncRuns') },
+  handler: async (ctx, args): Promise<Id<'docSyncRuns'> | null> => {
+    const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
+    if (!source || !run || source.activeSyncId !== run._id || run.state !== 'running') return null;
+    const now = Date.now();
+    await ctx.db.patch(run._id, {
+      state: 'superseded',
+      completedAt: now,
+      reason: endedShort(LISTING_CHANGED_REASON, run.reason),
+    });
+    const runId = await ctx.db.insert('docSyncRuns', {
+      sourceId: source._id,
+      refs: [],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+      state: 'running',
+      createdAt: now,
+    });
+    await ctx.db.patch(source._id, {
+      activeSyncId: runId,
+      status: 'linking',
+      lastError: undefined,
+      updatedAt: now,
+    });
+    return runId;
+  },
+});
+
 /**
  * Delete a source's oldest finished runs, a few at a time.
  *
