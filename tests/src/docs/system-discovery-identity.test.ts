@@ -6,6 +6,7 @@ import {
   sameSystemForHostlessMention,
   type DiscoveredSystemCandidate,
 } from '../../../src/docs/system-discovery';
+import { surfaceSlug } from '../../../src/surfaces/slug';
 
 function candidate(
   name: string,
@@ -71,7 +72,9 @@ describe('documentation system identity convergence', (): void => {
     });
 
     expect(sameSystemForHostlessMention('analytics', studio, 'analytics', tile)).toBe(false);
-    expect(sameSystemForHostlessMention('analytics', studio, 'analytics', hostedLooker)).toBe(false);
+    expect(sameSystemForHostlessMention('analytics', studio, 'analytics', hostedLooker)).toBe(
+      false,
+    );
     expect(
       sameSystemForHostlessMention(
         'crm',
@@ -185,7 +188,12 @@ describe('documentation system identity convergence', (): void => {
   it('keeps differently named same-class systems on a shared host distinct', (): void => {
     expect(
       convergeDiscoveryCandidates([
-        candidate('Linear', 'kanban', 'linear.md', 'Linear endpoint: https://api.example.com/linear'),
+        candidate(
+          'Linear',
+          'kanban',
+          'linear.md',
+          'Linear endpoint: https://api.example.com/linear',
+        ),
         candidate('Jira', 'kanban', 'jira.md', 'Jira endpoint: https://api.example.com/jira'),
       ]).map((system) => system.name),
     ).toEqual(['Linear', 'Jira']);
@@ -270,12 +278,7 @@ describe('documentation system identity convergence', (): void => {
 
   it('keeps Linear and a Linear-backed internal tool on another endpoint distinct', (): void => {
     const systems = convergeDiscoveryCandidates([
-      candidate(
-        'Linear',
-        'kanban',
-        'linear.md',
-        'Linear MCP endpoint: https://mcp.linear.app/mcp',
-      ),
+      candidate('Linear', 'kanban', 'linear.md', 'Linear MCP endpoint: https://mcp.linear.app/mcp'),
       candidate(
         'Linear-backed internal tool',
         'kanban',
@@ -284,10 +287,7 @@ describe('documentation system identity convergence', (): void => {
       ),
     ]);
 
-    expect(systems.map((system) => system.name)).toEqual([
-      'Linear',
-      'Linear-backed internal tool',
-    ]);
+    expect(systems.map((system) => system.name)).toEqual(['Linear', 'Linear-backed internal tool']);
   });
 
   it('marks a transport line with no system candidate as evidence-only', (): void => {
@@ -364,5 +364,29 @@ describe('documented endpoint canonicalisation', (): void => {
     } finally {
       globalThis.URL = RealURL;
     }
+  });
+});
+
+describe('the slugs a name is matched by (review m50)', (): void => {
+  it('keys a name in another script by its digest slug, so one name meets itself and two never meet', (): void => {
+    const feishu = documentedSystemIdentity({ name: '飞书' });
+    const dingtalk = documentedSystemIdentity({ name: '钉钉' });
+    expect(feishu.slugs).toEqual([surfaceSlug('飞书')]);
+    expect(feishu.slugs[0]).toMatch(/^system-/);
+    expect(dingtalk.slugs).not.toEqual(feishu.slugs);
+    expect(
+      sameSystemForHostlessMention(
+        'chat',
+        feishu,
+        'chat',
+        documentedSystemIdentity({ name: '飞书' }),
+      ),
+    ).toBe(true);
+    expect(sameSystemForHostlessMention('chat', feishu, 'chat', dingtalk)).toBe(false);
+  });
+
+  it('keeps the ASCII slug a Latin name was matched by, beside its own', (): void => {
+    expect(documentedSystemIdentity({ name: 'Linear' }).slugs).toEqual(['linear']);
+    expect(documentedSystemIdentity({ name: 'Café' }).slugs).toEqual(['caf', surfaceSlug('Café')]);
   });
 });

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { SYSTEM_CLASSES } from '../agent/system-classes';
+import { droppedScriptSuffix } from '../lib/short-hash';
+import { surfaceSlug } from '../surfaces/slug';
 
 export interface DiscoveryPage {
   ref: string;
@@ -398,14 +400,26 @@ function documentedEndpoints(values: readonly string[]): string[] {
   return [...endpoints].sort();
 }
 
+/**
+ * The identity a documented or named system is matched by: its slugs, its
+ * transport name key, and the endpoints and hosts its quotes document.
+ *
+ * A name with letters the ASCII slug drops keys by the digest-carrying slug
+ * `surfaceSlug` gives it as well, so a Chinese name has a slug of its own on
+ * both sides of a match: a row an earlier build keyed as `system` is still
+ * found by its display name, and two different Chinese names never meet
+ * (review m50).
+ */
 export function documentedSystemIdentity(args: {
   name: string;
   quotes?: readonly string[];
   endpoints?: readonly string[];
 }): DocumentedSystemIdentity {
   const endpoints = documentedEndpoints([...(args.quotes ?? []), ...(args.endpoints ?? [])]);
+  const ascii = stableSlug(args.name);
+  const scripted = droppedScriptSuffix(args.name) === '' ? undefined : surfaceSlug(args.name);
   return {
-    slugs: [stableSlug(args.name)].filter(Boolean),
+    slugs: [...new Set([ascii, scripted].filter((slug): slug is string => !!slug))],
     nameKeys: [transportNameKey(args.name)].filter(Boolean),
     endpoints,
     hosts: [...new Set(endpoints.map((endpoint) => new URL(endpoint).host.toLowerCase()))].sort(),

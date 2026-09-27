@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { backfillCharterProvenance, surfaceSlug } from '../../convex/surfaces';
+import { backfillCharterProvenance, retireCharterSystem, surfaceSlug } from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -155,6 +155,53 @@ describe('surface persistence', (): void => {
     expect(rows.map((row): string => row.displayName).sort()).toEqual(['钉钉', '飞书'].sort());
     expect(new Set(rows.map((row): string => row.slug)).size).toBe(2);
     expect(rows.map((row): string => row.slug)).not.toContain('system');
+  });
+
+  it('finds a Chinese-named row an earlier build keyed as system when the charter names it again, and retires it (review m50)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const legacy = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'system',
+          displayName: '飞书',
+          class: 'chat',
+          verdict: 'declared',
+          whereFound: [],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'charter:namedSystems',
+              quote: '团队在飞书上沟通。',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        }),
+    );
+    const system = { name: '飞书', class: 'chat', whereMentioned: '团队在飞书上沟通。' };
+    await harness.mutation(internal.surfaces.seedFromCharter, { agentId, namedSystems: [system] });
+    const rows = await harness.run(
+      async (ctx): Promise<Doc<'surfaces'>[]> =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows.map((row) => row._id)).toEqual([legacy]);
+
+    const retired = await harness.run(
+      async (ctx) => await retireCharterSystem(ctx, { agentId, system, now: 5 }),
+    );
+    expect(retired).toBe(1);
+    expect((await readSurface(harness, legacy)).discoveryEvidence?.[0]).toMatchObject({
+      current: false,
+      lastSeenAt: 5,
+    });
   });
 
   it('seeds once and exposes rows only to the owner', async (): Promise<void> => {
