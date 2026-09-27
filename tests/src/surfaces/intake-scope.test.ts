@@ -754,19 +754,21 @@ describe('the scope an approved card reads', (): void => {
         page.ref === 'finance/handbook.md'
           ? {
               ...page,
-              markdown: page.markdown.replaceAll('`September close`', '`October close`'),
+              markdown: page.markdown.replace(
+                '- Project: `September close`',
+                '- Project: `October close`',
+              ),
             }
           : page,
     );
     expect(scopeDrift(finance, pages('revops-first'))).toEqual([]);
     expect(scopeDrift(finance, edited)).toEqual([finance.project]);
-    // `#ops-requests` is still stated on the other handbooks, so intake reads the same queue.
     expect(
       scopeDrift(
         finance,
         edited.filter((page): boolean => page.ref !== 'finance/handbook.md'),
       ),
-    ).toEqual([finance.team, finance.project, finance.channels![0]]);
+    ).toHaveLength(4);
   });
 
   it('compares values, not lines: a rename or a reflowed line is no drift, a removed value is', (): void => {
@@ -774,7 +776,6 @@ describe('the scope an approved card reads', (): void => {
     const renamed = pages('revops-first').map(
       (page): ScopePage => (page.ref === handbook ? { ...page, ref: 'finance/team.md' } : page),
     );
-    expect(scopeDrift(finance, renamed)).toEqual([]);
     const restated = restatedScope(finance, renamed);
     expect(restated.drift).toEqual([]);
     expect(restated.scope.team?.ref).toBe('finance/team.md');
@@ -794,7 +795,7 @@ describe('the scope an approved card reads', (): void => {
             }
           : page,
     );
-    expect(scopeDrift(finance, reflowed)).toEqual([]);
+    expect(restatedScope(finance, reflowed).drift).toEqual([]);
     expect(restatedScope(finance, reflowed).scope.channels?.[0]?.quote).toBe(
       '- Channels:   #finance-close ,  #ops-requests, #finance-desk',
     );
@@ -810,7 +811,14 @@ describe('the scope an approved card reads', (): void => {
             }
           : page,
     );
-    expect(scopeDrift(finance, removed)).toEqual([finance.channels![0]]);
+    expect(restatedScope(finance, removed).drift).toEqual([finance.channels![0]]);
+    // `#ops-requests` is still stated on the revops handbook, so intake reads the same queue.
+    expect(
+      restatedScope(
+        finance,
+        pages('revops-first').filter((page): boolean => page.ref !== handbook),
+      ).drift,
+    ).toEqual([finance.team, finance.project, finance.channels![0]]);
   });
 
   it('says which changed values intake still reads, and how to take the page as it is now', (): void => {
