@@ -1069,7 +1069,7 @@ describe('surface probe generations', (): void => {
     });
   });
 
-  it('persists only the latest successful generation and renews expiry only when asked', async (): Promise<void> => {
+  it('persists only the latest successful generation and clears the last manager details it held', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
@@ -1077,7 +1077,6 @@ describe('surface probe generations', (): void => {
     await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
     const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!first) throw new Error('probe was not reserved');
-    const renewedExpiry = 9_000_000_000_000;
     await expect(
       harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
@@ -1088,14 +1087,12 @@ describe('surface probe generations', (): void => {
         managerUserId: 'UMANAGER',
         managerName: 'Brian',
         verifiedAt: 100,
-        expiresAt: renewedExpiry,
       }),
     ).resolves.toBe(true);
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'connected',
       credentialLanded: true,
       lastVerifiedAt: 100,
-      expiresAt: renewedExpiry,
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
       managerName: 'Brian',
@@ -1115,7 +1112,6 @@ describe('surface probe generations', (): void => {
     expect(reprobed).toMatchObject({
       verdict: 'connected',
       lastVerifiedAt: 200,
-      expiresAt: renewedExpiry,
     });
     expect(reprobed.managerDmChannelId).toBeUndefined();
     expect(reprobed.managerUserId).toBeUndefined();
@@ -2314,5 +2310,303 @@ describe('a connected surface and its last skip reason', (): void => {
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface?.verdict).toBe('connected');
     expect(surface?.intakeSkipReason).toBeUndefined();
+  });
+});
+
+describe('access expiry (Q5)', (): void => {
+  const DAY = 24 * 60 * 60 * 1_000;
+  const PROPOSED_AT = Date.UTC(2026, 8, 1);
+  const APPROVED_AT = PROPOSED_AT + 10 * DAY;
+
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(PROPOSED_AT);
+  });
+
+  /**
+   * Propose, then approve as both roles ten days later.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   request: The proposal's request, carrying its access length or none.
+   *
+   * Returns:
+   *   The approved surface id.
+   */
+  async function approvedSurface(
+    harness: TestConvex<typeof schema>,
+    request: Record<string, unknown> = { target: { system: 'Linear' }, expiresInDays: 30 },
+  ): Promise<Id<'surfaces'>> {
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId,
+      request,
+      whereFound: [{ ref: 'runbook.md', quote: 'Use Linear MCP.' }],
+      path: 'mcp',
+      fallbackPath: 'escalate',
+      endpoint: 'https://mcp.linear.app/mcp',
+      expiresInDays: typeof request.expiresInDays === 'number' ? request.expiresInDays : 90,
+    });
+    vi.setSystemTime(APPROVED_AT);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
+    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' });
+    return surfaceId;
+  }
+
+  /**
+   * The payloads of one event type, in insertion order.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   type: Event type.
+   *
+   * Returns:
+   *   The payloads.
+   */
+  async function payloads(harness: TestConvex<typeof schema>, type: string): Promise<unknown[]> {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type === type)
+        .map((event): unknown => event.payload),
+    );
+  }
+
+  it('leaves the clock stopped at proposal and starts it at approval', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    expect((await readSurface(harness, surfaceId)).expiresAt).toBeUndefined();
+
+    const approved = await approvedSurface(harness);
+    expect((await readSurface(harness, approved)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
+  });
+
+  it("uses Q5's 90-day default when the proposal names no length", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { target: { system: 'Linear' } });
+    expect((await readSurface(harness, surfaceId)).expiresAt).toBe(APPROVED_AT + 90 * DAY);
+  });
+
+  it('caps a proposed length at a year', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, {
+      target: { system: 'Linear' },
+      expiresInDays: 3650,
+    });
+    expect((await readSurface(harness, surfaceId)).expiresAt).toBe(APPROVED_AT + 365 * DAY);
+  });
+
+  it('keeps the end date through every probe that connects', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    for (const verifiedAt of [APPROVED_AT + DAY, APPROVED_AT + 20 * DAY]) {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: probe.generation,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [],
+        verifiedAt,
+      });
+    }
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      expiresAt: APPROVED_AT + 30 * DAY,
+    });
+  });
+
+  it('refuses to probe an approval whose access has ended', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    vi.setSystemTime(APPROVED_AT + 31 * DAY);
+    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toBeNull();
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'approved',
+      reason: 'expired',
+    });
+  });
+
+  it('lets the manager set the length, which restarts the clock and renews an ended access', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['list_issues'],
+      toolArguments: [],
+      verifiedAt: APPROVED_AT + DAY,
+    });
+    const endedAt = APPROVED_AT + 31 * DAY;
+    await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endedAt });
+    const renewedAt = endedAt + DAY;
+    vi.setSystemTime(renewedAt);
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 60 });
+
+    const surface = await readSurface(harness, surfaceId);
+    expect(surface).toMatchObject({ verdict: 'approved', expiresAt: renewedAt + 60 * DAY });
+    expect(surface.reason).toBeUndefined();
+    expect(await payloads(harness, 'surface.access-set')).toEqual([
+      { surfaceId, by: 'approval', days: 30, expiresAt: APPROVED_AT + 30 * DAY },
+      { surfaceId, by: 'manager', days: 60, expiresAt: renewedAt + 60 * DAY, renewed: true },
+    ]);
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(
+      scheduled.filter(
+        (job) => job.name === 'surfaceActions:probeInternal' && job.scheduledTime === renewedAt,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('sets the length on a live connection without probing it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['list_issues'],
+      toolArguments: [],
+      verifiedAt: APPROVED_AT + DAY,
+    });
+    const setAt = APPROVED_AT + 5 * DAY;
+    vi.setSystemTime(setAt);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 7 });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      expiresAt: setAt + 7 * DAY,
+    });
+    expect((await payloads(harness, 'surface.access-set')).at(-1)).toEqual({
+      surfaceId,
+      by: 'manager',
+      days: 7,
+      expiresAt: setAt + 7 * DAY,
+      renewed: false,
+    });
+  });
+
+  it('refuses a length before approval, outside a day to a year, or from another owner', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const proposed = await seedDeclared(harness, agentId);
+    await propose(harness, proposed);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.surfaces.setAccessDays, { surfaceId: proposed, days: 30 }),
+    ).rejects.toThrow('Access length is set once the card is approved; this one is proposed.');
+
+    const approved = await approvedSurface(harness);
+    for (const days of [0, 366, 1.5]) {
+      await expect(
+        owner.mutation(api.surfaces.setAccessDays, { surfaceId: approved, days }),
+      ).rejects.toThrow('Access length must be a whole number of days from 1 to 365.');
+    }
+    await expect(
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .mutation(api.surfaces.setAccessDays, { surfaceId: approved, days: 30 }),
+    ).rejects.toThrow();
+    expect((await readSurface(harness, approved)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
+    expect(await payloads(harness, 'surface.access-set')).toEqual([
+      { surfaceId: approved, by: 'approval', days: 30, expiresAt: APPROVED_AT + 30 * DAY },
+    ]);
+  });
+
+  it('writes one notice a week before the end date, and none earlier', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const expiresAt = APPROVED_AT + 30 * DAY;
+
+    await expect(
+      harness.mutation(internal.surfaces.recordExpiryNotice, {
+        surfaceId,
+        now: expiresAt - 7 * DAY - 1,
+      }),
+    ).resolves.toBe(false);
+    for (const now of [expiresAt - 7 * DAY, expiresAt - 6 * DAY]) {
+      await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now });
+    }
+    expect(await payloads(harness, 'surface.expiring')).toEqual([{ surfaceId, expiresAt }]);
+  });
+
+  it('notices a new end date after the manager moves it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const first = APPROVED_AT + 30 * DAY;
+    await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: first - DAY });
+    vi.setSystemTime(first - DAY);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 3 });
+    const second = first - DAY + 3 * DAY;
+    await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: second - DAY });
+    expect(await payloads(harness, 'surface.expiring')).toEqual([
+      { surfaceId, expiresAt: first },
+      { surfaceId, expiresAt: second },
+    ]);
+  });
+
+  it('restarts, once, every connected clock the proposal started', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const current = await approvedSurface(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(current, { verdict: 'connected', credentialLanded: true });
+    });
+    const agentId = await seedAgent(harness);
+    const legacy = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          request: { expiresInDays: 30 },
+          managerApprovedAt: PROPOSED_AT + DAY,
+          itApprovedAt: PROPOSED_AT + DAY,
+          credentialLanded: true,
+          expiresAt: PROPOSED_AT + 30 * DAY,
+          createdAt: 1,
+        }),
+    );
+    const declared = await seedDeclared(harness, agentId, 'Slack', 'chat');
+    const upgradedAt = PROPOSED_AT + 20 * DAY;
+    vi.setSystemTime(upgradedAt);
+
+    await expect(harness.mutation(internal.surfaces.restartAccessClocks, {})).resolves.toEqual({
+      restarted: 1,
+      continued: false,
+    });
+    vi.setSystemTime(upgradedAt + DAY);
+    await expect(harness.mutation(internal.surfaces.restartAccessClocks, {})).resolves.toEqual({
+      restarted: 0,
+      continued: false,
+    });
+
+    expect((await readSurface(harness, legacy)).expiresAt).toBe(upgradedAt + 90 * DAY);
+    expect((await readSurface(harness, declared)).expiresAt).toBeUndefined();
+    expect((await readSurface(harness, current)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
+    expect((await payloads(harness, 'surface.access-set')).at(-1)).toEqual({
+      surfaceId: legacy,
+      by: 'upgrade',
+      days: 90,
+      from: PROPOSED_AT + 30 * DAY,
+      expiresAt: upgradedAt + 90 * DAY,
+    });
   });
 });
