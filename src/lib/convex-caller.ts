@@ -1,10 +1,16 @@
 /// <reference types="node" />
 
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { auth } from '@clerk/nextjs/server';
 import { ConvexHttpClient } from 'convex/browser';
 import { DEV_NO_AUTH } from './dev-auth';
-import { establishCaller, mintDevNoAuthToken } from './dev-auth-server';
+import {
+  DEV_NO_AUTH_COOKIE,
+  devNoAuthSessionId,
+  establishCaller,
+  mintDevNoAuthToken,
+} from './dev-auth-server';
 
 /**
  * The one seam a server route acts on Convex through, as the caller.
@@ -40,7 +46,10 @@ export function serverConvexUrl(values: Partial<Record<string, string>> = proces
 
 /** The established caller's Convex token, or null when their issuer gave none. */
 async function convexToken(): Promise<string | null> {
-  if (DEV_NO_AUTH) return mintDevNoAuthToken();
+  if (DEV_NO_AUTH) {
+    const jar = await cookies();
+    return mintDevNoAuthToken(await devNoAuthSessionId(jar.get(DEV_NO_AUTH_COOKIE)?.value));
+  }
   const { getToken } = await auth();
   return getToken({ template: 'convex' });
 }

@@ -132,10 +132,40 @@ export async function mintDevNoAuthSession(now: number = Date.now()): Promise<st
 }
 
 /**
+ * The id of the live session a cookie value carries, signed with this
+ * machine's current unlock secret, or undefined. The signature is checked by
+ * `crypto.subtle.verify`, which does not leak how much of it matched; an unset
+ * secret, a malformed value, an expired session and the raw secret itself all
+ * answer undefined.
+ *
+ * @param candidate - The cookie value the browser sent.
+ * @param now - The current time in milliseconds.
+ */
+export async function devNoAuthSessionId(
+  candidate: string | null | undefined,
+  now: number = Date.now(),
+): Promise<string | undefined> {
+  const secret = process.env.DEV_NO_AUTH_SECRET;
+  if (!secret || !candidate) return undefined;
+  const parts = candidate.split('.');
+  if (parts.length !== 4 || parts[0] !== SESSION_VERSION) return undefined;
+  const [version, id, expiresText, signatureText] = parts;
+  const expires = Number(expiresText);
+  if (!/^\d{1,12}$/.test(expiresText) || expires * 1000 <= now) return undefined;
+  const signature = fromBase64Url(signatureText);
+  if (!id || !signature) return undefined;
+  const valid = await crypto.subtle.verify(
+    'HMAC',
+    await sessionKey(secret),
+    signature,
+    new TextEncoder().encode(`${SESSION_CONTEXT}.${version}.${id}.${expiresText}`),
+  );
+  return valid ? id : undefined;
+}
+
+/**
  * Whether a cookie value is a live session signed with this machine's current
- * unlock secret. The signature is checked by `crypto.subtle.verify`, which does
- * not leak how much of it matched; an unset secret, a malformed value, an
- * expired session and the raw secret itself all answer false.
+ * unlock secret (see {@link devNoAuthSessionId}).
  *
  * @param candidate - The cookie value the browser sent.
  * @param now - The current time in milliseconds.
@@ -144,21 +174,7 @@ export async function isDevNoAuthSession(
   candidate: string | null | undefined,
   now: number = Date.now(),
 ): Promise<boolean> {
-  const secret = process.env.DEV_NO_AUTH_SECRET;
-  if (!secret || !candidate) return false;
-  const parts = candidate.split('.');
-  if (parts.length !== 4 || parts[0] !== SESSION_VERSION) return false;
-  const [version, id, expiresText, signatureText] = parts;
-  const expires = Number(expiresText);
-  if (!/^\d{1,12}$/.test(expiresText) || expires * 1000 <= now) return false;
-  const signature = fromBase64Url(signatureText);
-  if (!id || !signature) return false;
-  return crypto.subtle.verify(
-    'HMAC',
-    await sessionKey(secret),
-    signature,
-    new TextEncoder().encode(`${SESSION_CONTEXT}.${version}.${id}.${expiresText}`),
-  );
+  return (await devNoAuthSessionId(candidate, now)) !== undefined;
 }
 
 /** The caller a handler is running for, or the refusal to answer with. */
