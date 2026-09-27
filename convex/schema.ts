@@ -424,6 +424,15 @@ export default defineSchema({
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
+    /**
+     * Who set `expiresAt` (Q5): the approval that started the clock, the
+     * manager, or the upgrade that restarted a clock the proposal had started.
+     * Cleared with the date; the `surface.access-set` event stays the record.
+     * The `surfaces-access-set-by` migration fills it from that event.
+     */
+    accessSetBy: v.optional(
+      v.union(v.literal('approval'), v.literal('manager'), v.literal('upgrade')),
+    ),
     reason: v.optional(v.string()),
     createdAt: v.number(),
   })

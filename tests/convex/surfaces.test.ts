@@ -2454,7 +2454,10 @@ describe('access expiry (Q5)', (): void => {
     expect((await readSurface(harness, surfaceId)).expiresAt).toBeUndefined();
 
     const approved = await approvedSurface(harness);
-    expect((await readSurface(harness, approved)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
+    expect(await readSurface(harness, approved)).toMatchObject({
+      expiresAt: APPROVED_AT + 30 * DAY,
+      accessSetBy: 'approval',
+    });
   });
 
   it("uses Q5's 90-day default when the proposal names no length", async (): Promise<void> => {
@@ -2544,7 +2547,11 @@ describe('access expiry (Q5)', (): void => {
       .mutation(api.surfaces.setAccessDays, { surfaceId, days: 60 });
 
     const surface = await readSurface(harness, surfaceId);
-    expect(surface).toMatchObject({ verdict: 'approved', expiresAt: renewedAt + 60 * DAY });
+    expect(surface).toMatchObject({
+      verdict: 'approved',
+      expiresAt: renewedAt + 60 * DAY,
+      accessSetBy: 'manager',
+    });
     expect(surface.reason).toBeUndefined();
     expect(await payloads(harness, 'surface.access-set')).toEqual([
       { surfaceId, by: 'approval', days: 30, expiresAt: APPROVED_AT + 30 * DAY },
@@ -2772,8 +2779,11 @@ describe('access expiry (Q5)', (): void => {
     expect(probed).not.toContain(ended);
     expect((await readSurface(harness, ended)).reason).toBe('expired');
 
-    for (const surfaceId of [connected, approved, ungranted]) {
-      expect((await readSurface(harness, surfaceId)).expiresAt).toBe(upgradedAt + 90 * DAY);
+    for (const surfaceId of [connected, approved, ungranted, swept]) {
+      expect(await readSurface(harness, surfaceId)).toMatchObject({
+        expiresAt: upgradedAt + 90 * DAY,
+        accessSetBy: 'upgrade',
+      });
     }
     expect((await readSurface(harness, ended)).expiresAt).toBe(PROPOSED_AT + 30 * DAY);
     expect((await readSurface(harness, declared)).expiresAt).toBeUndefined();

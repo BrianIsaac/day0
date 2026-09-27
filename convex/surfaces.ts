@@ -25,6 +25,7 @@ import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent } from './eventLog';
+import { isEventOf } from '../src/events/contract';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -545,6 +546,7 @@ export const propose = internalMutation({
       credentialLocation: args.credentialLocation,
       credentialRef: undefined,
       expiresAt: undefined,
+      accessSetBy: undefined,
       reason: undefined,
       intakeScope: args.intakeScope,
     });
@@ -1439,7 +1441,7 @@ const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
 ];
 
 /** Who set an access end date: the approval that started it, the manager, or the upgrade. */
-type AccessSetBy = 'approval' | 'manager' | 'upgrade';
+type AccessSetBy = NonNullable<Doc<'surfaces'>['accessSetBy']>;
 
 /**
  * The access length an approved card carries, in whole days.
@@ -1638,7 +1640,11 @@ export const setAccessDays = mutation({
     const now = Date.now();
     const expiresAt = now + args.days * DAY_MS;
     const renewed = surface.reason === 'expired';
-    await ctx.db.patch(surface._id, { expiresAt, ...(renewed ? { reason: undefined } : {}) });
+    await ctx.db.patch(surface._id, {
+      expiresAt,
+      accessSetBy: 'manager',
+      ...(renewed ? { reason: undefined } : {}),
+    });
     await logAccessSet(ctx, surface, {
       by: 'manager',
       days: args.days,
@@ -1721,7 +1727,11 @@ export async function restartAccessClocksPage(
     const ended = surface.reason === 'expired';
     if (ended && !(await endedByThisRelease(ctx, surface))) continue;
     const expiresAt = now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
-    await ctx.db.patch(surface._id, { expiresAt, ...(ended ? { reason: undefined } : {}) });
+    await ctx.db.patch(surface._id, {
+      expiresAt,
+      accessSetBy: 'upgrade',
+      ...(ended ? { reason: undefined } : {}),
+    });
     await logAccessSet(ctx, surface, {
       by: 'upgrade',
       days: SURFACE_ACCESS_DEFAULT_DAYS,
@@ -1743,6 +1753,55 @@ export async function restartAccessClocksPage(
     cursor: page.continueCursor,
     isDone: page.isDone,
   };
+}
+
+/**
+ * One page of the `surfaces-access-set-by` migration: give every card with an
+ * access end date the setter its newest `surface.access-set` event names, or
+ * `upgrade` when it has none (a date the proposal-started clock left and no
+ * event recorded). Run by `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function backfillAccessSetByPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.expiresAt === undefined || surface.accessSetBy !== undefined) continue;
+    await ctx.db.patch(surface._id, {
+      accessSetBy: (await latestAccessSetter(ctx, surface)) ?? 'upgrade',
+    });
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/** Who set a surface's end date last, by its newest `surface.access-set` event. */
+async function latestAccessSetter(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<AccessSetBy | undefined> {
+  for await (const event of ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (index) =>
+      index.eq('agentId', surface.agentId).eq('type', 'surface.access-set'),
+    )
+    .order('desc')) {
+    if (!isEventOf(event, 'surface.access-set') || event.payload.surfaceId !== surface._id)
+      continue;
+    const by: unknown = event.payload.by;
+    return by === 'approval' || by === 'manager' || by === 'upgrade' ? by : undefined;
+  }
+  return undefined;
 }
 
 /** Record this poll's waterfall position and visible skip outcome. */
@@ -1815,7 +1874,12 @@ export const approve = mutation({
     // Q5: the access clock starts here, at the second approval, never at proposal.
     const days = approvedAccessDays(surface.request);
     const expiresAt = now + days * DAY_MS;
-    await ctx.db.patch(surface._id, { ...patch, verdict: 'approved', expiresAt });
+    await ctx.db.patch(surface._id, {
+      ...patch,
+      verdict: 'approved',
+      expiresAt,
+      accessSetBy: 'approval',
+    });
     await logAccessSet(ctx, surface, { by: 'approval', days, expiresAt, at: now });
     await appendEvent(ctx, {
       agentId: surface.agentId,
@@ -1886,6 +1950,7 @@ export const reject = mutation({
       credentialLanded: false,
       lastVerifiedAt: undefined,
       expiresAt: undefined,
+      accessSetBy: undefined,
     });
     await appendEvent(ctx, {
       agentId: surface.agentId,
