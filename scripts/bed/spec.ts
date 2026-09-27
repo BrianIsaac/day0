@@ -9,6 +9,10 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 export const BED_DIR = 'bed/company';
+/** The company bed's entry, relative to the checkout. */
+export const COMPANY_SCRIPT = 'scripts/bed/company.ts';
+/** How the company bed is run: internal tooling, by its script path rather than a package alias (N4). */
+export const COMPANY_COMMAND = `pnpm exec tsx ${COMPANY_SCRIPT}`;
 export const LINEAR_KEY_ENV = 'DAY0_BED_LINEAR_API_KEY';
 export const SLACK_TOKEN_ENV = 'DAY0_BED_SLACK_BOT_TOKEN';
 export const NOTION_TOKEN_ENV = 'DAY0_BED_NOTION_TOKEN';
@@ -115,7 +119,7 @@ export function ticketsToFile(spec: BedSpec, set: string | undefined): BedTicket
 }
 
 /**
- * What the operator makes by hand, once, before `pnpm bed:company check` can
+ * What the operator makes by hand, once, before the bed's `check` can
  * be green.
  *
  * Args:
@@ -133,10 +137,10 @@ export function companyHandSteps(spec: BedSpec): string[] {
     `2. Slack: the public channels ${BED_CHANNELS.map((name) => `#${name}`).join(', ')}, and one shared bot app with chat:write.customize, invited to all five. The asks of ${BED_DIR}/slack-asks.md are posted by you during each sitting, once the employees are deployed (that file says which a sitting posts).`,
     `3. Notion: the two pages in ${BED_DIR}/notion/, pasted under one parent page shared with the integration (${BED_DIR}/notion/README.md).`,
     `4. .env.local: ${LINEAR_KEY_ENV}, ${SLACK_TOKEN_ENV} and ${NOTION_TOKEN_ENV}.`,
-    'Then `pnpm bed:company check` until it is all green, and `pnpm bed:company seed`.',
+    `Then \`${COMPANY_COMMAND} check\` until it is all green, and \`${COMPANY_COMMAND} seed\`.`,
     ...Object.entries(spec.sets).map(
       ([name, keys]) =>
-        `For a sitting that files only ${keys.join(', ')}: \`pnpm bed:company check --set ${name}\`, then \`pnpm bed:company seed --set ${name}\`; every other bed ticket is archived.`,
+        `For a sitting that files only ${keys.join(', ')}: \`${COMPANY_COMMAND} check --set ${name}\`, then \`${COMPANY_COMMAND} seed --set ${name}\`; every other bed ticket is archived.`,
     ),
   ];
 }

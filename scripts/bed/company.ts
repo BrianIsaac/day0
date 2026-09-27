@@ -1,6 +1,7 @@
 /// <reference types="node" />
 /**
- * `pnpm bed:company <verb>`: the company bed, from a fresh clone.
+ * `pnpm exec tsx scripts/bed/company.ts <verb>`: the company bed, from a fresh
+ * clone. Internal tooling, run by its path rather than a package alias (N4).
  *
  *   docs [--replace]   copy bed/company/folder/ into the documentation folder
  *   check [--set <n>]  what the hand steps have made, and what is still missing
@@ -15,7 +16,8 @@
  * README's "The company bed"). This script never creates them; `check` reads
  * them back and says what is missing and how to add it.
  *
- * Tokens come from `.env.local`: DAY0_BED_LINEAR_API_KEY,
+ * Tokens come from `.env.local`, which the entry loads beneath the shell's own
+ * values: DAY0_BED_LINEAR_API_KEY,
  * DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN. None of them is ever
  * printed: every line goes through a scrub that removes their values and any
  * token shape before it reaches the terminal.
@@ -85,6 +87,7 @@ import {
 import {
   BED_CHANNELS,
   BED_DIR,
+  COMPANY_COMMAND,
   LINEAR_KEY_ENV,
   loadBedSpec,
   NOTION_TOKEN_ENV,
@@ -135,7 +138,7 @@ export interface CompanyIo {
   sleep(ms: number): Promise<void>;
 }
 
-const USAGE = `Usage: pnpm bed:company <verb>
+const USAGE = `Usage: ${COMPANY_COMMAND} <verb>
 
   docs [--replace]   copy bed/company/folder/ into the documentation folder
                      (DAY0_DOCS_HOST_DIR, default ./docs-local); refuses to
@@ -323,7 +326,7 @@ export function runDocs(io: CompanyIo, options: CompanyOptions, report: Report):
     for (const refusal of plan.refused) report.line('gap', `${refusal.ref} ${refusal.reason}`);
     report.say('');
     report.say(
-      'Nothing was written. Move those pages aside, or run `pnpm bed:company docs --replace` to overwrite them.',
+      `Nothing was written. Move those pages aside, or run \`${COMPANY_COMMAND} docs --replace\` to overwrite them.`,
     );
     return 1;
   }
@@ -1070,7 +1073,7 @@ function checkFolder(io: CompanyIo, report: Report): void {
   const target = docsTarget(io);
   report.section(`Documentation folder ${target}`);
   if (!existsSync(target)) {
-    report.line('gap', `${target} does not exist: pnpm bed:company docs`);
+    report.line('gap', `${target} does not exist: ${COMPANY_COMMAND} docs`);
     return;
   }
   const pages = trackedPages(join(io.cwd, BED_DIR, 'folder'));
@@ -1084,12 +1087,12 @@ function checkFolder(io: CompanyIo, report: Report): void {
   for (const page of plan.write)
     report.line(
       'gap',
-      `${page.ref} is ${page.reason === 'new' ? 'missing' : 'out of date'}: pnpm bed:company docs`,
+      `${page.ref} is ${page.reason === 'new' ? 'missing' : 'out of date'}: ${COMPANY_COMMAND} docs`,
     );
   for (const refusal of plan.refused)
-    report.line('gap', `${refusal.ref} ${refusal.reason}: pnpm bed:company docs --replace`);
+    report.line('gap', `${refusal.ref} ${refusal.reason}: ${COMPANY_COMMAND} docs --replace`);
   for (const removal of plan.remove)
-    report.line('gap', `${removal.ref} is ${removal.reason}: pnpm bed:company docs removes it`);
+    report.line('gap', `${removal.ref} is ${removal.reason}: ${COMPANY_COMMAND} docs removes it`);
   for (const ref of plan.foreign)
     report.line('gap', `${ref} is not a company bed page and would sync as one: move it out`);
   if (plan.write.length + plan.refused.length + plan.remove.length + plan.foreign.length === 0) {
@@ -1716,6 +1719,8 @@ async function main(): Promise<number> {
     console.log(USAGE);
     return options.help ? 0 : 2;
   }
+  // The bed's tokens live there; a value the shell already exports wins.
+  if (existsSync('.env.local')) process.loadEnvFile('.env.local');
   return await runCompany(options, consoleIo());
 }
 

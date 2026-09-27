@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -538,6 +538,21 @@ describe('the command line', (): void => {
     expect(() => parseCompanyArguments(['seed', '--replace'])).toThrow('--replace belongs to docs');
     expect(() => parseCompanyArguments(['post'])).toThrow('post needs a ticket key');
     expect(() => parseCompanyArguments(['reset'])).toThrow('is not a verb');
+  });
+
+  it('is run by its script path, with no package alias (N4)', (): void => {
+    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(Object.keys(manifest.scripts).filter((name) => name.startsWith('bed:'))).toEqual([]);
+    const help = spawnSync(resolve('node_modules/.bin/tsx'), ['scripts/bed/company.ts', '--help'], {
+      encoding: 'utf8',
+      env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('Usage: pnpm exec tsx scripts/bed/company.ts <verb>');
+    expect(help.stdout).not.toContain('bed:company');
   });
 
   it('reads the tracked tickets: ten, one of them late, every team and state declared', (): void => {
@@ -1684,7 +1699,7 @@ describe('docs', (): void => {
     expect(existsSync(join(h.docs, 'finance'))).toBe(false);
     expect(existsSync(join(h.docs, MANIFEST_FILE))).toBe(false);
     expect(h.logs.join('\n')).toContain(
-      'onboarding.md is already there and was not written by bed:company',
+      'onboarding.md is already there and was not written by the company bed',
     );
     expect(await run(h, ['docs', '--replace'])).toBe(0);
     expect(readFileSync(join(h.docs, 'onboarding.md'), 'utf8')).toContain(
@@ -1724,7 +1739,7 @@ describe('docs', (): void => {
     writeFileSync(join(h.docs, 'revops/handbook.md'), '# Edited by hand\n');
     expect(await run(h, ['docs'])).toBe(1);
     expect(h.logs.join('\n')).toContain(
-      'revops/handbook.md was written by bed:company and edited since',
+      'revops/handbook.md was written by the company bed and edited since',
     );
   });
 });
@@ -1886,9 +1901,9 @@ describe('check', (): void => {
     writeFileSync(join(h.root, 'docs-local', 'README.md'), DOCS_STUB);
     expect(await run(h, ['check'])).toBe(1);
     const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
-    expect(gaps).toContain('onboarding.md is missing: pnpm bed:company docs');
+    expect(gaps).toContain('onboarding.md is missing: pnpm exec tsx scripts/bed/company.ts docs');
     expect(gaps).toContain(
-      "README.md is the setup's placeholder page: pnpm bed:company docs removes it",
+      "README.md is the setup's placeholder page: pnpm exec tsx scripts/bed/company.ts docs removes it",
     );
     expect(gaps).toContain('team FIN is missing: create it by hand in Linear');
     expect(gaps).toContain(

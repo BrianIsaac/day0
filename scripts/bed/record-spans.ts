@@ -2,7 +2,7 @@
 /**
  * Record the span model's answers over the company bed's pages.
  *
- *   DAY0_REDACTOR_URL=http://127.0.0.1:<port> pnpm bed:record-spans
+ *   DAY0_REDACTOR_URL=http://127.0.0.1:<port> pnpm exec tsx scripts/bed/record-spans.ts
  *
  * Documentation sync sends each page's title and body to the redaction
  * component whole, so the component's answer for a page's exact text is what

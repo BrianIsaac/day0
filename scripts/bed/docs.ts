@@ -138,8 +138,8 @@ export function planDocs(input: {
         ref: page.ref,
         reason:
           written === undefined
-            ? 'is already there and was not written by bed:company'
-            : 'was written by bed:company and edited since',
+            ? 'is already there and was not written by the company bed'
+            : 'was written by the company bed and edited since',
       });
     }
   }

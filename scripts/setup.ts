@@ -108,7 +108,7 @@ import {
   type RedactorGpuDecision,
   type VenvDevice,
 } from './redactor-device';
-import { companyHandSteps, loadBedSpec } from './bed/spec';
+import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from './bed/spec';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './lib/docker';
 import { setupRoute } from './setup-route';
 import {
@@ -337,8 +337,8 @@ const USAGE = `Usage: pnpm setup:local [options]
   --sandbox <local|daytona>     real mode: what verifies authored skills (default local)
   --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
   --company                     real mode: then copy the company bed's pages into the
-                                documentation folder (pnpm bed:company docs), print its
-                                hand steps and run pnpm bed:company check
+                                documentation folder (scripts/bed/company.ts docs), print
+                                its hand steps and run its check
   --dry-run                     print the plan of commands and write nothing
   --reset                       clear this project (containers and volumes) first
   --adopt                       re-adopt the installation of a checkout that moved here:
@@ -1182,7 +1182,7 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
       : ['sync:env', 'convex dev --once', 'migrations', 'release:stamp']),
     'convex:restart',
     'check:setup',
-    ...(real && input.company ? ['bed:company docs', 'bed:company check'] : []),
+    ...(real && input.company ? ['company bed docs', 'company bed check'] : []),
   ];
 }
 
@@ -1629,14 +1629,13 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
       return [{ command: 'pnpm', args: ['run', 'convex:restart'] }];
     case 'check:setup':
       return [{ command: 'pnpm', args: ['run', 'check:setup'] }];
-    case 'bed:company docs':
-      return [{ command: 'pnpm', args: ['run', 'bed:company', 'docs'] }];
-    case 'bed:company check':
+    case 'company bed docs':
+      return [{ command: 'pnpm', args: ['exec', 'tsx', COMPANY_SCRIPT, 'docs'] }];
+    case 'company bed check':
       // A check that only lists the hand steps still owed exits non-zero by
-      // design, and the setup says so in the line under it. Silencing pnpm's
-      // own reporter keeps `ELIFECYCLE  Command failed with exit code 1` out
-      // of a setup that worked; the checker's own output is unchanged.
-      return [{ command: 'pnpm', args: ['--reporter=silent', 'run', 'bed:company', 'check'] }];
+      // design, and the setup says so in the line under it; `pnpm exec` adds
+      // no failure line of its own to a setup that worked.
+      return [{ command: 'pnpm', args: ['exec', 'tsx', COMPANY_SCRIPT, 'check'] }];
     default:
       throw new Error(`no command for step "${step}"`);
   }
@@ -3353,18 +3352,18 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     if (real && options.company) {
       io.log('');
-      const [docsCommand] = stepCommands('bed:company docs', context);
+      const [docsCommand] = stepCommands('company bed docs', context);
       const docs = step(
         io,
         steps,
-        'bed:company docs',
-        'pnpm bed:company docs',
+        'company bed docs',
+        `${COMPANY_COMMAND} docs`,
         docsCommand.command,
         docsCommand.args,
         streamed,
       );
       if (docs.status !== 0) {
-        reportFailure(io, 'pnpm bed:company docs', docs, resolvedProject, options.mode);
+        reportFailure(io, `${COMPANY_COMMAND} docs`, docs, resolvedProject, options.mode);
         return 1;
       }
       io.log('');
@@ -3376,12 +3375,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         for (const printed of wrapped) io.log(printed);
       }
       io.log('');
-      const [bedCheckCommand] = stepCommands('bed:company check', context);
+      const [bedCheckCommand] = stepCommands('company bed check', context);
       const bedCheck = step(
         io,
         steps,
-        'bed:company check',
-        'pnpm bed:company check',
+        'company bed check',
+        `${COMPANY_COMMAND} check`,
         bedCheckCommand.command,
         bedCheckCommand.args,
         { ...streamed, inherit: false },
@@ -3394,12 +3393,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         if (onlyOwedCompanyTokenGaps(bedCheckOutput)) {
           io.log(
             '    The setup itself is done; the gaps above are the hand steps still owed. Run ' +
-              '`pnpm bed:company check` again after each, then `pnpm bed:company seed`.',
+              `\`${COMPANY_COMMAND} check\` again after each, then \`${COMPANY_COMMAND} seed\`.`,
           );
         } else {
           io.log(
             '    The company bed check found a gap beyond the token hand steps. ' +
-              'Fix the GAP lines above, then run `pnpm bed:company check` again.',
+              `Fix the GAP lines above, then run \`${COMPANY_COMMAND} check\` again.`,
           );
           return 1;
         }

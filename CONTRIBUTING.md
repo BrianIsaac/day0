@@ -45,11 +45,11 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | `pnpm probe:docs-source <docSourceId>` | Real mode: syncs one documentation source and prints its page and redaction counts |
 | `pnpm probe:surface <surfaceId>` | Real mode: probes one surface card and prints the verdict |
 | `pnpm demo:bed <subcommand>` | A restorable demonstration bed: snapshot, restore, up, preflight, offline-rung, down |
-| `pnpm bed:company <subcommand>` | The synthetic company bed: its pages, its check and its seed |
-| `pnpm bed:record-spans` | Records the span model's answers over the company bed's pages |
 | `pnpm eval:comparison`, `eval:revocation`, `eval:gate` | The evaluation, below |
 | `pnpm metrics:recompute <export>` | Recomputes an owner's supervision figures from a snapshot export |
 | `pnpm lint`, `typecheck`, `test`, `build` | The gate, below |
+
+The company bed's tools are maintainers' tooling rather than product commands, so they have no `pnpm` script and are run by their paths: `pnpm exec tsx scripts/bed/company.ts <verb>` (the synthetic company bed: its pages, its check and its seed), `pnpm exec tsx scripts/bed/record-spans.ts` (the span model's answers over the bed's pages) and `pnpm exec tsx scripts/bed/rehearse.ts` (the rehearsal).
 
 `PLAYWRIGHT_ALLOWED_ORIGINS` in `.env.local` is the list of origins the browser component (`--profile browser`) may open, separated by `;`; the default is the demo tile and the app on this host.
 

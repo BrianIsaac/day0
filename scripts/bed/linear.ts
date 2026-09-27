@@ -16,7 +16,11 @@ export { LinearClient };
 
 /** The line that makes an issue the bed's, and names which ticket it is. */
 export const MARKER_PREFIX = 'day0-demo-key: ';
-/** What the label seed creates says about itself, so teardown removes only its own. */
+/**
+ * What the label seed creates says about itself, so teardown removes only its
+ * own. Compared by equality with labels already in a workspace, so its text
+ * keeps the alias the bed was once run by.
+ */
 export const LABEL_DESCRIPTION =
   'Day0 company bed: created by pnpm bed:company seed, removed by teardown.';
 const MARKER_LINE = /(?:^|\n)day0-demo-key: ([a-z0-9-]+)\s*$/;

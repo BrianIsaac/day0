@@ -851,7 +851,7 @@ describe('--company', (): void => {
     expect(parseSetupArguments(['--company']).company).toBe(true);
     expect(parseSetupArguments([]).company).toBeUndefined();
     const real = sequenceSteps('featherless', { mode: 'real', sandbox: 'local', company: true });
-    expect(real.slice(-3)).toEqual(['check:setup', 'bed:company docs', 'bed:company check']);
+    expect(real.slice(-3)).toEqual(['check:setup', 'company bed docs', 'company bed check']);
     expect(sequenceSteps('key', { mode: 'mock', company: true })).toEqual(sequenceSteps('key'));
   });
 
@@ -860,13 +860,13 @@ describe('--company', (): void => {
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
     const lines = ran(h);
     const checker = lines.indexOf('run check:setup');
-    const docs = lines.indexOf('pnpm run bed:company docs');
-    const check = lines.indexOf('pnpm --reporter=silent run bed:company check');
+    const docs = lines.indexOf('pnpm exec tsx scripts/bed/company.ts docs');
+    const check = lines.indexOf('pnpm exec tsx scripts/bed/company.ts check');
     expect(checker).toBeGreaterThan(-1);
     expect(docs).toBeGreaterThan(checker);
     expect(check).toBeGreaterThan(docs);
     const printed = h.output.join('\n');
-    expect(printed).toContain('[12/13] pnpm bed:company docs');
+    expect(printed).toContain('[12/13] pnpm exec tsx scripts/bed/company.ts docs');
     expect(printed).toContain("The company bed's hand steps, once per workspace:");
     expect(printed).toContain('\n  1. Linear, as a workspace admin: the teams REVOPS');
     const flat = printed.replace(/\s+/g, ' ');
@@ -880,46 +880,48 @@ describe('--company', (): void => {
       'DAY0_BED_LINEAR_API_KEY, DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN',
     );
     expect(printed.indexOf('hand steps')).toBeLessThan(
-      printed.indexOf('[13/13] pnpm bed:company check'),
+      printed.indexOf('[13/13] pnpm exec tsx scripts/bed/company.ts check'),
     );
   });
 
   it('stops when the pages cannot be copied, and runs no check', async (): Promise<void> => {
     const h = companyHarness([
       {
-        match: 'bed:company docs',
+        match: 'company.ts docs',
         status: 1,
-        stderr: 'GAP onboarding.md is already there and was not written by bed:company',
+        stderr: 'GAP onboarding.md is already there and was not written by the company bed',
       },
     ]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(1);
-    expect(ran(h)).not.toContain('bed:company check');
-    expect(h.output.join('\n')).toContain('error: pnpm bed:company docs failed (status 1).');
+    expect(ran(h)).not.toContain('company.ts check');
+    expect(h.output.join('\n')).toContain(
+      'error: pnpm exec tsx scripts/bed/company.ts docs failed (status 1).',
+    );
   });
 
   it('says the gaps are the hand steps still owed without failing the setup', async (): Promise<void> => {
-    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: owedTokenGaps }]);
+    const h = companyHarness([{ match: 'company.ts check', status: 1, stderr: owedTokenGaps }]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
     const printed = h.output.join('\n');
     expect(printed).toContain('the gaps above are the hand steps still owed');
     expect(printed).toContain('GAP  DAY0_BED_LINEAR_API_KEY');
   });
 
-  it('runs that check with pnpm silent, so its gaps do not print a failed command', async (): Promise<void> => {
-    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: owedTokenGaps }]);
+  it('runs that check by its script path, which adds no failed-command line of its own', async (): Promise<void> => {
+    const h = companyHarness([{ match: 'company.ts check', status: 1, stderr: owedTokenGaps }]);
     expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
     // The gaps are the hand steps the reader still owes, and the setup says so
-    // itself; pnpm's own `ELIFECYCLE Command failed with exit code 1` above
-    // that line reads as a broken setup instead.
-    expect(ran(h)).toContain('pnpm --reporter=silent run bed:company check');
-    expect(ran(h)).not.toContain('\npnpm run bed:company check');
+    // itself; `pnpm run`'s `ELIFECYCLE Command failed with exit code 1` above
+    // that line would read as a broken setup instead, and `pnpm exec` prints none.
+    expect(ran(h)).toContain('pnpm exec tsx scripts/bed/company.ts check');
+    expect(ran(h)).not.toContain('bed:company');
   });
 
   it('fails setup and shows a missing team instead of calling it an owed hand step', async (): Promise<void> => {
     const gap = '  GAP  team FIN is missing from the Linear workspace';
     const h = companyHarness([
       {
-        match: 'bed:company check',
+        match: 'company.ts check',
         status: 1,
         stderr: `${gap}\n1 gap(s) above.`,
       },
@@ -934,7 +936,7 @@ describe('--company', (): void => {
     const wrong = '  GAP  DAY0_BED_LINEAR_API_KEY did not authenticate with Linear';
     const h = companyHarness([
       {
-        match: 'bed:company check',
+        match: 'company.ts check',
         status: 1,
         stderr: `${owedTokenGaps.split('\n').slice(1, 3).join('\n')}\n${wrong}\n3 gap(s) above.`,
       },
@@ -959,8 +961,9 @@ describe('--company', (): void => {
     const h = companyHarness();
     expect(await runSetup(realRoute({ company: true, dryRun: true }), h.io)).toBe(0);
     const printed = h.output.join('\n');
-    expect(printed).toContain('pnpm run bed:company docs');
-    expect(printed).toContain('pnpm --reporter=silent run bed:company check');
+    expect(printed).toContain('pnpm exec tsx scripts/bed/company.ts docs');
+    expect(printed).toContain('pnpm exec tsx scripts/bed/company.ts check');
+    expect(printed).not.toContain('pnpm run bed:company');
     expect(existsSync(join(h.directory, 'docs-local'))).toBe(false);
   });
 });

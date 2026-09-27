@@ -509,33 +509,33 @@ The company bed runs three digital employees in one synthetic company, Kestrel S
 | `bed/company/slack-asks.md` | the three Slack asks a person posts during each sitting, once the employees are deployed |
 | `bed/company/answers.md` | the manager's Day-1 answers per role, and the note for the logistics retry |
 
-From a fresh clone:
+The bed is maintainers' tooling rather than a product command, so it has no `pnpm` script: it is run by its path, `pnpm exec tsx scripts/bed/company.ts <verb>`. From a fresh clone:
 
 ```bash
 ./setup.sh --route featherless --company
 ```
 
-That is the ordinary real-mode setup followed by `pnpm bed:company docs`, which copies the thirteen pages into `docs-local/` and removes the setup's placeholder page (it never overwrites a page it did not write unless you pass `--replace`), then the hand steps, then `pnpm bed:company check`.
+That is the ordinary real-mode setup followed by `pnpm exec tsx scripts/bed/company.ts docs`, which copies the thirteen pages into `docs-local/` and removes the setup's placeholder page (it never overwrites a page it did not write unless you pass `--replace`), then the hand steps, then its `check`.
 
 The hand steps are done once per workspace, by you, because they are admin acts in accounts only you hold:
 
 1. **Linear**, as a workspace admin: teams `REVOPS` (project `Q3 close`), `FIN` "Finance close" (project `September close`) and `LOG` "Logistics desk" (project `Shipment exceptions`), each with the workflow states `Todo`, `In Progress` and `Done`. Archive or move out any older ticket in those three projects: intake reads every ticket in a documented project, and `check` lists each one that is not the bed's.
 2. **Slack**: the public channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests` (intake reads public channels only), and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. The three asks of `bed/company/slack-asks.md` are posted by you during each sitting, as yourself, once the employees are deployed: a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting. A one-task-each sitting posts only the `#ops-requests` ask, which is that sitting's revenue operations task.
 3. **Notion**: the two pages in `bed/company/notion/`, pasted under one parent page shared with your integration, with the Linear key in place of the placeholder ([`bed/company/notion/README.md`](bed/company/notion/README.md)).
-4. **`.env.local`**: `DAY0_BED_LINEAR_API_KEY`, `DAY0_BED_SLACK_BOT_TOKEN` and `DAY0_BED_NOTION_TOKEN`. Only `pnpm bed:company` reads them, and it prints none of them.
+4. **`.env.local`**: `DAY0_BED_LINEAR_API_KEY`, `DAY0_BED_SLACK_BOT_TOKEN` and `DAY0_BED_NOTION_TOKEN`. Only `scripts/bed/company.ts` reads them, and it prints none of them.
 
 Then:
 
 ```bash
-pnpm bed:company check    # every hand step read back; each gap says how to close it
-pnpm bed:company seed     # tickets created or put back, the bed's bot messages deleted, the tile back at 68%
+pnpm exec tsx scripts/bed/company.ts check    # every hand step read back; each gap says how to close it
+pnpm exec tsx scripts/bed/company.ts seed     # tickets created or put back, the bed's bot messages deleted, the tile back at 68%
 ```
 
-`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` uses tickets whose descriptions end in `day0-demo-key: <key>` and refuses active marked tickets from another clone. It deletes comments with the server's provenance trailer and attempts to delete the bot's trailer messages posted since this clone's first seed. Run it before each sitting. A sitting that runs one task per employee files only its tickets: `pnpm bed:company seed --set one-each` files `fin-status`, `log-sh4471` and the two September close step tickets the status note reads, `fin-accruals` and `fin-bankrec` (the `sets` in `bed/company/linear.json`), archives every other bed ticket a fuller seed left active, and still restarts the Looker tile at its starting figure. Revenue operations' task in that sitting is not a ticket but the `#ops-requests` ask, posted once the employees are deployed (refresh the pipeline tile to the standup figure): one employee claims it, the other two leave it at scope, and it is answered in its thread. `pnpm bed:company check` names the asks each sitting posts. During the run, `pnpm bed:company post log-sh4480` files the one late ticket at its step; afterwards, `pnpm bed:company teardown` archives only tickets this clone activated, and any ticket a run filed in the bed's teams since this clone's first seed (an employee whose charter says to triage asks into tickets files one, and its description ends with the server's provenance trailer; `check` names such a ticket as a gap), and attempts to delete its bot messages. Slack refuses `chat.delete` for posts with a customised employee name or icon. Teardown names each refused channel message and timestamp, keeps the clone's state, and exits with a gap; delete those exact messages by hand in Slack, then run teardown again. Earlier runs' messages remain outside this clone's cleanup window.
+`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` uses tickets whose descriptions end in `day0-demo-key: <key>` and refuses active marked tickets from another clone. It deletes comments with the server's provenance trailer and attempts to delete the bot's trailer messages posted since this clone's first seed. Run it before each sitting. A sitting that runs one task per employee files only its tickets: `seed --set one-each` files `fin-status`, `log-sh4471` and the two September close step tickets the status note reads, `fin-accruals` and `fin-bankrec` (the `sets` in `bed/company/linear.json`), archives every other bed ticket a fuller seed left active, and still restarts the Looker tile at its starting figure. Revenue operations' task in that sitting is not a ticket but the `#ops-requests` ask, posted once the employees are deployed (refresh the pipeline tile to the standup figure): one employee claims it, the other two leave it at scope, and it is answered in its thread. `check` names the asks each sitting posts. During the run, `post log-sh4480` files the one late ticket at its step; afterwards, `teardown` archives only tickets this clone activated, and any ticket a run filed in the bed's teams since this clone's first seed (an employee whose charter says to triage asks into tickets files one, and its description ends with the server's provenance trailer; `check` names such a ticket as a gap), and attempts to delete its bot messages. Slack refuses `chat.delete` for posts with a customised employee name or icon. Teardown names each refused channel message and timestamp, keeps the clone's state, and exits with a gap; delete those exact messages by hand in Slack, then run teardown again. Earlier runs' messages remain outside this clone's cleanup window.
 
 On `/documentation`, link the folder (`.`) and the Notion source. Thirteen folder pages and three Notion pages (the parent and its two) sync; the only credentials taken from the pages are the tile's login, on its two pages, and the Linear token from the Notion page, and the Notion source's own connection secret is stored beside them, from the field you typed it into.
 
-The redaction model reads a page as a whole, and a wording change can make it take a channel or a method name for a token, which the owner-wide layer then removes from every page. So a page you edit is checked against the model again: `tests/bed/company-docs.test.ts` replays the model's recorded answers and fails on a page it has no answer for until you run `DAY0_REDACTOR_URL=<a component you can reach> pnpm bed:record-spans` and read what it stores.
+The redaction model reads a page as a whole, and a wording change can make it take a channel or a method name for a token, which the owner-wide layer then removes from every page. So a page you edit is checked against the model again: `tests/bed/company-docs.test.ts` replays the model's recorded answers and fails on a page it has no answer for until you run `DAY0_REDACTOR_URL=<a component you can reach> pnpm exec tsx scripts/bed/record-spans.ts` and read what it stores.
 
 ### Teardown
 
@@ -1537,33 +1537,33 @@ ledger 中该行会注明是复用，而非重新发送。
 | `bed/company/slack-asks.md` | 三条 Slack 请求：员工部署完成后，由真人在每次演示中发布 |
 | `bed/company/answers.md` | manager 对每个角色 Day-1 的回答，以及物流重试时给出的备注 |
 
-从一个全新 clone 开始：
+这个演示环境是维护者的工具，而不是产品命令，因此没有 `pnpm` 脚本：按路径运行，即 `pnpm exec tsx scripts/bed/company.ts <verb>`。从一个全新 clone 开始：
 
 ```bash
 ./setup.sh --route featherless --company
 ```
 
-这就是普通的 real-mode 安装，之后执行 `pnpm bed:company docs`：把十三个页面复制进 `docs-local/`，并删除 setup 的占位页面（除非传入 `--replace`，否则它绝不覆盖不是它写入的页面）；然后打印手工步骤，并运行 `pnpm bed:company check`。
+这就是普通的 real-mode 安装，之后执行 `pnpm exec tsx scripts/bed/company.ts docs`：把十三个页面复制进 `docs-local/`，并删除 setup 的占位页面（除非传入 `--replace`，否则它绝不覆盖不是它写入的页面）；然后打印手工步骤，并运行它的 `check`。
 
 手工步骤每个 workspace 只做一次，由你完成，因为它们是只有你持有的账户中的管理员操作：
 
 1. **Linear**，以 workspace 管理员身份：team `REVOPS`（project `Q3 close`）、`FIN` "Finance close"（project `September close`）和 `LOG` "Logistics desk"（project `Shipment exceptions`），每个 team 都有 `Todo`、`In Progress`、`Done` 三个工作流状态。把这三个 project 中较早的工单归档或移出：intake 会读取文档所记录 project 中的每一张工单，`check` 会列出每一张不属于演示环境的工单。
 2. **Slack**：公开频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`（intake 只读取公开频道），以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。`bed/company/slack-asks.md` 中的三条请求由你在每次演示中以本人身份发布，且要在员工部署完成之后：部署不会读取早于其员工的任何提及，因此上一次演示留下的请求不会被读取，也无需删除。每名员工一项任务的演示只发布 `#ops-requests` 中的那一条，它就是该演示中 revenue operations 的任务。
 3. **Notion**：把 `bed/company/notion/` 下的两个页面粘贴到一个与你的 integration 共享的父页面之下，并把占位符换成 Linear key（见 [`bed/company/notion/README.md`](bed/company/notion/README.md)）。
-4. **`.env.local`**：`DAY0_BED_LINEAR_API_KEY`、`DAY0_BED_SLACK_BOT_TOKEN` 和 `DAY0_BED_NOTION_TOKEN`。只有 `pnpm bed:company` 读取它们，且不会打印其中任何一个。
+4. **`.env.local`**：`DAY0_BED_LINEAR_API_KEY`、`DAY0_BED_SLACK_BOT_TOKEN` 和 `DAY0_BED_NOTION_TOKEN`。只有 `scripts/bed/company.ts` 读取它们，且不会打印其中任何一个。
 
 然后：
 
 ```bash
-pnpm bed:company check    # 逐项读回手工步骤；每个缺口都会说明如何补上
-pnpm bed:company seed     # 创建或复位工单，删除演示环境的 bot 消息，tile 回到 68%
+pnpm exec tsx scripts/bed/company.ts check    # 逐项读回手工步骤；每个缺口都会说明如何补上
+pnpm exec tsx scripts/bed/company.ts seed     # 创建或复位工单，删除演示环境的 bot 消息，tile 回到 68%
 ```
 
-`check` 读取 Linear 的 team、project 与状态，频道与应用的 scope，经由内置 Notion 组件读取的 Notion 页面（除 token 行外逐行与 `bed/company/notion/` 比较），以及 tile。`seed` 使用描述以 `day0-demo-key: <key>` 结尾的工单；若另一 clone 留下仍启用的标记工单，则拒绝改动。它删除带服务端来源标记的评论，并尝试删除本 clone 首次 seed 之后由 bot 发送、带来源标记的消息。每次录制前运行一次。若一次演示每位员工只做一项任务，只提交它的工单：`pnpm bed:company seed --set one-each` 提交 `fin-status`、`log-sh4471`，以及状态说明要读取的两张九月结账步骤工单 `fin-accruals` 和 `fin-bankrec`（即 `bed/company/linear.json` 中的 `sets`），归档更完整的 seed 留下的其他所有演示工单，并照常把 Looker tile 重启回初始数值。该演示中 revenue operations 的任务不是工单，而是员工部署完成后发布在 `#ops-requests` 中的那条请求（把 pipeline tile 刷新为 standup 数值）：一名员工认领它，另外两名因不在职责范围内而放下，并在其线程中回复。`pnpm bed:company check` 会列出每次演示需要发布的请求。运行期间，`pnpm bed:company post log-sh4480` 在对应步骤提交迟到工单；结束后，`pnpm bed:company teardown` 只归档本 clone 激活的工单，并尝试删除本 clone 的 bot 消息。Slack 不允许 bot 用 `chat.delete` 删除带自定义员工姓名或头像的消息；teardown 会列出每条无法删除的消息所在频道和时间戳，保留本 clone 的状态并报告缺口。请在 Slack 中手动删除这些确切消息，再次运行 teardown。较早运行的消息不在本 clone 的清理范围内。
+`check` 读取 Linear 的 team、project 与状态，频道与应用的 scope，经由内置 Notion 组件读取的 Notion 页面（除 token 行外逐行与 `bed/company/notion/` 比较），以及 tile。`seed` 使用描述以 `day0-demo-key: <key>` 结尾的工单；若另一 clone 留下仍启用的标记工单，则拒绝改动。它删除带服务端来源标记的评论，并尝试删除本 clone 首次 seed 之后由 bot 发送、带来源标记的消息。每次录制前运行一次。若一次演示每位员工只做一项任务，只提交它的工单：`seed --set one-each` 提交 `fin-status`、`log-sh4471`，以及状态说明要读取的两张九月结账步骤工单 `fin-accruals` 和 `fin-bankrec`（即 `bed/company/linear.json` 中的 `sets`），归档更完整的 seed 留下的其他所有演示工单，并照常把 Looker tile 重启回初始数值。该演示中 revenue operations 的任务不是工单，而是员工部署完成后发布在 `#ops-requests` 中的那条请求（把 pipeline tile 刷新为 standup 数值）：一名员工认领它，另外两名因不在职责范围内而放下，并在其线程中回复。`check` 会列出每次演示需要发布的请求。运行期间，`post log-sh4480` 在对应步骤提交迟到工单；结束后，`teardown` 只归档本 clone 激活的工单，并尝试删除本 clone 的 bot 消息。Slack 不允许 bot 用 `chat.delete` 删除带自定义员工姓名或头像的消息；teardown 会列出每条无法删除的消息所在频道和时间戳，保留本 clone 的状态并报告缺口。请在 Slack 中手动删除这些确切消息，再次运行 teardown。较早运行的消息不在本 clone 的清理范围内。
 
 在 `/documentation` 上链接文件夹（`.`）和 Notion 来源。同步后有十三个文件夹页面和三个 Notion 页面（父页面及其两个子页面）；从页面中取出的凭据只有 tile 的登录（出现在它的两个页面上）和 Notion 页面里的 Linear token，此外还会存储 Notion 来源自身的连接密钥（connection secret），也就是你填进表单的那一个。
 
-脱敏模型以整页为单位读取页面，措辞改动可能让它把频道名或方法名当成 token，随后 owner 级精确值层会把它从每个页面中删除。因此修改过的页面要重新经过模型检查：`tests/bed/company-docs.test.ts` 回放模型记录下的回答，遇到没有记录的页面就会失败，直到你运行 `DAY0_REDACTOR_URL=<可访问的组件地址> pnpm bed:record-spans` 并确认它存储了什么。
+脱敏模型以整页为单位读取页面，措辞改动可能让它把频道名或方法名当成 token，随后 owner 级精确值层会把它从每个页面中删除。因此修改过的页面要重新经过模型检查：`tests/bed/company-docs.test.ts` 回放模型记录下的回答，遇到没有记录的页面就会失败，直到你运行 `DAY0_REDACTOR_URL=<可访问的组件地址> pnpm exec tsx scripts/bed/record-spans.ts` 并确认它存储了什么。
 
 #### 停止
 

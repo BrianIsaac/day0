@@ -1,9 +1,9 @@
 # The Notion pages, pasted by hand
 
 The company bed's documentation comes from two sources: the folder `bed/company/folder/`, which
-`pnpm bed:company docs` copies into `docs-local/`, and the two pages in this directory, which you
-paste into Notion once, by hand. Nothing here is a secret; the one token line stays a placeholder
-in git and is filled in Notion only.
+`pnpm exec tsx scripts/bed/company.ts docs` copies into `docs-local/`, and the two pages in this
+directory, which you paste into Notion once, by hand. Nothing here is a secret; the one token line
+stays a placeholder in git and is filled in Notion only.
 
 ## Paste them
 
@@ -25,9 +25,10 @@ in git and is filled in Notion only.
 5. Take the integration off every other page, an earlier handbook parent included. Documentation
    sync reads every page the integration can see.
 
-`pnpm bed:company check` then reads the pages through the bundled Notion component, the way the
-backend will, and says which page differs from this directory (the token line apart), which is
-missing, and which page the integration can see that is not one of these three.
+`pnpm exec tsx scripts/bed/company.ts check` then reads the pages through the bundled Notion
+component, the way the backend will, and says which page differs from this directory (the token
+line apart), which is missing, and which page the integration can see that is not one of these
+three.
 
 ## What documentation sync then reads
 

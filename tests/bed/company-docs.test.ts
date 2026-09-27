@@ -306,7 +306,7 @@ describe('credentials on the pages', (): void => {
   });
 });
 
-/** The deployed span model's answers for these pages, recorded by `pnpm bed:record-spans`. */
+/** The deployed span model's answers for these pages, recorded by `pnpm exec tsx scripts/bed/record-spans.ts`. */
 class BedRecordingModel implements SpanModel {
   readonly name = 'bed-recording';
 
@@ -317,7 +317,7 @@ class BedRecordingModel implements SpanModel {
     if (!recorded) {
       throw new Error(
         'no recorded answer for this text: a bed page changed since the recording. Run ' +
-          '`DAY0_REDACTOR_URL=<reachable component> pnpm bed:record-spans` and read what it stores.',
+          '`DAY0_REDACTOR_URL=<reachable component> pnpm exec tsx scripts/bed/record-spans.ts` and read what it stores.',
       );
     }
     return recorded.filter((span) => labels.includes(span.label) && span.score >= threshold);
@@ -336,7 +336,7 @@ describe('the deployed span model over the pages', (): void => {
     );
     expect(
       missing.map((text) => text.split('\n')[0]),
-      'pages changed since `pnpm bed:record-spans`',
+      'pages changed since `pnpm exec tsx scripts/bed/record-spans.ts`',
     ).toEqual([]);
   });
 
