@@ -92,6 +92,8 @@ describe('folder documentation reader', (): void => {
         );
         expect(batch.pages.map((page) => page.ref)).toEqual(['b.md']);
         expect(batch.unread).toEqual([{ ref: 'a.md', reason: expect.stringContaining('EACCES') }]);
+        expect(batch.unread[0]?.reason).toContain("'a.md'");
+        expect(batch.unread[0]?.reason).not.toContain(root);
         expect(batch.nextCursor).toBeUndefined();
       } finally {
         await chmod(join(root, 'a.md'), 0o600);

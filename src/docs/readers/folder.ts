@@ -126,7 +126,8 @@ export async function readMarkdownDirectoryBatch(
         } satisfies DocPage;
       } catch (error) {
         // Every failure here is this one file's: the listing already succeeded.
-        return { ref, reason: unreadReason(error) };
+        // The host's own path to the documentation is not the author's to see.
+        return { ref, reason: unreadReason(error).replaceAll(`${directory}${sep}`, '') };
       }
     }),
   );
