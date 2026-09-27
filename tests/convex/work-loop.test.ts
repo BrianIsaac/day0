@@ -9,7 +9,7 @@ import type { ExecutionOutput } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import { MAX_DRAFT_RESUMES, STEP_LEASE_MS } from '../../convex/workLoop';
+import { EXECUTION_STALL_MS, MAX_DRAFT_RESUMES, STEP_LEASE_MS } from '../../convex/workLoop';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -1035,5 +1035,35 @@ describe('what an outage leaves (P7-18)', (): void => {
     expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([
       { workItemId, kind: 'actions' },
     ]);
+  });
+});
+
+describe('a closing phase whose authoring never claimed the run (P5-1)', (): void => {
+  it('is handed to its recovery, not stopped as if nothing landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-44');
+    const runId = await harness.run(async (ctx) => {
+      const claim = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: Date.now() - EXECUTION_STALL_MS - 1,
+      });
+      await ctx.db.patch(workItemId, {
+        state: 'executing',
+        executionRunId: claim,
+        output: { ...managerDm, phase: 'dependent-authoring', applied: [{ tool: 'http.request', ok: true }] },
+      });
+      return claim;
+    });
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    const jobs = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).map((job) => ({ name: job.name, args: job.args[0] }));
+    expect(jobs).toContainEqual({ name: 'work:recoverDependentAuthoring', args: { workItemId, runId } });
+    expect(jobs.map((job) => job.name)).not.toContain('work:setFailed');
   });
 });

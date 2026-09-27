@@ -7,8 +7,11 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import {
+  DEPENDENT_AUTHORING_INTERRUPTED_REASON,
+  DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
   MANAGER_CHANGED_RESEND_REASON,
+  NOTHING_TO_DECIDE_REASON,
   PLAN_CANCELLED_REASON,
   REEVALUATION_BATCH,
   UNSENT_NOTE_REASON,
@@ -2052,12 +2055,21 @@ describe('the exact-action gate', (): void => {
       ],
     };
 
+    // Refused at hold time, the only action leaves nothing to decide, so the
+    // run stops naming the refusal instead of parking with no approve control.
     await expect(
       harness.mutation(internal.work.setActionsPending, { workItemId, runId, output }),
-    ).resolves.toEqual({ pending: true, phase: 'manager' });
-    expect((await readItem(harness, workItemId)).actionVerdicts).toEqual([
-      { disposition: 'refused', reason: 'surface not connected (ungranted)' },
-    ]);
+    ).resolves.toEqual({ pending: false });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toContain(
+      "Day0's gate refused every action (surface not connected (ungranted))",
+    );
+    expect(
+      (await eventsOfType(harness, agentId, 'work.actions-pending')).map(
+        (event) => (event.payload as { refusals?: unknown }).refusals,
+      ),
+    ).toEqual([[{ index: 0, reason: 'surface not connected (ungranted)' }]]);
   });
 
   it('refuses a refused row at approval and applies the rest by selection', async (): Promise<void> => {
@@ -4384,5 +4396,159 @@ describe('what an outage leaves for the manager (P7-18)', (): void => {
     await expect(
       harness.mutation(internal.work.recoverUnsentManagerNote, { noteId }),
     ).resolves.toEqual({ recovered: 'ignored' });
+  });
+});
+
+describe('a recovery for every claim (P5-1, P5-2, P5-3)', (): void => {
+  const landedPrerequisite = {
+    ...pendingOutput,
+    needsDependentPhase: true,
+    phase: 'dependent-authoring',
+    actions: [pendingOutput.actions[0]],
+    applied: [{ tool: 'mcp.call', ok: true, providerId: 'c-1', idempotencyKey: 'k0' }],
+  };
+
+  it('fails a closing phase whose authoring died after its claim, once the bound has passed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.prepareDependentPhase, {
+      workItemId,
+      runId,
+      output: landedPrerequisite,
+    });
+    const claim = await harness.mutation(internal.work.claimDependentAuthoring, { workItemId, runId });
+    if (!claim.claimed) throw new Error('authoring was not claimed');
+    expect(
+      (await scheduledFunctionNames(harness)).filter((name) => name === 'work:recoverDependentAuthoring'),
+    ).toHaveLength(1);
+
+    // Fired early, or for another attempt, the switch leaves the row alone.
+    await expect(
+      harness.mutation(internal.work.recoverDependentAuthoring, {
+        workItemId,
+        runId,
+        authoringAttemptId: claim.authoringAttemptId,
+      }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    await expect(
+      harness.mutation(internal.work.recoverDependentAuthoring, { workItemId, runId }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    expect((await readItem(harness, workItemId)).state).toBe('executing');
+
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { applyClaimedAt: Date.now() - DEPENDENT_AUTHORING_RECOVERY_MS - 1 });
+    });
+    await expect(
+      harness.mutation(internal.work.recoverDependentAuthoring, {
+        workItemId,
+        runId,
+        authoringAttemptId: claim.authoringAttemptId,
+      }),
+    ).resolves.toEqual({ recovered: 'failed' });
+    const row = await readItem(harness, workItemId);
+    expect(row).toMatchObject({ state: 'failed', skipReason: DEPENDENT_AUTHORING_INTERRUPTED_REASON });
+    expect(row.applyAttemptId).toBeUndefined();
+    expect((row.output as { applied: unknown[] }).applied).toEqual(landedPrerequisite.applied);
+    expect((await eventsOfType(harness, agentId, 'work.failed')).map((event) => event.payload)).toEqual([
+      expect.objectContaining({ workItemId, reason: DEPENDENT_AUTHORING_INTERRUPTED_REASON }),
+    ]);
+  });
+
+  it('fails a closing phase whose authoring never claimed it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.prepareDependentPhase, {
+      workItemId,
+      runId,
+      output: landedPrerequisite,
+    });
+    await expect(
+      harness.mutation(internal.work.recoverDependentAuthoring, { workItemId, runId }),
+    ).resolves.toEqual({ recovered: 'failed' });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+  });
+
+  it('fails a needs-skill row whose proposal never landed, naming the skill', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'discovered');
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { plan: undefined }));
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: {
+        decision: 'needs-skill',
+        reason: 'no registered skill closes a Linear ticket',
+        suggestedSkillName: 'linear-close',
+        suggestedSkillRationale: 'closing tickets is the charter work',
+        suggestedSkillShape: { surfaceClass: 'kanban', operation: 'close' },
+      },
+    });
+    expect((await readItem(harness, workItemId)).state).toBe('needs-skill');
+    const [evaluated] = await eventsOfType(harness, agentId, 'work.evaluated');
+    expect(await scheduledFunctionNames(harness)).toContain('work:recoverUnproposedSkill');
+
+    await expect(
+      harness.mutation(internal.work.recoverUnproposedSkill, { workItemId, evaluatedId: evaluated._id }),
+    ).resolves.toEqual({ recovered: 'failed' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toContain('"linear-close"');
+    expect(row.skipReason).toContain('Retry evaluates the item again');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+  });
+
+  it('leaves a needs-skill row whose proposal landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'discovered');
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: {
+        decision: 'needs-skill',
+        reason: 'no registered skill closes a Linear ticket',
+        suggestedSkillName: 'linear-close',
+        suggestedSkillRationale: 'closing tickets is the charter work',
+        suggestedSkillShape: { surfaceClass: 'kanban', operation: 'close' },
+      },
+    });
+    const [evaluated] = await eventsOfType(harness, agentId, 'work.evaluated');
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'linear-close',
+          description: 'Close a Linear ticket.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'proposed',
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.work.setProposedSkill, { workItemId, skillId });
+    await expect(
+      harness.mutation(internal.work.recoverUnproposedSkill, { workItemId, evaluatedId: evaluated._id }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    expect((await readItem(harness, workItemId)).state).toBe('needs-skill');
+  });
+
+  it('stops a phase-one run that emitted nothing to decide instead of parking it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await expect(
+      harness.mutation(internal.work.setActionsPending, {
+        workItemId,
+        runId,
+        output: { draft: 'No surface is connected.', notes: '', actions: [] },
+      }),
+    ).resolves.toEqual({ pending: false });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toContain(NOTHING_TO_DECIDE_REASON);
+    expect(await scheduledFunctionNames(harness)).not.toContain('managerChannelActions:requestDecision');
   });
 });

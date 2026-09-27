@@ -27,6 +27,7 @@ import {
   openSlotCount,
   resumeStalledStepsInTransaction,
   scheduleNextStep,
+  STEP_LEASE_MS,
   type StepClaim,
 } from './workLoop';
 import { actionIdempotencyKey } from '../src/work/idempotency';
@@ -95,6 +96,17 @@ import {
 } from '../src/work/manager-notes';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
+/**
+ * How long a closing phase's authoring may hold its claim before its switch
+ * fails the row. The backend kills a Node action after ten minutes; this is
+ * the execution stall bound, so a live authoring is never failed under it.
+ */
+export const DEPENDENT_AUTHORING_RECOVERY_MS = EXECUTION_STALL_MS;
+/** Why a closing phase whose authoring died is failed; Retry resumes it. */
+export const DEPENDENT_AUTHORING_INTERRUPTED_REASON =
+  'the closing phase was interrupted before its actions were written; the prerequisites stand and Retry resumes the closing phase';
+/** Why a phase-one run with nothing held for the manager stops instead of parking. */
+export const NOTHING_TO_DECIDE_REASON = 'the run held nothing for a decision';
 /** Parked rows examined per state in one re-evaluation call; the rest continue by schedule. */
 export const REEVALUATION_BATCH = 100;
 /** The longest rejection reason kept in full for the retry to read. */
@@ -2206,12 +2218,20 @@ export async function applyVerdict(
       ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
   });
-  await ctx.db.insert('events', {
+  const evaluatedId = await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.evaluated',
     payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  // The proposal is written by the evaluating action after this commit; if it
+  // throws, nothing else ever moves the row (P5-2).
+  if (nextState === 'needs-skill' && SURFACE_MODE === 'real') {
+    await ctx.scheduler.runAfter(STEP_LEASE_MS, internal.work.recoverUnproposedSkill, {
+      workItemId,
+      evaluatedId,
+    });
+  }
   if (readmission) {
     await logSatisfiedRequeue(
       ctx,
@@ -2226,6 +2246,40 @@ export async function applyVerdict(
   await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
+
+/**
+ * A `needs-skill` row's switch for the proposal its evaluation promised.
+ *
+ * Fires a lease after the verdict. A row still parked on that verdict (no
+ * later evaluation) with no proposal recorded had its proposal throw after the
+ * verdict committed, and would say "needs a skill" with nothing to approve and
+ * no control. It is stopped with the skill it needed named, so Retry
+ * evaluates it again. Internal.
+ */
+export const recoverUnproposedSkill = internalMutation({
+  args: { workItemId: v.id('workItems'), evaluatedId: v.id('events') },
+  handler: async (ctx, args): Promise<{ recovered: 'failed' | 'ignored' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row || row.state !== 'needs-skill' || row.proposedSkillId !== undefined) {
+      return { recovered: 'ignored' };
+    }
+    const latest = (
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', 'work.evaluated'))
+        .order('desc')
+        .take(REEVALUATION_BATCH)
+    ).find((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
+    if (latest?._id !== args.evaluatedId) return { recovered: 'ignored' };
+    const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
+    const skill = typeof name === 'string' && name ? `the skill "${name}"` : 'a skill';
+    await failInTransaction(ctx, row, {
+      reason: `evaluation found this item needs ${skill}, but its proposal was never recorded; Retry evaluates the item again`,
+      stopped: true,
+    });
+    return { recovered: 'failed' };
+  },
+});
 
 export const setVerdict = internalMutation({
   args: {
@@ -3758,7 +3812,57 @@ export const claimDependentAuthoring = internalMutation({
       applyAttemptId: authoringAttemptId,
       applyClaimedAt: Date.now(),
     });
+    // The claim's dead-man's switch, in the same transaction as the claim
+    // (P5-1): nothing else recovers an `executing` row that holds one.
+    await ctx.scheduler.runAfter(
+      DEPENDENT_AUTHORING_RECOVERY_MS,
+      internal.work.recoverDependentAuthoring,
+      { workItemId: args.workItemId, runId: args.runId, authoringAttemptId },
+    );
     return { claimed: true, authoringAttemptId };
+  },
+});
+
+/**
+ * The closing phase's dead-man's switch.
+ *
+ * Armed when the authoring claims the run (with the attempt); the stalled-step
+ * sweep calls it without one for a phase whose authoring never claimed the
+ * run. A row still awaiting authoring for this run is failed with its landed
+ * prerequisites kept, so the card shows them and Retry resumes the closing
+ * phase: unclaimed, or holding this attempt's claim past the bound. Anything
+ * else has moved on. Internal.
+ */
+export const recoverDependentAuthoring = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    runId: v.id('events'),
+    authoringAttemptId: v.optional(v.id('events')),
+  },
+  handler: async (ctx, args): Promise<{ recovered: 'failed' | 'ignored' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (
+      !row ||
+      row.state !== 'executing' ||
+      row.executionRunId !== args.runId ||
+      (row.output as { phase?: unknown } | undefined)?.phase !== 'dependent-authoring'
+    ) {
+      return { recovered: 'ignored' };
+    }
+    if (args.authoringAttemptId === undefined) {
+      if (row.applyAttemptId !== undefined) return { recovered: 'ignored' };
+    } else if (
+      row.applyAttemptId !== args.authoringAttemptId ||
+      row.applyClaimedAt === undefined ||
+      Date.now() - row.applyClaimedAt < DEPENDENT_AUTHORING_RECOVERY_MS
+    ) {
+      return { recovered: 'ignored' };
+    }
+    await failInTransaction(ctx, row, {
+      reason: DEPENDENT_AUTHORING_INTERRUPTED_REASON,
+      output: row.output,
+    });
+    return { recovered: 'failed' };
   },
 });
 
@@ -4470,6 +4574,25 @@ export const setActionsPending = internalMutation({
       });
       await scheduleApply(ctx, args.workItemId, pendingId, 'auto');
       return { pending: true, phase: 'auto' };
+    }
+    // A phase-one run that holds nothing for the manager (no actions, or every
+    // one refused by the gate) has nothing to decide: parked, it would hold
+    // the slot with both approve controls disabled and no request sent (P5-3).
+    if (!dependent && heldIndexes.length === 0) {
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.actions-pending',
+        payload,
+        createdAt: Date.now(),
+      });
+      await failInTransaction(ctx, row, {
+        reason:
+          refusals.length > 0
+            ? `${NOTHING_TO_DECIDE_REASON}: Day0's gate refused every action (${refusals[0].reason}), so nothing was sent`
+            : `${NOTHING_TO_DECIDE_REASON}: it emitted no actions`,
+        output: args.output,
+      });
+      return { pending: false };
     }
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',

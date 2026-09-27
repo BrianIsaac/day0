@@ -571,6 +571,17 @@ export async function resumeStalledStepsInTransaction(
       const claim = await ctx.db.get(row.executionRunId);
       return !!claim && now - claim.createdAt >= EXECUTION_STALL_MS;
     })) {
+      // A closing phase whose authoring never claimed the run keeps its
+      // landed prerequisites: it is failed so Retry resumes it, not as a stop.
+      const runId = row.executionRunId;
+      if (runId && (row.output as { phase?: unknown } | undefined)?.phase === 'dependent-authoring') {
+        await ctx.scheduler.runAfter(0, internal.work.recoverDependentAuthoring, {
+          workItemId: row._id,
+          runId,
+        });
+        rescheduled += 1;
+        continue;
+      }
       await ctx.scheduler.runAfter(0, internal.work.setFailed, {
         workItemId: row._id,
         runId: row.executionRunId,
