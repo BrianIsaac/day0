@@ -357,6 +357,15 @@ describe('applying surface actions', (): void => {
       [true, true, AWAITING_APPROVAL, undefined],
     ]);
     expect(applied[4]).toMatchObject({ awaitingApproval: true, idempotencyKey: 'wi_1:run_1:4' });
+    // Each landed row records what it was when it was sent (review M16); a row
+    // that did not land records nothing.
+    expect(applied.map((entry) => entry.actionClass)).toEqual([
+      'read',
+      'manager-dm',
+      undefined,
+      undefined,
+      undefined,
+    ]);
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['list_issues']);
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual([
       'D0MANAGER',
@@ -522,6 +531,7 @@ describe('applying surface actions', (): void => {
     });
     expect(applied[0]).toMatchObject({ ok: false, reason: 'not an automatic action' });
     expect(applied[0].authority).toBeUndefined();
+    expect(applied[0].actionClass).toBeUndefined();
     expect(recorded.mcp).toHaveLength(0);
   });
 

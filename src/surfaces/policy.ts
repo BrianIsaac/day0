@@ -1,6 +1,12 @@
 import type { MockAction, ReplyTarget } from '../work/types';
 import { MOCK_TOOLS } from './mock';
-import type { ActionAuthority, AppliedAction, CredentialKind, SurfaceRecord } from './types';
+import type {
+  ActionAuthority,
+  ActionClass,
+  AppliedAction,
+  CredentialKind,
+  SurfaceRecord,
+} from './types';
 import { verdictFor } from './verdict';
 
 /**
@@ -1064,8 +1070,7 @@ export function normaliseActionVerdict(row: {
   return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
 }
 
-/** What kind of change an applicable action makes, which decides its disposition and its held reason. */
-export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
+export type { ActionClass } from './types';
 
 /**
  * Classify an applicable action by what it changes.

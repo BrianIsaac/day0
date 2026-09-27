@@ -88,6 +88,9 @@ export type BeforeSurfaceTransport = (
   replay?: { authority?: ActionAuthority },
 ) => Promise<string | undefined>;
 
+/** What kind of change an applicable action makes, which decides its disposition and its held reason. */
+export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
+
 export interface ActionOutcome {
   ok: boolean;
   effect?: string;
@@ -109,6 +112,13 @@ export interface ActionOutcome {
    * auto phase while the toggle is off). The audit trail shows the mode.
    */
   authority?: ActionAuthority;
+  /**
+   * What the landed row was when it was sent (`policy.actionClass`): a read,
+   * the manager DM, or a change. Recorded at the send, so a later figure
+   * never reclassifies it against a surface whose manager DM has moved since
+   * (review M16). Absent on rows sent before it was recorded.
+   */
+  actionClass?: ActionClass;
   providerId?: string;
   /**
    * The first attempt at this row, when the provider refused its arguments

@@ -476,14 +476,21 @@ function eventActionKey(
 type AutomaticKind = 'read' | 'manager-message' | 'write';
 
 /**
- * Classify an automatic row by its action. A row whose action the output did
- * not keep is counted as a write, so the split never makes the agent look
- * more supervised than the ledger can show.
+ * Classify an automatic row: by the class the send recorded on it, so a
+ * later export reproduces the split whatever became of the surface's manager
+ * DM (review M16); a row sent before the class was recorded, by its action
+ * against the surface as it stands. A row whose action the output did not
+ * keep is counted as a write, so the split never makes the agent look more
+ * supervised than the ledger can show.
  */
 function automaticKind(
   observation: LedgerObservation,
   surfaces: readonly SurfaceRecord[],
 ): AutomaticKind {
+  const recorded = asString(observation.entry.actionClass);
+  if (recorded === 'manager-dm') return 'manager-message';
+  if (recorded === 'read') return 'read';
+  if (recorded !== undefined) return 'write';
   if (!observation.action) return 'write';
   const parsed = parseSurfaceAction(observation.action as unknown as MockAction);
   if (!parsed.ok) return 'write';

@@ -9,6 +9,7 @@ import { McpAdapter, type CreateMcpClient } from './mcp';
 import { MOCK_TOOLS, mockAdapter } from './mock';
 import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
 import {
+  actionClass,
   applyProvenance,
   actionIntent,
   AWAITING_APPROVAL,
@@ -721,10 +722,14 @@ export async function applySurfaceActions(
         idempotencyKey,
         options.authorityByIndex?.get(index),
       );
-      const stamped =
-        rowAuthority && outcome.ok && !outcome.held
-          ? { ...outcome, authority: rowAuthority }
-          : outcome;
+      const landed = outcome.ok && !outcome.held;
+      const stamped = landed
+        ? {
+            ...outcome,
+            ...(rowAuthority ? { authority: rowAuthority } : {}),
+            actionClass: actionClass(parsed.action, surface),
+          }
+        : outcome;
       applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);
       // The page is open once a replay or a call has landed on it; until then
       // the next call on the surface is checked for a replay again.

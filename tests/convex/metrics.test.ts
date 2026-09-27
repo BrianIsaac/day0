@@ -1309,6 +1309,24 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(metrics.actions.automatic).toEqual({ reads: 1, managerMessages: 1, writes: 2 });
   });
 
+  it('keeps a manager message the send recorded one after the manager DM moves, and a post it recorded a change (review M16)', (): void => {
+    const output = {
+      actions: [post('D0MANAGER'), post('C0TEAM')],
+      applied: [
+        row('wi:run-1:0', { authority: 'standing', actionClass: 'manager-dm' }),
+        row('wi:run-1:1', { authority: 'autonomous', actionClass: 'public-post' }),
+      ],
+    };
+    // The manager changed: the surface now names the team channel as the DM.
+    const moved = { ...slack, managerDmChannelId: 'C0TEAM' };
+    const metrics = computeAgentMetrics([], [item('wi', { output })], [], [moved]);
+    expect(metrics.actions.automatic).toEqual({ reads: 0, managerMessages: 1, writes: 1 });
+    const wiped = { ...slack, managerDmChannelId: undefined };
+    expect(
+      computeAgentMetrics([], [item('wi', { output })], [], [wiped]).actions.automatic,
+    ).toEqual({ reads: 0, managerMessages: 1, writes: 1 });
+  });
+
   it('computes skill reuse, cycle time from the ask, reorientation acceptance and the hours-saved gauge', (): void => {
     const events = [
       event('work.discovered', { workItemId: 'a' }, 1_500),
