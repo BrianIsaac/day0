@@ -914,6 +914,9 @@ export class McpAdapter implements SurfaceAdapter {
           // Every click is followed to the page it left the browser on, not
           // only a replayed one: a first-run click can navigate too (P6-16).
           if (call.tool === 'browser_click') {
+            // The click was sent: a page check that cannot run says nothing
+            // about whether it landed, so a Retry must not click it again.
+            const unknownOutcome = writeAttempted ? { outcomeUnknown: true } : {};
             let page = browserPageUrl(result.text);
             if (!page) {
               const snapshotTool = (await client.listTools())[`${surface.slug}_browser_snapshot`];
@@ -922,15 +925,25 @@ export class McpAdapter implements SurfaceAdapter {
                   tool: action.tool,
                   ok: false,
                   reason: 'the browser driver does not expose browser_snapshot',
+                  ...unknownOutcome,
                   idempotencyKey,
                 };
               }
-              const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
-              if (snapshot.isError) {
+              let snapshot: InterpretedToolResult | undefined;
+              try {
+                snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
+              } catch (error) {
+                // The driver refusing the snapshot answers the snapshot, not
+                // the click; any other error reaches the catch below, which
+                // keeps the outcome unknown itself.
+                if (!isServerToolError(error)) throw error;
+              }
+              if (!snapshot || snapshot.isError) {
                 return {
                   tool: action.tool,
                   ok: false,
-                  reason: 'browser_snapshot failed after the replayed click',
+                  reason: 'browser_snapshot failed after the click',
+                  ...unknownOutcome,
                   idempotencyKey,
                 };
               }
@@ -941,6 +954,7 @@ export class McpAdapter implements SurfaceAdapter {
                 tool: action.tool,
                 ok: false,
                 reason: 'the browser driver reported no final page URL',
+                ...unknownOutcome,
                 idempotencyKey,
               };
             }
@@ -951,7 +965,7 @@ export class McpAdapter implements SurfaceAdapter {
                 reason: `the page is outside the approved surface (${surface.endpoint ?? 'no documented address'})`,
                 // The click was sent and did something; whether it landed a
                 // change before the page left is not known.
-                ...(writeAttempted ? { outcomeUnknown: true } : {}),
+                ...unknownOutcome,
                 idempotencyKey,
               };
             }
