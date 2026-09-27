@@ -388,6 +388,16 @@ describe('the auth section', (): void => {
     expect(section.status).toBe('ok');
   });
 
+  it('still reports a local key that is on without its values, issuer or not', (): void => {
+    const section = authSection({
+      ...ISSUER,
+      DAY0_PROFILE: 'customer-local',
+      NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+    });
+    expect(section.status).toBe('gap');
+    expect(section.title).toBe('Auth: no-auth mode is on but has no key');
+  });
+
   it('is a gap when the customer-local profile names no issuer', (): void => {
     const section = authSection({ DAY0_PROFILE: 'customer-local' });
     expect(section.status).toBe('gap');

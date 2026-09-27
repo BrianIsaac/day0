@@ -860,16 +860,19 @@ function customerIssuerSection(v: Values): Section | undefined {
  * @param v - The env file with the process environment layered on.
  */
 export function authSection(v: Values): Section {
-  const customer = customerIssuerSection(v);
-  if (customer) return customer;
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
   const clerkKeys = ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY'].filter((k) => !v[k]);
   const hasClerk = clerkKeys.length === 0;
+  const missing = ['DEV_NO_AUTH_SECRET', 'DEV_NO_AUTH_SIGNING_KEY', 'DEV_NO_AUTH_JWKS'].filter(
+    (k) => !v[k],
+  );
+  // A keyless local issuer is a gap whatever else is configured beside it.
+  if (!noAuth || missing.length === 0) {
+    const customer = customerIssuerSection(v);
+    if (customer) return customer;
+  }
 
   if (noAuth) {
-    const missing = ['DEV_NO_AUTH_SECRET', 'DEV_NO_AUTH_SIGNING_KEY', 'DEV_NO_AUTH_JWKS'].filter(
-      (k) => !v[k],
-    );
     if (missing.length > 0) {
       return {
         title: 'Auth: no-auth mode is on but has no key',
