@@ -712,6 +712,15 @@ export interface WorkDraftResumedPayload extends WorkItemNamed {
   readonly attempt: number;
 }
 
+/**
+ * The payload of `work.execution-resumed`: a run whose execution failed on
+ * the model, sent back to execute again (`attempt` counts from the last Retry).
+ */
+export interface WorkExecutionResumedPayload extends WorkItemRun {
+  readonly attempt: number;
+  readonly reason: string;
+}
+
 /** `work.plan-held` for a plan whose row the manager waived a skip on. */
 export interface PlanHeldSkipOverruled extends WorkItemNamed {
   readonly reason: 'skip-overruled';
@@ -1066,6 +1075,7 @@ export interface EventPayloads {
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
   'work.draft-resumed': WorkDraftResumedPayload;
+  'work.execution-resumed': WorkExecutionResumedPayload;
   'work.plan-held': WorkPlanHeldPayload;
   'work.plan-approved': WorkPlanApprovedPayload;
   'work.decision-requesting': WorkDecisionRequestingPayload;
@@ -1206,6 +1216,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.corrections-redaction-limited',
   'work.correction-retired',
   'work.draft-resumed',
+  'work.execution-resumed',
   'work.plan-held',
   'work.plan-approved',
   'work.decision-requesting',

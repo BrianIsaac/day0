@@ -1216,6 +1216,20 @@ async function holdDay0Actions(
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
+    // A failure that is not about the item (a rate limit, an outage, a
+    // timeout) goes through the resume ladder before the run stops, as a
+    // draft's does; one about the item stops it now (`draftOrFail`'s rule).
+    if (SURFACE_MODE === 'real' && itemBoundModelFailure(err) === undefined) {
+      const resumed = await ctx.runMutation(internal.work.resumeExecution, {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        reason: safeFailureMessage(err, '', 'the execution failed'),
+      });
+      if (resumed.outcome === 'resumed') {
+        return result({ ok: false, reason: `execution will be tried again: ${reason}` });
+      }
+      if (resumed.outcome === 'stopped') return result({ ok: false, reason });
+    }
     await ctx.runMutation(internal.work.setFailed, {
       workItemId: args.workItemId,
       reason,

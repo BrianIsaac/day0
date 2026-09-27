@@ -145,6 +145,8 @@ afterAll(async (): Promise<void> => {
 const recorded = vi.hoisted(() => ({
   /** Thrown by the next plan draft instead of returning a plan. */
   planFailure: undefined as unknown,
+  /** Thrown by every skill run while set, instead of returning an output. */
+  skillFailure: undefined as unknown,
   /** Every message the manager-question judgement was asked about, as its prompt. */
   questionJudgements: [] as string[],
   /** Set to make the manager-question judgement unavailable. */
@@ -550,6 +552,7 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
+      if (recorded.skillFailure !== undefined) throw recorded.skillFailure;
       recorded.skillGroundingReads.push(args.groundingReads);
       recorded.skillModes.push(args.mode);
       recorded.skillAnswers.push(args.managerAnswers);
@@ -791,6 +794,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 
 afterEach((): void => {
   recorded.planFailure = undefined;
+  recorded.skillFailure = undefined;
   recorded.questionJudgements.length = 0;
   recorded.questionJudgementFails = false;
   recorded.scopeJudgementFails = false;
@@ -8443,5 +8447,68 @@ describe('the access end date at the apply (wave 2 review D4, M21)', (): void =>
         'access ended on 2026-09-01; the manager renews it on the card',
       ),
     });
+  });
+});
+
+describe('an execution that fails on the model (P7-18, U9 step 20)', (): void => {
+  /** Every event of one type for the agent, as payloads. */
+  async function payloadsOf(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    type: string,
+  ): Promise<unknown[]> {
+    return (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('events')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect(),
+      )
+    )
+      .filter((event) => event.type === type)
+      .map((event) => event.payload);
+  }
+
+  it('sends the run back to execute three times before it stops, each time saying so', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    recorded.skillFailure = new Error('model unavailable in tests');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+
+    for (const attempt of [1, 2, 3]) {
+      await harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId });
+      expect(await readItem(harness, workItemId)).toMatchObject({ state: 'plan-approved' });
+      expect(await payloadsOf(harness, agentId, 'work.execution-resumed')).toHaveLength(attempt);
+      expect(await scheduledNames(harness)).toContain('workActions:executeApprovedPlanInternal');
+    }
+    expect((await payloadsOf(harness, agentId, 'work.execution-resumed'))[0]).toMatchObject({
+      workItemId,
+      attempt: 1,
+      reason: 'model unavailable in tests',
+    });
+
+    await harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId });
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(isStopped(stopped.skipReason)).toBe(true);
+    expect(stopped.skipReason).toContain(
+      'the execution failed 4 times on the model (model unavailable in tests); Retry runs it again',
+    );
+    expect(recorded.skillRuns).toBe(4);
+  });
+
+  it('stops at once on a failure about the item, a reply cut at the output limit', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { ModelReplyCutError } = await import('../../src/lib/structured-fallback');
+    recorded.skillFailure = new ModelReplyCutError('day0-executor', '{"draft": "Prepared');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+
+    await harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+    expect(await payloadsOf(harness, agentId, 'work.execution-resumed')).toEqual([]);
   });
 });

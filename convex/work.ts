@@ -4295,6 +4295,99 @@ export const recoverDependentAuthoring = internalMutation({
 });
 
 /**
+ * How many times a run whose execution failed on the model outside the item
+ * (a rate limit, an outage, a timeout) is sent back to execute before it
+ * stops for the manager's Retry: the draft's ladder (`MAX_DRAFT_RESUMES`).
+ */
+export const MAX_EXECUTION_RESUMES = 3;
+
+/** How long a resumed execution waits before it runs again, doubled for each resume. */
+export const EXECUTION_RESUME_DELAY_MS = 60_000;
+
+/** Recent resume events read to count a row's resumes since its last Retry. */
+const EXECUTION_RESUME_HISTORY = 200;
+
+/**
+ * How many times this row's execution was resumed since the manager last
+ * retried it.
+ *
+ * @param row - The executing row.
+ * @returns The resumes counted from the row's latest `work.retry`, or all of them.
+ */
+async function executionResumesSinceRetry(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+): Promise<number> {
+  const forRow = async (type: 'work.execution-resumed' | 'work.retry'): Promise<Doc<'events'>[]> =>
+    (
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
+        .order('desc')
+        .take(EXECUTION_RESUME_HISTORY)
+    ).filter((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
+  const [resumes, retries] = await Promise.all([
+    forRow('work.execution-resumed'),
+    forRow('work.retry'),
+  ]);
+  const since = retries[0]?.createdAt ?? Number.NEGATIVE_INFINITY;
+  return resumes.filter((event) => event.createdAt > since).length;
+}
+
+/**
+ * Send a run whose execution failed on the model back to execute, or stop it
+ * once the resumes are spent (P7-18: a model outage made execution final).
+ *
+ * Internal; the execution action calls it for a failure that is not about the
+ * item (`itemBoundModelFailure`). Fenced on the run's claim and on nothing
+ * having been held or applied, so only an execution that ended before the
+ * gate goes back: the row returns to `plan-approved` with a
+ * `work.execution-resumed` event and its execution is scheduled after a
+ * doubling wait (the stalled-step sweep may run it sooner). After
+ * `MAX_EXECUTION_RESUMES` the row stops with the reason, for Retry.
+ *
+ * @returns `resumed`, `stopped`, or `moved-on` when the run is no longer the row's.
+ */
+export const resumeExecution = internalMutation({
+  args: { workItemId: v.id('workItems'), runId: v.id('events'), reason: v.string() },
+  handler: async (ctx, args): Promise<{ outcome: 'resumed' | 'stopped' | 'moved-on' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (
+      !row ||
+      row.state !== 'executing' ||
+      row.executionRunId !== args.runId ||
+      row.pendingRunId !== undefined ||
+      row.applyAttemptId !== undefined ||
+      row.applyPhase !== undefined
+    ) {
+      return { outcome: 'moved-on' };
+    }
+    const attempt = (await executionResumesSinceRetry(ctx, row)) + 1;
+    if (attempt > MAX_EXECUTION_RESUMES) {
+      await failInTransaction(ctx, row, {
+        reason: `the execution failed ${attempt} times on the model (${args.reason}); Retry runs it again`,
+        stopped: true,
+      });
+      return { outcome: 'stopped' };
+    }
+    const now = Date.now();
+    await ctx.db.patch(row._id, { state: 'plan-approved', executionRunId: undefined });
+    await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.execution-resumed',
+      payload: { workItemId: row._id, runId: args.runId, attempt, reason: args.reason },
+      createdAt: now,
+    });
+    await ctx.scheduler.runAfter(
+      EXECUTION_RESUME_DELAY_MS * 2 ** (attempt - 1),
+      internal.workActions.executeApprovedPlanInternal,
+      { workItemId: row._id },
+    );
+    return { outcome: 'resumed' };
+  },
+});
+
+/**
  * Mark a run done, and refuse to when nothing is behind it.
  *
  * The rule — every action the run emitted changed the work environment — was
