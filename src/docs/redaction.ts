@@ -168,8 +168,8 @@ const REDACTOR_WINDOW_OVERLAP = 400;
 
 /** One window of a text: where it starts in the text, and what it holds. */
 export interface TextWindow {
-  start: number;
-  text: string;
+  readonly start: number;
+  readonly text: string;
 }
 
 /**

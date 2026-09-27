@@ -171,9 +171,9 @@ export function clipRoleLine(text: string): string {
 /** Where an employee's charter stands, as the roster reads it. */
 interface CharterStanding {
   /** The clipped role line, or the pending or not-stated line. */
-  roleLine: string;
+  readonly roleLine: string;
   /** Whether the newest charter is a draft the manager has not approved yet. */
-  draftAwaitsManager: boolean;
+  readonly draftAwaitsManager: boolean;
 }
 
 /**
