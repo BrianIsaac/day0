@@ -33,6 +33,7 @@ import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { avatarById } from '../src/agent/avatar-pets';
 import { deploymentZone } from '../src/lib/zone';
 
 /**
@@ -50,6 +51,7 @@ export const MIGRATION_NAMES = [
   'retirements-from-tombstones',
   'surfaces-approved-tools',
   'surfaces-access-set-by',
+  'agents-avatar-digest',
 ] as const;
 
 /** One migration's name. */
@@ -108,6 +110,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'records on each card with an access end date who set it, from its newest surface.access-set event, or the upgrade when it has none',
     thenRemoves: 'nothing: accessSetBy is written wherever the clock is set from here on',
+  },
+  'agents-avatar-digest': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'rewrites an avatar id the gallery no longer lists, the handle-keyed ids of earlier builds, to the face the dashboard already shows for it',
+    thenRemoves: 'nothing: avatarById keeps its digest fallback for an id a client sends',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -359,6 +366,24 @@ async function copyApprovedTools(ctx: MutationCtx, cursor: string | null): Promi
   };
 }
 
+/**
+ * Rewrite every stored avatar id the gallery does not list to the listed face
+ * `avatarById` already shows for it (U15 D1 (a)): an earlier build keyed faces
+ * by a person's handle (`tw-<handle>`), which an export would otherwise carry.
+ */
+async function rewriteAvatarIds(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('agents').paginate({ cursor, numItems: MIGRATION_PAGE });
+  let changed = 0;
+  for (const agent of page.page) {
+    if (agent.avatarId === undefined) continue;
+    const listed = avatarById(agent.avatarId).id;
+    if (listed === agent.avatarId) continue;
+    await ctx.db.patch(agent._id, { avatarId: listed });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
 /** Each migration's page, keyed by name, so a name with no page fails the typecheck. */
 const MIGRATION_PAGES: Readonly<
   Record<MigrationName, (ctx: MutationCtx, cursor: string | null) => Promise<MigrationPage>>
@@ -370,6 +395,7 @@ const MIGRATION_PAGES: Readonly<
   'retirements-from-tombstones': copyRetirements,
   'surfaces-approved-tools': copyApprovedTools,
   'surfaces-access-set-by': async (ctx, cursor) => await backfillAccessSetByPage(ctx, cursor),
+  'agents-avatar-digest': rewriteAvatarIds,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
 };

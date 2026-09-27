@@ -6,6 +6,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS } from '../../scripts/releases';
+import { avatarById } from '../../src/agent/avatar-pets';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -423,6 +424,45 @@ describe('the declarations the schema step retired (N10)', (): void => {
       ).fields;
       expect(fields, declaration).not.toHaveProperty(field);
     }
+  });
+});
+
+describe('the avatar id rewrite (U15 D1 (a), N6)', (): void => {
+  it('gives an agent stored under a handle-keyed avatar id the face the dashboard shows for it, and leaves a listed one', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const [handle, listed, none] = await Promise.all(
+      [{ avatarId: 'tw-someone' }, { avatarId: 'face-07' }, {}].map(
+        async (fields) =>
+          await harness.run(
+            async (ctx) =>
+              await ctx.db.insert('agents', {
+                bossEmail: 'boss@day0.local',
+                name: 'Priya',
+                state: 'active',
+                createdAt: 1,
+                ...fields,
+              }),
+          ),
+      ),
+    );
+
+    await runAll(harness);
+
+    const ids = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [handle, listed, none].map(async (id) => (await ctx.db.get(id))?.avatarId ?? null),
+        ),
+    );
+    expect(ids).toEqual([avatarById('tw-someone').id, 'face-07', null]);
+    expect(ids[0]).toMatch(/^face-\d{2}$/);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'agents-avatar-digest')).toMatchObject({
+      release: '0.6.0',
+      read: 3,
+      changed: 1,
+      completedAt: expect.any(Number),
+    });
   });
 });
 
