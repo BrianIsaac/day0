@@ -2519,7 +2519,7 @@ describe('access expiry (Q5)', (): void => {
       harness
         .withIdentity({ subject: 'intruder' })
         .mutation(api.surfaces.setAccessDays, { surfaceId: approved, days: 30 }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     expect((await readSurface(harness, approved)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
     expect(await payloads(harness, 'surface.access-set')).toEqual([
       { surfaceId: approved, by: 'approval', days: 30, expiresAt: APPROVED_AT + 30 * DAY },

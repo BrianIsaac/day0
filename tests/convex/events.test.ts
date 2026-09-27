@@ -197,6 +197,6 @@ describe('the flips of the autonomous-actions switch', (): void => {
     expect(await owner.query(api.events.autonomyChanges, { agentId: mateo! })).toEqual([{ at: 1789788477973, on: true }]);
     await expect(
       harness.withIdentity({ subject: 'intruder' }).query(api.events.autonomyChanges, { agentId: priya! }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
   });
 });

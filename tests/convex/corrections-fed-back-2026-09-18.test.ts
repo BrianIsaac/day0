@@ -543,7 +543,7 @@ describe('a note on item one changes the plan of item two', (): void => {
       harness
         .withIdentity({ subject: 'stranger' })
         .mutation(api.corrections.retire, { correctionId: correction._id }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     expect((await correctionsOf(harness, agentId))[0]?.retiredAt).toBeUndefined();
   });
 

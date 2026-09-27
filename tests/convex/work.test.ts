@@ -320,7 +320,7 @@ describe('batched decisions', (): void => {
       harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActionsBatch, {
         members: [{ workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] }],
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
   });
 
   async function batchOnChannel(harness: Harness): Promise<{
@@ -876,7 +876,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity({ subject: 'stranger' }).mutation(api.work.resendDecisionRequest, {
         workItemId,
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     await harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId });
     expect(
       (await scheduledFunctionNames(harness)).filter(

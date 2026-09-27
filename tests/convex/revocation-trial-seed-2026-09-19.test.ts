@@ -230,7 +230,7 @@ describe('who can put a row past the scope stage this way', (): void => {
         trialId: 'rev-scope-01',
         kind: 'queued-read',
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     const rows = await harness.run(async (ctx) => await ctx.db.query('workItems').collect());
     expect(rows).toEqual([]);
   });
@@ -245,7 +245,7 @@ describe('who can put a row past the scope stage this way', (): void => {
         trialId: 'rev-scope-01',
         kind: 'queued-read',
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('is a local real-mode feature');
   });
 
   it('leaves a row the trial agent did not seed to the scope judgement', async (): Promise<void> => {

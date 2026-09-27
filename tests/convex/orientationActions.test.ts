@@ -2037,7 +2037,7 @@ describe('each employee reads its own role', (): void => {
       harness
         .withIdentity({ subject: 'other-owner' })
         .mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     await expect(owner.mutation(requestProposal, { surfaceId: before.linear._id })).rejects.toThrow(
       'Only a declared system can be proposed; this one is proposed.',
     );
