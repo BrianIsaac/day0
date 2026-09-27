@@ -502,11 +502,15 @@ describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void =
     expect(printed).toContain("the deployment's rows are at 0.3.0");
   });
 
-  it('takes a volume with rows and no stamp as the last unstamped release', async (): Promise<void> => {
-    const h = configured({ services: ['backend'] });
+  it('takes a deployment with rows and no stamp as the last unstamped release, and one never pushed to as new', async (): Promise<void> => {
+    const h = configured({ services: ['backend'], deploymentTables: ['agents', 'events'] });
     expect(await runCommand(verb('resume'), h.io)).toBe(0);
     expect(h.output.join('\n')).toContain('already at 0.3.0 (taken from its unstamped rows)');
     expect(ran(h)).not.toContain('convex data deploymentVersions');
+
+    const empty = configured({ services: ['backend'] });
+    expect(await runCommand(verb('resume'), empty.io)).toBe(0);
+    expect(empty.output.join('\n')).toContain('a new volume, starting at 0.3.0');
   });
 
   it('leaves the old functions on the old env when the push is refused, and never restarts', async (): Promise<void> => {

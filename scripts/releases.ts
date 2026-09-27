@@ -173,3 +173,133 @@ export function upgradeVerdict(input: {
       `migrations: check out v${skipped[0]}, upgrade, then come back to this checkout.`,
   };
 }
+
+/** The Convex CLI arguments that run every migration still pending (`convex/migrations.ts`). */
+export const MIGRATIONS_ARGUMENTS: readonly string[] = ['convex', 'run', 'migrations:runPending'];
+
+/**
+ * The Convex CLI arguments that stamp the release once the upgrade is done.
+ *
+ * Args:
+ *   release: The checkout's release.
+ *   commit: The commit the functions were pushed from, when known.
+ *
+ * Returns:
+ *   Arguments for `npx`.
+ */
+export function releaseStampArguments(release: string, commit?: string): string[] {
+  return [
+    'convex',
+    'run',
+    'migrations:recordRelease',
+    JSON.stringify({ release, ...(commit !== undefined ? { commit } : {}) }),
+  ];
+}
+
+/** What one `migrations:runPending` call reports. */
+export interface MigrationReport {
+  migrations: { name: string; read: number; changed: number }[];
+  pending: string[];
+}
+
+/**
+ * The report `npx convex run migrations:runPending` printed.
+ *
+ * Args:
+ *   stdout: The CLI's output: the function's return value as JSON.
+ *
+ * Returns:
+ *   The report.
+ *
+ * Raises:
+ *   Error: When the output holds no report.
+ */
+export function parseMigrationReport(stdout: string): MigrationReport {
+  const start = stdout.indexOf('{');
+  const end = stdout.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('migrations:runPending printed no report');
+  const parsed = JSON.parse(stdout.slice(start, end + 1)) as Partial<MigrationReport>;
+  if (!Array.isArray(parsed.migrations) || !Array.isArray(parsed.pending)) {
+    throw new Error('migrations:runPending printed something other than its report');
+  }
+  return { migrations: parsed.migrations, pending: parsed.pending };
+}
+
+/**
+ * The lines the setup prints for a migration report: what each migration
+ * changed, and the ownerless agents it could not give to anyone.
+ *
+ * Args:
+ *   report: One call's report.
+ *
+ * Returns:
+ *   Lines to print, none when nothing changed.
+ */
+export function migrationLines(report: MigrationReport): string[] {
+  const lines = report.migrations
+    .filter((migration) => migration.changed > 0)
+    .map((migration) => `migrated ${migration.name}: ${migration.changed} row(s) changed`);
+  const owners = report.migrations.find((migration) => migration.name === 'agents-owner');
+  if (owners !== undefined && owners.read > owners.changed) {
+    lines.push(
+      `${owners.read - owners.changed} agent(s) with no owner were left as they are: this ` +
+        'deployment has more than one owner, so none is theirs by default',
+    );
+  }
+  return lines;
+}
+
+/** What a Convex CLI call returned, as the release read needs it. */
+export interface CliResult {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * Read the deployment's release stamp through the Convex CLI and decide
+ * whether this checkout may be pushed over its rows. A deployment with no
+ * tables has had nothing pushed, so it is new whatever its volume; one that
+ * cannot be read is refused.
+ *
+ * @param npx - Runs `npx` with the given arguments against the deployment.
+ * @param checkout - This checkout's release and the releases it records.
+ */
+export function readReleaseVerdict(
+  npx: (args: readonly string[]) => CliResult,
+  checkout: { release: string; releases: readonly string[] },
+): UpgradeVerdict {
+  const refused = (what: string, result: CliResult): UpgradeVerdict => ({
+    allowed: false,
+    reason: `${what}: ${firstLineOf(result.stderr) || firstLineOf(result.stdout) || `exit ${result.status ?? 'unknown'}`}`,
+  });
+  const tables = npx(TABLE_LISTING_ARGUMENTS);
+  if (tables.status !== 0) return refused("the deployment's tables could not be listed", tables);
+  const fresh = tables.stdout.trim() === '';
+  let stored: string | undefined;
+  if (listsReleaseTable(tables.stdout)) {
+    const read = npx(RELEASE_STAMP_ARGUMENTS);
+    if (read.status !== 0) return refused('the release stamp could not be read', read);
+    try {
+      stored = parseReleaseStamp(read.stdout)?.release;
+    } catch (error) {
+      return { allowed: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  return upgradeVerdict({
+    stored,
+    fresh,
+    checkout: checkout.release,
+    releases: checkout.releases,
+  });
+}
+
+/** The first non-empty line of some output. */
+function firstLineOf(text: string): string {
+  return (
+    text
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? ''
+  );
+}

@@ -114,10 +114,15 @@ import { setupRoute } from './setup-route';
 import {
   checkoutReleases,
   listsReleaseTable,
+  migrationLines,
+  MIGRATIONS_ARGUMENTS,
+  parseMigrationReport,
   parseReleaseStamp,
+  readReleaseVerdict,
   RELEASE_STAMP_ARGUMENTS,
+  releaseStampArguments,
   TABLE_LISTING_ARGUMENTS,
-  upgradeVerdict,
+  type MigrationReport,
   type UpgradeVerdict,
 } from './releases';
 
@@ -1631,83 +1636,8 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
   }
 }
 
-/** The Convex CLI arguments that run every migration still pending (`convex/migrations.ts`). */
-export const MIGRATIONS_ARGUMENTS: readonly string[] = ['convex', 'run', 'migrations:runPending'];
-
 /** How many `runPending` calls the setup makes before it says the migrations did not finish. */
 const MIGRATION_CALLS = 12;
-
-/**
- * The Convex CLI arguments that stamp the release once the upgrade is done.
- *
- * Args:
- *   release: The checkout's release.
- *   commit: The commit the functions were pushed from, when known.
- *
- * Returns:
- *   Arguments for `npx`.
- */
-export function releaseStampArguments(release: string, commit?: string): string[] {
-  return [
-    'convex',
-    'run',
-    'migrations:recordRelease',
-    JSON.stringify({ release, ...(commit !== undefined ? { commit } : {}) }),
-  ];
-}
-
-/** What one `migrations:runPending` call reports. */
-export interface MigrationReport {
-  migrations: { name: string; read: number; changed: number }[];
-  pending: string[];
-}
-
-/**
- * The report `npx convex run migrations:runPending` printed.
- *
- * Args:
- *   stdout: The CLI's output: the function's return value as JSON.
- *
- * Returns:
- *   The report.
- *
- * Raises:
- *   Error: When the output holds no report.
- */
-export function parseMigrationReport(stdout: string): MigrationReport {
-  const start = stdout.indexOf('{');
-  const end = stdout.lastIndexOf('}');
-  if (start < 0 || end < start) throw new Error('migrations:runPending printed no report');
-  const parsed = JSON.parse(stdout.slice(start, end + 1)) as Partial<MigrationReport>;
-  if (!Array.isArray(parsed.migrations) || !Array.isArray(parsed.pending)) {
-    throw new Error('migrations:runPending printed something other than its report');
-  }
-  return { migrations: parsed.migrations, pending: parsed.pending };
-}
-
-/**
- * The lines the setup prints for a migration report: what each migration
- * changed, and the ownerless agents it could not give to anyone.
- *
- * Args:
- *   report: One call's report.
- *
- * Returns:
- *   Lines to print, none when nothing changed.
- */
-export function migrationLines(report: MigrationReport): string[] {
-  const lines = report.migrations
-    .filter((migration) => migration.changed > 0)
-    .map((migration) => `migrated ${migration.name}: ${migration.changed} row(s) changed`);
-  const owners = report.migrations.find((migration) => migration.name === 'agents-owner');
-  if (owners !== undefined && owners.read > owners.changed) {
-    lines.push(
-      `${owners.read - owners.changed} agent(s) with no owner were left as they are: this ` +
-        'deployment has more than one owner, so none is theirs by default',
-    );
-  }
-  return lines;
-}
 
 export interface PlanInput {
   mode: SetupMode;
@@ -2348,34 +2278,10 @@ function releaseCheck(
   environment: Record<string, string>,
   checkout: { release: string; releases: string[] },
 ): UpgradeVerdict {
-  const refused = (what: string, result: RunResult): UpgradeVerdict => ({
-    allowed: false,
-    reason: `${what}: ${firstLine(result.stderr) || firstLine(result.stdout) || `exit ${result.status ?? 'unknown'}`}`,
-  });
-  const tables = io.run('npx', [...TABLE_LISTING_ARGUMENTS], {
-    env: environment,
-    timeoutMs: 120_000,
-  });
-  if (tables.status !== 0) return refused("the deployment's tables could not be listed", tables);
-  let stored: string | undefined;
-  if (listsReleaseTable(tables.stdout)) {
-    const read = io.run('npx', [...RELEASE_STAMP_ARGUMENTS], {
-      env: environment,
-      timeoutMs: 120_000,
-    });
-    if (read.status !== 0) return refused('the release stamp could not be read', read);
-    try {
-      stored = parseReleaseStamp(read.stdout)?.release;
-    } catch (error) {
-      return { allowed: false, reason: error instanceof Error ? error.message : String(error) };
-    }
-  }
-  return upgradeVerdict({
-    stored,
-    fresh: false,
-    checkout: checkout.release,
-    releases: checkout.releases,
-  });
+  return readReleaseVerdict(
+    (args) => io.run('npx', args, { env: environment, timeoutMs: 120_000 }),
+    checkout,
+  );
 }
 
 /**

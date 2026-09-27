@@ -155,6 +155,8 @@ export interface HarnessOptions {
   servicesBeforeUp?: string[];
   /** The release the deployment's rows are stamped at; absent means no stamp table. */
   releaseStamp?: string;
+  /** Tables the deployment lists besides the stamp's; none means nothing was ever pushed. */
+  deploymentTables?: string[];
   /** What each `migrations:runPending` call answers, in order, the last repeated. */
   migrationReports?: string[];
   /** What `npx convex env list` prints when the admin key is accepted. */
@@ -302,11 +304,11 @@ export function harness(options: HarnessOptions = {}): Harness {
       };
     }
     if (joined === 'npx convex data') {
-      return {
-        status: 0,
-        stdout: options.releaseStamp === undefined ? '' : 'agents\ndeploymentVersions\nevents\n',
-        stderr: '',
-      };
+      const tables = [
+        ...(options.deploymentTables ?? []),
+        ...(options.releaseStamp === undefined ? [] : ['agents', 'deploymentVersions']),
+      ];
+      return { status: 0, stdout: tables.map((table) => `${table}\n`).join(''), stderr: '' };
     }
     if (joined.startsWith('npx convex data deploymentVersions')) {
       return {

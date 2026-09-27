@@ -4,7 +4,11 @@ import {
   changelogReleases,
   LAST_UNVERSIONED_RELEASE,
   listsReleaseTable,
+  migrationLines,
+  parseMigrationReport,
   parseReleaseStamp,
+  readReleaseVerdict,
+  releaseStampArguments,
   upgradeVerdict,
 } from '../../scripts/releases';
 
@@ -80,5 +84,62 @@ describe('whether the upgrade may push this checkout (decision N10)', (): void =
     expect(unknown.allowed ? '' : unknown.reason).toContain('does not record');
     const unlisted = verdict('0.3.0', '0.5.0');
     expect(unlisted.allowed ? '' : unlisted.reason).toContain('has no heading in CHANGELOG.md');
+  });
+});
+
+describe('reading the verdict through the Convex CLI', (): void => {
+  const cli =
+    (answers: Record<string, { status?: number; stdout?: string; stderr?: string }>) =>
+    (args: readonly string[]) => ({
+      status: 0,
+      stdout: '',
+      stderr: '',
+      ...answers[args.join(' ')],
+    });
+  const checkout = { release: '0.4.0', releases: RELEASES };
+
+  it('takes a deployment that lists no tables as new, and reads the stamp when its table is there', (): void => {
+    expect(readReleaseVerdict(cli({}), checkout)).toMatchObject({ allowed: true, from: undefined });
+    expect(
+      readReleaseVerdict(
+        cli({
+          'convex data': { stdout: 'agents\ndeploymentVersions\n' },
+          'convex data deploymentVersions --limit 1 --format jsonl': {
+            stdout: '{"release":"0.2.0","recordedAt":1}\n',
+          },
+        }),
+        checkout,
+      ),
+    ).toMatchObject({ allowed: false });
+  });
+
+  it('refuses a deployment whose tables cannot be listed', (): void => {
+    const verdict = readReleaseVerdict(
+      cli({ 'convex data': { status: 1, stderr: 'Failed to connect\n' } }),
+      checkout,
+    );
+    expect(verdict).toEqual({
+      allowed: false,
+      reason: "the deployment's tables could not be listed: Failed to connect",
+    });
+  });
+});
+
+describe('the migration report the upgrade prints', (): void => {
+  it('reads the runPending answer and says what changed and who owns nothing', (): void => {
+    const report = parseMigrationReport(
+      'noise before\n{"migrations":[{"name":"agents-owner","read":3,"changed":1},{"name":"agents-posture","read":4,"changed":0}],"pending":[]}\n',
+    );
+    expect(migrationLines(report)).toEqual([
+      'migrated agents-owner: 1 row(s) changed',
+      '2 agent(s) with no owner were left as they are: this deployment has more than one owner, so none is theirs by default',
+    ]);
+    expect(() => parseMigrationReport('')).toThrow('printed no report');
+    expect(releaseStampArguments('0.4.0', 'abc123')).toEqual([
+      'convex',
+      'run',
+      'migrations:recordRelease',
+      '{"release":"0.4.0","commit":"abc123"}',
+    ]);
   });
 });
