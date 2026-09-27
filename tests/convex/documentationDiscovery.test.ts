@@ -212,9 +212,7 @@ describe('documentation discovery lifecycle', (): void => {
       async (ctx) =>
         await ctx.db
           .query('surfaces')
-          .withIndex('by_agent_slug', (index) =>
-            index.eq('agentId', agentId).eq('slug', 'linear'),
-          )
+          .withIndex('by_agent_slug', (index) => index.eq('agentId', agentId).eq('slug', 'linear'))
           .unique(),
     );
     expect(row).toMatchObject({
@@ -371,32 +369,36 @@ describe('documentation discovery lifecycle', (): void => {
       fingerprint: 'first',
       candidates: [slack],
     });
-    const second = await harness.run(async (ctx): Promise<{
-      sourceId: Id<'docSources'>;
-      runId: Id<'docSyncRuns'>;
-    }> => {
-      const otherSourceId = await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'Runbooks',
-        kind: 'folder',
-        locator: 'runbooks',
-        status: 'synced',
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      const otherRunId = await ctx.db.insert('docSyncRuns', {
-        sourceId: otherSourceId,
-        refs: [],
-        credentialRefs: [],
-        pageCount: 0,
-        redactionCount: 0,
-        state: 'completed',
-        createdAt: 1,
-        completedAt: 1,
-      });
-      await ctx.db.patch(otherSourceId, { lastCompletedSyncId: otherRunId });
-      return { sourceId: otherSourceId, runId: otherRunId };
-    });
+    const second = await harness.run(
+      async (
+        ctx,
+      ): Promise<{
+        sourceId: Id<'docSources'>;
+        runId: Id<'docSyncRuns'>;
+      }> => {
+        const otherSourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Runbooks',
+          kind: 'folder',
+          locator: 'runbooks',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const otherRunId = await ctx.db.insert('docSyncRuns', {
+          sourceId: otherSourceId,
+          refs: [],
+          credentialRefs: [],
+          pageCount: 0,
+          redactionCount: 0,
+          state: 'completed',
+          createdAt: 1,
+          completedAt: 1,
+        });
+        await ctx.db.patch(otherSourceId, { lastCompletedSyncId: otherRunId });
+        return { sourceId: otherSourceId, runId: otherRunId };
+      },
+    );
 
     await expect(
       harness.mutation(internal.documentationDiscovery.apply, {
@@ -570,32 +572,36 @@ describe('documentation discovery lifecycle', (): void => {
   it('keeps one origin per source and retires only the source that stopped naming it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, sourceId, runId } = await seedDiscovery(harness);
-    const second = await harness.run(async (ctx): Promise<{
-      sourceId: Id<'docSources'>;
-      runId: Id<'docSyncRuns'>;
-    }> => {
-      const otherSourceId = await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'RevOps handbook',
-        kind: 'folder',
-        locator: 'handbook',
-        status: 'synced',
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      const otherRunId = await ctx.db.insert('docSyncRuns', {
-        sourceId: otherSourceId,
-        refs: [],
-        credentialRefs: [],
-        pageCount: 0,
-        redactionCount: 0,
-        state: 'completed',
-        createdAt: 1,
-        completedAt: 1,
-      });
-      await ctx.db.patch(otherSourceId, { lastCompletedSyncId: otherRunId });
-      return { sourceId: otherSourceId, runId: otherRunId };
-    });
+    const second = await harness.run(
+      async (
+        ctx,
+      ): Promise<{
+        sourceId: Id<'docSources'>;
+        runId: Id<'docSyncRuns'>;
+      }> => {
+        const otherSourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'RevOps handbook',
+          kind: 'folder',
+          locator: 'handbook',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const otherRunId = await ctx.db.insert('docSyncRuns', {
+          sourceId: otherSourceId,
+          refs: [],
+          credentialRefs: [],
+          pageCount: 0,
+          redactionCount: 0,
+          state: 'completed',
+          createdAt: 1,
+          completedAt: 1,
+        });
+        await ctx.db.patch(otherSourceId, { lastCompletedSyncId: otherRunId });
+        return { sourceId: otherSourceId, runId: otherRunId };
+      },
+    );
 
     await harness.mutation(internal.documentationDiscovery.apply, {
       sourceId,
@@ -608,7 +614,9 @@ describe('documentation discovery lifecycle', (): void => {
         sourceId: second.sourceId,
         runId: second.runId,
         fingerprint: 'first',
-        candidates: [{ ...northstar, ref: 'handbook/systems.md', quote: '| Northstar CRM | ... |' }],
+        candidates: [
+          { ...northstar, ref: 'handbook/systems.md', quote: '| Northstar CRM | ... |' },
+        ],
       }),
       // One system, two origins, one surface.
     ).resolves.toMatchObject({ applied: true, created: 0, updated: 1, scheduled: 0 });

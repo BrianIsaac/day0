@@ -383,16 +383,68 @@ function nestedString(value: unknown, path: string[]): string | undefined {
   return typeof current === 'string' ? current : undefined;
 }
 
-/** Derive an Atlassian continuation cursor from common response fields. */
+/**
+ * The reason a walk stops when the provider says there is more but gives no
+ * continuation the reader can follow. Ending the walk there would complete the
+ * generation and delete every page after it, so the batch fails instead.
+ */
+export const TRUNCATED_CONTINUATION_REASON =
+  'the documentation provider said there were more pages but gave no continuation day0 can follow; the sync stops here rather than delete the pages after it';
+
+/**
+ * The reason a Drive walk stops when Drive says its search did not cover
+ * every corpus and gives no token to go on from. Completing there would
+ * delete every document the search missed.
+ */
+export const DRIVE_INCOMPLETE_SEARCH_REASON =
+  'Google Drive reported an incomplete search with no page token; the sync stops here rather than delete the documents it could not list. Narrow the linked Drive location or check its sharing.';
+
+/**
+ * Derive an Atlassian continuation cursor from common response fields.
+ *
+ * @returns The cursor, or undefined when the response names no next page.
+ * @throws Error with `TRUNCATED_CONTINUATION_REASON` when a next page is
+ *   named in a shape that carries no cursor.
+ */
 function atlassianCursor(payload: Record<string, unknown>): string | undefined {
-  if (typeof payload.nextCursor === 'string') return payload.nextCursor;
-  const next = nestedString(payload, ['_links', 'next']);
-  if (!next) return undefined;
+  const named = continuationCursor(payload.nextCursor);
+  if (named !== undefined) return named;
+  const links = payload._links;
+  const next =
+    links && typeof links === 'object' && !Array.isArray(links)
+      ? (links as Record<string, unknown>).next
+      : undefined;
+  if (next === undefined || next === null || next === '') return undefined;
+  if (typeof next !== 'string') throw new Error(TRUNCATED_CONTINUATION_REASON);
+  let cursor: string | null;
   try {
-    return new URL(next, 'https://mcp.atlassian.com').searchParams.get('cursor') || undefined;
-  } catch {
-    return undefined;
+    cursor = new URL(next, 'https://mcp.atlassian.com').searchParams.get('cursor');
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${TRUNCATED_CONTINUATION_REASON} (${detail})`);
   }
+  if (!cursor) throw new Error(TRUNCATED_CONTINUATION_REASON);
+  return cursor;
+}
+
+/**
+ * The continuation a provider names in one field, when it names one. An
+ * absent, null or empty field is the end of the walk, the way the providers
+ * say so, unless the provider also says more pages follow.
+ *
+ * @param value - The provider's continuation field.
+ * @param more - Whether the provider says more pages follow, where it says so
+ *   apart from the field.
+ * @returns The cursor, or undefined at the end of the walk.
+ * @throws Error with `TRUNCATED_CONTINUATION_REASON` when the field holds
+ *   something other than a cursor, or more pages follow and it holds none.
+ */
+function continuationCursor(value: unknown, more?: boolean): string | undefined {
+  if (typeof value === 'string' && value !== '') return value;
+  if (more === true || (value !== undefined && value !== null && value !== '')) {
+    throw new Error(TRUNCATED_CONTINUATION_REASON);
+  }
+  return undefined;
 }
 
 /** Reader for credential-bound MCP documentation locations. */
@@ -523,13 +575,12 @@ export class McpReader implements DocSourceReader {
             : Date.now(),
       });
     }
-    return {
-      pages,
-      nextCursor:
-        typeof searchResult.nextPageToken === 'string' && searchResult.nextPageToken
-          ? searchResult.nextPageToken
-          : undefined,
-    };
+    const nextCursor = continuationCursor(searchResult.nextPageToken);
+    // A search Drive could not finish, with no token to go on from, is not the end of the corpus.
+    if (nextCursor === undefined && searchResult.incompleteSearch === true) {
+      throw new Error(DRIVE_INCOMPLETE_SEARCH_REASON);
+    }
+    return { pages, nextCursor };
   }
 
   /** Read one Atlassian CQL page and retrieve each Confluence page as Markdown. */
@@ -562,7 +613,10 @@ export class McpReader implements DocSourceReader {
       await search.execute!(
         {
           cloudId,
-          cql: 'type=page ORDER BY lastmodified DESC',
+          // Oldest first by creation, which an edit never changes: newest
+          // first by modification put a page edited mid-walk ahead of the
+          // cursor, where the walk missed it and the final batch deleted it.
+          cql: 'type=page ORDER BY created ASC',
           limit,
           ...(cursor ? { cursor } : {}),
         },
@@ -663,9 +717,9 @@ export class McpReader implements DocSourceReader {
     return {
       pages,
       nextCursor:
-        searchResult.has_more === true && typeof searchResult.next_cursor === 'string'
-          ? searchResult.next_cursor
-          : undefined,
+        searchResult.has_more === false
+          ? undefined
+          : continuationCursor(searchResult.next_cursor, searchResult.has_more === true),
     };
   }
 

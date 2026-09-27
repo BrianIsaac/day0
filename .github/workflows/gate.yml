@@ -2,7 +2,7 @@ name: Gate
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging, 'unit/**']
   pull_request:
 
 permissions:

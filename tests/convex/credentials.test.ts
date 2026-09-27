@@ -1,14 +1,19 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
 
 const SECRET = ['ntn', 'contract-value-0123456789abcdef'].join('_');
 const ROTATED = ['ntn', 'rotated-value-0123456789abcdef'].join('_');
@@ -123,6 +128,55 @@ describe('credential contract', (): void => {
       ROTATED,
     );
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
+  });
+
+  it("revives a credential a sync superseded when the same value returns, and keeps a person's revoke (P10-1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const source = { sourceId, ref: 'linear-automation' };
+    const args = { userId: 'owner', kind: 'value' as const, label: 'linear service token', source };
+    const credentialId = await harness.action(internal.credentials.store, {
+      ...args,
+      plaintext: SECRET,
+    });
+    /** One sync generation that found the credential's page ref, or did not. */
+    const sync = async (found: boolean): Promise<void> => {
+      const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+      if (found) await harness.action(internal.credentials.store, { ...args, plaintext: SECRET });
+      await harness.mutation(internal.docSources.finishSync, {
+        sourceId,
+        runId,
+        refs: ['linear-automation'],
+        credentialRefs: found ? ['linear-automation'] : [],
+        pageCount: 1,
+        redactionCount: found ? 1 : 0,
+      });
+    };
+
+    // The page blinks: one sync does not find the value, the next finds it again.
+    await sync(false);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+    await sync(true);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
+      SECRET,
+    );
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
+    expect(await rows(harness)).toEqual([
+      expect.not.objectContaining({ status: expect.anything(), revokedAt: expect.anything() }),
+    ]);
+
+    // A revoke the owner made survives the same blink.
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {
+      credentialId,
+    });
+    await sync(false);
+    await sync(true);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
   });
 
   it('replaces a row sealed under a rotated deployment key instead of failing the sync', async (): Promise<void> => {
@@ -247,27 +301,233 @@ describe('credential contract', (): void => {
   });
 });
 
+describe('a page whose count of values changes (P10-1)', (): void => {
+  const TWO = ['ntn', 'second-value-0123456789abcdef'].join('_');
+  const pageRef = 'linear-automation.md';
+  const qualified = (index: number, label: string): string =>
+    `${pageRef}#credential=${index}-${encodeURIComponent(label)}`;
 
-describe('credential persistence after unlink', () => {
-  it.each([false, true])('refuses late ciphertext after unlink (existing row: %s)', async (existing) => {
-    useSurfaceMode('real');
+  it('carries a value the page already holds to its new ref instead of minting a row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const store = async (ref: string, plaintext: string, label = 'linear service token') =>
+      await harness.action(internal.credentials.store, {
+        userId: 'owner',
+        kind: 'value',
+        label,
+        plaintext,
+        source: { sourceId, ref },
+      });
+    const first = await store(pageRef, SECRET);
+
+    // A second value appears on the page, so both take label-qualified refs.
+    await expect(store(qualified(1, 'linear service token'), SECRET)).resolves.toBe(first);
+    const second = await store(qualified(2, 'notion token'), TWO, 'notion token');
+    expect(second).not.toBe(first);
+    expect(await rows(harness)).toHaveLength(2);
+
+    // The second value goes again: the first returns to the page's own ref.
+    await expect(store(pageRef, SECRET)).resolves.toBe(first);
+    expect(await rows(harness)).toHaveLength(2);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: first }),
+    ).resolves.toBe(SECRET);
+
+    // The same value on another page is that page's own row.
+    await expect(store('another-page.md', SECRET)).resolves.not.toBe(first);
+  });
+
+  it('moves a row only from the ref it was read at, so a concurrent store cannot move it twice', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'linear service token',
+      plaintext: SECRET,
+      source: { sourceId, ref: pageRef },
+    });
+    const move = async (fromRef: string, ref: string): Promise<boolean> =>
+      await harness.mutation(internal.credentials.moveToRef, {
+        credentialId,
+        userId: 'owner',
+        fromRef,
+        source: { sourceId, ref },
+        kind: 'value',
+        label: 'linear service token',
+      });
+    await expect(move(pageRef, qualified(1, 'linear service token'))).resolves.toBe(true);
+    await expect(move(pageRef, qualified(2, 'linear service token'))).resolves.toBe(false);
+    expect(await rows(harness)).toEqual([
+      expect.objectContaining({ source: { sourceId, ref: qualified(1, 'linear service token') } }),
+    ]);
+  });
+
+  it("keeps a person's revoke on a value it carries to a new ref", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'owner');
     const args = {
-      userId: 'owner', kind: 'value' as const, label: 'linear service token',
-      source: { sourceId, ref: 'page' }, ciphertext: 'late-ciphertext', iv: 'late-iv',
-      reactivate: true,
+      userId: 'owner',
+      kind: 'value' as const,
+      label: 'linear service token',
+      plaintext: SECRET,
     };
-    if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
-    // Encryption began while the source existed; its final transaction arrives after unlink.
-    await expect(harness.mutation(internal.credentials.persistEncrypted, args)).rejects.toThrow('does not belong');
-    const stored = await rows(harness);
-    expect(stored).toHaveLength(existing ? 1 : 0);
-    for (const row of stored) {
-      expect(row).not.toHaveProperty('ciphertext');
-      expect(row).not.toHaveProperty('iv');
-      expect(row.revokedAt).toEqual(expect.any(Number));
-    }
+    const credentialId = await harness.action(internal.credentials.store, {
+      ...args,
+      source: { sourceId, ref: pageRef },
+    });
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.credentials.revoke, { credentialId });
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...args,
+        source: { sourceId, ref: qualified(1, 'linear service token') },
+      }),
+    ).resolves.toBe(credentialId);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'unavailable',
+    );
   });
+
+  describe('through a folder sync', (): void => {
+    let redactor: { url: string; close: () => Promise<void> } | undefined;
+    beforeAll(async (): Promise<void> => {
+      redactor = await serveSpanModel();
+    });
+    afterAll(async (): Promise<void> => {
+      await redactor?.close();
+    });
+
+    it('keeps one row per value as a runbook gains a second token and loses it again', async (): Promise<void> => {
+      // Scheduled discovery never runs: the clock is fake and never advanced.
+      vi.useFakeTimers();
+      try {
+        const root = await mkdtemp(join(tmpdir(), 'day0-credential-refs-'));
+        vi.stubEnv('DAY0_DOCS_ROOT', root);
+        vi.stubEnv('DAY0_REDACTOR_URL', redactor?.url ?? '');
+        const linear = ['lin', 'api', 'refs-contract-0123456789abcdef'].join('_');
+        const backup = ['lin', 'api', 'backup-contract-0123456789abcdef'].join('_');
+        const write = async (...lines: string[]): Promise<void> =>
+          await writeFile(
+            join(root, 'runbook.md'),
+            ['# Linear automation', '', ...lines, ''].join('\n'),
+            'utf8',
+          );
+        useSurfaceMode('real');
+        const harness = convexTest(schema, allConvexModules());
+        const sourceId = await harness.mutation(internal.docSources.createSource, {
+          userId: 'owner',
+          label: 'Runbooks',
+          kind: 'folder',
+          locator: '.',
+        });
+        const sync = async (): Promise<void> => {
+          await expect(
+            harness.action(internal.docSyncActions.syncSource, { sourceId }),
+          ).resolves.toMatchObject({ ok: true, complete: true });
+        };
+
+        await write(`Service token: ${linear}`);
+        await sync();
+        const [first] = await rows(harness);
+        await write(`Service token: ${linear}`, `Backup token: ${backup}`);
+        await sync();
+        await write(`Service token: ${linear}`);
+        await sync();
+
+        const stored = await rows(harness);
+        expect(stored).toHaveLength(2);
+        const kept = stored.find((row) => row._id === first?._id);
+        expect(kept).toMatchObject({ source: { sourceId, ref: 'runbook.md' } });
+        expect(kept).not.toHaveProperty('status');
+        await expect(
+          harness.action(internal.credentials.decrypt, {
+            credentialId: first!._id as Id<'credentials'>,
+          }),
+        ).resolves.toBe(linear);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+});
+
+describe('the known-value cap (P10-1)', (): void => {
+  /** Insert `count` rows for one owner, each shaped by `extra`. */
+  const insertRows = async (
+    harness: TestConvex<typeof schema>,
+    count: number,
+    extra: Record<string, unknown>,
+  ): Promise<void> => {
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < count; index += 1) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: `row ${index}`,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'entered',
+          createdAt: index,
+          ...extra,
+        });
+      }
+    });
+  };
+
+  it('counts active rows only, so rows a sync superseded or a person revoked lock nobody out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await insertRows(harness, OWNER_KNOWN_VALUE_CAP, { status: 'superseded' });
+    await insertRows(harness, 200, { revokedAt: 1 });
+    await insertRows(harness, 2, {});
+    const list = await harness.query(internal.credentials.activeValuesForOwner, {
+      userId: 'owner',
+    });
+    expect(list.overflow).toBe(false);
+    expect(list.rows).toHaveLength(2);
+  });
+
+  it('still fails closed one active row past the cap', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await insertRows(harness, OWNER_KNOWN_VALUE_CAP + 1, {});
+    await expect(
+      harness.query(internal.credentials.activeValuesForOwner, { userId: 'owner' }),
+    ).resolves.toMatchObject({ overflow: true });
+  });
+});
+
+describe('credential persistence after unlink', () => {
+  it.each([false, true])(
+    'refuses late ciphertext after unlink (existing row: %s)',
+    async (existing) => {
+      useSurfaceMode('real');
+      const harness = convexTest(schema, allConvexModules());
+      const sourceId = await seedSource(harness, 'owner');
+      const args = {
+        userId: 'owner',
+        kind: 'value' as const,
+        label: 'linear service token',
+        source: { sourceId, ref: 'page' },
+        ciphertext: 'late-ciphertext',
+        iv: 'late-iv',
+        reactivate: true,
+      };
+      if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);
+      await harness
+        .withIdentity({ subject: 'owner' })
+        .mutation(api.docSources.unlink, { sourceId });
+      // Encryption began while the source existed; its final transaction arrives after unlink.
+      await expect(harness.mutation(internal.credentials.persistEncrypted, args)).rejects.toThrow(
+        'does not belong',
+      );
+      const stored = await rows(harness);
+      expect(stored).toHaveLength(existing ? 1 : 0);
+      for (const row of stored) {
+        expect(row).not.toHaveProperty('ciphertext');
+        expect(row).not.toHaveProperty('iv');
+        expect(row.revokedAt).toEqual(expect.any(Number));
+      }
+    },
+  );
 });

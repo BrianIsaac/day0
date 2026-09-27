@@ -4,8 +4,12 @@
 # machine has an NVIDIA driver, and drops back to the base file alone when
 # Docker turns out not to be able to hand a device over. Run it by hand as:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
-#     --profile model up -d model
+#   docker compose --env-file .env.local \
+#     -f docker-compose.yml -f docker-compose.gpu.yml --profile model up -d model
+#
+# The env file is not optional: it names the Compose project, and the base file
+# interpolates DAY0_DOCS_HOST_DIR from it, so without it compose refuses the file
+# or starts a second project beside yours.
 #
 # It is a separate file rather than a block in the main one because an
 # unsatisfiable device reservation is fatal rather than ignored - the container

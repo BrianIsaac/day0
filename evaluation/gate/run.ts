@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 
+import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,8 +13,14 @@ function stamp(now: Date): string {
     .replace(/:/g, '-');
 }
 
+/**
+ * Measure the gate at the checked-out commit and write the matrix under `evaluation/gate/<stamp>/`.
+ *
+ * @returns The directory written.
+ */
 export async function runGateMatrix(now = new Date()): Promise<string> {
-  const evidence = buildGateMatrix(now);
+  const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const evidence = buildGateMatrix(commit, now);
   const directory = resolve('evaluation/gate', stamp(now));
   await mkdir(directory, { recursive: true });
   await Promise.all([

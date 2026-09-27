@@ -1,8 +1,6 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-import { BlockList, isIP } from 'node:net';
 import { v } from 'convex/values';
 import type { GenericId } from 'convex/values';
 import type { FunctionReference } from 'convex/server';
@@ -13,6 +11,14 @@ import { assertOwnsAgentAction } from './ownership';
 import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
+import {
+  checkMcpAddress,
+  McpAddressRefusal,
+  pinnedFetch,
+  resolveHostname as resolveMcpHostname,
+  type CheckedMcpAddress,
+  type HostResolver,
+} from '../src/surfaces/mcp-address';
 import {
   browserComponent,
   browserComponentRefusal,
@@ -106,52 +112,10 @@ export interface ProbeOutcome {
   managerDmReady?: boolean;
 }
 
-type McpClientFactory = (endpoint: URL, credential: string) => McpProbeClient;
+type McpClientFactory = (checked: CheckedMcpAddress, credential: string) => McpProbeClient;
 type EndpointInspector = (endpoint: URL) => Promise<string>;
-type HostResolver = (hostname: string) => Promise<string[]>;
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 type CredentialId = GenericId<'credentials'>;
-
-const NON_PUBLIC_MCP_ADDRESSES = new BlockList();
-for (const [network, prefix] of [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.0.0.0', 24],
-  ['192.0.2.0', 24],
-  ['192.88.99.0', 24],
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['198.51.100.0', 24],
-  ['203.0.113.0', 24],
-  ['224.0.0.0', 4],
-  ['240.0.0.0', 4],
-] as const) {
-  NON_PUBLIC_MCP_ADDRESSES.addSubnet(network, prefix, 'ipv4');
-}
-for (const [network, prefix] of [
-  ['2001::', 32],
-  ['2001:db8::', 32],
-  ['2002::', 16],
-] as const) {
-  NON_PUBLIC_MCP_ADDRESSES.addSubnet(network, prefix, 'ipv6');
-}
-
-/**
- * The one IPv6 range that is globally routable unicast.
- *
- * A denylist of IPv6 ranges cannot be finished: loopback, link-local and
- * unique-local were listed, but `fec0::1` (site-local), `::7f00:1`
- * (IPv4-compatible) and `64:ff9b::7f00:1` (NAT64) were not, and
- * `2002:7f00:1::1` reaches 127.0.0.1 through a 6to4 relay. An address is
- * admitted only if it is inside global unicast and outside the transition and
- * documentation ranges carved out of it above.
- */
-const GLOBAL_UNICAST_V6 = new BlockList();
-GLOBAL_UNICAST_V6.addSubnet('2000::', 3, 'ipv6');
 
 /** A refusal caused by Day0's deployment or protocol support, not provider liveness. */
 class Day0ProbeLimitation extends Error {}
@@ -189,10 +153,7 @@ async function day0Step<T>(what: string, step: () => Promise<T>): Promise<T> {
 const ACCESS_REFUSAL =
   /\b(?:HTTP\s+)?(?:401|403)\b|\bunauthori[sz]ed\b|\bforbidden\b|invalid[_ -]?(?:auth|token|credential)|token[_ -]?expired|missing[_ -]?scope|not[_ -]?authed|not a member|no manager email|deactivated|own bot user/i;
 
-function probeFailureVerdict(
-  error: unknown,
-  safeReason: string,
-): 'ungranted' | 'listed-dead' {
+function probeFailureVerdict(error: unknown, safeReason: string): 'ungranted' | 'listed-dead' {
   if (error instanceof Day0ProbeLimitation || safeReason.includes(BROWSER_DRIVER_ABSENT)) {
     return 'ungranted';
   }
@@ -445,117 +406,24 @@ export function safeProviderError(
 }
 
 /**
- * Validate the exact evidence-backed MCP endpoint stored on the approved row.
+ * Create the production MCP client with a bearer bound to one exact host,
+ * dialling only the addresses the probe checked.
  *
  * Args:
- *   endpoint: Evidence-derived surface endpoint.
- *
- * Returns:
- *   The exact public HTTPS endpoint.
- *
- * Raises:
- *   Error: If the URL could address this deployment or another private network.
- */
-export function approvedMcpEndpoint(endpoint: string | undefined): URL {
-  const refusal = (): never => {
-    throw new Day0ProbeLimitation(
-      'The approved MCP endpoint must use a public HTTPS hostname. Day0 refused the address before creating a credential-bearing client.',
-    );
-  };
-  if (!endpoint) return refusal();
-  let parsed: URL;
-  try {
-    parsed = new URL(endpoint);
-  } catch {
-    return refusal();
-  }
-  const hostname = parsed.hostname
-    .toLowerCase()
-    .replace(/^\[|\]$/g, '')
-    .replace(/\.$/, '');
-  const privateName =
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.localdomain') ||
-    hostname.endsWith('.internal') ||
-    hostname.endsWith('.home') ||
-    hostname.endsWith('.lan') ||
-    !hostname.includes('.');
-  if (
-    parsed.protocol !== 'https:' ||
-    parsed.username !== '' ||
-    parsed.password !== '' ||
-    parsed.hash !== '' ||
-    hostname === '' ||
-    isIP(hostname) !== 0 ||
-    privateName
-  ) {
-    return refusal();
-  }
-  return parsed;
-}
-
-/** Resolve the approved hostname immediately before creating a bearer client. */
-async function resolveMcpHostname(hostname: string): Promise<string[]> {
-  return (await lookup(hostname, { all: true, verbatim: true })).map(({ address }) => address);
-}
-
-/** Refuse a hostname if any current DNS answer can address a non-public network. */
-async function assertPublicMcpAddresses(
-  hostname: string,
-  resolveHostname: HostResolver,
-): Promise<void> {
-  let addresses: string[];
-  try {
-    addresses = await resolveHostname(hostname);
-  } catch (error) {
-    // A name that does not exist is a fact about the enterprise's endpoint; a
-    // resolver that would not answer is a fact about this deployment.
-    const code = (error as { code?: unknown }).code;
-    if (code === 'ENOTFOUND' || code === 'EAI_NONAME' || code === 'EAI_NODATA') {
-      throw new Error('The approved MCP endpoint hostname does not resolve.');
-    }
-    throw new Day0ProbeLimitation(
-      'Day0 could not resolve the approved MCP hostname; its own resolver did not answer.',
-    );
-  }
-  if (addresses.length === 0) throw new Error('The approved MCP endpoint hostname did not resolve.');
-  const hasNonPublicAddress = addresses.some((address: string): boolean => {
-    const family = isIP(address);
-    if (family === 4) return NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv4');
-    if (family === 6) {
-      return (
-        !GLOBAL_UNICAST_V6.check(address, 'ipv6') ||
-        NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv6')
-      );
-    }
-    return true;
-  });
-  if (hasNonPublicAddress) {
-    throw new Day0ProbeLimitation(
-      'The approved MCP hostname resolved to a private, loopback, link-local, reserved or otherwise non-public address. Day0 refused the address before creating a credential-bearing client.',
-    );
-  }
-}
-
-/**
- * Create the production MCP client with a bearer bound to one exact host.
- *
- * Args:
- *   endpoint: Validated Linear endpoint.
+ *   checked: The approved endpoint and its checked public addresses.
  *   credential: Decrypted provider bearer.
  *
  * Returns:
  *   A client exposing only the discovery methods used by probing.
  */
-function createMcpClient(endpoint: URL, credential: string): McpProbeClient {
+function createMcpClient(checked: CheckedMcpAddress, credential: string): McpProbeClient {
   return createSecretMcpClient({
     id: `day0-surface-probe-${randomUUID()}`,
     servers: {
       surface: {
-        url: endpoint,
-        allowedHosts: [endpoint.host],
+        url: checked.url,
+        allowedHosts: [checked.url.host],
+        fetch: pinnedFetch(checked),
         requestInit: { headers: { Authorization: `Bearer ${credential}` } },
       },
     },
@@ -735,6 +603,26 @@ function mcpFailureLead(message: string): string {
 }
 
 /**
+ * Approve the endpoint and check its addresses once, in the probe's terms.
+ *
+ * Day0's own boundary or resolver refusing is a limitation (`ungranted`); a
+ * name that does not exist is a fact about the system and stays a plain error.
+ */
+async function probeAddress(
+  endpoint: string | undefined,
+  resolveHostname: HostResolver,
+): Promise<CheckedMcpAddress> {
+  try {
+    return await checkMcpAddress(endpoint, resolveHostname);
+  } catch (error) {
+    if (error instanceof McpAddressRefusal) {
+      throw error.limitation ? new Day0ProbeLimitation(error.message) : new Error(error.message);
+    }
+    throw error;
+  }
+}
+
+/**
  * Discover and constrain the tools exposed by one MCP surface.
  *
  * Args:
@@ -754,9 +642,9 @@ export async function probeMcpSurface(
   resolveHostname: HostResolver = resolveMcpHostname,
   inspectEndpoint: EndpointInspector = inspectMcpEndpoint,
 ): Promise<McpDiscovery> {
-  const url = approvedMcpEndpoint(endpoint);
-  await assertPublicMcpAddresses(url.hostname, resolveHostname);
-  const client = makeClient(url, credential);
+  const checked = await probeAddress(endpoint, resolveHostname);
+  const url = checked.url;
+  const client = makeClient(checked, credential);
   try {
     // Discovery with errors first: `listTools()` returns an empty map for a
     // server that refused the bearer, which would read as "no tools" on the
@@ -1054,10 +942,13 @@ export async function runSurfaceProbe(
   ): Promise<ProbeOutcome | undefined> => {
     const attemptedAt = dependencies.now();
     if (descend) {
-      const demoted: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
-        internal.surfaces.demoteAfterProbeFailure,
-        { surfaceId, generation, reason, attemptedAt },
-      );
+      const demoted: { surface: Doc<'surfaces'>; generation: number } | null =
+        await ctx.runMutation(internal.surfaces.demoteAfterProbeFailure, {
+          surfaceId,
+          generation,
+          reason,
+          attemptedAt,
+        });
       if (demoted) {
         surface = demoted.surface;
         generation = demoted.generation;

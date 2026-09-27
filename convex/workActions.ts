@@ -91,6 +91,7 @@ import { carriedReadIndexes, rereadStopReason, withRereads, type FailedReread } 
 import { verdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-telemetry';
+import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { browserComponent } from '../src/surfaces/browser';
 import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types';
 import {
@@ -618,7 +619,7 @@ async function draftPlanHandler(
       : undefined;
   const corrections = SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
-  const plan = await recordingModelCalls(ctx, step, () => draftExecutionPlan({
+  const plan = await draftOrFail(ctx, args.workItemId, () => recordingModelCalls(ctx, step, () => draftExecutionPlan({
     candidate,
     charter: charterRow.body as Charter,
     autonomousActions: autonomousActionsOn(agent),
@@ -638,7 +639,8 @@ async function draftPlanHandler(
         payload: { workItemId: args.workItemId, ...event.payload },
       });
     },
-  }));
+  })));
+  if (plan === undefined) return { ok: false, reason: 'the plan draft failed on this item' };
   const stored = await ctx.runMutation(internal.work.setPlan, {
     workItemId: args.workItemId,
     plan,
@@ -653,6 +655,43 @@ async function draftPlanHandler(
     return await executeApprovedPlanHandler(ctx, args, internalCaller);
   }
   return { ok: true };
+}
+
+/**
+ * Draft a plan, or fail the row when the model's failure is about this item.
+ *
+ * A refusal, a reply cut at the output limit, a reply with no object after
+ * the ladder's own native, prompt and repair attempts, or a request the
+ * provider rejected with a reason fails the same way on the next lease, and
+ * the row would hold its work slot while the sweep re-ran it for ever. So the
+ * cap is one draft run per item for these failures: the row lands `failed`
+ * with the reason on its card and Retry drafts again. A rate limit, an outage
+ * or a bad key is left to the sweep, since the item is not what failed.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   workItemId: The row being drafted.
+ *   draft: The drafting call.
+ *
+ * Returns:
+ *   The plan, or undefined when the row was failed.
+ */
+async function draftOrFail<T>(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  draft: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await draft();
+  } catch (err) {
+    const failure = itemBoundModelFailure(err);
+    if (failure === undefined) throw err;
+    await ctx.runMutation(internal.work.setFailed, {
+      workItemId,
+      reason: `plan draft failed: ${failure}`,
+    });
+    return undefined;
+  }
 }
 
 export const draftPlan = action({
@@ -1251,12 +1290,18 @@ function actionName(action: MockAction): string {
 type QuestionableOutput = Parameters<typeof withholdActions>[0] & {
   argumentRepairs?: ArgumentRepairAttempt[];
   openQuestion?: ExecutionOutput['openQuestion'];
+  /** Where the executor asks when no chat surface can carry the manager DM. */
+  notes?: string;
+  /** The phase before a closing set, whose notes may have asked already. */
+  initial?: { notes?: string } | null;
 };
 
 /**
  * The set with the writes the approved plan left to the manager's answer
  * withheld, when the run asks the manager a question nobody has answered
- * (`openManagerQuestion`). The question and everything else in the set go on;
+ * (`openManagerQuestion`), in the manager DM or, with no chat surface to carry
+ * one, in the notes of this set or the phase before it. The question and
+ * everything else in the set go on;
  * the withheld writes stay on the output with their reason, and the open
  * question is recorded so the run stops with it once the rest has settled.
  *
@@ -1277,7 +1322,8 @@ export function withOpenQuestionHeld<T extends QuestionableOutput>(
     askedEarlier?: readonly MockAction[];
   },
 ): T {
-  const open = openManagerQuestion({ ...context, actions: output.actions });
+  const notes = [output.notes, output.initial?.notes].filter((text): text is string => typeof text === 'string');
+  const open = openManagerQuestion({ ...context, actions: output.actions, notes, now: Date.now() });
   if (!open) return output;
   const removed = new Set(open.withheld.map((row) => row.index));
   const withheld = withholdActions(
@@ -1771,10 +1817,13 @@ export function blockedPlanReason(
 
 /**
  * A manager message that puts something to the manager: a question, or an
- * ask for a decision. A note that only reports is not a way to unblock the
- * work, so a stop still withholds it.
+ * ask for a decision, in English or in Chinese. A note that only reports is
+ * not a way to unblock the work, so a stop still withholds it. The Chinese
+ * forms carry no word boundary: `\b` only sees Latin letters and digits, and
+ * 请 is an ask except where it opens 请求, the noun a report uses.
  */
-const MANAGER_ASK = /\?|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b/i;
+const MANAGER_ASK =
+  /[?？]|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b|请(?!求)|能否|可否|是否|麻烦|告知|确认|批准|决定|需要/i;
 
 /** The text a manager message carries, whichever transport it takes. */
 function managerMessageText(parsed: ParsedSurfaceAction): string {
@@ -2886,6 +2935,7 @@ async function plannerCorrections(
     agentId: item.agentId,
     sourceCategory: item.sourceCategory,
     sourceSystem: item.sourceSystem,
+    workItemId: item._id,
   });
   if (selected.length === 0) return { entries: [] };
   return await scrubbedCorrectionEntries(selected, { model: spanModelFromEnv(), known: knownValues });
@@ -2893,7 +2943,8 @@ async function plannerCorrections(
 
 /**
  * The corrections an approved plan applied, as its executor reads them:
- * the plan's own list, this employee's only, scrubbed at prompt assembly. A
+ * the plan's own list, this employee's only apart from the first rejection
+ * of a plan for the same provider item, scrubbed at prompt assembly. A
  * correction kept from this same item whose words are already on the run as
  * its live manager feedback is not repeated. A scrub without the span model
  * is recorded on the timeline.
@@ -2921,6 +2972,7 @@ async function executorCorrections(
   const rows: Doc<'corrections'>[] = await ctx.runQuery(internal.corrections.forPlan, {
     agentId: args.item.agentId,
     ids,
+    workItemId: args.item._id,
   });
   const live = liveManagerFeedback(args.item.managerFeedback);
   const carried = rows.filter((row) => !(row.workItemId === args.item._id && row.text === live));

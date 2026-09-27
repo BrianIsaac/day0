@@ -364,7 +364,13 @@ describe('documentation sources in real mode', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const { discovered, connection, typed } = await harness.run(async (ctx) => {
-      const base = { userId: 'owner', kind: 'value' as const, ciphertext: 'sealed', iv: 'iv', createdAt: 1 };
+      const base = {
+        userId: 'owner',
+        kind: 'value' as const,
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 1,
+      };
       const connection = await ctx.db.insert('credentials', {
         ...base,
         label: 'notion integration token',
@@ -378,7 +384,11 @@ describe('documentation sources in real mode', (): void => {
           source: { sourceId, ref: 'linear-automation' },
         }),
         connection,
-        typed: await ctx.db.insert('credentials', { ...base, label: 'typed elsewhere', source: 'entered' }),
+        typed: await ctx.db.insert('credentials', {
+          ...base,
+          label: 'typed elsewhere',
+          source: 'entered',
+        }),
       };
     });
     await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
@@ -549,7 +559,8 @@ describe('documentation sources in real mode', (): void => {
       redactionCount: 0,
     });
     const credential = await harness.run(async (ctx) => await ctx.db.get(credentialId));
-    expect(credential?.revokedAt).toEqual(expect.any(Number));
+    expect(credential?.status).toBe('superseded');
+    expect(credential?.revokedAt).toBeUndefined();
   });
 
   it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {
@@ -557,33 +568,65 @@ describe('documentation sources in real mode', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
     await harness.mutation(internal.docSources.upsertPage, {
-      sourceId, ref: 'page.md', title: 'Finance handbook',
-      markdown: '- Channels: #finance-close', updatedAt: 2,
+      sourceId,
+      ref: 'page.md',
+      title: 'Finance handbook',
+      markdown: '- Channels: #finance-close',
+      updatedAt: 2,
     });
-    const surfaceId = await harness.run(async (ctx) => await ctx.db.insert('surfaces', {
-      agentId, slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected',
-      credentialLanded: true, whereFound: [], createdAt: 1,
-      managerApprovedAt: 2, itApprovedAt: 3, probeGeneration: 4,
-      intakeScope: { channels: [{
-        value: 'finance-close', sourceId, ref: 'page.md', quote: '- Channels: #finance-close',
-      }] },
-    }));
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          credentialLanded: true,
+          whereFound: [],
+          createdAt: 1,
+          managerApprovedAt: 2,
+          itApprovedAt: 3,
+          probeGeneration: 4,
+          intakeScope: {
+            channels: [
+              {
+                value: 'finance-close',
+                sourceId,
+                ref: 'page.md',
+                quote: '- Channels: #finance-close',
+              },
+            ],
+          },
+        }),
+    );
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
-      sourceId, ref: 'page.md', title: 'Finance handbook',
-      markdown: '- Channels: #ops-requests', updatedAt: 3,
+      sourceId,
+      ref: 'page.md',
+      title: 'Finance handbook',
+      markdown: '- Channels: #ops-requests',
+      updatedAt: 3,
     });
     await harness.mutation(internal.docSources.finishSync, {
-      sourceId, runId, refs: ['page.md'], credentialRefs: [], pageCount: 1, redactionCount: 0,
+      sourceId,
+      runId,
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
     });
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'proposed', probeGeneration: 5 });
     expect(surface?.managerApprovedAt).toBeUndefined();
     expect(surface?.itApprovedAt).toBeUndefined();
     expect(surface?.intakeScope?.channels?.[0].value).toBe('finance-close');
-    await expect(harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, {
-      surfaceId, role: 'manager',
-    })).rejects.toThrow('re-run orientation');
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, {
+        surfaceId,
+        role: 'manager',
+      }),
+    ).rejects.toThrow('re-run orientation');
   });
 
   it('skips a source mid-sync and restarts one whose generation stopped progressing', async (): Promise<void> => {
@@ -627,37 +670,79 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
   const { sourceId, agentId } = await seedSyncedSource(harness);
   const { credentialId, surfaceId, retainedId, proposedId } = await harness.run(async (ctx) => {
     const credentialId = await ctx.db.insert('credentials', {
-      userId: 'owner', kind: 'value', label: 'Slack credential',
-      source: { sourceId, ref: 'page.md' }, ciphertext: 'sealed', iv: 'iv', createdAt: 1,
-      status: 'suspect', statusReason: 'permission scope',
+      userId: 'owner',
+      kind: 'value',
+      label: 'Slack credential',
+      source: { sourceId, ref: 'page.md' },
+      ciphertext: 'sealed',
+      iv: 'iv',
+      createdAt: 1,
+      status: 'suspect',
+      statusReason: 'permission scope',
     });
     const retainedId = await ctx.db.insert('credentials', {
-      userId: 'owner', kind: 'value', label: 'retained',
-      source: { sourceId, ref: 'retained.md' }, ciphertext: 'sealed', iv: 'iv', createdAt: 1,
+      userId: 'owner',
+      kind: 'value',
+      label: 'retained',
+      source: { sourceId, ref: 'retained.md' },
+      ciphertext: 'sealed',
+      iv: 'iv',
+      createdAt: 1,
     });
     const surfaceId = await ctx.db.insert('surfaces', {
-      agentId, slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected',
-      credentialId, credentialKind: 'value', credentialLanded: true, whereFound: [], createdAt: 1,
+      agentId,
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'connected',
+      credentialId,
+      credentialKind: 'value',
+      credentialLanded: true,
+      whereFound: [],
+      createdAt: 1,
       request: { credential: { found: 'value', method: 'bot-token', evidenceRef: 'page.md' } },
-      managerApprovedAt: 2, itApprovedAt: 3, probeGeneration: 4, lastVerifiedAt: 5,
-      toolAllowlist: ['chat.postMessage'], providerIdentityId: 'bot',
+      managerApprovedAt: 2,
+      itApprovedAt: 3,
+      probeGeneration: 4,
+      lastVerifiedAt: 5,
+      toolAllowlist: ['chat.postMessage'],
+      providerIdentityId: 'bot',
     });
     const proposedId = await ctx.db.insert('surfaces', {
-      agentId, slug: 'slack-proposed', displayName: 'Slack proposed', class: 'chat', verdict: 'proposed',
-      credentialId, credentialKind: 'value', credentialLanded: false, whereFound: [], createdAt: 1,
+      agentId,
+      slug: 'slack-proposed',
+      displayName: 'Slack proposed',
+      class: 'chat',
+      verdict: 'proposed',
+      credentialId,
+      credentialKind: 'value',
+      credentialLanded: false,
+      whereFound: [],
+      createdAt: 1,
     });
     return { credentialId, surfaceId, retainedId, proposedId };
   });
   const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
-  const finish = { sourceId, runId, refs: ['page.md', 'retained.md'], credentialRefs: ['retained.md'], pageCount: 2, redactionCount: 1 };
+  const finish = {
+    sourceId,
+    runId,
+    refs: ['page.md', 'retained.md'],
+    credentialRefs: ['retained.md'],
+    pageCount: 2,
+    redactionCount: 1,
+  };
   await harness.mutation(internal.docSources.finishSync, finish);
-  expect(await harness.query(internal.credentials.getInternal, { credentialId })).toMatchObject({
-    status: 'superseded', revokedAt: expect.any(Number),
-  });
+  const superseded = await harness.query(internal.credentials.getInternal, { credentialId });
+  expect(superseded).toMatchObject({ status: 'superseded' });
+  // Superseded by the sync, not revoked: the same value returning revives it.
+  expect(superseded).not.toHaveProperty('revokedAt');
   const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
   expect(surface).toMatchObject({
-    verdict: 'ungranted', credentialLanded: false, probeGeneration: 5,
-    managerApprovedAt: 2, itApprovedAt: 3,
+    verdict: 'ungranted',
+    credentialLanded: false,
+    probeGeneration: 5,
+    managerApprovedAt: 2,
+    itApprovedAt: 3,
     request: { credential: { found: 'location', method: 'bot-token' } },
   });
   expect(surface?.credentialId).toBeUndefined();
@@ -667,10 +752,18 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
   const proposed = await harness.run(async (ctx) => await ctx.db.get(proposedId));
   expect(proposed?.verdict).toBe('proposed');
   expect(proposed?.credentialId).toBeUndefined();
-  expect(await harness.mutation(internal.surfaces.recordConnected, {
-    surfaceId, generation: 4, toolAllowlist: ['chat.postMessage'], toolArguments: [], verifiedAt: 10,
-  })).toBe(false);
-  expect(await harness.query(internal.credentials.getInternal, { credentialId: retainedId })).not.toHaveProperty('status');
+  expect(
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: 4,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [],
+      verifiedAt: 10,
+    }),
+  ).toBe(false);
+  expect(
+    await harness.query(internal.credentials.getInternal, { credentialId: retainedId }),
+  ).not.toHaveProperty('status');
   await harness.mutation(internal.docSources.finishSync, finish);
   expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(surface);
 });

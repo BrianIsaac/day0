@@ -168,34 +168,44 @@ export function clipRoleLine(text: string): string {
   return `${kept.replace(/[\s,;:.\u2013\u2014-]+$/, '')}\u2026`;
 }
 
+/** Where an employee's charter stands, as the roster reads it. */
+interface CharterStanding {
+  /** The clipped role line, or the pending or not-stated line. */
+  readonly roleLine: string;
+  /** Whether the newest charter is a draft the manager has not approved yet. */
+  readonly draftAwaitsManager: boolean;
+}
+
 /**
- * The role line from the newest charter the manager approved.
+ * The role line from the newest charter the manager approved, and whether a
+ * newer draft waits on the manager's approval.
  *
  * An amendment is approved on insert, so it wins at once; a draft awaiting
- * approval never shows; a draft sent back is deleted, which leaves the
- * employee pending again.
+ * approval never shows as the role but counts as waiting on the manager; a
+ * draft sent back is deleted, which leaves the employee pending again with
+ * nothing to approve.
  *
- * Args:
- *   ctx: Query context.
- *   agentId: The employee.
- *
- * Returns:
- *   The clipped role line, or the pending or not-stated line.
+ * @param ctx - Query context.
+ * @param agentId - The employee.
  */
-async function approvedRoleLine(ctx: QueryCtx, agentId: Id<'agents'>): Promise<string> {
+async function charterStanding(ctx: QueryCtx, agentId: Id<'agents'>): Promise<CharterStanding> {
   const charters = ctx.db
     .query('charters')
     .withIndex('by_agent', (q) => q.eq('agentId', agentId))
     .order('desc');
+  let draftAwaitsManager: boolean | undefined;
   for await (const charter of charters) {
+    draftAwaitsManager ??= !charter.approved;
     if (!charter.approved) continue;
     const proposedFunction = (charter.body as { proposedFunction?: unknown } | null)
       ?.proposedFunction;
-    return typeof proposedFunction === 'string' && proposedFunction.trim() !== ''
-      ? clipRoleLine(proposedFunction)
-      : ROLE_NOT_STATED;
+    const roleLine =
+      typeof proposedFunction === 'string' && proposedFunction.trim() !== ''
+        ? clipRoleLine(proposedFunction)
+        : ROLE_NOT_STATED;
+    return { roleLine, draftAwaitsManager };
   }
-  return CHARTER_PENDING_ROLE_LINE;
+  return { roleLine: CHARTER_PENDING_ROLE_LINE, draftAwaitsManager: draftAwaitsManager ?? false };
 }
 
 /**
@@ -360,8 +370,8 @@ export const rosterForUser = query({
       .take(DOC_SOURCE_READ_LIMIT);
     return await Promise.all(
       agents.map(async (agent): Promise<RosterRow> => {
-        const [roleLine, counts] = await Promise.all([
-          approvedRoleLine(ctx, agent._id),
+        const [charter, counts] = await Promise.all([
+          charterStanding(ctx, agent._id),
           workCounts(ctx, agent._id),
         ]);
         return {
@@ -370,8 +380,10 @@ export const rosterForUser = query({
           ...(agent.avatarId !== undefined ? { avatarId: agent.avatarId } : {}),
           state: agent.state,
           autonomous: autonomousActionsOn(agent),
-          roleLine,
+          roleLine: charter.roleLine,
           ...counts,
+          // A drafted charter is the one thing the manager must approve before any work.
+          needsYou: counts.needsYou + (charter.draftAwaitsManager ? 1 : 0),
           docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
         };
       }),
@@ -456,7 +468,14 @@ export const deploy = mutation({
     });
     const initialScopes =
       SURFACE_MODE === 'mock'
-        ? ['boss:message', 'docs:read', 'spreadsheet:read', 'social:read', 'ticket:read', 'slack:read']
+        ? [
+            'boss:message',
+            'docs:read',
+            'spreadsheet:read',
+            'social:read',
+            'ticket:read',
+            'slack:read',
+          ]
         : ['boss:message', 'docs:read'];
     for (const scope of initialScopes) {
       const createdAt = Date.now();

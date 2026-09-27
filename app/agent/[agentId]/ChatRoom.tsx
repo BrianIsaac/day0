@@ -6,7 +6,7 @@ import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { INIT_PROMPT } from '@/agent/day-one-turn';
+import { INIT_PROMPT, managerReplies } from '@/agent/day-one-turn';
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -50,6 +50,8 @@ export function turnFailure(turn: {
   finishReason?: string;
 }): string | null {
   if (turn.isError || turn.isAbort) return null;
+  // A moderation stop is the provider's refusal, whatever text preceded it.
+  if (turn.finishReason === 'content-filter') return "Day0's model provider refused to answer";
   const closed = turn.message.parts.some((p) => p.type === 'tool-dayOneComplete');
   if (!closed && !textOf(turn.message).trim()) return 'Day0 returned nothing';
   if (turn.finishReason === undefined || turn.finishReason === 'length') {
@@ -97,6 +99,96 @@ export async function askAgain(
 ): Promise<void> {
   if (chat.messages.length === 0) await chat.sendMessage({ text: INIT_PROMPT });
   else await chat.regenerate();
+}
+
+/**
+ * The conversation as the charter is drafted from it: one line per turn,
+ * speaker first, the priming turn left out and the agent's closing line kept.
+ *
+ * @returns The turns joined by blank lines.
+ */
+export function charterTranscript(messages: UIMessage[]): string {
+  return withoutPrimingTurn(messages)
+    .map((m) => {
+      const text = textOf(m);
+      const closing = m.parts
+        .filter((p) => p.type === 'tool-dayOneComplete')
+        .map((p) => (p as { input?: { closingLine?: string } }).input?.closingLine ?? '')
+        .join('');
+      const body = [text, closing].filter(Boolean).join(' ');
+      return `${m.role.toUpperCase()}: ${body}`;
+    })
+    .filter((line) => !line.endsWith(': '))
+    .join('\n\n');
+}
+
+/**
+ * Whether the manager may end the 1:1 now. The agent closes only after every
+ * topic and only by a tool call some models never make, so the manager can
+ * end it once they have answered at least once and the agent is not mid-turn.
+ */
+export function canFinish(state: {
+  status: ChatStatus;
+  done: boolean;
+  messages: UIMessage[];
+}): boolean {
+  const answering = state.status === 'submitted' || state.status === 'streaming';
+  return !state.done && !answering && managerReplies(state.messages) > 0;
+}
+
+/**
+ * The most characters one reply in the 1:1 may carry. The route bounds only
+ * the output, so without this one pasted document is sent whole on every
+ * later turn of the conversation.
+ */
+export const REPLY_MAX_CHARS = 4000;
+
+/** The composer's text field: Enter sends, and a reply is bounded at `REPLY_MAX_CHARS`. */
+export function ReplyInput({
+  value,
+  onChange,
+  onSend,
+  disabled,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  disabled: boolean;
+  placeholder: string;
+}) {
+  return (
+    <input
+      value={value}
+      maxLength={REPLY_MAX_CHARS}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          onSend();
+        }
+      }}
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label="Your reply"
+      className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm disabled:opacity-50"
+    />
+  );
+}
+
+/** The manager's control for ending the 1:1 and drafting the charter from it. */
+export function FinishControl({ disabled, onFinish }: { disabled: boolean; onFinish: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onFinish}
+      disabled={disabled}
+      title="End the 1:1 and draft the charter from what you have said so far"
+      className="px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+    >
+      Finish
+    </button>
+  );
 }
 
 export function TurnFailureNotice({
@@ -188,24 +280,16 @@ export function ChatRoom({
     return () => cancelAnimationFrame(id);
   }, [messages]);
 
-  const done = messages.some((m) => m.parts.some((p) => p.type === 'tool-dayOneComplete'));
+  const [finishedByManager, setFinishedByManager] = useState(false);
+  const closedByAgent = messages.some((m) => m.parts.some((p) => p.type === 'tool-dayOneComplete'));
+  const done = closedByAgent || finishedByManager;
 
-  // Fire charter synthesis once the agent emits the dayOneComplete tool.
+  // Fire charter synthesis once the agent emits the dayOneComplete tool or the
+  // manager presses Finish; both end the 1:1 the same way.
   useEffect(() => {
     if (!done || synthFired.current) return;
     synthFired.current = true;
-    const transcript = withoutPrimingTurn(messages)
-      .map((m) => {
-        const text = textOf(m);
-        const closing = m.parts
-          .filter((p) => p.type === 'tool-dayOneComplete')
-          .map((p) => (p as { input?: { closingLine?: string } }).input?.closingLine ?? '')
-          .join('');
-        const body = [text, closing].filter(Boolean).join(' ');
-        return `${m.role.toUpperCase()}: ${body}`;
-      })
-      .filter((line) => !line.endsWith(': '))
-      .join('\n\n');
+    const transcript = charterTranscript(messages);
     void fetch('/api/onboarding/synthesise', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -225,7 +309,7 @@ export function ChatRoom({
   const composerDisabled = composerLocked({ status, done, opened });
 
   function send() {
-    const trimmed = draft.trim();
+    const trimmed = draft.trim().slice(0, REPLY_MAX_CHARS);
     if (!trimmed || composerDisabled) return;
     setStreamError(null);
     sendMessage({ text: trimmed });
@@ -235,6 +319,14 @@ export function ChatRoom({
   function retryTurn() {
     setStreamError(null);
     void askAgain({ messages, regenerate, sendMessage });
+  }
+
+  function finish() {
+    if (!confirm('Finish the 1:1 now? Day0 drafts your charter from what you have said so far.')) {
+      return;
+    }
+    setStreamError(null);
+    setFinishedByManager(true);
   }
 
   return (
@@ -286,20 +378,14 @@ export function ChatRoom({
         ) : null}
       </div>
       <div className="border-t border-[var(--color-border)] p-2 flex gap-2">
-        <input
+        <ReplyInput
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
+          onChange={setDraft}
+          onSend={send}
           disabled={composerDisabled}
           placeholder={
             done ? 'conversation complete' : opened ? 'type your reply…' : 'waiting for Day0…'
           }
-          className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm disabled:opacity-50"
         />
         <button
           onClick={send}
@@ -308,6 +394,7 @@ export function ChatRoom({
         >
           Send
         </button>
+        <FinishControl disabled={!canFinish({ status, done, messages })} onFinish={finish} />
       </div>
     </section>
   );

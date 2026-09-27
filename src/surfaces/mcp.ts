@@ -11,13 +11,22 @@ import {
   TOOL_NOT_ALLOWED,
   type ParsedMcpCall,
 } from './policy';
-import { injectSecret } from './secrets';
 import { redactOutcome } from './redact';
+import { redactValue } from './secrets';
 import type { SpanModel } from '../redaction/client';
+import type { MCPClient } from '@mastra/mcp';
 import { createSecretMcpClient } from './mcp-client';
+import {
+  checkMcpAddress,
+  pinnedFetch,
+  resolveHostname,
+  type HostResolver,
+  type HttpsRequest,
+} from './mcp-address';
 import {
   browserComponent,
   browserPageUrl,
+  carriesSecretPlaceholder,
   BROWSER_DRIVER_ABSENT_REASON,
   elementDescriptions,
   isDriverUnreachable,
@@ -26,7 +35,10 @@ import {
   needsElementRef,
   refFieldFor,
   resolveElementRef,
+  secretPlacementRefusal,
+  unknownPlaceholderRefusal,
   withResolvedRefs,
+  withSecretTyped,
   withinDocumentedSurface,
   type SnapshotElement,
 } from './browser';
@@ -43,8 +55,28 @@ import type {
 } from './types';
 
 export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['tool'][];
+
 export const MCP_TIMEOUT_MS = 30_000;
 export const EFFECT_LENGTH = 180;
+
+/**
+ * The most of one tool result the adapter redacts. The ledger keeps at most
+ * `READ_EFFECT_LENGTH` of it, and a page or a provider decides how long the
+ * result is, so the rest is never sent to the redactor.
+ */
+export const MCP_RESULT_TEXT_LIMIT = 64 * 1024;
+
+/**
+ * A tool result's text cut to `MCP_RESULT_TEXT_LIMIT`, with the credential and
+ * every known value removed exactly before the cut, so the cut cannot split
+ * one and leave a prefix no exact match would find.
+ */
+function boundedResultText(text: string, removals: readonly string[]): string {
+  if (text.length <= MCP_RESULT_TEXT_LIMIT) return text;
+  return removals
+    .reduce((scrubbed: string, value: string): string => redactValue(scrubbed, value), text)
+    .slice(0, MCP_RESULT_TEXT_LIMIT);
+}
 
 /** Keep the two human-checkable results from a long accessibility snapshot. */
 export function browserSnapshotEvidence(text: string): string | undefined {
@@ -90,40 +122,13 @@ export interface McpAdapterDeps {
 }
 
 /**
- * Replace `{{secret}}` placeholders anywhere in an MCP tool's arguments.
- *
- * `http.request` has always substituted the surface's credential into headers
- * and bodies. An MCP tool needs the same rule for the same reason: on the
- * browser floor the credential is typed into a form field, so it travels as a
- * tool argument rather than a header, and a skill must be able to name it
- * without ever holding it. `injectSecret` refuses a placeholder naming another
- * surface, so an action cannot borrow a credential it is not the target of.
- *
- * Args:
- *   value: A tool-argument tree as the skill supplied it.
- *   secret: The decrypted credential for the action's target surface.
- *   slug: That surface's slug, for the qualified placeholder form.
- *
- * Returns:
- *   The same tree with every placeholder resolved.
+ * Why an MCP call naming `{{secret}}` is refused. An MCP server receives the
+ * surface's credential as its bearer, so no argument ever needs it; one that
+ * asks for it is either a confused skill or a ticket steering the agent into
+ * posting its own credential.
  */
-export function injectSecretsDeep(value: unknown, secret: string, slug: string): unknown {
-  if (typeof value === 'string') return injectSecret(value, secret, slug);
-  if (Array.isArray(value)) {
-    return value.map((entry: unknown): unknown => injectSecretsDeep(entry, secret, slug));
-  }
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(
-        ([key, entry]: [string, unknown]): [string, unknown] => [
-          key,
-          injectSecretsDeep(entry, secret, slug),
-        ],
-      ),
-    );
-  }
-  return value;
-}
+export const MCP_SECRET_ARGUMENT_REFUSAL =
+  'an MCP server receives the credential as its bearer, so {{secret}} in a tool argument is never substituted and the call was not sent';
 
 /** What the adapter reads out of a tool result, whichever shape the server used. */
 export interface InterpretedToolResult {
@@ -191,6 +196,12 @@ export function providerErrorMessage(text: string): string | undefined {
   return 'the server reported an error';
 }
 
+/** How a credential-bearing client checks and reaches its server; a test supplies its own. */
+export interface McpConnection {
+  readonly resolveHostname: HostResolver;
+  readonly request?: HttpsRequest;
+}
+
 /**
  * Build a Streamable HTTP client for one surface.
  *
@@ -198,36 +209,64 @@ export function providerErrorMessage(text: string): string | undefined {
  * server also returns structured content. Its default logger is disabled so
  * a provider response cannot log a reflected credential before redaction.
  *
+ * A client that carries a bearer resolves the endpoint's hostname once, before
+ * its first request, refuses it unless every answer is public, and then dials
+ * only those answers: the probe's check holds for every connection a write or
+ * a manager message makes, not only for the probe. A client with no bearer is
+ * Day0's own browser driver on the compose network and is not checked.
+ *
  * Args:
  *   options: Server name, endpoint and bearer credential.
+ *   connection: The resolver and transport a bearer client uses.
  *
  * Returns:
  *   A connected-on-demand Mastra MCP client.
  */
-export function createMastraMcpClient(options: McpClientOptions): McpClientLike {
-  const client = createSecretMcpClient({
-    id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
-    servers: {
-      [options.serverName]: {
-        url: options.url,
-        allowedHosts: [options.url.host],
-        ...(options.bearer
-          ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
-          : {}),
+export function createMastraMcpClient(
+  options: McpClientOptions,
+  connection: McpConnection = { resolveHostname },
+): McpClientLike {
+  let created: Promise<MCPClient> | undefined;
+  const create = async (): Promise<MCPClient> => {
+    const pinned = options.bearer
+      ? pinnedFetch(
+          await checkMcpAddress(options.url, connection.resolveHostname),
+          connection.request,
+        )
+      : undefined;
+    return createSecretMcpClient({
+      id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
+      servers: {
+        [options.serverName]: {
+          url: options.url,
+          allowedHosts: [options.url.host],
+          ...(pinned ? { fetch: pinned } : {}),
+          ...(options.bearer
+            ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
+            : {}),
+        },
       },
-    },
-    timeout: MCP_TIMEOUT_MS,
-  });
+      timeout: MCP_TIMEOUT_MS,
+    });
+  };
+  const client = (): Promise<MCPClient> => (created ??= create());
   return {
     listTools: async (): Promise<Record<string, McpToolLike>> => {
-      const { tools, errors } = await client.listToolsWithErrors({
+      const { tools, errors } = await (
+        await client()
+      ).listToolsWithErrors({
         perServerTimeoutMs: MCP_TIMEOUT_MS,
       });
       const error = errors[options.serverName];
       if (error) throw new Error(error);
       return tools;
     },
-    disconnect: async (): Promise<void> => await client.disconnect(),
+    disconnect: async (): Promise<void> => {
+      if (!created) return;
+      // A client whose address check refused it never connected, so there is nothing to close.
+      const connected = await created.catch((): undefined => undefined);
+      await connected?.disconnect();
+    },
   };
 }
 
@@ -288,10 +327,17 @@ export function interpretToolResult(result: unknown): InterpretedToolResult {
     const text = textBlocks[0]?.text ?? '';
     const errorMessage =
       providerErrorMessage(JSON.stringify(record.structuredContent) ?? '') ??
-      textBlocks.map((block) => providerErrorMessage(block.text)).find((message) => message !== undefined);
+      textBlocks
+        .map((block) => providerErrorMessage(block.text))
+        .find((message) => message !== undefined);
     const providerId =
       firstStringDeep(record.structuredContent, idKeys) ?? providerIdFromText(text, idKeys);
-    return withBodyError({ isError: record.isError === true || errorMessage !== undefined, text, providerId, errorMessage });
+    return withBodyError({
+      isError: record.isError === true || errorMessage !== undefined,
+      text,
+      providerId,
+      errorMessage,
+    });
   }
   const text = JSON.stringify(result);
   const errorMessage = providerErrorMessage(JSON.stringify(record.structuredContent) ?? '');
@@ -406,10 +452,13 @@ export class McpAdapter implements SurfaceAdapter {
    *   client: The run's live browser session.
    *   slug: The surface slug, for the namespaced tool name.
    *   toolName: The browser tool being called.
-   *   toolArgs: Its arguments, secrets already injected.
+   *   toolArgs: Its arguments, placeholders not yet substituted.
+   *   argumentNames: The driver's argument names for the tool, which name the ref field.
+   *   pageBound: When set, the documented address the current page must be within.
    *
    * Returns:
-   *   The arguments with refs filled in, or why an element could not be found.
+   *   The arguments with refs filled in and the elements they name, or why an
+   *   element could not be found or the page is not the surface's.
    */
   private async resolveRefs(
     client: McpClientLike,
@@ -417,8 +466,8 @@ export class McpAdapter implements SurfaceAdapter {
     toolName: string,
     toolArgs: Record<string, unknown>,
     argumentNames: readonly string[] | undefined,
-    replayEndpoint?: string,
-  ): Promise<{ toolArgs: Record<string, unknown> } | { reason: string }> {
+    pageBound?: string,
+  ): Promise<{ toolArgs: Record<string, unknown>; refs: SnapshotElement[] } | { reason: string }> {
     const descriptions = elementDescriptions(toolName, toolArgs);
     if (descriptions.length === 0) {
       return { reason: `${toolName} names no element to act on` };
@@ -429,11 +478,11 @@ export class McpAdapter implements SurfaceAdapter {
     }
     const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
     if (snapshot.isError) return { reason: 'browser_snapshot failed before element resolution' };
-    if (replayEndpoint) {
+    if (pageBound) {
       const page = browserPageUrl(snapshot.text);
       if (!page) return { reason: 'the browser driver reported no current page URL' };
-      if (!withinDocumentedSurface(page, replayEndpoint)) {
-        return { reason: `the page is outside the approved surface (${replayEndpoint})` };
+      if (!withinDocumentedSurface(page, pageBound)) {
+        return { reason: `the page is outside the approved surface (${pageBound})` };
       }
     }
     const refs: SnapshotElement[] = [];
@@ -453,6 +502,7 @@ export class McpAdapter implements SurfaceAdapter {
     }
     return {
       toolArgs: withResolvedRefs(toolName, toolArgs, refs, refFieldFor(argumentNames)),
+      refs,
     };
   }
 
@@ -479,7 +529,10 @@ export class McpAdapter implements SurfaceAdapter {
   ): Promise<AppliedAction> {
     void index;
     return await this.send(
-      ctx, run, action, idempotencyKey,
+      ctx,
+      run,
+      action,
+      idempotencyKey,
       transportAuthority ? { authority: transportAuthority } : undefined,
     );
   }
@@ -516,7 +569,8 @@ export class McpAdapter implements SurfaceAdapter {
     const steps: SessionRestoreStep[] = [];
     for (const [n, step] of recipe.entries()) {
       const parsed = parseSurfaceAction(step.action);
-      const onSurface = parsed.ok && parsed.action.kind === 'mcp.call' && parsed.action.surface === surface.slug;
+      const onSurface =
+        parsed.ok && parsed.action.kind === 'mcp.call' && parsed.action.surface === surface.slug;
       const outcome = onSurface
         ? await this.send(ctx, run, step.action, `${baseKey}.session-${n}`, {
             authority: step.authority,
@@ -535,7 +589,8 @@ export class McpAdapter implements SurfaceAdapter {
         action: step.action,
       });
       if (!landed) {
-        const tool = parsed.ok && parsed.action.kind === 'mcp.call' ? parsed.action.tool : step.action.tool;
+        const tool =
+          parsed.ok && parsed.action.kind === 'mcp.call' ? parsed.action.tool : step.action.tool;
         return {
           ok: false,
           steps,
@@ -642,6 +697,19 @@ export class McpAdapter implements SurfaceAdapter {
       const outside = navigationRefusal(call.tool, call.toolArgs, surface.endpoint);
       if (outside) return { tool: action.tool, ok: false, reason: outside, idempotencyKey };
     }
+    const unfilled = unknownPlaceholderRefusal(call.toolArgs);
+    if (unfilled) return { tool: action.tool, ok: false, reason: unfilled, idempotencyKey };
+    const carriesSecret = carriesSecretPlaceholder(call.toolArgs);
+    if (carriesSecret) {
+      const refusal = !browserDriven
+        ? MCP_SECRET_ARGUMENT_REFUSAL
+        : !surface.credentialId
+          ? 'the surface has no credential to type'
+          : !surface.endpoint
+            ? 'the surface has no documented address to check the page against'
+            : secretPlacementRefusal(call.tool, call.toolArgs, surface.slug);
+      if (refusal) return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
+    }
     if (!surface.credentialId && !browserDriven) {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }
@@ -678,9 +746,7 @@ export class McpAdapter implements SurfaceAdapter {
           };
         }
         writeAttempted = actionIntent(call) === 'write';
-        let toolArgs = bearer
-          ? (injectSecretsDeep(call.toolArgs, bearer, surface.slug) as Record<string, unknown>)
-          : call.toolArgs;
+        let toolArgs = call.toolArgs;
         if (browserDriven && needsElementRef(call.tool)) {
           const resolved = await this.resolveRefs(
             client,
@@ -690,10 +756,18 @@ export class McpAdapter implements SurfaceAdapter {
             surface.toolArguments?.find(
               (entry: { arguments: string[]; tool: string }): boolean => entry.tool === call.tool,
             )?.arguments,
-            replay ? surface.endpoint : undefined,
+            // The page is checked before any action that carries the
+            // credential, on every run: a click or a script can have moved
+            // the browser since the last navigation was checked.
+            replay || carriesSecret ? surface.endpoint : undefined,
           );
           if ('reason' in resolved) {
-            const redacted = await redactOutcome(resolved.reason, bearer, this.deps.spanModel, this.deps.knownValues);
+            const redacted = await redactOutcome(
+              resolved.reason,
+              bearer,
+              this.deps.spanModel,
+              this.deps.knownValues,
+            );
             return {
               tool: action.tool,
               ok: false,
@@ -703,18 +777,41 @@ export class McpAdapter implements SurfaceAdapter {
             };
           }
           toolArgs = resolved.toolArgs;
+          if (carriesSecret) {
+            const misplaced = secretPlacementRefusal(
+              call.tool,
+              toolArgs,
+              surface.slug,
+              resolved.refs,
+            );
+            if (misplaced) {
+              return { tool: action.tool, ok: false, reason: misplaced, idempotencyKey };
+            }
+            toolArgs = withSecretTyped(call.tool, toolArgs, resolved.refs, bearer, surface.slug);
+          }
         }
         const finalAuthorityRefusal = await this.transportRefusal(action, surface, replay);
         if (finalAuthorityRefusal) {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
-        const redacted = await redactOutcome(result.text, bearer, this.deps.spanModel, this.deps.knownValues);
+        const removals = [bearer, ...(this.deps.knownValues ?? [])];
+        const redacted = await redactOutcome(
+          boundedResultText(result.text, removals),
+          bearer,
+          this.deps.spanModel,
+          this.deps.knownValues,
+        );
         const text = redacted.text;
         const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
         if (result.isError) {
           const errorResult = result.errorMessage
-            ? await redactOutcome(result.errorMessage, bearer, this.deps.spanModel, this.deps.knownValues)
+            ? await redactOutcome(
+                boundedResultText(result.errorMessage, removals),
+                bearer,
+                this.deps.spanModel,
+                this.deps.knownValues,
+              )
             : redacted;
           const reason = errorResult.text;
           return {
@@ -736,19 +833,39 @@ export class McpAdapter implements SurfaceAdapter {
             if (!page) {
               const snapshotTool = (await client.listTools())[`${surface.slug}_browser_snapshot`];
               if (!snapshotTool?.execute) {
-                return { tool: action.tool, ok: false, reason: 'the browser driver does not expose browser_snapshot', idempotencyKey };
+                return {
+                  tool: action.tool,
+                  ok: false,
+                  reason: 'the browser driver does not expose browser_snapshot',
+                  idempotencyKey,
+                };
               }
               const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
               if (snapshot.isError) {
-                return { tool: action.tool, ok: false, reason: 'browser_snapshot failed after the replayed click', idempotencyKey };
+                return {
+                  tool: action.tool,
+                  ok: false,
+                  reason: 'browser_snapshot failed after the replayed click',
+                  idempotencyKey,
+                };
               }
               page = browserPageUrl(snapshot.text);
             }
             if (!page) {
-              return { tool: action.tool, ok: false, reason: 'the browser driver reported no final page URL', idempotencyKey };
+              return {
+                tool: action.tool,
+                ok: false,
+                reason: 'the browser driver reported no final page URL',
+                idempotencyKey,
+              };
             }
             if (!surface.endpoint || !withinDocumentedSurface(page, surface.endpoint)) {
-              return { tool: action.tool, ok: false, reason: `the page is outside the approved surface (${surface.endpoint ?? 'no documented address'})`, idempotencyKey };
+              return {
+                tool: action.tool,
+                ok: false,
+                reason: `the page is outside the approved surface (${surface.endpoint ?? 'no documented address'})`,
+                idempotencyKey,
+              };
             }
           }
         }
@@ -757,7 +874,12 @@ export class McpAdapter implements SurfaceAdapter {
             ? browserSnapshotEvidence(text)
             : undefined;
         const identifier = result.providerId
-          ? await redactOutcome(result.providerId, bearer, this.deps.spanModel, this.deps.knownValues)
+          ? await redactOutcome(
+              result.providerId,
+              bearer,
+              this.deps.spanModel,
+              this.deps.knownValues,
+            )
           : undefined;
         return {
           tool: action.tool,
@@ -788,7 +910,9 @@ export class McpAdapter implements SurfaceAdapter {
               this.deps.spanModel,
               this.deps.knownValues,
             );
-      const reason = failure ? clipEffect(failure.text, EFFECT_LENGTH) : BROWSER_DRIVER_ABSENT_REASON;
+      const reason = failure
+        ? clipEffect(failure.text, EFFECT_LENGTH)
+        : BROWSER_DRIVER_ABSENT_REASON;
       return {
         tool: action.tool,
         ok: false,

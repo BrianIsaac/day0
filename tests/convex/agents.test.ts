@@ -181,7 +181,8 @@ describe('agent surface grants', (): void => {
     };
 
     const verdict = await evaluateCandidate(candidate, context, {
-      hasGrantForScope: async (scope) => grants.some((grant) => grant.scope === scope && grant.active),
+      hasGrantForScope: async (scope) =>
+        grants.some((grant) => grant.scope === scope && grant.active),
       findExistingClaim: async () => null,
       countOpenClaims: async () => 0,
       findMatchingSkill: async () => null,
@@ -431,7 +432,9 @@ describe('revocation under adversarial use', (): void => {
     await expect(
       owner.mutation(api.agents.revokeScope, { agentId: mine, scope: 'linear:read' }),
     ).resolves.toEqual({ revoked: 0 });
-    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
+    const grants = await harness.run(
+      async (ctx) => await ctx.db.query('permissionGrants').collect(),
+    );
     expect(grants).toMatchObject([{ agentId: other, scope: 'linear:read' }]);
     expect(grants[0]!.revokedAt).toBeUndefined();
     const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
@@ -476,7 +479,9 @@ describe('revocation under adversarial use', (): void => {
         revokedAt: Date.parse('2026-08-30T12:00:00.000Z'),
       },
     ]);
-    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
+    const grants = await harness.run(
+      async (ctx) => await ctx.db.query('permissionGrants').collect(),
+    );
     expect(grants).toHaveLength(2);
     expect(grants.every((grant) => grant.revokedAt !== undefined)).toBe(true);
   });
@@ -601,23 +606,30 @@ describe('the autonomous-actions switch', (): void => {
         .mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
     ).rejects.toThrow('forbidden');
     const owner = harness.withIdentity({ subject: 'owner' });
-    await expect(owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' })).resolves.toEqual({
+    await expect(
+      owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' }),
+    ).resolves.toEqual({
       ok: true,
       managerNotifications: 'per-run',
       changed: false,
     });
-    await expect(owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' })).resolves.toEqual({
+    await expect(
+      owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
+    ).resolves.toEqual({
       ok: true,
       managerNotifications: 'digest',
       changed: true,
     });
-    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.managerNotifications).toBe('digest');
-    const changes = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
-      (event) => event.type === 'agent.notifications-changed',
-    );
-    expect(changes.map((event) => event.payload)).toEqual([{ from: 'per-run', to: 'digest', reason: 'set by the manager' }]);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(agentId)))?.managerNotifications,
+    ).toBe('digest');
+    const changes = (
+      await harness.run(async (ctx) => await ctx.db.query('events').collect())
+    ).filter((event) => event.type === 'agent.notifications-changed');
+    expect(changes.map((event) => event.payload)).toEqual([
+      { from: 'per-run', to: 'digest', reason: 'set by the manager' },
+    ]);
   });
-
 });
 
 type Harness = TestConvex<typeof schema>;
@@ -848,7 +860,7 @@ describe('the employee roster', (): void => {
     ).resolves.toEqual([]);
   });
 
-  it('shows each of the owner\'s employees with its role, open work, what needs the manager and its autonomy, and nobody else', async (): Promise<void> => {
+  it("shows each of the owner's employees with its role, open work, what needs the manager and its autonomy, and nobody else", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
@@ -917,7 +929,8 @@ describe('the employee roster', (): void => {
         openCount: 0,
         parkedCount: 0,
         stoppedCount: 0,
-        needsYou: 0,
+        // The drafted charter waits on the manager's approval.
+        needsYou: 1,
         docSourceCount: 1,
       },
       {
@@ -979,7 +992,10 @@ describe('the employee roster', (): void => {
     const counts = async (): Promise<Record<string, [number, number, number]>> =>
       Object.fromEntries(
         (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
-          (row): [string, [number, number, number]] => [row.name, [row.openCount, row.parkedCount, row.needsYou]],
+          (row): [string, [number, number, number]] => [
+            row.name,
+            [row.openCount, row.parkedCount, row.needsYou],
+          ],
         ),
       );
 
@@ -987,7 +1003,11 @@ describe('the employee roster', (): void => {
     const registered = await seedSkill(harness, aiko, { state: 'registered' });
     const priyaRegistered = await seedSkill(harness, priya, { state: 'registered' });
     await seedParked(harness, priya, 'REVOPS-27', 'deferred', {
-      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'looker-pipeline-tile' },
+      verdict: {
+        decision: 'defer',
+        reason: 'awaiting-connection',
+        missingSurface: 'looker-pipeline-tile',
+      },
     });
     await seedParked(harness, priya, 'REVOPS-29', 'deferred', {
       verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar' },
@@ -1003,7 +1023,11 @@ describe('the employee roster', (): void => {
     // Mateo mid-run: the ask waits for plan approval, FIN-1 waits behind the cap, FIN-2 waits for its evaluation.
     await seedWork(harness, mateo, ['plan-pending']);
     await seedParked(harness, mateo, 'FIN-1', 'discovered', {
-      verdict: { decision: 'queue', reason: 'WIP cap reached: supervised cold-start limit is 1', openClaims: 1 },
+      verdict: {
+        decision: 'queue',
+        reason: 'WIP cap reached: supervised cold-start limit is 1',
+        openClaims: 1,
+      },
     });
     await seedParked(harness, mateo, 'FIN-2', 'discovered', {});
     expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 1, 1], Aiko: [0, 1, 0] });
@@ -1063,7 +1087,11 @@ describe('the employee roster', (): void => {
     const plan = { summary: 'Synthetic.', steps: ['Synthetic.'] };
     const comment = {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-28","body":"Q3 close-summary audit note."}' },
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-28","body":"Q3 close-summary audit note."}',
+      },
     };
     const landed = {
       authority: 'autonomous',
@@ -1086,9 +1114,20 @@ describe('the employee roster', (): void => {
         '1 of 7 actions did not change the work environment: mcp.call (shared credential write without attributable content)',
     });
     await seedWork(harness, priya, ['completed', 'completed', 'skipped']);
-    await seedWork(harness, mateo, ['completed', 'completed', 'skipped', 'skipped', 'skipped', 'skipped']);
+    await seedWork(harness, mateo, [
+      'completed',
+      'completed',
+      'skipped',
+      'skipped',
+      'skipped',
+      'skipped',
+    ]);
     await seedWork(harness, aiko, ['completed', 'completed']);
-    expect(await counts()).toEqual({ Priya: [0, 0, 2, 2], Mateo: [0, 0, 0, 0], Aiko: [0, 0, 0, 0] });
+    expect(await counts()).toEqual({
+      Priya: [0, 0, 2, 2],
+      Mateo: [0, 0, 0, 0],
+      Aiko: [0, 0, 0, 0],
+    });
 
     // A stop with nothing landed: Retry stands.
     await seedParked(harness, aiko, 'SH-4471', 'failed', {
@@ -1100,7 +1139,10 @@ describe('the employee roster', (): void => {
     // An interrupted apply whose ledger names what to verify: the reconciliation is the manager's move, then Retry.
     await seedParked(harness, aiko, 'LOG-interrupted', 'failed', {
       plan,
-      output: { actions: [comment], applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true }] },
+      output: {
+        actions: [comment],
+        applied: [{ tool: 'mcp.call', ok: false, outcomeUnknown: true }],
+      },
       skipReason: INTERRUPTED_APPLY_REASON,
     });
     expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
@@ -1115,9 +1157,18 @@ describe('the employee roster', (): void => {
     // Rejected by the manager, through the mutation the dashboard calls: the held set waited on
     // them, the rejected row keeps its Retry but waits on nobody, since the last decision was theirs.
     const owner = harness.withIdentity({ subject: 'owner' });
-    for (const [index, [externalId, reason]] of [['LOG-rejected', 'not this quarter'], ['LOG-rejected-bare', '']].entries()) {
+    for (const [index, [externalId, reason]] of [
+      ['LOG-rejected', 'not this quarter'],
+      ['LOG-rejected-bare', ''],
+    ].entries()) {
       const pendingRunId = await harness.run(
-        async (ctx) => await ctx.db.insert('events', { agentId: aiko, type: 'work.run', payload: {}, createdAt: 1 }),
+        async (ctx) =>
+          await ctx.db.insert('events', {
+            agentId: aiko,
+            type: 'work.run',
+            payload: {},
+            createdAt: 1,
+          }),
       );
       const workItemId = await seedParked(harness, aiko, externalId, 'actions-pending', {
         plan,
@@ -1130,7 +1181,10 @@ describe('the employee roster', (): void => {
     expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
 
     // A cancelled plan, a skip and finished work are not stopped rows.
-    await seedParked(harness, aiko, 'LOG-cancelled', 'cancelled', { plan, skipReason: 'plan cancelled by the manager' });
+    await seedParked(harness, aiko, 'LOG-cancelled', 'cancelled', {
+      plan,
+      skipReason: 'plan cancelled by the manager',
+    });
     expect((await counts()).Aiko).toEqual([0, 0, 4, 2]);
   });
 
@@ -1182,6 +1236,41 @@ describe('the employee roster', (): void => {
     const mateo = await deployEmployee(harness, 'owner', 'Mateo');
     await seedCharter(harness, mateo, { version: '0.0' }, true);
     await expect(roleLines()).resolves.toMatchObject({ Mateo: 'role not stated' });
+  });
+
+  it('counts a drafted charter under needs-you until the manager approves it or sends it back (P10-4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const needsYou = async (): Promise<Record<string, number>> =>
+      Object.fromEntries(
+        (await owner.query(api.agents.rosterForUser, {})).map((row): [string, number] => [
+          row.name,
+          row.needsYou,
+        ]),
+      );
+
+    const aiko = await deployEmployee(harness, 'owner', 'Aiko');
+    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+    const sentBack = await seedCharter(harness, aiko, runThroughBody(), false);
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
+    await owner.mutation(api.charters.requestChanges, { charterId: sentBack });
+    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+
+    const approved = await seedCharter(harness, aiko, runThroughBody(), false);
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
+    await owner.mutation(api.charters.approve, { charterId: approved });
+    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+
+    // A redraft after approval waits on the manager too, while the approved role still shows.
+    await seedCharter(
+      harness,
+      aiko,
+      { ...runThroughBody(), proposedFunction: 'A redraft.' },
+      false,
+    );
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
   });
 
   it('lists at most 20 employees, newest first, and an evaluation agent never takes a place', async (): Promise<void> => {
@@ -1255,7 +1344,11 @@ describe('the employee roster', (): void => {
       Array.from({ length: 20 }, () => [5, 2]),
     );
     expect(roster.find((row) => row.agentId === employees[0])?.docSourceCount).toBe(99);
-    expect(roster.filter((row) => row.agentId !== employees[0]).every((row) => row.docSourceCount === 100)).toBe(true);
+    expect(
+      roster
+        .filter((row) => row.agentId !== employees[0])
+        .every((row) => row.docSourceCount === 100),
+    ).toBe(true);
 
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.delete(sources[0]);
@@ -1274,7 +1367,10 @@ describe('the employee roster', (): void => {
         'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices, and prepare the close pack.',
         'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices\u2026',
       ],
-      ['  Close the month,\n every month,   for the finance team. ', 'Close the month, every month, for the finance team.'],
+      [
+        '  Close the month,\n every month,   for the finance team. ',
+        'Close the month, every month, for the finance team.',
+      ],
       [`${'a'.repeat(44)} ${'b'.repeat(45)}`, `${'a'.repeat(44)} ${'b'.repeat(45)}`],
       ['x'.repeat(120), `${'x'.repeat(89)}\u2026`],
     ];

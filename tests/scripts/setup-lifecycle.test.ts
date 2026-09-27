@@ -15,7 +15,14 @@ import {
   writeEnvValues,
   type SetupCommand,
 } from '../../scripts/setup';
-import { cleanupCheckouts, harness, ran, realRoute, SYNTHETIC_KEY, type Harness } from './setup-harness';
+import {
+  cleanupCheckouts,
+  harness,
+  ran,
+  realRoute,
+  SYNTHETIC_KEY,
+  type Harness,
+} from './setup-harness';
 
 afterEach(cleanupCheckouts);
 
@@ -49,7 +56,12 @@ const OWN_VOLUMES = [
 ];
 
 /** The volumes of other projects that every listing also shows, and nothing here may touch. */
-const OTHERS = ['day0_convex_data', 'day0-demo-7c65e7_convex_data', 'day0-redactor-warm_redactor_venv', 'day0-redactor-warm_redactor_models'];
+const OTHERS = [
+  'day0_convex_data',
+  'day0-demo-7c65e7_convex_data',
+  'day0-redactor-warm_redactor_venv',
+  'day0-redactor-warm_redactor_models',
+];
 
 /**
  * A checkout the first pass configured: the env file above, its ownership
@@ -98,7 +110,17 @@ describe('the compose lines', (): void => {
     expect(stop).not.toContain('-v');
     expect(stop).not.toContain('--volumes');
     expect(stop.slice(0, 3)).toEqual(['compose', '--env-file', '.env.local']);
-    for (const profile of ['real', 'sandbox', 'redactor', 'model', 'browser', 'demo', 'docs-notion', 'dev', 'test']) {
+    for (const profile of [
+      'real',
+      'sandbox',
+      'redactor',
+      'model',
+      'browser',
+      'demo',
+      'docs-notion',
+      'dev',
+      'test',
+    ]) {
       expect(stop).toContain(profile);
     }
     expect(resetArguments().slice(-3)).toEqual(['down', '-v', '--remove-orphans']);
@@ -127,19 +149,27 @@ describe('stop', (): void => {
     const down = h.commands.find((call) => call.args.includes('down'));
     expect(down?.args.slice(-2)).toEqual(['down', '--remove-orphans']);
     expect(down?.args).not.toContain('-v');
-    expect(down?.env).toMatchObject({ COMPOSE_PROJECT_NAME: PROJECT, DAY0_DOCS_HOST_DIR: './docs-local', CONVEX_PORT: '46210' });
+    expect(down?.env).toMatchObject({
+      COMPOSE_PROJECT_NAME: PROJECT,
+      DAY0_DOCS_HOST_DIR: './docs-local',
+      CONVEX_PORT: '46210',
+    });
     expect(h.volumes).toEqual(expect.arrayContaining(OWN_VOLUMES));
     expect(ran(h)).not.toContain('volume rm');
     expect(readFileSync(join(h.directory, '.env.local'), 'utf8')).toBe(before);
     const printed = h.output.join('\n');
-    expect(printed).toContain(`Stopped ${PROJECT}. Kept: ${OWN_VOLUMES.join(', ')}; .env.local with its admin key.`);
+    expect(printed).toContain(
+      `Stopped ${PROJECT}. Kept: ${OWN_VOLUMES.join(', ')}; .env.local with its admin key.`,
+    );
     expect(printed).toContain('Resume with `./setup.sh resume`');
     expect(printed).toContain('something is still serving on 45300, most likely `pnpm dev`');
     expect(printed).not.toContain('day0-redactor-warm');
   });
 
   it('names the mock entry point in mock mode, and refuses without an installation', async (): Promise<void> => {
-    const mock = configured({ envLocal: CONFIGURED.replace('DAY0_SURFACE_MODE=real', 'DAY0_SURFACE_MODE=mock') });
+    const mock = configured({
+      envLocal: CONFIGURED.replace('DAY0_SURFACE_MODE=real', 'DAY0_SURFACE_MODE=mock'),
+    });
     expect(await runCommand(verb('stop', { mode: 'mock' }), mock.io)).toBe(0);
     expect(mock.output.join('\n')).toContain('Resume with `pnpm setup:local resume`');
 
@@ -175,7 +205,10 @@ describe('clear', (): void => {
     expect(lines.indexOf('down -v --remove-orphans')).toBeLessThan(lines.indexOf('volume rm'));
     const rm = h.commands.find((call) => call.args[0] === 'volume' && call.args[1] === 'rm');
     expect(rm?.args).toEqual(['volume', 'rm', `${PROJECT}_redactor_venv`]);
-    const listing = h.commands.find((call) => call.args[0] === 'volume' && call.args[1] === 'ls' && call.args.includes('--filter'));
+    const listing = h.commands.find(
+      (call) =>
+        call.args[0] === 'volume' && call.args[1] === 'ls' && call.args.includes('--filter'),
+    );
     expect(listing?.args).toContain(`label=com.docker.compose.project=${PROJECT}`);
     for (const volume of OWN_VOLUMES) expect(h.volumes).not.toContain(volume);
     for (const volume of OTHERS) expect(h.volumes).toContain(volume);
@@ -183,7 +216,9 @@ describe('clear', (): void => {
     const printed = h.output.join('\n');
     expect(printed).toContain(`Clearing ${PROJECT}: 3 container(s), 4 volume(s) and the network`);
     expect(printed).toContain(`Removed: 3 container(s), ${OWN_VOLUMES.join(', ')}, the network.`);
-    expect(printed).toContain('.env.local is kept, keys and settings included; `--purge-env` removes it too.');
+    expect(printed).toContain(
+      '.env.local is kept, keys and settings included; `--purge-env` removes it too.',
+    );
     expect(printed).not.toContain('day0-redactor-warm');
   });
 
@@ -193,7 +228,12 @@ describe('clear', (): void => {
     // A listing that answers every volume for the label filter, as a mislabelled daemon would.
     h.io.run = (command, args, options) => {
       const result = original(command, args, options);
-      if (command === 'docker' && args[0] === 'volume' && args[1] === 'ls' && args.includes('--filter')) {
+      if (
+        command === 'docker' &&
+        args[0] === 'volume' &&
+        args[1] === 'ls' &&
+        args.includes('--filter')
+      ) {
         return { ...result, stdout: `${h.volumes.join('\n')}\n` };
       }
       return result;
@@ -204,7 +244,9 @@ describe('clear', (): void => {
       for (const name of call.args.slice(2)) expect(name.startsWith(`${PROJECT}_`)).toBe(true);
     }
     for (const volume of OTHERS) expect(h.volumes).toContain(volume);
-    expect(h.output.join('\n')).toContain('still present, so not this helper\'s to remove: day0_convex_data');
+    expect(h.output.join('\n')).toContain(
+      "still present, so not this helper's to remove: day0_convex_data",
+    );
   });
 
   it('removes .env.local as well with --purge-env', async (): Promise<void> => {
@@ -245,8 +287,12 @@ describe('clear', (): void => {
     });
     expect(await runSetup(realRoute({ reset: true }), h.io)).toBe(0);
     const lines = ran(h);
-    expect(lines.indexOf('down -v --remove-orphans')).toBeLessThan(lines.indexOf(`volume rm ${PROJECT}_redactor_models`));
-    expect(lines.indexOf(`volume rm ${PROJECT}_redactor_models`)).toBeLessThan(lines.indexOf('dev:no-auth-key'));
+    expect(lines.indexOf('down -v --remove-orphans')).toBeLessThan(
+      lines.indexOf(`volume rm ${PROJECT}_redactor_models`),
+    );
+    expect(lines.indexOf(`volume rm ${PROJECT}_redactor_models`)).toBeLessThan(
+      lines.indexOf('dev:no-auth-key'),
+    );
     expect(h.output.join('\n')).toContain(`removed ${PROJECT}_redactor_models as well`);
   });
 });
@@ -260,22 +306,36 @@ describe('resume', (): void => {
     };
     expect(await runCommand(verb('resume'), h.io)).toBe(0);
     const printed = h.output.join('\n');
-    expect(printed).toContain(`Resuming ${PROJECT} from .env.local: real mode on the featherless route`);
+    expect(printed).toContain(
+      `Resuming ${PROJECT} from .env.local: real mode on the featherless route`,
+    );
     expect(printed).toContain('CONVEX_PORT 46210: free');
-    expect(printed).toContain('the key in .env.local (convex-self-hosted|...) still authenticates against this volume, so it is kept');
+    expect(printed).toContain(
+      'the key in .env.local (convex-self-hosted|...) still authenticates against this volume, so it is kept',
+    );
     expect(printed).toContain('http://localhost:45300/?day0_key=unlock-secret');
     expect(ran(h)).not.toContain('generate_admin_key.sh');
     expect(ran(h)).not.toContain('down');
-    expect(ran(h)).toContain('run convex:up --profile docs-notion --profile browser --profile demo');
-    expect(readEnvValues(join(h.directory, '.env.local')).CONVEX_SELF_HOSTED_ADMIN_KEY).toBe('convex-self-hosted|from-the-first-run');
+    expect(ran(h)).toContain(
+      'run convex:up --profile docs-notion --profile browser --profile demo',
+    );
+    expect(readEnvValues(join(h.directory, '.env.local')).CONVEX_SELF_HOSTED_ADMIN_KEY).toBe(
+      'convex-self-hosted|from-the-first-run',
+    );
     expect(readEnvValues(join(h.directory, '.env.local')).OPENAI_API_KEY).toBe('already-here');
     expect(printed).toContain('.env.local already carries a key for this route; it is kept.');
     expect(printed).not.toContain('already-here');
   });
 
   it('serves the model the file names without a picker or a pull when the volume holds it', async (): Promise<void> => {
-    const local = CONFIGURED.replace(`OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`, 'OPENAI_BASE_URL=http://127.0.0.1:48191/v1')
-      .replace(`CONVEX_OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`, 'CONVEX_OPENAI_BASE_URL=http://model:11434/v1')
+    const local = CONFIGURED.replace(
+      `OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`,
+      'OPENAI_BASE_URL=http://127.0.0.1:48191/v1',
+    )
+      .replace(
+        `CONVEX_OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`,
+        'CONVEX_OPENAI_BASE_URL=http://model:11434/v1',
+      )
       .replace('OPENAI_MODEL=zai-org/GLM-5.3-Flash', 'OPENAI_MODEL=qwen3:8b\nMODEL_PORT=48191');
     const h = configured({
       envLocal: local,
@@ -301,7 +361,9 @@ describe('resume', (): void => {
     expect(await runCommand(verb('resume'), fresh.io)).toBe(1);
     expect(fresh.output.join('\n')).toContain('there is no .env.local here');
 
-    const noRoute = configured({ envLocal: `COMPOSE_PROJECT_NAME=${PROJECT}\nDAY0_SURFACE_MODE=real\n` });
+    const noRoute = configured({
+      envLocal: `COMPOSE_PROJECT_NAME=${PROJECT}\nDAY0_SURFACE_MODE=real\n`,
+    });
     expect(await runCommand(verb('resume'), noRoute.io)).toBe(1);
     expect(noRoute.output.join('\n')).toContain('names no model route');
 
@@ -318,28 +380,37 @@ describe('resume', (): void => {
 });
 
 describe('protected and read-only projects', (): void => {
-  it.each(['stop', 'resume', 'clear'] as const)('%s refuses a protected project from a linked worktree', async (command): Promise<void> => {
-    const h = harness({ envLocal: 'COMPOSE_PROJECT_NAME=day0\nOPENAI_API_KEY=x\n', volumes: ['day0_convex_data'] });
-    expect(await runCommand(verb(command, { assumeYes: true }), h.io)).toBe(1);
-    expect(h.output.join('\n')).toContain('protected');
-    expect(ran(h)).not.toContain('down');
-    expect(ran(h)).not.toContain('volume rm');
-    expect(ran(h)).not.toContain('convex:up');
-    expect(h.volumes).toContain('day0_convex_data');
-  });
+  it.each(['stop', 'resume', 'clear'] as const)(
+    '%s refuses a protected project from a linked worktree',
+    async (command): Promise<void> => {
+      const h = harness({
+        envLocal: 'COMPOSE_PROJECT_NAME=day0\nOPENAI_API_KEY=x\n',
+        volumes: ['day0_convex_data'],
+      });
+      expect(await runCommand(verb(command, { assumeYes: true }), h.io)).toBe(1);
+      expect(h.output.join('\n')).toContain('protected');
+      expect(ran(h)).not.toContain('down');
+      expect(ran(h)).not.toContain('volume rm');
+      expect(ran(h)).not.toContain('convex:up');
+      expect(h.volumes).toContain('day0_convex_data');
+    },
+  );
 
-  it.each(['stop', 'resume', 'clear'] as const)('%s refuses the warm redactor project it only ever copies from', async (command): Promise<void> => {
-    const h = harness({
-      envLocal: 'COMPOSE_PROJECT_NAME=day0-redactor-warm\nOPENAI_API_KEY=x\n',
-      volumes: ['day0-redactor-warm_redactor_venv', 'day0-redactor-warm_redactor_models'],
-      mainWorktree: true,
-    });
-    expect(await runCommand(verb(command, { assumeYes: true }), h.io)).toBe(1);
-    expect(h.output.join('\n')).toContain('only ever read');
-    expect(ran(h)).not.toContain('down');
-    expect(ran(h)).not.toContain('volume rm');
-    expect(h.volumes).toContain('day0-redactor-warm_redactor_venv');
-  });
+  it.each(['stop', 'resume', 'clear'] as const)(
+    '%s refuses the warm redactor project it only ever copies from',
+    async (command): Promise<void> => {
+      const h = harness({
+        envLocal: 'COMPOSE_PROJECT_NAME=day0-redactor-warm\nOPENAI_API_KEY=x\n',
+        volumes: ['day0-redactor-warm_redactor_venv', 'day0-redactor-warm_redactor_models'],
+        mainWorktree: true,
+      });
+      expect(await runCommand(verb(command, { assumeYes: true }), h.io)).toBe(1);
+      expect(h.output.join('\n')).toContain('only ever read');
+      expect(ran(h)).not.toContain('down');
+      expect(ran(h)).not.toContain('volume rm');
+      expect(h.volumes).toContain('day0-redactor-warm_redactor_venv');
+    },
+  );
 
   it('refuses to set the warm project up as well, and a --project that is not the file’s', async (): Promise<void> => {
     const warm = harness({ environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY } });
@@ -349,14 +420,21 @@ describe('protected and read-only projects', (): void => {
 
     const renamed = configured({ services: ['backend'] });
     expect(await runCommand(verb('stop', { project: 'day0-setup-other' }), renamed.io)).toBe(1);
-    expect(renamed.output.join('\n')).toContain(`.env.local names ${PROJECT}, not day0-setup-other`);
+    expect(renamed.output.join('\n')).toContain(
+      `.env.local names ${PROJECT}, not day0-setup-other`,
+    );
     expect(ran(renamed)).not.toContain('down');
   });
 
   it('refuses an env file that belongs to another checkout', async (): Promise<void> => {
-    const h = harness({ envLocal: `${CONFIGURED}DAY0_SETUP_ROOT=/somewhere/else\n`, services: ['backend'] });
+    const h = harness({
+      envLocal: `${CONFIGURED}DAY0_SETUP_ROOT=/somewhere/else\n`,
+      services: ['backend'],
+    });
     expect(await runCommand(verb('clear', { assumeYes: true }), h.io)).toBe(1);
     expect(h.output.join('\n')).toContain('belongs to another checkout');
+    // /somewhere/else holds no checkout any more, so the way back is named.
+    expect(h.output.join('\n')).toContain('--adopt');
     expect(ran(h)).not.toContain('down');
   });
 });

@@ -118,6 +118,8 @@ export interface HarnessOptions {
   stamps?: Record<string, string>;
   /** Whether `nvidia-smi -L` names a GPU. */
   driver?: boolean;
+  /** What `nvidia-smi --query-gpu=memory.free` answers, in MiB; absent means no answer. */
+  freeVramMiB?: number;
   /** What compose reports for the redactor on each poll, last value repeated. */
   redactorHealth?: string[];
   failing?: { match: string; status: number; stderr: string }[];
@@ -180,9 +182,12 @@ export function harness(options: HarnessOptions = {}): Harness {
     }
     if (joined.startsWith('docker volume ls')) {
       // A compose label filter answers only that project's volumes.
-      const filter = args.find((argument) => argument.startsWith('label=com.docker.compose.project='));
+      const filter = args.find((argument) =>
+        argument.startsWith('label=com.docker.compose.project='),
+      );
       const project = filter?.slice('label=com.docker.compose.project='.length);
-      const listed = project === undefined ? volumes : volumes.filter((name) => name.startsWith(`${project}_`));
+      const listed =
+        project === undefined ? volumes : volumes.filter((name) => name.startsWith(`${project}_`));
       return { status: 0, stdout: `${listed.join('\n')}\n`, stderr: '' };
     }
     if (joined.startsWith('docker volume rm')) {
@@ -206,7 +211,7 @@ export function harness(options: HarnessOptions = {}): Harness {
       if (joined.includes('cat /venv/')) {
         const stamp = stamps[source];
         return stamp === undefined
-          ? { status: 1, stdout: '', stderr: 'cat: can\'t open: No such file' }
+          ? { status: 1, stdout: '', stderr: "cat: can't open: No such file" }
           : { status: 0, stdout: `${stamp}\n`, stderr: '' };
       }
       // The volume copy carries the stamp across with the wheels.
@@ -214,9 +219,15 @@ export function harness(options: HarnessOptions = {}): Harness {
       return { status: 0, stdout: '', stderr: '' };
     }
     if (joined.includes(' down -v')) {
-      const project = runOptions?.env?.COMPOSE_PROJECT_NAME ?? readEnvValues(join(directory, '.env.local')).COMPOSE_PROJECT_NAME ?? '';
+      const project =
+        runOptions?.env?.COMPOSE_PROJECT_NAME ??
+        readEnvValues(join(directory, '.env.local')).COMPOSE_PROJECT_NAME ??
+        '';
       for (let index = volumes.length - 1; index >= 0; index -= 1) {
-        if (volumes[index].startsWith(`${project}_`) && !(options.leftover ?? []).includes(volumes[index])) {
+        if (
+          volumes[index].startsWith(`${project}_`) &&
+          !(options.leftover ?? []).includes(volumes[index])
+        ) {
           volumes.splice(index, 1);
         }
       }
@@ -231,7 +242,8 @@ export function harness(options: HarnessOptions = {}): Harness {
       return { status: 0, stdout: `${options.inspectOwner ?? directory}\n`, stderr: '' };
     }
     if (joined.startsWith('docker ps')) {
-      const reported = !broughtUp && options.servicesBeforeUp !== undefined ? options.servicesBeforeUp : services;
+      const reported =
+        !broughtUp && options.servicesBeforeUp !== undefined ? options.servicesBeforeUp : services;
       return { status: 0, stdout: `${reported.join('\n')}\n`, stderr: '' };
     }
     if (joined.includes('ps -a --format json redactor')) {
@@ -257,14 +269,27 @@ export function harness(options: HarnessOptions = {}): Harness {
     if (joined.includes('convex env list')) {
       return { status: options.adminKeyAccepted === false ? 1 : 0, stdout: '', stderr: '' };
     }
+    if (joined.includes('nvidia-smi') && joined.includes('memory.free')) {
+      return options.freeVramMiB === undefined
+        ? { status: 1, stdout: '', stderr: 'not found' }
+        : { status: 0, stdout: `${options.freeVramMiB}\n`, stderr: '' };
+    }
     if (joined.includes('nvidia-smi')) {
       return options.driver
-        ? { status: 0, stdout: 'GPU 0: NVIDIA GeForce RTX 5070 Ti Laptop GPU (UUID: GPU-x)\n', stderr: '' }
+        ? {
+            status: 0,
+            stdout: 'GPU 0: NVIDIA GeForce RTX 5070 Ti Laptop GPU (UUID: GPU-x)\n',
+            stderr: '',
+          }
         : { status: 1, stdout: '', stderr: 'not found' };
     }
     if (joined.includes('dev-no-auth-key.ts url')) {
       const port = runOptions?.env?.PORT ?? '3000';
-      return { status: 0, stdout: `http://localhost:${port}/?day0_key=unlock-secret\n`, stderr: '' };
+      return {
+        status: 0,
+        stdout: `http://localhost:${port}/?day0_key=unlock-secret\n`,
+        stderr: '',
+      };
     }
     if (joined.includes('dev:no-auth-key')) {
       const path = join(directory, '.env.local');
@@ -287,7 +312,11 @@ export function harness(options: HarnessOptions = {}): Harness {
       return { status: 0, stdout: '', stderr: '' };
     }
     if (joined.includes('check:setup')) {
-      return { status: 0, stdout: 'Nothing here is half-done. Mode real, route featherless.\n', stderr: '' };
+      return {
+        status: 0,
+        stdout: 'Nothing here is half-done. Mode real, route featherless.\n',
+        stderr: '',
+      };
     }
     return { status: 0, stdout: '', stderr: '' };
   };

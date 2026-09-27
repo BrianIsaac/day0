@@ -13,7 +13,11 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
-import { keepCorrectionInTransaction, markCorrectionsAppliedInTransaction } from './corrections';
+import {
+  firstTicketRejection,
+  keepCorrectionInTransaction,
+  markCorrectionsAppliedInTransaction,
+} from './corrections';
 import {
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
@@ -1902,6 +1906,11 @@ export const setPlan = internalMutation({
  * in `plan-pending` first, then this transaction re-reads the agent's switch at
  * the actual decision boundary. A switch change while the model was drafting
  * therefore affects this run; a stale value captured before the draft does not.
+ *
+ * A plan for a provider item on which the manager rejected any employee's
+ * plan waits for the manager whatever the switch says (decision N3), and the
+ * first time it is held for that reason a `work.plan-held` event names the
+ * first rejection. Internal; called by the drafting action and the stalled-step sweep.
  */
 export const decidePlan = internalMutation({
   args: { workItemId: v.id('workItems'), recovery: v.optional(v.boolean()) },
@@ -1911,6 +1920,28 @@ export const decidePlan = internalMutation({
     if (row.state !== 'plan-pending') return { approved: false };
     const agent = await ctx.db.get(row.agentId);
     if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    const rejection = await firstTicketRejection(ctx, row);
+    if (rejection) {
+      // The sweep re-runs this for an undecided row every lease; the drafting
+      // call is the one that records why the plan waits.
+      if (!args.recovery) {
+        await ctx.db.insert('events', {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'plan-rejected-for-this-item',
+            rejectedWorkItemId: rejection.workItemId,
+            rejectedAgentId: rejection.agentId,
+            rejectedAt: rejection.rejectedAt,
+            ...(rejection.correction ? { rejection: rejection.correction.text } : {}),
+          },
+          createdAt: Date.now(),
+        });
+      }
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
     }

@@ -46,8 +46,11 @@ function defaultOutPath(now = new Date()): string {
 const DEFAULT_APPROVAL_DELAY_MS = 750;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const TOKEN_REFRESH_MS = 45 * 60 * 1000;
+/** The execution-harness revision every new evidence file records. */
 export const EVALUATION_HARNESS_VERSION = 2;
+/** Skill-authoring attempts one task-run may spend before it is terminalised. */
 export const MAX_SKILL_AUTHORING_ATTEMPTS = 6;
+/** The recorded error of a task-run that spent every authoring attempt. */
 export const SKILL_AUTHORING_ATTEMPTS_EXHAUSTED = 'skill-authoring-attempts-exhausted';
 
 const onboardingFixtureSchema = z.object({
@@ -56,7 +59,8 @@ const onboardingFixtureSchema = z.object({
   transcript: z.string().min(1),
 });
 
-interface CliOptions {
+/** One invocation's command-line settings. */
+export interface CliOptions {
   arms: EvaluationArm[];
   runs: number;
   taskSelectors: string[];
@@ -67,6 +71,7 @@ interface CliOptions {
   help: boolean;
 }
 
+/** The task a run is on, with the counters the harness keeps while it runs. */
 export interface ActiveTask {
   taskId: string;
   startedAt: string;
@@ -80,6 +85,7 @@ export interface ActiveTask {
 
 type RawSnapshot = FunctionReturnType<typeof api.evaluation.snapshot>;
 
+/** A run as the harness persists it between steps. */
 export interface RunWithProgress extends EvaluationRun {
   activeTask?: ActiveTask;
 }
@@ -88,6 +94,7 @@ interface EvidenceWithProgress extends EvaluationEvidence {
   runs: RunWithProgress[];
 }
 
+/** What one harness invocation carries: the client, the evidence and where it is written. */
 export interface HarnessContext {
   client: Pick<ConvexHttpClient, 'query' | 'mutation' | 'action' | 'setAuth'>;
   authenticatedAt: number;
@@ -97,6 +104,7 @@ export interface HarnessContext {
   options: CliOptions;
 }
 
+/** Whether a failure is a provider billing or authentication stop that no retry can clear. */
 export function isFatalEvaluationInfrastructureError(value: unknown): boolean {
   const message = value instanceof Error ? value.message : typeof value === 'string' ? value : '';
   return /no credits remaining|insufficient_quota|invalid api key|incorrect api key|billing.*(?:disabled|required)|account.*(?:deactivated|disabled)/i.test(
@@ -104,6 +112,11 @@ export function isFatalEvaluationInfrastructureError(value: unknown): boolean {
   );
 }
 
+/**
+ * Refuse a deployment that would verify skills anywhere but the local sandbox.
+ *
+ * @throws when the deployment would select another backend.
+ */
 export function assertLocalEvaluationSandbox(backend: string): asserts backend is 'local' {
   if (backend === 'local') return;
   throw new Error(
@@ -113,6 +126,7 @@ export function assertLocalEvaluationSandbox(backend: string): asserts backend i
   );
 }
 
+/** Whether a task timed out, and how far past its deadline it finished. */
 export function evaluationTaskTiming(
   stateAtDeadlineCheck: string,
   finishedAt: number,
@@ -132,6 +146,11 @@ function positiveInteger(flag: string, value: string | undefined): number {
   return parsed;
 }
 
+/**
+ * Parse the command line into one invocation's settings.
+ *
+ * @throws on an unknown flag, a missing value or an invalid subset.
+ */
 export function parseCliOptions(argv: string[]): CliOptions {
   const result: CliOptions = {
     arms: ['day0', 'baseline'],
@@ -182,6 +201,11 @@ export function parseCliOptions(argv: string[]): CliOptions {
   return result;
 }
 
+/**
+ * The tasks a `--tasks` selection names, in the order given; all tasks when it names none.
+ *
+ * @throws on an unknown or repeated task.
+ */
 export function selectEvaluationTasks(
   tasks: EvaluationTask[],
   selectors: string[],
@@ -241,10 +265,15 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function assertResumeCompatible(
-  evidence: EvidenceWithProgress,
+/**
+ * Refuse to resume evidence recorded under different code, options or task definitions.
+ *
+ * @throws when any recorded setting differs from this invocation's.
+ */
+export function assertResumeCompatible(
+  evidence: EvaluationEvidence,
   options: CliOptions,
-  tasks: EvaluationTask[],
+  tasks: readonly EvaluationTask[],
   commit: string,
 ): void {
   const config = evidence.configuration;
@@ -268,7 +297,8 @@ function assertResumeCompatible(
     !sameStrings(
       config.taskIds,
       tasks.map((task) => task.id),
-    )
+    ) ||
+    JSON.stringify(config.taskDefinitions) !== JSON.stringify(tasks)
   ) {
     throw new Error(
       `the existing evidence at ${options.out} was created with different code or options; choose another --out`,
@@ -306,6 +336,7 @@ async function loadOrCreateEvidence(
       arms: options.arms,
       requestedRuns: options.runs,
       taskIds: tasks.map((task) => task.id),
+      taskDefinitions: tasks,
       taskTimeoutMs,
       approvalDelayMs: options.approvalDelayMs,
       pollIntervalMs: options.pollIntervalMs,
@@ -511,17 +542,45 @@ function eventWorkItemId(event: RawSnapshot['events'][number]): string | undefin
   return typeof value === 'string' ? value : undefined;
 }
 
-function terminalTimestamp(raw: RawSnapshot, item: Doc<'workItems'>): number | null {
+/** Events that end a work item: its own terminal events and the two ways an apply ends it. */
+const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'work.completed',
+  'work.failed',
+  'work.cancelled',
+  'work.actions-rejected',
+  'work.actions-interrupted',
+]);
+
+function endsWorkItem(event: RawSnapshot['events'][number], item: Doc<'workItems'>): boolean {
+  if (eventWorkItemId(event) === item._id) {
+    return (
+      TERMINAL_EVENT_TYPES.has(event.type) ||
+      ((item.state === 'skipped' || item.state === 'deferred') && event.type === 'work.evaluated')
+    );
+  }
+  // A skill rejection cancels every row waiting on the proposal; its event names the skill only.
+  const skillId = (event.payload as { skillId?: unknown } | undefined)?.skillId;
+  return (
+    item.state === 'cancelled' &&
+    event.type === 'skill.rejected' &&
+    item.proposedSkillId !== undefined &&
+    skillId === item.proposedSkillId
+  );
+}
+
+/**
+ * When a terminal work item ended, from the ledger event that ended it.
+ *
+ * @returns The latest such event's time, or null when the item is not terminal
+ *   or no event records its end, in which case the caller uses the poll time.
+ * @remarks `skill.rejected` names the skill, not the rows it cancels, so a row
+ *   cancelled as the proposal's `proposedFor` without a `proposedSkillId` still
+ *   takes the poll time; the scripted manager never rejects, so no bed meets it.
+ */
+export function terminalTimestamp(raw: RawSnapshot, item: Doc<'workItems'>): number | null {
   if (!isTerminalWorkState(item.state)) return null;
-  const terminalTypes = new Set(['work.completed', 'work.failed', 'work.cancelled']);
   const candidates = raw.events
-    .filter(
-      (event) =>
-        eventWorkItemId(event) === item._id &&
-        (terminalTypes.has(event.type) ||
-          ((item.state === 'skipped' || item.state === 'deferred') &&
-            event.type === 'work.evaluated')),
-    )
+    .filter((event) => endsWorkItem(event, item))
     .map((event) => event.createdAt);
   return candidates.length === 0 ? null : Math.max(...candidates);
 }
@@ -845,6 +904,7 @@ async function executeRun(
   await persist(context);
 }
 
+/** The seams a regrade takes in place of the live backend, the clock and git. */
 export interface RegradeDependencies {
   /** A query-only seam for fixtures; production constructs this from CONVEX_SELF_HOSTED_URL. */
   client?: Pick<ConvexHttpClient, 'query' | 'setAuth'>;
@@ -896,11 +956,10 @@ function regradeTask(
   };
 }
 
-/** Re-score retained backend state without invoking any mutation, action or model-bearing stage. */
-export async function runRegrade(
+/** Read a regrade source, refusing an output that exists or a task the task file lacks. */
+async function readRegradeSource(
   options: CliOptions,
-  dependencies: RegradeDependencies = {},
-): Promise<EvaluationEvidence> {
+): Promise<{ sourcePath: string; outPath: string; source: EvidenceWithProgress }> {
   if (!options.regrade) throw new Error('--regrade requires an existing semifinal.json path');
   const sourcePath = resolve(options.regrade);
   const outPath = resolve(options.out);
@@ -909,19 +968,15 @@ export async function runRegrade(
   }
   await requireAbsent(outPath, 're-grade JSON');
   await requireAbsent(reportPathFor(outPath), 're-grade report');
+  const source: unknown = JSON.parse(await readFile(sourcePath, 'utf8'));
+  if (!isEvidence(source)) throw new Error('regrade source is not evaluation evidence v1');
+  return { sourcePath, outPath, source };
+}
 
-  const parsed: unknown = JSON.parse(await readFile(sourcePath, 'utf8'));
-  if (!isEvidence(parsed)) throw new Error('regrade source is not evaluation evidence v1');
-  const allTasks = await loadEvaluationTasks();
-  const tasksById = new Map(allTasks.map((task) => [task.id, task]));
-  for (const run of parsed.runs) {
-    for (const recorded of run.tasks) {
-      if (!tasksById.has(recorded.taskId)) {
-        throw new Error(`current task file does not contain recorded task ${recorded.taskId}`);
-      }
-    }
-  }
-
+/** An authenticated, query-only client on a backend that reports mock mode. */
+async function regradeClient(
+  dependencies: RegradeDependencies,
+): Promise<Pick<ConvexHttpClient, 'query' | 'setAuth'>> {
   const modeUrl = process.env.CONVEX_SELF_HOSTED_URL;
   if (!dependencies.client && !modeUrl) throw new Error('CONVEX_SELF_HOSTED_URL is required');
   const convexClient =
@@ -943,9 +998,16 @@ export async function runRegrade(
   if (mode.mode !== 'mock') {
     throw new Error(`evaluation re-grade requires mock mode; backend reports ${mode.mode}`);
   }
+  return client;
+}
 
+/** Each recorded run's retained backend state, refusing a run whose work items are gone. */
+async function retainedSnapshots(
+  client: Pick<ConvexHttpClient, 'query'>,
+  source: EvaluationEvidence,
+): Promise<Map<string, RawSnapshot>> {
   const snapshots = new Map<string, RawSnapshot>();
-  for (const run of parsed.runs) {
+  for (const run of source.runs) {
     if (run.tasks.length === 0) continue;
     if (!run.agentId) throw new Error(`recorded run ${run.id} has tasks but no agentId`);
     const raw = await client.query(api.evaluation.snapshot, {
@@ -964,9 +1026,34 @@ export async function runRegrade(
     }
     snapshots.set(run.id, raw);
   }
+  return snapshots;
+}
 
-  const sourceGeneratedAt = parsed.generatedAt;
-  const evidence = structuredClone(parsed) as EvidenceWithProgress;
+/**
+ * Re-score retained backend state without invoking any mutation, action or model-bearing stage.
+ *
+ * The output carries the current task definitions it was graded against and
+ * the source run's provenance; the source file is never touched.
+ *
+ * @throws when the output exists, the backend is not in mock mode, or a recorded task or work item is gone.
+ */
+export async function runRegrade(
+  options: CliOptions,
+  dependencies: RegradeDependencies = {},
+): Promise<EvaluationEvidence> {
+  const { sourcePath, outPath, source } = await readRegradeSource(options);
+  const tasksById = new Map((await loadEvaluationTasks()).map((task) => [task.id, task]));
+  for (const recorded of source.runs.flatMap((run) => run.tasks)) {
+    if (!tasksById.has(recorded.taskId)) {
+      throw new Error(`current task file does not contain recorded task ${recorded.taskId}`);
+    }
+  }
+  const snapshots = await retainedSnapshots(await regradeClient(dependencies), source);
+
+  const evidence = structuredClone(source);
+  evidence.configuration.taskDefinitions = evidence.configuration.taskIds.flatMap(
+    (taskId) => tasksById.get(taskId) ?? [],
+  );
   for (const run of evidence.runs) {
     if (run.tasks.length === 0) continue;
     const raw = snapshots.get(run.id)!;
@@ -982,9 +1069,9 @@ export async function runRegrade(
   evidence.generatedAt = (dependencies.now ?? new Date()).toISOString();
   evidence.regradedFrom = {
     path: sourcePath,
-    commit: parsed.configuration.commit,
+    commit: source.configuration.commit,
     gradedAtCommit: dependencies.commit ?? currentCommit(),
-    generatedAt: sourceGeneratedAt,
+    generatedAt: source.generatedAt,
     modelCallsMade,
   };
   await atomicWrite(outPath, `${JSON.stringify(evidence, null, 2)}\n`);
@@ -992,6 +1079,11 @@ export async function runRegrade(
   return evidence;
 }
 
+/**
+ * Run or resume a comparison against the mock backend and write its evidence and report.
+ *
+ * @throws when the backend is not in mock mode, names another model or would select another sandbox.
+ */
 export async function runEvaluation(options: CliOptions): Promise<EvaluationEvidence> {
   const allTasks = await loadEvaluationTasks();
   const tasks = selectEvaluationTasks(allTasks, options.taskSelectors);

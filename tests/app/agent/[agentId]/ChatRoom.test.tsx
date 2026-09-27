@@ -3,8 +3,13 @@ import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  FinishControl,
+  REPLY_MAX_CHARS,
+  ReplyInput,
   TurnFailureNotice,
   askAgain,
+  canFinish,
+  charterTranscript,
   composerLocked,
   emphasisSegments,
   errorLine,
@@ -55,7 +60,7 @@ describe('the Day-1 transcript bubble', (): void => {
 /** What `useChat` hands `onFinish`, cut down to what the chat room reads. */
 function finished(
   parts: UIMessage['parts'],
-  finishReason?: 'stop' | 'tool-calls' | 'length',
+  finishReason?: 'stop' | 'tool-calls' | 'length' | 'content-filter',
 ): Parameters<typeof turnFailure>[0] {
   return {
     message: { id: 'a1', role: 'assistant', parts },
@@ -253,5 +258,95 @@ describe('Ask again, against the SDK chat the room runs on', (): void => {
     await askAgain(chat);
 
     expect(lastText(requests[0])).toBe(INIT_PROMPT);
+  });
+});
+
+/** One turn of the 1:1 as `useChat` holds it. */
+function turn(id: string, role: UIMessage['role'], parts: UIMessage['parts']): UIMessage {
+  return { id, role, parts };
+}
+
+const said = (text: string): UIMessage['parts'] => [{ type: 'text', text }];
+
+describe('finishing the 1:1 from the room', (): void => {
+  const conversation: UIMessage[] = [
+    turn('0', 'user', said(INIT_PROMPT)),
+    turn('1', 'assistant', said('Why this hire?')),
+    turn('2', 'user', said('To close the books faster.')),
+  ];
+
+  it('names a content-filter finish as the provider refusing, even with no text', (): void => {
+    expect(turnFailure(finished([], 'content-filter'))).toBe(
+      "Day0's model provider refused to answer",
+    );
+    expect(turnFailure(finished(said('Partial answer'), 'content-filter'))).toBe(
+      "Day0's model provider refused to answer",
+    );
+  });
+
+  it('offers Finish once the manager has answered, and not while Day0 is answering or after the close', (): void => {
+    expect(canFinish({ status: 'ready', done: false, messages: conversation })).toBe(true);
+    expect(canFinish({ status: 'error', done: false, messages: conversation })).toBe(true);
+    expect(canFinish({ status: 'ready', done: false, messages: conversation.slice(0, 2) })).toBe(
+      false,
+    );
+    expect(canFinish({ status: 'streaming', done: false, messages: conversation })).toBe(false);
+    expect(canFinish({ status: 'ready', done: true, messages: conversation })).toBe(false);
+  });
+
+  it('builds the transcript the charter is drafted from without the priming turn, closing line included', (): void => {
+    const closed = [
+      ...conversation,
+      turn('3', 'assistant', [
+        { type: 'text', text: 'Thanks.' },
+        {
+          type: 'tool-dayOneComplete',
+          toolCallId: 'c1',
+          state: 'input-available',
+          input: { closingLine: 'I will draft the charter now.' },
+        },
+      ]),
+    ];
+
+    expect(charterTranscript(closed)).toBe(
+      [
+        'ASSISTANT: Why this hire?',
+        'USER: To close the books faster.',
+        'ASSISTANT: Thanks. I will draft the charter now.',
+      ].join('\n\n'),
+    );
+    expect(charterTranscript(conversation)).toBe(
+      'ASSISTANT: Why this hire?\n\nUSER: To close the books faster.',
+    );
+  });
+
+  it('renders Finish as a labelled button that is disabled until it can run', (): void => {
+    const enabled = renderToStaticMarkup(<FinishControl disabled={false} onFinish={() => {}} />);
+    const disabled = renderToStaticMarkup(<FinishControl disabled onFinish={() => {}} />);
+
+    expect(enabled).toMatch(/<button[^>]*type="button"[^>]*>Finish<\/button>/);
+    expect(enabled).toContain(
+      'title="End the 1:1 and draft the charter from what you have said so far"',
+    );
+    expect(enabled).not.toContain('disabled=""');
+    expect(disabled).toContain('disabled=""');
+  });
+});
+
+describe('the composer', (): void => {
+  it('bounds a reply and names the field', (): void => {
+    const markup = renderToStaticMarkup(
+      <ReplyInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        disabled={false}
+        placeholder="type"
+      />,
+    );
+
+    expect(REPLY_MAX_CHARS).toBe(4000);
+    expect(markup).toContain(`maxLength="${REPLY_MAX_CHARS}"`);
+    expect(markup).toContain('aria-label="Your reply"');
   });
 });
