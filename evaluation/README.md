@@ -584,6 +584,7 @@ The setting is the eighteenth shared parity field. New evidence includes a
 `structured-output.json` companion record, produced by
 `pnpm exec tsx scripts/eval-structured-output.ts <semifinal.json> <function-logs.jsonl>`.
 It records initial schema failures, repair attempts and coercions for every observed
-structured call and task, and flags incomplete log coverage. First-reply validity means
+structured call and task, and flags incomplete log coverage. It refuses to replace a
+record already in the evidence directory, which is frozen once written. First-reply validity means
 schema validation after Mastra's existing JSON extraction; fences alone are not schema
 failures. This audit leaves the frozen evaluation driver, tasks and graders unchanged.
