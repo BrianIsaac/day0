@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  authSection,
   browserSetupConfiguration,
   componentsSection,
   composeImages,
@@ -357,5 +358,60 @@ describe('the handbook twins line', (): void => {
         'the tests read the fixture, so a stale twin tests a page nobody publishes.',
     );
     expect(line).not.toContain('docs/submission');
+  });
+});
+
+describe('the auth section', (): void => {
+  const ISSUER = {
+    DAY0_OIDC_ISSUER: 'https://sso.example.com/realms/ops',
+    DAY0_OIDC_AUDIENCE: 'day0',
+  };
+
+  it('reports the customer issuer a customer-local profile signs people in with', (): void => {
+    const section = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' });
+    expect(section.title).toBe('Auth: customer OIDC issuer');
+    expect(section.status).not.toBe('gap');
+    expect(section.lines.join(' ')).toContain('https://sso.example.com/realms/ops');
+    expect(section.lines.join(' ')).toContain('under `next start`');
+  });
+
+  it('says the local key and the customer issuer are both accepted when both are on', (): void => {
+    const section = authSection({
+      ...ISSUER,
+      DAY0_PROFILE: 'customer-local',
+      NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+      DEV_NO_AUTH_SECRET: 's',
+      DEV_NO_AUTH_SIGNING_KEY: 'k',
+      DEV_NO_AUTH_JWKS: 'data:x',
+    });
+    expect(section.title).toBe('Auth: customer OIDC issuer and the local key');
+    expect(section.status).toBe('ok');
+  });
+
+  it('is a gap when the customer-local profile names no issuer', (): void => {
+    const section = authSection({ DAY0_PROFILE: 'customer-local' });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('DAY0_OIDC_ISSUER');
+  });
+
+  it('is a gap when the issuer has no audience, and the push would be refused', (): void => {
+    const section = authSection({ DAY0_OIDC_ISSUER: ISSUER.DAY0_OIDC_ISSUER });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('DAY0_OIDC_AUDIENCE');
+  });
+
+  it('is a gap for an issuer that is not an https URL, without printing it', (): void => {
+    const section = authSection({
+      DAY0_OIDC_ISSUER: 'https://admin:hunter2@sso.example.com',
+      DAY0_OIDC_AUDIENCE: 'day0',
+    });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).not.toContain('hunter2');
+  });
+
+  it('names all three sign-in options when none is configured', (): void => {
+    const section = authSection({});
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('DAY0_OIDC_ISSUER');
   });
 });
