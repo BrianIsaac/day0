@@ -201,6 +201,25 @@ describe("the labelled password grammar on an author's page", (): void => {
     }
   });
 
+  it('stops every bare value at CJK text and full-width punctuation, so no Chinese tail is stored', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['密码：abc123然后登录', ['abc123']],
+      ['密码：abc123，请勿外传', ['abc123']],
+      ['请求头 Authorization: Bearer abc123def456ghi，然后调用接口', ['abc123def456ghi']],
+      ['Bearer abc123def456ghi然后调用', ['abc123def456ghi']],
+      ['X-Api-Key: abcd1234efgh然后', ['abcd1234efgh']],
+      ['curl -u admin:s3cretpass，然后', ['s3cretpass']],
+      ['login: admin / Tr0ub4dor3。', ['Tr0ub4dor3']],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(
+        spans.map((span) => text.slice(span.start, span.end)),
+        text,
+      ).toEqual(values);
+    }
+  });
+
   it('still takes a quoted value, and a bare value that is not a plain word, in a sentence', (): void => {
     const cases: Array<[string, string[]]> = [
       ['Password: "Summer"', ['Summer']],

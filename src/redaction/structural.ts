@@ -87,17 +87,23 @@ const PEM_BLOCK =
 const JSON_WEB_TOKEN =
   /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g;
 /**
+ * Every bare value below stops at CJK text and full-width punctuation, which no
+ * token or password written without quotes carries, so the Chinese sentence
+ * after a value (`Bearer abc123，然后调用`, `密码：abc123然后登录`) is never
+ * stored as part of it.
+ *
  * The value after an `Authorization` scheme word. Eight characters keeps
  * "Bearer header." in prose out; a placeholder (`Bearer <token>`,
  * `Bearer {{secret}}`, `Bearer YOUR_TOKEN`) is left as the safe form it is.
  */
-const AUTHORIZATION_VALUE = /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+([^\s,;"'`<>\\]+)/gi;
-const HEADER_VALUE = /\b(?:Bearer|Basic)\s+([^\s,;"'`<>\\]{8,})/g;
+const AUTHORIZATION_VALUE =
+  /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/gi;
+const HEADER_VALUE = /\b(?:Bearer|Basic)\s+([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]{8,})/g;
 /** A named credential header: `X-Api-Key: value`, `Api-Key: value`, `X-Auth-Token: value`. */
 const CREDENTIAL_HEADER =
-  /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\]{8,})/gi;
+  /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]{8,})/gi;
 /** curl's `-u user:password` and `--user user:password`. */
-const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"']+)/g;
+const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"'　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/g;
 /**
  * A line that assigns a value to a password-class label. The label must sit
  * directly before the separator (an optional parenthetical allowed), so
@@ -109,33 +115,28 @@ const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"']+)/g;
  * pair, which `LOGIN_PAIR` reads instead.
  */
 const LABELLED_PASSWORD =
-  /(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)(?:[ \t]*\([^)\n]{0,60}\))?[ \t]*[:=：][ \t]*(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|([^\s`'",;)，。；、）]+)(?![^\s`'",;)，。；、）])(?![ \t]*\/[ \t]*[^\s/]))/gi;
+  /(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)(?:[ \t]*\([^)\n]{0,60}\))?[ \t]*[:=：][ \t]*(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|([^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)(?![^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠])(?![ \t]*\/[ \t]*[^\s/]))/gi;
 /** `login: user / password`, `credentials: user/password`: the second half is the secret. */
 const LOGIN_PAIR =
-  /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)，。；、）]+)/gi;
+  /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿！-｠]+)/gi;
 /** A bare value that is a plain word, lowercase or Capitalised, is a word before it is a password. */
 const PLAIN_WORD = /^[A-Z]?[a-z]+$/;
 /** Letters only: the first word of a phrase when more words follow it on the line. */
 const LATIN_LETTERS = /^[A-Za-z]+$/;
 const PHRASE_CONTINUES = /^[ \t]+[A-Za-z]/;
-/** A Chinese, Japanese or Korean character: an unquoted run of them is a sentence, not a value. */
-const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 /**
  * Whether an unquoted value after a password-class label is the author's
  * prose rather than a password: "Login: Google Workspace SSO", "Password:
- * Managed by Okta", "密码：请联系IT管理员". A quoted value is the author's
- * own marking of the secret and is never refused here.
+ * Managed by Okta". A CJK phrase ("密码：请联系IT管理员") never reaches here,
+ * because a bare value stops at the first CJK character. A quoted value is
+ * the author's own marking of the secret and is never refused here.
  *
  * @param value - The bare value, trailing punctuation shed.
  * @param rest - The line after the value.
  */
 function bareValueIsProse(value: string, rest: string): boolean {
-  return (
-    PLAIN_WORD.test(value) ||
-    CJK_CHARACTER.test(value) ||
-    (LATIN_LETTERS.test(value) && PHRASE_CONTINUES.test(rest))
-  );
+  return PLAIN_WORD.test(value) || (LATIN_LETTERS.test(value) && PHRASE_CONTINUES.test(rest));
 }
 /** A Singapore NRIC or FIN: a series letter, seven digits and a check letter. */
 const NATIONAL_ID = /(?<![A-Za-z0-9])([STFGM])(\d{7})([A-Z])(?![A-Za-z0-9])/g;
