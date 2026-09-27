@@ -75,6 +75,7 @@ import {
   withBrowserComponentState,
 } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { skillBodyHash } from '../src/work/skill-body';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
 import {
   INTERRUPTED_APPLY_REASON,
@@ -1052,6 +1053,9 @@ const NEVER_CLAIMED_DEAD_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Se
 
 /** The most work items read for one provider item: one per employee that discovered it. */
 const DISCOVERED_FROM_LIMIT = 32;
+
+/** Why an execution is not claimed with a skill a Revise has cleared. */
+const SKILL_UNDER_REVISION_REASON = 'the skill is being revised; it runs once it registers again';
 
 /** The verdicts that park a row until a skill or a connection arrives; they check the claim and take none. */
 const PARKING_DECISIONS: ReadonlySet<string> = new Set(['needs-skill', 'defer']);
@@ -3392,6 +3396,9 @@ export const resumeStalledSteps = internalMutation({
  * unique per claim and derived from nothing the caller controls. Adapter
  * calls key their idempotency off it, so an external effect can be recognised
  * as already-applied if the run is interrupted before its completion lands.
+ * The event records the skill's registration time and the hash of its body,
+ * so the ledger says which body the run used; a skill sent back for revision
+ * is refused.
  */
 export const claimForExecution = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
@@ -3399,7 +3406,7 @@ export const claimForExecution = internalMutation({
     ctx,
     args,
   ): Promise<{ claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }> => {
-    const { item } = await assertSameAgent(ctx, args.workItemId, args.skillId);
+    const { item, skill } = await assertSameAgent(ctx, args.workItemId, args.skillId);
     if (item.state !== 'plan-approved') {
       return {
         claimed: false,
@@ -3409,10 +3416,20 @@ export const claimForExecution = internalMutation({
             : `workItem state is ${item.state}; expected plan-approved`,
       };
     }
+    // The executor picked from the registered list before this transaction;
+    // a Revise in between cleared the body the run would otherwise use (P8-8).
+    if (skill.state !== 'registered' || skill.body === '') {
+      return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
+    }
     const runId = await ctx.db.insert('events', {
       agentId: item.agentId,
       type: 'work.execution-claimed',
-      payload: { workItemId: args.workItemId, skillId: args.skillId },
+      payload: {
+        workItemId: args.workItemId,
+        skillId: args.skillId,
+        ...(skill.registeredAt !== undefined ? { skillRegisteredAt: skill.registeredAt } : {}),
+        skillBodyHash: skillBodyHash(skill.body),
+      },
       createdAt: Date.now(),
     });
     await ctx.db.patch(args.workItemId, {

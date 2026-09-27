@@ -13,6 +13,7 @@ import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
+import { skillBodyHash } from '../../src/work/skill-body';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -4005,5 +4006,75 @@ describe('the owner-wide claim before the model call and on parked verdicts', ()
       harness.mutation(internal.work.claimLoopStep, { workItemId: mateoRow, step: 'evaluation' }),
     ).resolves.toEqual({ claimed: true });
     expect((await readItem(harness, mateoRow)).state).toBe('discovered');
+  });
+});
+
+describe('the execution claim and the skill body it runs', (): void => {
+  /**
+   * Seed a plan-approved row and a skill of the same employee.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   skill: The skill's state and body.
+   *
+   * Returns:
+   *   The row and the skill.
+   */
+  async function seedApproved(
+    harness: Harness,
+    skill: { state: Doc<'skills'>['state']; body: string },
+  ): Promise<{ workItemId: Id<'workItems'>; skillId: Id<'skills'> }> {
+    const { agentId, workItemId } = await seed(harness, 'plan-approved');
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'update-linear-ticket',
+          description: 'Comment on and close a linear ticket.',
+          body: skill.body,
+          sourceType: 'agent-authored',
+          state: skill.state,
+          createdAt: 1,
+          ...(skill.state === 'registered' ? { registeredAt: 5 } : {}),
+        }),
+    );
+    return { workItemId, skillId };
+  }
+
+  it('refuses a skill sent back for revision after the executor picked it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, { state: 'approved', body: '' });
+
+    const claim = await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+
+    expect(claim).toEqual({
+      claimed: false,
+      reason: 'the skill is being revised; it runs once it registers again',
+    });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.skillId).toBeUndefined();
+  });
+
+  it('records the registration and the hash of the body the run claimed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, {
+      state: 'registered',
+      body: 'Comment, then close.',
+    });
+
+    const claim = await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+
+    expect(claim.claimed).toBe(true);
+    const row = await readItem(harness, workItemId);
+    const [event] = (await eventsOfType(harness, row.agentId, 'work.execution-claimed')).filter(
+      (entry) => entry._id === row.executionRunId,
+    );
+    expect(event?.payload).toEqual({
+      workItemId,
+      skillId,
+      skillRegisteredAt: 5,
+      skillBodyHash: skillBodyHash('Comment, then close.'),
+    });
   });
 });
