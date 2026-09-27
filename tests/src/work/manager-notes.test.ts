@@ -101,4 +101,22 @@ describe('the notes the gate writes for the manager', (): void => {
       digestText({ agentName: 'Priya', zone: 'UTC', notes: [{ text: 'one', createdAt: evening }] }),
     ).toContain('1 update since');
   });
+
+  it('closes a digest with what is still owed, the code where one was sent, and counts past ten', (): void => {
+    const note = { text: 'one', createdAt: Date.UTC(2026, 8, 27, 9, 5) };
+    const owed = [
+      { title: 'Close REVOPS-7', decisionId: 'ab3xyz' },
+      ...Array.from({ length: 11 }, (_, index) => ({ title: `Ask ${index + 1}` })),
+    ];
+    const text = digestText({ agentName: 'Priya', zone: 'UTC', notes: [note], owed });
+    const block = text.split('\n\n').at(-1)?.split('\n') ?? [];
+    expect(block[0]).toBe('Still waiting for your decision (12):');
+    expect(block[1]).toBe('- “Close REVOPS-7”: reply “approve ab3xyz” or “reject ab3xyz <reason>”');
+    expect(block[2]).toBe('- “Ask 1”: decide in day0');
+    expect(block).toHaveLength(12);
+    expect(block.at(-1)).toBe('…and 2 more in day0.');
+    expect(digestText({ agentName: 'Priya', zone: 'UTC', notes: [note], owed: [] })).not.toContain(
+      'Still waiting',
+    );
+  });
 });

@@ -142,23 +142,53 @@ export function stoppedNoteText(args: {
   return `${args.agentName} stopped on ${quoted(args.title)}: ${args.reason}. Nothing landed; Retry stands in day0.`;
 }
 
+/** A decision the manager still owes, as the digest names it. */
+export interface OwedDecision {
+  readonly title: string;
+  /** The code of the request delivered for it; absent when it was never asked on chat. */
+  readonly decisionId?: string;
+}
+
+/** The most owed decisions a digest names; the rest are counted. */
+export const DIGEST_OWED_SHOWN = 10;
+
 /**
  * One digest message from the notes kept since the last one, each stamped
- * with the date and time it was kept, in the agent's zone.
+ * with the date and time it was kept, in the agent's zone, closed by the
+ * decisions still waiting on the manager, so a manager who reads only the
+ * digest learns what is owed (E-2, N-3).
  *
- *
- * @param args - The agent, its zone and the notes in the order they were recorded.
+ * @param args - The agent, its zone, the notes in the order they were recorded, and what is owed.
  * @returns The digest text.
  */
 export function digestText(args: {
   agentName: string;
   zone: string;
   notes: ReadonlyArray<{ text: string; createdAt: number }>;
+  owed?: readonly OwedDecision[];
 }): string {
   const count = args.notes.length;
+  const owed = args.owed ?? [];
+  const shown = owed
+    .slice(0, DIGEST_OWED_SHOWN)
+    .map((decision) =>
+      decision.decisionId === undefined
+        ? `- ${quoted(decision.title)}: decide in day0`
+        : `- ${quoted(decision.title)}: reply “approve ${decision.decisionId}” or “reject ${decision.decisionId} <reason>”`,
+    );
+  const more = owed.length - shown.length;
   return [
     `${args.agentName}: ${count} ${count === 1 ? 'update' : 'updates'} since the last digest (times in ${args.zone}).`,
     '',
     ...args.notes.map((note) => `${formatStamp(note.createdAt, args.zone)}: ${note.text}`),
+    ...(owed.length > 0
+      ? [
+          [
+            `Still waiting for your decision (${owed.length}):`,
+            ...shown,
+            ...(more > 0 ? [`…and ${more} more in day0.`] : []),
+          ].join('\n'),
+        ]
+      : []),
   ].join('\n\n');
 }

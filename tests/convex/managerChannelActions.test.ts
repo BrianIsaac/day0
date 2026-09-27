@@ -623,6 +623,54 @@ describe('the notes the gate sends for the manager', (): void => {
     expect(sent).toHaveLength(1);
   });
 
+  it('closes the digest with the decisions still owed, with the code the manager was sent (E-2, N-3)', async (): Promise<void> => {
+    clockAt(TOP_OF_HOUR);
+    recordSends();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedParkedPlan(harness);
+    const asked = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest' });
+      return await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-7',
+        title: 'Close REVOPS-7',
+        contentSummary: 'Close it.',
+        contentRefs: [],
+        state: 'plan-pending',
+        plan: { summary: 'Close it.' },
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+          ts: '1787768406.604379',
+        },
+        observedAt: 1,
+        createdAt: 1,
+      });
+    });
+    await keepNote(harness, agentId, asked, 'landed', 'ops worker finished “B”: 1 change landed.');
+
+    await expect(
+      harness.action(internal.managerChannelActions.sendManagerDigests, {}),
+    ).resolves.toEqual({ sent: 1, failed: 0 });
+    const text = JSON.parse(sent[0].body).text as string;
+    // The owed block closes the digest's own text; the provenance trailer follows it.
+    expect(text).toContain(
+      [
+        'ops worker finished “B”: 1 change landed.',
+        '',
+        'Still waiting for your decision (2):',
+        '- “Verify the runbook”: decide in day0',
+        '- “Close REVOPS-7”: reply “approve ab3xyz” or “reject ab3xyz <reason>”',
+      ].join('\n'),
+    );
+  });
+
   it('keeps a digest agent’s notes until the top of the hour in its own zone', async (): Promise<void> => {
     clockAt(TOP_OF_HOUR);
     recordSends();

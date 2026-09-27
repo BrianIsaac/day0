@@ -102,6 +102,7 @@ import {
   managerNotificationMode,
   stoppedNoteText,
   type ManagerNoteKind,
+  type OwedDecision,
 } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
@@ -4710,6 +4711,40 @@ async function digestNoteFilter(
  * due: at the top of the hour in the agent's zone, or at once for notes a
  * switch to per run stranded; never twice in one quarter hour.
  */
+/**
+ * What the manager still has to decide for an agent, oldest first: each
+ * parked row's delivered request with its code, or the row alone when no
+ * request reached the manager (never asked, or its request failed).
+ *
+ * @param agentId - The agent.
+ * @returns The owed decisions.
+ */
+async function owedDecisions(ctx: QueryCtx, agentId: Id<'agents'>): Promise<OwedDecision[]> {
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  return parked
+    .flat()
+    .filter((row) => row.state === 'plan-pending' || row.approvedIndexes === undefined)
+    .filter((row) => !isRevocationTrialRow(row))
+    .sort((left, right) => left._creationTime - right._creationTime)
+    .map((row): OwedDecision => {
+      const decision = row.decision;
+      const delivered =
+        decision !== undefined &&
+        askedFor(decision, row.state) &&
+        decision.ts !== undefined &&
+        decision.requestFailedAt === undefined;
+      return { title: row.title, ...(delivered ? { decisionId: decision.id } : {}) };
+    });
+}
+
 export const prepareManagerDigest = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -4755,7 +4790,12 @@ export const prepareManagerDigest = internalMutation({
       requestRunId: digestId,
       workItemId: notes[0].workItemId,
       noteIds: notes.map((note) => note._id),
-      text: digestText({ agentName: agent.name, zone: agentZone(agent), notes }),
+      text: digestText({
+        agentName: agent.name,
+        zone: agentZone(agent),
+        notes,
+        owed: await owedDecisions(ctx, args.agentId),
+      }),
     };
   },
 });
