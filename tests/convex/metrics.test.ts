@@ -244,6 +244,7 @@ describe('agent evaluation metrics', (): void => {
       },
       actions: {
         autoApplied: 2,
+        automatic: { reads: 0, managerMessages: 0, writes: 2 },
         sessionRestores: 0,
         held: 4,
         approved: 1,
@@ -256,6 +257,21 @@ describe('agent evaluation metrics', (): void => {
       skills: { approved: 2, rejected: 1 },
       autonomyChanges: 2,
       auditTrail: { complete: 3, total: 3, fraction: 1 },
+      // The ask is the rows' observedAt (1); the three items that ended did
+      // so at 509 s, 620 s and 650 s, and only the last completed.
+      pilot: {
+        skillReuse: { runs: 0, reused: 0, rate: null },
+        cycleTime: {
+          ended: 3,
+          medianToEndMs: 619_999,
+          completed: 1,
+          medianToCompletionMs: 649_999,
+          p90ToCompletionMs: 649_999,
+        },
+        reorientation: { answered: 0, amended: 0, rate: null },
+        hoursSaved: { estimatedItems: 0, hours: null },
+        retrieval: { tokens: null, recall: null },
+      },
     });
   });
 
@@ -820,6 +836,7 @@ describe('supervision figures for a company of employees', (): void => {
       },
       actions: {
         autoApplied: 3,
+        automatic: { reads: 0, managerMessages: 0, writes: 3 },
         sessionRestores: 2,
         held: 0,
         approved: 0,
@@ -832,6 +849,19 @@ describe('supervision figures for a company of employees', (): void => {
       skills: { approved: 0, rejected: 0 },
       autonomyChanges: 1,
       auditTrail: { complete: 5, total: 6, fraction: 5 / 6 },
+      pilot: {
+        skillReuse: { runs: 0, reused: 0, rate: null },
+        cycleTime: {
+          ended: 1,
+          medianToEndMs: 122_999,
+          completed: 0,
+          medianToCompletionMs: null,
+          p90ToCompletionMs: null,
+        },
+        reorientation: { answered: 0, amended: 0, rate: null },
+        hoursSaved: { estimatedItems: 0, hours: null },
+        retrieval: { tokens: null, recall: null },
+      },
     });
     expect(figures.excludedAgents).toBe(2);
     expect(figures.omittedEmployees).toBe(0);
@@ -996,5 +1026,171 @@ describe('the figures do not depend on the order the rows are read in', (): void
     expect(written.auditTrail).toEqual({ complete: 0, total: 1, fraction: 0 });
     expect(reversed).toEqual(written);
     expect(shuffled).toEqual(written);
+  });
+});
+
+describe('the ledger walk and the pilot figures (step 29)', (): void => {
+  let created = 0;
+  const event = (type: string, payload: Record<string, unknown>, createdAt: number): Doc<'events'> =>
+    ({
+      _id: `event-${(created += 1)}`,
+      _creationTime: created,
+      agentId: 'agent',
+      type,
+      payload,
+      createdAt,
+    }) as unknown as Doc<'events'>;
+  const item = (id: string, fields: Record<string, unknown> = {}): Doc<'workItems'> =>
+    ({
+      _id: id,
+      _creationTime: 1,
+      agentId: 'agent',
+      state: 'completed',
+      observedAt: 1_000,
+      createdAt: 2_000,
+      ...fields,
+    }) as unknown as Doc<'workItems'>;
+  const row = (key: string, fields: Record<string, unknown> = {}): Record<string, unknown> => ({
+    tool: 'http.request',
+    ok: true,
+    authority: 'manager',
+    effect: 'Commented on REVOPS-5',
+    idempotencyKey: key,
+    ...fields,
+  });
+  const slack = {
+    _id: 'surface-slack',
+    _creationTime: 1,
+    agentId: 'agent',
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    verdict: 'connected',
+    whereFound: [],
+    credentialLanded: true,
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage', 'conversations.history'],
+    managerDmChannelId: 'D0MANAGER',
+    createdAt: 1,
+  } as unknown as Doc<'surfaces'>;
+  const post = (channel: string): Record<string, unknown> => ({
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      body: JSON.stringify({ channel, text: 'Done.' }),
+    },
+  });
+  const history = { tool: 'http.request', args: { surface: 'slack', method: 'GET', path: '/conversations.history' } };
+
+  it('keeps phase one’s landed rows in the figures while its closing set is held', (): void => {
+    const pending = {
+      phase: 'dependent',
+      initial: { phase: 'dependent-authoring', actions: [post('C0TEAM')], applied: [row('wi:run-1:0')] },
+      actions: [post('C0TEAM')],
+      applied: [],
+    };
+    const metrics = computeAgentMetrics([], [item('wi', { state: 'actions-pending', output: pending })], []);
+    expect(metrics.auditTrail).toEqual({ complete: 1, total: 1, fraction: 1 });
+  });
+
+  it('keeps the writes an earlier run landed when a retry replaces the output, and a reconciled write once', (): void => {
+    const retried = {
+      applied: [],
+      landedWrites: [{ action: post('C0TEAM'), applied: row('wi:run-1:0') }],
+    };
+    const reconciled = event(
+      'work.provider-reconciled',
+      {
+        workItemId: 'wi',
+        entries: [
+          { phase: 'single', actionIndex: 0, tool: 'http.request', outcome: 'landed', idempotencyKey: 'wi:run-1:0' },
+          { phase: 'single', actionIndex: 1, tool: 'http.request', outcome: 'landed', idempotencyKey: 'wi:run-1:1', effect: 'Moved REVOPS-5 to Done' },
+          { phase: 'single', actionIndex: 2, tool: 'http.request', outcome: 'outcome-unknown', idempotencyKey: 'wi:run-1:2' },
+        ],
+      },
+      5_000,
+    );
+    const metrics = computeAgentMetrics([reconciled], [item('wi', { state: 'failed', output: retried })], []);
+    // The carried write, and the one only the reconciliation records (it names no authority).
+    expect(metrics.auditTrail).toEqual({ complete: 1, total: 2, fraction: 0.5 });
+  });
+
+  it('keys a closing set apart from phase one under the same run, even on its unflagged second pending event', (): void => {
+    const events = [
+      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0], refusedIndexes: [] }, 1_000),
+      event('work.actions-approved', { workItemId: 'wi', runId: 'run-1', approvedIndexes: [0], rejectedIndexes: [], decidedVia: 'dashboard' }, 2_000),
+      event('work.dependent-authoring', { workItemId: 'wi', runId: 'run-1', prerequisiteActionCount: 1 }, 3_000),
+      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0], refusedIndexes: [], dependentPhase: true }, 4_000),
+      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0], refusedIndexes: [], autoApplied: true }, 4_001),
+      event('work.actions-approved', { workItemId: 'wi', runId: 'attempt-2', approvedIndexes: [0], rejectedIndexes: [], decidedVia: 'dashboard' }, 5_000),
+    ];
+    expect(computeAgentMetrics(events, [], []).actions).toMatchObject({ held: 2, approved: 2 });
+  });
+
+  it('counts approving none of the held actions as a rejection of the decision and of each held action', (): void => {
+    const events = [
+      event('work.decision-requesting', { workItemId: 'wi', decisionId: 'a1', kind: 'actions' }, 1_000),
+      event('work.actions-pending', { workItemId: 'wi', runId: 'run-1', heldIndexes: [0, 1], refusedIndexes: [] }, 1_001),
+      event('work.actions-approved', { workItemId: 'wi', runId: 'run-1', approvedIndexes: [], rejectedIndexes: [], decidedVia: 'channel' }, 9_000),
+    ];
+    const metrics = computeAgentMetrics(events, [], []);
+    expect(metrics.decisions).toMatchObject({ approved: 0, rejected: 1, partiallyApproved: 0 });
+    expect(metrics.actions).toMatchObject({ held: 2, approved: 0, rejected: 2 });
+  });
+
+  it('splits the automatic rows into reads, messages to the manager and writes', (): void => {
+    const output = {
+      actions: [history, post('D0MANAGER'), post('C0TEAM'), { tool: 'http.request', args: {} }],
+      applied: [
+        row('wi:run-1:0', { authority: 'standing' }),
+        row('wi:run-1:1', { authority: 'standing' }),
+        row('wi:run-1:2', { authority: 'autonomous' }),
+        row('wi:run-1:3', { authority: 'autonomous' }),
+      ],
+    };
+    const metrics = computeAgentMetrics([], [item('wi', { output })], [], [slack]);
+    expect(metrics.actions.autoApplied).toBe(4);
+    // The unparseable last row cannot be shown to be a read, so it counts as a write.
+    expect(metrics.actions.automatic).toEqual({ reads: 1, managerMessages: 1, writes: 2 });
+  });
+
+  it('computes skill reuse, cycle time from the ask, reorientation acceptance and the hours-saved gauge', (): void => {
+    const events = [
+      event('work.discovered', { workItemId: 'a' }, 1_500),
+      event('work.execution-claimed', { workItemId: 'a', skillId: 's1', proposedFor: 'a' }, 2_000),
+      event('work.execution-claimed', { workItemId: 'a', skillId: 's1', proposedFor: 'a' }, 2_500),
+      event('work.failed', { workItemId: 'a', reason: 'stopped' }, 3_000),
+      event('work.completed', { workItemId: 'a' }, 61_000),
+      event('work.execution-claimed', { workItemId: 'b', skillId: 's1', proposedFor: 'a' }, 4_000),
+      event('work.completed', { workItemId: 'b' }, 121_000),
+      event('work.execution-claimed', { workItemId: 'c', skillId: 'builtin' }, 5_000),
+      event('work.execution-claimed', { workItemId: 'd', skillId: 'builtin' }, 6_000),
+      event('work.skipped', { workItemId: 'e' }, 7_000),
+      event('charter.question-answered', { questionId: 'q1', amended: true }, 8_000),
+      event('charter.question-answered', { questionId: 'q2', amended: false }, 9_000),
+    ];
+    const items = [
+      item('a', { manualEstimateMinutes: 45 }),
+      item('b', { manualEstimateMinutes: 45 }),
+      item('c', { state: 'executing' }),
+      item('d', { state: 'failed', manualEstimateMinutes: 600 }),
+      item('e', { state: 'skipped' }),
+    ];
+    expect(computeAgentMetrics(events, items, []).pilot).toEqual({
+      skillReuse: { runs: 4, reused: 2, rate: 0.5 },
+      cycleTime: {
+        ended: 3,
+        medianToEndMs: 6_000,
+        completed: 2,
+        medianToCompletionMs: 90_000,
+        p90ToCompletionMs: 120_000,
+      },
+      reorientation: { answered: 2, amended: 1, rate: 0.5 },
+      hoursSaved: { estimatedItems: 2, hours: 1.5 },
+      retrieval: { tokens: null, recall: null },
+    });
   });
 });

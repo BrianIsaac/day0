@@ -1,8 +1,17 @@
 import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
-import { isGateRefusal } from '../src/surfaces/policy';
+import {
+  actionIntent,
+  isGateRefusal,
+  isManagerDm,
+  parseSurfaceAction,
+} from '../src/surfaces/policy';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import type { SurfaceRecord } from '../src/surfaces/types';
 import { droppedReadRefusal } from '../src/work/stop';
+import { ledgerPhases } from '../src/work/reconciliation';
+import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCaller } from './ownership';
 
 type UnknownRecord = Record<string, unknown>;
@@ -29,7 +38,10 @@ export interface AgentMetrics {
     >;
   };
   actions: {
+    /** Every row that landed without a person's approval: `automatic` splits it. */
     autoApplied: number;
+    /** The automatic rows by what they did: reads, messages to the manager, and writes to a system. */
+    automatic: { reads: number; managerMessages: number; writes: number };
     /** Replayed browser calls that landed: a sign-in repeated in a new invocation, never a write of the work. */
     sessionRestores: number;
     held: number;
@@ -43,6 +55,34 @@ export interface AgentMetrics {
   skills: { approved: number; rejected: number };
   autonomyChanges: number;
   auditTrail: { complete: number; total: number; fraction: number | null };
+  /** A9's five pilot figures. */
+  pilot: PilotFigures;
+}
+
+/**
+ * The pilot figures decision A9 adds to the ledger's own, each recomputable
+ * from an exported trace.
+ */
+export interface PilotFigures {
+  /** Of the distinct (work item, skill) runs, those run with a skill made for another item. */
+  skillReuse: { runs: number; reused: number; rate: number | null };
+  /**
+   * From the ask (`observedAt`: the provider's own time when intake had one)
+   * to the item's first terminal event, and to its first completion.
+   */
+  cycleTime: {
+    ended: number;
+    medianToEndMs: number | null;
+    completed: number;
+    medianToCompletionMs: number | null;
+    p90ToCompletionMs: number | null;
+  };
+  /** The charter questions the manager answered, and how many of the answers changed the charter. */
+  reorientation: { answered: number; amended: number; rate: number | null };
+  /** N11: the manager's optional estimates over completed items. An internal gauge, never a claim. */
+  hoursSaved: { estimatedItems: number; hours: number | null };
+  /** N11: counted once B3 records the selected blocks and the provider's usage; null until then. */
+  retrieval: { tokens: null; recall: null };
 }
 
 export interface LedgerObservation {
@@ -50,7 +90,16 @@ export interface LedgerObservation {
   observedAt: number | null;
   runId: string | null;
   entry: UnknownRecord;
+  /** The action the row applied, when the output carried it beside the row: what tells a read, the manager DM and a write apart. */
+  action?: UnknownRecord;
   /** Set on a replayed browser call: the key of the row whose session it re-established. */
+  sessionRestoreOf?: string;
+}
+
+/** One ledger row as a run's output carries it, with its action when the output has it. */
+interface LedgerRow {
+  entry: UnknownRecord;
+  action?: UnknownRecord;
   sessionRestoreOf?: string;
 }
 
@@ -95,30 +144,74 @@ function actionKeyFromIdempotencyKey(key: unknown): string | undefined {
   return parts.length >= 3 ? `${parts[1]}:${parts[2]}` : undefined;
 }
 
+/** Each applied row of one list, paired with the action at its index. */
+function pairedRows(applied: unknown, actions: unknown): LedgerRow[] {
+  if (!Array.isArray(applied)) return [];
+  const list = Array.isArray(actions) ? actions : [];
+  return applied.flatMap((value, index) => {
+    const entry = asRecord(value);
+    if (!entry) return [];
+    const action = asRecord(list[index]);
+    return [{ entry, ...(action ? { action } : {}) }];
+  });
+}
+
 /**
- * Every row of a ledger, a re-established browser session's replayed calls
- * each counted as the row it is, just before the row that needed the page.
+ * Every row of a ledger: both phases of a two-phase run (a pending closing
+ * set keeps phase one under `initial`), the reads a failed re-read attempted,
+ * and the writes earlier runs landed that the output carries forward
+ * (`landedWrites`), so a retry that replaces the output never takes a landed
+ * row out of the figures. A re-established browser session's replayed calls
+ * are each counted as the row they are, just before the row that needed the
+ * page.
  */
-function ledgerEntries(
-  output: unknown,
-): Array<{ entry: UnknownRecord; sessionRestoreOf?: string }> {
+function ledgerEntries(output: unknown): LedgerRow[] {
   const record = asRecord(output);
   const failedReread = asRecord(record?.failedReread);
-  const applied = [record?.applied, failedReread?.applied].flatMap((rows) =>
-    Array.isArray(rows) ? rows : [],
-  );
-  return applied.flatMap((value) => {
-    const row = asRecord(value);
-    if (!row) return [];
-    const steps = asRecord(row.sessionRestore)?.steps;
-    const owner = asString(row.idempotencyKey);
+  const carried = Array.isArray(record?.landedWrites) ? record.landedWrites : [];
+  const rows: LedgerRow[] = [
+    ...ledgerPhases(output).flatMap(({ applied, actions }) => pairedRows(applied, actions)),
+    ...pairedRows(failedReread?.applied, failedReread?.actions),
+    ...carried.flatMap((value: unknown) => {
+      const write = asRecord(value);
+      return pairedRows([write?.applied], [write?.action]);
+    }),
+  ];
+  return rows.flatMap((row) => {
+    const steps = asRecord(row.entry.sessionRestore)?.steps;
+    const owner = asString(row.entry.idempotencyKey);
     const replayed = Array.isArray(steps)
       ? steps.flatMap((step) => {
           const entry = asRecord(step);
           return entry ? [{ entry, ...(owner ? { sessionRestoreOf: owner } : {}) }] : [];
         })
       : [];
-    return [...replayed, { entry: row }];
+    return [...replayed, row];
+  });
+}
+
+/**
+ * The writes a manager's provider reconciliation confirmed landed, as ledger
+ * rows. `work.provider-reconciled` records entries, not an output, so the
+ * walk reads them here; a row the output also carries is the same row.
+ */
+function reconciledRows(payload: UnknownRecord): LedgerRow[] {
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  return entries.flatMap((value: unknown) => {
+    const entry = asRecord(value);
+    if (!entry || entry.outcome !== 'landed') return [];
+    return [
+      {
+        entry: {
+          tool: entry.tool,
+          ok: true,
+          reconciled: true,
+          ...(asString(entry.effect) ? { effect: entry.effect } : {}),
+          ...(asString(entry.providerId) ? { providerId: entry.providerId } : {}),
+          ...(asString(entry.idempotencyKey) ? { idempotencyKey: entry.idempotencyKey } : {}),
+        },
+      },
+    ];
   });
 }
 
@@ -132,17 +225,25 @@ export function collectLedgerObservations(
   workItems: readonly Doc<'workItems'>[],
 ): LedgerObservation[] {
   const observations = new Map<string, LedgerObservation>();
-  const add = (workItemId: string, output: unknown, observedAt: number | null): void => {
-    ledgerEntries(output).forEach(({ entry, sessionRestoreOf }, index) => {
+  const add = (workItemId: string, rows: readonly LedgerRow[], observedAt: number | null): void => {
+    rows.forEach(({ entry, action, sessionRestoreOf }, index) => {
       const idempotencyKey = asString(entry.idempotencyKey);
       const key = idempotencyKey ?? `${workItemId}:${observedAt ?? 'current'}:${index}`;
       const existing = observations.get(key);
-      if (existing && (existing.observedAt ?? Infinity) <= (observedAt ?? Infinity)) return;
+      const earlier = (existing?.observedAt ?? Infinity) <= (observedAt ?? Infinity);
+      // A reconciliation's copy of a row carries less than the row itself:
+      // the row wins, keeping the earlier of the two moments it was seen.
+      const fuller = existing?.entry.reconciled === true && entry.reconciled !== true;
+      if (existing && earlier && !fuller) return;
+      if (existing && !earlier && entry.reconciled === true && existing.entry.reconciled !== true) {
+        return;
+      }
       observations.set(key, {
         workItemId,
-        observedAt,
+        observedAt: existing && earlier ? existing.observedAt : observedAt,
         runId: runIdFromIdempotencyKey(idempotencyKey),
         entry,
+        ...(action ? { action } : {}),
         ...(sessionRestoreOf ? { sessionRestoreOf } : {}),
       });
     });
@@ -151,7 +252,10 @@ export function collectLedgerObservations(
     const payload = asRecord(event.payload);
     const workItemId = asString(payload?.workItemId);
     if (workItemId && payload?.output !== undefined) {
-      add(workItemId, payload.output, event.createdAt);
+      add(workItemId, ledgerEntries(payload.output), event.createdAt);
+    }
+    if (workItemId && payload && event.type === 'work.provider-reconciled') {
+      add(workItemId, reconciledRows(payload), event.createdAt);
     }
   }
   for (const item of [...workItems].sort(
@@ -159,7 +263,7 @@ export function collectLedgerObservations(
       left._creationTime - right._creationTime ||
       (left._id < right._id ? -1 : left._id > right._id ? 1 : 0),
   )) {
-    add(item._id, item.output, null);
+    add(item._id, ledgerEntries(item.output), null);
   }
   return [...observations.values()];
 }
@@ -220,14 +324,14 @@ function decisionResult(event: Doc<'events'>):
   }
   if (event.type !== 'work.actions-approved') return undefined;
   if (!payload) return undefined;
+  // Approving none of the held actions lets none of them land: a rejection.
+  const approvedAny = asIndexes(payload.approvedIndexes).length > 0;
   return {
     workItemId,
     kind: 'actions',
-    outcome: 'approved',
+    outcome: approvedAny ? 'approved' : 'rejected',
     via,
-    partial:
-      asIndexes(payload.approvedIndexes).length > 0 &&
-      asIndexes(payload.rejectedIndexes).length > 0,
+    partial: approvedAny && asIndexes(payload.rejectedIndexes).length > 0,
     cancelled: false,
   };
 }
@@ -347,13 +451,49 @@ function summariseDecisions(totals: DecisionTotals): AgentMetrics['decisions'] {
   };
 }
 
-function eventActionKey(payload: UnknownRecord, index: number): string {
-  return `${asString(payload.runId) ?? asString(payload.workItemId) ?? 'unknown'}:${index}`;
+/**
+ * One held, refused, approved or rejected action's key: the run and the
+ * index, with `closing` between them for a closing set. A closing set's
+ * indexes start again at 0 under the same run, so without the phase its rows
+ * would take phase one's keys. A run is in its closing phase from its
+ * `work.dependent-authoring` event on, which also covers the second pending
+ * event a closing set writes without the flag. A single phase keeps the key
+ * the ledger's idempotency keys give, so a refusal both saw is one refusal.
+ */
+function eventActionKey(
+  payload: UnknownRecord,
+  index: number,
+  closingRuns: ReadonlySet<string>,
+): string {
+  const run = asString(payload.runId) ?? asString(payload.workItemId) ?? 'unknown';
+  const closing = payload.dependentPhase === true || closingRuns.has(run);
+  return closing ? `${run}:closing:${index}` : `${run}:${index}`;
+}
+
+/** What an automatic row did: read, told the manager, or wrote to a system. */
+type AutomaticKind = 'read' | 'manager-message' | 'write';
+
+/**
+ * Classify an automatic row by its action. A row whose action the output did
+ * not keep is counted as a write, so the split never makes the agent look
+ * more supervised than the ledger can show.
+ */
+function automaticKind(
+  observation: LedgerObservation,
+  surfaces: readonly SurfaceRecord[],
+): AutomaticKind {
+  if (!observation.action) return 'write';
+  const parsed = parseSurfaceAction(observation.action as unknown as MockAction);
+  if (!parsed.ok) return 'write';
+  const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+  if (surface && isManagerDm(parsed.action, surface)) return 'manager-message';
+  return actionIntent(parsed.action) === 'write' ? 'write' : 'read';
 }
 
 function actionMetrics(
   events: readonly Doc<'events'>[],
   ledger: readonly LedgerObservation[],
+  surfaces: readonly SurfaceRecord[],
 ): AgentMetrics['actions'] {
   const held = new Set<string>();
   const approved = new Set<string>();
@@ -361,20 +501,27 @@ function actionMetrics(
   const refused = new Set<string>();
   const refusalObservations = new Map<string, { reason: string; at: number }>();
   const lastPending = new Map<string, { payload: UnknownRecord; at: number }>();
+  const closingRuns = new Set<string>();
   for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     if (!payload) continue;
+    if (event.type === 'work.dependent-authoring') {
+      const run = asString(payload.runId);
+      if (run) closingRuns.add(run);
+      continue;
+    }
     if (event.type === 'work.actions-auto-applying' || event.type === 'work.actions-pending') {
-      for (const index of asIndexes(payload.heldIndexes)) held.add(eventActionKey(payload, index));
+      for (const index of asIndexes(payload.heldIndexes))
+        held.add(eventActionKey(payload, index, closingRuns));
       for (const index of asIndexes(payload.refusedIndexes))
-        refused.add(eventActionKey(payload, index));
+        refused.add(eventActionKey(payload, index, closingRuns));
       if (Array.isArray(payload.refusals)) {
         for (const value of payload.refusals) {
           const row = asRecord(value);
           const index = row?.index;
           const reason = asString(row?.reason);
           if (!Number.isInteger(index) || (index as number) < 0 || !reason) continue;
-          const key = eventActionKey(payload, index as number);
+          const key = eventActionKey(payload, index as number, closingRuns);
           const existing = refusalObservations.get(key);
           if (!existing || event.createdAt < existing.at) {
             refusalObservations.set(key, { reason, at: event.createdAt });
@@ -386,12 +533,19 @@ function actionMetrics(
       continue;
     }
     if (event.type === 'work.actions-approved') {
-      for (const index of asIndexes(payload.approvedIndexes)) {
-        approved.add(eventActionKey(payload, index));
-      }
-      for (const index of asIndexes(payload.rejectedIndexes)) {
-        rejected.add(eventActionKey(payload, index));
-      }
+      // The decision's indexes are the held set's: key them in the run and
+      // phase that set was held under, whatever id the approval carries.
+      const workItemId = asString(payload.workItemId);
+      const heldUnder = (workItemId ? lastPending.get(workItemId)?.payload : undefined) ?? payload;
+      const approvedIndexes = asIndexes(payload.approvedIndexes);
+      for (const index of approvedIndexes)
+        approved.add(eventActionKey(heldUnder, index, closingRuns));
+      const rejectedIndexes =
+        approvedIndexes.length > 0
+          ? asIndexes(payload.rejectedIndexes)
+          : [...asIndexes(payload.rejectedIndexes), ...asIndexes(heldUnder.heldIndexes)];
+      for (const index of rejectedIndexes)
+        rejected.add(eventActionKey(heldUnder, index, closingRuns));
       continue;
     }
     if (event.type !== 'work.actions-rejected') continue;
@@ -399,7 +553,7 @@ function actionMetrics(
     const pending = workItemId ? lastPending.get(workItemId) : undefined;
     if (!pending) continue;
     for (const index of asIndexes(pending.payload.heldIndexes)) {
-      rejected.add(eventActionKey(pending.payload, index));
+      rejected.add(eventActionKey(pending.payload, index, closingRuns));
     }
   }
 
@@ -440,17 +594,24 @@ function actionMetrics(
     entry.ok === true && entry.held !== true;
   // A replayed sign-in repeats a call the run already landed; it is counted
   // as a replay, never as a second automatic action.
-  const autoApplied = ledger.filter(
+  const automaticRows = ledger.filter(
     (observation) =>
       landed(observation) &&
       observation.sessionRestoreOf === undefined &&
       (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous'),
-  ).length;
+  );
+  const kinds = automaticRows.map((observation) => automaticKind(observation, surfaces));
+  const count = (kind: AutomaticKind): number => kinds.filter((each) => each === kind).length;
   const sessionRestores = ledger.filter(
     (observation) => landed(observation) && observation.sessionRestoreOf !== undefined,
   ).length;
   return {
-    autoApplied,
+    autoApplied: automaticRows.length,
+    automatic: {
+      reads: count('read'),
+      managerMessages: count('manager-message'),
+      writes: count('write'),
+    },
     sessionRestores,
     held: held.size,
     approved: approved.size,
@@ -462,6 +623,141 @@ function actionMetrics(
   };
 }
 
+/** The work events that end an item's run: every terminal transition writes one. */
+export const TERMINAL_WORK_EVENTS: ReadonlySet<string> = new Set([
+  'work.completed',
+  'work.failed',
+  'work.cancelled',
+  'work.withdrawn',
+  'work.skipped',
+  'work.actions-rejected',
+  'work.actions-interrupted',
+]);
+
+/** The raw lists behind the pilot figures, which a company figure pools before any median. */
+interface PilotTotals {
+  runs: number;
+  reused: number;
+  toEnd: number[];
+  toCompletion: number[];
+  answered: number;
+  amended: number;
+  estimatedItems: number;
+  estimatedMinutes: number;
+}
+
+function pilotTotals(
+  events: readonly Doc<'events'>[],
+  workItems: readonly Doc<'workItems'>[],
+): PilotTotals {
+  const ordered = [...events].sort(byWriteOrder);
+  const firstItemOfSkill = new Map<string, string>();
+  const runs = new Set<string>();
+  let reused = 0;
+  const firstEnd = new Map<string, number>();
+  const firstCompletion = new Map<string, number>();
+  const discoveredAt = new Map<string, number>();
+  let answered = 0;
+  let amended = 0;
+  for (const event of ordered) {
+    const payload = asRecord(event.payload);
+    const workItemId = asString(payload?.workItemId);
+    if (event.type === 'work.execution-claimed' && workItemId) {
+      const skillId = asString(payload?.skillId);
+      if (!skillId || runs.has(`${workItemId}:${skillId}`)) continue;
+      runs.add(`${workItemId}:${skillId}`);
+      const proposedFor = asString(payload?.proposedFor);
+      const first = firstItemOfSkill.get(skillId);
+      if (first === undefined) firstItemOfSkill.set(skillId, workItemId);
+      if (
+        (proposedFor !== undefined && proposedFor !== workItemId) ||
+        (first ?? workItemId) !== workItemId
+      ) {
+        reused += 1;
+      }
+      continue;
+    }
+    if (event.type === 'work.discovered' && workItemId && !discoveredAt.has(workItemId)) {
+      discoveredAt.set(workItemId, event.createdAt);
+      continue;
+    }
+    if (TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
+      if (!firstEnd.has(workItemId)) firstEnd.set(workItemId, event.createdAt);
+      if (event.type === 'work.completed' && !firstCompletion.has(workItemId)) {
+        firstCompletion.set(workItemId, event.createdAt);
+      }
+      continue;
+    }
+    if (event.type === 'charter.question-answered') {
+      answered += 1;
+      if (payload?.amended === true) amended += 1;
+    }
+  }
+  const askedAt = new Map(discoveredAt);
+  for (const item of workItems) askedAt.set(item._id, item.observedAt);
+  const durations = (ends: Map<string, number>): number[] =>
+    [...ends].flatMap(([workItemId, at]) => {
+      const start = askedAt.get(workItemId);
+      return start === undefined ? [] : [Math.max(0, at - start)];
+    });
+  const estimates = workItems.flatMap((item) =>
+    item.state === 'completed' && typeof item.manualEstimateMinutes === 'number'
+      ? [item.manualEstimateMinutes]
+      : [],
+  );
+  return {
+    runs: runs.size,
+    reused,
+    toEnd: durations(firstEnd),
+    toCompletion: durations(firstCompletion),
+    answered,
+    amended,
+    estimatedItems: estimates.length,
+    estimatedMinutes: estimates.reduce((total, minutes) => total + minutes, 0),
+  };
+}
+
+function summarisePilot(totals: PilotTotals): PilotFigures {
+  const completion = latencySummary(totals.toCompletion);
+  return {
+    skillReuse: {
+      runs: totals.runs,
+      reused: totals.reused,
+      rate: totals.runs > 0 ? totals.reused / totals.runs : null,
+    },
+    cycleTime: {
+      ended: totals.toEnd.length,
+      medianToEndMs: latencySummary(totals.toEnd).medianLatencyMs,
+      completed: totals.toCompletion.length,
+      medianToCompletionMs: completion.medianLatencyMs,
+      p90ToCompletionMs: completion.p90LatencyMs,
+    },
+    reorientation: {
+      answered: totals.answered,
+      amended: totals.amended,
+      rate: totals.answered > 0 ? totals.amended / totals.answered : null,
+    },
+    hoursSaved: {
+      estimatedItems: totals.estimatedItems,
+      hours: totals.estimatedItems > 0 ? totals.estimatedMinutes / 60 : null,
+    },
+    retrieval: { tokens: null, recall: null },
+  };
+}
+
+function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
+  return {
+    runs: rows.reduce((total, row) => total + row.runs, 0),
+    reused: rows.reduce((total, row) => total + row.reused, 0),
+    toEnd: rows.flatMap((row) => row.toEnd),
+    toCompletion: rows.flatMap((row) => row.toCompletion),
+    answered: rows.reduce((total, row) => total + row.answered, 0),
+    amended: rows.reduce((total, row) => total + row.amended, 0),
+    estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),
+    estimatedMinutes: rows.reduce((total, row) => total + row.estimatedMinutes, 0),
+  };
+}
+
 /**
  * One agent's summary together with the raw decision latencies behind it,
  * which a company figure pools before taking its median.
@@ -470,7 +766,8 @@ function agentFigures(
   events: readonly Doc<'events'>[],
   workItems: readonly Doc<'workItems'>[],
   charters: readonly Doc<'charters'>[],
-): { metrics: AgentMetrics; decisions: DecisionTotals } {
+  surfaces: readonly Doc<'surfaces'>[],
+): { metrics: AgentMetrics; decisions: DecisionTotals; pilot: PilotTotals } {
   const deployedAt = events
     .filter((event) => event.type === 'agent.deployed')
     .map((event) => event.createdAt)
@@ -501,6 +798,7 @@ function agentFigures(
   const timeFromDeploy = (at: number | undefined): number | null =>
     deployedAt === undefined || at === undefined ? null : Math.max(0, at - deployedAt);
   const decisions = decisionTotals(events, workItems);
+  const pilot = pilotTotals(events, workItems);
   const metrics: AgentMetrics = {
     charter: {
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
@@ -509,7 +807,7 @@ function agentFigures(
       requestChanges: events.filter((event) => event.type === 'charter.request_changes').length,
     },
     decisions: summariseDecisions(decisions),
-    actions: actionMetrics(events, ledger),
+    actions: actionMetrics(events, ledger, surfaces.map(toSurfaceRecord)),
     surfaces: {
       approved: events.filter((event) => event.type === 'surface.approved').length,
       rejected: events.filter((event) => event.type === 'surface.rejected').length,
@@ -528,8 +826,9 @@ function agentFigures(
       total: landed.length,
       fraction: landed.length > 0 ? complete / landed.length : null,
     },
+    pilot: summarisePilot(pilot),
   };
-  return { metrics, decisions };
+  return { metrics, decisions, pilot };
 }
 
 /** Compute the complete supervision summary from one agent's durable records. */
@@ -537,19 +836,22 @@ export function computeAgentMetrics(
   events: readonly Doc<'events'>[],
   workItems: readonly Doc<'workItems'>[],
   charters: readonly Doc<'charters'>[],
+  surfaces: readonly Doc<'surfaces'>[] = [],
 ): AgentMetrics {
-  return agentFigures(events, workItems, charters).metrics;
+  return agentFigures(events, workItems, charters, surfaces).metrics;
 }
 
 /** The most employees the company figures cover: as many as the landing page lists. */
 export const MAX_COMPANY_EMPLOYEES = 20;
 
-/** One employee's durable records, as `forAgent` reads them. */
+/** One employee's durable records, as `forAgent` reads them or a trace carries them. */
 export interface EmployeeRecords {
-  agent: Doc<'agents'>;
+  agent: Pick<Doc<'agents'>, '_id' | 'name' | 'createdAt'>;
   events: readonly Doc<'events'>[];
   workItems: readonly Doc<'workItems'>[];
   charters: readonly Doc<'charters'>[];
+  /** The employee's surfaces, which tell the manager DM from other writes; none reads every automatic write as a write. */
+  surfaces?: readonly Doc<'surfaces'>[];
 }
 
 export interface EmployeeMetrics {
@@ -580,6 +882,8 @@ export interface CompanyMetrics {
   autonomyChanges: number;
   /** Pooled complete rows over pooled landed rows, replayed browser calls included. */
   auditTrail: AgentMetrics['auditTrail'];
+  /** Pooled across employees before any median or rate is taken. */
+  pilot: PilotFigures;
 }
 
 export interface OwnerMetrics {
@@ -673,6 +977,11 @@ function pooledActions(rows: readonly AgentMetrics['actions'][]): AgentMetrics['
   );
   return {
     autoApplied: sum((row) => row.autoApplied),
+    automatic: {
+      reads: sum((row) => row.automatic.reads),
+      managerMessages: sum((row) => row.automatic.managerMessages),
+      writes: sum((row) => row.automatic.writes),
+    },
     sessionRestores: sum((row) => row.sessionRestores),
     held: sum((row) => row.held),
     approved: sum((row) => row.approved),
@@ -700,7 +1009,7 @@ export function computeCompanyMetrics(
 ): OwnerMetrics {
   const figures = records.map((record) => ({
     agent: record.agent,
-    ...agentFigures(record.events, record.workItems, record.charters),
+    ...agentFigures(record.events, record.workItems, record.charters, record.surfaces ?? []),
   }));
   const metrics = figures.map((figure) => figure.metrics);
   const decisions: DecisionTotals = {
@@ -755,6 +1064,7 @@ export function computeCompanyMetrics(
       },
       autonomyChanges: sum((row) => row.autonomyChanges),
       auditTrail: { complete, total, fraction: total > 0 ? complete / total : null },
+      pilot: summarisePilot(pooledPilot(figures.map((figure) => figure.pilot))),
     },
     excludedAgents: setAside.excludedAgents,
     omittedEmployees: setAside.omittedEmployees,
@@ -762,7 +1072,7 @@ export function computeCompanyMetrics(
 }
 
 async function readEmployeeRecords(ctx: QueryCtx, agent: Doc<'agents'>): Promise<EmployeeRecords> {
-  const [events, workItems, charters] = await Promise.all([
+  const [events, workItems, charters, surfaces] = await Promise.all([
     ctx.db
       .query('events')
       .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
@@ -775,16 +1085,20 @@ async function readEmployeeRecords(ctx: QueryCtx, agent: Doc<'agents'>): Promise
       .query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
       .collect(),
+    ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+      .collect(),
   ]);
-  return { agent, events, workItems, charters };
+  return { agent, events, workItems, charters, surfaces };
 }
 
 export const forAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<AgentMetrics> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const { events, workItems, charters } = await readEmployeeRecords(ctx, agent);
-    return computeAgentMetrics(events, workItems, charters);
+    const { events, workItems, charters, surfaces } = await readEmployeeRecords(ctx, agent);
+    return computeAgentMetrics(events, workItems, charters, surfaces);
   },
 });
 
