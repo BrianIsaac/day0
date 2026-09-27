@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import {
+  assertEditKeepsBoundaries,
   clauseTexts,
   deriveConstraints,
   effectiveCharter,
@@ -463,5 +464,54 @@ describe('striking a derived constraint', (): void => {
         void constraint;
       });
     }
+  });
+});
+
+describe('assertEditKeepsBoundaries', (): void => {
+  const ruled = {
+    proposedFunction: 'RevOps.',
+    proposedBoundaries: {
+      willDo: ['Handle Linear tickets.'],
+      willNotDo: ['Post to public Slack channels.', 'Never edit the forecast sheet.'],
+      escalationTriggers: [],
+    },
+    namedSystems: [{ name: 'Slack' }],
+    constraints: [
+      {
+        kind: 'system-boundary' as const,
+        quote: 'Never touch the forecast sheet.',
+        wording: ['forecast sheet'],
+        origin: 'manager' as const,
+      },
+    ],
+  };
+  const edited = (willNotDo: string[]) => ({
+    ...ruled,
+    proposedBoundaries: { ...ruled.proposedBoundaries, willNotDo },
+  });
+
+  it('refuses an edit that leaves a standing rule with no clause enforcing it', (): void => {
+    expect(() =>
+      assertEditKeepsBoundaries(ruled, edited(['Post to public Slack channels.'])),
+    ).toThrow(/edit refused: .Never edit the forecast sheet.. is the only clause that enforces/);
+  });
+
+  it('lets an edit remove a clause that only names a system, or keep the rule enforced in new words', (): void => {
+    expect(() =>
+      assertEditKeepsBoundaries(ruled, edited(['Never edit the forecast sheet.'])),
+    ).not.toThrow();
+    expect(() =>
+      assertEditKeepsBoundaries(
+        ruled,
+        edited(['Post to public Slack channels.', 'Leave the forecast sheet alone.']),
+      ),
+    ).not.toThrow();
+    const struck = { ...ruled, constraints: [{ ...ruled.constraints[0]!, struck: true }] };
+    expect(() =>
+      assertEditKeepsBoundaries(struck, {
+        ...edited(['Post to public Slack channels.']),
+        constraints: struck.constraints,
+      }),
+    ).not.toThrow();
   });
 });
