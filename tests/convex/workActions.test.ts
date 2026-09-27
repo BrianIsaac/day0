@@ -137,6 +137,8 @@ const recorded = vi.hoisted(() => ({
   questionJudgements: [] as string[],
   /** Set to make the manager-question judgement unavailable. */
   questionJudgementFails: false,
+  /** Set to make the charter scope judgement unavailable. */
+  scopeJudgementFails: false,
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; method?: string; authorization: string | undefined; body: unknown }>,
   failMcpAfterRequest: false,
@@ -462,9 +464,20 @@ const RECORDED_ASKS = [
   '请确认通知使用哪个模板',
 ];
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
+    if (args.agent.name === 'day0-scope-judgement') {
+      if (recorded.scopeJudgementFails) throw new Error('model unavailable in tests');
+      return {
+        inScope: true,
+        fit: true,
+        reason: 'revenue operations hand-offs are the charter work',
+        exclusion: { kind: 'none', quote: '' },
+      };
+    }
     if (args.agent.name !== 'day0-manager-question') throw new Error('model unavailable in tests');
     recorded.questionJudgements.push(args.user);
     if (recorded.questionJudgementFails) throw new Error('model unavailable in tests');
@@ -479,7 +492,7 @@ vi.mock('../../src/lib/mastra', () => ({
     return asked.length > 0
       ? { asks: true, question: question.trim() }
       : { asks: false, question: null };
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 
@@ -731,6 +744,7 @@ afterEach((): void => {
   recorded.planFailure = undefined;
   recorded.questionJudgements.length = 0;
   recorded.questionJudgementFails = false;
+  recorded.scopeJudgementFails = false;
   recorded.mcp.length = 0;
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
@@ -2464,11 +2478,15 @@ describe('executing an approved plan through the gate', (): void => {
     expect(members.map((member) => member.approvedIndexes)).toEqual([[0, 1, 3], [0, 1, 3]]);
     recorded.mcp.length = 0;
 
-    // The batch schedules one apply per member; let those start and finish
-    // rather than racing them by hand.
+    // The batch schedules one apply per member; they start on the faked clock
+    // and finish, rather than being raced by hand or waited for on the real one.
+    // The clock is pumped at zero while they run: fetch's zero-delay timers (the
+    // idle-socket check before a pooled connection is reused, from undici 6.28)
+    // are faked too, and the apply's redaction call waits on one. Nothing is
+    // moved forward, so the six-minute dead-man switches stay armed.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, { members });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await harness.finishInProgressScheduledFunctions();
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
 
     const done = await Promise.all([readItem(harness, first), readItem(harness, second)]);
     expect(done.map((row) => [row.state, row.skipReason])).toEqual([
@@ -4327,9 +4345,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
   });
 
-  it('admits a real-mode item on the lexical inputs and records it when the charter judgement is unavailable', async (): Promise<void> => {
+  it('parks a real-mode item whose charter judgement is unavailable: one unavailable event, no verdict, no admission', async (): Promise<void> => {
     useSurfaceMode('real');
-    // The claim schedules the server's draft; this test reads the verdict alone.
+    recorded.scopeJudgementFails = true;
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'real');
@@ -4344,16 +4362,21 @@ describe('the autonomous-actions switch through the gate', (): void => {
 
     await expect(
       harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
-    ).resolves.toEqual({ decision: 'claim' });
-    const unavailable = (
-      await harness.run(
-        async (ctx) =>
-          await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
-      )
-    ).filter((event) => event.type === 'work.scope-judgement-unavailable');
-    expect(unavailable.map((event) => event.payload)).toEqual([
-      { workItemId, cause: 'model unavailable in tests' },
-    ]);
+    ).resolves.toEqual({ decision: 'scope-judgement-unavailable' });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+    );
+    expect(
+      events
+        .filter((event) => event.type === 'work.scope-judgement-unavailable')
+        .map((event) => event.payload),
+    ).toEqual([{ workItemId, cause: 'model unavailable in tests' }]);
+    expect(events.filter((event) => event.type === 'work.evaluated')).toEqual([]);
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({ state: 'discovered', evaluationClaimedAt: expect.any(Number) });
+    expect(parked).not.toHaveProperty('verdict');
+    expect(parked).not.toHaveProperty('scopeAdmission');
   });
 
   it('re-evaluates an out-of-scope skip the manager retried without the eligibility rule and records the decision', async (): Promise<void> => {
@@ -6700,11 +6723,11 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
       autonomousActions: true,
     });
     await harness.run(async (ctx): Promise<void> => {
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: asPlanned },
-        createdAt: 1,
+        workItemId,
+        tracker: asPlanned,
+        listedAt: 1,
       });
       const runId = await ctx.db.insert('events', {
         agentId,
@@ -6775,11 +6798,12 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     // A poll refused the ticket, the manager pressed Retry, and the plan was made after both.
     await harness.run(async (ctx): Promise<void> => {
       const row = (await ctx.db.get(workItemId))!;
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId: row.agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: taken, refused: 'the ticket is assigned to someone else' },
-        createdAt: 2,
+        workItemId,
+        tracker: taken,
+        refused: 'the ticket is assigned to someone else',
+        listedAt: 2,
       });
       await ctx.db.patch(workItemId, { planPendingAt: 3 });
     });
@@ -7051,11 +7075,11 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
       const row = (await ctx.db.get(workItemId))!;
       await ctx.db.patch(workItemId, { planPendingAt: 10 });
       // A listing after the plan showed In Review, and the manager pressed Retry after it.
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId: row.agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: inReview },
-        createdAt: 20,
+        workItemId,
+        tracker: inReview,
+        listedAt: 20,
       });
       await ctx.db.insert('events', {
         agentId: row.agentId,
@@ -7085,11 +7109,11 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
       const row = (await ctx.db.get(workItemId))!;
       await ctx.db.patch(workItemId, { planPendingAt: 10 });
       // A person labelled the failed row's ticket, and the manager pressed Retry after.
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId: row.agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: labelled },
-        createdAt: 20,
+        workItemId,
+        tracker: labelled,
+        listedAt: 20,
       });
       await ctx.db.insert('events', {
         agentId: row.agentId,

@@ -28,7 +28,12 @@ import { PROVIDER_SHAPES, structuralSpans } from '../../src/redaction/structural
 import { browserTitleMarker } from '../../src/surfaces/browser';
 import { documentedChannelNames } from '../../src/surfaces/slack-policy';
 import type { DocSourceRecord } from '../../src/docs/types';
-import { bedTexts, SPANS_PATH, textKey, type BedSpanRecording } from '../../scripts/bed/record-spans';
+import {
+  bedTexts,
+  SPANS_PATH,
+  textKey,
+  type BedSpanRecording,
+} from '../../scripts/bed/record-spans';
 import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { loadSpanRecording, RecordedSpanModel } from '../fixtures/redaction-double';
 
@@ -106,11 +111,13 @@ const NOT_SYSTEMS = [
 ];
 
 beforeAll(async (): Promise<void> => {
-  folderPages = (await readMarkdownDirectory(folderSource, FOLDER)).map(({ ref, title, markdown }) => ({
-    ref,
-    title,
-    markdown,
-  }));
+  folderPages = (await readMarkdownDirectory(folderSource, FOLDER)).map(
+    ({ ref, title, markdown }) => ({
+      ref,
+      title,
+      markdown,
+    }),
+  );
   notionPages = readdirSync(NOTION)
     .filter((file) => file.endsWith('.md') && file !== 'README.md')
     .sort()
@@ -141,8 +148,13 @@ describe('the company bed pages', (): void => {
   });
 
   it('is copied into the convex fixtures byte for byte, so a page reworded here is reworded there', (): void => {
-    const drifted = [...folderPages.map((bedPage) => `folder/${bedPage.ref}`), ...notionPages.map((bedPage) => bedPage.ref)]
-      .filter((path) => readFileSync(join(BED, path), 'utf8') !== readFileSync(join(FIXTURES, path), 'utf8'));
+    const drifted = [
+      ...folderPages.map((bedPage) => `folder/${bedPage.ref}`),
+      ...notionPages.map((bedPage) => bedPage.ref),
+    ].filter(
+      (path) =>
+        readFileSync(join(BED, path), 'utf8') !== readFileSync(join(FIXTURES, path), 'utf8'),
+    );
     expect(drifted, 'tests/fixtures/company-bed/ is stale: copy the page over').toEqual([]);
   });
 
@@ -154,6 +166,24 @@ describe('the company bed pages', (): void => {
       }
     }
   });
+
+  it.fails(
+    'sends every question an employee asks to the manager DM (fails until the bed pane re-records the spans)',
+    (): void => {
+      const elsewhere = [...folderPages, ...notionPages].flatMap((bedPage) =>
+        bedPage.markdown
+          .split(/\n\s*\n|\n- /)
+          .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+          .filter(
+            (sentence) =>
+              /\bask (?:questions?|the operations lead)\b/i.test(sentence) &&
+              !sentence.includes('manager DM'),
+          )
+          .map((sentence) => `${bedPage.ref}: ${sentence}`),
+      );
+      expect(elsewhere).toEqual([]);
+    },
+  );
 });
 
 describe('system discovery over the folder pages', (): void => {
@@ -168,7 +198,11 @@ describe('system discovery over the folder pages', (): void => {
 
   it('keeps the five when a model also names them, in the words the pages use', (): void => {
     const proposals = [
-      { name: 'Linear', class: 'kanban' as const, pageRef: 'revops/runbooks/how-to-update-ticket.md' },
+      {
+        name: 'Linear',
+        class: 'kanban' as const,
+        pageRef: 'revops/runbooks/how-to-update-ticket.md',
+      },
       { name: 'Slack', class: 'chat' as const, pageRef: 'revops/runbooks/how-to-post-slack.md' },
       { name: 'Looker', class: 'analytics' as const, pageRef: 'systems/looker-pipeline-tile.md' },
       {
@@ -213,7 +247,11 @@ describe('credentials on the pages', (): void => {
     const found: Array<{ ref: string; value: string; label: string }> = [];
     for (const bedPage of [...folderPages, ...notionPages]) {
       for (const span of structuralSpans(bedPage.markdown)) {
-        found.push({ ref: bedPage.ref, value: bedPage.markdown.slice(span.start, span.end), label: span.label });
+        found.push({
+          ref: bedPage.ref,
+          value: bedPage.markdown.slice(span.start, span.end),
+          label: span.label,
+        });
       }
     }
     expect(found).toEqual([
@@ -226,9 +264,15 @@ describe('credentials on the pages', (): void => {
     const files = ['linear.json', 'slack-asks.md', 'answers.md', 'notion/README.md'].map((file) =>
       readFileSync(join(BED, file), 'utf8'),
     );
-    for (const text of [...files, ...folderPages.map((p) => p.markdown), ...notionPages.map((p) => p.markdown)]) {
+    for (const text of [
+      ...files,
+      ...folderPages.map((p) => p.markdown),
+      ...notionPages.map((p) => p.markdown),
+    ]) {
       for (const shape of PROVIDER_SHAPES) expect(text).not.toMatch(shape.pattern);
-      expect(structuralSpans(text).every((span) => text.slice(span.start, span.end) === TILE_LOGIN)).toBe(true);
+      expect(
+        structuralSpans(text).every((span) => text.slice(span.start, span.end) === TILE_LOGIN),
+      ).toBe(true);
     }
   });
 
@@ -262,7 +306,7 @@ describe('credentials on the pages', (): void => {
   });
 });
 
-/** The deployed span model's answers for these pages, recorded by `pnpm bed:record-spans`. */
+/** The deployed span model's answers for these pages, recorded by `pnpm exec tsx scripts/bed/record-spans.ts`. */
 class BedRecordingModel implements SpanModel {
   readonly name = 'bed-recording';
 
@@ -273,7 +317,7 @@ class BedRecordingModel implements SpanModel {
     if (!recorded) {
       throw new Error(
         'no recorded answer for this text: a bed page changed since the recording. Run ' +
-          '`DAY0_REDACTOR_URL=<reachable component> pnpm bed:record-spans` and read what it stores.',
+          '`DAY0_REDACTOR_URL=<reachable component> pnpm exec tsx scripts/bed/record-spans.ts` and read what it stores.',
       );
     }
     return recorded.filter((span) => labels.includes(span.label) && span.score >= threshold);
@@ -287,8 +331,13 @@ describe('the deployed span model over the pages', (): void => {
     expect(recording.model).toBe(loadSpanRecording().model);
     expect(recording.labels).toEqual([...REQUESTED_LABELS]);
     expect(recording.threshold).toBe(MODEL_THRESHOLD);
-    const missing = bedTexts(process.cwd()).filter((text) => recording.spans[textKey(text)] === undefined);
-    expect(missing.map((text) => text.split('\n')[0]), 'pages changed since `pnpm bed:record-spans`').toEqual([]);
+    const missing = bedTexts(process.cwd()).filter(
+      (text) => recording.spans[textKey(text)] === undefined,
+    );
+    expect(
+      missing.map((text) => text.split('\n')[0]),
+      'pages changed since `pnpm exec tsx scripts/bed/record-spans.ts`',
+    ).toEqual([]);
   });
 
   it('stores the tile login on its two pages and nothing else, a channel name and a method name included', async (): Promise<void> => {
@@ -300,10 +349,9 @@ describe('the deployed span model over the pages', (): void => {
         stored[bedPage.ref] = result.credentials.map((credential) => credential.plaintext);
       }
       for (const identifier of KEPT_IDENTIFIERS) {
-        expect(
-          result.markdown.split(identifier).length,
-          `${bedPage.ref} loses ${identifier}`,
-        ).toBe(bedPage.markdown.split(identifier).length);
+        expect(result.markdown.split(identifier).length, `${bedPage.ref} loses ${identifier}`).toBe(
+          bedPage.markdown.split(identifier).length,
+        );
       }
     }
     expect(stored).toEqual({
@@ -334,13 +382,28 @@ describe('orientation over the synced pages', (): void => {
     );
   });
 
-  function orient(system: string, slug: string, draftPath: 'mcp' | 'documented-api' | 'browser-driven' | 'escalate') {
-    const matches = synced.filter((bedPage) => namesSystem(`${bedPage.title}\n${bedPage.markdown}`, system));
-    const relevant = matches.map((bedPage) => relevantSystemText(bedPage.markdown, system, bedPage.title)).join('\n\n');
+  function orient(
+    system: string,
+    slug: string,
+    draftPath: 'mcp' | 'documented-api' | 'browser-driven' | 'escalate',
+  ) {
+    const matches = synced.filter((bedPage) =>
+      namesSystem(`${bedPage.title}\n${bedPage.markdown}`, system),
+    );
+    const relevant = matches
+      .map((bedPage) => relevantSystemText(bedPage.markdown, system, bedPage.title))
+      .join('\n\n');
     const endpoints = documentedEndpoints(attributedUrls(relevant, system, slug));
-    const denied = matches.filter((bedPage) => explicitlyDeniesSurface(bedPage.markdown, system, bedPage.title));
+    const denied = matches.filter((bedPage) =>
+      explicitlyDeniesSurface(bedPage.markdown, system, bedPage.title),
+    );
     const credential = extractCredentialFinding(matches, system);
-    const chosen = choosePath(draftPath, endpoints, isBrowserLoginCredential(credential), browserTitleMarker(relevant) !== undefined);
+    const chosen = choosePath(
+      draftPath,
+      endpoints,
+      isBrowserLoginCredential(credential),
+      browserTitleMarker(relevant) !== undefined,
+    );
     return { matches, endpoints, denied, credential, chosen };
   }
 
@@ -348,7 +411,11 @@ describe('orientation over the synced pages', (): void => {
     const linear = orient('Linear', 'linear', 'mcp');
     expect(linear.denied.map((bedPage) => bedPage.ref)).toEqual([]);
     expect(linear.chosen).toEqual({ path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' });
-    expect(linear.credential).toMatchObject({ found: 'value', label: 'linear service token', method: 'api-key' });
+    expect(linear.credential).toMatchObject({
+      found: 'value',
+      label: 'linear service token',
+      method: 'api-key',
+    });
   });
 
   it('reaches Slack by its Web API, with the shared bot token landed by the administrator', (): void => {
@@ -383,9 +450,10 @@ describe('orientation over the synced pages', (): void => {
         .filter((bedPage) => explicitlyDeniesSurface(bedPage.markdown, system, bedPage.title))
         .map((bedPage) => bedPage.ref);
       // The tile's own pages say it has no API while documenting its web page.
-      const expected = system === 'Looker pipeline tile'
-        ? ['revops/runbooks/how-to-refresh-the-tile.md', 'systems/looker-pipeline-tile.md']
-        : [];
+      const expected =
+        system === 'Looker pipeline tile'
+          ? ['revops/runbooks/how-to-refresh-the-tile.md', 'systems/looker-pipeline-tile.md']
+          : [];
       expect(deniedOn.sort(), system).toEqual(expected);
     }
   });
@@ -393,9 +461,24 @@ describe('orientation over the synced pages', (): void => {
 
 describe('the intake lines each role reads its queue from', (): void => {
   const roles = [
-    { folder: 'revops', team: 'REVOPS', project: 'Q3 close', channels: ['revops-asks', 'revops', 'ops-requests'] },
-    { folder: 'finance', team: 'FIN', project: 'September close', channels: ['finance-close', 'ops-requests'] },
-    { folder: 'logistics', team: 'LOG', project: 'Shipment exceptions', channels: ['logistics-desk', 'ops-requests'] },
+    {
+      folder: 'revops',
+      team: 'REVOPS',
+      project: 'Q3 close',
+      channels: ['revops-asks', 'revops', 'ops-requests'],
+    },
+    {
+      folder: 'finance',
+      team: 'FIN',
+      project: 'September close',
+      channels: ['finance-close', 'ops-requests'],
+    },
+    {
+      folder: 'logistics',
+      team: 'LOG',
+      project: 'Shipment exceptions',
+      channels: ['logistics-desk', 'ops-requests'],
+    },
   ];
 
   it('parses each handbook to its own team, project and channels', (): void => {
@@ -417,7 +500,9 @@ describe('the intake lines each role reads its queue from', (): void => {
           team: role.team,
           project: role.project,
         });
-        expect(documentedChannelNames(ordered).sort(), role.folder).toEqual([...role.channels].sort());
+        expect(documentedChannelNames(ordered).sort(), role.folder).toEqual(
+          [...role.channels].sort(),
+        );
       }
     }
   });

@@ -306,6 +306,78 @@ describe('revising a registered authored skill', (): void => {
   });
 });
 
+describe('the Revise window while the source work waits', (): void => {
+  /**
+   * Seed a registered authored skill whose source work is in a given state.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   state: The source work's state.
+   *
+   * Returns:
+   *   The skill and its source work.
+   */
+  async function registeredWithSource(
+    harness: ReturnType<typeof convexTest>,
+    state: Doc<'workItems'>['state'],
+  ): Promise<{ skillId: Id<'skills'>; workItemId: Id<'workItems'> }> {
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const skillId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment',
+        description: 'Comment on a ticket.',
+        body: 'Comment with the figures.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        proposedFor: workItemId,
+        registeredAt: 2,
+        createdAt: 1,
+      });
+      await ctx.db.patch(workItemId, { state, proposedSkillId: id });
+      return id;
+    });
+    return { skillId, workItemId };
+  }
+
+  it.each(['deferred'] as const)(
+    'reopens the skill while its source work is %s and leaves that work where it is',
+    async (state): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(schema, allConvexModules());
+      const { skillId, workItemId } = await registeredWithSource(harness, state);
+
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
+      ).resolves.toEqual({ ok: true });
+
+      const [skill, work] = await harness.run(async (ctx) => [
+        await ctx.db.get(skillId),
+        await ctx.db.get(workItemId),
+      ]);
+      expect(skill).toMatchObject({ state: 'approved', body: '' });
+      expect(work?.state).toBe(state);
+    },
+  );
+
+  // A claimed or plan-pending row would be approved and then failed by the
+  // executor, which picks only registered skills.
+  it.each(['claimed', 'plan-pending', 'plan-approved', 'executing', 'completed'] as const)(
+    'refuses once the source work is %s',
+    async (state): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(schema, allConvexModules());
+      const { skillId } = await registeredWithSource(harness, state);
+
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
+      ).rejects.toThrow('cannot revise while the source work has moved on');
+      const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+      expect(skill?.state).toBe('registered');
+    },
+  );
+});
+
 describe('skills that target a surface', (): void => {
   it("refuses to create a proposal against another agent's work", async (): Promise<void> => {
     useSurfaceMode('real');
@@ -582,6 +654,48 @@ describe('skills that target a surface', (): void => {
         { scope: 'linear:read', source: 'skill' },
         { scope: 'linear:write', source: 'skill' },
       ]),
+    );
+  });
+});
+
+describe('moving the sandbox id off its old field by hand', (): void => {
+  it('moves one page at a time until the cursor says done, and a second pass moves nothing', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: OWNER.subject,
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index < 150; index += 1) {
+        await ctx.db.insert('skills', {
+          agentId,
+          name: `skill-${index}`,
+          description: 'A skill.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          createdAt: 1,
+          daytonaSandboxId: `sandbox-${index}`,
+        });
+      }
+    });
+
+    const first = await harness.mutation(internal.skills.migrateSandboxIdField, { cursor: null });
+    expect(first).toMatchObject({ read: 100, moved: 100, isDone: false });
+    const second = await harness.mutation(internal.skills.migrateSandboxIdField, {
+      cursor: first.cursor,
+    });
+    expect(second).toMatchObject({ read: 50, moved: 50, isDone: true });
+    const again = await harness.mutation(internal.skills.migrateSandboxIdField, { cursor: null });
+    expect(again).toMatchObject({ read: 100, moved: 0 });
+
+    const skills = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
+    expect(skills.every((skill) => skill.daytonaSandboxId === undefined)).toBe(true);
+    expect(skills.map((skill) => skill.sandboxId)).toEqual(
+      skills.map((skill) => `sandbox-${skill.name.slice('skill-'.length)}`),
     );
   });
 });

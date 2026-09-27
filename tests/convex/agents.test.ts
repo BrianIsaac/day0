@@ -508,7 +508,7 @@ describe('the autonomous-actions switch', (): void => {
     ).rejects.toThrow('forbidden');
     await expect(
       harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('not authenticated');
     const owner = harness.withIdentity({ subject: 'owner' });
     // Off is what an absent field already is, so setting it records nothing.
     await expect(

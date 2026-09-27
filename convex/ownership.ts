@@ -2,25 +2,78 @@ import type { UserIdentity } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import { notAuthenticatedMessage } from './devAuth';
+import { CUSTOMER_OIDC_ISSUER_VAR } from '../src/lib/customer-oidc';
+import { DEV_NO_AUTH_SESSION_CLAIM, notAuthenticatedMessage } from './devAuth';
 
 /**
  * Per-account ownership guards. Every public query/mutation/action that
  * touches a per-agent row calls one of these. Internal functions skip the
- * check — they're only callable from other Convex functions, which have
+ * check - they're only callable from other Convex functions, which have
  * already verified the caller.
  *
  * `getCaller` is the single place a caller's identity enters the backend. Every
- * caller presents a verified token, in no-auth dev mode as much as under Clerk;
- * the two differ only in who issued it (see `convex/devAuth.ts`).
+ * caller presents a verified token, from the local issuer, the customer's OIDC
+ * issuer or Clerk (see `convex/auth.config.ts`); the owner key below is what
+ * keeps two issuers from ever naming one owner.
  */
 
+/** An issuer URL compared the way two spellings of one issuer should compare. */
+function issuerKey(issuer: string): string {
+  return issuer.trim().replace(/\/+$/, '');
+}
+
+/**
+ * The key a caller's rows are stored under and checked against.
+ *
+ * A subject is unique only within its issuer, so a deployment that accepts two
+ * issuers must not key rows on the subject alone: a customer token whose `sub`
+ * is `dev-no-auth|local-boss` would otherwise own the local boss's rows. The
+ * customer issuer's callers are keyed on `tokenIdentifier` (issuer and subject
+ * together). The local issuer and Clerk keep the bare subject, since every row
+ * from before a second issuer existed is keyed on it, and neither shares a
+ * deployment with the other (Clerk is declared only when neither of the other
+ * two is).
+ *
+ * @param identity - The verified token's identity.
+ * @returns The owner key.
+ */
+export function ownerKeyOf(identity: UserIdentity): string {
+  const customer = process.env[CUSTOMER_OIDC_ISSUER_VAR];
+  if (customer && issuerKey(customer) === issuerKey(identity.issuer)) {
+    return identity.tokenIdentifier;
+  }
+  return identity.subject;
+}
+
+/**
+ * The browser session a caller's token was minted for, when its issuer names
+ * one in `sid` (the local issuer, and OIDC issuers that follow the session
+ * management claims), so a ledger can tell two browsers of one owner apart.
+ *
+ * @param identity - The caller's identity.
+ * @returns The session id, or undefined when the token carries none.
+ */
+export function callerSessionId(identity: UserIdentity): string | undefined {
+  const session = identity[DEV_NO_AUTH_SESSION_CLAIM];
+  return typeof session === 'string' && session !== '' ? session : undefined;
+}
+
+/**
+ * The verified caller, or null for an anonymous one.
+ *
+ * `subject` on the identity returned here is the owner key
+ * ({@link ownerKeyOf}), not necessarily the token's `sub`, so every guard and
+ * every row written from it agree on one key per owner. Every other claim is
+ * the token's own.
+ */
 export async function getCaller(
   ctx: QueryCtx | MutationCtx | ActionCtx,
 ): Promise<UserIdentity | null> {
-  return ctx.auth.getUserIdentity();
+  const identity = await ctx.auth.getUserIdentity();
+  return identity && { ...identity, subject: ownerKeyOf(identity) };
 }
 
+/** The verified caller; throws the mode's not-authenticated message for an anonymous one. */
 export async function getCallerOrThrow(
   ctx: QueryCtx | MutationCtx | ActionCtx,
 ): Promise<UserIdentity> {

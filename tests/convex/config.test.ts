@@ -1,8 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { convexTest } from 'convex-test';
 import { api } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+// The mode is set here, never read from the shell that runs the suite (P11-1).
+beforeEach((): void => {
+  useSurfaceMode('mock');
+});
+
+afterEach((): void => {
+  restoreSurfaceMode();
+});
 
 describe('public surface configuration', (): void => {
   it('returns only the mock mode and its public label', async (): Promise<void> => {

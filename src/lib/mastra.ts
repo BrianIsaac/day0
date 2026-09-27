@@ -4,7 +4,14 @@ import type { MastraModelConfig } from '@mastra/core/llm';
 import { env } from '../env';
 import { languageModel, MODEL, modelProviderClient } from './openai';
 import { log } from './logger';
-import { countingProviderRequests, reportModelCall } from './model-call-telemetry';
+import {
+  countingProviderRequests,
+  countModelUsage,
+  reportModelCall,
+  type ProviderRequestCounter,
+  type StructuredCallFacts,
+  type StructuredMode,
+} from './model-call-telemetry';
 import {
   classifyStructuredFailure,
   createFallbackMemo,
@@ -106,24 +113,39 @@ function isTransientApiError(err: unknown): boolean {
 }
 
 async function withRetry<T>(
-  call: { label: string; agent: string },
+  call: { label: string; agent: string; structured?: StructuredCallFacts },
   fn: () => Promise<T>,
 ): Promise<T> {
   const startedAt = Date.now();
   // The counter spans every attempt, so one report says how many requests
   // this call put on the provider, the SDK's own retries included.
-  const counter = { count: 0 };
+  const counter: ProviderRequestCounter = { count: 0 };
   return await countingProviderRequests(counter, async (): Promise<T> => {
     let lastErr: unknown;
     for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
       try {
         const value = await fn();
-        await reportModelCall(call.agent, attempt + 1, startedAt, counter.count);
+        await reportModelCall({
+          agent: call.agent,
+          attempts: attempt + 1,
+          startedAt,
+          providerCalls: counter.count,
+          usage: counter,
+          structured: call.structured,
+        });
         return value;
       } catch (err) {
         lastErr = err;
         if (!isTransientApiError(err) || attempt === MODEL_RETRY_POLICY.maxAttempts - 1) {
-          await reportModelCall(call.agent, attempt + 1, startedAt, counter.count, err);
+          await reportModelCall({
+            agent: call.agent,
+            attempts: attempt + 1,
+            startedAt,
+            providerCalls: counter.count,
+            usage: counter,
+            failure: { error: err },
+            structured: call.structured,
+          });
           throw err;
         }
         const delay = Math.min(
@@ -155,19 +177,8 @@ export function makeAgent(name: string, instructions: string): Agent {
   });
 }
 
-/**
- * How Mastra is asked to produce the object.
- *
- *   native — the schema goes down the wire as `response_format`
- *            (`json_schema` for providers that advertise strict mode).
- *   prompt — Mastra injects the schema into the system prompt instead
- *            and parses the object back out of the reply text.
- *
- * This is the Mastra-side twin of the ladder in `src/lib/openai.ts`,
- * driven by the same `OPENAI_JSON_MODE` switch so one variable
- * describes the whole model layer.
- */
-export type StructuredMode = 'native' | 'prompt';
+/** How Mastra is asked to produce the object; declared beside the report that records it. */
+export type { StructuredMode };
 
 /**
  * Raised when the server accepted the request and returned no object. Mastra
@@ -352,7 +363,10 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
     }
     let generated: GeneratedObject<T>;
     try {
-      generated = await generateObject<T>(args, 'prompt');
+      generated = await generateObject<T>(args, 'prompt', {
+        fellBack: true,
+        demotes: failure.provesRefusal,
+      });
     } catch {
       structuredModeMemo.inconclusive(key);
       log.warn(
@@ -390,7 +404,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
     }
     structuredModeMemo.refused(key);
     log.warn(
-      'structured-output fallback: native response_format failed, prompt injection produced the object',
+      'structured-output fallback: the native attempt produced no valid object and prompt injection did; this agent starts on the prompt rung',
       {
         agent: args.agent.name,
         baseUrl: endpoint,
@@ -422,6 +436,7 @@ export async function agentJson<T>(args: AgentJsonArgs): Promise<T> {
 async function generateObject<T>(
   args: AgentJsonArgs,
   mode: StructuredMode,
+  fallback: Omit<StructuredCallFacts, 'mode'> = {},
 ): Promise<GeneratedObject<T>> {
   const startedAt = new Date().toISOString();
   const maxRepairs = mode === 'prompt' ? env.OPENAI_STRUCTURED_REPAIR_ATTEMPTS : 0;
@@ -443,7 +458,11 @@ async function generateObject<T>(
     for (;;) {
       try {
         const result = await withRetry(
-          { label: `agentJson(${args.agent.name})`, agent: args.agent.name },
+          {
+            label: `agentJson(${args.agent.name})`,
+            agent: args.agent.name,
+            structured: { mode, ...fallback },
+          },
           () => generateObjectOnce<T>({ ...args, user }, mode),
         );
         if (diagnostics.firstReplyValid === null) diagnostics.firstReplyValid = true;
@@ -508,6 +527,8 @@ async function generateObjectOnce<T>(
     }
     throw asModerationRefusal(args.agent.name, err);
   }
+  // Billed whatever the reply turns out to hold.
+  countModelUsage(response);
   const resultError = (response as { error?: unknown }).error;
   if (timedOut()) throw timeoutError(resultError);
   if (resultError !== undefined && resultError !== null) {
@@ -588,6 +609,7 @@ export async function agentText(
     } catch (err) {
       throw asModerationRefusal(args.agent.name, err);
     }
+    countModelUsage(response);
     const text = replyText(response);
     assertCompleteReply(
       args.agent.name,

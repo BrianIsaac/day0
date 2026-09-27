@@ -36,30 +36,43 @@ const linear = { slug: 'linear', displayName: 'Linear' };
 const slack = { slug: 'slack', displayName: 'Slack' };
 const surfaces = [linear, slack];
 
-const log1Gate = (extra: Partial<Parameters<typeof validatePlanStepOutcomes>[0]> = {}): void =>
-  validatePlanStepOutcomes({
-    plan: log1Plan,
-    outcomes: log1RefusedClosing.planStepOutcomes,
-    initialActions: [],
-    initialLedger: [],
-    surfaces,
-    managerFeedback: LOG_1_RETRY_NOTE,
-    retryNote: LOG_1_RETRY_NOTE,
-    ...extra,
-  });
+type GateArgs = Parameters<typeof validatePlanStepOutcomes>[0];
 
-const fin1Gate = (extra: Partial<Parameters<typeof validatePlanStepOutcomes>[0]> = {}): void =>
-  validatePlanStepOutcomes({
-    plan: fin1Plan,
-    outcomes: fin1RefusedClosing.planStepOutcomes,
-    initialActions: fin1PhaseOne.actions,
-    initialLedger: fin1PhaseOne.applied,
-    surfaces,
-    managerFeedback: FIN_1_RETRY_NOTE,
-    retryNote: FIN_1_RETRY_NOTE,
-    candidate: fin1Candidate,
-    ...extra,
-  });
+const log1Args: GateArgs = {
+  plan: log1Plan,
+  outcomes: log1RefusedClosing.planStepOutcomes,
+  initialActions: [],
+  initialLedger: [],
+  surfaces,
+  managerFeedback: LOG_1_RETRY_NOTE,
+  retryNote: LOG_1_RETRY_NOTE,
+};
+
+const fin1Args: GateArgs = {
+  plan: fin1Plan,
+  outcomes: fin1RefusedClosing.planStepOutcomes,
+  initialActions: fin1PhaseOne.actions,
+  initialLedger: fin1PhaseOne.applied,
+  surfaces,
+  managerFeedback: FIN_1_RETRY_NOTE,
+  retryNote: FIN_1_RETRY_NOTE,
+  candidate: fin1Candidate,
+};
+
+const log1Gate = (extra: Partial<GateArgs> = {}): void =>
+  validatePlanStepOutcomes({ ...log1Args, ...extra });
+
+const fin1Gate = (extra: Partial<GateArgs> = {}): void =>
+  validatePlanStepOutcomes({ ...fin1Args, ...extra });
+
+/**
+ * What an accepted closing set owes: no declared read left unmet, and a gate
+ * that returns. The refusal cases name the sentence the gate throws instead.
+ */
+const owedReads = (args: GateArgs): string[] => {
+  validatePlanStepOutcomes(args);
+  return unmetDeclaredReads(args).map(missingReadReason);
+};
 
 describe('the plan-grounding read of the item is a landed read (LOG-1, 19 September)', () => {
   it('reproduces the run: with no grounding read handed over, the gate refuses with the run\'s sentence', (): void => {
@@ -69,8 +82,10 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
 
   it('accepts both refused closing sets once the item\'s own grounding read is counted', (): void => {
     const grounded = { candidate: log1Candidate, groundingReads: [log1GroundingRead] };
-    expect(() => log1Gate(grounded)).not.toThrow();
-    expect(() => log1Gate({ ...grounded, outcomes: log1SecondRefusedClosing.planStepOutcomes })).not.toThrow();
+    expect(owedReads({ ...log1Args, ...grounded })).toEqual([]);
+    expect(
+      owedReads({ ...log1Args, ...grounded, outcomes: log1SecondRefusedClosing.planStepOutcomes }),
+    ).toEqual([]);
   });
 
   it('never counts a grounding read that did not land, was held, or reads another ticket', (): void => {
@@ -96,7 +111,13 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
       { action: log1GroundingRead.action, applied: null },
     ] as unknown as GroundingRead[];
     expect(() => log1Gate({ candidate: log1Candidate, groundingReads: malformed })).toThrow(LOG_1_REFUSAL);
-    expect(() => log1Gate({ candidate: log1Candidate, groundingReads: [...malformed, log1GroundingRead] })).not.toThrow();
+    expect(
+      owedReads({
+        ...log1Args,
+        candidate: log1Candidate,
+        groundingReads: [...malformed, log1GroundingRead],
+      }),
+    ).toEqual([]);
   });
 
   it('counts the grounding read for its own surface only: a declared Slack read is still owed', (): void => {
@@ -127,7 +148,7 @@ describe('a retry note releases the declared read it removed (FIN-1, 19 Septembe
   });
 
   it('accepts the run\'s closing set: a live retry note, the step resting on it, and the note naming the surface it removes', (): void => {
-    expect(() => fin1Gate()).not.toThrow();
+    expect(owedReads(fin1Args)).toEqual([]);
   });
 
   it('releases nothing when the step does not rest on the manager\'s feedback', (): void => {
@@ -151,7 +172,7 @@ describe('a retry note releases the declared read it removed (FIN-1, 19 Septembe
 
   it('releases the read on a note that names the step by number', (): void => {
     const retryNote = 'Skip step 4, the questions were answered on a call.';
-    expect(() => fin1Gate({ retryNote, managerFeedback: retryNote })).not.toThrow();
+    expect(owedReads({ ...fin1Args, retryNote, managerFeedback: retryNote })).toEqual([]);
     const wrongStep = 'Skip step 2, the questions were answered on a call.';
     expect(() => fin1Gate({ retryNote: wrongStep, managerFeedback: wrongStep })).toThrow(fin1RefusedClosing.reason);
   });
@@ -167,7 +188,7 @@ describe('a retry note releases the declared read it removed (FIN-1, 19 Septembe
       obligations: { ...fin1Plan.obligations!, steps: fin1Plan.obligations!.steps.slice(0, 3) },
     };
     const outcomes = fin1RefusedClosing.planStepOutcomes.slice(0, 3);
-    expect(() => fin1Gate({ plan: redrafted, outcomes, retryNote: undefined })).not.toThrow();
+    expect(owedReads({ ...fin1Args, plan: redrafted, outcomes, retryNote: undefined })).toEqual([]);
   });
 });
 

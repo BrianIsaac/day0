@@ -3,8 +3,10 @@
 # Run once after `pnpm convex:dev` has provisioned the deployment - or, when
 # self-hosting, as soon as CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY
 # are in .env.local and before the first push: `convex/auth.config.ts` reads
-# NEXT_PUBLIC_DEV_NO_AUTH and DEV_NO_AUTH_JWKS off the deployment at push time,
-# and refuses the push if the first is set without the second.
+# the identity settings (NEXT_PUBLIC_DEV_NO_AUTH with DEV_NO_AUTH_JWKS, and
+# DAY0_OIDC_ISSUER with DAY0_OIDC_AUDIENCE) off the deployment at push time,
+# and refuses the push if a flag or issuer is set without its partner, or if
+# none of them (nor CLERK_JWT_ISSUER_DOMAIN) is set.
 #
 # Usage: ./scripts/sync-convex-env.sh
 
@@ -24,6 +26,7 @@ KEYS=(
   DAYTONA_API_URL
   SKILL_SANDBOX_SOCKET
   DAY0_SURFACE_MODE
+  DAY0_PRIVATE_HOSTS
   DAY0_DOCS_ROOT
   DAY0_CREDENTIAL_KEY
   DAY0_NOTION_MCP_AUTH_TOKEN
@@ -33,22 +36,30 @@ KEYS=(
   DAY0_TEST_SLACK_API_URL
   DAY0_TEST_SLACK_AUTHORIZE_URL
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
-  CLERK_JWT_ISSUER_DOMAIN
 )
 
-# The two `convex/auth.config.ts` reads to decide who may call the deployment.
-# They are handled apart from KEYS because their order is load-bearing and it
-# is not the same order in both directions: a deployment that already has
-# functions on it validates its auth config on *every* env change, and rejects
-# any single step that would leave the config invalid. So the flag may never be
-# set before the key exists, nor the key removed while the flag still says to
-# use it. Getting this wrong fails only once functions are pushed, which is why
-# it survived a self-hosted backend that had not been pushed to yet.
+# The pairs `convex/auth.config.ts` reads to decide who may call the
+# deployment: the local key's flag and its public half, the customer's issuer
+# (A7) with its audience and the profile that runs it, and Clerk's issuer for
+# the hosted demo. They are handled
+# apart from KEYS because their order is load-bearing and it is not the same
+# order in both directions: a deployment that already has functions on it
+# validates its auth config on *every* env change, and rejects any single step
+# that would leave the config invalid. So a flag or issuer is never set before
+# its partner exists, nor a partner removed while the flag or issuer still
+# needs it, and every addition comes before every removal, so a switch from one
+# way in to the other never passes through a deployment with none. Getting
+# this wrong fails only once functions are pushed, which is why it survived a
+# self-hosted backend that had not been pushed to yet.
 NO_AUTH_FLAG=NEXT_PUBLIC_DEV_NO_AUTH
 NO_AUTH_JWKS=DEV_NO_AUTH_JWKS
+OIDC_ISSUER=DAY0_OIDC_ISSUER
+OIDC_AUDIENCE=DAY0_OIDC_AUDIENCE
+PROFILE=DAY0_PROFILE
+CLERK_ISSUER=CLERK_JWT_ISSUER_DOMAIN
 
-# Their absence is also meaningful, which is why they are the only two removed
-# rather than skipped when empty: leaving a stale flag on the deployment would
+# Their absence is also meaningful, which is why they are removed rather than
+# skipped when empty: leaving a stale flag or issuer on the deployment would
 # be a silent security downgrade rather than an inconvenience.
 
 # Keys the deployment must see under a different name than .env.local uses.
@@ -57,10 +68,14 @@ NO_AUTH_JWKS=DEV_NO_AUTH_JWKS
 # container, where the loopback address Next uses means the container itself.
 # CONVEX_OPENAI_BASE_URL is that same endpoint as the backend must address it.
 # Unset, the local value is pushed unchanged, which is right for Convex cloud
-# and for any endpoint both sides can reach by the same name.
-declare -A ALIASED=(
-  [OPENAI_BASE_URL]=CONVEX_OPENAI_BASE_URL
-)
+# and for any endpoint both sides can reach by the same name. A function, not
+# an associative array, so the script runs under the bash 3.2 macOS ships.
+aliased_name() {
+  case "$1" in
+    OPENAI_BASE_URL) echo CONVEX_OPENAI_BASE_URL ;;
+    *) echo "" ;;
+  esac
+}
 
 # Keys whose absence is a setting rather than an omission, and so must be
 # removed from the deployment rather than left alone when .env.local has
@@ -73,6 +88,8 @@ CLEAR_WHEN_EMPTY=(
   OPENAI_REASONING_EFFORT
   OPENAI_BASE_URL
   DAY0_SURFACE_MODE
+  # A host dropped from the list must stop being reachable, not linger there.
+  DAY0_PRIVATE_HOSTS
   DAY0_CREDENTIAL_KEY
   DAY0_NOTION_MCP_AUTH_TOKEN
   # A quick tunnel's hostname changes on every restart, so a stale value here
@@ -122,6 +139,12 @@ if [ "$(read_local NEXT_PUBLIC_DEV_NO_AUTH)" = "true" ] && [ -z "$(read_local DE
   echo "       \`pnpm dev:no-auth-key\`, then re-run this script." >&2
   exit 1
 fi
+if [ -n "$(read_local DAY0_OIDC_ISSUER)" ] && [ -z "$(read_local DAY0_OIDC_AUDIENCE)" ]; then
+  echo "error: DAY0_OIDC_ISSUER is set in $ENV_FILE but DAY0_OIDC_AUDIENCE is empty." >&2
+  echo "       The deployment refuses an issuer without the client id its tokens carry" >&2
+  echo "       in \`aud\`. Set DAY0_OIDC_AUDIENCE, then re-run this script." >&2
+  exit 1
+fi
 if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ] && [ -z "$(read_local DAY0_CREDENTIAL_KEY)" ]; then
   echo "error: DAY0_SURFACE_MODE=real in $ENV_FILE but DAY0_CREDENTIAL_KEY is empty." >&2
   echo "       Run \`pnpm dev:no-auth-key\` once, then re-run this script." >&2
@@ -164,6 +187,38 @@ clear_key() {
   fi
 }
 
+# The credential key sealed every credential the deployment stores, so while
+# it stores any, the key is never cleared or replaced here: either would leave
+# every stored credential unreadable. A restore adopts the deployment's key
+# into .env.local first (./setup.sh restore); a deliberate rotation is
+# scripts/rotate-credential-key.ts, which asks and sets the deployment itself.
+guard_credential_key() {
+  local wanted="$1" held output
+  held=$(grep -E "^DAY0_CREDENTIAL_KEY=" <<<"$deployment_env" | head -n1 | cut -d= -f2- || true)
+  if [ -z "$held" ] || [ "$held" = "$wanted" ]; then
+    return 0
+  fi
+  if ! output=$(npx convex data credentials --limit 1 --format jsonl 2>&1); then
+    echo "error: could not read whether this deployment stores credentials, so DAY0_CREDENTIAL_KEY" >&2
+    echo "       is left as it is there. Check the Convex values in $ENV_FILE, then re-run." >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+  if grep -q '^{' <<<"$output"; then
+    if [ -z "$wanted" ]; then
+      echo "error: $ENV_FILE has no DAY0_CREDENTIAL_KEY, and this deployment stores credentials" >&2
+      echo "       sealed under the key it holds. Clearing it would leave every one unreadable." >&2
+    else
+      echo "error: DAY0_CREDENTIAL_KEY in $ENV_FILE is not the key this deployment holds, and the" >&2
+      echo "       deployment stores credentials sealed under its own. Pushing yours would leave" >&2
+      echo "       every one unreadable." >&2
+    fi
+    echo "       Adopt the deployment's key: \`npx convex env get DAY0_CREDENTIAL_KEY\` into $ENV_FILE." >&2
+    echo "       To change it on purpose: pnpm exec tsx scripts/rotate-credential-key.ts" >&2
+    exit 1
+  fi
+}
+
 # A value the deployment already holds is not set again: `convex env set` is
 # one CLI call per key, and a resume after `stop` would otherwise pay for
 # every key to change nothing. The comparison is the whole `KEY=value` line
@@ -176,26 +231,62 @@ set_key() {
     return 0
   fi
   echo "set  ${key}${note:+ (${note})}"
-  if ! output=$(npx convex env set "$key" "$value" 2>&1); then
+  # `--` before the value: a base64url token can begin with `-`, which the CLI
+  # would otherwise read as an option.
+  if ! output=$(npx convex env set "$key" -- "$value" 2>&1); then
     echo "error: failed to set ${key} on the deployment." >&2
     printf '%s\n' "$output" >&2
     exit 1
   fi
 }
 
+# Before any change: a refusal here must leave the deployment exactly as it was.
+guard_credential_key "$(read_local DAY0_CREDENTIAL_KEY)"
+
 for key in "${RETIRED[@]}"; do
   clear_key "$key" "no longer read by the deployment"
 done
 
-# The no-auth pair, in whichever order keeps the auth config valid at every
-# single step: turning the mode on means the key first, turning it off means
-# the flag first.
+# One key set when .env.local has a value, removed when it has none.
+sync_key() {
+  local key="$1" note="${2:-}" value
+  value=$(read_local "$key")
+  if [ -n "$value" ]; then
+    set_key "$key" "$value" "$note"
+  else
+    clear_key "$key" "empty in $ENV_FILE${note:+, ${note}}"
+  fi
+}
+
+# The identity pairs, in whichever order keeps the auth config valid at every
+# single step: turning a way in on means its partner first, turning it off
+# means the flag or issuer first, and every way in turned on comes before any
+# turned off.
 no_auth_flag_value=$(read_local "$NO_AUTH_FLAG")
 no_auth_jwks_value=$(read_local "$NO_AUTH_JWKS")
+oidc_issuer_value=$(read_local "$OIDC_ISSUER")
+# Clerk, the hosted demo's way in, needs no partner; left alone when empty.
+clerk_value=$(read_local "$CLERK_ISSUER")
+if [ -n "$clerk_value" ]; then
+  set_key "$CLERK_ISSUER" "$clerk_value"
+else
+  echo "skip ${CLERK_ISSUER} (empty in $ENV_FILE)"
+fi
+if [ -n "$oidc_issuer_value" ]; then
+  sync_key "$PROFILE"
+  sync_key "$OIDC_AUDIENCE" "before the issuer that requires it"
+  set_key "$OIDC_ISSUER" "$oidc_issuer_value"
+fi
 if [ "$no_auth_flag_value" = "true" ]; then
   set_key "$NO_AUTH_JWKS" "$no_auth_jwks_value" "before the flag that requires it"
   set_key "$NO_AUTH_FLAG" "$no_auth_flag_value"
-else
+fi
+if [ -z "$oidc_issuer_value" ]; then
+  clear_key "$OIDC_ISSUER"
+  sync_key "$OIDC_AUDIENCE" "after the issuer that required it"
+  sync_key "$PROFILE"
+fi
+if [ "$no_auth_flag_value" != "true" ]; then
   [ -n "$no_auth_flag_value" ] && set_key "$NO_AUTH_FLAG" "$no_auth_flag_value" || clear_key "$NO_AUTH_FLAG"
   [ -n "$no_auth_jwks_value" ] && set_key "$NO_AUTH_JWKS" "$no_auth_jwks_value" ||
     clear_key "$NO_AUTH_JWKS" "after the flag that required it"
@@ -215,7 +306,7 @@ else
 fi
 
 for key in "${KEYS[@]}"; do
-  override_var="${ALIASED[$key]:-}"
+  override_var=$(aliased_name "$key")
   override=""
   [ -n "$override_var" ] && override=$(read_local "$override_var")
   if [ -n "$override" ]; then

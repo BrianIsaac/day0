@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { DEV_NO_AUTH_COOKIE, isDevNoAuthSession, mintDevNoAuthToken } from '@/lib/dev-auth-server';
+import { DEV_NO_AUTH_COOKIE, devNoAuthSessionId, mintDevNoAuthToken } from '@/lib/dev-auth-server';
 
 /**
  * Hands the browser a short-lived Convex token for the local boss, once it has
@@ -16,7 +16,8 @@ export async function POST(): Promise<NextResponse> {
   }
 
   const jar = await cookies();
-  if (!(await isDevNoAuthSession(jar.get(DEV_NO_AUTH_COOKIE)?.value))) {
+  const session = await devNoAuthSessionId(jar.get(DEV_NO_AUTH_COOKIE)?.value);
+  if (!session) {
     return NextResponse.json(
       { error: 'this browser has not been unlocked with the local no-auth key' },
       { status: 403 },
@@ -24,7 +25,7 @@ export async function POST(): Promise<NextResponse> {
   }
 
   try {
-    const token = await mintDevNoAuthToken();
+    const token = await mintDevNoAuthToken(session);
     return NextResponse.json({ token }, { headers: { 'cache-control': 'no-store' } });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 503 });

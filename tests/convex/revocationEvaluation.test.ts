@@ -17,10 +17,17 @@ describe('the live revocation evaluation fixture', (): void => {
   it('is restricted to an evaluation agent and installs ordinary proposed cards', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const { agentId, credentialId } = await harness.run(async (ctx) => {
+    const { agentId, ordinaryAgentId, credentialId } = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
         bossEmail: 'eval-revocation-test@day0.local',
         name: 'Evaluation agent',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const ordinaryAgentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
         userId: 'owner',
         state: 'active',
         createdAt: 1,
@@ -49,8 +56,17 @@ describe('the live revocation evaluation fixture', (): void => {
         credentialLanded: false,
         createdAt: 1,
       });
-      return { agentId, credentialId };
+      return { agentId, ordinaryAgentId, credentialId };
     });
+    await expect(
+      harness.mutation(internal.revocationEvaluation.installSurfaceCards, {
+        agentId: ordinaryAgentId,
+        slackCredentialId: credentialId,
+      }),
+    ).rejects.toThrow('revocation evaluation accepts only its isolated evaluation agent');
+    await expect(
+      harness.withIdentity(OWNER).query(api.surfaces.listForAgent, { agentId: ordinaryAgentId }),
+    ).resolves.toEqual([]);
     await harness.mutation(internal.revocationEvaluation.installSurfaceCards, {
       agentId,
       slackCredentialId: credentialId,

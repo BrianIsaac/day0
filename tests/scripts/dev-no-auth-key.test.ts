@@ -18,6 +18,8 @@ const SHELL_KEYS = [
   'CONVEX_DEPLOYMENT',
   'CONVEX_SELF_HOSTED_URL',
   'CONVEX_SELF_HOSTED_ADMIN_KEY',
+  'PORT',
+  'DAY0_APP_HOST',
 ] as const;
 
 /** What the stand-in Convex CLI answers to `convex env list`. */
@@ -121,6 +123,32 @@ describe('dev-no-auth-key url mode', (): void => {
   });
 });
 
+describe('the unlock URL', (): void => {
+  const unlocked =
+    'NEXT_PUBLIC_DEV_NO_AUTH=true\nDEV_NO_AUTH_SECRET=the-secret\nDEV_NO_AUTH_SIGNING_KEY=k\n' +
+    `DEV_NO_AUTH_JWKS=j\nDAY0_CREDENTIAL_KEY=${DEPLOYMENT_KEY}\nDAY0_NOTION_MCP_AUTH_TOKEN=${DEPLOYMENT_TOKEN}\n`;
+
+  it('names localhost and the app port by default', (): void => {
+    const { cwd } = envDirectory(`${unlocked}DAY0_APP_PORT=4100\n`);
+    const run = runScript(cwd, ['url']);
+    expect(run.output).toContain('http://localhost:4100/?day0_key=the-secret');
+  });
+
+  it('names the loopback address pnpm dev binds, so the URL and the server agree', (): void => {
+    const { cwd } = envDirectory(`${unlocked}DAY0_APP_HOST=127.0.0.2\n`);
+    const run = runScript(cwd, ['url']);
+    expect(run.output).toContain('http://127.0.0.2:3000/?day0_key=the-secret');
+  });
+
+  it('says a non-loopback bind serves no other machine in no-auth mode', (): void => {
+    const { cwd } = envDirectory(`${unlocked}DAY0_APP_HOST=0.0.0.0\n`);
+    const run = runScript(cwd, ['url']);
+    expect(run.status).toBe(0);
+    expect(run.output).toContain('http://localhost:3000/?day0_key=the-secret');
+    expect(run.output).toContain('DAY0_APP_HOST=0.0.0.0 is not a loopback address');
+  });
+});
+
 describe('adopting the deployment key before minting one', (): void => {
   it("adopts the deployment's credential key and transport token when the file has none", (): void => {
     const { cwd, envFile } = envDirectory(`NEXT_PUBLIC_DEV_NO_AUTH=false\n${SELF_HOSTED}`);
@@ -200,12 +228,32 @@ describe('rotation', (): void => {
     expect(run.output).toContain('every unlocked browser is signed out');
   });
 
-  it('says --force regenerates the credential key before it does so', (): void => {
+  it('regenerates the three no-auth values on --force and keeps the credential key and the Notion token (U4 decision 3)', (): void => {
     const { cwd, envFile } = envDirectory(complete);
     const run = runScript(cwd, ['init', '--force']);
     expect(run.status).toBe(0);
-    expect(valueOf(envFile, 'DAY0_CREDENTIAL_KEY')).not.toBe(DEPLOYMENT_KEY);
-    expect(run.output).toContain('--force regenerated DAY0_CREDENTIAL_KEY');
-    expect(run.output).toContain('can no longer be decrypted');
+    expect(valueOf(envFile, 'DEV_NO_AUTH_SECRET')).not.toBe('old-secret');
+    expect(valueOf(envFile, 'DEV_NO_AUTH_SIGNING_KEY')).not.toBe('old-signing');
+    expect(valueOf(envFile, 'DEV_NO_AUTH_JWKS')).not.toBe('old-jwks');
+    expect(valueOf(envFile, 'DAY0_CREDENTIAL_KEY')).toBe(DEPLOYMENT_KEY);
+    expect(valueOf(envFile, 'DAY0_NOTION_MCP_AUTH_TOKEN')).toBe(DEPLOYMENT_TOKEN);
+    expect(run.output).toContain('DAY0_CREDENTIAL_KEY is unchanged');
+    expect(run.output).toContain('scripts/rotate-credential-key.ts');
+  });
+
+  it('regenerates only the Notion token on surface-keys --force, and adopts a missing credential key rather than minting one', (): void => {
+    const kept = envDirectory(complete);
+    const forced = runScript(kept.cwd, ['surface-keys', '--force']);
+    expect(forced.status).toBe(0);
+    expect(valueOf(kept.envFile, 'DAY0_CREDENTIAL_KEY')).toBe(DEPLOYMENT_KEY);
+    expect(valueOf(kept.envFile, 'DAY0_NOTION_MCP_AUTH_TOKEN')).not.toBe(DEPLOYMENT_TOKEN);
+
+    const missing = envDirectory(`DAY0_SURFACE_MODE=real\n${SELF_HOSTED}`);
+    const adopted = runScript(missing.cwd, ['surface-keys', '--force'], {
+      listing: `DAY0_CREDENTIAL_KEY=${DEPLOYMENT_KEY}`,
+    });
+    expect(adopted.status).toBe(0);
+    expect(adopted.calls).toEqual(['convex env list']);
+    expect(valueOf(missing.envFile, 'DAY0_CREDENTIAL_KEY')).toBe(DEPLOYMENT_KEY);
   });
 });

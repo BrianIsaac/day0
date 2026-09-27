@@ -307,7 +307,7 @@ describe('registering a dedicated app', (): void => {
           surfaceId,
           configurationToken: CONFIG_TOKEN,
         }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('forbidden');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 

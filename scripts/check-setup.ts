@@ -49,6 +49,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { customerOidcIssuer, type CustomerOidcIssuer } from '../src/lib/customer-oidc';
+import { PRIVATE_HOSTS_VAR, privateHostAllowlist } from '../src/lib/private-hosts';
+import { DEPLOYMENT_PROFILES } from '../src/lib/surface-mode';
 import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
 import {
@@ -116,6 +119,15 @@ const WATCHED = [
   'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
   'CLERK_SECRET_KEY',
   'CLERK_JWT_ISSUER_DOMAIN',
+  'DAY0_PROFILE',
+  'DAY0_OIDC_ISSUER',
+  'DAY0_OIDC_AUDIENCE',
+  'DAY0_PRIVATE_HOSTS',
+  'CONVEX_BIND_ADDR',
+  'CONVEX_DASHBOARD_BIND_ADDR',
+  'MODEL_BIND_ADDR',
+  'FAKE_SLACK_BIND_ADDR',
+  'DAY0_APP_HOST',
   'OPENAI_API_KEY',
   'OPENAI_BASE_URL',
   'CONVEX_OPENAI_BASE_URL',
@@ -221,9 +233,16 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
       ? dialFromBackend(projectName, backendUrl)
       : undefined;
 
+  const migrations =
+    selfHosted && services?.includes('backend')
+      ? migrationsSection(readMigrationStatus(v))
+      : undefined;
+  const settings = settingsSection(v);
   const sections: Section[] = [
     backendSection(v),
+    ...(migrations ? [migrations] : []),
     authSection(v),
+    ...(settings ? [settings] : []),
     surfacesSection(v, services),
     componentsSection(v, projectName, services),
     modelSection(v, selfHosted, modelDial),
@@ -448,6 +467,167 @@ function storedCredentialCount(values: Values): number | undefined {
   if (probe.status !== 0) return undefined;
   const count = Number.parseInt((probe.stdout || '').trim(), 10);
   return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}
+
+/** What `migrations:status` says, as far as the checker reports it. */
+export interface MigrationStatusRead {
+  /** The release the rows are stamped at, or undefined before the first stamp. */
+  readonly release?: string;
+  /** Each migration that has changed rows, and how many: the legacy rows it converted. */
+  readonly converted: ReadonlyArray<{ readonly name: string; readonly changed: number }>;
+  /** The migrations that have not finished. */
+  readonly pending: readonly string[];
+}
+
+/**
+ * Read the JSON `npx convex run migrations:status` prints.
+ *
+ * @param stdout - The command's output.
+ * @throws Error when the output is not the status the function returns.
+ */
+export function parseMigrationStatus(stdout: string): MigrationStatusRead {
+  const parsed = JSON.parse(stdout) as {
+    release?: { release?: unknown } | null;
+    migrations?: unknown;
+    pending?: unknown;
+  } | null;
+  if (!Array.isArray(parsed?.migrations) || !Array.isArray(parsed.pending)) {
+    throw new Error('migrations:status printed no migrations and pending lists');
+  }
+  const release = parsed.release?.release;
+  return {
+    ...(typeof release === 'string' ? { release } : {}),
+    converted: (parsed.migrations as Array<{ name?: unknown; changed?: unknown }>).flatMap((row) =>
+      typeof row.name === 'string' && typeof row.changed === 'number' && row.changed > 0
+        ? [{ name: row.name, changed: row.changed }]
+        : [],
+    ),
+    pending: parsed.pending.filter((name): name is string => typeof name === 'string'),
+  };
+}
+
+/**
+ * Ask the backend, in one call, where its migrations are.
+ *
+ * @param values - Resolved deployment environment.
+ * @returns The status, why it could not be read, or undefined with no admin key to ask with.
+ */
+function readMigrationStatus(values: Values): MigrationStatusRead | { error: string } | undefined {
+  if (!values.CONVEX_SELF_HOSTED_URL || !values.CONVEX_SELF_HOSTED_ADMIN_KEY) return undefined;
+  const probe = spawnSync(
+    'npx',
+    ['convex', 'run', '--typecheck', 'disable', '--codegen', 'disable', 'migrations:status', '{}'],
+    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...values } },
+  );
+  const firstLine = (text: string | null | undefined): string =>
+    (text ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
+  if (probe.status !== 0) {
+    return { error: firstLine(probe.stderr) || firstLine(probe.stdout) || `exit ${probe.status}` };
+  }
+  try {
+    return parseMigrationStatus(probe.stdout ?? '');
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Report the upgrade's migrations: the legacy rows each converted, and any
+ * still pending, which the release stamp waits for.
+ *
+ * @param read - What `migrations:status` answered, or undefined when it was not asked.
+ */
+export function migrationsSection(
+  read: MigrationStatusRead | { error: string } | undefined,
+): Section | undefined {
+  if (read === undefined) return undefined;
+  if ('error' in read) {
+    return {
+      title: 'Migrations: could not be read',
+      status: 'warn',
+      lines: [
+        `\`npx convex run migrations:status\` failed: ${read.error}`,
+        'A deployment whose functions were never pushed has none to read yet.',
+      ],
+    };
+  }
+  const converted =
+    read.converted.length === 0
+      ? 'No migration needed to change a row.'
+      : `Rows each migration changed: ${read.converted.map((row) => `${row.name} ${row.changed}`).join(', ')}.`;
+  if (read.pending.length > 0) {
+    return {
+      title: `Migrations: ${read.pending.length} pending`,
+      status: 'warn',
+      lines: [
+        `Still to run: ${read.pending.join(', ')}. The release is not stamped until they finish.`,
+        converted,
+        'Run `npx convex run migrations:runPending` until nothing is pending, then the setup',
+        'again, which stamps the release.',
+      ],
+    };
+  }
+  return {
+    title: 'Migrations: every one has run',
+    status: 'ok',
+    lines: [
+      read.release === undefined
+        ? 'The rows carry no release stamp yet; the setup writes one after the migrations.'
+        : `The rows are at ${read.release}.`,
+      converted,
+    ],
+  };
+}
+
+/** The host variables that publish a port, each loopback unless set, and what it publishes. */
+const BIND_VARIABLES: ReadonlyArray<readonly [string, string]> = [
+  ['CONVEX_BIND_ADDR', "the backend's API"],
+  ['CONVEX_DASHBOARD_BIND_ADDR', 'the Convex dashboard'],
+  ['MODEL_BIND_ADDR', "the bundled model's API, which asks for no key"],
+  ['FAKE_SLACK_BIND_ADDR', 'the Slack double'],
+  ['DAY0_APP_HOST', 'the app'],
+];
+
+/**
+ * Settings that start but deserve a second look: a profile that names none, a
+ * port published on every interface, and a private-host list the backend
+ * refuses. Warned, never refused (review D9): each can be meant.
+ *
+ * @param v - Resolved values.
+ * @returns The section, or undefined when there is nothing to say.
+ */
+export function settingsSection(v: Values): Section | undefined {
+  const lines: string[] = [];
+  const profile = (v.DAY0_PROFILE ?? '').trim();
+  if (profile !== '' && !DEPLOYMENT_PROFILES.some((known) => known === profile)) {
+    lines.push(
+      `DAY0_PROFILE=${profile} names no profile, so every module that reads it throws at import,`,
+      `the app's and the backend's. Set it to ${DEPLOYMENT_PROFILES.join(' or ')}, or leave it empty.`,
+    );
+  }
+  for (const [name, what] of BIND_VARIABLES) {
+    const value = (v[name] ?? '').trim();
+    if (value === '0.0.0.0' || value === '::' || value === '[::]') {
+      lines.push(
+        `${name}=${value} publishes ${what} on every interface, so anyone on this network`,
+        'can reach it. Leave it empty or 127.0.0.1 unless another machine must.',
+      );
+    }
+  }
+  try {
+    privateHostAllowlist(v[PRIVATE_HOSTS_VAR]);
+  } catch (error) {
+    lines.push(
+      `${PRIVATE_HOSTS_VAR} is refused as it stands, and with it every credentialed MCP client`,
+      `and every git source, GitHub and GitLab included: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return lines.length === 0
+    ? undefined
+    : { title: 'Settings worth a second look', status: 'warn', lines };
 }
 
 /**
@@ -789,16 +969,88 @@ function backendSection(v: Values): Section {
   };
 }
 
-/** No-auth mode and Clerk are alternatives, and a half of either is worse than neither. */
-function authSection(v: Values): Section {
+/**
+ * The customer issuer's section, or undefined when neither an issuer nor the
+ * customer-local profile is configured.
+ *
+ * Validated by the same reader the backend's auth config uses, so a value this
+ * reports as fine is one the push accepts. The issuer is printed only once it
+ * has been accepted, since a refused one may carry a password.
+ */
+function customerIssuerSection(v: Values): Section | undefined {
+  const customerLocal = (v.DAY0_PROFILE ?? '').trim() === 'customer-local';
+  if (!customerLocal && !(v.DAY0_OIDC_ISSUER ?? '').trim()) return undefined;
+  let issuer: CustomerOidcIssuer | undefined;
+  try {
+    issuer = customerOidcIssuer((name: string): string | undefined => v[name]);
+  } catch (error) {
+    return {
+      title: 'Auth: the customer issuer is misconfigured',
+      status: 'gap',
+      lines: [
+        error instanceof Error ? error.message : String(error),
+        'The backend refuses to push its functions until this is fixed.',
+      ],
+    };
+  }
+  if (!issuer) {
+    return {
+      title: 'Auth: customer-local profile with no issuer',
+      status: 'gap',
+      lines: [
+        "DAY0_PROFILE=customer-local signs people in through the customer's OIDC issuer,",
+        'and DAY0_OIDC_ISSUER is unset, so real mode refuses to start. Set it to the',
+        "issuer's URL as its tokens carry it in `iss`, and DAY0_OIDC_AUDIENCE to the",
+        'client id they carry in `aud`.',
+      ],
+    };
+  }
+  const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
+  // A warning until the app's own sign-in uses the issuer (review M12): the
+  // backend accepts its tokens, and no browser can get one yet.
+  return {
+    title: noAuth ? 'Auth: customer OIDC issuer and the local key' : 'Auth: customer OIDC issuer',
+    status: 'warn',
+    lines: [
+      `Issuer ${issuer.issuer}, audience ${issuer.audience}.`,
+      noAuth
+        ? "The backend accepts this issuer's tokens and this machine's local key side by side."
+        : "The backend accepts this issuer's tokens; Clerk keys, if any, are ignored beside it.",
+      'Both values must be on the deployment as well, where the auth config reads them at',
+      'push: `pnpm sync:env` puts them there, the audience before the issuer.',
+      noAuth
+        ? 'The local key runs only under `next dev`; `next start` refuses to start with it on.'
+        : customerLocal
+          ? 'DAY0_PROFILE=customer-local: real mode is for the people it signs in, under `next start`.'
+          : 'DAY0_PROFILE is not customer-local, so real mode still needs the local key under `next dev`.',
+      "The app's own sign-in does not use this issuer yet, so until it does nobody signs in",
+      noAuth
+        ? 'through the browser with it; the local key is the way in meanwhile.'
+        : 'through the browser, and with the local key off there is no other way in.',
+    ],
+  };
+}
+
+/**
+ * Report who can sign in: the customer's OIDC issuer (beside the local key or
+ * alone), the local key, or Clerk. A half of any of them is worse than none.
+ *
+ * @param v - The env file with the process environment layered on.
+ */
+export function authSection(v: Values): Section {
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
   const clerkKeys = ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY'].filter((k) => !v[k]);
   const hasClerk = clerkKeys.length === 0;
+  const missing = ['DEV_NO_AUTH_SECRET', 'DEV_NO_AUTH_SIGNING_KEY', 'DEV_NO_AUTH_JWKS'].filter(
+    (k) => !v[k],
+  );
+  // A keyless local issuer is a gap whatever else is configured beside it.
+  if (!noAuth || missing.length === 0) {
+    const customer = customerIssuerSection(v);
+    if (customer) return customer;
+  }
 
   if (noAuth) {
-    const missing = ['DEV_NO_AUTH_SECRET', 'DEV_NO_AUTH_SIGNING_KEY', 'DEV_NO_AUTH_JWKS'].filter(
-      (k) => !v[k],
-    );
     if (missing.length > 0) {
       return {
         title: 'Auth: no-auth mode is on but has no key',
@@ -846,9 +1098,11 @@ function authSection(v: Values): Section {
     title: 'Auth: nothing configured',
     status: 'gap',
     lines: [
-      `Missing ${clerkKeys.join(' and ')}, and NEXT_PUBLIC_DEV_NO_AUTH is not true.`,
-      'Pick one: Clerk keys for per-user auth, or no-auth dev mode for the',
-      'account-free path. Without either, nobody can sign in and nothing loads.',
+      `Missing ${clerkKeys.join(' and ')}, NEXT_PUBLIC_DEV_NO_AUTH is not true, and`,
+      'DAY0_OIDC_ISSUER is unset. Pick one: no-auth dev mode for the account-free path,',
+      "the customer's issuer (DAY0_OIDC_ISSUER and DAY0_OIDC_AUDIENCE) for a",
+      'customer-local install, or Clerk keys for the hosted demo. Without one, nobody',
+      'can sign in and the backend refuses to push its functions.',
     ],
   };
 }

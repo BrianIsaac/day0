@@ -4,8 +4,10 @@ import { v } from 'convex/values';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
+  SCOPE_JUDGEMENT_UNAVAILABLE,
   evaluateCandidate,
   inferRequiredPermissions,
+  isScopeUnavailable,
   type EvaluateLookups,
 } from '../src/work/evaluate';
 import { spanModelFromEnv } from '../src/redaction/client';
@@ -337,6 +339,18 @@ function buildLookups(args: {
 type ModelCallStage = 'evaluation' | 'draft' | 'execution' | 'closing';
 
 /**
+ * Which authoring of the closing set a closing-stage call belongs to. One run
+ * can author the set up to four times (P8-10), and each re-sends the whole
+ * prompt, so the ledger says which one each call was.
+ */
+type ClosingAuthoring =
+  | 'first'
+  | 'post-apply-round'
+  | 'after-carried-reads'
+  | 'holder-changed'
+  | 'hold-repair';
+
+/**
  * Run one loop step with each of its model calls recorded on the item's
  * events as `work.model-call`, in real mode.
  *
@@ -356,7 +370,12 @@ type ModelCallStage = 'evaluation' | 'draft' | 'execution' | 'closing';
  */
 async function recordingModelCalls<T>(
   ctx: ActionCtx,
-  step: { agentId: Id<'agents'>; workItemId: Id<'workItems'>; stage: ModelCallStage },
+  step: {
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    stage: ModelCallStage;
+    closingAuthoring?: ClosingAuthoring;
+  },
   fn: () => Promise<T>,
 ): Promise<T> {
   if (SURFACE_MODE !== 'real') return await fn();
@@ -364,7 +383,12 @@ async function recordingModelCalls<T>(
     await ctx.runMutation(internal.events.log, {
       agentId: step.agentId,
       type: 'work.model-call',
-      payload: { workItemId: step.workItemId, stage: step.stage, ...report },
+      payload: {
+        workItemId: step.workItemId,
+        stage: step.stage,
+        ...(step.closingAuthoring ? { closingAuthoring: step.closingAuthoring } : {}),
+        ...report,
+      },
     });
   }, fn);
 }
@@ -378,13 +402,21 @@ async function recordingModelCalls<T>(
  * claims the row first, so a second run arriving while this one holds the
  * model call returns at once.
  *
+ * A scope call that gives no judgement (a throw, a timeout, a reply out of
+ * shape) stores no verdict: the row stays `discovered` under the evaluation
+ * claim, `work.scope-judgement-unavailable` is the one event it writes, and
+ * the stall sweep evaluates it again once the claim's lease has passed. A
+ * verdict would move it to `deferred`, which nothing re-admits for this
+ * reason, or write an admission no reading made.
+ *
  * Args:
  *   ctx: Convex action context.
  *   args: The work item.
  *   internalCaller: Whether the caller is the scheduler rather than a page.
  *
  * Returns:
- *   The stored decision, or a `noop-` reason when the step was not this run's.
+ *   The stored decision, `scope-judgement-unavailable` when the row was left
+ *   parked, or a `noop-` reason when the step was not this run's.
  */
 async function evaluateWorkItemHandler(
   ctx: ActionCtx,
@@ -401,7 +433,7 @@ async function evaluateWorkItemHandler(
   // (e.g. evaluator + draftPlan on the same render tick). The
   // findExistingClaim self-match below would otherwise see the
   // item's own `claimed` state and stomp the verdict back to skip.
-  // No-op cleanly in that case — same posture as draftPlan and
+  // No-op cleanly in that case: same posture as draftPlan and
   // executeApprovedPlan (lines below).
   if (item.state !== 'discovered') {
     return { decision: `noop-state=${item.state}` };
@@ -467,7 +499,6 @@ async function evaluateWorkItemHandler(
   // admission when it sends the row back, and an amendment is a new charter.
   const scopeHeld =
     surfaceConfig.mode === 'real' && item.scopeAdmission?.charterId === charterRow._id;
-  let scopeJudgementUnavailable: string | undefined;
   let scopeAdmission: { basis: string; namedBy?: string; overruled?: string[] } | undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'evaluation' } as const;
   const verdict = await recordingModelCalls(ctx, step, () => evaluateCandidate(
@@ -487,17 +518,13 @@ async function evaluateWorkItemHandler(
     lookups,
     {
       onScopeJudgement: (judgement): void => {
-        if (judgement.admitted && judgement.failedOpen !== undefined) {
-          scopeJudgementUnavailable = judgement.failedOpen;
-        }
         // Only a reading of the charter is kept: the model's own in-scope
         // judgement, or the skip readings a named source set aside. A waiver
         // is already on the row, a held judgement is the one already kept,
-        // and a fail-open admission read nothing.
+        // and an unavailable judgement admitted nothing.
         const judged =
           judgement.admitted &&
-          (judgement.overruled !== undefined ||
-            (judgement.basis === 'charter-judgement' && judgement.failedOpen === undefined));
+          (judgement.overruled !== undefined || judgement.basis === 'charter-judgement');
         if (surfaceConfig.mode === 'real' && judged) {
           scopeAdmission = {
             basis: judgement.basis,
@@ -508,12 +535,13 @@ async function evaluateWorkItemHandler(
       },
     },
   ));
-  if (scopeJudgementUnavailable !== undefined) {
+  if (isScopeUnavailable(verdict)) {
     await ctx.runMutation(internal.events.log, {
       agentId,
       type: 'work.scope-judgement-unavailable',
-      payload: { workItemId: args.workItemId, cause: scopeJudgementUnavailable },
+      payload: { workItemId: args.workItemId, cause: verdict.cause },
     });
+    return { decision: SCOPE_JUDGEMENT_UNAVAILABLE };
   }
   if (scopeAdmission !== undefined) {
     await ctx.runMutation(internal.work.recordScopeAdmission, {
@@ -2267,11 +2295,14 @@ export const authorDependentActions = internalAction({
       // given is the one the set keeps: the finish uses the holders the set
       // was authored under, whatever becomes of them while it waits.
       let heldElsewhere: HeldExternalItem[] = [];
-      const authorClosingSet = async (): Promise<DependentExecutionOutput> => {
+      const authorClosingSet = async (authoring: ClosingAuthoring): Promise<DependentExecutionOutput> => {
         heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
-        return await authorUnder(heldElsewhere);
+        return await authorUnder(heldElsewhere, authoring);
       };
-      const authorUnder = (held: HeldExternalItem[]): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, step, () => runDependentSkill({
+      const authorUnder = (
+        held: HeldExternalItem[],
+        authoring: ClosingAuthoring,
+      ): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, { ...step, closingAuthoring: authoring }, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
         candidate: rowToCandidate(item),
@@ -2299,7 +2330,7 @@ export const authorDependentActions = internalAction({
           });
         },
       }));
-      let output = await authorClosingSet();
+      let output = await authorClosingSet(initial.closingRound ? 'post-apply-round' : 'first');
       const cap = dependentActionCap(initial);
       // A set over the cap is refused below as it stands: nothing in it is applied first.
       const carriedReads = output.actions.length > cap ? [] : carriedBy(output);
@@ -2310,7 +2341,7 @@ export const authorDependentActions = internalAction({
           workItemId: args.workItemId, runId: args.runId, agent, surfaces, knownValues, initial, reads: carriedReads,
         });
         prerequisites = initial;
-        output = await authorClosingSet();
+        output = await authorClosingSet('after-carried-reads');
       }
       // The held items were read before the model call, and a sibling can
       // take a claim while it is in flight. Read again now: a set that writes
@@ -2331,7 +2362,7 @@ export const authorDependentActions = internalAction({
           });
           heldElsewhere = heldNow;
           droppedWritesTo = taken;
-          output = await authorUnder(heldNow);
+          output = await authorUnder(heldNow, 'holder-changed');
         }
       }
       authored = output;
@@ -2344,7 +2375,7 @@ export const authorDependentActions = internalAction({
       // the set that came back.
       const gate = closingGate(output);
       if (gate.length > 0) throw new ClosingGateRefusal(gate, output);
-      const repaired = await recordingModelCalls(ctx, step, () => repairedForHold(output, {
+      const repaired = await recordingModelCalls(ctx, { ...step, closingAuthoring: 'hold-repair' }, () => repairedForHold(output, {
         surfaces,
         skill: { name: skill.name },
         candidate: rowToCandidate(item),

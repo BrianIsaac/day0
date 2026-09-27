@@ -1,6 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { decrypt, encrypt } from '../../../src/lib/credential-crypto';
+import {
+  CREDENTIAL_KEY_CHANGED_MESSAGE,
+  credentialOwnerBinding,
+  decrypt,
+  encrypt,
+  openOwnedCredential,
+} from '../../../src/lib/credential-crypto';
 
 /** Generate one valid AES-256 key for a test case. */
 function key(): string {
@@ -71,5 +77,50 @@ describe('credential crypto', (): void => {
     for (const plaintext of ['', 'nt' + 'n_'.repeat(24), '柑橘 secret 🍊']) {
       expect(decrypt(encrypt(plaintext, credentialKey), credentialKey)).toBe(plaintext);
     }
+  });
+});
+
+describe('credential crypto associated data', (): void => {
+  it('opens a value only with the associated data it was sealed under', (): void => {
+    const credentialKey = key();
+    const sealed = encrypt(
+      'local test credential',
+      credentialKey,
+      credentialOwnerBinding('owner-a'),
+    );
+    expect(decrypt(sealed, credentialKey, credentialOwnerBinding('owner-a'))).toBe(
+      'local test credential',
+    );
+    expect(() => decrypt(sealed, credentialKey, credentialOwnerBinding('owner-b'))).toThrow(
+      'Credential decryption failed',
+    );
+    expect(() => decrypt(sealed, credentialKey)).toThrow('Credential decryption failed');
+  });
+
+  it('binds a value to its owner so ciphertext moved to another owner does not open', (): void => {
+    const credentialKey = key();
+    const sealed = encrypt(
+      'local test credential',
+      credentialKey,
+      credentialOwnerBinding('owner-a'),
+    );
+    expect(() => openOwnedCredential(sealed, credentialKey, 'owner-b')).toThrow(
+      'Credential decryption failed',
+    );
+    expect(openOwnedCredential(sealed, credentialKey, 'owner-a')).toBe('local test credential');
+  });
+
+  it('still opens a value sealed before associated data existed', (): void => {
+    const credentialKey = key();
+    const legacy = encrypt('local test credential', credentialKey);
+    expect(openOwnedCredential(legacy, credentialKey, 'owner-a')).toBe('local test credential');
+  });
+
+  it('says the credential key changed when the key cannot open a value', (): void => {
+    const sealed = encrypt('local test credential', key(), credentialOwnerBinding('owner-a'));
+    expect(() => openOwnedCredential(sealed, key(), 'owner-a')).toThrow(
+      CREDENTIAL_KEY_CHANGED_MESSAGE,
+    );
+    expect(CREDENTIAL_KEY_CHANGED_MESSAGE).toMatch(/credential key changed/);
   });
 });

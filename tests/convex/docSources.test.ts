@@ -115,6 +115,33 @@ describe('documentation source validation', (): void => {
     ).not.toThrow();
   });
 
+  it('refuses a user name or token in every remote locator, and never repeats it', (): void => {
+    for (const [kind, locator] of [
+      ['git', 'https://oauth2:glpat-abc@git.corp.internal/team/docs#main'],
+      ['git', 'https://ghp_secret123@github.com/example/docs'],
+      ['urls', 'https://docs.example.com/a\nhttps://deploy:hunter2@docs.example.com/b'],
+      ['mcp', 'https://svc:hunter2@docs.example.com/mcp'],
+      ['git', 'https://ghp_secret123#en@github.com/org/docs#main'],
+      ['urls', 'https://hunter2#x@docs.example.com/page'],
+    ] as const) {
+      let message = '';
+      try {
+        validateLinkInput({
+          label: 'Docs',
+          kind,
+          locator,
+          ...(kind === 'mcp' ? { serverKind: 'confluence' as const } : {}),
+        });
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message, locator).toContain('must not carry a user name or password');
+      for (const secret of ['glpat-abc', 'ghp_secret123', 'hunter2', 'oauth2', 'deploy', 'svc']) {
+        expect(message).not.toContain(secret);
+      }
+    }
+  });
+
   it("refuses a plain HTTP MCP locator except Day0's own component, before a secret is stored (M16)", (): void => {
     const mcp = (locator: string) => (): unknown =>
       validateLinkInput({ label: 'Docs', kind: 'mcp', locator, serverKind: 'confluence' });
@@ -327,6 +354,21 @@ describe('documentation sources in real mode', (): void => {
     ).resolves.toEqual([]);
   });
 
+  it('refuses a git locator carrying a token at link, so no row stores it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.action(api.docSources.link, {
+        label: 'Runbooks',
+        kind: 'git',
+        locator: 'https://oauth2:glpat-abc@github.com/team/docs#main',
+      }),
+    ).rejects.toThrow('must not carry a user name or password');
+    await expect(owner.query(api.docSources.listMine, {})).resolves.toEqual([]);
+  });
+
   it('persists only a credential id on an authenticated source', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -514,6 +556,7 @@ describe('documentation sources in real mode', (): void => {
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
+      syncRunId: runId,
       ref: 'new-one.md',
       title: 'New one',
       markdown: '# New one',
@@ -533,6 +576,7 @@ describe('documentation sources in real mode', (): void => {
     await expect(rowsForSource(harness, sourceId)).resolves.toMatchObject({ pages: 2 });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
+      syncRunId: runId,
       ref: 'new-two.md',
       title: 'New two',
       markdown: '# New two',
@@ -584,12 +628,17 @@ describe('documentation sources in real mode', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
-    await harness.mutation(internal.docSources.upsertPage, {
-      sourceId,
-      ref: 'page.md',
-      title: 'Finance handbook',
-      markdown: '- Channels: #finance-close',
-      updatedAt: 2,
+    // The page as an earlier sync left it.
+    await harness.run(async (ctx) => {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'page.md'))
+        .unique();
+      await ctx.db.patch(page!._id, {
+        title: 'Finance handbook',
+        markdown: '- Channels: #finance-close',
+        updatedAt: 2,
+      });
     });
     const surfaceId = await harness.run(
       async (ctx) =>
@@ -620,6 +669,7 @@ describe('documentation sources in real mode', (): void => {
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
+      syncRunId: runId,
       ref: 'page.md',
       title: 'Finance handbook',
       markdown: '- Channels: #ops-requests',
@@ -783,4 +833,35 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
   ).not.toHaveProperty('status');
   await harness.mutation(internal.docSources.finishSync, finish);
   expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(surface);
+});
+
+describe('the sync generation fence on pages (step 14)', (): void => {
+  it('refuses a page from a generation a newer sync superseded and writes the running one’s', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const stale = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const current = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = { sourceId, ref: 'late.md', title: 'Late', markdown: '# Late', updatedAt: 2 };
+
+    await expect(
+      harness.mutation(internal.docSources.upsertPage, { ...page, syncRunId: stale }),
+    ).rejects.toThrow('superseded by a newer one');
+    await expect(rowsForSource(harness, sourceId)).resolves.toMatchObject({ pages: 1 });
+
+    await harness.mutation(internal.docSources.upsertPage, { ...page, syncRunId: current });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId: current,
+      refs: ['page.md', 'late.md'],
+      credentialRefs: [],
+      pageCount: 2,
+      redactionCount: 0,
+    });
+    // Completed, the generation no longer writes either.
+    await expect(
+      harness.mutation(internal.docSources.upsertPage, { ...page, syncRunId: current }),
+    ).rejects.toThrow('superseded by a newer one');
+    await expect(rowsForSource(harness, sourceId)).resolves.toMatchObject({ pages: 2 });
+  });
 });

@@ -339,20 +339,3 @@ setup starts it, because a skill that was never verified stays uncallable;
 `DAYTONA_API_KEY` replaces it with the hosted sandbox. Both are described where
 they are set up, in the repository README; neither is a way for day0 to reach
 one of your systems, which is what the components above are for.
-
-## Rehearsing the real path
-
-`pnpm rehearse:real` is not a component but it starts them: a fresh clone in
-its own compose project with the `real`, `sandbox`, `browser`, `demo` and
-`redactor` profiles (no Notion, so one token fewer in the bed), your `docs-local`
-folder mounted read-only, and the Linear key and Slack bot token typed into the
-connection cards by a browser from a separate 0600 secrets file. `--dry-run`
-stops at the first provider write, after the bring-up, the 1:1, the charter,
-orientation and the cards; a live run assigns the demonstration ticket, drives
-the work through the dashboard, checks the ledger and attempts to undo attributable writes
-before it removes the project and the clone. Deletion requires this work item's
-server provenance; state restoration requires a matching successful receipt or
-the provider's own history showing this run's key made the move, and an
-assignment changed by someone else is left alone. Unknown effects need
-reconciliation. Use the demonstration ticket exclusively during the run. `--warm-from <project>` copies the
-redactor's wheel and model volumes from a project that already has them.

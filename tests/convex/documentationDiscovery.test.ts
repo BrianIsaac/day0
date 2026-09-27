@@ -1,11 +1,12 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 interface SeededDiscovery {
   agentId: Id<'agents'>;
@@ -122,8 +123,16 @@ const convergedSlack = {
   mergedNames: ['Slack Web API'],
 };
 
+// The mode is set here, never read from the shell, and the orientation jobs a
+// discovery schedules wait on the faked clock instead of running mid-test (P11-1).
+beforeEach((): void => {
+  useSurfaceMode('mock');
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+});
+
 afterEach((): void => {
   vi.useRealTimers();
+  restoreSurfaceMode();
 });
 
 describe('documentation discovery lifecycle', (): void => {

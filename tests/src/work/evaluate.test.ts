@@ -9,14 +9,26 @@ import {
 } from '../../../src/work/evaluate';
 import type { AgentContext, WorkCandidate } from '../../../src/work/types';
 
-const model = vi.hoisted(() => ({ calls: [] as string[] }));
+const model = vi.hoisted(() => ({
+  calls: [] as string[],
+  /** Thrown by the charter scope judgement instead of an answer. */
+  scopeFailure: undefined as Error | undefined,
+}));
+
+const { schemaChecked } = await vi.hoisted(async () => await import('../../convex/fakes/mastra'));
 
 vi.mock('../../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string } }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     model.calls.push(args.agent.name);
-    return { inScope: true, fit: true, reason: 'inside the role' };
-  },
+    if (model.scopeFailure) throw model.scopeFailure;
+    return {
+      inScope: true,
+      fit: true,
+      reason: 'inside the role',
+      exclusion: { kind: 'none', quote: '' },
+    };
+  }),
 }));
 
 const NOW = Date.parse('2026-08-26T12:00:00.000Z');
@@ -122,6 +134,24 @@ function lookups(
 describe('work surface enablement', (): void => {
   beforeEach((): void => {
     model.calls.length = 0;
+    model.scopeFailure = undefined;
+  });
+
+  it('defers a real-mode candidate whose scope call fails, under autonomy too, before reading a grant or a skill', async (): Promise<void> => {
+    model.scopeFailure = new Error('provider answered 503');
+    const hasGrantForScope = vi.fn(async (): Promise<boolean> => true);
+    const reads = lookups(hasGrantForScope);
+    const findMatchingSkill = vi.spyOn(reads, 'findMatchingSkill');
+
+    await expect(
+      evaluateCandidate(candidate(), context('real', [surface('linear')], true), reads),
+    ).resolves.toEqual({
+      decision: 'defer',
+      reason: 'scope-judgement-unavailable',
+      cause: 'provider answered 503',
+    });
+    expect(hasGrantForScope).not.toHaveBeenCalled();
+    expect(findMatchingSkill).not.toHaveBeenCalled();
   });
 
   it('asks the charter judgement once for a real-mode candidate and never in mock mode', async (): Promise<void> => {
@@ -163,7 +193,9 @@ describe('work surface enablement', (): void => {
       operation: 'comment-and-close',
     });
     expect(verdict.suggestedSkillName).not.toContain(ticket.externalId.toLowerCase());
-    expect(verdict.suggestedSkillRationale).toContain('ticket comment-and-close on a kanban surface');
+    expect(verdict.suggestedSkillRationale).toContain(
+      'ticket comment-and-close on a kanban surface',
+    );
     expect(verdict.suggestedSkillRationale).toContain(`"${ticket.title}"`);
     expect(verdict.suggestedSkillRationale).not.toContain(charter.proposedFunction);
     expect(verdict.suggestedSkillRationale).not.toContain('Charter');
@@ -434,18 +466,16 @@ describe('work surface enablement', (): void => {
         decision: 'skip',
         reason: 'out-of-scope: no charter or current documented-system overlap',
       });
-      await expect(
-        evaluateCandidate(work, context('mock', []), lookups()),
-      ).resolves.toMatchObject({ decision: 'skip' });
+      await expect(evaluateCandidate(work, context('mock', []), lookups())).resolves.toMatchObject({
+        decision: 'skip',
+      });
     });
   });
 
   it('leaves the eligibility rule out once the manager has waived it, in either mode', async (): Promise<void> => {
     const work = candidate('ticket', 'Reserve the venue and confirm the catering headcount.');
     work.title = 'Book the offsite venue';
-    await expect(
-      evaluateCandidate(work, context('mock', []), lookups()),
-    ).resolves.toEqual({
+    await expect(evaluateCandidate(work, context('mock', []), lookups())).resolves.toEqual({
       decision: 'skip',
       reason: 'out-of-scope: no charter or current documented-system overlap',
     });
@@ -459,7 +489,11 @@ describe('work surface enablement', (): void => {
         { ...context('real', [surface('linear', 'absent')]), scopeWaived: true },
         lookups(),
       ),
-    ).resolves.toEqual({ decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' });
+    ).resolves.toEqual({
+      decision: 'defer',
+      reason: 'awaiting-connection',
+      missingSurface: 'linear',
+    });
   });
 
   it('does not use retired documentation evidence to widen charter scope', async (): Promise<void> => {

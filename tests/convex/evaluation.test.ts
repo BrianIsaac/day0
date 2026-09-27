@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { convexTest } from 'convex-test';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -36,7 +36,16 @@ const tasks = [
   },
 ];
 
-afterEach((): void => restoreSurfaceMode());
+// A deploy schedules the documentation mirror; it waits on the faked clock
+// instead of running on the real one mid-test (P11-1).
+beforeEach((): void => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+});
+
+afterEach((): void => {
+  vi.useRealTimers();
+  restoreSurfaceMode();
+});
 
 describe('evaluation backend boundary', (): void => {
   it('seeds fixed tasks idempotently and returns owner-scoped grader state', async (): Promise<void> => {

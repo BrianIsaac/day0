@@ -10,6 +10,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
@@ -75,6 +76,7 @@ import {
   withBrowserComponentState,
 } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { skillBodyHash } from '../src/work/skill-body';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
 import {
   INTERRUPTED_APPLY_REASON,
@@ -348,30 +350,85 @@ async function rememberExternalAlias(
 }
 
 /** The ticket as a listing showed it, for the re-read before apply to compare with. */
-const trackerSnapshot = v.object({
-  assigned: v.boolean(),
-  assigneeId: v.optional(v.string()),
-  assigneeEmail: v.optional(v.string()),
-  state: v.optional(v.string()),
-  stateType: v.optional(v.string()),
-  doNotAutomate: v.boolean(),
-});
+const trackerSnapshot = ticketSnapshotValidator;
 
-/** The event that keeps each listing's snapshot of a ticket. */
+/** The event that keeps each listing's snapshot of a ticket in the live feed. */
 export const WORK_LISTED_EVENT = 'work.listed';
 
 /** A listing as it was kept: the ticket, and why intake refused it on that poll, if it did. */
 interface KeptListing {
   readonly tracker: TicketSnapshot;
   readonly refused?: string;
+  readonly listedAt: number;
+}
+
+/** A work item as the listing reads need it. */
+type ListedItem = Pick<Doc<'workItems'>, '_id' | 'agentId' | '_creationTime'>;
+
+/**
+ * How many of an agent's discoveries at or after an item's creation the
+ * first-listing read looks through. The discovery is written in the same
+ * transaction as the row, so it is among the first few.
+ */
+const DISCOVERY_SCAN = 16;
+
+/**
+ * Keep one listing of a ticket in `ticketListings`, unless the same moment
+ * is already kept for the item, so a copy made twice keeps one row.
+ *
+ * @returns Whether a row was written.
+ */
+export async function keepTicketListing(
+  ctx: MutationCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  listing: { tracker: TicketSnapshot; refused?: string; listedAt: number },
+): Promise<boolean> {
+  const kept = await ctx.db
+    .query('ticketListings')
+    .withIndex('by_work_item_listed_at', (q) =>
+      q.eq('workItemId', row._id).eq('listedAt', listing.listedAt),
+    )
+    .first();
+  if (kept !== null) return false;
+  await ctx.db.insert('ticketListings', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    tracker: listing.tracker,
+    listedAt: listing.listedAt,
+    ...(listing.refused !== undefined ? { refused: listing.refused } : {}),
+  });
+  return true;
+}
+
+/**
+ * The listing an item's discovery kept. Every ticket's first listing rides on
+ * its `work.discovered` event, which is written with the row, so it is read
+ * from the agent's discoveries at or after the row's creation.
+ */
+async function discoveryListing(ctx: QueryCtx, row: ListedItem): Promise<KeptListing | undefined> {
+  const discoveries = await ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (q) =>
+      q
+        .eq('agentId', row.agentId)
+        .eq('type', 'work.discovered')
+        .gte('_creationTime', row._creationTime),
+    )
+    .take(DISCOVERY_SCAN);
+  const discovery = discoveries.find(
+    (event) => (event.payload as { workItemId?: unknown } | undefined)?.workItemId === row._id,
+  );
+  const tracker = (discovery?.payload as { tracker?: TicketSnapshot } | undefined)?.tracker;
+  return discovery && tracker ? { tracker, listedAt: discovery.createdAt } : undefined;
 }
 
 /**
  * The latest listing kept for an item, at or before a time.
  *
- * The read is the agent's listing events, newest first, down to the item's;
- * an item's listings are kept only when its ticket changed, so they are few,
- * and none is lost behind other tickets' listings.
+ * A later listing is a `ticketListings` row, read by the item's own index;
+ * the first rides on the discovery, and a refused ticket is never discovered.
+ * A listing kept only as a `work.listed` event before the table existed is
+ * found once the `ticket-listings` migration has copied it.
  *
  * @param row - The item and its agent.
  * @param before - The latest listing time that counts.
@@ -380,34 +437,34 @@ interface KeptListing {
  */
 async function keptListingAt(
   ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  row: ListedItem,
   before: number,
   acceptedOnly: boolean,
 ): Promise<KeptListing | undefined> {
-  // A later listing is its own event; the first rides on the discovery, and
-  // a refused ticket is never discovered.
-  for (const type of [WORK_LISTED_EVENT, 'work.discovered']) {
-    const listing = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
-      .order('desc')
-      .filter((q) =>
-        q.and(
-          q.eq(q.field('payload.workItemId'), row._id),
-          q.lte(q.field('createdAt'), before),
-          acceptedOnly ? q.eq(q.field('payload.refused'), undefined) : true,
-        ),
-      )
-      .first();
-    const payload = listing?.payload as Partial<KeptListing> | undefined;
-    if (payload?.tracker !== undefined) {
-      return {
-        tracker: payload.tracker,
-        ...(payload.refused !== undefined ? { refused: payload.refused } : {}),
-      };
-    }
+  const later = acceptedOnly
+    ? await ctx.db
+        .query('ticketListings')
+        .withIndex('by_work_item_refused_listed_at', (q) =>
+          q.eq('workItemId', row._id).eq('refused', undefined).lte('listedAt', before),
+        )
+        .order('desc')
+        .first()
+    : await ctx.db
+        .query('ticketListings')
+        .withIndex('by_work_item_listed_at', (q) =>
+          q.eq('workItemId', row._id).lte('listedAt', before),
+        )
+        .order('desc')
+        .first();
+  if (later !== null) {
+    return {
+      tracker: later.tracker,
+      listedAt: later.listedAt,
+      ...(later.refused !== undefined ? { refused: later.refused } : {}),
+    };
   }
-  return undefined;
+  const first = await discoveryListing(ctx, row);
+  return first !== undefined && first.listedAt <= before ? first : undefined;
 }
 
 /**
@@ -422,7 +479,7 @@ async function keptListingAt(
  */
 async function listedSnapshotAt(
   ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  row: ListedItem,
   before: number,
 ): Promise<TicketSnapshot | undefined> {
   return (await keptListingAt(ctx, row, before, true))?.tracker;
@@ -446,15 +503,16 @@ function sameSnapshot(left: TicketSnapshot, right: TicketSnapshot): boolean {
 /**
  * Keep the ticket as this listing showed it, when it differs from the last
  * listing kept or intake's refusal of it changed, so the re-read before
- * apply can tell what changed since the plan was made. The first listing is
- * kept on the discovery event, so the live feed gains a row only when a
- * ticket changes.
+ * apply can tell what changed since the plan was made. The listing goes to
+ * `ticketListings` and, as before, to the live feed as `work.listed`. The
+ * first listing is kept on the discovery event, so the feed gains a row only
+ * when a ticket changes.
  *
  * @param refused - Why intake refused the ticket on this poll, when it did.
  */
 async function recordListing(
   ctx: MutationCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  row: ListedItem,
   tracker: TicketSnapshot | undefined,
   refused?: string,
 ): Promise<void> {
@@ -468,6 +526,11 @@ async function recordListing(
   ) {
     return;
   }
+  await keepTicketListing(ctx, row, {
+    tracker,
+    listedAt: now,
+    ...(refused !== undefined ? { refused } : {}),
+  });
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: WORK_LISTED_EVENT,
@@ -475,6 +538,17 @@ async function recordListing(
     createdAt: now,
   });
 }
+
+/**
+ * How many of an agent's Retries since a plan the acknowledged-listing read
+ * looks through. A Retry of this item further back than that reads as no
+ * Retry, so the re-read compares with the planned listing alone, the stricter
+ * of the two.
+ */
+const RETRY_SCAN = 200;
+
+/** How far `_creationTime` may sit before an event's own `createdAt` stamp. */
+const CREATION_TIME_SLACK_MS = 1_000;
 
 /**
  * The ticket as the listing a plan was made under showed it (the latest
@@ -491,17 +565,25 @@ export const listedSnapshot = internalQuery({
   ): Promise<{ planned: TicketSnapshot | null; acknowledged: TicketSnapshot | null }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return { planned: null, acknowledged: null };
-    const retry = await ctx.db
+    const retries = await ctx.db
       .query('events')
-      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', 'work.retry'))
+      .withIndex('by_agent_type', (q) =>
+        q
+          .eq('agentId', row.agentId)
+          .eq('type', 'work.retry')
+          .gt('_creationTime', args.before - CREATION_TIME_SLACK_MS),
+      )
       .order('desc')
-      .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
-      .first();
-    const retriedAt = retry && retry.createdAt > args.before ? retry.createdAt : undefined;
+      .take(RETRY_SCAN);
+    const retry = retries.find(
+      (event) =>
+        (event.payload as { workItemId?: unknown } | undefined)?.workItemId === args.workItemId &&
+        event.createdAt > args.before,
+    );
     return {
       planned: (await listedSnapshotAt(ctx, row, args.before)) ?? null,
       acknowledged:
-        retriedAt === undefined ? null : ((await listedSnapshotAt(ctx, row, retriedAt)) ?? null),
+        retry === undefined ? null : ((await listedSnapshotAt(ctx, row, retry.createdAt)) ?? null),
     };
   },
 });
@@ -1053,6 +1135,12 @@ const NEVER_CLAIMED_DEAD_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Se
 /** The most work items read for one provider item: one per employee that discovered it. */
 const DISCOVERED_FROM_LIMIT = 32;
 
+/** Why an execution is not claimed with a skill a Revise has cleared. */
+const SKILL_UNDER_REVISION_REASON = 'the skill is being revised; it runs once it registers again';
+
+/** The verdicts that park a row until a skill or a connection arrives; they check the claim and take none. */
+const PARKING_DECISIONS: ReadonlySet<string> = new Set(['needs-skill', 'defer']);
+
 /**
  * The owner and key a row's provider item is claimed under, if it is claimed at all.
  *
@@ -1084,15 +1172,67 @@ async function externalClaimScope(
   return key === undefined ? undefined : { userId: agent.userId, key };
 }
 
+/** Another work item holding a row's provider item, and the state it is in. */
+interface HeldElsewhere {
+  readonly holder: ClaimHolder;
+  readonly state: string;
+}
+
+/**
+ * Read the live claims on a row's provider item: the row's own, another work
+ * item's, or none. A live claim whose holder is gone, cancelled or skipped
+ * is released here, with what it refused, so a release some path missed
+ * cannot keep the item from the company for good.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item asking.
+ *   scope: The owner and key the row's item is claimed under.
+ *   now: The time of the read.
+ *
+ * Returns:
+ *   'own' when the row holds the claim, the holder when another work item
+ *   does, undefined when nobody does.
+ */
+async function liveClaimOn(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  scope: { userId: string; key: string },
+  now: number,
+): Promise<'own' | HeldElsewhere | undefined> {
+  const live = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_user_key', (q) => q.eq('userId', scope.userId).eq('key', scope.key))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of live) {
+    if (claim.workItemId === row._id) return 'own';
+    const holding = await ctx.db.get(claim.workItemId);
+    if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) {
+      await releaseClaim(ctx, claim, now);
+      continue;
+    }
+    const agent = await ctx.db.get(claim.agentId);
+    return {
+      holder: {
+        claimId: claim._id,
+        agentId: claim.agentId,
+        workItemId: claim.workItemId,
+        name: agent?.name ?? 'another employee',
+        title: holding.title,
+      },
+      state: holding.state,
+    };
+  }
+  return undefined;
+}
+
 /**
  * Take the owner-wide claim on a row's provider item, or name who holds it.
  *
  * The read of the live claims and the insert share the claiming
  * transaction, and Convex serialises transactions that touch the same index
- * range, so of two verdicts on one item exactly one inserts. A live claim
- * whose holder is gone, cancelled or skipped is released here, with what it
- * refused, so a release some path missed cannot keep the item from the
- * company for good.
+ * range, so of two verdicts on one item exactly one inserts.
  *
  * Args:
  *   ctx: Mutation context.
@@ -1107,31 +1247,12 @@ async function takeExternalClaim(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   now: number,
-): Promise<{ key: string; heldBy?: { holder: ClaimHolder; state: string } } | undefined> {
+): Promise<{ key: string; heldBy?: HeldElsewhere } | undefined> {
   const scope = await externalClaimScope(ctx, row);
   if (!scope) return undefined;
-  const live = await ctx.db
-    .query('externalClaims')
-    .withIndex('by_user_key', (q) => q.eq('userId', scope.userId).eq('key', scope.key))
-    .filter((q) => q.eq(q.field('releasedAt'), undefined))
-    .collect();
-  for (const claim of live) {
-    if (claim.workItemId === row._id) return { key: scope.key };
-    const holding = await ctx.db.get(claim.workItemId);
-    if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) {
-      await releaseClaim(ctx, claim, now);
-      continue;
-    }
-    const agent = await ctx.db.get(claim.agentId);
-    const holder: ClaimHolder = {
-      claimId: claim._id,
-      agentId: claim.agentId,
-      workItemId: claim.workItemId,
-      name: agent?.name ?? 'another employee',
-      title: holding.title,
-    };
-    return { key: scope.key, heldBy: { holder, state: holding.state } };
-  }
+  const live = await liveClaimOn(ctx, row, scope, now);
+  if (live === 'own') return { key: scope.key };
+  if (live) return { key: scope.key, heldBy: live };
   await ctx.db.insert('externalClaims', {
     userId: scope.userId,
     key: scope.key,
@@ -1141,6 +1262,56 @@ async function takeExternalClaim(
     claimedAt: now,
   });
   return { key: scope.key };
+}
+
+/**
+ * The other work item holding a row's provider item, without taking a claim.
+ *
+ * What a row that is not about to work the item asks: one whose evaluation
+ * has not begun, so a colleague's hold costs no model call (P8-2), and one
+ * parked for a skill or a connection, so its manager is never asked to
+ * approve a skill for an item a colleague already works. A parked row takes
+ * no claim of its own, so a colleague who can do the work still can.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item asking.
+ *   now: The time of the read.
+ *
+ * Returns:
+ *   The key and the holder, or undefined when the row takes no claim or
+ *   nobody else holds the item.
+ */
+async function externalClaimHeldElsewhere(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<{ key: string; heldBy: HeldElsewhere } | undefined> {
+  const scope = await externalClaimScope(ctx, row);
+  if (!scope) return undefined;
+  const live = await liveClaimOn(ctx, row, scope, now);
+  return live === undefined || live === 'own' ? undefined : { key: scope.key, heldBy: live };
+}
+
+/**
+ * Record that a row was refused the item another work item holds.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The refused work item.
+ *   refused: The claim key and who holds it.
+ */
+async function logClaimRefused(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  refused: { key: string; holder: ClaimHolder },
+): Promise<void> {
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.claim-refused',
+    payload: { workItemId: row._id, key: refused.key, holder: refused.holder },
+    createdAt: Date.now(),
+  });
 }
 
 /**
@@ -1994,14 +2165,18 @@ export async function applyVerdict(
 
   // One work item holds each provider item across the owner's employees: the
   // claim is taken here, in the claiming transaction, or the verdict becomes
-  // a skip naming who holds it.
+  // a skip naming who holds it. A verdict that parks the row for a skill or a
+  // connection takes nothing, but a colleague's hold still skips it.
   let refused: { key: string; holder: ClaimHolder } | undefined;
-  if (effective.decision === 'claim') {
-    const taken = await takeExternalClaim(ctx, row, Date.now());
-    if (taken?.heldBy) {
-      effective = claimRefusedVerdict(row, taken.heldBy.holder, taken.heldBy.state);
-      refused = { key: taken.key, holder: taken.heldBy.holder };
-    }
+  const claimRead =
+    effective.decision === 'claim'
+      ? await takeExternalClaim(ctx, row, Date.now())
+      : PARKING_DECISIONS.has(effective.decision)
+        ? await externalClaimHeldElsewhere(ctx, row, Date.now())
+        : undefined;
+  if (claimRead?.heldBy) {
+    effective = claimRefusedVerdict(row, claimRead.heldBy.holder, claimRead.heldBy.state);
+    refused = { key: claimRead.key, holder: claimRead.heldBy.holder };
   }
 
   // A verdict that waits on a surface or a grant was computed from reads taken
@@ -2064,14 +2239,7 @@ export async function applyVerdict(
       readmission.at,
     );
   }
-  if (refused) {
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.claim-refused',
-      payload: { workItemId, key: refused.key, holder: refused.holder },
-      createdAt: Date.now(),
-    });
-  }
+  if (refused) await logClaimRefused(ctx, row, refused);
   await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
@@ -3255,15 +3423,33 @@ export const cancelPlan = mutation({
 
 /**
  * Claim the evaluation or the draft of one row for the run about to make its
- * model call, in real mode; see `claimLoopStepInTransaction`.
+ * model call, in real mode; see `claimLoopStepInTransaction`. Internal. An
+ * evaluation whose item a colleague already holds is not claimed: the row is
+ * skipped naming the holder, with a `work.claim-refused` event, and no model
+ * call is made.
  */
 export const claimLoopStep = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     step: v.union(v.literal('evaluation'), v.literal('draft')),
   },
-  handler: async (ctx, args): Promise<StepClaim> =>
-    await claimLoopStepInTransaction(ctx, args.workItemId, args.step, Date.now()),
+  handler: async (ctx, args): Promise<StepClaim> => {
+    const now = Date.now();
+    if (args.step === 'evaluation') {
+      const row = await ctx.db.get(args.workItemId);
+      const held =
+        row?.state === 'discovered' ? await externalClaimHeldElsewhere(ctx, row, now) : undefined;
+      if (row && held) {
+        // Two employees on one project each paid a scope call for an item one
+        // of them already held (P8-2); the skip is written without one.
+        const skip = claimRefusedVerdict(row, held.heldBy.holder, held.heldBy.state);
+        await applyVerdict(ctx, row._id, skip);
+        await logClaimRefused(ctx, row, { key: held.key, holder: held.heldBy.holder });
+        return { claimed: false, reason: 'held-elsewhere' };
+      }
+    }
+    return await claimLoopStepInTransaction(ctx, args.workItemId, args.step, now);
+  },
 });
 
 /**
@@ -3291,6 +3477,9 @@ export const resumeStalledSteps = internalMutation({
  * unique per claim and derived from nothing the caller controls. Adapter
  * calls key their idempotency off it, so an external effect can be recognised
  * as already-applied if the run is interrupted before its completion lands.
+ * The event records the skill's registration time and the hash of its body,
+ * so the ledger says which body the run used; a skill sent back for revision
+ * is refused.
  */
 export const claimForExecution = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
@@ -3298,7 +3487,7 @@ export const claimForExecution = internalMutation({
     ctx,
     args,
   ): Promise<{ claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }> => {
-    const { item } = await assertSameAgent(ctx, args.workItemId, args.skillId);
+    const { item, skill } = await assertSameAgent(ctx, args.workItemId, args.skillId);
     if (item.state !== 'plan-approved') {
       return {
         claimed: false,
@@ -3308,10 +3497,20 @@ export const claimForExecution = internalMutation({
             : `workItem state is ${item.state}; expected plan-approved`,
       };
     }
+    // The executor picked from the registered list before this transaction;
+    // a Revise in between cleared the body the run would otherwise use (P8-8).
+    if (skill.state !== 'registered' || skill.body === '') {
+      return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
+    }
     const runId = await ctx.db.insert('events', {
       agentId: item.agentId,
       type: 'work.execution-claimed',
-      payload: { workItemId: args.workItemId, skillId: args.skillId },
+      payload: {
+        workItemId: args.workItemId,
+        skillId: args.skillId,
+        ...(skill.registeredAt !== undefined ? { skillRegisteredAt: skill.registeredAt } : {}),
+        skillBodyHash: skillBodyHash(skill.body),
+      },
       createdAt: Date.now(),
     });
     await ctx.db.patch(args.workItemId, {
@@ -3994,6 +4193,10 @@ function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
 /**
  * Schedule the apply for the row's current approved set, with its recovery timer.
  *
+ * This timer reschedules an apply that never started. An apply that started
+ * is covered by the timer its claim arms (`armApplySwitch`), so a start that
+ * comes late is measured from the claim, not from here.
+ *
  * Args:
  *   ctx: Mutation context.
  *   workItemId: The work item.
@@ -4006,10 +4209,29 @@ async function scheduleApply(
   phase: 'auto' | 'approved',
 ): Promise<void> {
   await ctx.scheduler.runAfter(0, internal.workActions.applyApprovedActions, { workItemId });
+  await armApplySwitch(ctx, workItemId, pendingRunId, phase);
+}
+
+/**
+ * Arm the apply's dead-man switch: `recoverInterruptedApply` after `APPLY_RECOVERY_MS`.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   workItemId: The work item.
+ *   pendingRunId: The run the approval belongs to.
+ *   phase: Which apply phase the switch guards.
+ */
+async function armApplySwitch(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  pendingRunId: Id<'events'>,
+  phase: 'auto' | 'approved',
+): Promise<void> {
   await ctx.scheduler.runAfter(APPLY_RECOVERY_MS, internal.work.recoverInterruptedApply, {
     workItemId,
     pendingRunId,
     phase,
+    fromTimer: true,
   });
 }
 
@@ -4711,6 +4933,9 @@ export const claimApprovedActions = internalMutation({
       applyAttemptId,
       applyClaimedAt: Date.now(),
     });
+    // The switch counts from the claim: an apply that started late still has
+    // its whole window before its outcomes are recorded as unknown (P9-1).
+    await armApplySwitch(ctx, args.workItemId, row.pendingRunId, autoPhase ? 'auto' : 'approved');
     const count = actionsOf(row.output).length;
     return {
       claimed: true,
@@ -4736,13 +4961,17 @@ export const claimApprovedActions = internalMutation({
  * safe to reschedule. Once an apply claim exists, the provider may already
  * have accepted a request, so recovery records every outcome of this phase
  * as unknown, keeps what an earlier phase already recorded, and refuses
- * automatic replay.
+ * automatic replay. A timer that fires on a claim younger than
+ * `APPLY_RECOVERY_MS` leaves it alone: that claim armed its own timer. The
+ * apply action's own failure calls this without `fromTimer` and is acted on
+ * at once.
  */
 export const recoverInterruptedApply = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     pendingRunId: v.id('events'),
     phase: v.union(v.literal('auto'), v.literal('approved')),
+    fromTimer: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -4759,6 +4988,9 @@ export const recoverInterruptedApply = internalMutation({
       return { recovered: 'rescheduled' };
     }
     if (row.state !== 'executing' || !row.applyAttemptId || !row.applyClaimedAt) {
+      return { recovered: 'ignored' };
+    }
+    if (args.fromTimer && Date.now() - row.applyClaimedAt < APPLY_RECOVERY_MS) {
       return { recovered: 'ignored' };
     }
     const output = (row.output ?? {}) as {
@@ -4835,12 +5067,15 @@ export const setProposedSkill = internalMutation({
 
 const OPEN_CLAIM_STATES = new Set<string>(OPEN_WORK_STATES);
 
+/**
+ * The employee's rows holding a slot, counted up to the largest cap.
+ *
+ * Read state by state through the index, so the employee's closed rows and
+ * their outputs are never read: every caller compares the count with a cap
+ * no larger than `AUTONOMOUS_WIP_LIMIT` (P9-1).
+ */
 async function countOpenForAgentImpl(ctx: QueryCtx, agentId: Id<'agents'>): Promise<number> {
-  const open = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
-    .collect();
-  return open.filter((w) => OPEN_CLAIM_STATES.has(w.state)).length;
+  return await openSlotCount(ctx, agentId, Math.max(AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT));
 }
 
 async function findExistingClaimImpl(

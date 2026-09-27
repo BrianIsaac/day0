@@ -71,6 +71,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
         retries: 0,
         durationMs: 1_250,
         outcome: 'ok',
+        structuredMode: 'native',
       },
     ]);
   });
@@ -99,6 +100,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
         retries: 2,
         durationMs: 6_000,
         outcome: 'ok',
+        structuredMode: 'native',
       },
     ]);
   });
@@ -156,6 +158,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
         durationMs: MODEL_CALL_TIMEOUT_MS,
         outcome: 'timed-out',
         errorName: 'TimeoutError',
+        structuredMode: 'native',
       },
     ]);
   });
@@ -334,10 +337,10 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     await observeModelCalls((report) => { seen.push(report); }, async () => {
       vi.resetModules();
       const fresh = await import('../../../src/lib/model-call-telemetry');
-      await fresh.reportModelCall('inside', 1, Date.now(), 0);
+      await fresh.reportModelCall({ agent: 'inside', attempts: 1, startedAt: Date.now(), providerCalls: 0 });
     });
     const fresh = await import('../../../src/lib/model-call-telemetry');
-    await fresh.reportModelCall('outside', 1, Date.now(), 0);
+    await fresh.reportModelCall({ agent: 'outside', attempts: 1, startedAt: Date.now(), providerCalls: 0 });
     expect(seen.map((report) => report.agent)).toEqual(['inside']);
   });
 
@@ -350,7 +353,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
         globals[key] = new AsyncLocalStorage();
         vi.resetModules();
         const fresh = await import('../../../src/lib/model-call-telemetry');
-        await expect(fresh.reportModelCall('lost-observer', 1, Date.now(), 0)).rejects.toThrow(
+        await expect(fresh.reportModelCall({ agent: 'lost-observer', attempts: 1, startedAt: Date.now(), providerCalls: 0 })).rejects.toThrow(
           'model-call observer missing',
         );
       });
@@ -361,7 +364,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
   });
 
   it('does not print a failing observer error body', async (): Promise<void> => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation((): void => {});
+    const warning = vi.spyOn(console, 'log').mockImplementation((): void => {});
     await expect(observeModelCalls(async () => {
       throw new Error(`ledger rejected ${secretToken}`);
     }, () => withModelRetry('observer-failure', async () => 'ok'))).resolves.toBe('ok');
@@ -502,5 +505,158 @@ describe('replies the provider did not finish', (): void => {
     const agent = { name: 'day0-good-habits', generate } as unknown as Agent;
 
     await expect(agentText({ agent, user: 'distil' })).rejects.toBeInstanceOf(ModelReplyCutError);
+  });
+});
+
+describe('the structured-output mode on the report', (): void => {
+  it('says which rung produced each object, and marks the call that moved the agent to the prompt rung', async (): Promise<void> => {
+    vi.spyOn(console, 'log').mockImplementation((): void => {});
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({ finishReason: 'stop', text: 'Sure! Here is prose.' })
+      .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' })
+      .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
+    const agent = { name: 'day0-mode-flip', generate } as unknown as Agent;
+
+    const { reports } = await collect(async () => {
+      await agentJson({ agent, user: SECRET_PROMPT, schema: {} });
+      await agentJson({ agent, user: SECRET_PROMPT, schema: {} });
+    });
+
+    const call = {
+      agent: 'day0-mode-flip',
+      attempts: 1,
+      retries: 0,
+      durationMs: expect.any(Number),
+    };
+    expect(reports).toEqual([
+      {
+        ...call,
+        outcome: 'failed',
+        errorName: 'StructuredOutputMissingError',
+        structuredMode: 'native',
+      },
+      { ...call, outcome: 'ok', structuredMode: 'prompt', fellBack: true, demoted: true },
+      { ...call, outcome: 'ok', structuredMode: 'prompt' },
+    ]);
+  });
+
+  it('marks a fallback that proved nothing without calling it a demotion', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation((): void => {});
+    vi.spyOn(console, 'log').mockImplementation((): void => {});
+    const busy = Object.assign(new Error('busy'), {
+      statusCode: 503,
+      requestBodyValues: { response_format: { type: 'json_schema' } },
+    });
+    const generate = vi
+      .fn()
+      .mockRejectedValueOnce(busy)
+      .mockRejectedValueOnce(busy)
+      .mockRejectedValueOnce(busy)
+      .mockRejectedValueOnce(busy)
+      .mockRejectedValueOnce(busy)
+      .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
+    const agent = { name: 'day0-busy-native', generate } as unknown as Agent;
+
+    const pending = collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }));
+    for (const delay of [2_000, 4_000, 8_000, 16_000]) await vi.advanceTimersByTimeAsync(delay);
+    const { reports } = await pending;
+
+    expect(reports.at(-1)).toMatchObject({
+      outcome: 'ok',
+      structuredMode: 'prompt',
+      fellBack: true,
+    });
+    expect(reports.at(-1)).not.toHaveProperty('demoted');
+  });
+
+  it('keeps the class of a typed model failure and nothing of its text', async (): Promise<void> => {
+    const generate = vi
+      .fn()
+      .mockResolvedValue({ finishReason: 'length', text: `${SECRET_PROMPT} {"a":` });
+    const agent = { name: 'day0-cut-reply', generate } as unknown as Agent;
+
+    const { reports } = await collect(() =>
+      agentText({ agent, user: SECRET_PROMPT }).catch(() => undefined),
+    );
+
+    expect(reports).toEqual([
+      expect.objectContaining({ outcome: 'failed', errorName: 'ModelReplyCutError' }),
+    ]);
+    expect(JSON.stringify(reports)).not.toContain(secretToken);
+  });
+});
+
+describe('the bill on the report', (): void => {
+  it("puts the provider's token usage on each call's report, the attempt with no object included", async (): Promise<void> => {
+    vi.spyOn(console, 'log').mockImplementation((): void => {});
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        finishReason: 'stop',
+        text: 'Sure! Here is prose.',
+        totalUsage: { inputTokens: 1_200, outputTokens: 40, totalTokens: 1_240 },
+      })
+      .mockResolvedValueOnce({
+        object: { ok: true },
+        finishReason: 'stop',
+        usage: {
+          inputTokens: 1_500,
+          outputTokens: 60,
+          totalTokens: 1_560,
+          cachedInputTokens: 1_024,
+        },
+      });
+    const agent = { name: 'day0-metered', generate } as unknown as Agent;
+
+    const { reports } = await collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }));
+
+    expect(
+      reports.map(({ inputTokens, outputTokens, cachedInputTokens }) => ({
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+      })),
+    ).toEqual([
+      { inputTokens: 1_200, outputTokens: 40, cachedInputTokens: undefined },
+      { inputTokens: 1_500, outputTokens: 60, cachedInputTokens: 1_024 },
+    ]);
+  });
+
+  it('leaves the token fields off when the provider reported no usage', async (): Promise<void> => {
+    const generate = vi.fn().mockResolvedValue({ text: 'done' });
+    const agent = { name: 'day0-unmetered-provider', generate } as unknown as Agent;
+
+    const { reports } = await collect(() => agentText({ agent, user: SECRET_PROMPT }));
+
+    expect(reports[0]).not.toHaveProperty('inputTokens');
+    expect(reports[0]).not.toHaveProperty('outputTokens');
+  });
+
+  it('logs the report of a call no loop step observes, and nothing of the prompt', async (): Promise<void> => {
+    const output = vi.spyOn(console, 'log').mockImplementation((): void => {});
+    const generate = vi.fn().mockResolvedValue({
+      text: 'done',
+      usage: { inputTokens: 900, outputTokens: 12, totalTokens: 912 },
+    });
+    const agent = { name: 'day0-orientation', generate } as unknown as Agent;
+
+    await agentText({ agent, user: SECRET_PROMPT });
+
+    const lines = output.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        level: 'info',
+        msg: 'model-call',
+        agent: 'day0-orientation',
+        outcome: 'ok',
+        inputTokens: 900,
+        outputTokens: 12,
+      }),
+    );
+    expect(JSON.stringify(lines)).not.toContain(secretToken);
   });
 });

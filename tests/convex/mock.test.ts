@@ -53,3 +53,48 @@ describe('mock documentation mirrors', (): void => {
     });
   });
 });
+
+describe('the sync generation fence on mirrors (step 14)', (): void => {
+  it('refuses a mirror from a superseded sync and writes the running sync’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await harness.run(async (ctx) => ({
+      sourceId: await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Team folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+      agentId: await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'mirror test',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      }),
+    }));
+    const stale = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const current = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const mirror = {
+      agentId,
+      slug: 'source-onboarding',
+      title: 'Onboarding',
+      body: '# Onboarding',
+      category: 'team-doc' as const,
+      sourceId,
+      sourceRef: 'onboarding.md',
+    };
+
+    await expect(
+      harness.mutation(internal.mock.upsertDoc, { ...mirror, syncRunId: stale }),
+    ).rejects.toThrow('superseded by a newer one');
+    expect(await harness.run(async (ctx) => await ctx.db.query('mockDocs').collect())).toEqual([]);
+
+    await harness.mutation(internal.mock.upsertDoc, { ...mirror, syncRunId: current });
+    expect(await harness.run(async (ctx) => await ctx.db.query('mockDocs').collect())).toEqual([
+      expect.objectContaining({ slug: 'source-onboarding', sourceRef: 'onboarding.md' }),
+    ]);
+  });
+});

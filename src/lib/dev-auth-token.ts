@@ -5,13 +5,19 @@ import {
   DEV_NO_AUTH_AUDIENCE,
   DEV_NO_AUTH_ISSUER,
   DEV_NO_AUTH_KEY_ID,
+  DEV_NO_AUTH_SESSION_CLAIM,
   DEV_NO_AUTH_SUBJECT,
 } from '@convex/devAuth';
 
 const TOKEN_LIFETIME_SECONDS = 3600;
 
-/** Mint the short-lived owner token used by no-auth development clients. */
-export async function mintDevNoAuthToken(): Promise<string> {
+/**
+ * Mint the short-lived owner token used by no-auth development clients.
+ *
+ * @param sessionId - The browser session the token is for, carried as `sid` so the
+ *   backend can tell two browsers of the one local owner apart.
+ */
+export async function mintDevNoAuthToken(sessionId?: string): Promise<string> {
   const key = await signingKey();
   const issuedAt = Math.floor(Date.now() / 1000);
 
@@ -22,6 +28,7 @@ export async function mintDevNoAuthToken(): Promise<string> {
     aud: DEV_NO_AUTH_AUDIENCE,
     iat: issuedAt,
     exp: issuedAt + TOKEN_LIFETIME_SECONDS,
+    ...(sessionId ? { [DEV_NO_AUTH_SESSION_CLAIM]: sessionId } : {}),
   };
 
   const signingInput = `${base64UrlText(JSON.stringify(header))}.${base64UrlText(JSON.stringify(payload))}`;

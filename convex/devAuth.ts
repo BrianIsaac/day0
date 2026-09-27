@@ -4,7 +4,7 @@
  * When it is on, Clerk is not involved. The deployment accepts one locally
  * issued token instead, and every caller who presents it resolves to one fixed
  * synthetic subject. Nothing downstream changes: `assertOwnsAgent` and friends
- * still compare `agent.userId` against `identity.subject`, rows are still
+ * still compare `agent.userId` against the caller's owner key, rows are still
  * stamped with a `userId`, and the per-user data model is untouched. There is
  * simply only ever one user.
  *
@@ -30,6 +30,8 @@
  * `src/lib/dev-auth-server.ts`.
  */
 
+import { presentHostedMarkers } from '../src/lib/hosted-markers';
+
 const FLAG = 'NEXT_PUBLIC_DEV_NO_AUTH';
 const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
 
@@ -44,26 +46,15 @@ export const DEV_NO_AUTH_AUDIENCE = 'day0-dev-no-auth';
 
 export const DEV_NO_AUTH_KEY_ID = 'day0-dev-no-auth';
 
-export const DEV_NO_AUTH_ALGORITHM = 'ES256';
-
 /**
- * Env names set by the platforms this could plausibly be deployed to by
- * accident. None of them can be true of a backend running on the operator's own
- * machine, so any of them present is a contradiction of no-auth mode. Possession
- * already holds without this check; it exists so a flag that reaches a hosted
- * deployment fails the push loudly instead of quietly configuring an issuer
- * nobody meant to run there.
+ * The claim a local token carries its browser's session id in, so the one
+ * subject every browser shares can still be told apart per browser. `sid` is
+ * the name OIDC session management gives the same fact, so the owner's ledger
+ * reads one claim whichever issuer signed the caller in.
  */
-const HOSTED_PLATFORM_MARKERS = [
-  'VERCEL',
-  'VERCEL_ENV',
-  'AWS_REGION',
-  'AWS_EXECUTION_ENV',
-  'KUBERNETES_SERVICE_HOST',
-  'FLY_APP_NAME',
-  'RENDER',
-  'DYNO',
-];
+export const DEV_NO_AUTH_SESSION_CLAIM = 'sid';
+
+export const DEV_NO_AUTH_ALGORITHM = 'ES256';
 
 /**
  * Reading an unset name can throw rather than return `undefined` depending on
@@ -94,9 +85,12 @@ export function devNoAuthProvider(): {
   applicationID: string;
   issuer: string;
   jwks: string;
-  algorithm: string;
+  algorithm: typeof DEV_NO_AUTH_ALGORITHM;
 } {
-  const hosted = HOSTED_PLATFORM_MARKERS.filter((name) => !!readEnv(name));
+  // Possession already holds without this check; it exists so a flag that
+  // reaches a hosted deployment fails the push loudly instead of quietly
+  // configuring an issuer nobody meant to run there.
+  const hosted = presentHostedMarkers(readEnv);
   if (hosted.length > 0) {
     throw new Error(
       `${FLAG}=true serves every caller as one fixed user and is refused on this ` +
@@ -113,10 +107,11 @@ export function devNoAuthProvider(): {
         '`pnpm dev:no-auth-key` and then `./scripts/sync-convex-env.sh`.',
     );
   }
-  if (!jwks.startsWith('data:') && !jwks.startsWith('https://') && !jwks.startsWith('http://')) {
+  // Over plain http anyone on the path could hand the deployment their own key.
+  if (!jwks.startsWith('data:') && !jwks.startsWith('https://')) {
     throw new Error(
-      `${JWKS_VAR} must be a JWKS URI - either a data: URI holding the key set or a ` +
-        'URL serving one. Re-run `pnpm dev:no-auth-key` to regenerate it.',
+      `${JWKS_VAR} must be a data: URI or an https:// URL serving the key set. ` +
+        'Re-run `pnpm dev:no-auth-key` to regenerate it.',
     );
   }
 

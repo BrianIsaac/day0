@@ -1,6 +1,16 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FEATHERLESS_SETTINGS,
   parseSetupArguments,
@@ -18,6 +28,7 @@ import {
 import {
   cleanupCheckouts,
   harness,
+  IDENTITY_SETTINGS,
   ran,
   realRoute,
   SYNTHETIC_KEY,
@@ -436,5 +447,381 @@ describe('protected and read-only projects', (): void => {
     // /somewhere/else holds no checkout any more, so the way back is named.
     expect(h.output.join('\n')).toContain('--adopt');
     expect(ran(h)).not.toContain('down');
+  });
+});
+
+describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void => {
+  it('refuses a jump of more than one release before anything is pushed', async (): Promise<void> => {
+    const h = configured({ services: ['backend'], releaseStamp: '0.1.0' });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain("the deployment's rows are at 0.1.0, and 0.3.0 skips 0.2.0");
+    expect(printed).toContain('check out v0.2.0, upgrade, then come back');
+    expect(printed).toContain('keeps its functions, its env and its rows');
+    const lines = ran(h);
+    expect(lines).toContain('npx convex data deploymentVersions --limit 1 --format jsonl');
+    expect(lines).not.toContain('convex dev --once');
+    expect(lines).not.toContain('sync:env');
+    expect(lines).not.toContain('convex:restart');
+  });
+
+  it('refuses to push older functions over rows a newer release migrated', async (): Promise<void> => {
+    const h = configured({ services: ['backend'], releaseStamp: '0.4.0' });
+    writeFileSync(
+      join(h.directory, 'CHANGELOG.md'),
+      `## v0.4.0, a later day\n\n${readFileSync(join(h.directory, 'CHANGELOG.md'), 'utf8')}`,
+      'utf8',
+    );
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain("newer than this checkout's 0.3.0");
+    expect(ran(h)).not.toContain('convex dev --once');
+  });
+
+  it('pushes the functions, runs the migrations and stamps the release, then the env, and restarts only after', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      releaseStamp: '0.2.0',
+      migrationReports: [
+        '{"migrations":[{"name":"agents-owner","read":2,"changed":0}],"pending":["agents-inclusion-list"]}',
+        '{"migrations":[{"name":"skills-sandbox-id","read":9,"changed":4}],"pending":[]}',
+      ],
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('convex data deploymentVersions')).toBeLessThan(at('convex dev --once'));
+    expect(at('convex dev --once')).toBeLessThan(at('migrations:runPending'));
+    expect(at('migrations:runPending')).toBeLessThan(at('migrations:recordRelease'));
+    expect(at('migrations:recordRelease')).toBeLessThan(at('run sync:env'));
+    expect(at('run sync:env')).toBeLessThan(at('run convex:restart'));
+    expect(lines.filter((line) => line.includes('migrations:runPending'))).toHaveLength(2);
+    expect(lines[at('migrations:recordRelease')]).toContain('{"release":"0.3.0"}');
+    const printed = h.output.join('\n');
+    expect(printed).toContain('0.2.0 to 0.3.0');
+    expect(printed).toContain('migrated skills-sandbox-id: 4 row(s) changed');
+    expect(printed).toContain('2 agent(s) with no owner were left as they are');
+    expect(printed).toContain("the deployment's rows are at 0.3.0");
+  });
+
+  it('takes a deployment with rows and no stamp as the last unstamped release, and one never pushed to as new', async (): Promise<void> => {
+    const h = configured({ services: ['backend'], deploymentTables: ['agents', 'events'] });
+    expect(await runCommand(verb('resume'), h.io)).toBe(0);
+    expect(h.output.join('\n')).toContain('already at 0.3.0 (taken from its unstamped rows)');
+    expect(ran(h)).not.toContain('convex data deploymentVersions');
+
+    const empty = configured({ services: ['backend'] });
+    expect(await runCommand(verb('resume'), empty.io)).toBe(0);
+    expect(empty.output.join('\n')).toContain('a new volume, starting at 0.3.0');
+  });
+
+  it('leaves the old functions on the old env when the push is refused, and never restarts', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentTables: ['agents'],
+      failing: [{ match: 'convex dev --once', status: 1, stderr: 'Schema validation failed' }],
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('the old functions keep serving with the env they had');
+    const lines = ran(h);
+    expect(lines).not.toContain('sync:env');
+    expect(lines).not.toContain('convex:restart');
+    expect(lines).not.toContain('migrations:');
+  });
+
+  it('asks before --reset removes a volume with rows, and removes nothing when told no', async (): Promise<void> => {
+    const h = configured({ services: ['backend'], answers: ['n'] });
+    expect(await runSetup(realRoute({ reset: true, assumeYes: false }), h.io)).toBe(130);
+    expect(h.output.join('\n')).toContain(
+      '--reset removes day0-setup-test and its volumes, and with them every agent',
+    );
+    expect(ran(h)).not.toContain('down -v');
+    expect(h.volumes).toContain(`${PROJECT}_convex_data`);
+  });
+});
+
+/** The identity settings a completed `sync:env` leaves on the deployment. */
+const SYNCED_SETTINGS = {
+  NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+  DEV_NO_AUTH_JWKS: 'data:text/plain;base64,generated-jwks',
+};
+
+/**
+ * Evaluate `convex/auth.config.ts` as a push does, once per candidate set of
+ * deployment settings, and answer the harness's push from those verdicts. A
+ * push against settings not evaluated here fails the test.
+ */
+async function authConfigJudge(
+  candidates: readonly Record<string, string>[],
+): Promise<(settings: Readonly<Record<string, string>>) => string | undefined> {
+  const key = (settings: Readonly<Record<string, string>>): string =>
+    JSON.stringify(Object.entries(settings).sort(([a], [b]) => a.localeCompare(b)));
+  const verdicts = new Map<string, string | undefined>();
+  for (const candidate of candidates) {
+    for (const name of [...IDENTITY_SETTINGS, 'VERCEL', 'NEXT_PUBLIC_VERCEL_ENV']) {
+      vi.stubEnv(name, candidate[name] ?? '');
+    }
+    vi.resetModules();
+    try {
+      await import('../../convex/auth.config');
+      verdicts.set(key(candidate), undefined);
+    } catch (error) {
+      verdicts.set(key(candidate), error instanceof Error ? error.message : String(error));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+  return (settings) => {
+    const found = key(settings);
+    if (!verdicts.has(found)) throw new Error(`the auth config was not evaluated for ${found}`);
+    return verdicts.get(found);
+  };
+}
+
+describe('a rerun over a volume nothing was pushed to', (): void => {
+  it('refuses a push to a deployment with no identity provider, as the real auth config does', async (): Promise<void> => {
+    const judge = await authConfigJudge([{}, SYNCED_SETTINGS]);
+    expect(judge({})).toContain('no identity provider configured');
+    expect(judge(SYNCED_SETTINGS)).toBeUndefined();
+  });
+
+  it('completes on the second run after the first stopped before its push', async (): Promise<void> => {
+    const failing = [{ match: 'generate_admin_key.sh', status: 1, stderr: 'backend not ready' }];
+    const h = harness({
+      volumes: [...OTHERS],
+      services: ['backend'],
+      failing,
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      authConfig: await authConfigJudge([{}, SYNCED_SETTINGS]),
+    });
+    expect(await runSetup(realRoute(), h.io)).toBe(1);
+    expect(ran(h)).not.toContain('convex dev --once');
+
+    // Compose made the project's volumes at the first run's `up`.
+    h.volumes.push(...OWN_VOLUMES);
+    failing.length = 0;
+    h.commands.length = 0;
+    h.output.length = 0;
+    expect(await runSetup(realRoute(), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('npx convex data')).toBeLessThan(at('run sync:env'));
+    expect(at('run sync:env')).toBeLessThan(at('convex dev --once'));
+    expect(at('convex dev --once')).toBeLessThan(at('migrations:runPending'));
+    const printed = h.output.join('\n');
+    expect(printed).toContain('a new volume, starting at 0.3.0');
+    expect(printed).toContain('nothing was ever pushed here, so the env goes first');
+    expect(printed).toContain(
+      '    sync:env → convex dev --once → migrations → release:stamp → convex:restart → check:setup',
+    );
+  });
+
+  it('prints the whole of a refused push, not its last lines only', async (): Promise<void> => {
+    const errors = Array.from({ length: 20 }, (_, index) => `convex/x.ts(${index + 1},1): error`);
+    const h = configured({
+      services: ['backend'],
+      deploymentTables: ['agents'],
+      failing: [{ match: 'convex dev --once', status: 1, stderr: errors.join('\n') }],
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('convex/x.ts(1,1): error');
+  });
+
+  it('names pnpm sync:env when the auth config refuses the push', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentTables: ['agents'],
+      authConfig: await authConfigJudge([{}]),
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('InvalidAuthConfig');
+    expect(printed).toContain(
+      "The deployment's env names no identity provider, so its auth config refused the push. " +
+        '`pnpm sync:env` puts the one in .env.local on the deployment',
+    );
+  });
+});
+
+describe('backup, restore and upgrade (step 15)', (): void => {
+  /** A home directory outside the checkout for the default backup location. */
+  function home(): string {
+    return mkdtempSync(join(tmpdir(), 'day0-setup-home-'));
+  }
+
+  it('writes the data volume outside the checkout, with the backend stopped for the copy, a checksum and a manifest', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      releaseStamp: '0.3.0',
+    });
+    expect(await runCommand(verb('backup'), h.io)).toBe(0);
+    const directory = join(homeDirectory, 'day0-backups', PROJECT);
+    const [tar] = readdirSync(directory).filter((name) => name.endsWith('.tar.gz'));
+    expect(tar).toMatch(/^day0-setup-test-\d{8}T\d{6}Z\.tar\.gz$/);
+    const file = join(directory, tar!);
+    const digest = createHash('sha256').update(readFileSync(file)).digest('hex');
+    expect(readFileSync(`${file}.sha256`, 'utf8')).toBe(`${digest}  ${tar}\n`);
+    expect(JSON.parse(readFileSync(`${file}.json`, 'utf8'))).toMatchObject({
+      project: PROJECT,
+      volume: `${PROJECT}_convex_data`,
+      sha256: digest,
+      release: '0.3.0',
+      checkoutRelease: '0.3.0',
+    });
+    expect(statSync(`${file}.json`).mode & 0o777).toBe(0o600);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('stop backend')).toBeLessThan(at('tar czf'));
+    expect(at('tar czf')).toBeLessThan(at('start backend'));
+    expect(lines[at('tar czf')]).toContain(`${PROJECT}_convex_data:/from:ro`);
+    expect(h.output.join('\n')).toContain('DAY0_CREDENTIAL_KEY among it');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses a backup directory inside the checkout', async (): Promise<void> => {
+    const h = configured({ services: ['backend'] });
+    expect(await runCommand(verb('backup', { backupTo: 'backups' }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('is inside this checkout');
+    expect(ran(h)).not.toContain('tar czf');
+  });
+
+  it('restores a checked backup, adopts its credential key before the env sync, and resumes on it', async (): Promise<void> => {
+    const homeDirectory = home();
+    const taken = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('backup'), taken.io)).toBe(0);
+    const directory = join(homeDirectory, 'day0-backups', PROJECT);
+    const file = join(directory, readdirSync(directory).find((name) => name.endsWith('.tar.gz'))!);
+
+    const h = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: 'DAY0_CREDENTIAL_KEY=the-restored-key\nDAY0_SURFACE_MODE=real\n',
+      answers: ['y'],
+    });
+    writeEnvValues(join(h.directory, '.env.local'), { DAY0_CREDENTIAL_KEY: 'this-machines-key' });
+    expect(await runCommand(verb('restore', { restoreFrom: file, assumeYes: false }), h.io)).toBe(
+      0,
+    );
+    expect(h.output.join('\n')).toContain(`Replace ${PROJECT}_convex_data with`);
+    expect(readEnvValues(join(h.directory, '.env.local')).DAY0_CREDENTIAL_KEY).toBe(
+      'the-restored-key',
+    );
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    // What it replaces is backed up before anything is removed.
+    expect(at('tar czf')).toBeGreaterThan(-1);
+    expect(at('tar czf')).toBeLessThan(at(`volume rm ${PROJECT}_convex_data`));
+    expect(readdirSync(directory).filter((name) => name.endsWith('.tar.gz'))).toHaveLength(2);
+    expect(at('tar xzf')).toBeGreaterThan(at(`volume create`));
+    expect(at('tar xzf')).toBeLessThan(at('run sync:env'));
+    // Every profile but the test double comes up on the restored volume.
+    const upLines = lines.filter((line) => line.includes('run convex:up'));
+    expect(upLines).toHaveLength(1);
+    expect(upLines[0]).not.toContain('test');
+    expect(h.output.join('\n')).toContain("adopted the restored deployment's DAY0_CREDENTIAL_KEY");
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses to restore onto the test profile, or a backup whose checksum does not match', async (): Promise<void> => {
+    const homeDirectory = home();
+    const taken = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('backup'), taken.io)).toBe(0);
+    const directory = join(homeDirectory, 'day0-backups', PROJECT);
+    const file = join(directory, readdirSync(directory).find((name) => name.endsWith('.tar.gz'))!);
+
+    const test = configured({ services: ['backend'] });
+    writeEnvValues(join(test.directory, '.env.local'), {
+      DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/',
+    });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), test.io)).toBe(1);
+    expect(test.output.join('\n')).toContain('point Slack at the test double');
+    expect(ran(test)).not.toContain('volume rm');
+
+    writeFileSync(file, 'something else', 'utf8');
+    const tampered = configured({ services: ['backend'] });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), tampered.io)).toBe(1);
+    expect(tampered.output.join('\n')).toContain('does not match its checksum');
+    expect(ran(tampered)).not.toContain('volume rm');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('backs up, installs, then resumes, and stops before installing when the backup fails', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('tar czf')).toBeLessThan(at('pnpm install --frozen-lockfile'));
+    expect(at('pnpm install --frozen-lockfile')).toBeLessThan(at('convex dev --once'));
+
+    const failed = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      failing: [{ match: 'tar czf', status: 1, stderr: 'no space left on device' }],
+    });
+    expect(await runCommand(verb('upgrade'), failed.io)).toBe(1);
+    expect(failed.output.join('\n')).toContain('nothing is installed or pushed without a backup');
+    expect(ran(failed)).not.toContain('pnpm install');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses a backup when Docker cannot say whether the backend runs, rather than tar a live database', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      environment: { HOME: homeDirectory },
+      failing: [{ match: 'com.docker.compose.service', status: 1, stderr: 'daemon busy' }],
+    });
+    expect(await runCommand(verb('backup'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('a tar of a live database is not a backup');
+    expect(ran(h)).not.toContain('tar czf');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses an upgrade that would skip a release before it backs up or installs anything', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      releaseStamp: '0.1.0',
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('nothing was backed up, installed or pushed');
+    expect(ran(h)).not.toContain('tar czf');
+    expect(ran(h)).not.toContain('pnpm install');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('takes a backup whose stamp cannot be parsed, unlabelled, and restores past a manifest it cannot read', async (): Promise<void> => {
+    const homeDirectory = home();
+    const taken = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentTables: ['deploymentVersions'],
+    });
+    expect(await runCommand(verb('backup'), taken.io)).toBe(0);
+    const directory = join(homeDirectory, 'day0-backups', PROJECT);
+    const file = join(directory, readdirSync(directory).find((name) => name.endsWith('.tar.gz'))!);
+    expect(JSON.parse(readFileSync(`${file}.json`, 'utf8')).release).toBeUndefined();
+
+    writeFileSync(`${file}.json`, '{ not json', 'utf8');
+    const h = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), h.io)).toBe(0);
+    expect(ran(h)).toContain('tar xzf');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('reads backup, restore with its file, upgrade and --to from the command line', (): void => {
+    expect(parseSetupArguments(['backup', '--to', '/srv/backups'])).toMatchObject({
+      command: 'backup',
+      backupTo: '/srv/backups',
+    });
+    expect(parseSetupArguments(['restore', 'day0-1.tar.gz', '--yes'])).toMatchObject({
+      command: 'restore',
+      restoreFrom: 'day0-1.tar.gz',
+      assumeYes: true,
+    });
+    expect(parseSetupArguments(['upgrade']).command).toBe('upgrade');
+    expect(() => parseSetupArguments(['restore', 'a.tar.gz', 'b.tar.gz'])).toThrow('one backup');
   });
 });

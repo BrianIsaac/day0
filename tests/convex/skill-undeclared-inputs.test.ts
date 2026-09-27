@@ -20,13 +20,15 @@ const recorded = vi.hoisted(() => ({
   sandboxRuns: 0,
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async <T>(): Promise<T> => {
+  agentJson: schemaChecked(async (): Promise<unknown> => {
     const next = recorded.outputs.shift();
     if (!next) throw new Error('no authored output queued');
-    return next as T;
-  },
+    return next;
+  }),
   agentText: async (): Promise<string> => '',
 }));
 

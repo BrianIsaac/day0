@@ -463,7 +463,7 @@ export const DETAILED_SECTIONS: readonly DetailedSection[] = [
   {
     href: `${REPOSITORY_URL}#real-mode`,
     title: 'Real mode, what both local ways are',
-    body: 'The components, linking your documentation, the first day of decisions, the rehearsal and the teardown. Local only, and deliberately unreachable from a hosted deployment.',
+    body: 'The components, linking your documentation, the first day of decisions, one deployment per workspace and the teardown. Local only, and deliberately unreachable from a hosted deployment.',
   },
   {
     href: `${REPOSITORY_URL}#evaluation-and-the-mock-office`,

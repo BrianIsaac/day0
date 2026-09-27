@@ -1,12 +1,13 @@
-# The Slack asks, posted once by a person and left standing
+# The Slack asks, posted by a person during each sitting
 
 Kestrel Supply Co. is a synthetic company built for the Day0 demonstration; these asks are
 invented.
 
-The asks come from a person. The operator posts them once, as themselves, the way someone in the
-company would, and leaves them standing in the channels. They are never posted through the shared
-bot's token, by a script or under a borrowed display name: intake never reads anything the app
-itself posted, under any name, so an ask sent that way reaches nobody.
+The asks come from a person. The operator posts them during the sitting, as themselves, the way
+someone in the company would, once the three employees are deployed: a deployment takes no mention
+written before its agent was deployed, so an ask posted earlier is never read. They are never
+posted through the shared bot's token, by a script or under a borrowed display name: intake never
+reads anything the app itself posted, under any name, so an ask sent that way reaches nobody.
 
 Each ask mentions the shared bot. Type `@` and pick the bot by its Slack name, so Slack turns the
 mention into the bot's id; intake reads only messages that mention it.
@@ -17,36 +18,36 @@ mention into the bot's id; intake reads only messages that mention it.
 | 2 | `#finance-close` | @bot can you post where the September close stands? | finance close | `full` |
 | 3 | `#ops-requests` | @bot please refresh the pipeline tile to the standup figure | revenue operations; finance close and the logistics desk see it too and leave it | `full`, `one-each` |
 
-The last column is read by `pnpm bed:company check`: it names the sittings an ask stands for.
+The last column is read by `pnpm exec tsx scripts/bed/company.ts check`: it names the sittings
+that post an ask.
 
-## The full run: all three stand
+## The full run: all three
 
-- **Every new full-run deployment reads them by itself.** The first poll of a channel reads its
-  whole history, so a fresh bed takes up all three on its first poll, as soon as each employee's
-  Slack card is connected. Nobody posts anything before a run.
-- **Teardown leaves them alone.** `pnpm bed:company teardown` deletes only what the app posted
-  with a provenance trailer, which is the employees' replies under the asks. The asks are a
-  person's messages and stay.
-- **`pnpm bed:company check` expects all three.** It names each standing ask with its channel
-  and first words and says whether all three are present. A missing one, a second copy of one,
-  or any other message that mentions the bot is a gap.
+- **Post all three once the employees are deployed.** Each employee's first poll of a channel
+  reads from the moment it was deployed, so an ask posted after the deploy is taken up as soon as
+  that employee's Slack card is connected.
+- **Teardown leaves them alone.** `pnpm exec tsx scripts/bed/company.ts teardown` deletes only
+  what the app posted with a provenance trailer, which is the employees' replies under the asks.
+  The asks are a person's messages and stay; the next sitting's employees never read them.
+- **`pnpm exec tsx scripts/bed/company.ts check` names each ask to post** with its channel and
+  text. An ask or any other mention left from an earlier sitting is not a gap: no new deployment
+  reads it.
 
-## The one-task-each demo sitting: only ask 3 stands
+## The one-task-each demo sitting: only ask 3
 
 The demo sitting (`--set one-each`) is one task per employee. Revenue operations' task is ask 3,
 the `#ops-requests` ask, in place of the `revops-tile` Linear ticket, which that set does not
 file: the camera sees a Slack ask claimed by one employee, left at scope by the other two, and
 answered in its thread. Finance close and the logistics desk each work their Linear ticket.
-`pnpm bed:company seed --set one-each` still restarts the Looker pipeline tile at its starting
-figure; that reset belongs to the seed, not to any ticket.
+`pnpm exec tsx scripts/bed/company.ts seed --set one-each` still restarts the Looker pipeline
+tile at its starting figure; that reset belongs to the seed, not to any ticket.
 
-- **Before a demo sitting, delete asks 1 and 2 by hand** (`#revops-asks` and `#finance-close`).
-  Left standing, each would add an item on camera. Keep ask 3.
-- **`pnpm bed:company check --set one-each` expects exactly ask 3.** Its absence is a gap, and
-  any other standing message that mentions the bot, in `#revops-asks`, `#finance-close` or any
-  other bed channel, is a gap naming its channel and text.
-- **For the next full run, post asks 1 and 2 again**, once, as yourself. `pnpm bed:company check`
-  then finds all three.
+- **Post only ask 3**, once the employees are deployed. Asks 1 and 2 are not posted in this
+  sitting; their copies from an earlier sitting stay where they are, unread by any bed deployed
+  after them. A bed restored from a snapshot is the exception: it resumes from the snapshot's last
+  poll, so it reads every mention posted since, and asks left from a later sitting become work
+  for it.
+- **`pnpm exec tsx scripts/bed/company.ts check --set one-each` names only ask 3.**
 
-Post nothing else that mentions the bot in these five channels: a new deployment would read it as
-work.
+During a sitting, post nothing else that mentions the bot in these five channels: every employee
+deployed before it would read it as work.

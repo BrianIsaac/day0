@@ -30,6 +30,7 @@ import type * as intakeIdentity from "../intakeIdentity.js";
 import type * as managerChannelActions from "../managerChannelActions.js";
 import type * as managerQuestions from "../managerQuestions.js";
 import type * as metrics from "../metrics.js";
+import type * as migrations from "../migrations.js";
 import type * as mock from "../mock.js";
 import type * as mockSeed from "../mockSeed.js";
 import type * as onboarding from "../onboarding.js";
@@ -82,6 +83,7 @@ declare const fullApi: ApiFromModules<{
   managerChannelActions: typeof managerChannelActions;
   managerQuestions: typeof managerQuestions;
   metrics: typeof metrics;
+  migrations: typeof migrations;
   mock: typeof mock;
   mockSeed: typeof mockSeed;
   onboarding: typeof onboarding;

@@ -892,15 +892,14 @@ export async function probeSlackSurface(
  * Args:
  *   ctx: Convex Node action context.
  *   surfaceId: Surface being verified.
- *   renewExpiry: Whether a deliberate manual probe renews the approved lease.
  *
  * Returns:
  *   Safe connection outcome containing no credential or provider response body.
+ *   A probe never moves the access end date (Q5).
  */
 export async function runSurfaceProbe(
   ctx: ActionCtx,
   surfaceId: Id<'surfaces'>,
-  renewExpiry: boolean,
   dependencies: ProbeDependencies = probeDependencies,
 ): Promise<ProbeOutcome> {
   const claimed: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
@@ -1147,13 +1146,6 @@ export async function runSurfaceProbe(
         );
       }
       const verifiedAt = dependencies.now();
-      const expiresInDays = Number(
-        (surface.request as { expiresInDays?: unknown } | undefined)?.expiresInDays,
-      );
-      const expiresAt =
-        renewExpiry && Number.isFinite(expiresInDays) && expiresInDays > 0
-          ? verifiedAt + expiresInDays * 24 * 60 * 60 * 1_000
-          : undefined;
       const recorded = await day0Step(
         'record the connected surface',
         (): Promise<boolean> =>
@@ -1169,7 +1161,6 @@ export async function runSurfaceProbe(
             providerWorkspaceId,
             channelsNotJoined,
             verifiedAt,
-            expiresAt,
           }),
       );
       if (!recorded) {
@@ -1206,16 +1197,20 @@ export const probe = action({
     assertRealMode('Surface probing');
     return await ctx.runAction(internal.surfaceActions.probeInternal, {
       surfaceId: args.surfaceId,
-      renewExpiry: true,
     });
   },
 });
 
-/** Internal approval and maintenance entry point for one isolated probe. */
+/**
+ * Internal approval and maintenance entry point for one isolated probe.
+ *
+ * `renewExpiry` is retired and ignored: a probe never moves the access end
+ * date (Q5). It stays accepted until the Slack install
+ * (`slackProvisionActions.ts`) stops passing it.
+ */
 export const probeInternal = internalAction({
   args: { surfaceId: v.id('surfaces'), renewExpiry: v.optional(v.boolean()) },
-  handler: async (ctx, args): Promise<ProbeOutcome> =>
-    await runSurfaceProbe(ctx, args.surfaceId, args.renewExpiry ?? false),
+  handler: async (ctx, args): Promise<ProbeOutcome> => await runSurfaceProbe(ctx, args.surfaceId),
 });
 
 /**
@@ -1268,7 +1263,6 @@ export const landCredential = action({
     if (probeScheduled) {
       await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
         surfaceId: context.surface._id,
-        renewExpiry: true,
       });
     }
     return { landed: true, probeScheduled };
@@ -1276,22 +1270,25 @@ export const landCredential = action({
 });
 
 /**
- * Expire due leases and isolate hourly re-probes by surface.
+ * End what has ended, give a week's notice of what is ending, and isolate
+ * hourly re-probes by surface.
  *
  * Connected surfaces are re-verified; a surface the last probe left
  * `listed-dead` with its credential and approvals intact is retried, so a
  * transient provider failure does not stay dead until a human clicks Probe.
+ * The re-probe neither extends nor ends access (Q5): the end date does.
  */
 export const reprobeAll = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ expired: number; scheduled: number }> => {
-    if (SURFACE_MODE === 'mock') return { expired: 0, scheduled: 0 };
+  handler: async (ctx): Promise<{ expired: number; noticed: number; scheduled: number }> => {
+    if (SURFACE_MODE === 'mock') return { expired: 0, noticed: 0, scheduled: 0 };
     const now = Date.now();
     const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
       internal.orientationData.reprobeCandidates,
       {},
     );
     let expired = 0;
+    let noticed = 0;
     let scheduled = 0;
     for (const surface of surfaces) {
       if (surface.expiresAt !== undefined && surface.expiresAt <= now) {
@@ -1299,11 +1296,16 @@ export const reprobeAll = internalAction({
         expired += 1;
         continue;
       }
+      const notice: boolean = await ctx.runMutation(internal.surfaces.recordExpiryNotice, {
+        surfaceId: surface._id,
+        now,
+      });
+      if (notice) noticed += 1;
       await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
         surfaceId: surface._id,
       });
       scheduled += 1;
     }
-    return { expired, scheduled };
+    return { expired, noticed, scheduled };
   },
 });

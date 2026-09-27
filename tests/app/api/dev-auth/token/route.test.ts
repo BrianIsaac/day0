@@ -47,6 +47,22 @@ describe('the no-auth token route', (): void => {
     expect(body.token.split('.')).toHaveLength(3);
   });
 
+  it('carries the browser session in the sid claim, so two browsers are told apart', async (): Promise<void> => {
+    const { mintDevNoAuthSession } = await import('../../../../../src/lib/dev-auth-server');
+    const { POST } = await import('../../../../../app/api/dev-auth/token/route');
+    const claims = async (): Promise<{ sub: string; sid: string; cookieId: string }> => {
+      cookieValue = await mintDevNoAuthSession();
+      const { token } = (await (await POST()).json()) as { token: string };
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+      return { ...payload, cookieId: cookieValue.split('.')[1] };
+    };
+    const first = await claims();
+    const second = await claims();
+    expect(first.sub).toBe(second.sub);
+    expect(first.sid).toBe(first.cookieId);
+    expect(first.sid).not.toBe(second.sid);
+  });
+
   it('refuses a cookie that holds the unlock secret rather than a session', async (): Promise<void> => {
     cookieValue = SECRET;
     const { POST } = await import('../../../../../app/api/dev-auth/token/route');

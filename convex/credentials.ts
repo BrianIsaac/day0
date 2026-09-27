@@ -13,6 +13,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
 import { credentialPageRef, credentialRefRange } from '../src/docs/redaction';
+import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -59,6 +60,23 @@ function credentialPlaintext(kind: CredentialKind, plaintext?: string): string {
   return plaintext;
 }
 
+/**
+ * Refuse a sync's write once its generation is superseded (step 14): a stale
+ * action must not revive a row the newer generation retired. A write that
+ * names no generation is not a sync's and is not fenced.
+ *
+ * @throws Error when the write names a generation that may no longer write.
+ */
+async function fenceSyncWrite(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'> | undefined,
+  syncRunId: Id<'docSyncRuns'> | undefined,
+): Promise<void> {
+  if (syncRunId === undefined) return;
+  if (sourceId === undefined) throw new Error('A sync writes only page-derived credentials.');
+  await assertCurrentGeneration(ctx, sourceId, syncRunId);
+}
+
 /** The reason a rotated row keeps a person's revoke, shown with the credential. */
 export const REVOKE_STANDS_REASON =
   'Revoked by a person. The page now holds a different value; it stays revoked until a person lands or approves one.';
@@ -83,9 +101,11 @@ export const persistEncrypted = internalMutation({
     source: credentialSource,
     appId: v.optional(v.string()),
     rotated: v.boolean(),
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const sourced = pageSource(args.source);
+    await fenceSyncWrite(ctx, sourced?.sourceId, args.syncRunId);
     if (sourced) {
       // Unlink can commit while the store action is encrypting the value.
       const source = await ctx.db.get(sourced.sourceId);
@@ -145,9 +165,12 @@ export const updateMetadata = internalMutation({
     label: v.string(),
     appId: v.optional(v.string()),
     explicitlyAssigned: v.optional(v.boolean()),
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<void> => {
     const row = await ctx.db.get(args.credentialId);
+    const source = row === null ? undefined : pageSource(row.source);
+    await fenceSyncWrite(ctx, source?.sourceId, args.syncRunId);
     await ctx.db.patch(args.credentialId, {
       kind: args.kind,
       label: args.label,
@@ -359,8 +382,10 @@ export const moveToRef = internalMutation({
     label: v.string(),
     appId: v.optional(v.string()),
     explicitlyAssigned: v.optional(v.boolean()),
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<boolean> => {
+    await fenceSyncWrite(ctx, args.source.sourceId, args.syncRunId);
     const row = await ctx.db.get(args.credentialId);
     if (
       !row ||
@@ -398,22 +423,23 @@ export const moveToRef = internalMutation({
  * A row's value, or undefined when it holds none this deployment can read.
  *
  * @param ctx - The action context the Node decrypt runs through.
- * @param row - A stored credential row.
+ * @param row - A stored credential row; its owner is the one its value must be bound to.
  */
 async function storedValue(
   ctx: ActionCtx,
-  row: Pick<Doc<'credentials'>, 'ciphertext' | 'iv'>,
+  row: Pick<Doc<'credentials'>, 'ciphertext' | 'iv' | 'userId'>,
 ): Promise<string | undefined> {
   if (row.ciphertext === undefined || row.iv === undefined) return undefined;
   try {
     return await ctx.runAction(internal.credentialCryptoActions.open, {
       ciphertext: row.ciphertext,
       iv: row.iv,
+      userId: row.userId,
     });
   } catch {
-    // Sealed under a rotated DAY0_CREDENTIAL_KEY: unreadable, so it holds no
-    // value this sync can match, and the page's value replaces it rather than
-    // failing every sync of that page.
+    // Sealed under a rotated DAY0_CREDENTIAL_KEY, or bound to another owner:
+    // unreadable, so it holds no value this sync can match, and the page's
+    // value replaces it rather than failing every sync of that page.
     return undefined;
   }
 }
@@ -426,7 +452,8 @@ async function storedValue(
  * source has no row for is first looked for on the same page: a value the
  * page already holds under the ref its old count of values gave it is moved
  * to the new ref, not stored again, so a page gaining or losing a value never
- * mints a row for a value already known. The Node-only AES operation is
+ * mints a row for a value already known. The value is sealed bound to its
+ * owner, so it opens only on that owner's row. The Node-only AES operation is
  * isolated in `credentialCryptoActions` because Convex forbids a Node module
  * from also exporting this module's public query and mutation.
  */
@@ -439,6 +466,8 @@ export const store = internalAction({
     explicitlyAssigned: v.optional(v.boolean()),
     source: credentialSource,
     appId: v.optional(v.string()),
+    /** The sync generation that found the value; every write it makes is fenced by it. */
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const plaintext = credentialPlaintext(args.kind, args.plaintext);
@@ -470,6 +499,7 @@ export const store = internalAction({
       await ctx.runMutation(internal.credentials.updateMetadata, {
         credentialId: existing._id,
         ...metadata,
+        syncRunId: args.syncRunId,
       });
       return existing._id;
     }
@@ -488,22 +518,31 @@ export const store = internalAction({
           fromRef: row.source.ref,
           source: sourced,
           ...metadata,
+          syncRunId: args.syncRunId,
         });
         if (moved) return row._id;
       }
     }
-    const encrypted = await ctx.runAction(internal.credentialCryptoActions.seal, { plaintext });
+    const encrypted = await ctx.runAction(internal.credentialCryptoActions.seal, {
+      plaintext,
+      userId: args.userId,
+    });
     return await ctx.runMutation(internal.credentials.persistEncrypted, {
       userId: args.userId,
       source: args.source,
       ...metadata,
       ...encrypted,
       rotated: existing !== null,
+      syncRunId: args.syncRunId,
     });
   },
 });
 
-/** Decrypt one active value for another server-side action. */
+/**
+ * Decrypt one active value for another server-side action. Internal; records
+ * the use. The value opens only on its owner's row: a ciphertext bound to
+ * another owner is refused.
+ */
 export const decrypt = internalAction({
   args: { credentialId: v.id('credentials') },
   handler: async (ctx, args): Promise<string> => {
@@ -520,6 +559,7 @@ export const decrypt = internalAction({
     const plaintext = await ctx.runAction(internal.credentialCryptoActions.open, {
       ciphertext: credential.ciphertext,
       iv: credential.iv,
+      userId: credential.userId,
     });
     if (!plaintext) throw new Error('Credential does not contain a landed value.');
     await ctx.runMutation(internal.credentials.touch, args);

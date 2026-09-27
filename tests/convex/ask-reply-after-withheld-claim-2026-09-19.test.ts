@@ -84,6 +84,10 @@ vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: async <T>(args: { agent: { name: string }; user: string; schema: { parse(value: unknown): unknown } }): Promise<T> => {
     const name = args.agent.name;
+    // The call is answered here, at the model seam, and reported through the
+    // telemetry seam the real retry wrapper reports through.
+    const { reportModelCall } = await import('../../src/lib/model-call-telemetry');
+    await reportModelCall({ agent: name, attempts: 1, startedAt: Date.now(), providerCalls: 0 });
     if (name.endsWith('-dependent') && name.includes('c0c2u2ujutu')) {
       return args.schema.parse({
         draft: 'The tile was refreshed and read back in the same session.',
@@ -375,6 +379,12 @@ describe('an ask whose closing writes were withheld for a claim holder still ans
     expect(mine.filter((event) => event.type === 'work.closing-reauthored').map((event) => event.payload)).toEqual([
       expect.objectContaining({ reason: 'claim-withheld', withheldIndexes: [4, 5, 7] }),
     ]);
+    // Each authoring of the closing set is on the bill, named.
+    expect(
+      mine
+        .filter((event) => event.type === 'work.model-call' && (event.payload as { stage?: string }).stage === 'closing')
+        .map((event) => (event.payload as { closingAuthoring?: string }).closingAuthoring),
+    ).toEqual(['first', 'post-apply-round']);
     expect(mine.some((event) => event.type === 'audit.corrected' && String((event.payload as { reason?: string }).reason).startsWith('held-item reply completed'))).toBe(true);
     expect(mine.filter((event) => event.type === 'work.failed')).toEqual([]);
   }, 30_000);

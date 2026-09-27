@@ -26,16 +26,23 @@ const recorded = vi.hoisted(() => ({
   planCalls: [] as string[],
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
       await recorded.scopeGate;
-      return { inScope: true, fit: true, reason: 'ticket notes are the charter work' };
+      return {
+        inScope: true,
+        fit: true,
+        reason: 'ticket notes are the charter work',
+        exclusion: { kind: 'none', quote: '' },
+      };
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 
@@ -242,19 +249,19 @@ describe('a skill that registers while several items wait for it', (): void => {
         verdict: { decision: 'pending-reevaluation', reason: 'skill registered, ready to retry' },
       });
     }
-    expect(await pendingEvaluations(harness)).toEqual([String(first), String(second)]);
+    expect(new Set(await pendingEvaluations(harness))).toEqual(new Set([String(first)]));
 
     await drain(harness);
 
     // The supervised cap is one: the first item takes the slot and drafts its
-    // plan, the second is evaluated too and queues behind it. Neither is
-    // judged for scope again: both were in scope when they parked, and a
+    // plan, and the second waits for the slot without an evaluation. Neither
+    // is judged for scope again: both were in scope when they parked, and a
     // skill registering changes nothing that judgement reads (finding L, 19 Sep).
     expect(recorded.scopeCalls).toEqual([]);
     expect((await readItem(harness, first)).state).toBe('plan-pending');
     expect(await readItem(harness, second)).toMatchObject({
       state: 'discovered',
-      verdict: { decision: 'queue' },
+      verdict: { decision: 'pending-reevaluation' },
     });
     expect(recorded.planCalls).toEqual(['Post the shipment status note on LOG-2']);
   });
@@ -289,7 +296,7 @@ describe('a skill that registers while several items wait for it', (): void => {
 
     await register(harness, skillId, runId);
 
-    expect(await pendingEvaluations(harness)).toEqual([String(first), String(second)]);
+    expect(new Set(await pendingEvaluations(harness))).toEqual(new Set([String(first)]));
   });
 
   it('leaves alone a linked item that has already moved on', async (): Promise<void> => {
@@ -461,7 +468,7 @@ describe('an authoring run that does not register the skill', (): void => {
 
     await register(harness, skillId, await claim(harness, skillId));
 
-    expect(await pendingEvaluations(harness)).toEqual([String(first), String(second)]);
+    expect(new Set(await pendingEvaluations(harness))).toEqual(new Set([String(first)]));
     expect((await readItem(harness, first)).state).toBe('discovered');
     expect((await readItem(harness, second)).state).toBe('discovered');
   });
@@ -631,7 +638,7 @@ describe('an item linked to a skill after it registered', (): void => {
 });
 
 describe('an evaluation that straddles the registration', (): void => {
-  it('is re-evaluated once its late verdict lands, and ends up behind the cap like the others', async (): Promise<void> => {
+  it('is re-evaluated once its late verdict lands, and waits behind the cap like the others', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -651,22 +658,24 @@ describe('an evaluation that straddles the registration', (): void => {
     release();
     await drain(harness);
 
-    // One of the two waiting rows holds the slot and the other queues behind
-    // it. Which one is the harness's to decide here: their re-evaluations hold
-    // their in-scope verdicts and ask no model (finding L, 19 Sep), so both
-    // run while the late row's verdict and proposal are still being written,
-    // and the order their claims land in is the order of that interleaving.
-    const waiting = [await readItem(harness, first), await readItem(harness, second)];
-    expect(waiting.map((row) => row.state).sort()).toEqual(['discovered', 'plan-pending']);
-    expect(waiting.find((row) => row.state === 'discovered')).toMatchObject({
-      verdict: { decision: 'queue' },
-    });
-    const settled = await readItem(harness, late);
-    expect(settled).toMatchObject({
-      state: 'discovered',
-      verdict: { decision: 'queue' },
-      proposedSkillId: skillId,
-    });
+    // One row holds the slot and the other two wait for it unevaluated. The
+    // late row's evaluation held the one slot while the registration landed,
+    // so nothing else was evaluated until its verdict and proposal were written.
+    const rows = [
+      await readItem(harness, first),
+      await readItem(harness, second),
+      await readItem(harness, late),
+    ];
+    expect(rows.map((row) => row.state).sort()).toEqual([
+      'discovered',
+      'discovered',
+      'plan-pending',
+    ]);
+    for (const row of rows.filter((candidate) => candidate.state === 'discovered')) {
+      expect(row.verdict).toMatchObject({ decision: 'pending-reevaluation' });
+    }
+    const settled = rows[2];
+    expect(settled.proposedSkillId).toBe(skillId);
     expect(settled.reevaluation?.trigger).toBe('skill-registered');
   });
 });
@@ -1123,5 +1132,172 @@ describe('the verdict write and the registration side meeting on one late item',
     expect(stamp.spent!.at(-1)).toBe(stamp.key);
     expect(stamp.key).toBe(`charter:v${SPENT_REEVALUATION_KEYS + 5}`);
     expect(await charterChanged(harness, agentId, stamp.key)).toBe(0);
+  });
+});
+
+describe('a long wait behind one skill (P9-1)', (): void => {
+  /**
+   * Park many tickets behind one skill of the given state, oldest first.
+   *
+   * Args:
+   *   harness: Convex test harness with the limits the test enforces.
+   *   state: The skill's state.
+   *   count: How many tickets wait.
+   *
+   * Returns:
+   *   The agent, the skill and the waiting rows in discovery order.
+   */
+  async function seedLongWait(
+    harness: Harness,
+    state: Doc<'skills'>['state'],
+    count: number,
+  ): Promise<{ agentId: Id<'agents'>; skillId: Id<'skills'>; rows: Id<'workItems'>[] }> {
+    const agentId = await seedEmployee(harness);
+    const rows: Id<'workItems'>[] = [];
+    // Ten rows a transaction, so the seeding stays inside the limits the test enforces.
+    for (let start = 0; start < count; start += 10) {
+      await harness.run(async (ctx) => {
+        for (let index = start; index < Math.min(count, start + 10); index += 1) {
+          rows.push(
+            await ctx.db.insert('workItems', {
+              agentId,
+              sourceCategory: 'ticket-queue',
+              sourceSystem: 'linear',
+              externalId: `LOG-${100 + index}`,
+              title: `Post the shipment status note on LOG-${100 + index}`,
+              contentSummary:
+                'Comment on this Linear ticket with the shipment status and close it.',
+              contentRefs: [`ticket://LOG-${100 + index}`],
+              state: 'needs-skill',
+              verdict: {
+                decision: 'needs-skill',
+                reason:
+                  'no registered skill covers this; agent will propose "kanban-comment-and-close"',
+                suggestedSkillName: 'kanban-comment-and-close',
+              },
+              observedAt: Date.now(),
+              createdAt: Date.now(),
+            }),
+          );
+        }
+      });
+    }
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '',
+          sourceType: 'agent-authored',
+          state,
+          proposedFor: rows[0],
+          requiredScopes: ['linear:read', 'linear:write'],
+          targetSurface: 'linear',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          createdAt: Date.now(),
+        }),
+    );
+    for (let start = 0; start < count; start += 10) {
+      await harness.run(async (ctx) => {
+        for (const row of rows.slice(start, start + 10)) {
+          await ctx.db.patch(row, { proposedSkillId: skillId });
+        }
+      });
+    }
+    return { agentId, skillId, rows };
+  }
+
+  /** How many of the rows are in each state. */
+  async function stateCounts(
+    harness: Harness,
+    rows: readonly Id<'workItems'>[],
+  ): Promise<Record<string, number>> {
+    const counts: Record<string, number> = {};
+    for (const workItemId of rows) {
+      const { state } = await readItem(harness, workItemId);
+      counts[state] = (counts[state] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  it('registration re-queues sixty waiting rows in batches, within the transaction limits', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { functionsScheduled: 40 },
+    });
+    const { skillId, rows } = await seedLongWait(harness, 'approved', 60);
+
+    await register(harness, skillId, await claim(harness, skillId));
+    expect(await stateCounts(harness, rows)).toEqual({ discovered: 25, 'needs-skill': 35 });
+
+    await drain(harness);
+    expect(await stateCounts(harness, rows)).toEqual({ discovered: 59, 'plan-pending': 1 });
+    expect((await readItem(harness, rows[0])).state).toBe('plan-pending');
+    expect(recorded.planCalls).toEqual(['Post the shipment status note on LOG-100']);
+  });
+
+  it('stops a continuation once the skill has moved on', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { skillId, rows } = await seedLongWait(harness, 'approved', 60);
+    await register(harness, skillId, await claim(harness, skillId));
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, { state: 'approved' });
+    });
+
+    await drain(harness);
+
+    // The rows past the first batch were never re-queued, so never evaluated.
+    const evaluated = new Set(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+        .filter((event) => event.type === 'work.evaluated')
+        .map((event) => String((event.payload as { workItemId: string }).workItemId)),
+    );
+    expect(rows.slice(25).filter((row) => evaluated.has(String(row)))).toEqual([]);
+    expect(rows.slice(0, 25).every((row) => evaluated.has(String(row)))).toBe(true);
+  });
+
+  it('moves nothing from a continuation that names a state outside its walk', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { skillId, rows } = await seedLongWait(harness, 'registered', 3);
+
+    await expect(
+      harness.mutation(internal.skills.continueWaitingWork, {
+        skillId,
+        skillState: 'registered',
+        move: {
+          kind: 'verdict',
+          verdict: { decision: 'pending-reevaluation', reason: 'skill registered, ready to retry' },
+        },
+        scope: { sameName: true },
+        from: { state: 'discovered', skipSource: false },
+      }),
+    ).resolves.toEqual({ moved: 0 });
+    expect(await stateCounts(harness, rows)).toEqual({ 'needs-skill': 3 });
+  });
+
+  it('rejection cancels a long wait in batches, within the transaction limits', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { documentsWritten: 40 },
+    });
+    const { skillId, rows } = await seedLongWait(harness, 'proposed', 60);
+
+    await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
+    expect(await stateCounts(harness, rows)).toEqual({ cancelled: 25, 'needs-skill': 35 });
+
+    await drain(harness);
+    expect(await stateCounts(harness, rows)).toEqual({ cancelled: 60 });
   });
 });

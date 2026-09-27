@@ -9,6 +9,7 @@ import type { ExecutionOutput } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { STEP_LEASE_MS } from '../../convex/workLoop';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -22,6 +23,8 @@ const recorded = vi.hoisted(() => ({
   scopeCalls: [] as string[],
   /** Holds the charter judgement open until the test releases it. */
   scopeGate: undefined as Promise<void> | undefined,
+  /** Thrown or answered by the charter judgement instead of its in-scope reply. */
+  scopeOutcome: undefined as unknown,
   planCalls: [] as string[],
   /** Holds the planner open until the test releases it. */
   planGate: undefined as Promise<void> | undefined,
@@ -29,16 +32,25 @@ const recorded = vi.hoisted(() => ({
   http: [] as Array<{ url: string; body: unknown }>,
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
       await recorded.scopeGate;
-      return { inScope: true, fit: true, reason: 'close summaries are the charter work' };
+      if (recorded.scopeOutcome instanceof Error) throw recorded.scopeOutcome;
+      if (recorded.scopeOutcome !== undefined) return recorded.scopeOutcome;
+      return {
+        inScope: true,
+        fit: true,
+        reason: 'close summaries are the charter work',
+        exclusion: { kind: 'none', quote: '' },
+      };
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 
@@ -109,6 +121,7 @@ const OWNER = { subject: 'owner' };
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
   recorded.scopeGate = undefined;
+  recorded.scopeOutcome = undefined;
   recorded.planCalls.length = 0;
   recorded.planGate = undefined;
   recorded.skillRuns.length = 0;
@@ -469,7 +482,7 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(await eventsOf(harness, 'work.completed')).toHaveLength(1);
   });
 
-  it('holds the second row at the supervised cap until the first completes, then evaluates it', async (): Promise<void> => {
+  it('holds the second row at the supervised cap without a scope call until the first completes', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -482,7 +495,8 @@ describe('the server drives the work loop in real mode', (): void => {
     expect((await readItem(harness, first)).state).toBe('plan-pending');
     const queued = await readItem(harness, second);
     expect(queued.state).toBe('discovered');
-    expect(queued.verdict).toMatchObject({ decision: 'queue' });
+    expect(queued.verdict).toBeUndefined();
+    expect(recorded.scopeCalls).toHaveLength(1);
     expect(recorded.planCalls).toEqual(['Triage the Linear close summary REVOPS-23']);
 
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId: first });
@@ -508,8 +522,9 @@ describe('the server drives the work loop in real mode', (): void => {
     const third = await seedTicket(harness, agentId, 'REVOPS-30');
     await drain(harness);
     expect((await readItem(harness, first)).state).toBe('plan-pending');
-    expect((await readItem(harness, second)).verdict).toMatchObject({ decision: 'queue' });
-    expect((await readItem(harness, third)).verdict).toMatchObject({ decision: 'queue' });
+    expect((await readItem(harness, second)).verdict).toBeUndefined();
+    expect((await readItem(harness, third)).verdict).toBeUndefined();
+    expect(recorded.scopeCalls).toHaveLength(1);
 
     await harness
       .withIdentity(OWNER)
@@ -646,6 +661,196 @@ describe('the server drives the work loop in real mode', (): void => {
     const row = await readItem(harness, workItemId);
     expect(row).not.toHaveProperty('evaluationClaimedAt');
     expect(row).not.toHaveProperty('draftClaimedAt');
+  });
+});
+
+describe('the loop under load (P9-1)', (): void => {
+  /**
+   * Insert discovered tickets directly, so nothing is scheduled for them.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   agentId: The employee.
+   *   rows: Each ticket's external id and priority.
+   *
+   * Returns:
+   *   The work item ids, in insertion order.
+   */
+  async function insertQueue(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    rows: ReadonlyArray<{ externalId: string; priority?: string; verdict?: unknown }>,
+  ): Promise<Id<'workItems'>[]> {
+    return await harness.run(async (ctx) => {
+      const ids: Id<'workItems'>[] = [];
+      for (const row of rows) {
+        ids.push(
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: row.externalId,
+            title: `Triage the Linear close summary ${row.externalId}`,
+            contentSummary: 'Triage this Linear close summary revenue operations hand-off.',
+            contentRefs: [`ticket://${row.externalId}`],
+            ...(row.priority === undefined ? {} : { priority: row.priority }),
+            ...(row.verdict === undefined ? {} : { verdict: row.verdict }),
+            state: 'discovered',
+            observedAt: Date.now(),
+            createdAt: Date.now(),
+          }),
+        );
+      }
+      return ids;
+    });
+  }
+
+  /** The work items the scheduler holds an evaluation for. */
+  async function scheduledEvaluations(harness: Harness): Promise<string[]> {
+    return (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    )
+      .filter((job) => job.name === 'workActions:evaluateWorkItemInternal')
+      .map((job) => String((job.args[0] as { workItemId: string }).workItemId));
+  }
+
+  it('claims an evaluation only while a slot is free, an evaluation in flight holding one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness, { autonomousActions: true });
+    const rows = await insertQueue(
+      harness,
+      agentId,
+      ['REVOPS-60', 'REVOPS-61', 'REVOPS-62', 'REVOPS-63', 'REVOPS-64'].map((externalId) => ({
+        externalId,
+      })),
+    );
+
+    const claims = [];
+    for (const workItemId of rows) {
+      claims.push(
+        await harness.mutation(internal.work.claimLoopStep, { workItemId, step: 'evaluation' }),
+      );
+    }
+
+    expect(claims).toEqual([
+      { claimed: true },
+      { claimed: true },
+      { claimed: true },
+      { claimed: false, reason: 'queued' },
+      { claimed: false, reason: 'queued' },
+    ]);
+  });
+
+  it('gives a free slot to the most urgent waiting row, then the oldest', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const [, , urgent] = await insertQueue(harness, agentId, [
+      { externalId: 'REVOPS-70', priority: 'Low' },
+      { externalId: 'REVOPS-71', priority: 'No priority' },
+      { externalId: 'REVOPS-72', priority: 'Urgent' },
+      { externalId: 'REVOPS-73', priority: 'High' },
+      { externalId: 'REVOPS-74', priority: 'Urgent' },
+    ]);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledEvaluations(harness)).toEqual([String(urgent)]);
+  });
+
+  it('sweeps a deep backlog within the transaction limits, waking only what the free slots admit', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    // A backlog deeper than the limit allows reading in one transaction: the
+    // sweep reads a bounded window of it, not every waiting row.
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 400 },
+    });
+    const agentId = await seedEmployee(harness);
+    const backlog = Array.from({ length: 600 }, (_, index) => ({
+      externalId: `REVOPS-${1000 + index}`,
+      verdict: { decision: 'queue', reason: 'WIP cap reached: supervised cold-start limit is 1' },
+    }));
+    const [oldest] = await insertQueue(harness, agentId, backlog);
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledEvaluations(harness)).toEqual([String(oldest)]);
+  });
+});
+
+describe('a scope call that fails parks the row (E-70)', (): void => {
+  it.each([
+    ['throws', new Error('provider answered 503'), 'provider answered 503'],
+    [
+      'times out',
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      'The operation was aborted due to timeout',
+    ],
+    [
+      "answers `inScope: 'yes'`",
+      { inScope: 'yes', fit: true, reason: 'looks fine', exclusion: { kind: 'none', quote: '' } },
+      'agentJson(day0-scope-judgement): reply did not satisfy the schema',
+    ],
+  ])(
+    'never executes an item whose scope call %s under autonomy, and records only the unavailable event',
+    async (_how, outcome, cause): Promise<void> => {
+      useSurfaceMode('real');
+      vi.useFakeTimers();
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const agentId = await seedEmployee(harness, { autonomousActions: true });
+      recorded.scopeOutcome = outcome;
+
+      const workItemId = await seedTicket(harness, agentId, 'REVOPS-70');
+      await drain(harness);
+
+      const row = await readItem(harness, workItemId);
+      expect(row.state).toBe('discovered');
+      expect(row).not.toHaveProperty('verdict');
+      expect(row).not.toHaveProperty('scopeAdmission');
+      expect(recorded.scopeCalls).toHaveLength(1);
+      expect(recorded.planCalls).toEqual([]);
+      expect(recorded.skillRuns).toEqual([]);
+      expect((await eventsOf(harness, 'work.scope-judgement-unavailable')).map((e) => e.payload)).toEqual([
+        { workItemId, cause },
+      ]);
+      expect(await eventsOf(harness, 'work.evaluated')).toEqual([]);
+      expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
+    },
+  );
+
+  it('re-admits a parked row at the first sweep after its lease, once the scope call answers', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    recorded.scopeOutcome = new Error('provider answered 503');
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-71');
+    await drain(harness);
+    expect((await readItem(harness, workItemId)).state).toBe('discovered');
+
+    // Inside the lease the sweep leaves the parked row alone: no second call.
+    recorded.scopeOutcome = undefined;
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await drain(harness);
+    expect(recorded.scopeCalls).toHaveLength(1);
+    expect((await readItem(harness, workItemId)).state).toBe('discovered');
+
+    vi.advanceTimersByTime(STEP_LEASE_MS);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await drain(harness);
+
+    expect(recorded.scopeCalls).toHaveLength(2);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect(await eventsOf(harness, 'work.scope-judgement-unavailable')).toHaveLength(1);
+    expect((await eventsOf(harness, 'work.evaluated')).map((event) => event.payload)).toEqual([
+      expect.objectContaining({ workItemId, decision: 'claim' }),
+    ]);
   });
 });
 

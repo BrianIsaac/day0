@@ -33,19 +33,31 @@ const recorded = vi.hoisted(() => ({
   http: [] as string[],
 }));
 
+const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (args: { agent: { name: string }; user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args): Promise<unknown> => {
     if (args.agent.name === 'day0-scope-judgement') {
       recorded.scopeCalls.push(args.user);
       await recorded.scopeGate;
       if ([...recorded.outOfScope].some((role) => args.user.includes(`Role: ${role}`))) {
-        return { inScope: false, fit: true, reason: 'the ask belongs to another desk' };
+        return {
+          inScope: false,
+          fit: true,
+          reason: 'the ask belongs to another desk',
+          exclusion: { kind: 'none', quote: '' },
+        };
       }
-      return { inScope: true, fit: true, reason: 'close summaries are the charter work' };
+      return {
+        inScope: true,
+        fit: true,
+        reason: 'close summaries are the charter work',
+        exclusion: { kind: 'none', quote: '' },
+      };
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
-  },
+  }),
   agentText: async (): Promise<string> => '',
 }));
 
@@ -671,9 +683,11 @@ describe('releasing a claim', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const aiko = await seedEmployee(harness, { name: 'Aiko' });
     recorded.outOfScope.add("Aiko's desk");
-    const { mateo, held, refused } = await heldAndRefused(harness);
+    // Aiko is judged before anyone holds the item: a row reaching evaluation
+    // while a colleague holds it is skipped without the scope call.
     const atScope = await seedAsk(harness, aiko);
     await drain(harness);
+    const { mateo, held, refused } = await heldAndRefused(harness);
     expect((await readItem(harness, atScope)).skipReason).toBe('out-of-scope: the ask belongs to another desk');
     expect((await claimsOf(harness)).some((claim) => claim.workItemId === atScope)).toBe(false);
 

@@ -14,6 +14,38 @@ import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
+import { decrypt as decryptCredential, openOwnedCredential } from '../../src/lib/credential-crypto';
+import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
+
+/** The Linear writes the MCP transport received, with the bearer it was opened with. */
+const mcpCalls = vi.hoisted(() => [] as Array<{ bearer?: string; tool: string }>);
+
+// The transport is the seam: the apply above it, the decrypt included, is the product's.
+vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/surfaces/mcp')>();
+  return {
+    ...original,
+    createMastraMcpClient: (options: { serverName: string; bearer?: string }) => {
+      const tool = (name: string, reply: unknown) => ({
+        execute: async (): Promise<unknown> => {
+          mcpCalls.push({ bearer: options.bearer, tool: name });
+          return { content: [{ type: 'text', text: JSON.stringify(reply) }] };
+        },
+      });
+      return {
+        listTools: async () => ({
+          [`${options.serverName}_get_issue`]: tool('get_issue', {
+            id: 'REVOPS-1',
+            status: 'In Progress',
+            statusType: 'started',
+          }),
+          [`${options.serverName}_save_comment`]: tool('save_comment', { id: 'comment-1' }),
+        }),
+        disconnect: async (): Promise<void> => {},
+      };
+    },
+  };
+});
 
 const SECRET = ['ntn', 'contract-value-0123456789abcdef'].join('_');
 const ROTATED = ['ntn', 'rotated-value-0123456789abcdef'].join('_');
@@ -200,6 +232,75 @@ describe('credential contract', (): void => {
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
       'unavailable',
     );
+  });
+
+  it("seals a stored value to its owner, so its ciphertext moved to another owner's row no longer opens", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Notion connection secret',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    const sealed = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+    const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
+    const material = { ciphertext: sealed?.ciphertext ?? '', iv: sealed?.iv ?? '' };
+    expect(() => decryptCredential(material, key)).toThrow();
+    expect(openOwnedCredential(material, key, 'owner')).toBe(SECRET);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
+      SECRET,
+    );
+
+    const moved = await harness.mutation(internal.credentials.persistEncrypted, {
+      userId: 'neighbour',
+      kind: 'value',
+      label: 'Notion connection secret',
+      ...material,
+      source: 'entered',
+      rotated: false,
+    });
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: moved }),
+    ).rejects.toThrow();
+  });
+
+  it("does not take a value moved onto another owner's page row as that owner's own", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ownerId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'linear service token',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    const sealed = await harness.run(async (ctx) => await ctx.db.get(ownerId));
+    const sourceId = await seedSource(harness, 'neighbour');
+    const source = { sourceId, ref: 'linear-automation' };
+    const movedId = await harness.mutation(internal.credentials.persistEncrypted, {
+      userId: 'neighbour',
+      kind: 'value',
+      label: 'linear service token',
+      ciphertext: sealed?.ciphertext ?? '',
+      iv: sealed?.iv ?? '',
+      source,
+      rotated: false,
+    });
+    // The page names the same value: the moved row is unreadable to its owner, so the value is sealed again for them.
+    await expect(
+      harness.action(internal.credentials.store, {
+        userId: 'neighbour',
+        kind: 'value',
+        label: 'linear service token',
+        plaintext: SECRET,
+        source,
+      }),
+    ).resolves.toBe(movedId);
+    const resealed = await harness.run(async (ctx) => await ctx.db.get(movedId));
+    expect(resealed?.ciphertext).not.toBe(sealed?.ciphertext);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: movedId }),
+    ).resolves.toBe(SECRET);
   });
 
   it('replaces a row sealed under a rotated deployment key instead of failing the sync', async (): Promise<void> => {
@@ -553,4 +654,318 @@ describe('credential persistence after unlink', () => {
       }
     },
   );
+});
+
+describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)', (): void => {
+  const TOKEN = ['xoxb', 'apply-seam-0123456789abcdef'].join('-');
+
+  afterEach((): void => {
+    vi.unstubAllGlobals();
+    mcpCalls.length = 0;
+  });
+
+  /**
+   * An owned employee, one connected surface carrying a stored credential, and
+   * one work item whose single action the manager approved.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   surface: Which provider the action writes to.
+   *   credentialId: The stored credential the surface carries.
+   *
+   * Returns:
+   *   The work item, ready for the apply.
+   */
+  async function approvedWrite(
+    harness: TestConvex<typeof schema>,
+    surface: 'slack' | 'linear',
+    credentialId: Id<'credentials'>,
+    slack: { managerDm: string; channel: string } = {
+      managerDm: 'D0MANAGER',
+      channel: 'D0MANAGER',
+    },
+  ): Promise<Id<'workItems'>> {
+    const { workItemId, runId } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (const scope of ['boss:message', `${surface}:read`, `${surface}:write`]) {
+        await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
+      }
+      const live = {
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      };
+      await ctx.db.insert(
+        'surfaces',
+        surface === 'slack'
+          ? {
+              agentId,
+              slug: 'slack',
+              displayName: 'Slack',
+              class: 'chat',
+              verdict: 'connected',
+              endpoint: 'https://slack.com/api/',
+              path: 'documented-api',
+              toolAllowlist: ['chat.postMessage'],
+              toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+              managerDmChannelId: slack.managerDm,
+              managerUserId: 'UMANAGER',
+              credentialId,
+              ...live,
+            }
+          : {
+              agentId,
+              slug: 'linear',
+              displayName: 'Linear',
+              class: 'kanban',
+              verdict: 'connected',
+              endpoint: 'https://mcp.linear.app/mcp',
+              path: 'mcp',
+              toolAllowlist: ['get_issue', 'save_comment'],
+              toolArguments: [
+                { tool: 'get_issue', arguments: ['id'] },
+                { tool: 'save_comment', arguments: ['issueId', 'body'] },
+              ],
+              credentialId,
+              ...live,
+            },
+      );
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Note the close summary',
+        contentSummary: 'Note the close summary.',
+        contentRefs: [],
+        state: 'executing',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const runId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: 1,
+      });
+      await ctx.db.patch(workItemId, { executionRunId: runId });
+      return { workItemId, runId };
+    });
+    const action =
+      surface === 'slack'
+        ? {
+            tool: 'http.request',
+            args: {
+              surface: 'slack',
+              method: 'POST',
+              path: '/chat.postMessage',
+              headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+              body: JSON.stringify({ channel: slack.channel, text: 'The close summary is ready.' }),
+            },
+          }
+        : {
+            tool: 'mcp.call',
+            args: {
+              surface: 'linear',
+              tool: 'save_comment',
+              toolArgsJson: JSON.stringify({ issueId: 'REVOPS-1', body: 'Close summary noted.' }),
+            },
+          };
+    await harness.mutation(internal.work.setActionsPending, {
+      workItemId,
+      runId,
+      output: { draft: 'Close summary.', notes: '', actions: [action] },
+    });
+    // The manager's own DM is automatic and already applying; a Linear write waits for approval.
+    const pending = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    if (pending?.state === 'actions-pending') {
+      await harness.withIdentity({ subject: 'owner' }).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0],
+      });
+    }
+    return workItemId;
+  }
+
+  /** The ledger row the apply wrote for the one action. */
+  async function landed(
+    harness: TestConvex<typeof schema>,
+    workItemId: Id<'workItems'>,
+  ): Promise<{ state: string; applied: { ok: boolean; held?: boolean; reason?: string } }> {
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    const applied = (
+      row?.output as { applied?: Array<{ ok: boolean; held?: boolean; reason?: string }> }
+    ).applied;
+    return { state: row?.state ?? 'missing', applied: applied?.[0] ?? { ok: false } };
+  }
+
+  it('posts to Slack with the value the row decrypts to, and sends nothing once the row is revoked', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const posts: string[] = [];
+    vi.stubGlobal('fetch', async (_input: URL | string, init?: RequestInit): Promise<Response> => {
+      posts.push(new Headers(init?.headers).get('authorization') ?? '');
+      return new Response(JSON.stringify({ ok: true, ts: '1789000000.000100' }), { status: 200 });
+    });
+    const credentialId = await harness.action(liveInternal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Slack bot token',
+      plaintext: TOKEN,
+      source: 'entered',
+    });
+
+    const first = await approvedWrite(harness, 'slack', credentialId);
+    await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: first });
+    expect(await landed(harness, first)).toMatchObject({
+      state: 'completed',
+      applied: { ok: true },
+    });
+    expect(posts).toEqual([`Bearer ${TOKEN}`]);
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(liveApi.credentials.revoke, { credentialId });
+    const second = await approvedWrite(harness, 'slack', credentialId);
+    await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: second });
+    const refused = await landed(harness, second);
+    expect(refused.applied.ok).toBe(false);
+    expect(refused.applied.reason).toContain('Credential is unavailable');
+    expect(posts).toHaveLength(1);
+  });
+
+  it("records the fake Slack's own refusal, and lands what it accepts", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { internal: liveInternal } = await import('../../convex/_generated/api');
+    const fake = await startFakeSlack();
+    try {
+      // The transport resolves Slack to the compose alias; the alias is this spawned service.
+      vi.stubEnv('DAY0_TEST_SLACK_API_URL', 'http://fake-slack/api/');
+      const network = globalThis.fetch;
+      vi.stubGlobal(
+        'fetch',
+        async (input: URL | string, init?: RequestInit): Promise<Response> =>
+          await network(String(input).replace('http://fake-slack', fake.base), init),
+      );
+      const harness = convexTest(schema, allConvexModules());
+      const credentialId = await harness.action(liveInternal.credentials.store, {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack bot token',
+        plaintext: FAKE_BOT_TOKEN,
+        source: 'entered',
+      });
+
+      const dm = await approvedWrite(harness, 'slack', credentialId, {
+        managerDm: 'D_DAY0_MANAGER',
+        channel: 'D_DAY0_MANAGER',
+      });
+      await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: dm });
+      expect(await landed(harness, dm)).toMatchObject({
+        state: 'completed',
+        applied: { ok: true },
+      });
+
+      const elsewhere = await approvedWrite(harness, 'slack', credentialId, {
+        managerDm: 'D_DAY0_MANAGER',
+        channel: 'C_ELSEWHERE',
+      });
+      await harness.action(liveInternal.workActions.applyApprovedActions, {
+        workItemId: elsewhere,
+      });
+      const refused = await landed(harness, elsewhere);
+      expect(refused.applied.ok).toBe(false);
+      expect(refused.applied.reason).toContain('not_in_channel');
+    } finally {
+      fake.stop();
+    }
+  });
+
+  it('opens the Linear client with the value the row decrypts to, and opens none once the row is revoked', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.action(liveInternal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear API key',
+      plaintext: TOKEN,
+      source: 'entered',
+    });
+
+    const first = await approvedWrite(harness, 'linear', credentialId);
+    await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: first });
+    expect((await landed(harness, first)).applied.ok).toBe(true);
+    expect(mcpCalls).toEqual([
+      { bearer: TOKEN, tool: 'get_issue' },
+      { bearer: TOKEN, tool: 'save_comment' },
+    ]);
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(liveApi.credentials.revoke, { credentialId });
+    const second = await approvedWrite(harness, 'linear', credentialId);
+    await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: second });
+    // The re-read before the first write cannot open the client, so the write is withheld.
+    const refused = await landed(harness, second);
+    expect(refused).toMatchObject({ state: 'failed', applied: { held: true } });
+    expect(refused.applied.reason).toContain('Credential is unavailable');
+    expect(mcpCalls).toHaveLength(2);
+  });
+});
+
+describe('the sync generation fence on the credential store (step 14)', (): void => {
+  it('refuses a superseded sync the revival of a credential the newer sync retired, and lets the running one store', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const source = { sourceId, ref: 'linear-automation#credential=1' };
+    const args = { userId: 'owner', kind: 'value' as const, label: 'linear service token', source };
+    const stale = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const credentialId = await harness.action(internal.credentials.store, {
+      ...args,
+      plaintext: SECRET,
+      syncRunId: stale,
+    });
+    // A newer sync starts, no longer finds the value and retires the row.
+    const newer = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId: newer,
+      refs: [],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    expect((await rows(harness))[0]).toMatchObject({ status: 'superseded' });
+
+    // The older action, still on its last batch, finds the value again.
+    await expect(
+      harness.action(internal.credentials.store, { ...args, plaintext: SECRET, syncRunId: stale }),
+    ).rejects.toThrow('superseded by a newer one');
+    await expect(
+      harness.action(internal.credentials.store, { ...args, plaintext: ROTATED, syncRunId: stale }),
+    ).rejects.toThrow('superseded by a newer one');
+    expect(await rows(harness)).toEqual([
+      expect.objectContaining({ _id: credentialId, status: 'superseded' }),
+    ]);
+
+    const current = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...args,
+        plaintext: SECRET,
+        syncRunId: current,
+      }),
+    ).resolves.toBe(credentialId);
+    expect((await rows(harness))[0]?.status).toBeUndefined();
+  });
 });

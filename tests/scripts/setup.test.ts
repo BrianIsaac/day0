@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MOCK_FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../../src/setup/quickstart';
+import { CHANGELOG, MIGRATIONS_DONE } from './setup-harness';
 import {
   attachmentDecision,
   backendIdentityRefusal,
@@ -35,6 +36,7 @@ import {
   runSetup,
   SetupCancelled,
   firstSuccessLines,
+  pushRefusalAdvice,
   sequenceSteps,
   setupEnvUpdates,
   shouldCaptureAdminKey,
@@ -62,7 +64,8 @@ function checkout(envLocal?: string, name?: string): string {
   const directory = name === undefined ? root : join(root, name);
   if (name !== undefined) mkdirSync(directory);
   mkdirSync(join(directory, 'scripts'));
-  writeFileSync(join(directory, 'package.json'), '{"name":"day0"}\n', 'utf8');
+  writeFileSync(join(directory, 'package.json'), '{"name":"day0","version":"0.3.0"}\n', 'utf8');
+  writeFileSync(join(directory, 'CHANGELOG.md'), CHANGELOG, 'utf8');
   writeFileSync(join(directory, 'docker-compose.yml'), 'services:\n', 'utf8');
   writeFileSync(
     join(directory, '.env.example'),
@@ -211,6 +214,9 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     if (joined.includes('check:setup')) {
       return { status: 0, stdout: 'ok   backend\nNothing here is half-done.\n', stderr: '' };
+    }
+    if (joined.includes('migrations:runPending')) {
+      return { status: 0, stdout: MIGRATIONS_DONE, stderr: '' };
     }
     return { status: 0, stdout: '', stderr: '' };
   };
@@ -985,6 +991,8 @@ describe('the order the helpers run in', (): void => {
       'admin-key',
       'sync:env',
       'convex dev --once',
+      'migrations',
+      'release:stamp',
       'convex:restart',
       'check:setup',
     ]);
@@ -997,9 +1005,67 @@ describe('the order the helpers run in', (): void => {
       'admin-key',
       'sync:env',
       'convex dev --once',
+      'migrations',
+      'release:stamp',
       'convex:restart',
       'check:setup',
     ]);
+  });
+
+  it('checks the release and pushes the functions before the env on a volume that already holds a deployment (step 14)', (): void => {
+    expect(sequenceSteps('key', { existing: true })).toEqual([
+      'dev:no-auth-key',
+      'convex:up',
+      'sandbox:up',
+      'admin-key',
+      'release:check',
+      'convex dev --once',
+      'migrations',
+      'release:stamp',
+      'sync:env',
+      'convex:restart',
+      'check:setup',
+    ]);
+  });
+
+  it('puts the env first on a reused volume the release check found empty', (): void => {
+    expect(sequenceSteps('key', { existing: true, empty: true })).toEqual([
+      'dev:no-auth-key',
+      'convex:up',
+      'sandbox:up',
+      'admin-key',
+      'release:check',
+      'sync:env',
+      'convex dev --once',
+      'migrations',
+      'release:stamp',
+      'convex:restart',
+      'check:setup',
+    ]);
+  });
+});
+
+describe('the advice under a refused push', (): void => {
+  it('names pnpm sync:env when the auth config refused it', (): void => {
+    const advice = pushRefusalAdvice(
+      'Error: Unable to push deployment config\nInvalidAuthConfig: This deployment has no identity provider configured',
+      'mock',
+    ).join('\n');
+    expect(advice).toContain('`pnpm sync:env` puts the one in .env.local on the deployment');
+    expect(advice).toContain('`pnpm setup:local` again');
+  });
+
+  it('points at the reason above for any other auth config refusal, not at a missing provider', (): void => {
+    const advice = pushRefusalAdvice(
+      'InvalidAuthConfig: DAY0_OIDC_ISSUER is set without DAY0_OIDC_AUDIENCE',
+      'real',
+    ).join('\n');
+    expect(advice).toContain('refused the push for the reason above');
+    expect(advice).not.toContain('names no identity provider');
+  });
+
+  it('says nothing more for any other refusal', (): void => {
+    expect(pushRefusalAdvice('Schema validation failed', 'mock')).toEqual([]);
   });
 });
 
@@ -1080,7 +1146,11 @@ describe('a whole run on the key route', (): void => {
 
     const ran = commands.map((entry) => [entry.command, ...entry.args].join(' ')).join('\n');
     const order = sequenceSteps('key').map((step) =>
-      step === 'admin-key' ? 'generate_admin_key.sh' : step,
+      step === 'admin-key'
+        ? 'generate_admin_key.sh'
+        : step === 'release:stamp'
+          ? 'migrations:recordRelease'
+          : step,
     );
     let cursor = -1;
     for (const step of order) {

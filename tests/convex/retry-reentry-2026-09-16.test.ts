@@ -223,11 +223,16 @@ async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<
   return row;
 }
 
-/** Run the scheduled apply and authoring turns until the item comes to rest in one of the given states. */
+/**
+ * Run the scheduled apply and authoring turns until the item comes to rest in one of the given states.
+ *
+ * The scheduler runs on the faked clock: each round starts what is due now and
+ * waits for it, so nothing is left to the real clock (P11-1).
+ */
 async function settle(harness: Harness, workItemId: Id<'workItems'>, states: readonly string[]): Promise<Doc<'workItems'>> {
   for (let round = 0; round < 40; round += 1) {
+    vi.advanceTimersByTime(0);
     await harness.finishInProgressScheduledFunctions();
-    await new Promise((resolve) => setTimeout(resolve, 0));
     const row = await readItem(harness, workItemId);
     if (states.includes(row.state)) return row;
   }
@@ -289,9 +294,11 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   });
 
   afterEach((): void => {
+    vi.useRealTimers();
     recorded.mcp.length = 0;
     recorded.http.length = 0;
     recorded.model.length = 0;

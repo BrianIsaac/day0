@@ -2,7 +2,7 @@
 /**
  * Record the span model's answers over the company bed's pages.
  *
- *   DAY0_REDACTOR_URL=http://127.0.0.1:<port> pnpm bed:record-spans
+ *   DAY0_REDACTOR_URL=http://127.0.0.1:<port> pnpm exec tsx scripts/bed/record-spans.ts
  *
  * Documentation sync sends each page's title and body to the redaction
  * component whole, so the component's answer for a page's exact text is what
@@ -31,7 +31,10 @@ import { BED_DIR } from './spec';
 
 export const SPANS_PATH = 'tests/fixtures/bed/company-spans.json';
 /** The Notion texts, recorded as they are in git (the token line a placeholder). */
-export const NOTION_PAGES: readonly string[] = ['linear-automation.md', 'slack-automation-policy.md'];
+export const NOTION_PAGES: readonly string[] = [
+  'linear-automation.md',
+  'slack-automation-policy.md',
+];
 
 export interface BedSpanRecording {
   model: string;
@@ -73,7 +76,7 @@ async function main(): Promise<number> {
   if (!url) {
     console.error(
       'DAY0_REDACTOR_URL is unset. Point it at a redaction component this machine can reach, ' +
-        'for example a port forwarded to a running bed\'s `redactor` service.',
+        "for example a port forwarded to a running bed's `redactor` service.",
     );
     return 1;
   }
@@ -92,13 +95,15 @@ async function main(): Promise<number> {
     spans: {},
   };
   for (const text of bedTexts(process.cwd())) {
-    recording.spans[textKey(text)] = (await model.spans(text, REQUESTED_LABELS, MODEL_THRESHOLD)).map(
-      (span) => ({ ...span, score: Number(span.score.toFixed(4)) }),
-    );
+    recording.spans[textKey(text)] = (
+      await model.spans(text, REQUESTED_LABELS, MODEL_THRESHOLD)
+    ).map((span) => ({ ...span, score: Number(span.score.toFixed(4)) }));
   }
   mkdirSync(dirname(SPANS_PATH), { recursive: true });
   writeFileSync(SPANS_PATH, `${JSON.stringify(recording, null, 1)}\n`, 'utf8');
-  console.log(`recorded ${Object.keys(recording.spans).length} texts from ${body.model} into ${SPANS_PATH}`);
+  console.log(
+    `recorded ${Object.keys(recording.spans).length} texts from ${body.model} into ${SPANS_PATH}`,
+  );
   return 0;
 }
 

@@ -98,6 +98,16 @@ export interface IntakeRuntime {
   listChatSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
   listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
+  /** The scopes the employee holds now: granted and not revoked. */
+  grantedScopes(agentId: Id<'agents'>): Promise<string[]>;
+  /** The rows waiting to be evaluated for the employee, and the bound intake keeps (N7). */
+  waitingWork(agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }>;
+  /** Which of the listed items already have a row for the employee. */
+  seededItems(
+    agentId: Id<'agents'>,
+    sourceSystem: string,
+    externalIds: readonly string[],
+  ): Promise<string[]>;
   decrypt(credentialId: CredentialId): Promise<string>;
   recordIntake(record: IntakeRecord): Promise<void>;
   recordDecisionPoll(record: {
@@ -283,6 +293,21 @@ function discoveredArgument(
   return Object.keys(properties).find((name: string): boolean => wanted.has(normalise(name)));
 }
 
+/**
+ * Whether a discovered argument's schema accepts one string value.
+ *
+ * Args:
+ *   schema: The argument's advertised schema.
+ *   value: The value intake would send.
+ *
+ * Returns:
+ *   True when the schema lists the value, or lists no values at all.
+ */
+function schemaAccepts(schema: unknown, value: string): boolean {
+  const options = asRecord(schema)?.enum;
+  return !Array.isArray(options) || options.includes(value);
+}
+
 /** A Linear list request and which of its bounds the provider itself enforces. */
 export interface LinearListRequest {
   args: Record<string, unknown>;
@@ -400,6 +425,14 @@ export function linearListArguments(
 
   const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
   if (limitName) args[limitName] = PAGE_SIZE;
+
+  // Creation order keeps a ticket on its page while the walk pages: under the
+  // default update order, a ticket edited mid-walk moves pages and can be
+  // skipped or read twice (P9-1).
+  const orderName = discoveredArgument(properties, ['orderBy']);
+  if (orderName && schemaAccepts(properties[orderName], 'createdAt')) {
+    args[orderName] = 'createdAt';
+  }
 
   const selectable = selectableFields(properties);
   if (selectable) {
@@ -1426,6 +1459,20 @@ async function connectedBotId(
   return auth.bot_id;
 }
 
+/** What one chat poll reads: the manager's decision replies, the channels' asks, or both. */
+interface ChatPollScope {
+  readonly decisions: boolean;
+  readonly work: boolean;
+  /**
+   * When the agent was deployed, in epoch milliseconds. A mention written
+   * before it was addressed to whatever answered the bot then (an earlier
+   * agent, or another deployment on the same workspace), so the work read
+   * starts here and never takes an older mention, as a decision reply that
+   * predates the agent is never taken either.
+   */
+  readonly mentionsSince?: number;
+}
+
 /**
  * Poll documented Slack channels for exact mentions of the connected bot.
  *
@@ -1446,7 +1493,7 @@ async function pollSlack(
   observedAt: number,
   fetcher: IntakeFetcher,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
-  include: { decisions: boolean; work: boolean },
+  include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const requiredMethods = include.work
@@ -1468,11 +1515,19 @@ async function pollSlack(
     if (names.length === 0) throw new Error('Slack policy names no intake channels.');
     const channels = await resolveSlackChannels(fetcher, credential, names);
     const mention = `<@${surface.providerIdentityId}>`;
+    const since = include.mentionsSince;
+    const sinceTs = since === undefined ? undefined : String(since / 1_000);
     for (const channel of channels) {
-      const messages = await slackHistory(fetcher, credential, channel.id, surface.lastPolledAt);
+      const messages = await slackHistory(
+        fetcher,
+        credential,
+        channel.id,
+        surface.lastPolledAt ?? since,
+      );
       for (const message of messages) {
         if (!message.text.includes(mention) || postedByConnectedApp(message, surface, botId))
           continue;
+        if (sinceTs !== undefined && compareProviderTs(message.ts, sinceTs) < 0) continue;
         candidates.push(slackCandidate(message, channel, surface, observedAt));
       }
     }
@@ -1530,7 +1585,7 @@ async function pollChat(
   fetcher: IntakeFetcher,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
-  include: { decisions: boolean; work: boolean },
+  include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const polled = await (async (): Promise<ChatPollResult> => {
@@ -1637,7 +1692,90 @@ function disconnectedReason(surface: Doc<'surfaces'>): string {
 }
 
 /**
+ * Why intake reads nothing from a surface whose read scope is not held.
+ *
+ * Args:
+ *   scope: The surface's read scope, `<slug>:read`.
+ *
+ * Returns:
+ *   The skip reason the card shows.
+ */
+function ungrantedReadReason(scope: string): string {
+  return `read scope ${scope} is not granted; intake reads nothing here until the manager grants it again`;
+}
+
+/**
+ * Why intake stopped short while the employee's waiting queue is at its bound.
+ *
+ * Args:
+ *   limit: The bound on waiting rows.
+ *   held: How many listed items were left for a later poll, when known.
+ *
+ * Returns:
+ *   The skip reason the card shows.
+ */
+function queueFullReason(limit: number, held?: number): string {
+  const rest = held === undefined ? 'more' : `${held} more`;
+  return `${limit} items are waiting to be evaluated; intake reads ${rest} once the queue drains`;
+}
+
+/**
+ * The listed items a poll seeds within the bound on waiting work (N7).
+ *
+ * An item that already has a row is re-listed whatever the room, since it
+ * adds nothing to the queue; a new item takes a place while one is left.
+ *
+ * Args:
+ *   runtime: Persistence boundary.
+ *   agentId: The employee.
+ *   candidates: The poll's items, in list order.
+ *   room: Places left in the employee's waiting queue.
+ *
+ * Returns:
+ *   The items to seed, how many new items were left for a later poll, and the room left.
+ */
+async function admitWithinBound(
+  runtime: IntakeRuntime,
+  agentId: Id<'agents'>,
+  candidates: readonly WorkCandidate[],
+  room: number,
+): Promise<{ admitted: WorkCandidate[]; held: number; room: number }> {
+  const known = new Set<string>();
+  for (const sourceSystem of new Set(candidates.map((candidate) => candidate.sourceSystem))) {
+    const ids = candidates
+      .filter((candidate) => candidate.sourceSystem === sourceSystem)
+      .map((candidate) => candidate.externalId);
+    for (const id of await runtime.seededItems(agentId, sourceSystem, ids)) {
+      known.add(`${sourceSystem}:${id}`);
+    }
+  }
+  const admitted: WorkCandidate[] = [];
+  let held = 0;
+  let left = room;
+  for (const candidate of candidates) {
+    if (known.has(`${candidate.sourceSystem}:${candidate.externalId}`)) {
+      admitted.push(candidate);
+    } else if (left > 0) {
+      admitted.push(candidate);
+      left -= 1;
+    } else {
+      held += 1;
+    }
+  }
+  return { admitted, held, room: left };
+}
+
+/**
  * Run one deployment-wide waterfall sweep.
+ *
+ * A connected surface is read only while its employee holds `<slug>:read`
+ * (Q7): a revoked read scope stops intake before the credential is touched.
+ * Seeding is bounded (N7): while the employee's waiting queue is at its bound
+ * nothing is read, and a poll seeds new items only into the room left, holding
+ * the checkpoint so the rest is read again once the queue drains. An item that
+ * already has a row is always re-listed: it adds nothing to the queue.
+ * The manager's decision poll (`runDecisionSweep`) runs under the manager
+ * channel's own scope and is not stopped by it (N2).
  *
  * Args:
  *   runtime: Persistence and credential boundary.
@@ -1676,7 +1814,13 @@ export async function runIntakeSweep(
     if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
-    const pages = await runtime.listPages(agentId);
+    const [pages, scopes, queue] = await Promise.all([
+      runtime.listPages(agentId),
+      runtime.grantedScopes(agentId),
+      runtime.waitingWork(agentId),
+    ]);
+    const granted = new Set(scopes);
+    let waiting = queue.waiting;
     const documentedNames = extractDocumentedSystemOrder(
       pages.map((page: Doc<'docPages'>): { title: string; content: string } => ({
         title: page.title,
@@ -1692,6 +1836,16 @@ export async function runIntakeSweep(
           surfaceId: surface._id,
           waterfallPosition,
           skipReason: disconnectedReason(surface),
+        });
+        skipped += 1;
+        continue;
+      }
+      const readScope = `${surface.slug}:read`;
+      if (!granted.has(readScope)) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: ungrantedReadReason(readScope),
         });
         skipped += 1;
         continue;
@@ -1748,6 +1902,16 @@ export async function runIntakeSweep(
         continue;
       }
 
+      if (waiting >= queue.limit) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: queueFullReason(queue.limit),
+        });
+        skipped += 1;
+        continue;
+      }
+
       const pollStartedAt = now();
       let credential = '';
       try {
@@ -1762,29 +1926,39 @@ export async function runIntakeSweep(
                 fetcher,
                 makeMcpClient,
                 () => runtime.listOpenDecisionRequests(surface._id),
-                { decisions: false, work: true },
+                { decisions: false, work: true, mentionsSince: agent.createdAt },
                 rememberBotId(runtime, surface._id),
               )
             : undefined;
         const polledPage: LinearPoll = chat
           ? { candidates: chat.candidates, withdrawn: [], trackers: new Map() }
           : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
-        const mapped = polledPage.candidates;
+        const admission = await admitWithinBound(
+          runtime,
+          agentId,
+          polledPage.candidates,
+          queue.limit - waiting,
+        );
+        const mapped = admission.admitted;
+        const held = admission.held;
         for (const candidate of mapped) {
           await seedCandidate(runtime, agentId, candidate, polledPage.trackers);
         }
+        waiting = queue.limit - admission.room;
         for (const { candidate, leftQueue } of polledPage.withdrawn) {
           await runtime.withdraw({
             ...seedOf(agentId, candidate, polledPage.trackers),
             leftQueue,
           });
         }
+        const holdCheckpoint =
+          held > 0 ? queueFullReason(queue.limit, held) : polledPage.holdCheckpoint;
         await runtime.recordIntake({
           surfaceId: surface._id,
           waterfallPosition,
-          ...(polledPage.holdCheckpoint === undefined
+          ...(holdCheckpoint === undefined
             ? { polledAt: pollStartedAt }
-            : { skipReason: polledPage.holdCheckpoint }),
+            : { skipReason: holdCheckpoint }),
         });
         candidates += mapped.length;
         polled += 1;
@@ -1881,6 +2055,24 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       await ctx.runQuery(internal.agents.getInternal, { agentId }),
     listPages: async (agentId: Id<'agents'>): Promise<Doc<'docPages'>[]> =>
       await ctx.runQuery(internal.orientationData.pagesForAgent, { agentId }),
+    waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> =>
+      await ctx.runQuery(internal.workLoop.waitingWork, { agentId }),
+    seededItems: async (
+      agentId: Id<'agents'>,
+      sourceSystem: string,
+      externalIds: readonly string[],
+    ): Promise<string[]> =>
+      externalIds.length === 0
+        ? []
+        : await ctx.runQuery(internal.workLoop.seededItems, {
+            agentId,
+            sourceSystem,
+            externalIds: [...externalIds],
+          }),
+    grantedScopes: async (agentId: Id<'agents'>): Promise<string[]> =>
+      (await ctx.runQuery(internal.agents.grantedScopes, { agentId })).map(
+        (grant: Doc<'permissionGrants'>): string => grant.scope,
+      ),
     decrypt: async (credentialId: CredentialId): Promise<string> =>
       await ctx.runAction(credentialInternal.credentials.decrypt, { credentialId }),
     recordIntake: async (record: IntakeRecord): Promise<void> => {

@@ -1,5 +1,13 @@
-import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -15,9 +23,9 @@ import {
 } from '../../scripts/bed/company';
 import { MANIFEST_FILE } from '../../scripts/bed/docs';
 import { LABEL_DESCRIPTION, markedDescription } from '../../scripts/bed/linear';
-import { RETRY_PAUSE_MS } from '../../scripts/rehearsal/linear';
+import { RETRY_PAUSE_MS } from '../../scripts/lib/linear';
 import { comparePage, NOTION_READER_SCRIPT, parseNotionRead } from '../../scripts/bed/notion';
-import { standingAsksFromFile } from '../../scripts/bed/slack';
+import { asksFromFile } from '../../scripts/bed/slack';
 import { loadBedSpec } from '../../scripts/bed/spec';
 import { DOCS_STUB } from '../../scripts/setup';
 import { REFUSED_CREATE_ACTION } from '../fixtures/refused-ticket-create-2026-09-19';
@@ -67,7 +75,10 @@ class FakeLinear {
     id: `team-${team.key}`,
     key: team.key,
     name: team.name,
-    states: ['Backlog', 'Todo', 'In Progress', 'Done'].map((state) => ({ id: `${team.key}-${state}`, name: state })),
+    states: ['Backlog', 'Todo', 'In Progress', 'Done'].map((state) => ({
+      id: `${team.key}-${state}`,
+      name: state,
+    })),
     projects: [{ id: `project-${team.key}`, name: team.project }],
   }));
   labels: Array<{ id: string; name: string; description: string | null }> = [];
@@ -78,13 +89,21 @@ class FakeLinear {
   private next = 1;
   private numbers = new Map<string, number>();
 
-  fetch: typeof fetch = (async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const body = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+  fetch: typeof fetch = (async (
+    _input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const body = JSON.parse(String(init?.body)) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
     expect((init?.headers as Record<string, string>).Authorization).toBe(LINEAR_KEY);
     const operation = /(?:query|mutation) (\w+)/.exec(body.query)![1]!;
     this.operations.push(operation);
     if (operation === this.failOn) {
-      return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), { status: 200 });
+      return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), {
+        status: 200,
+      });
     }
     const fault = this.faults.get(operation)?.shift();
     if (fault?.kind === 'timeout') {
@@ -99,7 +118,9 @@ class FakeLinear {
     try {
       data = this.answer(operation, body.variables ?? {});
     } catch (error) {
-      return new Response(JSON.stringify({ errors: [{ message: (error as Error).message }] }), { status: 200 });
+      return new Response(JSON.stringify({ errors: [{ message: (error as Error).message }] }), {
+        status: 200,
+      });
     }
     return new Response(JSON.stringify({ data }), { status: 200 });
   }) as typeof fetch;
@@ -160,22 +181,34 @@ class FakeLinear {
           teams: {
             nodes: this.teams
               .filter((team) => keys.includes(team.key))
-              .map((team) => ({ ...team, states: { nodes: team.states }, projects: { nodes: team.projects } })),
+              .map((team) => ({
+                ...team,
+                states: { nodes: team.states },
+                projects: { nodes: team.projects },
+              })),
           },
         };
       }
       case 'BedLabels':
-        return { issueLabels: { nodes: this.labels.filter((label) => label.name === variables.name) } };
+        return {
+          issueLabels: { nodes: this.labels.filter((label) => label.name === variables.name) },
+        };
       case 'BedLabelCreate': {
         const input = variables.input as { name: string; description: string };
-        const label = { id: `label-${this.next++}`, name: input.name, description: input.description };
+        const label = {
+          id: `label-${this.next++}`,
+          name: input.name,
+          description: input.description,
+        };
         this.labels.push(label);
         return { issueLabelCreate: { success: true, issueLabel: { id: label.id } } };
       }
       case 'BedLabelDelete':
-        if (!this.labels.some((label) => label.id === variables.id)) throw new Error('Entity not found: IssueLabel');
+        if (!this.labels.some((label) => label.id === variables.id))
+          throw new Error('Entity not found: IssueLabel');
         this.labels = this.labels.filter((label) => label.id !== variables.id);
-        for (const issue of this.issues) issue.labelIds = issue.labelIds.filter((id) => id !== variables.id);
+        for (const issue of this.issues)
+          issue.labelIds = issue.labelIds.filter((id) => id !== variables.id);
         return { issueLabelDelete: { success: true } };
       case 'BedIssues':
         return {
@@ -191,7 +224,12 @@ class FakeLinear {
         return {
           issues: {
             nodes: this.issues
-              .filter((issue) => issue.archivedAt === null && teamIds.includes(issue.teamId) && issue.description.includes('(Day0) · run '))
+              .filter(
+                (issue) =>
+                  issue.archivedAt === null &&
+                  teamIds.includes(issue.teamId) &&
+                  issue.description.includes('(Day0) · run '),
+              )
               .map((issue) => ({
                 id: issue.id,
                 identifier: issue.identifier,
@@ -208,13 +246,18 @@ class FakeLinear {
         return {
           issues: {
             nodes: this.issues
-              .filter((issue) => issue.archivedAt === null && projectIds.includes(issue.projectId ?? ''))
+              .filter(
+                (issue) => issue.archivedAt === null && projectIds.includes(issue.projectId ?? ''),
+              )
               .map((issue) => ({
                 id: issue.id,
                 identifier: issue.identifier,
                 title: issue.title,
                 description: issue.description,
-                project: { name: this.teams.find((team) => `project-${team.key}` === issue.projectId)!.projects[0]!.name },
+                project: {
+                  name: this.teams.find((team) => `project-${team.key}` === issue.projectId)!
+                    .projects[0]!.name,
+                },
               })),
             pageInfo: { hasNextPage: false, endCursor: null },
           },
@@ -231,7 +274,9 @@ class FakeLinear {
           stateId: String(input.stateId),
           labelIds: input.labelIds as string[],
         });
-        return { issueCreate: { success: true, issue: { id: created.id, identifier: created.identifier } } };
+        return {
+          issueCreate: { success: true, issue: { id: created.id, identifier: created.identifier } },
+        };
       }
       case 'BedIssueUpdate': {
         const issue = this.issue(variables.id);
@@ -254,7 +299,8 @@ class FakeLinear {
       case 'RehearsalComments':
         return { issue: { comments: { nodes: this.issue(variables.id).comments } } };
       case 'RehearsalCommentDelete':
-        for (const issue of this.issues) issue.comments = issue.comments.filter((comment) => comment.id !== variables.id);
+        for (const issue of this.issues)
+          issue.comments = issue.comments.filter((comment) => comment.id !== variables.id);
         return { commentDelete: { success: true } };
       default:
         throw new Error(`the Linear double has no answer for ${operation}`);
@@ -262,7 +308,9 @@ class FakeLinear {
   }
 
   private node(issue: FakeIssue): Record<string, unknown> {
-    const state = this.teams.flatMap((team) => team.states).find((candidate) => candidate.id === issue.stateId)!;
+    const state = this.teams
+      .flatMap((team) => team.states)
+      .find((candidate) => candidate.id === issue.stateId)!;
     return {
       id: issue.id,
       identifier: issue.identifier,
@@ -306,15 +354,20 @@ class FakeSlack {
   /** Methods, or `method channel`, that answer an error instead. */
   failing = new Set<string>();
 
-  fetch: typeof fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  fetch: typeof fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
     expect((init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${SLACK_TOKEN}`);
     const url = new URL(String(input));
     const method = url.pathname.replace('/api/', '');
     const headers = { 'x-oauth-scopes': this.scopes };
-    const reply = (value: unknown): Response => new Response(JSON.stringify(value), { status: 200, headers });
+    const reply = (value: unknown): Response =>
+      new Response(JSON.stringify(value), { status: 200, headers });
     const channel = url.searchParams.get('channel') ?? '';
     const all = this.messages.get(channel) ?? [];
-    if (this.failing.has(method) || this.failing.has(`${method} ${channel}`)) return reply({ ok: false, error: 'internal_error' });
+    if (this.failing.has(method) || this.failing.has(`${method} ${channel}`))
+      return reply({ ok: false, error: 'internal_error' });
     switch (method) {
       case 'auth.test':
         return reply({ ok: true, team: 'day0', user_id: BOT_USER, bot_id: BOT_ID });
@@ -324,28 +377,44 @@ class FakeSlack {
           channels: url.searchParams.get('types') === 'im' ? this.ims : this.channels,
         });
       case 'conversations.history': {
-        const top = all.filter((message) => message.thread_ts === undefined || message.thread_ts === message.ts);
+        const top = all.filter(
+          (message) => message.thread_ts === undefined || message.thread_ts === message.ts,
+        );
         return reply({
           ok: true,
           messages: top.map((message) => {
-            const replies = all.filter((candidate) => candidate.thread_ts === message.ts && candidate.ts !== message.ts);
+            const replies = all.filter(
+              (candidate) => candidate.thread_ts === message.ts && candidate.ts !== message.ts,
+            );
             return replies.length > 0
-              ? { ...message, reply_count: replies.length, latest_reply: replies[replies.length - 1]!.ts }
+              ? {
+                  ...message,
+                  reply_count: replies.length,
+                  latest_reply: replies[replies.length - 1]!.ts,
+                }
               : message;
           }),
         });
       }
       case 'conversations.replies': {
         const parent = url.searchParams.get('ts');
-        return reply({ ok: true, messages: all.filter((message) => message.ts === parent || message.thread_ts === parent) });
+        return reply({
+          ok: true,
+          messages: all.filter((message) => message.ts === parent || message.thread_ts === parent),
+        });
       }
       case 'chat.delete': {
         const body = JSON.parse(String(init?.body)) as { channel: string; ts: string };
-        if (this.failing.has(`chat.delete ${body.channel}`)) return reply({ ok: false, error: 'internal_error' });
+        if (this.failing.has(`chat.delete ${body.channel}`))
+          return reply({ ok: false, error: 'internal_error' });
         const list = this.messages.get(body.channel) ?? [];
         const target = list.find((message) => message.ts === body.ts);
-        if (!target || target.bot_id !== BOT_ID || target.impersonated) return reply({ ok: false, error: 'cant_delete_message' });
-        this.messages.set(body.channel, list.filter((message) => message.ts !== body.ts));
+        if (!target || target.bot_id !== BOT_ID || target.impersonated)
+          return reply({ ok: false, error: 'cant_delete_message' });
+        this.messages.set(
+          body.channel,
+          list.filter((message) => message.ts !== body.ts),
+        );
         this.deleted.push(body);
         return reply({ ok: true });
       }
@@ -377,16 +446,34 @@ const roots: string[] = [];
 
 function notionPages(overrides: Record<string, string> = {}): string {
   const text = (file: string): string =>
-    readFileSync(resolve('bed', 'company', 'notion', file), 'utf8').replace('PASTE_LINEAR_API_KEY_HERE', LINEAR_KEY);
+    readFileSync(resolve('bed', 'company', 'notion', file), 'utf8').replace(
+      'PASTE_LINEAR_API_KEY_HERE',
+      LINEAR_KEY,
+    );
   const pages = [
-    { id: 'n0', title: 'Kestrel Supply handbook', markdown: '<page url="x">Linear automation</page>' },
-    { id: 'n1', title: 'Linear automation', markdown: overrides['Linear automation'] ?? `${text('linear-automation.md')}\n<empty-block/>` },
-    { id: 'n2', title: 'Slack automation policy', markdown: overrides['Slack automation policy'] ?? text('slack-automation-policy.md') },
+    {
+      id: 'n0',
+      title: 'Kestrel Supply handbook',
+      markdown: '<page url="x">Linear automation</page>',
+    },
+    {
+      id: 'n1',
+      title: 'Linear automation',
+      markdown: overrides['Linear automation'] ?? `${text('linear-automation.md')}\n<empty-block/>`,
+    },
+    {
+      id: 'n2',
+      title: 'Slack automation policy',
+      markdown: overrides['Slack automation policy'] ?? text('slack-automation-policy.md'),
+    },
   ];
   return `${JSON.stringify({ pages: [...pages, ...(overrides.extra ? [{ id: 'n9', title: overrides.extra, markdown: '' }] : [])] })}\n`;
 }
 
-function harness(env: Record<string, string> = {}, docker: (args: string[]) => RunResult | undefined = () => undefined): Harness {
+function harness(
+  env: Record<string, string> = {},
+  docker: (args: string[]) => RunResult | undefined = () => undefined,
+): Harness {
   const root = mkdtempSync(join(tmpdir(), 'day0-bed-company-'));
   roots.push(root);
   cpSync(resolve('bed', 'company'), join(root, 'bed', 'company'), { recursive: true });
@@ -440,17 +527,40 @@ afterEach((): void => {
 describe('the command line', (): void => {
   it('takes one verb, a key for post, and --replace for docs only', (): void => {
     expect(parseCompanyArguments(['seed'])).toEqual({ verb: 'seed', replace: false, help: false });
-    expect(parseCompanyArguments(['post', 'log-sh4480'])).toMatchObject({ verb: 'post', key: 'log-sh4480' });
-    expect(parseCompanyArguments(['--', 'docs', '--replace'])).toMatchObject({ verb: 'docs', replace: true });
+    expect(parseCompanyArguments(['post', 'log-sh4480'])).toMatchObject({
+      verb: 'post',
+      key: 'log-sh4480',
+    });
+    expect(parseCompanyArguments(['--', 'docs', '--replace'])).toMatchObject({
+      verb: 'docs',
+      replace: true,
+    });
     expect(() => parseCompanyArguments(['seed', '--replace'])).toThrow('--replace belongs to docs');
     expect(() => parseCompanyArguments(['post'])).toThrow('post needs a ticket key');
     expect(() => parseCompanyArguments(['reset'])).toThrow('is not a verb');
   });
 
+  it('is run by its script path, with no package alias (N4)', (): void => {
+    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(Object.keys(manifest.scripts).filter((name) => name.startsWith('bed:'))).toEqual([]);
+    const help = spawnSync(resolve('node_modules/.bin/tsx'), ['scripts/bed/company.ts', '--help'], {
+      encoding: 'utf8',
+      env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('Usage: pnpm exec tsx scripts/bed/company.ts <verb>');
+    expect(help.stdout).not.toContain('bed:company');
+  });
+
   it('reads the tracked tickets: ten, one of them late, every team and state declared', (): void => {
     const spec = loadBedSpec(process.cwd());
     expect(spec.tickets).toHaveLength(10);
-    expect(spec.tickets.filter((ticket) => ticket.late).map((ticket) => ticket.key)).toEqual(['log-sh4480']);
+    expect(spec.tickets.filter((ticket) => ticket.late).map((ticket) => ticket.key)).toEqual([
+      'log-sh4480',
+    ]);
     expect(spec.teams.map((team) => team.key)).toEqual(['REVOPS', 'FIN', 'LOG']);
   });
 });
@@ -483,13 +593,17 @@ describe('seed', (): void => {
         archivedAt: null,
       });
     }
-    expect(h.linear.labels).toEqual([{ id: expect.any(String), name: 'day0-demo', description: LABEL_DESCRIPTION }]);
+    expect(h.linear.labels).toEqual([
+      { id: expect.any(String), name: 'day0-demo', description: LABEL_DESCRIPTION },
+    ]);
     const first = h.linear.snapshot();
     h.linear.operations = [];
     h.clock.now += 60_000;
     expect(await run(h, ['seed'])).toBe(0);
     expect(h.linear.snapshot()).toBe(first);
-    expect(h.linear.operations.filter((operation) => /Create|Update|Archive|Delete/.test(operation))).toEqual([]);
+    expect(
+      h.linear.operations.filter((operation) => /Create|Update|Archive|Delete/.test(operation)),
+    ).toEqual([]);
   });
 
   it('puts a worked ticket back and deletes only the comments with a provenance trailer', async (): Promise<void> => {
@@ -522,14 +636,18 @@ describe('seed', (): void => {
     expect(late).toMatchObject({ archivedAt: null, stateId: 'LOG-Todo' });
     const identifier = late.identifier;
     expect(await run(h, ['post', 'log-sh4480'])).toBe(0);
-    expect(h.linear.issues.filter((issue) => issue.description.endsWith('log-sh4480'))).toHaveLength(1);
+    expect(
+      h.linear.issues.filter((issue) => issue.description.endsWith('log-sh4480')),
+    ).toHaveLength(1);
     late.comments = [{ id: 'c-run', body: `Exception recorded\n\n${TRAILER}`, createdAt: '1' }];
     await run(h, ['seed']);
     expect(late.archivedAt).not.toBeNull();
     expect(await run(h, ['post', 'log-sh4480'])).toBe(0);
     expect(late).toMatchObject({ archivedAt: null, identifier, comments: [] });
     expect(await run(h, ['post', 'log-sh4471'])).toBe(1);
-    expect(h.logs.join('\n')).toContain('log-sh4471 is not a late ticket; post files only log-sh4480');
+    expect(h.logs.join('\n')).toContain(
+      'log-sh4471 is not a late ticket; post files only log-sh4480',
+    );
   });
 
   it('refuses before changing anything when a hand step is missing', async (): Promise<void> => {
@@ -546,9 +664,14 @@ describe('seed', (): void => {
     const h = harness();
     const original = h.linear.fetch;
     let creates = 0;
-    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.linear.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       if (String(init?.body).includes('BedIssueCreate') && ++creates === 3) {
-        return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), { status: 200 });
+        return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), {
+          status: 200,
+        });
       }
       return original(input, init);
     }) as typeof fetch;
@@ -560,17 +683,34 @@ describe('seed', (): void => {
 
   it("deletes only the bot's trailer messages posted since this clone's first seed", async (): Promise<void> => {
     const h = harness();
-    h.slack.post('C1', { ts: '1789000000.000100', text: `an earlier run's reply\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('C1', {
+      ts: '1789000000.000100',
+      text: `an earlier run's reply\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     await run(h, ['seed']);
     const epoch = JSON.parse(readFileSync(join(h.root, STATE_FILE), 'utf8')).epoch as string;
     expect(epoch).toBe('1789693200.000000');
     const later = (seconds: number): string => `${1789693200 + seconds}.000100`;
-    h.slack.post('C5', { ts: later(10), text: `<@${BOT_USER}> please refresh the pipeline tile`, user: 'UHUMAN' });
-    h.slack.post('C5', { ts: later(20), text: `Refreshed.\n\n${TRAILER}`, bot_id: BOT_ID, thread_ts: later(10) });
+    h.slack.post('C5', {
+      ts: later(10),
+      text: `<@${BOT_USER}> please refresh the pipeline tile`,
+      user: 'UHUMAN',
+    });
+    h.slack.post('C5', {
+      ts: later(20),
+      text: `Refreshed.\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+      thread_ts: later(10),
+    });
     h.slack.post('C3', { ts: later(30), text: 'A bot line with no trailer', bot_id: BOT_ID });
     h.slack.post('C3', { ts: later(40), text: `Another app\n\n${TRAILER}`, bot_id: 'BOTHER' });
     h.slack.post('C9', { ts: later(50), text: `Outside the bed\n\n${TRAILER}`, bot_id: BOT_ID });
-    h.slack.post('D1', { ts: later(60), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(60),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     h.clock.now += 3_600_000;
     expect(await run(h, ['seed'])).toBe(0);
     expect(h.slack.deleted).toEqual([
@@ -611,8 +751,10 @@ describe('a named set of tickets', (): void => {
     const spec = loadBedSpec(process.cwd());
     const tickets = ONE_EACH.map((key) => spec.tickets.find((ticket) => ticket.key === key)!);
     expect(tickets.map((ticket) => ticket.team)).toEqual(['FIN', 'FIN', 'FIN', 'LOG']);
-    const asks = standingAsksFromFile(readFileSync(resolve('bed/company/slack-asks.md'), 'utf8'));
-    expect(asks.filter((ask) => ask.sets.includes('one-each')).map((ask) => ask.channel)).toEqual(['ops-requests']);
+    const asks = asksFromFile(readFileSync(resolve('bed/company/slack-asks.md'), 'utf8'));
+    expect(asks.filter((ask) => ask.sets.includes('one-each')).map((ask) => ask.channel)).toEqual([
+      'ops-requests',
+    ]);
     expect(tickets.every((ticket) => !ticket.late)).toBe(true);
     // The close status note reads the calendar steps as Linear reports them (rehearsal 1, finding 3):
     // accruals booked at Done, the bank reconciliation still in progress, so the note names it as not done.
@@ -628,18 +770,35 @@ describe('a named set of tickets', (): void => {
     const h = harness();
     const path = join(h.root, 'bed', 'company', 'linear.json');
     const tracked = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-    writeFileSync(path, JSON.stringify({ ...tracked, sets: { broken: ['revops-tile', 'fin-nothing'] } }));
-    expect(() => loadBedSpec(h.root)).toThrow('set broken names ticket fin-nothing, which it does not declare');
+    writeFileSync(
+      path,
+      JSON.stringify({ ...tracked, sets: { broken: ['revops-tile', 'fin-nothing'] } }),
+    );
+    expect(() => loadBedSpec(h.root)).toThrow(
+      'set broken names ticket fin-nothing, which it does not declare',
+    );
     writeFileSync(path, JSON.stringify({ ...tracked, sets: { late: ['log-sh4480'] } }));
-    expect(() => loadBedSpec(h.root)).toThrow('set late names log-sh4480, a late ticket that post files');
+    expect(() => loadBedSpec(h.root)).toThrow(
+      'set late names log-sh4480, a late ticket that post files',
+    );
   });
 
   it('takes --set for check and seed only, and always with a name', (): void => {
-    expect(parseCompanyArguments(['seed', '--set', 'one-each'])).toMatchObject({ verb: 'seed', set: 'one-each' });
-    expect(parseCompanyArguments(['--', 'check', '--set', 'one-each'])).toMatchObject({ verb: 'check', set: 'one-each' });
+    expect(parseCompanyArguments(['seed', '--set', 'one-each'])).toMatchObject({
+      verb: 'seed',
+      set: 'one-each',
+    });
+    expect(parseCompanyArguments(['--', 'check', '--set', 'one-each'])).toMatchObject({
+      verb: 'check',
+      set: 'one-each',
+    });
     expect(() => parseCompanyArguments(['seed', '--set'])).toThrow('--set needs a set name');
-    expect(() => parseCompanyArguments(['teardown', '--set', 'one-each'])).toThrow('--set belongs to check and seed');
-    expect(() => parseCompanyArguments(['post', 'log-sh4480', '--set', 'one-each'])).toThrow('--set belongs to check and seed');
+    expect(() => parseCompanyArguments(['teardown', '--set', 'one-each'])).toThrow(
+      '--set belongs to check and seed',
+    );
+    expect(() => parseCompanyArguments(['post', 'log-sh4480', '--set', 'one-each'])).toThrow(
+      '--set belongs to check and seed',
+    );
   });
 
   it('files only the set, and a second seed with it changes nothing', async (): Promise<void> => {
@@ -647,15 +806,24 @@ describe('a named set of tickets', (): void => {
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
     expect(filed(h)).toEqual(ONE_EACH);
     // The tile's starting figure belongs to no ticket: the set without revops-tile still resets it.
-    expect(h.runs.map((call) => call.args.join(' ')).filter((line) => line.includes('restart'))).toEqual([
+    expect(
+      h.runs.map((call) => call.args.join(' ')).filter((line) => line.includes('restart')),
+    ).toEqual([
       'compose -p day0-bed-test --env-file .env.local --profile real --profile demo restart looker-tile',
     ]);
-    expect(h.logs.join('\n')).toContain('restarted looker-tile in day0-bed-test; it reads its seeded 68%');
+    expect(h.logs.join('\n')).toContain(
+      'restarted looker-tile in day0-bed-test; it reads its seeded 68%',
+    );
     for (const key of ONE_EACH) {
       const ticket = loadBedSpec(h.root).tickets.find((candidate) => candidate.key === key)!;
-      expect(h.linear.byKey(key), key).toMatchObject({ stateId: `${ticket.team}-${ticket.state}`, assigneeId: null });
+      expect(h.linear.byKey(key), key).toMatchObject({
+        stateId: `${ticket.team}-${ticket.state}`,
+        assigneeId: null,
+      });
     }
-    expect(h.logs.join('\n')).toContain('Seeded the set one-each: fin-status, fin-accruals, fin-bankrec, log-sh4471.');
+    expect(h.logs.join('\n')).toContain(
+      'Seeded the set one-each: fin-status, fin-accruals, fin-bankrec, log-sh4471.',
+    );
     const first = h.linear.snapshot();
     h.linear.operations = [];
     h.clock.now += 60_000;
@@ -672,7 +840,9 @@ describe('a named set of tickets', (): void => {
     h.logs.length = 0;
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
     expect(filed(h)).toEqual(ONE_EACH);
-    expect(h.logs.join('\n')).toContain('archived revops-audit REVOPS-2; it is outside the set one-each');
+    expect(h.logs.join('\n')).toContain(
+      'archived revops-audit REVOPS-2; it is outside the set one-each',
+    );
     expect(await run(h, ['seed'])).toBe(0);
     expect(filed(h)).toHaveLength(9);
   });
@@ -682,18 +852,26 @@ describe('a named set of tickets', (): void => {
     expect(await run(h, ['seed', '--set', 'three-tasks'])).toBe(1);
     expect(writes(h)).toEqual([]);
     expect(h.runs).toEqual([]);
-    expect(h.logs.join('\n')).toContain('linear.json has no set three-tasks; its sets are one-each');
+    expect(h.logs.join('\n')).toContain(
+      'linear.json has no set three-tasks; its sets are one-each',
+    );
     expect(await run(h, ['check', '--set', 'three-tasks'])).toBe(1);
   });
 
   it('checks the bed for the set, and says which tickets it expects', async (): Promise<void> => {
     const h = harness();
     await run(h, ['docs']);
-    h.slack.post('C5', { ts: '1788000000.000102', text: `<@${BOT_USER}> please refresh the pipeline tile to the standup figure`, user: 'UHUMAN' });
+    h.slack.post('C5', {
+      ts: '1788000000.000102',
+      text: `<@${BOT_USER}> please refresh the pipeline tile to the standup figure`,
+      user: 'UHUMAN',
+    });
     h.logs.length = 0;
     expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
     const before = h.logs.join('\n');
-    expect(before).toContain('seed --set one-each files fin-status, fin-accruals, fin-bankrec, log-sh4471; every other ticket stays unfiled');
+    expect(before).toContain(
+      'seed --set one-each files fin-status, fin-accruals, fin-bankrec, log-sh4471; every other ticket stays unfiled',
+    );
     expect(before).toContain('fin-status is not filed yet; seed creates it');
     expect(before).toContain('revops-tile is outside the set one-each and not filed');
     expect(before).toContain('revops-audit is outside the set one-each and not filed');
@@ -701,14 +879,16 @@ describe('a named set of tickets', (): void => {
     await run(h, ['seed', '--set', 'one-each']);
     h.logs.length = 0;
     expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
-    expect(h.logs.join('\n')).toContain('All green: the company bed is ready for seed --set one-each.');
+    expect(h.logs.join('\n')).toContain(
+      'All green: the company bed is ready for seed --set one-each.',
+    );
     h.logs.length = 0;
-    // The full sitting needs the two standing asks a one-each bed must not hold.
-    expect(await run(h, ['check'])).toBe(1);
-    const gaps = h.logs.filter((line) => line.includes('GAP '));
-    expect(gaps).toHaveLength(2);
-    for (const gap of gaps) expect(gap).toContain('lacks the standing ask');
-    expect(h.logs.join('\n')).toContain('seed files the nine tickets; post files log-sh4480 at its protocol step');
+    // The asks are posted during a sitting, so a one-each bed owes the full sitting nothing in Slack.
+    expect(await run(h, ['check'])).toBe(0);
+    expect(h.logs.filter((line) => line.includes('GAP '))).toEqual([]);
+    expect(h.logs.join('\n')).toContain(
+      'seed files the nine tickets; post files log-sh4480 at its protocol step',
+    );
     expect(h.logs.join('\n')).toContain('revops-audit is not filed yet; seed creates it');
   });
 });
@@ -718,10 +898,17 @@ describe('teardown', (): void => {
     const h = harness();
     expect(await run(h, ['seed'])).toBe(0);
     const later = `${1789693200 + 5}.000100`;
-    h.slack.post('C1', { ts: later, text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID, impersonated: true });
+    h.slack.post('C1', {
+      ts: later,
+      text: `Coverage is 74%.\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+      impersonated: true,
+    });
     expect(await run(h, ['teardown'])).toBe(1);
     expect(h.slack.deleted).toEqual([]);
-    expect(h.logs.join('\n')).toContain(`#revops-asks message ${later} cannot be deleted by the bot token`);
+    expect(h.logs.join('\n')).toContain(
+      `#revops-asks message ${later} cannot be deleted by the bot token`,
+    );
     expect(existsSync(join(h.root, STATE_FILE))).toBe(true);
     h.slack.messages.set('C1', []);
     expect(await run(h, ['teardown'])).toBe(0);
@@ -755,7 +942,11 @@ describe('teardown', (): void => {
     expect(await run(h, ['teardown'])).toBe(0);
     expect(prior.archivedAt).not.toBeNull();
     expect(h.linear.labels).toHaveLength(1);
-    expect(h.linear.issues.filter((issue) => issue.id !== prior.id).every((issue) => issue.archivedAt !== null)).toBe(true);
+    expect(
+      h.linear.issues
+        .filter((issue) => issue.id !== prior.id)
+        .every((issue) => issue.archivedAt !== null),
+    ).toBe(true);
   });
 
   it('refuses to seed over an active ticket marked by an earlier clone', async (): Promise<void> => {
@@ -782,7 +973,11 @@ describe('teardown', (): void => {
     const later = `${1789693200 + 5}.000100`;
     h.slack.post('C1', { ts: later, text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID });
     expect(await run(h, ['teardown'])).toBe(0);
-    expect(h.linear.issues.filter((issue) => issue.description.includes('day0-demo-key')).every((issue) => issue.archivedAt !== null)).toBe(true);
+    expect(
+      h.linear.issues
+        .filter((issue) => issue.description.includes('day0-demo-key'))
+        .every((issue) => issue.archivedAt !== null),
+    ).toBe(true);
     expect(JSON.stringify(foreign)).toBe(before);
     expect(h.linear.labels).toEqual([]);
     expect(h.slack.deleted).toEqual([{ channel: 'C1', ts: later }]);
@@ -794,7 +989,9 @@ describe('teardown', (): void => {
     h.linear.labels.push({ id: 'label-own', name: 'day0-demo', description: 'made by hand' });
     await run(h, ['seed']);
     await run(h, ['teardown']);
-    expect(h.linear.labels).toEqual([{ id: 'label-own', name: 'day0-demo', description: 'made by hand' }]);
+    expect(h.linear.labels).toEqual([
+      { id: 'label-own', name: 'day0-demo', description: 'made by hand' },
+    ]);
   });
 });
 
@@ -802,24 +999,51 @@ describe('a ticket a run filed, signed in its description (19 Sep run, finding N
   const FILED = `${JSON.parse(REFUSED_CREATE_ACTION.args.toolArgsJson ?? '{}').description}\n\n${TRAILER}`;
   const TITLE = 'Refresh the Looker pipeline tile to the standup figure';
 
-  it('check names it as the run\'s own, once, and says teardown archives it', async (): Promise<void> => {
+  it("check names it as the run's own, once, and says teardown archives it", async (): Promise<void> => {
     const h = harness();
     expect(await run(h, ['seed'])).toBe(0);
-    const loose = h.linear.addIssue({ team: 'REVOPS', title: TITLE, description: FILED, projectId: null, createdAt: '2026-09-18T01:10:00.000Z' });
-    const inProject = h.linear.addIssue({ team: 'REVOPS', title: 'Filed into the project', description: FILED, createdAt: '2026-09-18T01:11:00.000Z' });
+    const loose = h.linear.addIssue({
+      team: 'REVOPS',
+      title: TITLE,
+      description: FILED,
+      projectId: null,
+      createdAt: '2026-09-18T01:10:00.000Z',
+    });
+    const inProject = h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'Filed into the project',
+      description: FILED,
+      createdAt: '2026-09-18T01:11:00.000Z',
+    });
     h.logs.length = 0;
     expect(await run(h, ['check'])).toBe(1);
     const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
-    expect(gaps).toContain(`${loose.identifier} "${TITLE}" was filed by a Day0 run (its description ends with a provenance trailer); teardown archives it`);
-    expect(gaps).toContain(`${inProject.identifier} "Filed into the project" was filed by a Day0 run`);
+    expect(gaps).toContain(
+      `${loose.identifier} "${TITLE}" was filed by a Day0 run (its description ends with a provenance trailer); teardown archives it`,
+    );
+    expect(gaps).toContain(
+      `${inProject.identifier} "Filed into the project" was filed by a Day0 run`,
+    );
     expect(gaps).not.toContain(`${inProject.identifier} "Filed into the project" is in project`);
   });
 
   it('teardown archives the ones filed since this clone seeded, and nothing else', async (): Promise<void> => {
     const h = harness();
-    const earlier = h.linear.addIssue({ team: 'REVOPS', title: 'Filed before this clone', description: FILED, projectId: null, createdAt: '2026-09-18T00:59:59.000Z' });
+    const earlier = h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'Filed before this clone',
+      description: FILED,
+      projectId: null,
+      createdAt: '2026-09-18T00:59:59.000Z',
+    });
     expect(await run(h, ['seed'])).toBe(0);
-    const filed = h.linear.addIssue({ team: 'REVOPS', title: TITLE, description: FILED, projectId: null, createdAt: '2026-09-18T01:10:00.000Z' });
+    const filed = h.linear.addIssue({
+      team: 'REVOPS',
+      title: TITLE,
+      description: FILED,
+      projectId: null,
+      createdAt: '2026-09-18T01:10:00.000Z',
+    });
     const quoting = h.linear.addIssue({
       team: 'REVOPS',
       title: 'A person quoting a trailer',
@@ -827,7 +1051,12 @@ describe('a ticket a run filed, signed in its description (19 Sep run, finding N
       projectId: null,
       createdAt: '2026-09-18T01:12:00.000Z',
     });
-    const human = h.linear.addIssue({ team: 'REVOPS', title: 'A person\'s ticket', projectId: null, createdAt: '2026-09-18T01:13:00.000Z' });
+    const human = h.linear.addIssue({
+      team: 'REVOPS',
+      title: "A person's ticket",
+      projectId: null,
+      createdAt: '2026-09-18T01:13:00.000Z',
+    });
     expect(await run(h, ['teardown'])).toBe(0);
     expect(filed.archivedAt).not.toBeNull();
     expect(h.logs.join('\n')).toContain(`archived ${filed.identifier}, which a Day0 run filed`);
@@ -839,8 +1068,18 @@ describe('a ticket a run filed, signed in its description (19 Sep run, finding N
   it('keeps the state file when the run-filed read fails, so the next teardown finishes', async (): Promise<void> => {
     const h = harness();
     expect(await run(h, ['seed'])).toBe(0);
-    const filed = h.linear.addIssue({ team: 'REVOPS', title: TITLE, description: FILED, projectId: null, createdAt: '2026-09-18T01:10:00.000Z' });
-    h.linear.fail('BedRunIssues', { kind: 'status', status: 503, body: 'unavailable' }, { kind: 'status', status: 503, body: 'unavailable' });
+    const filed = h.linear.addIssue({
+      team: 'REVOPS',
+      title: TITLE,
+      description: FILED,
+      projectId: null,
+      createdAt: '2026-09-18T01:10:00.000Z',
+    });
+    h.linear.fail(
+      'BedRunIssues',
+      { kind: 'status', status: 503, body: 'unavailable' },
+      { kind: 'status', status: 503, body: 'unavailable' },
+    );
     expect(await run(h, ['teardown'])).toBe(1);
     expect(filed.archivedAt).toBeNull();
     expect(existsSync(join(h.root, STATE_FILE))).toBe(true);
@@ -852,11 +1091,14 @@ describe('a ticket a run filed, signed in its description (19 Sep run, finding N
 describe('a transient Linear failure in teardown and seed', (): void => {
   const ONE_EACH = ['fin-status', 'fin-accruals', 'fin-bankrec', 'log-sh4471'];
   const log = (h: Harness): string => h.logs.join('\n');
-  const marked = (h: Harness): FakeIssue[] => h.linear.issues.filter((issue) => issue.description.includes('day0-demo-key: '));
-  const allArchived = (h: Harness): boolean => marked(h).every((issue) => issue.archivedAt !== null);
+  const marked = (h: Harness): FakeIssue[] =>
+    h.linear.issues.filter((issue) => issue.description.includes('day0-demo-key: '));
+  const allArchived = (h: Harness): boolean =>
+    marked(h).every((issue) => issue.archivedAt !== null);
   const stateKept = (h: Harness): boolean => existsSync(join(h.root, STATE_FILE));
   const later = (seconds: number): string => `${1789693200 + seconds}.000100`;
-  const timedOut = (): DOMException => new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  const timedOut = (): DOMException =>
+    new DOMException('The operation was aborted due to timeout', 'TimeoutError');
 
   async function seeded(): Promise<Harness> {
     const h = harness();
@@ -868,7 +1110,11 @@ describe('a transient Linear failure in teardown and seed', (): void => {
 
   it('retries the label delete that timed out, then cleans Slack and finishes first try (F4)', async (): Promise<void> => {
     const h = await seeded();
-    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(5),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     h.linear.fail('BedLabelDelete', { kind: 'timeout' });
     expect(await run(h, ['teardown'])).toBe(0);
     expect(log(h)).toContain('  note retrying label delete after a timeout');
@@ -886,7 +1132,9 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     h.linear.fail('BedLabelDelete', { kind: 'timeout', landed: true });
     expect(await run(h, ['teardown'])).toBe(0);
     expect(h.linear.count('BedLabelDelete')).toBe(1);
-    expect(log(h)).toContain('  note the first label delete landed before the timeout; not sent again');
+    expect(log(h)).toContain(
+      '  note the first label delete landed before the timeout; not sent again',
+    );
     expect(log(h)).not.toContain('GAP');
     expect(h.linear.labels).toEqual([]);
   });
@@ -897,13 +1145,19 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(await run(h, ['teardown'])).toBe(0);
     expect(h.linear.count('BedIssueArchive')).toBe(ONE_EACH.length);
     expect(log(h)).toMatch(/note retrying [A-Z]+-\d+ archive after a timeout/);
-    expect(log(h)).toMatch(/note the first [A-Z]+-\d+ archive landed before the timeout; not sent again/);
+    expect(log(h)).toMatch(
+      /note the first [A-Z]+-\d+ archive landed before the timeout; not sent again/,
+    );
     expect(allArchived(h)).toBe(true);
   });
 
   it('reads the bed again after a 503 whose body is not JSON', async (): Promise<void> => {
     const h = await seeded();
-    h.linear.fail('BedIssues', { kind: 'status', status: 503, body: '<html>Service Unavailable</html>' });
+    h.linear.fail('BedIssues', {
+      kind: 'status',
+      status: 503,
+      body: '<html>Service Unavailable</html>',
+    });
     expect(await run(h, ['teardown'])).toBe(0);
     expect(log(h)).toContain('  note retrying ticket read after HTTP 503');
     expect(allArchived(h)).toBe(true);
@@ -911,7 +1165,11 @@ describe('a transient Linear failure in teardown and seed', (): void => {
 
   it('names a call that times out twice, still cleans Slack, keeps the state, and a second run finishes', async (): Promise<void> => {
     const h = await seeded();
-    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(5),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     h.linear.fail('BedLabelDelete', { kind: 'timeout' }, { kind: 'timeout' });
     expect(await run(h, ['teardown'])).toBe(1);
     expect(log(h)).toContain('  GAP  label delete failed twice: a timeout, then a timeout');
@@ -939,8 +1197,17 @@ describe('a transient Linear failure in teardown and seed', (): void => {
 
   it('does not wait out a rate limit longer than its cap; it says so and carries on to Slack', async (): Promise<void> => {
     const h = await seeded();
-    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
-    h.linear.fail('BedLabelDelete', { kind: 'status', status: 429, headers: { 'Retry-After': '1800' }, body: {} });
+    h.slack.post('D1', {
+      ts: later(5),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
+    h.linear.fail('BedLabelDelete', {
+      kind: 'status',
+      status: 429,
+      headers: { 'Retry-After': '1800' },
+      body: {},
+    });
     expect(await run(h, ['teardown'])).toBe(1);
     expect(h.sleeps).toEqual([]);
     expect(log(h)).toContain(
@@ -954,12 +1221,20 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     const h = await seeded();
     h.slack.post('C1', { ts: later(5), text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID });
     h.slack.post('C3', { ts: later(6), text: `Accruals booked.\n\n${TRAILER}`, bot_id: BOT_ID });
-    h.slack.post('D1', { ts: later(7), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(7),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     h.slack.failing.add('conversations.history C1');
     h.slack.failing.add('chat.delete C3');
     expect(await run(h, ['teardown'])).toBe(1);
-    expect(log(h)).toContain('  GAP  #revops-asks was not read (Slack conversations.history: internal_error)');
-    expect(log(h)).toContain(`  GAP  #finance-close message ${later(6)} was not deleted (Slack chat.delete: internal_error)`);
+    expect(log(h)).toContain(
+      '  GAP  #revops-asks was not read (Slack conversations.history: internal_error)',
+    );
+    expect(log(h)).toContain(
+      `  GAP  #finance-close message ${later(6)} was not deleted (Slack chat.delete: internal_error)`,
+    );
     expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(7) }]);
     expect(stateKept(h)).toBe(true);
     h.slack.failing.clear();
@@ -969,12 +1244,23 @@ describe('a transient Linear failure in teardown and seed', (): void => {
 
   it('honours Retry-After once when a Slack conversation read is rate-limited', async (): Promise<void> => {
     const h = await seeded();
-    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(5),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     const original = h.slack.fetch;
     let limited = false;
-    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.slack.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = new URL(String(input));
-      if (!limited && url.pathname.endsWith('/conversations.history') && url.searchParams.get('channel') === 'D1') {
+      if (
+        !limited &&
+        url.pathname.endsWith('/conversations.history') &&
+        url.searchParams.get('channel') === 'D1'
+      ) {
         limited = true;
         return new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
           status: 429,
@@ -985,17 +1271,26 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     }) as typeof fetch;
 
     expect(await run(h, ['teardown'])).toBe(0);
-    expect(log(h)).toContain('  note retrying Slack conversations.history after HTTP 429, in 7 s as Slack asked');
+    expect(log(h)).toContain(
+      '  note retrying Slack conversations.history after HTTP 429, in 7 s as Slack asked',
+    );
     expect(h.sleeps).toEqual([7_000]);
     expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
   });
 
   it('reports a timed-out Slack delete that landed and does not count it twice', async (): Promise<void> => {
     const h = await seeded();
-    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(5),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     const original = h.slack.fetch;
     let deletes = 0;
-    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.slack.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = new URL(String(input));
       if (url.pathname.endsWith('/chat.delete')) {
         deletes += 1;
@@ -1013,7 +1308,9 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
     expect(h.sleeps).toEqual([2_000]);
     expect(log(h)).toContain('  note retrying Slack chat.delete after a timeout');
-    expect(log(h)).toContain('  note the first Slack chat.delete landed before the timeout; not sent again');
+    expect(log(h)).toContain(
+      '  note the first Slack chat.delete landed before the timeout; not sent again',
+    );
     expect(log(h)).toContain('Torn down.');
   });
 
@@ -1021,10 +1318,17 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     const h = await seeded();
     h.slack.post('C1', { ts: later(5), text: `Coverage is 74%.\n\n${TRAILER}`, bot_id: BOT_ID });
     h.slack.post('C3', { ts: later(6), text: `Accruals booked.\n\n${TRAILER}`, bot_id: BOT_ID });
-    h.slack.post('D1', { ts: later(7), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(7),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     const original = h.slack.fetch;
     let failures = 0;
-    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.slack.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = new URL(String(input));
       if (
         failures < 2 &&
@@ -1047,7 +1351,9 @@ describe('a transient Linear failure in teardown and seed', (): void => {
       { channel: 'D1', ts: later(7) },
     ]);
     expect(stateKept(h)).toBe(true);
-    expect(log(h)).toContain(`1 gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`);
+    expect(log(h)).toContain(
+      `1 gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`,
+    );
 
     h.logs.length = 0;
     expect(await run(h, ['teardown'])).toBe(0);
@@ -1062,10 +1368,17 @@ describe('a transient Linear failure in teardown and seed', (): void => {
 
   it('does not claim teardown succeeded when the Slack DM list fails twice', async (): Promise<void> => {
     const h = await seeded();
-    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.slack.post('D1', {
+      ts: later(5),
+      text: `A question for the manager\n\n${TRAILER}`,
+      bot_id: BOT_ID,
+    });
     const original = h.slack.fetch;
     let failures = 0;
-    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.slack.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = new URL(String(input));
       if (
         failures < 2 &&
@@ -1085,7 +1398,9 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     );
     expect(h.slack.deleted).toEqual([]);
     expect(stateKept(h)).toBe(true);
-    expect(log(h)).toContain(`1 gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`);
+    expect(log(h)).toContain(
+      `1 gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`,
+    );
 
     h.logs.length = 0;
     expect(await run(h, ['teardown'])).toBe(0);
@@ -1112,22 +1427,37 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
     expect(h.linear.count('BedIssueCreate')).toBe(ONE_EACH.length);
     for (const key of ONE_EACH) {
-      expect(h.linear.issues.filter((issue) => issue.description.endsWith(`day0-demo-key: ${key}`)), key).toHaveLength(1);
+      expect(
+        h.linear.issues.filter((issue) => issue.description.endsWith(`day0-demo-key: ${key}`)),
+        key,
+      ).toHaveLength(1);
     }
     expect(log(h)).toContain('  note retrying fin-status create after a timeout');
-    expect(log(h)).toContain('  note the first fin-status create landed before the timeout; not sent again');
+    expect(log(h)).toContain(
+      '  note the first fin-status create landed before the timeout; not sent again',
+    );
     expect(await run(h, ['teardown'])).toBe(0);
     expect(allArchived(h)).toBe(true);
   });
 
   it('waits out a 429 for as long as Retry-After says, once, then files the ticket', async (): Promise<void> => {
     const h = harness();
-    h.linear.fail('BedIssueCreate', { kind: 'status', status: 429, headers: { 'Retry-After': '7' }, body: {} });
+    h.linear.fail('BedIssueCreate', {
+      kind: 'status',
+      status: 429,
+      headers: { 'Retry-After': '7' },
+      body: {},
+    });
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
     expect(h.sleeps).toEqual([7_000]);
-    expect(log(h)).toContain('  note retrying fin-status create after HTTP 429, in 7 s as Linear asked');
+    expect(log(h)).toContain(
+      '  note retrying fin-status create after HTTP 429, in 7 s as Linear asked',
+    );
     for (const key of ONE_EACH) {
-      expect(h.linear.issues.filter((issue) => issue.description.endsWith(`day0-demo-key: ${key}`)), key).toHaveLength(1);
+      expect(
+        h.linear.issues.filter((issue) => issue.description.endsWith(`day0-demo-key: ${key}`)),
+        key,
+      ).toHaveLength(1);
     }
   });
 
@@ -1141,7 +1471,9 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     });
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
     expect(h.sleeps).toEqual([5_000]);
-    expect(log(h)).toContain('  note retrying label create after a Linear rate limit, in 5 s as Linear asked');
+    expect(log(h)).toContain(
+      '  note retrying label create after a Linear rate limit, in 5 s as Linear asked',
+    );
     expect(h.linear.labels).toHaveLength(1);
   });
 
@@ -1150,7 +1482,9 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     h.linear.fail('BedIssueCreate', {
       kind: 'status',
       status: 400,
-      body: { errors: [{ message: 'Argument Validation Error', extensions: { code: 'INVALID_INPUT' } }] },
+      body: {
+        errors: [{ message: 'Argument Validation Error', extensions: { code: 'INVALID_INPUT' } }],
+      },
     });
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(1);
     expect(h.linear.count('BedIssueCreate')).toBe(1);
@@ -1164,15 +1498,24 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     const h = harness();
     const original = h.linear.fetch;
     let reads = 0;
-    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.linear.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       if (String(init?.body).includes('query BedIssues') && ++reads > 1) throw timedOut();
       return original(input, init);
     }) as typeof fetch;
     await run(h, ['seed', '--set', 'one-each']);
     h.linear.fetch = original;
     expect(stateKept(h)).toBe(true);
-    const recorded = (JSON.parse(readFileSync(join(h.root, STATE_FILE), 'utf8')) as { issueIds: string[] }).issueIds;
-    expect(recorded.sort()).toEqual(marked(h).map((issue) => issue.id).sort());
+    const recorded = (
+      JSON.parse(readFileSync(join(h.root, STATE_FILE), 'utf8')) as { issueIds: string[] }
+    ).issueIds;
+    expect(recorded.sort()).toEqual(
+      marked(h)
+        .map((issue) => issue.id)
+        .sort(),
+    );
     expect(await run(h, ['teardown'])).toBe(0);
     expect(allArchived(h)).toBe(true);
   });
@@ -1181,9 +1524,14 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     const h = harness();
     const original = h.linear.fetch;
     let creates = 0;
-    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.linear.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       if (String(init?.body).includes('BedIssueCreate') && ++creates === 3) {
-        return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), { status: 200 });
+        return new Response(JSON.stringify({ errors: [{ message: 'simulated outage' }] }), {
+          status: 200,
+        });
       }
       return original(input, init);
     }) as typeof fetch;
@@ -1201,7 +1549,10 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     const h = harness();
     const original = h.linear.fetch;
     let interrupted = false;
-    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.linear.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       if (!interrupted && String(init?.body).includes('mutation BedLabelCreate')) {
         interrupted = true;
         await original(input, init);
@@ -1223,7 +1574,11 @@ describe('a transient Linear failure in teardown and seed', (): void => {
   it('does not delete a comment twice when the first delete landed before its timeout', async (): Promise<void> => {
     const h = await seeded();
     const issue = h.linear.byKey('fin-status')!;
-    issue.comments.push({ id: 'comment-run', body: `Close updated.\n\n${TRAILER}`, createdAt: '1' });
+    issue.comments.push({
+      id: 'comment-run',
+      body: `Close updated.\n\n${TRAILER}`,
+      createdAt: '1',
+    });
     h.linear.fail('RehearsalCommentDelete', { kind: 'timeout', landed: true });
 
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
@@ -1236,7 +1591,10 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     const h = harness();
     const original = h.linear.fetch;
     let interrupted = false;
-    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    h.linear.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       if (!interrupted && String(init?.body).includes('mutation BedIssueCreate')) {
         interrupted = true;
         await original(input, init);
@@ -1277,11 +1635,15 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     mkdirSync(join(h.root, '.demo-bed'), { recursive: true });
     writeFileSync(
       join(h.root, STATE_FILE),
-      `${JSON.stringify({
-        epoch: '1789693200.000000',
-        issueIds: old.map((issue) => issue.id),
-        labelId: 'label-deleted-by-rehearsal-one',
-      }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          epoch: '1789693200.000000',
+          issueIds: old.map((issue) => issue.id),
+          labelId: 'label-deleted-by-rehearsal-one',
+        },
+        null,
+        2,
+      )}\n`,
     );
 
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
@@ -1320,7 +1682,9 @@ describe('docs', (): void => {
     expect(readFileSync(join(h.docs, 'finance/handbook.md'), 'utf8')).toBe(
       readFileSync(resolve('bed/company/folder/finance/handbook.md'), 'utf8'),
     );
-    const manifest = JSON.parse(readFileSync(join(h.docs, MANIFEST_FILE), 'utf8')) as { files: Record<string, string> };
+    const manifest = JSON.parse(readFileSync(join(h.docs, MANIFEST_FILE), 'utf8')) as {
+      files: Record<string, string>;
+    };
     expect(Object.keys(manifest.files)).toHaveLength(13);
     expect(await run(h, ['docs'])).toBe(0);
     expect(h.logs.join('\n')).toContain('13 company pages in place (13 already current)');
@@ -1334,9 +1698,13 @@ describe('docs', (): void => {
     expect(readFileSync(join(h.docs, 'onboarding.md'), 'utf8')).toBe('# Our own onboarding\n');
     expect(existsSync(join(h.docs, 'finance'))).toBe(false);
     expect(existsSync(join(h.docs, MANIFEST_FILE))).toBe(false);
-    expect(h.logs.join('\n')).toContain('onboarding.md is already there and was not written by bed:company');
+    expect(h.logs.join('\n')).toContain(
+      'onboarding.md is already there and was not written by the company bed',
+    );
     expect(await run(h, ['docs', '--replace'])).toBe(0);
-    expect(readFileSync(join(h.docs, 'onboarding.md'), 'utf8')).toContain('# Kestrel Supply onboarding');
+    expect(readFileSync(join(h.docs, 'onboarding.md'), 'utf8')).toContain(
+      '# Kestrel Supply onboarding',
+    );
   });
 
   it('does not claim an identical foreign page in the manifest', async (): Promise<void> => {
@@ -1346,7 +1714,9 @@ describe('docs', (): void => {
     const source = join(h.root, 'bed/company/folder', ref);
     writeFileSync(join(h.docs, ref), readFileSync(source, 'utf8'));
     expect(await run(h, ['docs'])).toBe(0);
-    const manifest = JSON.parse(readFileSync(join(h.docs, MANIFEST_FILE), 'utf8')) as { files: Record<string, string> };
+    const manifest = JSON.parse(readFileSync(join(h.docs, MANIFEST_FILE), 'utf8')) as {
+      files: Record<string, string>;
+    };
     expect(manifest.files[ref]).toBeUndefined();
     writeFileSync(source, `${readFileSync(source, 'utf8')}\nNew tracked instruction.\n`);
     expect(await run(h, ['docs'])).toBe(1);
@@ -1360,120 +1730,99 @@ describe('docs', (): void => {
     writeFileSync(tracked, `${readFileSync(tracked, 'utf8')}\nA new line in the tracked page.\n`);
     writeFileSync(join(h.docs, 'queue.md'), '# Our queue\n');
     expect(await run(h, ['docs'])).toBe(0);
-    expect(readFileSync(join(h.docs, 'revops/handbook.md'), 'utf8')).toContain('A new line in the tracked page.');
+    expect(readFileSync(join(h.docs, 'revops/handbook.md'), 'utf8')).toContain(
+      'A new line in the tracked page.',
+    );
     expect(h.logs.join('\n')).toContain('revops/handbook.md (updated)');
     expect(h.logs.join('\n')).toContain('queue.md in');
     expect(existsSync(join(h.docs, 'queue.md'))).toBe(true);
     writeFileSync(join(h.docs, 'revops/handbook.md'), '# Edited by hand\n');
     expect(await run(h, ['docs'])).toBe(1);
-    expect(h.logs.join('\n')).toContain('revops/handbook.md was written by bed:company and edited since');
+    expect(h.logs.join('\n')).toContain(
+      'revops/handbook.md was written by the company bed and edited since',
+    );
   });
 });
 
 describe('check', (): void => {
   const CHANNEL_IDS: Record<string, string> = {
-    'revops-asks': 'C1', revops: 'C2', 'finance-close': 'C3', 'logistics-desk': 'C4', 'ops-requests': 'C5',
+    'revops-asks': 'C1',
+    revops: 'C2',
+    'finance-close': 'C3',
+    'logistics-desk': 'C4',
+    'ops-requests': 'C5',
   };
-  const FILE_ASKS = standingAsksFromFile(readFileSync(resolve('bed/company/slack-asks.md'), 'utf8'));
-
-  /** Post the file's asks the way the operator does: once, as a person, mentioning the bot. */
-  function postStandingAsks(h: Harness, author: Partial<FakeMessage> = { user: 'UHUMAN' }, skip?: string): void {
-    FILE_ASKS.forEach((ask, index) => {
-      if (ask.channel === skip) return;
-      h.slack.post(CHANNEL_IDS[ask.channel]!, { ts: `1788000000.00010${index}`, text: `<@${BOT_USER}> ${ask.text}`, ...author });
-    });
-  }
+  const FILE_ASKS = asksFromFile(readFileSync(resolve('bed/company/slack-asks.md'), 'utf8'));
 
   async function readyBed(): Promise<Harness> {
     const h = harness();
     await run(h, ['docs']);
     await run(h, ['seed']);
     await run(h, ['post', 'log-sh4480']);
-    postStandingAsks(h);
     h.logs.length = 0;
     return h;
   }
 
   it('reads the three asks from the tracked file', (): void => {
-    expect(FILE_ASKS.map((ask) => ask.channel)).toEqual(['revops-asks', 'finance-close', 'ops-requests']);
+    expect(FILE_ASKS.map((ask) => ask.channel)).toEqual([
+      'revops-asks',
+      'finance-close',
+      'ops-requests',
+    ]);
     expect(FILE_ASKS[2]!.text).toBe('please refresh the pipeline tile to the standup figure');
   });
 
-  it('reports each standing ask for the full set: its channel, its first words, and that all three are there', async (): Promise<void> => {
+  it('names each ask the full sitting posts once the employees are deployed, and needs none standing before it', async (): Promise<void> => {
     const h = await readyBed();
     expect(await run(h, ['check'])).toBe(0);
     const printed = h.logs.join('\n');
-    expect(printed).toContain('ok   #revops-asks holds the standing ask "can you confirm pipeline coverage for the three Friday stand');
-    expect(printed).toContain('ok   #finance-close holds the standing ask "can you post where the September close stands?"');
-    expect(printed).toContain('ok   #ops-requests holds the standing ask "please refresh the pipeline tile to the standup figure"');
-    expect(printed).toContain("ok   all three of slack-asks.md's asks are standing; a new deployment's first poll reads them");
+    expect(printed).toContain(
+      'note #revops-asks: once the employees are deployed, post "can you confirm pipeline coverage for the three Friday standup deals before the Q3 close summary goes out?" as yourself, mentioning the bot (type @ and pick it)',
+    );
+    expect(printed).toContain(
+      'note #finance-close: once the employees are deployed, post "can you post where the September close stands?" as yourself, mentioning the bot (type @ and pick it)',
+    );
+    expect(printed).toContain(
+      'note #ops-requests: once the employees are deployed, post "please refresh the pipeline tile to the standup figure" as yourself, mentioning the bot (type @ and pick it)',
+    );
+    expect(printed).toContain(
+      "note the full sitting posts all three of slack-asks.md's asks; a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting",
+    );
   });
 
-  it('names a standing ask that is missing for the full set as a gap', async (): Promise<void> => {
-    const h = harness();
-    await run(h, ['docs']);
-    await run(h, ['seed']);
-    postStandingAsks(h, { user: 'UHUMAN' }, 'finance-close');
-    h.logs.length = 0;
-    expect(await run(h, ['check'])).toBe(1);
-    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
-    expect(gaps).toContain('#finance-close lacks the standing ask "can you post where the September close stands?": post it once, as yourself, mentioning the bot');
-    expect(gaps).not.toContain('#revops-asks');
-    expect(h.logs.join('\n')).toContain("2 of slack-asks.md's 3 asks are standing");
-  });
-
-  it("does not count an ask the app's own token posted under a person's name, because intake never reads it", async (): Promise<void> => {
-    const h = harness();
-    await run(h, ['docs']);
-    await run(h, ['seed']);
-    postStandingAsks(h, { bot_id: BOT_ID, impersonated: true });
-    h.logs.length = 0;
-    expect(await run(h, ['check'])).toBe(1);
-    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
-    for (const ask of FILE_ASKS) expect(gaps).toContain(`#${ask.channel} lacks the standing ask`);
-    expect(gaps).toContain('was posted through the bot token; intake never reads the app\'s own posts');
-  });
-
-  it('names a second copy of a standing ask, and a mention the file does not list, as gaps for the full set', async (): Promise<void> => {
+  it('calls a mention left from an earlier sitting no gap, because no new deployment takes it', async (): Promise<void> => {
     const h = await readyBed();
-    h.slack.post('C5', { ts: '1788000001.000100', text: `<@${BOT_USER}> ${FILE_ASKS[2]!.text}`, user: 'UHUMAN' });
-    h.slack.post('C2', { ts: '1788000002.000100', text: `<@${BOT_USER}> one more thing`, user: 'UHUMAN' });
-    expect(await run(h, ['check'])).toBe(1);
-    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
-    expect(gaps).toContain('#ops-requests holds a message that mentions the bot and is not one of the standing asks (ts 1788000001.000100: "');
-    expect(gaps).toContain('#revops holds a message that mentions the bot and is not one of the standing asks (ts 1788000002.000100: "');
-    expect(h.logs.join('\n')).toContain("all three of slack-asks.md's asks are standing");
+    FILE_ASKS.forEach((ask, index) => {
+      h.slack.post(CHANNEL_IDS[ask.channel]!, {
+        ts: `1788000000.00010${index}`,
+        text: `<@${BOT_USER}> ${ask.text}`,
+        user: 'UHUMAN',
+      });
+    });
+    h.slack.post('C2', {
+      ts: '1788000002.000100',
+      text: `<@${BOT_USER}> one more thing`,
+      user: 'UHUMAN',
+    });
+    expect(await run(h, ['check'])).toBe(0);
+    expect(h.logs.filter((line) => line.includes('GAP '))).toEqual([]);
   });
 
-  it('expects exactly the #ops-requests ask for the one-each set, and names every other standing mention by channel and text', async (): Promise<void> => {
+  it('names only the #ops-requests ask for the one-each sitting', async (): Promise<void> => {
     const h = harness();
     await run(h, ['docs']);
     await run(h, ['seed', '--set', 'one-each']);
-    postStandingAsks(h);
-    h.slack.post('C4', { ts: '1788000003.000100', text: `<@${BOT_USER}> where is SH-4471?`, bot_id: 'BOTHER' });
-    h.slack.post('C4', { ts: '1788000004.000100', text: `<@${BOT_USER}> refreshed.\n\n${TRAILER}`, bot_id: BOT_ID });
     h.logs.length = 0;
-    expect(await run(h, ['check', '--set', 'one-each'])).toBe(1);
+    expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
     const printed = h.logs.join('\n');
-    expect(printed).toContain('ok   #ops-requests holds the standing ask "please refresh the pipeline tile to the standup figure"');
-    expect(printed).toContain("ok   the one standing ask the one-each sitting keeps is there");
-    const gaps = h.logs.filter((line) => line.includes('GAP '));
-    expect(gaps).toHaveLength(3);
-    expect(gaps.join('\n')).toContain('#revops-asks holds a standing message that mentions the bot (ts 1788000000.000100: "<@UBOT> can you confirm pipeline coverage for the three Fri');
-    expect(gaps.join('\n')).toContain('#finance-close holds a standing message that mentions the bot (ts 1788000000.000101: "<@UBOT> can you post where the September close stands?")');
-    expect(gaps.join('\n')).toContain('#logistics-desk holds a standing message that mentions the bot (ts 1788000003.000100: "<@UBOT> where is SH-4471?")');
-    expect(gaps[0]).toContain('the one-each sitting keeps only the #ops-requests ask and this would add an item on camera. Delete it by hand before the sitting');
-  });
-
-  it('names the missing #ops-requests ask as a gap for the one-each set', async (): Promise<void> => {
-    const h = harness();
-    await run(h, ['docs']);
-    await run(h, ['seed', '--set', 'one-each']);
-    h.logs.length = 0;
-    expect(await run(h, ['check', '--set', 'one-each'])).toBe(1);
-    const gaps = h.logs.filter((line) => line.includes('GAP '));
-    expect(gaps).toHaveLength(1);
-    expect(gaps[0]).toContain('#ops-requests lacks the standing ask "please refresh the pipeline tile to the standup figure": post it once, as yourself, mentioning the bot');
+    expect(printed).toContain(
+      'note #ops-requests: once the employees are deployed, post "please refresh the pipeline tile to the standup figure" as yourself, mentioning the bot (type @ and pick it)',
+    );
+    expect(printed).not.toContain('note #revops-asks:');
+    expect(printed).not.toContain('note #finance-close:');
+    expect(printed).toContain(
+      'note the one-each sitting posts only the #ops-requests ask; a deployment takes no mention written before its agent',
+    );
   });
 
   it('is all green on a bed whose hand steps are done, and prints no token', async (): Promise<void> => {
@@ -1481,15 +1830,36 @@ describe('check', (): void => {
     expect(await run(h, ['check'])).toBe(0);
     const printed = h.logs.join('\n');
     expect(printed).toContain('All green: the company bed is ready for seed.');
-    expect(printed).toContain('"Linear automation" matches linear-automation.md, the token line filled');
-    for (const token of [LINEAR_KEY, SLACK_TOKEN, NOTION_TOKEN]) expect(printed).not.toContain(token);
+    expect(printed).toContain(
+      '"Linear automation" matches linear-automation.md, the token line filled',
+    );
+    for (const token of [LINEAR_KEY, SLACK_TOKEN, NOTION_TOKEN])
+      expect(printed).not.toContain(token);
     const exec = h.runs.find((call) => call.args.includes('exec'))!;
     expect(exec.args).toEqual([
-      'compose', '-p', 'day0-bed-test', '--env-file', '.env.local', '--profile', 'real', '--profile', 'docs-notion',
-      'exec', '-T', '-e', 'DAY0_BED_NOTION_TOKEN', 'docs-notion-mcp', 'node', '--input-type=module', '-',
+      'compose',
+      '-p',
+      'day0-bed-test',
+      '--env-file',
+      '.env.local',
+      '--profile',
+      'real',
+      '--profile',
+      'docs-notion',
+      'exec',
+      '-T',
+      '-e',
+      'DAY0_BED_NOTION_TOKEN',
+      'docs-notion-mcp',
+      'node',
+      '--input-type=module',
+      '-',
     ]);
     expect(exec.args.join(' ')).not.toContain(NOTION_TOKEN);
-    expect(exec.options).toMatchObject({ env: { DAY0_BED_NOTION_TOKEN: NOTION_TOKEN }, input: NOTION_READER_SCRIPT });
+    expect(exec.options).toMatchObject({
+      env: { DAY0_BED_NOTION_TOKEN: NOTION_TOKEN },
+      input: NOTION_READER_SCRIPT,
+    });
   });
 
   it('prints each provider result under its own heading', async (): Promise<void> => {
@@ -1522,23 +1892,34 @@ describe('check', (): void => {
     h.slack.scopes = SCOPES.replace('chat:write.customize,', '');
     h.slack.channels = h.slack.channels.filter((channel) => channel.name !== 'logistics-desk');
     h.slack.channels.find((channel) => channel.name === 'ops-requests')!.is_member = false;
-    h.slack.post('C1', { ts: '1.000100', text: `<@${BOT_USER}> can you confirm pipeline coverage?`, user: 'UHUMAN' });
+    h.slack.post('C1', {
+      ts: '1.000100',
+      text: `<@${BOT_USER}> can you confirm pipeline coverage?`,
+      user: 'UHUMAN',
+    });
     mkdirSync(join(h.root, 'docs-local'));
     writeFileSync(join(h.root, 'docs-local', 'README.md'), DOCS_STUB);
     expect(await run(h, ['check'])).toBe(1);
     const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
-    expect(gaps).toContain('onboarding.md is missing: pnpm bed:company docs');
-    expect(gaps).toContain("README.md is the setup's placeholder page: pnpm bed:company docs removes it");
+    expect(gaps).toContain('onboarding.md is missing: pnpm exec tsx scripts/bed/company.ts docs');
+    expect(gaps).toContain(
+      "README.md is the setup's placeholder page: pnpm exec tsx scripts/bed/company.ts docs removes it",
+    );
     expect(gaps).toContain('team FIN is missing: create it by hand in Linear');
-    expect(gaps).toContain('REVOPS-1 "Refresh the Looker pipeline tile" is in project "Q3 close" and is not a bed ticket');
+    expect(gaps).toContain(
+      'REVOPS-1 "Refresh the Looker pipeline tile" is in project "Q3 close" and is not a bed ticket',
+    );
     expect(gaps).toContain('the app lacks chat:write.customize');
-    expect(gaps).toContain('#logistics-desk is not a public channel the bot can see: create it by hand as a public channel');
+    expect(gaps).toContain(
+      '#logistics-desk is not a public channel the bot can see: create it by hand as a public channel',
+    );
     expect(gaps).toContain('the bot is not in #ops-requests');
-    // A channel that could not be read says so once; its ask is not also called missing.
-    expect(gaps).not.toContain('#ops-requests lacks the standing ask');
-    expect(gaps).toContain('#finance-close lacks the standing ask');
-    expect(gaps).toContain('#revops-asks holds a message that mentions the bot and is not one of the standing asks');
-    expect(gaps).toContain('"Slack automation policy" differs from slack-automation-policy.md at line 3');
+    // A mention in a channel is not a hand step: the asks are posted during the sitting.
+    expect(gaps).not.toContain('mentions the bot');
+    expect(gaps).not.toContain('standing');
+    expect(gaps).toContain(
+      '"Slack automation policy" differs from slack-automation-policy.md at line 3',
+    );
     expect(gaps).toContain('"Linear automation" still carries the placeholder token');
     expect(gaps).toContain('the integration also sees "Revenue operations onboarding"');
     expect(gaps).toContain('looker-tile is not running in day0-bed-test');
@@ -1567,7 +1948,11 @@ describe('check', (): void => {
   it('tells a refused Notion secret from a component that is not running', async (): Promise<void> => {
     const refused = harness({}, (args) =>
       args.includes('exec')
-        ? { status: 0, stdout: `${JSON.stringify({ error: 'Notion refused the request: unauthorized (API token is invalid.)' })}\n`, stderr: '' }
+        ? {
+            status: 0,
+            stdout: `${JSON.stringify({ error: 'Notion refused the request: unauthorized (API token is invalid.)' })}\n`,
+            stderr: '',
+          }
         : undefined,
     );
     await run(refused, ['check']);
@@ -1575,7 +1960,9 @@ describe('check', (): void => {
       'Notion refused the request: unauthorized (API token is invalid.): DAY0_BED_NOTION_TOKEN must be the secret of the integration the parent page is shared with',
     );
     const down = harness({}, (args) =>
-      args.includes('exec') ? { status: 1, stdout: '', stderr: 'service "docs-notion-mcp" is not running' } : undefined,
+      args.includes('exec')
+        ? { status: 1, stdout: '', stderr: 'service "docs-notion-mcp" is not running' }
+        : undefined,
     );
     await run(down, ['check']);
     expect(down.logs.join('\n')).toContain(
@@ -1584,7 +1971,11 @@ describe('check', (): void => {
   });
 
   it('says which token is missing rather than calling a provider without one', async (): Promise<void> => {
-    const h = harness({ DAY0_BED_LINEAR_API_KEY: '', DAY0_BED_SLACK_BOT_TOKEN: '', DAY0_BED_NOTION_TOKEN: '' });
+    const h = harness({
+      DAY0_BED_LINEAR_API_KEY: '',
+      DAY0_BED_SLACK_BOT_TOKEN: '',
+      DAY0_BED_NOTION_TOKEN: '',
+    });
     expect(await run(h, ['check'])).toBe(1);
     const gaps = h.logs.join('\n');
     expect(gaps).toContain('DAY0_BED_LINEAR_API_KEY is not set in .env.local');
@@ -1598,8 +1989,15 @@ describe('the Notion comparison', (): void => {
   const tracked = readFileSync(resolve('bed/company/notion/linear-automation.md'), 'utf8');
 
   it('matches a pasted page with the token filled, its heading dropped and a trailing empty block', (): void => {
-    const pasted = tracked.replace('PASTE_LINEAR_API_KEY_HERE', LINEAR_KEY).split('\n').slice(2).join('\n');
-    expect(comparePage(tracked, `${pasted}\n\n<empty-block/>\n`)).toEqual({ kind: 'same', token: 'pasted' });
+    const pasted = tracked
+      .replace('PASTE_LINEAR_API_KEY_HERE', LINEAR_KEY)
+      .split('\n')
+      .slice(2)
+      .join('\n');
+    expect(comparePage(tracked, `${pasted}\n\n<empty-block/>\n`)).toEqual({
+      kind: 'same',
+      token: 'pasted',
+    });
     expect(comparePage(tracked, tracked)).toEqual({ kind: 'same', token: 'placeholder' });
   });
 
@@ -1608,9 +2006,19 @@ describe('the Notion comparison', (): void => {
       .replace('PASTE_LINEAR_API_KEY_HERE', LINEAR_KEY)
       .replace('Workflow states, the same in every team', 'Workflow states');
     const comparison = comparePage(tracked, edited);
-    expect(comparison).toMatchObject({ kind: 'differs', expected: expect.stringContaining('the same in every team') });
-    const moved = tracked.replace('- Service token (company automation): `PASTE_LINEAR_API_KEY_HERE`\n', '');
-    expect(JSON.stringify(comparePage(tracked, `${moved}\n- Service token (company automation): \`${LINEAR_KEY}\``))).not.toContain(LINEAR_KEY);
+    expect(comparison).toMatchObject({
+      kind: 'differs',
+      expected: expect.stringContaining('the same in every team'),
+    });
+    const moved = tracked.replace(
+      '- Service token (company automation): `PASTE_LINEAR_API_KEY_HERE`\n',
+      '',
+    );
+    expect(
+      JSON.stringify(
+        comparePage(tracked, `${moved}\n- Service token (company automation): \`${LINEAR_KEY}\``),
+      ),
+    ).not.toContain(LINEAR_KEY);
   });
 
   it('does not echo an unexpected credential on a mismatched live page line', (): void => {
@@ -1625,10 +2033,14 @@ describe('the Notion comparison', (): void => {
   });
 
   it('reads the container script output, and says what the component said when it failed', (): void => {
-    expect(parseNotionRead(`noise\n${JSON.stringify({ pages: [{ id: 'a', title: 'T', markdown: 'm' }] })}\n`)).toEqual([
-      { id: 'a', title: 'T', markdown: 'm' },
-    ]);
-    expect(() => parseNotionRead(`${JSON.stringify({ error: 'unauthorized' })}\n`)).toThrow('unauthorized');
+    expect(
+      parseNotionRead(
+        `noise\n${JSON.stringify({ pages: [{ id: 'a', title: 'T', markdown: 'm' }] })}\n`,
+      ),
+    ).toEqual([{ id: 'a', title: 'T', markdown: 'm' }]);
+    expect(() => parseNotionRead(`${JSON.stringify({ error: 'unauthorized' })}\n`)).toThrow(
+      'unauthorized',
+    );
   });
 });
 
@@ -1636,19 +2048,36 @@ describe('the Notion read, run as the container runs it', (): void => {
   let server: Server;
   let url: string;
   let searchAnswer: unknown;
-  const seen: Array<{ method: string; rpc?: string; auth?: string; notion?: string; session?: string }> = [];
+  const seen: Array<{
+    method: string;
+    rpc?: string;
+    auth?: string;
+    notion?: string;
+    session?: string;
+  }> = [];
 
   beforeEach(async (): Promise<void> => {
     seen.length = 0;
     searchAnswer = {
-      results: [{ id: 'p1', properties: { title: { type: 'title', title: [{ plain_text: 'Linear automation' }] } } }],
+      results: [
+        {
+          id: 'p1',
+          properties: { title: { type: 'title', title: [{ plain_text: 'Linear automation' }] } },
+        },
+      ],
       has_more: false,
     };
     server = createServer((request: IncomingMessage, response: ServerResponse): void => {
       let raw = '';
       request.on('data', (chunk: Buffer) => (raw += chunk.toString()));
       request.on('end', (): void => {
-        const rpc = raw ? (JSON.parse(raw) as { id?: number; method: string; params?: { name?: string; arguments?: Record<string, unknown> } }) : undefined;
+        const rpc = raw
+          ? (JSON.parse(raw) as {
+              id?: number;
+              method: string;
+              params?: { name?: string; arguments?: Record<string, unknown> };
+            })
+          : undefined;
         seen.push({
           method: request.method ?? '',
           rpc: rpc?.method,
@@ -1660,14 +2089,32 @@ describe('the Notion read, run as the container runs it', (): void => {
           response.writeHead(202).end();
           return;
         }
-        let result: unknown = { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'fake' } };
+        let result: unknown = {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          serverInfo: { name: 'fake' },
+        };
         if (rpc.params?.name === 'API-post-search') {
           result = { content: [{ type: 'text', text: JSON.stringify(searchAnswer) }] };
         } else if (rpc.params?.name === 'API-retrieve-page-markdown') {
-          result = { content: [{ type: 'text', text: JSON.stringify({ markdown: `# Page ${String(rpc.params.arguments?.page_id)}` }) }] };
+          result = {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  markdown: `# Page ${String(rpc.params.arguments?.page_id)}`,
+                }),
+              },
+            ],
+          };
         }
-        response.writeHead(200, { 'content-type': 'text/event-stream', 'mcp-session-id': 'session-1' });
-        response.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result })}\n\n`);
+        response.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'mcp-session-id': 'session-1',
+        });
+        response.end(
+          `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result })}\n\n`,
+        );
       });
     });
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -1680,7 +2127,12 @@ describe('the Notion read, run as the container runs it', (): void => {
 
   async function readThroughScript(): Promise<string> {
     const child = spawn(process.execPath, ['--input-type=module', '-'], {
-      env: { ...process.env, MCP_URL: url, AUTH_TOKEN: 'transport-token', DAY0_BED_NOTION_TOKEN: NOTION_TOKEN },
+      env: {
+        ...process.env,
+        MCP_URL: url,
+        AUTH_TOKEN: 'transport-token',
+        DAY0_BED_NOTION_TOKEN: NOTION_TOKEN,
+      },
     });
     let stdout = '';
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
@@ -1691,7 +2143,9 @@ describe('the Notion read, run as the container runs it', (): void => {
 
   it('lists and reads every page in one session with both tokens, then ends the session', async (): Promise<void> => {
     const stdout = await readThroughScript();
-    expect(parseNotionRead(stdout)).toEqual([{ id: 'p1', title: 'Linear automation', markdown: '# Page p1' }]);
+    expect(parseNotionRead(stdout)).toEqual([
+      { id: 'p1', title: 'Linear automation', markdown: '# Page p1' },
+    ]);
     expect(seen.map((call) => call.rpc ?? call.method)).toEqual([
       'initialize',
       'notifications/initialized',
@@ -1699,15 +2153,29 @@ describe('the Notion read, run as the container runs it', (): void => {
       'tools/call',
       'DELETE',
     ]);
-    expect(seen.every((call) => call.auth === 'Bearer transport-token' && call.notion === NOTION_TOKEN)).toBe(true);
+    expect(
+      seen.every((call) => call.auth === 'Bearer transport-token' && call.notion === NOTION_TOKEN),
+    ).toBe(true);
     expect(seen.slice(1).every((call) => call.session === 'session-1')).toBe(true);
   });
 
   it('reports a token Notion refused as the refusal, never as an empty workspace', async (): Promise<void> => {
     // What the bundled component relays when the integration secret is wrong, as read live on 18 September.
-    searchAnswer = { status: 401, object: 'error', code: 'unauthorized', message: 'API token is invalid.' };
+    searchAnswer = {
+      status: 401,
+      object: 'error',
+      code: 'unauthorized',
+      message: 'API token is invalid.',
+    };
     const stdout = await readThroughScript();
-    expect(() => parseNotionRead(stdout)).toThrow('Notion refused the request: unauthorized (API token is invalid.)');
-    expect(seen.map((call) => call.rpc ?? call.method)).toEqual(['initialize', 'notifications/initialized', 'tools/call', 'DELETE']);
+    expect(() => parseNotionRead(stdout)).toThrow(
+      'Notion refused the request: unauthorized (API token is invalid.)',
+    );
+    expect(seen.map((call) => call.rpc ?? call.method)).toEqual([
+      'initialize',
+      'notifications/initialized',
+      'tools/call',
+      'DELETE',
+    ]);
   });
 });

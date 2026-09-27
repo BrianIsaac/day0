@@ -8,6 +8,8 @@
 #                                      Local, cloud model: a server you already run
 #   ./setup.sh --route local           Local, local model: the bundled model, no account
 #   ./setup.sh stop | resume | clear   stop for the day, come back, or throw it away
+#   ./setup.sh backup | restore <file> | upgrade
+#                                      keep a copy, put it back, or move to this checkout's release
 #
 # This checks the tools the setup needs (the Docker daemon itself, not only
 # its client), installs the dependencies if they are not there yet (never on
@@ -23,6 +25,7 @@ usage() {
   cat <<'USAGE'
 Usage: ./setup.sh --route <featherless|key|endpoint|local> [setup flags]
        ./setup.sh stop | resume | clear [--yes] [--purge-env]
+       ./setup.sh backup | restore <file> | upgrade [--yes] [--to <dir>]
 
 Real mode, on your own documentation and systems: day0 reads the pages you
 link and, once you approve a card, acts on the systems those pages record.
@@ -65,6 +68,15 @@ Stop for the day, come back, or throw it away; the project is read from .env.loc
   ./setup.sh clear    containers, volumes and network removed; .env.local kept
                       unless --purge-env; asks first unless --yes
 
+Keep a copy, put it back, or move to this checkout's release:
+  ./setup.sh backup           the data volume to ~/day0-backups/<project>, with a
+                              checksum (--to <dir> for another place)
+  ./setup.sh restore <file>   replace the data volume with that backup, adopt its
+                              credential key, then resume; asks first unless --yes
+  ./setup.sh upgrade          after a git pull: a backup, pnpm install, then resume,
+                              which refuses to skip a release and runs the migrations.
+                              A mock deployment upgrades with pnpm setup:local upgrade.
+
 Everything else, ports and project names included: pnpm setup:local --help
 USAGE
 }
@@ -99,15 +111,6 @@ fi
 if ! command -v pnpm >/dev/null 2>&1 || [ "$(major "$(pnpm --version)")" -lt 9 ]; then
   echo "gap  pnpm 9 or newer is needed; found: $(pnpm --version 2>/dev/null || echo 'none on the path')." >&2
   echo "     corepack enable && corepack prepare pnpm@9 --activate" >&2
-  missing=1
-fi
-# The env sync the setup runs is a bash script with associative arrays, and it
-# runs under whichever bash is first on the path; macOS ships 3.2.
-path_bash="$(major "$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || true)")"
-if [ "${path_bash:-0}" -lt 4 ]; then
-  found_bash="$(bash -c 'echo "$BASH_VERSION"' 2>/dev/null || true)"
-  echo "gap  bash 4 or newer is needed on the path; found: ${found_bash:-none}." >&2
-  echo "     macOS ships bash 3.2: brew install bash, then open a new terminal." >&2
   missing=1
 fi
 if ! command -v docker >/dev/null 2>&1 || ! docker --version >/dev/null 2>&1; then
