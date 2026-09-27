@@ -8,9 +8,17 @@ vi.mock('../../app/providers', () => ({
 vi.mock('../../app/HeaderAccount', () => ({ HeaderAccount: () => null }));
 vi.mock('../../app/WhipCursor', () => ({ WhipCursor: () => null }));
 
+/** What the backend's `config.surfaceMode` query answers; undefined while it has not. */
+const backend = vi.hoisted((): { mode: 'mock' | 'real' | undefined } => ({ mode: undefined }));
+vi.mock('convex/react', () => ({
+  useQuery: (): { mode: 'mock' | 'real' } | undefined =>
+    backend.mode ? { mode: backend.mode } : undefined,
+}));
+
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.resetModules();
+  backend.mode = undefined;
 });
 
 /**
@@ -21,10 +29,13 @@ afterEach(() => {
  * caught ten of those on one pass.
  */
 describe('the header on a public page', (): void => {
-  const layout = readFileSync(new URL('../../app/layout.tsx', import.meta.url), 'utf8');
+  const component = readFileSync(
+    new URL('../../app/DocumentationLink.tsx', import.meta.url),
+    'utf8',
+  );
 
   it('does not prefetch the protected documentation route', (): void => {
-    const link = /<Link[^>]*href="\/documentation"[\s\S]*?>/.exec(layout)?.[0] ?? '';
+    const link = /<Link[^>]*href="\/documentation"[\s\S]*?>/.exec(component)?.[0] ?? '';
     expect(link).not.toBe('');
     expect(link).toContain('prefetch={false}');
   });
@@ -41,34 +52,37 @@ describe('the focus ring', (): void => {
   });
 });
 
+/** Render the root layout around one page. */
+async function renderLayout(): Promise<string> {
+  const { default: Layout } = await import('../../app/layout');
+  return renderToStaticMarkup(
+    <Layout>
+      <main>Page</main>
+    </Layout>,
+  );
+}
+
 describe('documentation navigation by deployment mode', () => {
-  it('omits the link when the mode is unset', async () => {
-    vi.stubEnv('DAY0_SURFACE_MODE', '');
-    vi.resetModules();
-    const { default: Layout } = await import('../../app/layout');
-    expect(
-      renderToStaticMarkup(
-        <Layout>
-          <main>Public page</main>
-        </Layout>,
-      ),
-    ).not.toContain('href="/documentation"');
+  it('omits the link until the backend has answered', async () => {
+    expect(await renderLayout()).not.toContain('href="/documentation"');
   });
 
-  it('shows the link in local real mode', async () => {
+  it('omits the link when the backend runs in mock mode', async () => {
+    backend.mode = 'mock';
+    expect(await renderLayout()).not.toContain('href="/documentation"');
+  });
+
+  it('shows the link when the backend runs in real mode', async () => {
+    backend.mode = 'real';
+    expect(await renderLayout()).toContain('href="/documentation"');
+  });
+
+  it('renders under next start with real mode in the Next environment, where the gate would throw', async () => {
     vi.stubEnv('DAY0_SURFACE_MODE', 'real');
-    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
-    vi.stubEnv('NODE_ENV', 'development');
-    vi.stubEnv('VERCEL', '');
-    vi.stubEnv('NEXT_PUBLIC_VERCEL_ENV', '');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', '');
+    vi.stubEnv('NODE_ENV', 'production');
+    backend.mode = 'real';
     vi.resetModules();
-    const { default: Layout } = await import('../../app/layout');
-    expect(
-      renderToStaticMarkup(
-        <Layout>
-          <main>Local page</main>
-        </Layout>,
-      ),
-    ).toContain('href="/documentation"');
+    expect(await renderLayout()).toContain('href="/documentation"');
   });
 });

@@ -49,6 +49,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { customerOidcIssuer, type CustomerOidcIssuer } from '../src/lib/customer-oidc';
 import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
 import {
@@ -116,6 +117,9 @@ const WATCHED = [
   'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
   'CLERK_SECRET_KEY',
   'CLERK_JWT_ISSUER_DOMAIN',
+  'DAY0_PROFILE',
+  'DAY0_OIDC_ISSUER',
+  'DAY0_OIDC_AUDIENCE',
   'OPENAI_API_KEY',
   'OPENAI_BASE_URL',
   'CONVEX_OPENAI_BASE_URL',
@@ -789,16 +793,86 @@ function backendSection(v: Values): Section {
   };
 }
 
-/** No-auth mode and Clerk are alternatives, and a half of either is worse than neither. */
-function authSection(v: Values): Section {
+/**
+ * The customer issuer's section, or undefined when neither an issuer nor the
+ * customer-local profile is configured.
+ *
+ * Validated by the same reader the backend's auth config uses, so a value this
+ * reports as fine is one the push accepts. The issuer is printed only once it
+ * has been accepted, since a refused one may carry a password.
+ */
+function customerIssuerSection(v: Values): Section | undefined {
+  const customerLocal = (v.DAY0_PROFILE ?? '').trim() === 'customer-local';
+  if (!customerLocal && !(v.DAY0_OIDC_ISSUER ?? '').trim()) return undefined;
+  let issuer: CustomerOidcIssuer | undefined;
+  try {
+    issuer = customerOidcIssuer((name: string): string | undefined => v[name]);
+  } catch (error) {
+    return {
+      title: 'Auth: the customer issuer is misconfigured',
+      status: 'gap',
+      lines: [
+        error instanceof Error ? error.message : String(error),
+        'The backend refuses to push its functions until this is fixed.',
+      ],
+    };
+  }
+  if (!issuer) {
+    return {
+      title: 'Auth: customer-local profile with no issuer',
+      status: 'gap',
+      lines: [
+        "DAY0_PROFILE=customer-local signs people in through the customer's OIDC issuer,",
+        'and DAY0_OIDC_ISSUER is unset, so real mode refuses to start. Set it to the',
+        "issuer's URL as its tokens carry it in `iss`, and DAY0_OIDC_AUDIENCE to the",
+        'client id they carry in `aud`.',
+      ],
+    };
+  }
+  const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
+  return {
+    title: noAuth ? 'Auth: customer OIDC issuer and the local key' : 'Auth: customer OIDC issuer',
+    status: noAuth ? 'ok' : 'warn',
+    lines: [
+      `Issuer ${issuer.issuer}, audience ${issuer.audience}.`,
+      noAuth
+        ? "The backend accepts this issuer's tokens and this machine's local key side by side."
+        : "The backend accepts this issuer's tokens; Clerk keys, if any, are ignored beside it.",
+      'Both values must be on the deployment as well, where the auth config reads them at',
+      'push: `npx convex env set DAY0_OIDC_ISSUER <url>`, and the same for the audience.',
+      customerLocal
+        ? 'DAY0_PROFILE=customer-local: real mode runs for the people it signs in, under `next start`.'
+        : 'DAY0_PROFILE is not customer-local, so real mode still needs the local key under `next dev`.',
+      ...(noAuth
+        ? []
+        : [
+            "The app's own sign-in does not use this issuer yet, so until it does nobody signs",
+            'in through the browser; the local key is the way in meanwhile.',
+          ]),
+    ],
+  };
+}
+
+/**
+ * Report who can sign in: the customer's OIDC issuer (beside the local key or
+ * alone), the local key, or Clerk. A half of any of them is worse than none.
+ *
+ * @param v - The env file with the process environment layered on.
+ */
+export function authSection(v: Values): Section {
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
   const clerkKeys = ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY'].filter((k) => !v[k]);
   const hasClerk = clerkKeys.length === 0;
+  const missing = ['DEV_NO_AUTH_SECRET', 'DEV_NO_AUTH_SIGNING_KEY', 'DEV_NO_AUTH_JWKS'].filter(
+    (k) => !v[k],
+  );
+  // A keyless local issuer is a gap whatever else is configured beside it.
+  if (!noAuth || missing.length === 0) {
+    const customer = customerIssuerSection(v);
+    if (customer) return customer;
+  }
 
   if (noAuth) {
-    const missing = ['DEV_NO_AUTH_SECRET', 'DEV_NO_AUTH_SIGNING_KEY', 'DEV_NO_AUTH_JWKS'].filter(
-      (k) => !v[k],
-    );
     if (missing.length > 0) {
       return {
         title: 'Auth: no-auth mode is on but has no key',
@@ -846,9 +920,11 @@ function authSection(v: Values): Section {
     title: 'Auth: nothing configured',
     status: 'gap',
     lines: [
-      `Missing ${clerkKeys.join(' and ')}, and NEXT_PUBLIC_DEV_NO_AUTH is not true.`,
-      'Pick one: Clerk keys for per-user auth, or no-auth dev mode for the',
-      'account-free path. Without either, nobody can sign in and nothing loads.',
+      `Missing ${clerkKeys.join(' and ')}, NEXT_PUBLIC_DEV_NO_AUTH is not true, and`,
+      'DAY0_OIDC_ISSUER is unset. Pick one: no-auth dev mode for the account-free path,',
+      "the customer's issuer (DAY0_OIDC_ISSUER and DAY0_OIDC_AUDIENCE) for a",
+      'customer-local install, or Clerk keys for the hosted demo. Without one, nobody',
+      'can sign in and the backend refuses to push its functions.',
     ],
   };
 }

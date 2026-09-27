@@ -18,6 +18,8 @@ const SHELL_KEYS = [
   'CONVEX_DEPLOYMENT',
   'CONVEX_SELF_HOSTED_URL',
   'CONVEX_SELF_HOSTED_ADMIN_KEY',
+  'PORT',
+  'DAY0_APP_HOST',
 ] as const;
 
 /** What the stand-in Convex CLI answers to `convex env list`. */
@@ -118,6 +120,32 @@ describe('dev-no-auth-key url mode', (): void => {
     const second = runScript(cwd, ['url']);
     expect(second.status).toBe(0);
     expect(readFileSync(envFile, 'utf8')).toBe(written);
+  });
+});
+
+describe('the unlock URL', (): void => {
+  const unlocked =
+    'NEXT_PUBLIC_DEV_NO_AUTH=true\nDEV_NO_AUTH_SECRET=the-secret\nDEV_NO_AUTH_SIGNING_KEY=k\n' +
+    `DEV_NO_AUTH_JWKS=j\nDAY0_CREDENTIAL_KEY=${DEPLOYMENT_KEY}\nDAY0_NOTION_MCP_AUTH_TOKEN=${DEPLOYMENT_TOKEN}\n`;
+
+  it('names localhost and the app port by default', (): void => {
+    const { cwd } = envDirectory(`${unlocked}DAY0_APP_PORT=4100\n`);
+    const run = runScript(cwd, ['url']);
+    expect(run.output).toContain('http://localhost:4100/?day0_key=the-secret');
+  });
+
+  it('names the loopback address pnpm dev binds, so the URL and the server agree', (): void => {
+    const { cwd } = envDirectory(`${unlocked}DAY0_APP_HOST=127.0.0.2\n`);
+    const run = runScript(cwd, ['url']);
+    expect(run.output).toContain('http://127.0.0.2:3000/?day0_key=the-secret');
+  });
+
+  it('says a non-loopback bind serves no other machine in no-auth mode', (): void => {
+    const { cwd } = envDirectory(`${unlocked}DAY0_APP_HOST=0.0.0.0\n`);
+    const run = runScript(cwd, ['url']);
+    expect(run.status).toBe(0);
+    expect(run.output).toContain('http://localhost:3000/?day0_key=the-secret');
+    expect(run.output).toContain('DAY0_APP_HOST=0.0.0.0 is not a loopback address');
   });
 });
 

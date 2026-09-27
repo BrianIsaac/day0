@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { auth } from '@clerk/nextjs/server';
-import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { DEV_NO_AUTH_COOKIE, isDevNoAuthSession, mintDevNoAuthToken } from '@/lib/dev-auth-server';
+import { establishConvexCaller } from '@/lib/convex-caller';
 import { crossOriginRefusal, readJsonBody } from '@/lib/json-request';
 
 interface Body {
@@ -20,32 +16,19 @@ const SYNTHESISE_BODY_LIMIT_BYTES = 1024 * 1024;
 
 /**
  * Browser-callable charter-synthesis trigger - used by the chat-mode
- * 1:1 once the agent emits the `dayOneComplete` tool call. Authenticated
- * via the caller's Clerk JWT; the Convex action enforces that the caller
- * owns the agent. In no-auth dev mode the token is minted here with this
- * machine's local key instead, and the same ownership check runs. A page
- * from another origin is refused first, and the JSON body is read, bounded,
- * only once the caller is established.
+ * 1:1 once the agent emits the `dayOneComplete` tool call. The caller is
+ * established by `establishConvexCaller`, whichever issuer signed them in,
+ * and the Convex action enforces that they own the agent. A page from
+ * another origin is refused first, and the JSON body is read, bounded, only
+ * once the caller is established.
  */
 export async function POST(req: Request): Promise<NextResponse> {
   const crossOrigin = crossOriginRefusal(req);
   if (crossOrigin) return crossOrigin;
 
-  const client = convexClient();
-  if (DEV_NO_AUTH) {
-    const jar = await cookies();
-    if (!(await isDevNoAuthSession(jar.get(DEV_NO_AUTH_COOKIE)?.value))) {
-      return NextResponse.json({ error: 'not authenticated' }, { status: 403 });
-    }
-    client.setAuth(await mintDevNoAuthToken());
-  } else {
-    const { getToken } = await auth();
-    const token = await getToken({ template: 'convex' });
-    if (!token) {
-      return NextResponse.json({ error: 'not authenticated' }, { status: 401 });
-    }
-    client.setAuth(token);
-  }
+  const caller = await establishConvexCaller();
+  if (!caller.ok) return caller.refusal;
+  const { client } = caller;
 
   const read = await readJsonBody(req, SYNTHESISE_BODY_LIMIT_BYTES);
   if (!read.ok) return read.refusal;
@@ -95,10 +78,4 @@ function bodyOf(value: unknown): Body | undefined {
     transcript,
     ...(typeof voiceSessionId === 'string' && voiceSessionId !== '' ? { voiceSessionId } : {}),
   };
-}
-
-function convexClient(): ConvexHttpClient {
-  const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!url) throw new Error('NEXT_PUBLIC_CONVEX_URL not set');
-  return new ConvexHttpClient(url);
 }

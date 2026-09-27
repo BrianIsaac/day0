@@ -62,6 +62,7 @@ const FLAG_VAR = 'NEXT_PUBLIC_DEV_NO_AUTH';
 const CREDENTIAL_KEY_VAR = 'DAY0_CREDENTIAL_KEY';
 const NOTION_MCP_AUTH_TOKEN_VAR = 'DAY0_NOTION_MCP_AUTH_TOKEN';
 const APP_PORT_VAR = 'DAY0_APP_PORT';
+const APP_HOST_VAR = 'DAY0_APP_HOST';
 const CONVEX_DEPLOYMENT_VAR = 'CONVEX_DEPLOYMENT';
 const SELF_HOSTED_URL_VAR = 'CONVEX_SELF_HOSTED_URL';
 const SELF_HOSTED_ADMIN_KEY_VAR = 'CONVEX_SELF_HOSTED_ADMIN_KEY';
@@ -117,6 +118,7 @@ function readEnvFile(): Record<string, string> {
     CREDENTIAL_KEY_VAR,
     NOTION_MCP_AUTH_TOKEN_VAR,
     APP_PORT_VAR,
+    APP_HOST_VAR,
     CONVEX_DEPLOYMENT_VAR,
     SELF_HOSTED_URL_VAR,
     SELF_HOSTED_ADMIN_KEY_VAR,
@@ -346,8 +348,42 @@ function printUnlockUrl(): void {
   }
 
   const port = appPort(values);
+  const bound = (values[APP_HOST_VAR] ?? '').trim();
+  const host = unlockHost(bound);
   console.log('No-auth dev mode. Open this once per browser to unlock it:\n');
-  console.log(`  http://localhost:${port}/?${UNLOCK_PARAM}=${values[SECRET_VAR]}\n`);
+  console.log(`  http://${host}:${port}/?${UNLOCK_PARAM}=${values[SECRET_VAR]}\n`);
+  if (bound !== '' && loopbackHost(bound) === undefined) {
+    console.log(
+      `${APP_HOST_VAR}=${bound} is not a loopback address, and no-auth mode refuses every ` +
+        'request that does not name this machine, so no other machine is served. Open the URL ' +
+        'here, or through a forward to this machine.\n',
+    );
+  }
+}
+
+/**
+ * A loopback name or address as a URL host, or undefined for any other host.
+ *
+ * Args:
+ *   host: A host name or address, IPv6 with or without brackets.
+ */
+function loopbackHost(host: string): string | undefined {
+  const bare = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (bare === 'localhost' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare)) return bare;
+  if (bare === '::1') return '[::1]';
+  return undefined;
+}
+
+/**
+ * The host the unlock URL names: the one `pnpm dev` binds (scripts/dev.ts reads
+ * the same `DAY0_APP_HOST`) when that is loopback, else `localhost`, which a
+ * server bound to every interface answers on too.
+ *
+ * Args:
+ *   bound: `DAY0_APP_HOST` from the shell or the file, empty when unset.
+ */
+function unlockHost(bound: string): string {
+  return loopbackHost(bound) ?? 'localhost';
 }
 
 /**

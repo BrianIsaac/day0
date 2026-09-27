@@ -1,7 +1,12 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import {
+  configuredPrivateHosts,
+  isPrivateHostAllowed,
+  type PrivateHostAllowlist,
+} from '../../lib/private-hosts';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 import { readMarkdownDirectory, readMarkdownDirectoryBatch } from './folder';
 
@@ -12,26 +17,48 @@ export interface GitLocator {
   ref: string;
 }
 
+/** The public hosts whose archives are read when the backend cannot clone. */
+const ARCHIVE_HOSTS = ['github.com', 'gitlab.com'];
+
 /**
  * Parse the documented `<repository>#<ref>` source format.
  *
- * Args:
- *   locator: Repository locator supplied by the owner.
+ * A locator never carries credentials: the reader reads public repositories
+ * only, and a user name or token in the URL would be stored on the source row
+ * and shown back on the page. It is refused, and no refusal repeats the
+ * locator. A repository on a host inside the operator's network is read once
+ * that host is listed in `DAY0_PRIVATE_HOSTS`.
  *
- * Returns:
- *   HTTPS repository URL and requested ref.
- *
- * Raises:
- *   Error: If the repository host or protocol is unsupported.
+ * @param locator - Repository locator supplied by the owner.
+ * @param privateHosts - Hosts inside the operator's network; the environment's by default.
+ * @returns HTTPS repository URL and requested ref.
+ * @throws Error when the locator is not an HTTPS URL, carries credentials, or names an unsupported host.
  */
-export function parseGitLocator(locator: string): GitLocator {
+export function parseGitLocator(
+  locator: string,
+  privateHosts: PrivateHostAllowlist = configuredPrivateHosts(),
+): GitLocator {
   const separator = locator.lastIndexOf('#');
   const rawUrl = separator === -1 ? locator : locator.slice(0, separator);
   const ref = separator === -1 ? 'main' : locator.slice(separator + 1);
-  const url = new URL(rawUrl);
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error('Git documentation locator is not a URL.');
+  }
   if (url.protocol !== 'https:') throw new Error('Git documentation URL must use HTTPS.');
-  if (!['github.com', 'gitlab.com'].includes(url.hostname)) {
-    throw new Error('Git documentation supports GitHub and GitLab archive URLs.');
+  if (url.username !== '' || url.password !== '') {
+    throw new Error(
+      'Git documentation URL must not carry a user name or password; link a repository ' +
+        'the backend can read without one.',
+    );
+  }
+  if (!ARCHIVE_HOSTS.includes(url.hostname) && !isPrivateHostAllowed(url.hostname, privateHosts)) {
+    throw new Error(
+      'Git documentation supports GitHub and GitLab archive URLs, and repositories on hosts ' +
+        'listed in DAY0_PRIVATE_HOSTS.',
+    );
   }
   if (!ref.trim()) throw new Error('Git documentation ref cannot be empty.');
   return { url, ref };
@@ -40,13 +67,14 @@ export function parseGitLocator(locator: string): GitLocator {
 /**
  * Build the provider archive URL used when the backend has no git binary.
  *
- * Args:
- *   locator: Parsed repository and ref.
- *
- * Returns:
- *   HTTPS tar-gzip archive URL.
+ * @param locator - Parsed repository and ref.
+ * @returns HTTPS tar-gzip archive URL.
+ * @throws Error for a host other than GitHub or GitLab, which publish no archive at a known path.
  */
 export function archiveUrlFor(locator: GitLocator): URL {
+  if (!ARCHIVE_HOSTS.includes(locator.url.hostname)) {
+    throw new Error(`${locator.url.hostname} has no archive fallback; only a clone can read it.`);
+  }
   const repositoryPath = locator.url.pathname
     .replace(/\/$/, '')
     .replace(/\.git$/, '')
@@ -83,7 +111,28 @@ async function downloadArchive(url: URL): Promise<Buffer> {
   return archive;
 }
 
-/** Reader for public GitHub and GitLab Markdown repositories. */
+/**
+ * Why a clone from a host with no archive fallback failed, in the words the
+ * source's status shows: the backend having no git binary is said as such.
+ *
+ * @param hostname - The repository's host.
+ * @param cloned - The finished `git clone`.
+ */
+export function cloneFailure(
+  hostname: string,
+  cloned: Pick<SpawnSyncReturns<string>, 'error' | 'stderr'>,
+): string {
+  if ((cloned.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+    return (
+      `The backend has no git binary, so the repository on ${hostname} cannot be cloned; ` +
+      'only GitHub and GitLab have an archive fallback.'
+    );
+  }
+  const reason = (cloned.error?.message ?? cloned.stderr ?? '').trim().split('\n').pop();
+  return `Git clone from ${hostname} failed${reason ? `: ${reason}` : ''}.`;
+}
+
+/** Reader for public GitHub and GitLab Markdown repositories, and repositories on listed private hosts. */
 export class GitReader implements DocSourceReader {
   /**
    * Read a bounded Markdown batch from an isolated checkout.
@@ -150,9 +199,13 @@ export class GitReader implements DocSourceReader {
       const cloned = spawnSync(
         'git',
         ['clone', '--depth', '1', '--branch', locator.ref, '--', locator.url.href, checkout],
-        { encoding: 'utf8', timeout: 30_000 },
+        // A repository that wants credentials fails at once rather than waiting on a prompt.
+        { encoding: 'utf8', timeout: 30_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } },
       );
       if (cloned.status !== 0) {
+        if (!ARCHIVE_HOSTS.includes(locator.url.hostname)) {
+          throw new Error(cloneFailure(locator.url.hostname, cloned));
+        }
         await rm(checkout, { recursive: true, force: true });
         await mkdir(checkout);
         const archivePath = join(temporary, 'source.tar.gz');
