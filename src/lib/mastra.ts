@@ -8,9 +8,15 @@ import { countingProviderRequests, reportModelCall } from './model-call-telemetr
 import {
   classifyStructuredFailure,
   createFallbackMemo,
+  errorInsideOk,
+  ModelRefusalError,
+  ModelReplyCutError,
+  moderationRefusal,
   providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
+
+export { ModelRefusalError, ModelReplyCutError } from './structured-fallback';
 
 /**
  * Mastra-fronted agent helpers.
@@ -72,22 +78,30 @@ export const MODEL_RETRY_POLICY = {
   baseDelayMs: 2000,
   maxDelayMs: 30000,
   retryableStatusCodes: [429, 503],
-  retryableMessagePattern: 'overload|service_unavailable|503|temporar|rate.?limit',
+  retryableMessagePattern: 'overload|service_unavailable|503|temporar|rate.?limit|busy',
 } as const;
+
+function isRetryableStatus(status: number): boolean {
+  return (MODEL_RETRY_POLICY.retryableStatusCodes as readonly number[]).includes(status);
+}
 
 function isTransientApiError(err: unknown): boolean {
   if (err instanceof StructuredContractError) return false;
+  if (err instanceof ModelRefusalError || err instanceof ModelReplyCutError) return false;
   if (!err || typeof err !== 'object') return false;
+  const retryableWords = new RegExp(MODEL_RETRY_POLICY.retryableMessagePattern, 'i');
+  // An error inside a 200 is non-retryable to the SDK whatever it says; its
+  // body's status and words decide, the way a real status would.
+  const inside = errorInsideOk(err);
+  if (inside) {
+    return inside.status !== undefined
+      ? isRetryableStatus(inside.status) || inside.status >= 500
+      : retryableWords.test(inside.text);
+  }
   const e = err as { isRetryable?: boolean; message?: unknown; statusCode?: number };
   if (e.isRetryable === true) return true;
-  if (
-    typeof e.statusCode === 'number' &&
-    (MODEL_RETRY_POLICY.retryableStatusCodes as readonly number[]).includes(e.statusCode)
-  ) {
-    return true;
-  }
-  const msg = String(e.message ?? '');
-  return new RegExp(MODEL_RETRY_POLICY.retryableMessagePattern, 'i').test(msg);
+  if (typeof e.statusCode === 'number' && isRetryableStatus(e.statusCode)) return true;
+  return retryableWords.test(String(e.message ?? ''));
 }
 
 async function withRetry<T>(
@@ -163,12 +177,17 @@ export type StructuredMode = 'native' | 'prompt';
  * failure.
  */
 export class StructuredOutputMissingError extends StructuredContractError {
+  /** What the model said instead, bounded; a refusal often arrives as prose with no object. */
+  readonly reply: string;
+
   constructor(
     readonly agentName: string,
     readonly mode: StructuredMode,
+    reply = '',
   ) {
     super(`agentJson(${agentName}): model returned no structured object in ${mode} mode`);
     this.name = 'StructuredOutputMissingError';
+    this.reply = reply.replace(/\s+/g, ' ').trim().slice(0, 300);
   }
 }
 
@@ -486,12 +505,12 @@ async function generateObjectOnce<T>(
     if (isMastraSchemaViolation(err)) {
       throw new StructuredOutputInvalidError(args.agent.name, mode, err);
     }
-    throw err;
+    throw asModerationRefusal(args.agent.name, err);
   }
   const resultError = (response as { error?: unknown }).error;
   if (timedOut()) throw timeoutError(resultError);
   if (resultError !== undefined && resultError !== null) {
-    if (resultError instanceof Error) throw resultError;
+    if (resultError instanceof Error) throw asModerationRefusal(args.agent.name, resultError);
     throw new Error(
       `agentJson(${args.agent.name}): ${mode} generation failed: ${String(resultError)}`,
     );
@@ -500,6 +519,7 @@ async function generateObjectOnce<T>(
   if (finishReason === 'error') {
     throw new Error(`agentJson(${args.agent.name}): ${mode} generation finished with an error`);
   }
+  assertCompleteReply(args.agent.name, finishReason, replyText(response));
   // Mastra reports a withdrawn call as a tripwire with no object; observed
   // shape for an aborted native call: finishReason 'tripwire', no error, no
   // text. The abort wall is handled above; any other tripwire is Mastra's own
@@ -516,7 +536,7 @@ async function generateObjectOnce<T>(
   }
   const object = response.object as T | undefined;
   if (object === undefined || object === null) {
-    throw new StructuredOutputMissingError(args.agent.name, mode);
+    throw new StructuredOutputMissingError(args.agent.name, mode, replyText(response));
   }
   return {
     value: object,
@@ -524,14 +544,55 @@ async function generateObjectOnce<T>(
   };
 }
 
+function replyText(response: unknown): string {
+  const text = (response as { text?: unknown }).text;
+  return typeof text === 'string' ? text : '';
+}
+
+/**
+ * Refuse a reply the provider did not finish: one cut at the output limit is
+ * incomplete however well it parses, and one stopped by a content filter is a
+ * refusal whatever text came with it.
+ *
+ * @throws ModelReplyCutError for a `length` finish.
+ * @throws ModelRefusalError for a `content-filter` finish.
+ */
+function assertCompleteReply(agentName: string, finishReason: unknown, text: string): void {
+  if (finishReason === 'length') throw new ModelReplyCutError(agentName, text);
+  if (finishReason === 'content-filter') throw new ModelRefusalError(agentName, text);
+}
+
+/** A provider's moderation refusal as the typed refusal, anything else unchanged. */
+function asModerationRefusal(agentName: string, err: unknown): unknown {
+  const refusal = moderationRefusal(err);
+  return refusal === undefined ? err : new ModelRefusalError(agentName, refusal);
+}
+
+/**
+ * Generate plain text with the shared retry policy.
+ *
+ * @throws ModelReplyCutError when the reply stopped at the output limit.
+ * @throws ModelRefusalError when the provider refused the content.
+ */
 export async function agentText(
   args: { agent: Agent; user: string } & ModelCallSettings,
 ): Promise<string> {
   return withRetry({ label: `agentText(${args.agent.name})`, agent: args.agent.name }, async () => {
-    const response = await args.agent.generate(args.user, {
-      abortSignal: modelAbortSignal(),
-      ...modelCallOptions(args),
-    });
-    return response.text ?? '';
+    let response;
+    try {
+      response = await args.agent.generate(args.user, {
+        abortSignal: modelAbortSignal(),
+        ...modelCallOptions(args),
+      });
+    } catch (err) {
+      throw asModerationRefusal(args.agent.name, err);
+    }
+    const text = replyText(response);
+    assertCompleteReply(
+      args.agent.name,
+      (response as { finishReason?: unknown }).finishReason,
+      text,
+    );
+    return text;
   });
 }

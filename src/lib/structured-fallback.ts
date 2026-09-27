@@ -57,6 +57,223 @@ export const STRUCTURED_DEMOTION_TTL_MS = 10 * 60 * 1000;
  */
 export class StructuredContractError extends Error {}
 
+/** The longest provider or model text a failure keeps for the card. */
+const FAILURE_TEXT_MAX_CHARS = 300;
+
+/** Collapse whitespace and bound a provider's or model's words for a failure reason. */
+function failureText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, FAILURE_TEXT_MAX_CHARS);
+}
+
+/**
+ * Raised when the provider stopped the reply at its output limit. Whatever
+ * arrived is incomplete, and a structured reply repaired from it would parse
+ * with its last fields missing, so nothing from it is used.
+ */
+export class ModelReplyCutError extends Error {
+  readonly agentName: string;
+  /** The start of what arrived, bounded. */
+  readonly reply: string;
+
+  constructor(agentName: string, reply: string) {
+    super(`${agentName}: the model's reply was cut off at the output limit`);
+    this.name = 'ModelReplyCutError';
+    this.agentName = agentName;
+    this.reply = failureText(reply);
+  }
+}
+
+/**
+ * Raised when the provider refused the content: a `content-filter` finish, or
+ * an error the provider's moderation raised. Sending the same request again
+ * in either structured mode is refused the same way.
+ */
+export class ModelRefusalError extends Error {
+  readonly agentName: string;
+  /** The provider's or the model's words, bounded; empty when it gave none. */
+  readonly refusal: string;
+
+  constructor(agentName: string, refusal: string) {
+    super(`${agentName}: the model provider refused the request on content grounds`);
+    this.name = 'ModelRefusalError';
+    this.agentName = agentName;
+    this.refusal = failureText(refusal);
+  }
+}
+
+/**
+ * A provider's moderation refusal as providers word it: OpenAI and Azure's
+ * `content_filter`, DashScope's `data_inspection_failed`, and the Chinese
+ * words the mainland providers use for sensitive or unsafe content and for
+ * content review. Read against a server's diagnosis only, never model output.
+ */
+const MODERATION_REFUSAL =
+  /content[_ -]?filter|data[_ -]?inspection|content[_ -]?(?:policy|moderation)|moderation|inappropriate content|敏感|不安全|违规|内容审核|内容安全/;
+
+/** The error an OpenAI-compatible server put inside a 200 reply, as read from its body. */
+export interface ErrorInsideOk {
+  /** The HTTP-like status the body names, when it names one. */
+  status?: number;
+  /** The body's own message, bounded. */
+  text: string;
+}
+
+interface OkBodyErrorLike {
+  statusCode?: unknown;
+  status?: unknown;
+  responseBody?: unknown;
+}
+
+function embeddedStatus(...candidates: unknown[]): number | undefined {
+  for (const raw of candidates) {
+    const value = typeof raw === 'string' && /^\d{3}$/.test(raw.trim()) ? Number(raw) : raw;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 400 && value <= 599) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The error a server answered inside an HTTP 200, when this failure is one.
+ *
+ * The AI SDK reports such a reply as an API call error with status 200,
+ * "Invalid JSON response" as its message and the server's body attached.
+ * That message is the SDK's, not the server's; the body says what failed.
+ *
+ * Args:
+ *   node: One error of a cause chain.
+ *
+ * Returns:
+ *   The body's status and message, or undefined when the node is not a 200 carrying an error.
+ */
+function okBodyError(node: unknown): ErrorInsideOk | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+  const e = node as OkBodyErrorLike;
+  if ((e.statusCode ?? e.status) !== 200 || typeof e.responseBody !== 'string') return undefined;
+  let body: unknown;
+  try {
+    body = JSON.parse(e.responseBody);
+  } catch {
+    // Not JSON: not an error body this reader can attribute, so not this shape.
+    return undefined;
+  }
+  if (!body || typeof body !== 'object') return undefined;
+  const outer = body as Record<string, unknown>;
+  const inner =
+    outer.error && typeof outer.error === 'object' ? (outer.error as Record<string, unknown>) : {};
+  const status = embeddedStatus(
+    inner.code,
+    inner.status,
+    outer.status,
+    outer.code,
+    outer.status_code,
+  );
+  if (outer.error === undefined && status === undefined) return undefined;
+  return {
+    ...(status !== undefined ? { status } : {}),
+    text: failureText(bodyMessage(outer) ?? e.responseBody),
+  };
+}
+
+/** The message an error body carries, in the shapes OpenAI-compatible servers use. */
+function bodyMessage(body: Record<string, unknown>): string | undefined {
+  const inner =
+    body.error && typeof body.error === 'object' ? (body.error as Record<string, unknown>) : {};
+  return [
+    typeof body.error === 'string' ? body.error : undefined,
+    inner.message,
+    inner.type,
+    typeof inner.code === 'string' ? inner.code : undefined,
+    body.message,
+    body.msg,
+  ].find((part): part is string => typeof part === 'string' && part.trim() !== '');
+}
+
+/** A response body's own message when it is a JSON error body, else the body itself, bounded. */
+function responseBodyText(responseBody: string): string {
+  try {
+    const body: unknown = JSON.parse(responseBody);
+    if (body && typeof body === 'object') {
+      const message = bodyMessage(body as Record<string, unknown>);
+      if (message !== undefined) return failureText(message);
+    }
+  } catch {
+    // Not JSON: the body is the server's words as they are.
+  }
+  return failureText(responseBody);
+}
+
+/**
+ * The error a server answered inside an HTTP 200 anywhere in a failure's cause chain.
+ *
+ * @returns The body's status and message, or undefined when the failure is not one.
+ */
+export function errorInsideOk(err: unknown): ErrorInsideOk | undefined {
+  const seen = new Set<unknown>();
+  let node: unknown = err;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && node && typeof node === 'object'; depth++) {
+    if (seen.has(node)) break;
+    seen.add(node);
+    const inside = okBodyError(node);
+    if (inside) return inside;
+    node = (node as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * Whether a failure is the provider's moderation refusing the request's content.
+ *
+ * @returns The provider's words when it is, undefined otherwise.
+ */
+export function moderationRefusal(err: unknown): string | undefined {
+  if (err instanceof ModelRefusalError) return err.refusal;
+  if (err instanceof StructuredContractError) return undefined;
+  const facts = gatherFacts(err);
+  if (!facts.responded || !MODERATION_REFUSAL.test(facts.diagnosis)) return undefined;
+  return failureText(facts.serverText || facts.diagnosis);
+}
+
+/** Statuses that say the provider rejected this request as sent, not its own condition. */
+const REQUEST_REJECTED_STATUSES: ReadonlySet<number> = new Set([400, 404, 422]);
+
+/**
+ * What a failed model call says about the work item it was for, when it is
+ * about the item rather than the provider's condition: a content refusal, a
+ * reply cut at the output limit, a reply with no usable object after the
+ * ladder's own repairs, or a request the provider rejected with a reason.
+ * Rate limits, outages, credentials and transport failures return undefined:
+ * they pass or get fixed without the item changing, so the caller leaves the
+ * item to be tried again.
+ *
+ * @returns A sentence for the card, or undefined when the failure is not the item's.
+ */
+export function itemBoundModelFailure(err: unknown): string | undefined {
+  if (err instanceof ModelReplyCutError) return "the model's reply was cut off at the output limit";
+  const refusal = moderationRefusal(err);
+  if (refusal !== undefined) {
+    return refusal
+      ? `the model provider refused the request on content grounds: ${refusal}`
+      : 'the model provider refused the request on content grounds';
+  }
+  if (err instanceof StructuredContractError) {
+    const reply = 'reply' in err && typeof err.reply === 'string' ? failureText(err.reply) : '';
+    return reply
+      ? `the model's reply held no valid structured object: ${reply}`
+      : "the model's reply held no valid structured object";
+  }
+  const facts = gatherFacts(err);
+  if (facts.transport !== undefined) return undefined;
+  const inside = errorInsideOk(err);
+  const status = facts.status ?? inside?.status;
+  if (status === undefined || !REQUEST_REJECTED_STATUSES.has(status)) return undefined;
+  const said = inside?.text ?? facts.serverText;
+  return said
+    ? `the model provider rejected the request (status ${status}): ${said}`
+    : `the model provider rejected the request (status ${status})`;
+}
+
 /**
  * Statuses that attribute a failure to something the parameter cannot explain:
  * credentials, entitlement, rate, request size, and the server being unwell.
@@ -169,6 +386,8 @@ interface ErrorFacts {
   responded: boolean;
   /** The stack's own view that this failure may pass on a retry. */
   retryable?: boolean;
+  /** The server's own words, from a response body or an error body's message, bounded and in the original case. */
+  serverText: string;
 }
 
 interface ErrorLike {
@@ -189,7 +408,7 @@ interface ErrorLike {
 const MAX_CAUSE_DEPTH = 8;
 
 function gatherFacts(err: unknown): ErrorFacts {
-  const facts: ErrorFacts = { diagnosis: '', responded: false };
+  const facts: ErrorFacts = { diagnosis: '', responded: false, serverText: '' };
   const seen = new Set<unknown>();
   let node: unknown = err;
 
@@ -227,8 +446,20 @@ function gatherFacts(err: unknown): ErrorFacts {
     ) {
       facts.transport = e.name;
     }
-    if (typeof e.message === 'string') facts.diagnosis += ` ${e.message}`;
-    if (typeof e.responseBody === 'string') facts.diagnosis += ` ${e.responseBody}`;
+    const inside = okBodyError(node);
+    if (inside) {
+      // An error inside a 200 is classed by the status its body names; the
+      // SDK's "Invalid JSON response" is its own word, not the server's.
+      if (facts.status === undefined && inside.status !== undefined) facts.status = inside.status;
+      facts.diagnosis += ` ${inside.text}`;
+      facts.serverText ||= inside.text;
+    } else {
+      if (typeof e.message === 'string') facts.diagnosis += ` ${e.message}`;
+      if (typeof e.responseBody === 'string') {
+        facts.diagnosis += ` ${e.responseBody}`;
+        facts.serverText ||= responseBodyText(e.responseBody);
+      }
+    }
     // `param` belongs to the OpenAI error *body*, so a client only ever holds
     // one because a server sent it: its presence is itself a response.
     if (typeof e.param === 'string') {
@@ -239,7 +470,10 @@ function gatherFacts(err: unknown): ErrorFacts {
     const body = e.error;
     if (body && typeof body === 'object') {
       const inner = body as ErrorLike;
-      if (typeof inner.message === 'string') facts.diagnosis += ` ${inner.message}`;
+      if (typeof inner.message === 'string') {
+        facts.diagnosis += ` ${inner.message}`;
+        facts.serverText ||= failureText(inner.message);
+      }
       if (typeof inner.param === 'string') {
         facts.param ??= inner.param.toLowerCase();
         facts.responded = true;
@@ -321,13 +555,17 @@ function statusPrefix(facts: ErrorFacts): string {
  *   1. the request never reached a server, so it says nothing about one;
  *   2. the request reached one and the failing request did not even carry the
  *      parameter, so the parameter is not what failed;
- *   3. the status blames a cause the parameter cannot explain;
+ *   3. the status blames a cause the parameter cannot explain - except a
+ *      rate limit or server error repeated after the retry wrapper's attempts
+ *      on a request carrying the parameter, which earns one request without
+ *      it and proves nothing;
  *   4. a structured-output contract failure, by type: the reply arrived and did
  *      not honour the schema, which is exactly what "took the parameter and
  *      ignored it" looks like from here. Settled before any prose is read,
  *      because the message of a contract failure quotes the model's own reply
  *      and a reply is not a diagnosis;
- *   5. the error's own words say no server answered;
+ *   5. the error's own words say no server answered, or name the provider's
+ *      moderation refusing the content;
  *   6. a server named `response_format` as the parameter it rejected. Ahead of
  *      the veto below, and the reason the veto can be worded loosely: between
  *      two readings of one message, a rejection of something the request
@@ -340,8 +578,11 @@ function statusPrefix(facts: ErrorFacts): string {
  *      consulted for statusless failures too, since a server is free to report
  *      a rate limit or a bad key without one;
  *   8. otherwise the parameter is implicated only if something actually
- *      implicates it. With a status, that is the status itself: the request
- *      shape was rejected. Without one, it takes affirmative evidence that a
+ *      implicates it. With a status, that is the status itself when the
+ *      server said nothing else, or a body rejecting something the request
+ *      carried; a body that rejects nothing it carried (a reason in another
+ *      language, a message about the content) is its own reason and licenses
+ *      no second request. Without a status, it takes affirmative evidence that a
  *      server answered *and* that the request it answered carried the
  *      parameter - and even then the failure is unexplained, so the experiment
  *      runs for the object and settles nothing. Anything else - a bare `Error`,
@@ -350,6 +591,8 @@ function statusPrefix(facts: ErrorFacts): string {
  */
 export function classifyStructuredFailure(err: unknown): StructuredFailure {
   if (!err || typeof err !== 'object') return unrelated('not an error object');
+  if (err instanceof ModelReplyCutError) return unrelated('reply cut at the output limit');
+  if (err instanceof ModelRefusalError) return unrelated('the provider refused the content');
   const facts = gatherFacts(err);
 
   if (facts.transport !== undefined) return unrelated(`transport failure (${facts.transport})`);
@@ -357,6 +600,12 @@ export function classifyStructuredFailure(err: unknown): StructuredFailure {
     return unrelated('failing request did not carry response_format');
   }
   if (facts.status !== undefined && statusBlamesAnotherCause(facts.status)) {
+    // The retry wrapper has already sent it again, so this is a repeat. A
+    // provider that answers `json_schema` with "busy" never says why, and one
+    // request without the parameter costs little against a run that stops.
+    if (facts.carriedParameter === true && (facts.status === 429 || facts.status >= 500)) {
+      return ambiguous(`repeated status ${facts.status} to a request carrying response_format`);
+    }
     return unrelated(`status ${facts.status} blames another cause`);
   }
   if (err instanceof StructuredContractError) {
@@ -364,6 +613,9 @@ export function classifyStructuredFailure(err: unknown): StructuredFailure {
   }
   if (NO_RESPONSE_PHRASE.test(facts.diagnosis)) {
     return unrelated('transport failure (no response)');
+  }
+  if (MODERATION_REFUSAL.test(facts.diagnosis)) {
+    return unrelated(`${statusPrefix(facts)}, the provider refused the content`);
   }
   if (serverRefusedTheParameter(facts)) {
     return decisive(facts, `${statusPrefix(facts)}, server named response_format as rejected`);
@@ -377,6 +629,14 @@ export function classifyStructuredFailure(err: unknown): StructuredFailure {
     }
     return ambiguous(
       'server answered a request carrying response_format, without saying what failed',
+    );
+  }
+  // A status alone (a proxy's bare 422) implicates the request's shape. A body
+  // that rejects nothing the request carried, in any language, is a failure
+  // with its own reason, and the same request in prompt mode fails the same way.
+  if (facts.serverText && !REJECTS_WHAT_THE_REQUEST_CARRIED.test(facts.diagnosis)) {
+    return unrelated(
+      `status ${facts.status}, and the server's answer rejects nothing the request carried`,
     );
   }
   return decisive(facts, `status ${facts.status} rejecting the request shape`);
