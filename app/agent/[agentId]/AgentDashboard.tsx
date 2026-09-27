@@ -206,17 +206,17 @@ export function AgentDashboard({ agentId }: Props) {
       : null;
 
   // Sync local mode with server state. Two cases:
-  //   1. Reload mid-session — route back into the room they were in
+  //   1. Reload mid-session: route back into the room they were in
   //      (uses the voiceSession row to figure out which).
-  //   2. Request Changes on the charter — agent.state flips back to
+  //   2. Request Changes on the charter: agent.state flips back to
   //      `deployed` AND a prior voiceSession exists. Reset to picker.
   // The `voiceSession` guard is critical: without it, the moment a fresh
   // user picks a mode (state is still `deployed`, mode flips off `pick`)
   // this effect would race the user's click and snap them back to picker.
   //
   // This resync stays an effect on purpose. Deriving `mode` cannot express
-  // case 2 — the boss's own pick has to be discarded when the server moves
-  // underneath it — and resetting via a subtree `key` would remount
+  // case 2 (the boss's own pick has to be discarded when the server moves
+  // underneath it), and resetting via a subtree `key` would remount
   // `ChatRoom`, whose mount effect opens a voice session, so every state
   // transition would start a duplicate 1:1.
   useEffect(() => {
@@ -240,8 +240,8 @@ export function AgentDashboard({ agentId }: Props) {
   }
 
   // A drafted charter ends the 1:1, whatever the agent row still says. The
-  // room stayed open under the charter it had just produced — badge reading
-  // "streaming", footer reading "drafting your charter…" — because both were
+  // room stayed open under the charter it had just produced (badge reading
+  // "streaming", footer reading "drafting your charter…") because both were
   // keyed to a state the chat route never moved on.
   const showOnboarding =
     !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
@@ -882,7 +882,7 @@ function Card({
 }
 
 function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
-  // null while the probe is in flight — voice stays clickable so the
+  // null while the probe is in flight; voice stays clickable so the
   // picker doesn't flicker on a configured deployment.
   const [voiceConfigured, setVoiceConfigured] = useState<boolean | null>(null);
 
@@ -903,7 +903,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
 
   const voiceOff = voiceConfigured === false;
   return (
-    <Card title="Day-1 1:1 — voice or chat?" tone="accent">
+    <Card title="Day-1 1:1: voice or chat?" tone="accent">
       <p className="text-sm text-[var(--color-muted)] mb-4">
         I&apos;d like a few minutes to understand the role you brought me on for. Voice is faster
         (~5 min); chat is fine if you&apos;d rather type.
@@ -934,7 +934,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
       </div>
       {voiceOff ? (
         <p className="text-xs text-[var(--color-muted)] mt-3">
-          Voice is off on this deployment — no ElevenLabs credentials. Chat runs the identical
+          Voice is off on this deployment: no ElevenLabs credentials. Chat runs the identical
           seven-topic 1:1.
         </p>
       ) : null}
@@ -1214,7 +1214,7 @@ export function CharterCard({
             />
             <BoundaryList
               label="Collaborators"
-              items={body.namedCollaborators.map((c) => `${c.name} — ${c.topic}`)}
+              items={body.namedCollaborators.map((c) => `${c.name} - ${c.topic}`)}
             />
             <BoundaryList
               label="Adjacent roles (work in their lane is out of scope)"
@@ -1465,7 +1465,7 @@ export function AmendCharterPanel({
               ))}
               {answered.map((entry) => (
                 <p key={entry.question} className="text-[var(--color-muted)]">
-                  {entry.question} <span className="text-[var(--color-fg)]">— {entry.answer}</span>
+                  {entry.question} <span className="text-[var(--color-fg)]">- {entry.answer}</span>
                 </p>
               ))}
             </div>
@@ -1880,7 +1880,7 @@ export function RegisteredSkillsPanel({
     <Card title={`Skills · ${skills.length} registered`}>
       {authoringFailure ? (
         <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
-          Authoring did not finish — {authoringFailure}
+          Authoring did not finish: {authoringFailure}
         </p>
       ) : null}
       {skills.length === 0 ? (
@@ -2291,8 +2291,8 @@ export function WorkQueue({
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
   // moved the row, so without this the same item is handed to the same action
-  // several times over. The backend refuses the duplicates — `claimForExecution`
-  // is the authority — but a refusal is not a reason to keep asking.
+  // several times over. The backend refuses the duplicates (`claimForExecution`
+  // is the authority), but a refusal is not a reason to keep asking.
   const inFlight = useRef(new Set<string>());
   const once = useCallback((step: string, id: string, call: () => Promise<unknown>) => {
     const key = `${step}:${id}`;
@@ -4146,7 +4146,7 @@ export function WorkItemCard({
           ) : (
             <span className="text-[var(--color-fg)]">
               {verdict.decision}
-              {verdict.reason ? ` — ${verdict.reason}` : ''}
+              {verdict.reason ? ` - ${verdict.reason}` : ''}
             </span>
           )}
         </div>
@@ -4890,7 +4890,7 @@ function EventTicker({
           const title = eventItemTitle(e, titles);
           return (
             <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
-              {/* Was a UTC clock beside the Slack panel's local one — the same
+              {/* Was a UTC clock beside the Slack panel's local one: the same
                   event stamped eight hours apart on one page. */}
               <span
                 className="shrink-0 tabular-nums"

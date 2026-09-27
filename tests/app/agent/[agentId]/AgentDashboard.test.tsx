@@ -1586,7 +1586,7 @@ describe('amending an approved charter from the card', (): void => {
     expect(markup).toContain('Whether Northstar CRM access will be granted.');
     expect(markup).toContain('>Answer<');
     expect(markup).toContain('Who owns the Looker tile.');
-    expect(markup).toContain('— Priya.');
+    expect(markup).toContain('- Priya.');
     expect(markup).toContain('>Add rule<');
     expect(markup).toContain('Linear (kanban)');
     expect(markup).toContain('>Add system<');
