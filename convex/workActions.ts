@@ -1789,6 +1789,79 @@ export function replyStillOwed(
 }
 
 /**
+ * The prerequisites a closing round is authored from: the phase before the
+ * first closing set, with that set's actions and ledger added, and the
+ * question it put to the manager with its notes carried, so a round that
+ * does not ask again still holds what waits on the answer (review M10).
+ *
+ * Args:
+ *   output: The first closing set as it was applied.
+ *   flattened: The run's whole action set and ledger after that apply.
+ *   round: Why the set is authored once more.
+ *
+ * Returns:
+ *   The output `prepareDependentPhase` stores for the round.
+ */
+export function closingRoundPrerequisites(
+  output: DependentPendingOutput,
+  flattened: Pick<
+    ReturnType<typeof flattenedDependentOutput>,
+    'actions' | 'applied' | 'prerequisiteCount'
+  >,
+  round: ClosingRoundReason,
+): DependentAuthoringOutput {
+  const withheldActions = [
+    ...(output.initial.withheldActions ?? []),
+    ...(output.withheldActions ?? []),
+  ];
+  const openQuestion = output.openQuestion ?? output.initial.openQuestion;
+  const earlierQuestion =
+    output.earlierQuestion !== undefined ? output.earlierQuestion : output.initial.earlierQuestion;
+  const notes = [output.initial.notes, output.notes]
+    .filter((text) => text.trim() !== '')
+    .join('\n');
+  // The phase before's own declaration is replaced by the carried one, which may be none at all.
+  const before: DependentAuthoringOutput = { ...output.initial };
+  delete before.declaredQuestion;
+  return {
+    ...before,
+    actions: flattened.actions,
+    applied: flattened.applied,
+    needsDependentPhase: true,
+    notes,
+    ...carriedDeclaration(output.declaredQuestion, output.initial.declaredQuestion),
+    ...(openQuestion ? { openQuestion } : {}),
+    ...(earlierQuestion !== undefined ? { earlierQuestion } : {}),
+    ...(withheldActions.length > 0 ? { withheldActions } : {}),
+    closingRound: { reason: round, prerequisiteCount: flattened.prerequisiteCount },
+  };
+}
+
+/**
+ * The declared question a closing round carries from the first closing set
+ * and the phase before it: a question either declared, else none when both
+ * declared none, else nothing, so a set from before the field is still read
+ * by the judgement.
+ *
+ * Args:
+ *   closing: The first closing set's declaration.
+ *   before: The phase before it's.
+ *
+ * Returns:
+ *   The field to spread onto the carried prerequisites.
+ */
+function carriedDeclaration(
+  closing: DeclaredQuestion | undefined,
+  before: DeclaredQuestion | undefined,
+): { declaredQuestion?: DeclaredQuestion } {
+  const question = [closing, before].find(
+    (declared): declared is string => typeof declared === 'string',
+  );
+  if (question !== undefined) return { declaredQuestion: question };
+  return closing === null && before === null ? { declaredQuestion: null } : {};
+}
+
+/**
  * Why a closing set that has been applied is authored once more, if it is.
  *
  * Two things a closing set cannot know when it is authored. A sibling work
@@ -3205,19 +3278,11 @@ async function finishRun(
     const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, { workItemId });
     const round = reason ? undefined : closingRoundOwed(output, settled, item);
     if (round && item) {
-      const withheldActions = [...(output.initial.withheldActions ?? []), ...(output.withheldActions ?? [])];
       const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
         workItemId,
         runId: claim.runId,
         applyAttemptId: claim.applyAttemptId,
-        output: {
-          ...output.initial,
-          actions: finalOutput.actions,
-          applied: finalOutput.applied,
-          needsDependentPhase: true,
-          ...(withheldActions.length > 0 ? { withheldActions } : {}),
-          closingRound: { reason: round, prerequisiteCount: finalOutput.prerequisiteCount },
-        } satisfies DependentAuthoringOutput,
+        output: closingRoundPrerequisites(output, finalOutput, round),
       });
       if (!prepared.prepared) {
         return { ok: false, reason: 'the run moved on before its closing set could be authored once more' };

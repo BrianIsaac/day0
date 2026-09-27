@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import {
   blockedPlanReason,
   browserTransportRefusal,
+  closingRoundPrerequisites,
   closingSetAsks,
   closingStopReason,
   completionFailure,
@@ -1262,6 +1263,88 @@ describe('stopping blocked work with only a manager message left', (): void => {
   it('still stops on a note that asks the manager nothing', (): void => {
     expect(closingStopReason(run('REVOPS-7 has no owner, so nothing was changed and I stopped.'))).toContain('blocked');
     expect(closingStopReason(run('已确认 REVOPS-7 没有负责人，我已停止。'))).toContain('blocked');
+  });
+});
+
+describe('closingRoundPrerequisites (review M10)', (): void => {
+  const read: MockAction = {
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"LOG-1"}' },
+  };
+  const question: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      body: '{"channel":"D0MANAGER","text":"Which template?"}',
+    },
+  };
+  const landed = (index: number): AppliedAction => ({
+    tool: 'x',
+    ok: true,
+    idempotencyKey: `wi:run:${index}`,
+  });
+  const firstSet = (closing: Partial<DependentExecutionOutput>) =>
+    ({
+      phase: 'dependent',
+      actionIndexOffset: 1,
+      draft: 'd',
+      notes: 'Please confirm which template the notice should use.',
+      actions: [question],
+      planStepOutcomes: [],
+      ...closing,
+      initial: {
+        phase: 'dependent-authoring',
+        draft: 'd',
+        notes: 'Read LOG-1.',
+        actions: [read],
+        applied: [landed(0)],
+        declaredQuestion: null,
+      },
+    }) as unknown as Parameters<typeof closingRoundPrerequisites>[0];
+  const flattened = {
+    actions: [read, question],
+    applied: [landed(0), landed(1)],
+    prerequisiteCount: 1,
+  };
+
+  it("carries the first closing set's question, its declaration and its notes into the round", (): void => {
+    const prepared = closingRoundPrerequisites(
+      firstSet({
+        declaredQuestion: 'Please confirm which template the notice should use.',
+        openQuestion: {
+          question: 'Please confirm which template the notice should use.',
+          steps: [2, 3],
+        },
+        earlierQuestion: null,
+      }),
+      flattened,
+      'claim-withheld',
+    );
+
+    expect(prepared.actions).toEqual([read, question]);
+    expect(prepared.applied).toHaveLength(2);
+    expect(prepared.declaredQuestion).toBe('Please confirm which template the notice should use.');
+    expect(prepared.openQuestion).toEqual({
+      question: 'Please confirm which template the notice should use.',
+      steps: [2, 3],
+    });
+    expect(prepared.notes).toBe(
+      'Read LOG-1.\nPlease confirm which template the notice should use.',
+    );
+    expect(prepared.earlierQuestion).toBeNull();
+    expect(prepared.closingRound).toEqual({ reason: 'claim-withheld', prerequisiteCount: 1 });
+  });
+
+  it('declares no question for the round when neither set asked, and leaves a set from before the field to the judgement', (): void => {
+    expect(
+      closingRoundPrerequisites(firstSet({ declaredQuestion: null }), flattened, 'reply-owed')
+        .declaredQuestion,
+    ).toBeNull();
+    expect(closingRoundPrerequisites(firstSet({}), flattened, 'reply-owed')).not.toHaveProperty(
+      'declaredQuestion',
+    );
   });
 });
 

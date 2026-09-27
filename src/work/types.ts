@@ -434,6 +434,8 @@ export interface DependentExecutionOutput {
   openQuestion?: OpenQuestion;
   /** See `DeclaredQuestion`. */
   declaredQuestion?: DeclaredQuestion;
+  /** Server-derived: as `ExecutionOutput.earlierQuestion`, when the closing phase read it. */
+  earlierQuestion?: string | null;
   /** The one repair each held write earned before the hold; absent when none was needed. */
   argumentRepairs?: ArgumentRepairAttempt[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */
