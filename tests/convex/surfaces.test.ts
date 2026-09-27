@@ -2531,6 +2531,45 @@ describe('access expiry (Q5)', (): void => {
     ).toHaveLength(1);
   });
 
+  it('keeps the frozen tool list through an expiry, a renewal and the probe the renewal schedules', async (): Promise<void> => {
+    // The renewal schedules a real probe; the timers stay still so only this test's probes run.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(PROPOSED_AT);
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const connect = async (tools: string[], verifiedAt: number): Promise<void> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: probe.generation,
+        toolAllowlist: tools,
+        toolArguments: [],
+        verifiedAt,
+      });
+    };
+    await connect(['list_issues', 'save_comment'], APPROVED_AT + DAY);
+    const endedAt = APPROVED_AT + 31 * DAY;
+    vi.setSystemTime(endedAt);
+    await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endedAt });
+    const renewedAt = endedAt + DAY;
+    vi.setSystemTime(renewedAt);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 90 });
+
+    await connect(['list_issues', 'save_comment', 'delete_issue'], renewedAt);
+
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      toolAllowlist: ['list_issues', 'save_comment'],
+    });
+    expect((await payloads(harness, 'surface.connected')).at(-1)).toEqual({
+      surfaceId,
+      withheldTools: ['delete_issue'],
+    });
+  });
+
   it('sets the length on a live connection without probing it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
