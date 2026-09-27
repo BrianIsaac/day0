@@ -320,6 +320,8 @@ async function moveWaitingWork(
     ? (['needs-skill', 'discovered'] as const)
     : (['needs-skill'] as const);
   let stateIndex = from === undefined ? 0 : states.findIndex((state) => state === from.state);
+  // A continuation always carries a state of its own walk; any other is not this walk's to read.
+  if (stateIndex < 0) return moved;
   let after = from?.after;
   for (; stateIndex < states.length; stateIndex += 1, after = undefined) {
     const state = states[stateIndex];

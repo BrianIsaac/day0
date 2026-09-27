@@ -1263,6 +1263,27 @@ describe('a long wait behind one skill (P9-1)', (): void => {
     expect(rows.slice(0, 25).every((row) => evaluated.has(String(row)))).toBe(true);
   });
 
+  it('moves nothing from a continuation that names a state outside its walk', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { skillId, rows } = await seedLongWait(harness, 'registered', 3);
+
+    await expect(
+      harness.mutation(internal.skills.continueWaitingWork, {
+        skillId,
+        skillState: 'registered',
+        move: {
+          kind: 'verdict',
+          verdict: { decision: 'pending-reevaluation', reason: 'skill registered, ready to retry' },
+        },
+        scope: { sameName: true },
+        from: { state: 'discovered', skipSource: false },
+      }),
+    ).resolves.toEqual({ moved: 0 });
+    expect(await stateCounts(harness, rows)).toEqual({ 'needs-skill': 3 });
+  });
+
   it('rejection cancels a long wait in batches, within the transaction limits', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
