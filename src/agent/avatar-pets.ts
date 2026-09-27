@@ -1,9 +1,9 @@
 import { fnv1a32 } from '../lib/short-hash';
 
 // The pixel-art faces are not ours. They come from the public "Singapore
-// Codex Pets" community gallery, credited with its licence terms in the
-// README's Credits section and in NOTICE. The product names no person: each
-// face is known by its number only (decision N6).
+// Codex Pets" community gallery, credited in the README's Credits section and
+// in NOTICE. The product names no person: each face is known by its number
+// only (decision N6).
 
 /** How many faces the gallery holds. */
 const FACE_COUNT = 29;

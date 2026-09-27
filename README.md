@@ -41,7 +41,7 @@ Three things to know before the rest of this file. Each is repeated where it app
 
 The container images for the backend, the model service, the sandbox, the redactor and the components are pinned by digest in `docker-compose.yml`; the package versions are in `package.json` and the [Stack](#stack) table. Provider-side processing and retention of anything sent to a hosted model or workspace follow your own account terms with that provider.
 
-Who receives what. On the hosted demo, the sign-in email goes to Clerk, the pages are served by Vercel, every row is stored in Convex's cloud, the chat and the mock office's content go to the model provider the deployment names, and a voice 1:1, when used, goes to ElevenLabs with the manager's email address. In real mode on your machine, the documentation you link and the text the agent reads from your systems go to the model provider you configure (to nobody on the local model route), and orientation looks a documented system up by name in the public MCP Registry (`registry.modelcontextprotocol.io`) when its documentation mentions an MCP server. Every third-party work Day0 adapts, runs, downloads or depends on is credited, with its licence and holder, in [`NOTICE`](NOTICE).
+Who receives what. On the hosted demo, the sign-in email goes to Clerk, the pages are served by Vercel, every row is stored in Convex's cloud, the chat and the mock office's content go to the model provider the deployment names, and a voice 1:1, when used, goes to ElevenLabs with the manager's email address. In real mode on your machine, the documentation you link and the text the agent reads from your systems go to the model provider you configure (to nobody on the local model route), and orientation looks a documented system up by name in the public MCP Registry (`registry.modelcontextprotocol.io`) when its documentation mentions an MCP server; a skill's smoke test runs on Daytona instead of the bundled sandbox only when a `DAYTONA_API_KEY` is set. Every third-party work Day0 adapts, runs, downloads or depends on is credited, with its licence and holder, in [`NOTICE`](NOTICE).
 
 **AI-assisted development.** The code, tests and documentation in this repository were written with AI coding agents, under human direction and review, and the commit history is the record of that work. The design, the evaluation method and every claim in this file were decided and checked by the maintainers.
 
@@ -1141,7 +1141,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 后端、模型服务、沙箱、redactor 与各组件的容器镜像在 `docker-compose.yml` 中按 digest 固定；软件包版本见 `package.json` 与[技术栈](#stack)表。发送给托管模型或 workspace 的内容，其服务商侧处理与保留遵循你与该服务商的账户条款。
 
-谁会收到什么。在托管演示中，登录邮箱发送给 Clerk，页面由 Vercel 提供，所有数据行存储在 Convex 云端，聊天内容与 mock office 的内容发送给该 deployment 指定的模型服务商；使用语音一对一时，通话连同经理的邮箱地址发送给 ElevenLabs。在你本机运行的 real mode 中，你链接的文档以及 Agent 从你的系统读取的文本发送给你配置的模型服务商（本地模型路线则不发送给任何人）；当某个已记录系统的文档提到 MCP server 时，orientation 会按系统名在公开的 MCP Registry（`registry.modelcontextprotocol.io`）中查询。Day0 改编、运行、下载或依赖的每一项第三方作品，连同其许可与权利人，都列在 [`NOTICE`](NOTICE) 中。
+谁会收到什么。在托管演示中，登录邮箱发送给 Clerk，页面由 Vercel 提供，所有数据行存储在 Convex 云端，聊天内容与 mock office 的内容发送给该 deployment 指定的模型服务商；使用语音一对一时，通话连同经理的邮箱地址发送给 ElevenLabs。在你本机运行的 real mode 中，你链接的文档以及 Agent 从你的系统读取的文本发送给你配置的模型服务商（本地模型路线则不发送给任何人）；当某个已记录系统的文档提到 MCP server 时，orientation 会按系统名在公开的 MCP Registry（`registry.modelcontextprotocol.io`）中查询；只有设置了 `DAYTONA_API_KEY` 时，技能的冒烟测试才会在 Daytona 而不是随附沙箱上运行。Day0 改编、运行、下载或依赖的每一项第三方作品，连同其许可与权利人，都列在 [`NOTICE`](NOTICE) 中。
 
 **AI 辅助开发。** 本仓库中的代码、测试和文档是在人工指导与审查下、借助 AI 编码代理编写的，提交历史即为这项工作的记录。设计、评测方法以及本文件中的每一项主张均由维护者决定并核对。
 
