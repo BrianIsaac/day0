@@ -8,7 +8,11 @@ import { readerFor } from '../src/docs/readers';
 import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef, redactCredentials } from '../src/docs/redaction';
-import { spanModelFromEnv, type SpanModel } from '../src/redaction/client';
+import {
+  RedactorUnavailableError,
+  spanModelFromEnv,
+  type SpanModel,
+} from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
 import { interruptedReadError } from '../src/lib/transport-error';
@@ -298,8 +302,11 @@ export const syncBatch = internalAction({
       };
     } catch (error) {
       // A read cut off mid-batch is recorded as the transient it is, with its cause.
+      // A stopped redaction component is a person's to start, not a transient.
       const reason = safeSyncError(
-        interruptedReadError(error, 'The documentation read') ?? error,
+        error instanceof RedactorUnavailableError
+          ? error
+          : (interruptedReadError(error, 'The documentation read') ?? error),
         secret,
         known,
       );

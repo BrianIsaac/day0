@@ -24,6 +24,14 @@ import { markdownPageTitle, offsetFromCursor } from './folder';
 
 const SERVER_NAME = 'docs';
 
+/**
+ * A batch is tried once more, five seconds later: its transport already
+ * waits out an HTTP 429, so this covers a read cut off mid-batch and a rate
+ * limit the server reports inside a tool result, without re-reading a whole
+ * batch into a limit again and again.
+ */
+const BATCH_BACKOFF: BackoffPolicy = { attempts: 2, baseMs: 5_000, maxWaitMs: 30_000 };
+
 interface McpTool {
   execute?: (input: Record<string, unknown>, context: Record<string, never>) => Promise<unknown>;
 }
@@ -575,7 +583,7 @@ export class McpReader implements DocSourceReader {
   constructor(
     private readonly clientFactory: McpClientFactory = productionClient,
     private readonly reach?: ReachFetch,
-    private readonly backoff: BackoffPolicy = PROVIDER_BACKOFF,
+    private readonly backoff: BackoffPolicy = BATCH_BACKOFF,
   ) {}
 
   /**

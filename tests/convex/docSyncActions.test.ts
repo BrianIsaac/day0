@@ -10,6 +10,7 @@ import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } 
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
 import { FolderReader } from '../../src/docs/readers/folder';
+import { RedactorUnavailableError } from '../../src/redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -367,6 +368,28 @@ describe('documentation sync batching', (): void => {
     const source = await harness.query(internal.docSources.getInternal, { sourceId });
     expect(source?.lastError).toBe(
       'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again.',
+    );
+  });
+
+  it('records a stopped redaction component as itself, not as a transient read', async (): Promise<void> => {
+    const { root } = await sixtyPages();
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockRejectedValueOnce(
+      new RedactorUnavailableError(
+        'redaction component unreachable at redactor:8000: read ECONNRESET',
+      ),
+    );
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    const source = await harness.query(internal.docSources.getInternal, { sourceId });
+    expect(source?.lastError).toBe(
+      'redaction component unreachable at redactor:8000: read ECONNRESET',
     );
   });
 

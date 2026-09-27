@@ -44,6 +44,12 @@ import {
 import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
 
 const PROVIDER_TIMEOUT_MS = 10_000;
+/**
+ * No backoff wait in a sweep starts after this long, so a rate-limited
+ * workspace leaves the rest to the next sweep instead of reaching the
+ * action's ten-minute limit with surfaces unrecorded.
+ */
+const SWEEP_WAIT_BUDGET_MS = 6 * 60_000;
 const MAX_MCP_PAGES = 5;
 /**
  * A bound on the channel list walk, not a budget: the walk stops as soon as
@@ -2068,7 +2074,11 @@ function providerFetcher(dependencies: IntakeDependencies, now: () => number): I
   return fetchWithBackoff(
     dependencies.fetcher ?? fetch,
     PROVIDER_TIMEOUT_MS,
-    dependencies.sleep ? { ...PROVIDER_BACKOFF, sleep: dependencies.sleep } : PROVIDER_BACKOFF,
+    {
+      ...PROVIDER_BACKOFF,
+      ...(dependencies.sleep ? { sleep: dependencies.sleep } : {}),
+      deadline: Date.now() + SWEEP_WAIT_BUDGET_MS,
+    },
     now,
   );
 }

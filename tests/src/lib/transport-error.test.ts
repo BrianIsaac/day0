@@ -187,3 +187,69 @@ describe('a fetch with one bounded backoff', (): void => {
     expect((await fetcher('https://slack.com/api/x')).status).toBe(429);
   });
 });
+
+describe('what the backoff never does (review)', (): void => {
+  it('does not call a bare fetch failed interrupted, but reads its cause', (): void => {
+    expect(transportFailureKind(new Error('fetch failed'))).toBeUndefined();
+    expect(
+      transportFailureKind(
+        new Error('fetch failed', { cause: new Error('unable to verify the first certificate') }),
+      ),
+    ).toBeUndefined();
+    expect(
+      transportFailureKind(
+        new Error('fetch failed', {
+          cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+        }),
+      ),
+    ).toBe('interrupted');
+  });
+
+  it('never tries again a request its caller aborted', async (): Promise<void> => {
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+    const fetcher = fetchWithBackoff(
+      async (): Promise<Response> => {
+        calls += 1;
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      },
+      undefined,
+      { ...PROVIDER_BACKOFF, sleep: async (): Promise<void> => undefined },
+    );
+    await expect(
+      fetcher('https://mcp.example.com/mcp', { signal: controller.signal }),
+    ).rejects.toThrow('aborted');
+    expect(calls).toBe(1);
+  });
+
+  it("keeps the caller's signal beside its own timeout", async (): Promise<void> => {
+    const controller = new AbortController();
+    let seen: AbortSignal | null | undefined;
+    const fetcher = fetchWithBackoff(async (_input, init): Promise<Response> => {
+      seen = init?.signal;
+      return new Response('{}');
+    }, 10_000);
+    await fetcher('https://slack.com/api/x', { signal: controller.signal });
+    expect(seen?.aborted).toBe(false);
+    controller.abort();
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it('never waits past the deadline it was given', async (): Promise<void> => {
+    const waits: number[] = [];
+    await expect(
+      withBackoff(
+        async (): Promise<never> => {
+          throw new TransientProviderError('rate limited', { retryAfterMs: 20_000 });
+        },
+        {
+          ...PROVIDER_BACKOFF,
+          deadline: Date.now() + 5_000,
+          sleep: async (ms): Promise<void> => void waits.push(ms),
+        },
+      ),
+    ).rejects.toThrow('rate limited');
+    expect(waits).toEqual([]);
+  });
+});

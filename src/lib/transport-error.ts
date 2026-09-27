@@ -33,7 +33,12 @@ const REFUSED_MARKERS = [
   'unable to connect',
 ] as const;
 
-/** Markers of a read that started and was cut off: a timeout, a reset, a closed socket. */
+/**
+ * Markers of a read that started and was cut off: a timeout, a reset, a
+ * closed socket. `fetch failed` alone is not one: undici says it for a
+ * refused certificate or a refused redirect too, and puts the real reason in
+ * the cause, which the chain walk reads.
+ */
 const INTERRUPTED_MARKERS = [
   'etimedout',
   'econnreset',
@@ -45,8 +50,6 @@ const INTERRUPTED_MARKERS = [
   'aborterror',
   'timed out',
   'terminated',
-  'fetch failed',
-  'failed to fetch',
 ] as const;
 
 /** The messages, codes and names along an error's cause chain, lower-cased. */
@@ -208,6 +211,11 @@ export interface BackoffPolicy {
   /** A provider that asks for a longer wait than this is not waited for: the failure stands. */
   readonly maxWaitMs: number;
   readonly sleep?: (ms: number) => Promise<void>;
+  /**
+   * An epoch-millisecond time no wait may run past, so a sweep of many reads
+   * stays inside its action's limit; the failure stands instead.
+   */
+  readonly deadline?: number;
 }
 
 /**
@@ -232,12 +240,14 @@ function retryable(error: unknown): boolean {
  *
  * @param call - One provider request.
  * @param policy - Tries and waits; `PROVIDER_BACKOFF` for every provider read.
+ * @param cancelled - Whether the caller has given up, in which case nothing is tried again.
  * @returns The call's answer.
  * @throws The last error when no try succeeded.
  */
 export async function withBackoff<T>(
   call: () => Promise<T>,
   policy: BackoffPolicy = PROVIDER_BACKOFF,
+  cancelled: () => boolean = (): boolean => false,
 ): Promise<T> {
   const sleep =
     policy.sleep ??
@@ -249,10 +259,12 @@ export async function withBackoff<T>(
     try {
       return await call();
     } catch (error) {
-      if (!retryable(error) || attempt >= policy.attempts) throw error;
+      // A caller that cancelled the request meant it: its abort is not a transient.
+      if (!retryable(error) || attempt >= policy.attempts || cancelled()) throw error;
       const asked = error instanceof TransientProviderError ? error.retryAfterMs : undefined;
       const wait = asked ?? policy.baseMs * 2 ** (attempt - 1);
       if (wait > policy.maxWaitMs) throw error;
+      if (policy.deadline !== undefined && Date.now() + wait > policy.deadline) throw error;
       await sleep(wait);
     }
   }
@@ -283,21 +295,29 @@ export function fetchWithBackoff<I = string | URL | Request>(
   return async (input: I, init?: RequestInit): Promise<Response> => {
     let last: Response | undefined;
     try {
-      return await withBackoff(async (): Promise<Response> => {
-        const response = await fetcher(
-          input,
-          timeoutMs === undefined ? init : { ...init, signal: AbortSignal.timeout(timeoutMs) },
-        );
-        const transient = transientFromResponse(response, 'The provider', now());
-        if (transient) {
-          // The previous refused answer is let go, so its connection is freed before the next try.
+      return await withBackoff(
+        async (): Promise<Response> => {
+          const timeout = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
+          const signal =
+            timeout === undefined
+              ? init?.signal
+              : init?.signal
+                ? AbortSignal.any([init.signal, timeout])
+                : timeout;
+          const response = await fetcher(input, { ...init, signal });
+          const transient = transientFromResponse(response, 'The provider', now());
+          if (transient) {
+            // The previous refused answer is let go, so its connection is freed before the next try.
+            await last?.body?.cancel();
+            last = response;
+            throw transient;
+          }
           await last?.body?.cancel();
-          last = response;
-          throw transient;
-        }
-        await last?.body?.cancel();
-        return response;
-      }, policy);
+          return response;
+        },
+        policy,
+        (): boolean => init?.signal?.aborted === true,
+      );
     } catch (error) {
       if (error instanceof TransientProviderError && last !== undefined) return last;
       throw error;
