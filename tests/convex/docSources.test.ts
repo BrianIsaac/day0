@@ -514,6 +514,7 @@ describe('documentation sources in real mode', (): void => {
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
+      syncRunId: runId,
       ref: 'new-one.md',
       title: 'New one',
       markdown: '# New one',
@@ -533,6 +534,7 @@ describe('documentation sources in real mode', (): void => {
     await expect(rowsForSource(harness, sourceId)).resolves.toMatchObject({ pages: 2 });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
+      syncRunId: runId,
       ref: 'new-two.md',
       title: 'New two',
       markdown: '# New two',
@@ -584,12 +586,17 @@ describe('documentation sources in real mode', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
-    await harness.mutation(internal.docSources.upsertPage, {
-      sourceId,
-      ref: 'page.md',
-      title: 'Finance handbook',
-      markdown: '- Channels: #finance-close',
-      updatedAt: 2,
+    // The page as an earlier sync left it.
+    await harness.run(async (ctx) => {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'page.md'))
+        .unique();
+      await ctx.db.patch(page!._id, {
+        title: 'Finance handbook',
+        markdown: '- Channels: #finance-close',
+        updatedAt: 2,
+      });
     });
     const surfaceId = await harness.run(
       async (ctx) =>
@@ -620,6 +627,7 @@ describe('documentation sources in real mode', (): void => {
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
+      syncRunId: runId,
       ref: 'page.md',
       title: 'Finance handbook',
       markdown: '- Channels: #ops-requests',
@@ -783,4 +791,35 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
   ).not.toHaveProperty('status');
   await harness.mutation(internal.docSources.finishSync, finish);
   expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(surface);
+});
+
+describe('the sync generation fence on pages (step 14)', (): void => {
+  it('refuses a page from a generation a newer sync superseded and writes the running one’s', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const stale = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const current = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = { sourceId, ref: 'late.md', title: 'Late', markdown: '# Late', updatedAt: 2 };
+
+    await expect(
+      harness.mutation(internal.docSources.upsertPage, { ...page, syncRunId: stale }),
+    ).rejects.toThrow('superseded by a newer one');
+    await expect(rowsForSource(harness, sourceId)).resolves.toMatchObject({ pages: 1 });
+
+    await harness.mutation(internal.docSources.upsertPage, { ...page, syncRunId: current });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId: current,
+      refs: ['page.md', 'late.md'],
+      credentialRefs: [],
+      pageCount: 2,
+      redactionCount: 0,
+    });
+    // Completed, the generation no longer writes either.
+    await expect(
+      harness.mutation(internal.docSources.upsertPage, { ...page, syncRunId: current }),
+    ).rejects.toThrow('superseded by a newer one');
+    await expect(rowsForSource(harness, sourceId)).resolves.toMatchObject({ pages: 2 });
+  });
 });

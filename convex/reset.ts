@@ -26,6 +26,7 @@ export const AGENT_KEYED_TABLES = [
   'skills',
   'permissionGrants',
   'events',
+  'ticketListings',
   'surfaces',
   'mockDocs',
   'mockSpreadsheets',

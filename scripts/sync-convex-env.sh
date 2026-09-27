@@ -57,10 +57,14 @@ NO_AUTH_JWKS=DEV_NO_AUTH_JWKS
 # container, where the loopback address Next uses means the container itself.
 # CONVEX_OPENAI_BASE_URL is that same endpoint as the backend must address it.
 # Unset, the local value is pushed unchanged, which is right for Convex cloud
-# and for any endpoint both sides can reach by the same name.
-declare -A ALIASED=(
-  [OPENAI_BASE_URL]=CONVEX_OPENAI_BASE_URL
-)
+# and for any endpoint both sides can reach by the same name. A function, not
+# an associative array, so the script runs under the bash 3.2 macOS ships.
+aliased_name() {
+  case "$1" in
+    OPENAI_BASE_URL) echo CONVEX_OPENAI_BASE_URL ;;
+    *) echo "" ;;
+  esac
+}
 
 # Keys whose absence is a setting rather than an omission, and so must be
 # removed from the deployment rather than left alone when .env.local has
@@ -164,6 +168,38 @@ clear_key() {
   fi
 }
 
+# The credential key sealed every credential the deployment stores, so while
+# it stores any, the key is never cleared or replaced here: either would leave
+# every stored credential unreadable. A restore adopts the deployment's key
+# into .env.local first (./setup.sh restore); a deliberate rotation is
+# scripts/rotate-credential-key.ts, which asks and sets the deployment itself.
+guard_credential_key() {
+  local wanted="$1" held output
+  held=$(grep -E "^DAY0_CREDENTIAL_KEY=" <<<"$deployment_env" | head -n1 | cut -d= -f2- || true)
+  if [ -z "$held" ] || [ "$held" = "$wanted" ]; then
+    return 0
+  fi
+  if ! output=$(npx convex data credentials --limit 1 --format jsonl 2>&1); then
+    echo "error: could not read whether this deployment stores credentials, so DAY0_CREDENTIAL_KEY" >&2
+    echo "       is left as it is there. Check the Convex values in $ENV_FILE, then re-run." >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+  if grep -q '^{' <<<"$output"; then
+    if [ -z "$wanted" ]; then
+      echo "error: $ENV_FILE has no DAY0_CREDENTIAL_KEY, and this deployment stores credentials" >&2
+      echo "       sealed under the key it holds. Clearing it would leave every one unreadable." >&2
+    else
+      echo "error: DAY0_CREDENTIAL_KEY in $ENV_FILE is not the key this deployment holds, and the" >&2
+      echo "       deployment stores credentials sealed under its own. Pushing yours would leave" >&2
+      echo "       every one unreadable." >&2
+    fi
+    echo "       Adopt the deployment's key: \`npx convex env get DAY0_CREDENTIAL_KEY\` into $ENV_FILE." >&2
+    echo "       To change it on purpose: pnpm exec tsx scripts/rotate-credential-key.ts" >&2
+    exit 1
+  fi
+}
+
 # A value the deployment already holds is not set again: `convex env set` is
 # one CLI call per key, and a resume after `stop` would otherwise pay for
 # every key to change nothing. The comparison is the whole `KEY=value` line
@@ -176,12 +212,17 @@ set_key() {
     return 0
   fi
   echo "set  ${key}${note:+ (${note})}"
-  if ! output=$(npx convex env set "$key" "$value" 2>&1); then
+  # `--` before the value: a base64url token can begin with `-`, which the CLI
+  # would otherwise read as an option.
+  if ! output=$(npx convex env set "$key" -- "$value" 2>&1); then
     echo "error: failed to set ${key} on the deployment." >&2
     printf '%s\n' "$output" >&2
     exit 1
   fi
 }
+
+# Before any change: a refusal here must leave the deployment exactly as it was.
+guard_credential_key "$(read_local DAY0_CREDENTIAL_KEY)"
 
 for key in "${RETIRED[@]}"; do
   clear_key "$key" "no longer read by the deployment"
@@ -215,7 +256,7 @@ else
 fi
 
 for key in "${KEYS[@]}"; do
-  override_var="${ALIASED[$key]:-}"
+  override_var=$(aliased_name "$key")
   override=""
   [ -n "$override_var" ] && override=$(read_local "$override_var")
   if [ -n "$override" ]; then

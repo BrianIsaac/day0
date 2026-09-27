@@ -657,3 +657,45 @@ describe('skills that target a surface', (): void => {
     );
   });
 });
+
+describe('moving the sandbox id off its old field by hand', (): void => {
+  it('moves one page at a time until the cursor says done, and a second pass moves nothing', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: OWNER.subject,
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index < 150; index += 1) {
+        await ctx.db.insert('skills', {
+          agentId,
+          name: `skill-${index}`,
+          description: 'A skill.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          createdAt: 1,
+          daytonaSandboxId: `sandbox-${index}`,
+        });
+      }
+    });
+
+    const first = await harness.mutation(internal.skills.migrateSandboxIdField, { cursor: null });
+    expect(first).toMatchObject({ read: 100, moved: 100, isDone: false });
+    const second = await harness.mutation(internal.skills.migrateSandboxIdField, {
+      cursor: first.cursor,
+    });
+    expect(second).toMatchObject({ read: 50, moved: 50, isDone: true });
+    const again = await harness.mutation(internal.skills.migrateSandboxIdField, { cursor: null });
+    expect(again).toMatchObject({ read: 100, moved: 0 });
+
+    const skills = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
+    expect(skills.every((skill) => skill.daytonaSandboxId === undefined)).toBe(true);
+    expect(skills.map((skill) => skill.sandboxId)).toEqual(
+      skills.map((skill) => `sandbox-${skill.name.slice('skill-'.length)}`),
+    );
+  });
+});

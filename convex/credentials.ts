@@ -13,6 +13,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
 import { credentialPageRef, credentialRefRange } from '../src/docs/redaction';
+import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -59,6 +60,23 @@ function credentialPlaintext(kind: CredentialKind, plaintext?: string): string {
   return plaintext;
 }
 
+/**
+ * Refuse a sync's write once its generation is superseded (step 14): a stale
+ * action must not revive a row the newer generation retired. A write that
+ * names no generation is not a sync's and is not fenced.
+ *
+ * @throws Error when the write names a generation that may no longer write.
+ */
+async function fenceSyncWrite(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'> | undefined,
+  syncRunId: Id<'docSyncRuns'> | undefined,
+): Promise<void> {
+  if (syncRunId === undefined) return;
+  if (sourceId === undefined) throw new Error('A sync writes only page-derived credentials.');
+  await assertCurrentGeneration(ctx, sourceId, syncRunId);
+}
+
 /** The reason a rotated row keeps a person's revoke, shown with the credential. */
 export const REVOKE_STANDS_REASON =
   'Revoked by a person. The page now holds a different value; it stays revoked until a person lands or approves one.';
@@ -83,9 +101,11 @@ export const persistEncrypted = internalMutation({
     source: credentialSource,
     appId: v.optional(v.string()),
     rotated: v.boolean(),
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const sourced = pageSource(args.source);
+    await fenceSyncWrite(ctx, sourced?.sourceId, args.syncRunId);
     if (sourced) {
       // Unlink can commit while the store action is encrypting the value.
       const source = await ctx.db.get(sourced.sourceId);
@@ -145,9 +165,12 @@ export const updateMetadata = internalMutation({
     label: v.string(),
     appId: v.optional(v.string()),
     explicitlyAssigned: v.optional(v.boolean()),
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<void> => {
     const row = await ctx.db.get(args.credentialId);
+    const source = row === null ? undefined : pageSource(row.source);
+    await fenceSyncWrite(ctx, source?.sourceId, args.syncRunId);
     await ctx.db.patch(args.credentialId, {
       kind: args.kind,
       label: args.label,
@@ -359,8 +382,10 @@ export const moveToRef = internalMutation({
     label: v.string(),
     appId: v.optional(v.string()),
     explicitlyAssigned: v.optional(v.boolean()),
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<boolean> => {
+    await fenceSyncWrite(ctx, args.source.sourceId, args.syncRunId);
     const row = await ctx.db.get(args.credentialId);
     if (
       !row ||
@@ -439,6 +464,8 @@ export const store = internalAction({
     explicitlyAssigned: v.optional(v.boolean()),
     source: credentialSource,
     appId: v.optional(v.string()),
+    /** The sync generation that found the value; every write it makes is fenced by it. */
+    syncRunId: v.optional(v.id('docSyncRuns')),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const plaintext = credentialPlaintext(args.kind, args.plaintext);
@@ -470,6 +497,7 @@ export const store = internalAction({
       await ctx.runMutation(internal.credentials.updateMetadata, {
         credentialId: existing._id,
         ...metadata,
+        syncRunId: args.syncRunId,
       });
       return existing._id;
     }
@@ -488,6 +516,7 @@ export const store = internalAction({
           fromRef: row.source.ref,
           source: sourced,
           ...metadata,
+          syncRunId: args.syncRunId,
         });
         if (moved) return row._id;
       }
@@ -499,6 +528,7 @@ export const store = internalAction({
       ...metadata,
       ...encrypted,
       rotated: existing !== null,
+      syncRunId: args.syncRunId,
     });
   },
 });

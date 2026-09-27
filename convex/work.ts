@@ -10,6 +10,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
@@ -349,30 +350,85 @@ async function rememberExternalAlias(
 }
 
 /** The ticket as a listing showed it, for the re-read before apply to compare with. */
-const trackerSnapshot = v.object({
-  assigned: v.boolean(),
-  assigneeId: v.optional(v.string()),
-  assigneeEmail: v.optional(v.string()),
-  state: v.optional(v.string()),
-  stateType: v.optional(v.string()),
-  doNotAutomate: v.boolean(),
-});
+const trackerSnapshot = ticketSnapshotValidator;
 
-/** The event that keeps each listing's snapshot of a ticket. */
+/** The event that keeps each listing's snapshot of a ticket in the live feed. */
 export const WORK_LISTED_EVENT = 'work.listed';
 
 /** A listing as it was kept: the ticket, and why intake refused it on that poll, if it did. */
 interface KeptListing {
   readonly tracker: TicketSnapshot;
   readonly refused?: string;
+  readonly listedAt: number;
+}
+
+/** A work item as the listing reads need it. */
+type ListedItem = Pick<Doc<'workItems'>, '_id' | 'agentId' | '_creationTime'>;
+
+/**
+ * How many of an agent's discoveries at or after an item's creation the
+ * first-listing read looks through. The discovery is written in the same
+ * transaction as the row, so it is among the first few.
+ */
+const DISCOVERY_SCAN = 16;
+
+/**
+ * Keep one listing of a ticket in `ticketListings`, unless the same moment
+ * is already kept for the item, so a copy made twice keeps one row.
+ *
+ * @returns Whether a row was written.
+ */
+export async function keepTicketListing(
+  ctx: MutationCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  listing: { tracker: TicketSnapshot; refused?: string; listedAt: number },
+): Promise<boolean> {
+  const kept = await ctx.db
+    .query('ticketListings')
+    .withIndex('by_work_item_listed_at', (q) =>
+      q.eq('workItemId', row._id).eq('listedAt', listing.listedAt),
+    )
+    .first();
+  if (kept !== null) return false;
+  await ctx.db.insert('ticketListings', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    tracker: listing.tracker,
+    listedAt: listing.listedAt,
+    ...(listing.refused !== undefined ? { refused: listing.refused } : {}),
+  });
+  return true;
+}
+
+/**
+ * The listing an item's discovery kept. Every ticket's first listing rides on
+ * its `work.discovered` event, which is written with the row, so it is read
+ * from the agent's discoveries at or after the row's creation.
+ */
+async function discoveryListing(ctx: QueryCtx, row: ListedItem): Promise<KeptListing | undefined> {
+  const discoveries = await ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (q) =>
+      q
+        .eq('agentId', row.agentId)
+        .eq('type', 'work.discovered')
+        .gte('_creationTime', row._creationTime),
+    )
+    .take(DISCOVERY_SCAN);
+  const discovery = discoveries.find(
+    (event) => (event.payload as { workItemId?: unknown } | undefined)?.workItemId === row._id,
+  );
+  const tracker = (discovery?.payload as { tracker?: TicketSnapshot } | undefined)?.tracker;
+  return discovery && tracker ? { tracker, listedAt: discovery.createdAt } : undefined;
 }
 
 /**
  * The latest listing kept for an item, at or before a time.
  *
- * The read is the agent's listing events, newest first, down to the item's;
- * an item's listings are kept only when its ticket changed, so they are few,
- * and none is lost behind other tickets' listings.
+ * A later listing is a `ticketListings` row, read by the item's own index;
+ * the first rides on the discovery, and a refused ticket is never discovered.
+ * A listing kept only as a `work.listed` event before the table existed is
+ * found once the `ticket-listings` migration has copied it.
  *
  * @param row - The item and its agent.
  * @param before - The latest listing time that counts.
@@ -381,34 +437,34 @@ interface KeptListing {
  */
 async function keptListingAt(
   ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  row: ListedItem,
   before: number,
   acceptedOnly: boolean,
 ): Promise<KeptListing | undefined> {
-  // A later listing is its own event; the first rides on the discovery, and
-  // a refused ticket is never discovered.
-  for (const type of [WORK_LISTED_EVENT, 'work.discovered']) {
-    const listing = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
-      .order('desc')
-      .filter((q) =>
-        q.and(
-          q.eq(q.field('payload.workItemId'), row._id),
-          q.lte(q.field('createdAt'), before),
-          acceptedOnly ? q.eq(q.field('payload.refused'), undefined) : true,
-        ),
-      )
-      .first();
-    const payload = listing?.payload as Partial<KeptListing> | undefined;
-    if (payload?.tracker !== undefined) {
-      return {
-        tracker: payload.tracker,
-        ...(payload.refused !== undefined ? { refused: payload.refused } : {}),
-      };
-    }
+  const later = acceptedOnly
+    ? await ctx.db
+        .query('ticketListings')
+        .withIndex('by_work_item_refused_listed_at', (q) =>
+          q.eq('workItemId', row._id).eq('refused', undefined).lte('listedAt', before),
+        )
+        .order('desc')
+        .first()
+    : await ctx.db
+        .query('ticketListings')
+        .withIndex('by_work_item_listed_at', (q) =>
+          q.eq('workItemId', row._id).lte('listedAt', before),
+        )
+        .order('desc')
+        .first();
+  if (later !== null) {
+    return {
+      tracker: later.tracker,
+      listedAt: later.listedAt,
+      ...(later.refused !== undefined ? { refused: later.refused } : {}),
+    };
   }
-  return undefined;
+  const first = await discoveryListing(ctx, row);
+  return first !== undefined && first.listedAt <= before ? first : undefined;
 }
 
 /**
@@ -423,7 +479,7 @@ async function keptListingAt(
  */
 async function listedSnapshotAt(
   ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  row: ListedItem,
   before: number,
 ): Promise<TicketSnapshot | undefined> {
   return (await keptListingAt(ctx, row, before, true))?.tracker;
@@ -447,15 +503,16 @@ function sameSnapshot(left: TicketSnapshot, right: TicketSnapshot): boolean {
 /**
  * Keep the ticket as this listing showed it, when it differs from the last
  * listing kept or intake's refusal of it changed, so the re-read before
- * apply can tell what changed since the plan was made. The first listing is
- * kept on the discovery event, so the live feed gains a row only when a
- * ticket changes.
+ * apply can tell what changed since the plan was made. The listing goes to
+ * `ticketListings` and, as before, to the live feed as `work.listed`. The
+ * first listing is kept on the discovery event, so the feed gains a row only
+ * when a ticket changes.
  *
  * @param refused - Why intake refused the ticket on this poll, when it did.
  */
 async function recordListing(
   ctx: MutationCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  row: ListedItem,
   tracker: TicketSnapshot | undefined,
   refused?: string,
 ): Promise<void> {
@@ -469,6 +526,11 @@ async function recordListing(
   ) {
     return;
   }
+  await keepTicketListing(ctx, row, {
+    tracker,
+    listedAt: now,
+    ...(refused !== undefined ? { refused } : {}),
+  });
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: WORK_LISTED_EVENT,
@@ -476,6 +538,17 @@ async function recordListing(
     createdAt: now,
   });
 }
+
+/**
+ * How many of an agent's Retries since a plan the acknowledged-listing read
+ * looks through. A Retry of this item further back than that reads as no
+ * Retry, so the re-read compares with the planned listing alone, the stricter
+ * of the two.
+ */
+const RETRY_SCAN = 200;
+
+/** How far `_creationTime` may sit before an event's own `createdAt` stamp. */
+const CREATION_TIME_SLACK_MS = 1_000;
 
 /**
  * The ticket as the listing a plan was made under showed it (the latest
@@ -492,17 +565,25 @@ export const listedSnapshot = internalQuery({
   ): Promise<{ planned: TicketSnapshot | null; acknowledged: TicketSnapshot | null }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return { planned: null, acknowledged: null };
-    const retry = await ctx.db
+    const retries = await ctx.db
       .query('events')
-      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', 'work.retry'))
+      .withIndex('by_agent_type', (q) =>
+        q
+          .eq('agentId', row.agentId)
+          .eq('type', 'work.retry')
+          .gt('_creationTime', args.before - CREATION_TIME_SLACK_MS),
+      )
       .order('desc')
-      .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
-      .first();
-    const retriedAt = retry && retry.createdAt > args.before ? retry.createdAt : undefined;
+      .take(RETRY_SCAN);
+    const retry = retries.find(
+      (event) =>
+        (event.payload as { workItemId?: unknown } | undefined)?.workItemId === args.workItemId &&
+        event.createdAt > args.before,
+    );
     return {
       planned: (await listedSnapshotAt(ctx, row, args.before)) ?? null,
       acknowledged:
-        retriedAt === undefined ? null : ((await listedSnapshotAt(ctx, row, retriedAt)) ?? null),
+        retry === undefined ? null : ((await listedSnapshotAt(ctx, row, retry.createdAt)) ?? null),
     };
   },
 });

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MOCK_FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../../src/setup/quickstart';
+import { CHANGELOG, MIGRATIONS_DONE } from './setup-harness';
 import {
   attachmentDecision,
   backendIdentityRefusal,
@@ -62,7 +63,8 @@ function checkout(envLocal?: string, name?: string): string {
   const directory = name === undefined ? root : join(root, name);
   if (name !== undefined) mkdirSync(directory);
   mkdirSync(join(directory, 'scripts'));
-  writeFileSync(join(directory, 'package.json'), '{"name":"day0"}\n', 'utf8');
+  writeFileSync(join(directory, 'package.json'), '{"name":"day0","version":"0.3.0"}\n', 'utf8');
+  writeFileSync(join(directory, 'CHANGELOG.md'), CHANGELOG, 'utf8');
   writeFileSync(join(directory, 'docker-compose.yml'), 'services:\n', 'utf8');
   writeFileSync(
     join(directory, '.env.example'),
@@ -211,6 +213,9 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     if (joined.includes('check:setup')) {
       return { status: 0, stdout: 'ok   backend\nNothing here is half-done.\n', stderr: '' };
+    }
+    if (joined.includes('migrations:runPending')) {
+      return { status: 0, stdout: MIGRATIONS_DONE, stderr: '' };
     }
     return { status: 0, stdout: '', stderr: '' };
   };
@@ -985,6 +990,8 @@ describe('the order the helpers run in', (): void => {
       'admin-key',
       'sync:env',
       'convex dev --once',
+      'migrations',
+      'release:stamp',
       'convex:restart',
       'check:setup',
     ]);
@@ -997,6 +1004,24 @@ describe('the order the helpers run in', (): void => {
       'admin-key',
       'sync:env',
       'convex dev --once',
+      'migrations',
+      'release:stamp',
+      'convex:restart',
+      'check:setup',
+    ]);
+  });
+
+  it('checks the release and pushes the functions before the env on a volume that already holds a deployment (step 14)', (): void => {
+    expect(sequenceSteps('key', { existing: true })).toEqual([
+      'dev:no-auth-key',
+      'convex:up',
+      'sandbox:up',
+      'admin-key',
+      'release:check',
+      'convex dev --once',
+      'migrations',
+      'release:stamp',
+      'sync:env',
       'convex:restart',
       'check:setup',
     ]);
@@ -1080,7 +1105,11 @@ describe('a whole run on the key route', (): void => {
 
     const ran = commands.map((entry) => [entry.command, ...entry.args].join(' ')).join('\n');
     const order = sequenceSteps('key').map((step) =>
-      step === 'admin-key' ? 'generate_admin_key.sh' : step,
+      step === 'admin-key'
+        ? 'generate_admin_key.sh'
+        : step === 'release:stamp'
+          ? 'migrations:recordRelease'
+          : step,
     );
     let cursor = -1;
     for (const step of order) {

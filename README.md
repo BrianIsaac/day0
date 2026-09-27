@@ -47,7 +47,7 @@ The container images for the backend, the model service, the sandbox, the redact
 
 **Start here** · [Live demo](#live-demo) · [Disclosures](#disclosures) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
 
-**Run it** · [Hosted demo](#hosted-demo) · [Local, cloud model](#local-cloud-model) · [Local, local model](#local-local-model) · [Real mode, what both local ways are](#real-mode) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
+**Run it** · [Hosted demo](#hosted-demo) · [Local, cloud model](#local-cloud-model) · [Local, local model](#local-local-model) · [Real mode, what both local ways are](#real-mode) · [Backup, restore and upgrade](#backup-restore-and-upgrade) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
 **Configure it** · [Environment](#environment) · [Ports](#ports-host-side-and-container-side) · [Phones and tunnels](#testing-from-a-phone-and-tunnels) · [ElevenLabs voice](#elevenlabs-agent-setup) · [The local skill sandbox](#the-local-skill-sandbox) · [The GPU](#the-gpu-is-opt-out-not-opt-in)
 
@@ -288,7 +288,7 @@ Stop, resume, clear - each reads the project from `.env.local` and refuses the p
 ./setup.sh clear     # containers, volumes and network removed; .env.local kept unless --purge-env; asks first unless --yes
 ```
 
-Running the setup again is the same as `resume`, and `--reset` is `clear` followed by the setup.
+Running the setup again is the same as `resume`, and `--reset` is `clear` followed by the setup; it asks first unless `--yes`. A backup, a restore and the upgrade after a `git pull` are [their own verbs](#backup-restore-and-upgrade).
 
 ### What the setup does
 
@@ -301,9 +301,9 @@ Running the setup again is the same as `resume`, and `--reset` is `clear` follow
 5. **`pnpm sandbox:up`**, skipped with `--sandbox daytona`. The default writes `DAYTONA_API_KEY` empty and says so, because Daytona wins whenever its key is present.
 6. **`pnpm redactor:up`, on the device the venv was built for.** `redactor/start.sh` keys its virtual environment on the requirements file its device selects, and a bare `pnpm redactor:up` reserves the GPU wherever an NVIDIA driver answers, so a venv warmed on the CPU (`--warm-from` copies exactly that) would be emptied and rebuilt from CUDA wheels: minutes of download where ten seconds were expected. The setup reads the venv's stamp first; `--gpu auto` follows it, `--gpu on` rebuilds for the GPU and names the wipe before it starts, `--gpu off` never asks. By hand, `MODEL_GPU=off pnpm redactor:up` is the same thing.
 7. **The admin key**, generated inside the backend container and kept only while this volume accepts it. The key belongs to the volume, not to the project: coming to real mode from an earlier stack, the key already in `.env.local` is the *old* backend's, and `pnpm sync:env` then fails to authenticate against the new one. The setup regenerates it whenever the volume is new.
-8. **`pnpm sync:env`** pushes the no-auth JWKS, the key and every `DAY0_*` value before the functions, because `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key. A value the deployment already holds is kept rather than set again.
-9. **`npx convex dev --once`** pushes the functions once; nothing needs pushing twice. The setup puts back the two public URLs the CLI rewrites to container ports.
-10. **`pnpm convex:restart`**, because a module keeps whatever env it was first evaluated with and the backend has been up since step 3. The setup then waits for the redactor to report healthy - the model loaded and verified against `redactor/models.sha256` - and carries on with a note if it has not.
+8. **`pnpm sync:env`** pushes the no-auth JWKS, the key and every `DAY0_*` value before the functions on a new volume, because `convex/auth.config.ts` is evaluated against the deployment's env at the first push and refuses a no-auth push with no key. A value the deployment already holds is kept rather than set again. On a volume that already holds a deployment the order is the upgrade's instead, [below](#backup-restore-and-upgrade): the release check, the functions and the migrations, then the env.
+9. **`npx convex dev --once`** pushes the functions once, `npx convex run migrations:runPending` runs every migration the release ships until none is pending, and `migrations:recordRelease` then stamps the release the rows are at; nothing needs pushing twice. The setup puts back the two public URLs the CLI rewrites to container ports.
+10. **`pnpm convex:restart`**, only once every step before it has succeeded, because a module keeps whatever env it was first evaluated with and the backend has been up since step 3. The setup then waits for the redactor to report healthy - the model loaded and verified against `redactor/models.sha256` - and carries on with a note if it has not.
 11. **`pnpm check:setup`** reads the same `.env.local` and reports every component and every setup, with the mode and the route on one line. It looks for the Compose project `COMPOSE_PROJECT_NAME` names, which the setup writes; a hand-made file without it, in a clone called anything but `day0`, is a checker that reports every component as absent while `docker ps` shows them running. Read the whole output rather than the summary lines - the component notes underneath them are where the real gaps are.
 
 On top of the generated values, the setup writes `COMPOSE_PROJECT_NAME`, the ports, `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NEXT_PUBLIC_CONVEX_URL` and `CONVEX_SELF_HOSTED_URL`, `DAY0_SURFACE_MODE=real`, `DAY0_DOCS_HOST_DIR` (default `./docs-local`), `DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`, `DAY0_REDACTOR_URL=http://redactor:8000`, `NEXT_PUBLIC_DEMO_BOSS_EMAIL` (your Slack address, asked for when the file has none because the DM is resolved from it at deploy and cannot be corrected on a live agent; `--boss-email` gives it), `DAY0_SETUP_ROOT`, and the model settings of the route: on the Featherless route `OPENAI_BASE_URL=https://api.featherless.ai/v1`, `OPENAI_MODEL=zai-org/GLM-5.3-Flash`, `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low`, written every time, with the key stored as `OPENAI_API_KEY`; on the local route the two paired model addresses, `MODEL_PORT` and `OPENAI_MODEL`.
@@ -549,6 +549,34 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 
 `pnpm convex:down` removes the network on its way out and cannot while a container is still attached to it, so the sandbox and the redactor go first, and the profiles named are the ones that were brought up. The data volume survives all three, which is what lets you stop for the day and come back to the same agent with `./setup.sh resume`; `pnpm convex:down -- -v` is the one that throws it away, and `./setup.sh --route <r> --reset` does that and sets up again.
 
+### Backup, restore and upgrade
+
+A real-mode installation is durable: the data volume holds the credentials, the charters, the skills, the corrections, the claims and the ledger, and none of it is in the clone. Your documentation folder is a bind mount outside the volume, so it is yours to keep and is not in a backup.
+
+```bash
+./setup.sh backup                  # the data volume to ~/day0-backups/<project>/, with a checksum and a manifest
+./setup.sh restore <file>          # that backup back into this project, then resume; asks first unless --yes
+./setup.sh upgrade                 # after git pull: a backup, pnpm install --frozen-lockfile, then resume
+```
+
+**`backup`** stops the backend for the copy, because a tar of a live database is not a backup, and starts it again after. It writes `<project>-<time>.tar.gz` beside a `.sha256` and a `.json` naming the release, the commit and the time, under `~/day0-backups/<project>/` or wherever `--to <dir>` says, and refuses a directory inside the checkout, which a `git clean` or a deleted clone would take with it. The tar holds the deployment's env as well as its rows, `DAY0_CREDENTIAL_KEY` among it: it is written readable only by you, and it belongs where you keep secrets.
+
+**`restore`** checks the file against its checksum, asks, backs up the data volume it is about to replace (under a name of its own, beside the others), takes the project down, replaces the volume and resumes on it. Before the env sync it adopts the restored deployment's credential key into `.env.local`, so the credentials the backup holds stay readable. It refuses while `.env.local` points Slack at the test double (`DAY0_TEST_SLACK_API_URL`): that is the demo bed's own restore, `pnpm demo:bed restore`, which stays demo-only. A restore rewinds everything to the moment of the backup, the intake checkpoints included, so work that landed on your systems after it is unknown to the restored rows and can be picked up again; read the queue before you approve anything.
+
+**`upgrade`** is what to run after a `git pull`. It takes a backup first, installs the dependencies the new lockfile names, and resumes, and the resume on a volume that already holds a deployment does the upgrade in this order:
+
+1. **The release check.** The release the rows are at is a row on the deployment (`deploymentVersions`), read before anything is pushed. The releases are the `## vX.Y.Z` headings of `CHANGELOG.md` and this checkout's is `package.json`'s version. The same release again or the next one goes ahead; a jump of more than one release is refused and names the release to go through first, and older functions over rows a newer release migrated are refused, because each release's migrations run once, in order. Rows from before the stamp existed count as 0.3.0.
+2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
+3. **The env, then the restart.** `pnpm sync:env`, then `pnpm convex:restart` once everything before it succeeded.
+
+A schema change existing rows do not fit ships as two releases: the first declares both shapes and migrates, the second removes the old declaration. The migrations in `convex/migrations.ts` say what the release after theirs may remove: `agents.posture`, `agents.docSourceIds` and its read, `skills.daytonaSandboxId`, `skills.supervisedRunsCompleted` and `surfaces.credentialRef`. `npx convex run skills:requeueStranded` is an earlier one-off that no migration runs; the sandbox-id move it sat beside is now the `skills-sandbox-id` migration.
+
+The demo bed and the hosted deployment take the same upgrade. `pnpm demo:bed up` checks the release of the restored snapshot before it changes anything, then pushes the functions, runs the migrations and stamps the release before it pushes the env, and a snapshot records the commit, the release and the backend image beside its checksum. On Convex cloud: read the stamp (`npx convex data deploymentVersions --prod --limit 1`), `npx convex deploy`, `npx convex run migrations:runPending --prod` until nothing is pending, `npx convex run migrations:recordRelease --prod '{"release":"<version>"}'`, then deploy the app.
+
+**The credential key.** `pnpm dev:no-auth-key --force` regenerates the three no-auth values and never the credential key, and `pnpm sync:env` refuses to clear or replace `DAY0_CREDENTIAL_KEY` while the deployment stores credentials sealed under the key it holds. Rotating it on purpose is `pnpm exec tsx scripts/rotate-credential-key.ts`: it counts what the deployment stores, asks you to type `rotate`, and sets the new key in `.env.local` and on the deployment; every stored credential then has to be landed again.
+
+**Pushing backend changes while developing.** With the stack up, `npx convex dev` watches `convex/` and pushes on every save to the backend `.env.local` names. It rewrites `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CONVEX_SITE_URL` to the backend's container ports; put the host addresses back, or run the setup again, which does. After changing a deployment value, `pnpm sync:env && pnpm convex:restart`. A schema change against a volume with rows follows the two-release rule above; a push the schema refuses changes nothing.
+
 ## Convex cloud + Clerk
 
 ```bash
@@ -737,7 +765,7 @@ It resolves values the way the running app does, which matters more than it soun
 4. **Approval** — the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (real mode declares the named systems and runs orientation, mock mode seeds the generated work items; no web-research call and no search key). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
 5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Real mode](#real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
 6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** one distinct stdout line per representative input set (two), whichever ran. In real mode the author writes only `run()` and `CASES`, its two input sets, and the sandbox runs a harness around them (`src/work/smoke-harness.ts`) that calls `run()` once per case and prints the lines itself. It holds what `run()` returned against the skill it stands for: every action is `mcp.call` or `http.request` on a surface the author was shown as connected, with a tool that surface allows and `SKILL.md` names; at least two cases emit actions and one acts on the skill's target surface; each case's action arguments carry a value that case supplied, including the record and the reply target when the case gives them; and the action arguments, not only the outputs, differ between cases. It is still a check of the author's mimic and not of a provider's answer; the author's `assert` statements are never compiled, so no assertion it writes about its own output can fail the check. Before any sandbox runs, a static gate refuses a body or smoke test that repeats the identifiers, figures or quoted phrases of the work item that proposed the skill; the reason lands on the row for the retry. An input the body uses without declaring it is refused as well in mock mode; real mode declares it for the author, as read from the candidate or its runbook, and the verification log says so. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not registered · not callable" with a retry.
-7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 22 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
+7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 23 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
 
 ## Stack
 
@@ -818,12 +846,12 @@ It resolves values the way the running app does, which matters more than it soun
 | `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger, per employee (`forAgent`) and for the owner's company (`forOwner`) |
 | `ownership.ts` | Shared caller and per-agent ownership guards for queries, mutations and actions |
 | `crons.ts` | Recovery, documentation sync, surface re-probe, work intake and stalled work-step recovery, manager-decision and hourly manager-digest schedules |
-| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 22 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
+| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 23 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
 | `auth.config.ts` | Chooses the Clerk JWT bridge or the guarded local no-auth JWT provider from deployment env |
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 29 tables: 23 carry per-agent or agent-owned runtime state, five hold owner-level documentation and credential state, and one is the transient lease on the verification sandbox.
+The schema contains 32 tables: 24 carry per-agent or agent-owned runtime state, five hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
 | Table | Purpose |
 |---|---|
@@ -848,6 +876,9 @@ The schema contains 29 tables: 23 carry per-agent or agent-owned runtime state, 
 | `permissionGrants` | Scoped capability grants (revocable) |
 | `sandboxLeases` | The one lease on the verification sandbox: which authoring run may call it now, so employees authoring at once wait visibly instead of timing out on each other |
 | `events` | Event ticker |
+| `ticketListings` | Each intake listing that changed a ticket, by work item, which the re-read before apply compares with |
+| `migrations` | How far each upgrade migration has got, and when it finished |
+| `deploymentVersions` | The release the deployment's rows are at, one row per completed upgrade; the upgrade refuses to skip a release |
 | `mockDocs`, `mockSpreadsheets`, `mockSpreadsheetRows`, `mockSlackChannels`, `mockSlackMessages`, `mockTweets`, `mockTweetReplies`, `mockTickets` | Per-agent mock work environment |
 
 ## Domain logic (`src/`)
@@ -1012,8 +1043,8 @@ The harness wants exactly this stack: a self-hosted backend in mock mode, the lo
 4. **`pnpm sandbox:up`** starts the sandbox that verifies authored skills. It needs nothing from you and touches nothing else: the two meet over a socket on a shared volume the backend mounts whether or not the sandbox is running, so a sandbox started later needs no restart and no setting, and `pnpm check:setup` says which of the two states you are in.
 5. **The admin key** is generated inside the backend container (`pnpm convex:admin-key` by hand) and written to `CONVEX_SELF_HOSTED_ADMIN_KEY`. The key belongs to the volume, not to the project, and every key a backend has ever minted for a volume goes on working, so the setup keeps the one already in the file when this backend accepts it and mints a new one only when the file has none or this volume refuses it.
 6. **`pnpm sync:env`** pushes the values to the deployment, the JWKS before the flag that requires it: `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key. It pushes the two model addresses as a pair, and this is the one that costs an afternoon: the Day-1 chat streams from Next on this machine and reaches the model on loopback, while the charter is synthesised by a Convex Node action inside the backend container, where `127.0.0.1` is the container itself. So `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` is what Next dials and `CONVEX_OPENAI_BASE_URL=http://model:11434/v1` is what the backend dials; the sync pushes the second as the deployment's `OPENAI_BASE_URL` and warns if it was left pointing at loopback. The symptom of getting it wrong is a 1:1 that works perfectly and a charter that never arrives.
-7. **`npx convex dev --once`** pushes the functions. The CLI rewrites `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CONVEX_SITE_URL` to the backend's own container ports as it goes; the setup puts the host addresses back and says that it did.
-8. **`pnpm convex:restart`**, because a module keeps whatever env it was first evaluated with and the backend has been up since step 2.
+7. **`npx convex dev --once`** pushes the functions, `npx convex run migrations:runPending` runs the release's migrations, and the release is stamped. The CLI rewrites `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CONVEX_SITE_URL` to the backend's own container ports as it goes; the setup puts the host addresses back and says that it did. On a volume that already holds a deployment, steps 6 and 7 swap and the release is checked first, as in [the upgrade](#backup-restore-and-upgrade).
+8. **`pnpm convex:restart`**, once everything before it has succeeded, because a module keeps whatever env it was first evaluated with and the backend has been up since step 2.
 9. **`pnpm check:setup`** reads `.env.local` and reports the backend, auth, model, sandbox and voice separately, failing only on what is broken rather than merely incomplete.
 
 Then `pnpm dev` prints an unlock URL. It carries the secret once; after that it lives in an httpOnly cookie. Open `http://localhost:3000` directly and every route answers 403 - that is the boundary working, not a fault.
@@ -1093,7 +1124,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **从这里开始** · [在线演示](#在线演示) · [披露](#披露) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
 
-**运行** · [托管演示](#托管演示) · [本地运行，云端模型](#本地运行云端模型) · [本地运行，本地模型](#本地运行本地模型) · [真实模式：两种本地方式的共同基础](#真实模式) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
+**运行** · [托管演示](#托管演示) · [本地运行，云端模型](#本地运行云端模型) · [本地运行，本地模型](#本地运行本地模型) · [真实模式：两种本地方式的共同基础](#真实模式) · [备份、恢复与升级](#备份恢复与升级) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
 **配置** · [环境变量](#environment) · [端口](#ports-host-side-and-container-side) · [手机与隧道](#testing-from-a-phone-and-tunnels) · [ElevenLabs 语音](#elevenlabs-agent-setup) · [本地技能沙箱](#本地技能沙箱) · [GPU](#gpu-默认启用而非默认停用)
 
@@ -1313,7 +1344,7 @@ key 路线上两个模型地址归并为同一个默认值。变量留空表示 
 ./setup.sh clear     # 删除容器、卷和网络；保留 .env.local，除非加 --purge-env；除非加 --yes，否则先询问
 ```
 
-再次运行 setup 与 `resume` 相同；`--reset` 等于先 `clear` 再 setup。
+再次运行 setup 与 `resume` 相同；`--reset` 等于先 `clear` 再 setup，除非加 `--yes`，否则先询问。备份、恢复以及 `git pull` 之后的升级见[对应命令](#备份恢复与升级)。
 
 #### 安装过程做了什么
 
@@ -1326,9 +1357,9 @@ key 路线上两个模型地址归并为同一个默认值。变量留空表示 
 5. **`pnpm sandbox:up`**，加 `--sandbox daytona` 时跳过。默认会把 `DAYTONA_API_KEY` 写为空并说明，因为只要 Daytona 的 key 存在它就优先。
 6. **`pnpm redactor:up`，按 venv 构建时的设备启动。** `redactor/start.sh` 以其设备所选的 requirements 文件为虚拟环境的键，而直接执行 `pnpm redactor:up` 只要 NVIDIA 驱动有应答就会预留 GPU，因此在 CPU 上预热的 venv（`--warm-from` 复制的正是它）会被清空并用 CUDA wheel 重建：本该十秒完成的事变成几分钟的下载。setup 会先读取 venv 的 stamp：`--gpu auto` 沿用它，`--gpu on` 为 GPU 重建并在开始前说明会清空，`--gpu off` 从不请求 GPU。手动执行时 `MODEL_GPU=off pnpm redactor:up` 效果相同。
 7. **admin key**，在 backend 容器内生成，只在该卷接受它时保留。key 属于数据卷而不属于 project：从旧的 stack 切换到真实模式时，`.env.local` 中保存的是旧 backend 的 key，`pnpm sync:env` 会认证失败。只要数据卷是新的，setup 就重新生成。
-8. **`pnpm sync:env`** 在推送 functions 之前推送无认证 JWKS、key 和每个 `DAY0_*` 值，因为 `convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。deployment 中已经相同的值会被保留而不是重新设置。
-9. **`npx convex dev --once`** 推送 functions，一次即可，不需要重复 push。setup 会把 CLI 改写成容器端口的两个公开 URL 写回。
-10. **`pnpm convex:restart`**：module 会保留首次求值时的 env，而 backend 从第 3 步起就一直在运行。随后 setup 等待 redactor 报告健康（模型已加载并按 `redactor/models.sha256` 校验），未就绪时留下说明并继续。
+8. **`pnpm sync:env`** 在新数据卷上先于 functions 推送无认证 JWKS、key 和每个 `DAY0_*` 值，因为 `convex/auth.config.ts` 在第一次 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。deployment 中已经相同的值会被保留而不是重新设置。已有 deployment 的数据卷则按[升级](#备份恢复与升级)的顺序进行：先检查版本，再推送 functions 并运行迁移，最后推送 env。
+9. **`npx convex dev --once`** 推送 functions，一次即可；随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，直到没有待运行的迁移，再由 `migrations:recordRelease` 记录数据所处的版本。setup 会把 CLI 改写成容器端口的两个公开 URL 写回。
+10. **`pnpm convex:restart`**：只在此前每一步都成功后执行，因为 module 会保留首次求值时的 env，而 backend 从第 3 步起就一直在运行。随后 setup 等待 redactor 报告健康（模型已加载并按 `redactor/models.sha256` 校验），未就绪时留下说明并继续。
 11. **`pnpm check:setup`** 读取同一个 `.env.local`，报告每个组件和每项配置，并用一行给出模式和路线。它按 `COMPOSE_PROJECT_NAME` 查找 Compose project，setup 会写入该值；目录名不是 `day0` 又没有这一行的手写文件，症状是 `docker ps` 显示组件全部运行，而 check:setup 报告组件全部缺失。另外要读完整输出，而不只是摘要行：真正的缺口写在摘要行下方的组件说明里。
 
 除生成的值外，setup 还会写入 `COMPOSE_PROJECT_NAME`、各端口、`NEXT_PUBLIC_DEV_NO_AUTH=true`、`NEXT_PUBLIC_CONVEX_URL` 和 `CONVEX_SELF_HOSTED_URL`、`DAY0_SURFACE_MODE=real`、`DAY0_DOCS_HOST_DIR`（默认 `./docs-local`）、`DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`、`DAY0_REDACTOR_URL=http://redactor:8000`、`NEXT_PUBLIC_DEMO_BOSS_EMAIL`（你的 Slack 地址；文件中没有时会询问，因为 Slack DM 在部署时据此解析，且无法在已运行的 Agent 上更正；`--boss-email` 可直接给出）、`DAY0_SETUP_ROOT`，以及所选路线的模型设置：Featherless 路线上每次都写入 `OPENAI_BASE_URL=https://api.featherless.ai/v1`、`OPENAI_MODEL=zai-org/GLM-5.3-Flash`、`OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`，key 存为 `OPENAI_API_KEY`；本地路线上写入成对的两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL`。
@@ -1546,6 +1577,34 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 
 `pnpm convex:down` 退出时会删除 compose network，仍有容器连接时无法完成，因此先停掉沙箱和 redactor，再写上启动时使用的相同 profile。数据卷在这三条命令后仍然保留，因此可以随时停止，并用 `./setup.sh resume` 回到同一个 Agent；`pnpm convex:down -- -v` 才会删除数据卷，而 `./setup.sh --route <r> --reset` 会删除数据卷并重新完成安装。
 
+#### 备份、恢复与升级
+
+真实模式的安装是持久的：数据卷保存凭据、章程、技能、纠正、认领和账本，这些都不在克隆的代码里。你的文档文件夹是数据卷之外的 bind mount，由你自己保管，不在备份中。
+
+```bash
+./setup.sh backup                  # 把数据卷备份到 ~/day0-backups/<project>/，附带校验和与清单
+./setup.sh restore <file>          # 把该备份恢复到本项目，然后 resume；除非加 --yes，否则先询问
+./setup.sh upgrade                 # git pull 之后：先备份，再 pnpm install --frozen-lockfile，然后 resume
+```
+
+**`backup`** 在复制期间停止 backend（运行中的数据库打出的 tar 不算备份），完成后再启动。它在 `~/day0-backups/<project>/`（或 `--to <dir>` 指定的目录）写出 `<project>-<时间>.tar.gz`，旁边是 `.sha256` 和记录版本、commit 与时间的 `.json`；它拒绝写入 checkout 内部的目录，因为 `git clean` 或删除克隆会把它一起带走。tar 里既有数据，也有 deployment 的 env，其中包括 `DAY0_CREDENTIAL_KEY`：文件只对你可读，应放在保管密钥的地方。
+
+**`restore`** 先按校验和检查文件，然后询问，先备份即将被替换的数据卷（使用独立的文件名，与其他备份放在一起），再停下项目、替换数据卷并在其上 resume。在同步 env 之前，它会把恢复出的 deployment 的凭据密钥写入 `.env.local`，使备份中的凭据仍可读取。若 `.env.local` 把 Slack 指向测试替身（`DAY0_TEST_SLACK_API_URL`），它会拒绝：那是演示环境自己的恢复 `pnpm demo:bed restore`，仍只用于演示。恢复会把一切回退到备份时刻，包括 intake 的检查点，因此备份之后已在你的系统上落地的工作不为恢复出的数据所知，可能被再次领取；批准任何操作前请先查看队列。
+
+**`upgrade`** 用于 `git pull` 之后。它先备份，再安装新 lockfile 指定的依赖，然后 resume；在已有 deployment 的数据卷上，resume 按以下顺序升级：
+
+1. **版本检查。** 数据所处的版本是 deployment 上的一行（`deploymentVersions`），在推送任何内容之前读取。版本列表取自 `CHANGELOG.md` 的 `## vX.Y.Z` 标题，本 checkout 的版本取自 `package.json`。同一版本或下一版本可以继续；跨越多个版本会被拒绝，并指出应先经过哪个版本；把旧 functions 推到已被新版本迁移过的数据上也会被拒绝，因为每个版本的迁移只按顺序运行一次。版本记录出现之前的数据视为 0.3.0。
+2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
+3. **env，然后重启。** `pnpm sync:env`，此前各步都成功后 `pnpm convex:restart`。
+
+现有数据不符合的 schema 变更分两个版本发布：第一个同时声明新旧两种结构并迁移，第二个删除旧声明。`convex/migrations.ts` 中的迁移注明了下一版本可以删除的内容：`agents.posture`、`agents.docSourceIds` 及其读取、`skills.daytonaSandboxId`、`skills.supervisedRunsCompleted` 和 `surfaces.credentialRef`。`npx convex run skills:requeueStranded` 是更早的一次性命令，不由任何迁移运行；与它并列的 sandbox id 迁移现在是 `skills-sandbox-id` 迁移。
+
+演示环境和托管 deployment 走同样的升级。`pnpm demo:bed up` 在改动任何内容之前检查恢复出的快照的版本，然后推送 functions、运行迁移并记录版本，最后才推送 env；快照在校验和旁边记录 commit、版本和 backend 镜像。在 Convex cloud 上：读取版本（`npx convex data deploymentVersions --prod --limit 1`），`npx convex deploy`，反复运行 `npx convex run migrations:runPending --prod` 直到没有待运行的迁移，`npx convex run migrations:recordRelease --prod '{"release":"<version>"}'`，然后部署应用。
+
+**凭据密钥。** `pnpm dev:no-auth-key --force` 只重新生成三个无认证值，从不重新生成凭据密钥；只要 deployment 保存着用其现有密钥加密的凭据，`pnpm sync:env` 就拒绝清除或替换 `DAY0_CREDENTIAL_KEY`。有意轮换请运行 `pnpm exec tsx scripts/rotate-credential-key.ts`：它统计 deployment 保存的内容，要求你输入 `rotate`，然后在 `.env.local` 和 deployment 上设置新密钥；此后每个已存凭据都需要重新提供。
+
+**开发时推送后端改动。** stack 运行时，`npx convex dev` 监视 `convex/`，每次保存都推送到 `.env.local` 指定的 backend。它会把 `NEXT_PUBLIC_CONVEX_URL` 和 `NEXT_PUBLIC_CONVEX_SITE_URL` 改写成 backend 的容器端口；请把宿主机地址改回，或重新运行 setup（它会改回）。修改 deployment 的值之后运行 `pnpm sync:env && pnpm convex:restart`。对已有数据的数据卷做 schema 变更时遵循上面的两版本规则；被 schema 拒绝的 push 不会改变任何东西。
+
 ### 接口与 API 文档
 
 第三方会调用、复用或扩展的契约记录在 [`docs/running/interfaces.md`](docs/running/interfaces.md)，每一项都注明定义它的文件：
@@ -1667,8 +1726,8 @@ harness 需要的正是这套 stack：处于 mock 模式的自托管 backend、�
 4. **`pnpm sandbox:up`** 启动验证自写技能的沙箱。它不需要任何配置，也不影响其他组件：两者通过共享 volume 上的 socket 通信，backend 容器无论沙箱是否运行都挂载该 volume，因此之后启动的沙箱不需要重启也不需要设置；`pnpm check:setup` 会说明当前处于哪种状态。
 5. **admin key** 在 backend 容器内生成（手动执行时为 `pnpm convex:admin-key`），写入 `CONVEX_SELF_HOSTED_ADMIN_KEY`。key 属于数据卷而不属于 project，且 backend 为某个卷签发过的每个 key 都持续有效，因此 setup 在当前 backend 接受文件中已有 key 时保留它，只在文件没有 key 或该卷拒绝时才生成新的。
 6. **`pnpm sync:env`** 把各值推送到 deployment，JWKS 先于依赖它的开关：`convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。它成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但章程始终不出现。
-7. **`npx convex dev --once`** 推送 functions。CLI 在此过程中会把 `NEXT_PUBLIC_CONVEX_URL` 和 `NEXT_PUBLIC_CONVEX_SITE_URL` 改写成 backend 自己的容器端口；setup 会把宿主机地址写回并说明。
-8. **`pnpm convex:restart`**：module 会保留首次求值时的 env，而 backend 从第 2 步起就一直在运行。
+7. **`npx convex dev --once`** 推送 functions，随后 `npx convex run migrations:runPending` 运行本版本的迁移并记录版本。CLI 在此过程中会把 `NEXT_PUBLIC_CONVEX_URL` 和 `NEXT_PUBLIC_CONVEX_SITE_URL` 改写成 backend 自己的容器端口；setup 会把宿主机地址写回并说明。已有 deployment 的数据卷上，第 6、7 步对调，并先检查版本，与[升级](#备份恢复与升级)相同。
+8. **`pnpm convex:restart`**：在此前各步都成功后执行，因为 module 会保留首次求值时的 env，而 backend 从第 2 步起就一直在运行。
 9. **`pnpm check:setup`** 读取 `.env.local`，分别报告 backend、auth、model、sandbox 和 voice，只在真正损坏而非仅仅未完成的状态上失败。
 
 随后 `pnpm dev` 会输出 unlock URL。它只携带一次 secret；之后 secret 保存在 httpOnly cookie 中。直接打开 `http://localhost:3000` 会得到 403，这是边界生效，不是故障。

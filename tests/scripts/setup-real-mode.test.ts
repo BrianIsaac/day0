@@ -304,6 +304,8 @@ describe('the order the real-mode helpers run in', (): void => {
       'admin-key',
       'sync:env',
       'convex dev --once',
+      'migrations',
+      'release:stamp',
       'convex:restart',
       'check:setup',
     ]);
@@ -316,6 +318,8 @@ describe('the order the real-mode helpers run in', (): void => {
       'admin-key',
       'sync:env',
       'convex dev --once',
+      'migrations',
+      'release:stamp',
       'convex:restart',
       'check:setup',
     ]);
@@ -609,7 +613,7 @@ describe('the redactor device check inside a run', (): void => {
     expect(printed).toContain('waiting for the redactor to load its model');
     expect(printed).toContain('the redactor is healthy');
     expect(printed.indexOf('the redactor is healthy')).toBeLessThan(
-      printed.indexOf('[9/9] pnpm check:setup'),
+      printed.indexOf('[11/11] pnpm check:setup'),
     );
   });
 
@@ -713,7 +717,7 @@ describe('--reset', (): void => {
     expect(readEnvValues(join(h.directory, '.env.local')).CONVEX_SELF_HOSTED_ADMIN_KEY).toBe(
       'convex-self-hosted|0123456789abcdef1',
     );
-    expect(h.output.join('\n')).toContain('[1/10] docker compose down -v');
+    expect(h.output.join('\n')).toContain('[1/12] docker compose down -v');
   });
 });
 
@@ -862,7 +866,7 @@ describe('--company', (): void => {
     expect(docs).toBeGreaterThan(checker);
     expect(check).toBeGreaterThan(docs);
     const printed = h.output.join('\n');
-    expect(printed).toContain('[10/11] pnpm bed:company docs');
+    expect(printed).toContain('[12/13] pnpm bed:company docs');
     expect(printed).toContain("The company bed's hand steps, once per workspace:");
     expect(printed).toContain('\n  1. Linear, as a workspace admin: the teams REVOPS');
     const flat = printed.replace(/\s+/g, ' ');
@@ -876,7 +880,7 @@ describe('--company', (): void => {
       'DAY0_BED_LINEAR_API_KEY, DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN',
     );
     expect(printed.indexOf('hand steps')).toBeLessThan(
-      printed.indexOf('[11/11] pnpm bed:company check'),
+      printed.indexOf('[13/13] pnpm bed:company check'),
     );
   });
 

@@ -24,6 +24,21 @@ export const CPU_STAMP = createHash('sha256').update(CPU_REQUIREMENTS).digest('h
 export const CUDA_STAMP = createHash('sha256').update(CUDA_REQUIREMENTS).digest('hex');
 export const SYNTHETIC_KEY = 'synthetic-featherless-key-for-tests';
 
+/** The releases a disposable checkout records, newest first as the real file has them. */
+export const CHANGELOG = [
+  '# Changelog',
+  '',
+  '## v0.3.0, 27 September 2026',
+  '',
+  '## v0.2.0, 27 September 2026',
+  '',
+  '## v0.1.0, 16 to 19 September 2026',
+  '',
+].join('\n');
+
+/** What `npx convex run migrations:runPending` answers once every migration has run. */
+export const MIGRATIONS_DONE = '{\n  "migrations": [],\n  "pending": []\n}\n';
+
 const directories: string[] = [];
 
 /**
@@ -44,7 +59,8 @@ export function checkout(envLocal?: string, options: { mainWorktree?: boolean } 
   mkdirSync(join(directory, 'scripts'));
   mkdirSync(join(directory, 'redactor'));
   if (options.mainWorktree) mkdirSync(join(directory, '.git'));
-  writeFileSync(join(directory, 'package.json'), '{"name":"day0"}\n', 'utf8');
+  writeFileSync(join(directory, 'package.json'), '{"name":"day0","version":"0.3.0"}\n', 'utf8');
+  writeFileSync(join(directory, 'CHANGELOG.md'), CHANGELOG, 'utf8');
   writeFileSync(
     join(directory, 'docker-compose.yml'),
     ['services:', '  looker-tile:', `    image: ${NODE_IMAGE}`, ''].join('\n'),
@@ -137,6 +153,14 @@ export interface HarnessOptions {
   leftover?: string[];
   /** Services `docker ps` reports until the first `up`; absent means `services` throughout. */
   servicesBeforeUp?: string[];
+  /** The release the deployment's rows are stamped at; absent means no stamp table. */
+  releaseStamp?: string;
+  /** Tables the deployment lists besides the stamp's; none means nothing was ever pushed. */
+  deploymentTables?: string[];
+  /** What each `migrations:runPending` call answers, in order, the last repeated. */
+  migrationReports?: string[];
+  /** What `npx convex env list` prints when the admin key is accepted. */
+  deploymentEnv?: string;
 }
 
 /**
@@ -159,6 +183,7 @@ export function harness(options: HarnessOptions = {}): Harness {
   const stamps = { ...(options.stamps ?? {}) };
   const failing = options.failing ?? [];
   const health = [...(options.redactorHealth ?? ['healthy'])];
+  const migrationReports = [...(options.migrationReports ?? [MIGRATIONS_DONE])];
   let minted = 0;
   let clock = 0;
   let broughtUp = false;
@@ -201,6 +226,11 @@ export function harness(options: HarnessOptions = {}): Harness {
       const name = args[args.length - 1];
       if (!volumes.includes(name)) volumes.push(name);
       return { status: 0, stdout: `${name}\n`, stderr: '' };
+    }
+    if (joined.startsWith('docker run --rm -v') && joined.includes('tar czf /to/')) {
+      const name = /tar czf \/to\/(\S+)/.exec(joined)![1];
+      writeFileSync(join(args[5].split(':')[0], name), `backup of ${args[3]}`, 'utf8');
+      return { status: 0, stdout: '', stderr: '' };
     }
     if (joined.startsWith('docker run --rm -v')) {
       const source = args[3].split(':')[0];
@@ -267,7 +297,32 @@ export function harness(options: HarnessOptions = {}): Harness {
       };
     }
     if (joined.includes('convex env list')) {
-      return { status: options.adminKeyAccepted === false ? 1 : 0, stdout: '', stderr: '' };
+      return {
+        status: options.adminKeyAccepted === false ? 1 : 0,
+        stdout: options.deploymentEnv ?? '',
+        stderr: '',
+      };
+    }
+    if (joined === 'npx convex data') {
+      const tables = [
+        ...(options.deploymentTables ?? []),
+        ...(options.releaseStamp === undefined ? [] : ['agents', 'deploymentVersions']),
+      ];
+      return { status: 0, stdout: tables.map((table) => `${table}\n`).join(''), stderr: '' };
+    }
+    if (joined.startsWith('npx convex data deploymentVersions')) {
+      return {
+        status: 0,
+        stdout: `${JSON.stringify({ _id: 'k1', _creationTime: 1, release: options.releaseStamp, recordedAt: 1 })}\n`,
+        stderr: '',
+      };
+    }
+    if (joined.includes('migrations:runPending')) {
+      const report = migrationReports.length > 1 ? migrationReports.shift()! : migrationReports[0];
+      return { status: 0, stdout: report, stderr: '' };
+    }
+    if (joined.includes('migrations:recordRelease')) {
+      return { status: 0, stdout: '{ "previous": null, "release": "0.3.0" }\n', stderr: '' };
     }
     if (joined.includes('nvidia-smi') && joined.includes('memory.free')) {
       return options.freeVramMiB === undefined

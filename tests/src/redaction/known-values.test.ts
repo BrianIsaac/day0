@@ -126,6 +126,7 @@ const source: Doc<'docSources'> = {
   kind: 'folder',
   locator: '.',
   status: 'linking',
+  activeSyncId: 'run-1' as Id<'docSyncRuns'>,
   createdAt: 1,
   updatedAt: 1,
 };

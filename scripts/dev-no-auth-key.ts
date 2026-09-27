@@ -4,10 +4,13 @@
  *
  *   pnpm dev:no-auth-key                  generate what is missing
  *   pnpm dev:no-auth-key --rotate-unlock  rotate the unlock secret alone
- *   pnpm dev:no-auth-key --force          regenerate every value, the credential key included
+ *   pnpm dev:no-auth-key --force          regenerate the three no-auth values; the credential key stays
  *   tsx scripts/dev-no-auth-key.ts url           print the unlock URL, which `pnpm dev` does
  *   tsx scripts/dev-no-auth-key.ts surface-keys  the two real-mode values only, for a profile
- *                                                that signs in some other way
+ *                                                that signs in some other way; with --force
+ *                                                the Notion transport token is regenerated
+ *   tsx scripts/rotate-credential-key.ts         rotate the credential key itself, after a
+ *                                                confirmation
  *
  * No-auth mode serves every request as one fixed user who owns every row, so the
  * only thing standing between that user and anyone who can reach the ports is
@@ -35,8 +38,10 @@
  * a live one.
  *
  * Rotating the unlock secret signs every browser out and needs no re-sync.
- * `--force` regenerates everything, which also makes every credential the
- * deployment stores unreadable once synced; it says so when it runs.
+ * `--force` regenerates the three no-auth values and never the credential key:
+ * the deployment's stored credentials were sealed under it, so a new one would
+ * leave each unreadable. Rotating it is its own verb, with a confirmation
+ * (`scripts/rotate-credential-key.ts`).
  */
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -68,10 +73,22 @@ const SELF_HOSTED_URL_VAR = 'CONVEX_SELF_HOSTED_URL';
 const SELF_HOSTED_ADMIN_KEY_VAR = 'CONVEX_SELF_HOSTED_ADMIN_KEY';
 const DEPLOYMENT_READ_TIMEOUT_MS = 60_000;
 
-/** The real-mode values the deployment holds a copy of, and how each is minted. */
+/**
+ * The real-mode values the deployment holds a copy of, how each is minted, and
+ * whether `--force` may regenerate it. The credential key never is: what the
+ * deployment stores was sealed under it.
+ */
 const SURFACE_KEYS = [
-  { name: CREDENTIAL_KEY_VAR, mint: (): string => randomBytes(32).toString('base64') },
-  { name: NOTION_MCP_AUTH_TOKEN_VAR, mint: (): string => randomBytes(32).toString('base64url') },
+  {
+    name: CREDENTIAL_KEY_VAR,
+    mint: (): string => randomBytes(32).toString('base64'),
+    forceable: false,
+  },
+  {
+    name: NOTION_MCP_AUTH_TOKEN_VAR,
+    mint: (): string => randomBytes(32).toString('base64url'),
+    forceable: true,
+  },
 ] as const;
 
 /** What the Convex deployment this file points at holds, as far as it could be read. */
@@ -184,7 +201,8 @@ function readDeploymentEnv(values: Readonly<Record<string, string>>): Deployment
  *
  * Args:
  *   existing: The env file with the process environment layered on.
- *   force: Regenerate every value, adopting nothing.
+ *   force: Regenerate the values `--force` may regenerate; the credential key
+ *     is still only adopted or minted when the file has none.
  *
  * Returns:
  *   The values to write and which of them were adopted rather than minted.
@@ -193,14 +211,16 @@ function surfaceKeyUpdates(
   existing: Readonly<Record<string, string>>,
   force: boolean,
 ): { updates: Record<string, string>; adopted: string[] } {
-  const missing = SURFACE_KEYS.filter((key): boolean => force || !existing[key.name]);
-  if (missing.length === 0) return { updates: {}, adopted: [] };
-  if (force) {
-    return {
-      updates: Object.fromEntries(missing.map((key): [string, string] => [key.name, key.mint()])),
-      adopted: [],
-    };
-  }
+  const forced = Object.fromEntries(
+    SURFACE_KEYS.filter((key): boolean => force && key.forceable).map((key): [string, string] => [
+      key.name,
+      key.mint(),
+    ]),
+  );
+  const missing = SURFACE_KEYS.filter(
+    (key): boolean => !(key.name in forced) && !existing[key.name],
+  );
+  if (missing.length === 0) return { updates: forced, adopted: [] };
 
   const deployment = readDeploymentEnv(existing);
   if (deployment.kind === 'unreadable') {
@@ -208,12 +228,12 @@ function surfaceKeyUpdates(
       `${ENV_FILE} has no ${missing.map((key) => key.name).join(' or ')}, and this script could not read the ` +
         'deployment it points at to adopt its copy. A new credential key over a deployment that already ' +
         'holds one leaves every stored credential unreadable, so none is minted. Start the backend ' +
-        '(`pnpm convex:up`) or check the Convex values in .env.local, then re-run. To start over with new ' +
-        `keys on purpose, pass --force.${deployment.detail ? `\n  (${deployment.detail})` : ''}`,
+        '(`pnpm convex:up`) or check the Convex values in .env.local, then re-run.' +
+        `${deployment.detail ? `\n  (${deployment.detail})` : ''}`,
     );
   }
   const held = deployment.kind === 'read' ? deployment.values : {};
-  const updates: Record<string, string> = {};
+  const updates: Record<string, string> = { ...forced };
   const adopted: string[] = [];
   for (const key of missing) {
     const fromDeployment = held[key.name] ?? '';
@@ -238,17 +258,18 @@ function reportWrite(updates: Readonly<Record<string, string>>, adopted: readonl
  * Ensure the no-auth signing material and the real-mode keys exist.
  *
  * Args:
- *   force: Regenerate every value when true, the credential key included.
+ *   force: Regenerate the three no-auth values when true; the credential key
+ *     and the Notion token are kept, and a missing one is still adopted first.
  */
 async function init(force: boolean): Promise<void> {
   const existing = readEnvFile();
   const authComplete =
     !!existing[SECRET_VAR] && !!existing[SIGNING_KEY_VAR] && !!existing[JWKS_VAR];
-  const { updates: surfaceUpdates, adopted } = surfaceKeyUpdates(existing, force);
+  const { updates: surfaceUpdates, adopted } = surfaceKeyUpdates(existing, false);
   if (authComplete && Object.keys(surfaceUpdates).length === 0 && !force) {
     console.log(
       `${ENV_FILE} already carries a no-auth key. Pass --rotate-unlock to sign every browser ` +
-        'out, or --force to regenerate every value, the credential key included.\n',
+        'out, or --force to regenerate the three no-auth values; the credential key is kept.\n',
     );
     return printUnlockUrl();
   }
@@ -259,10 +280,11 @@ async function init(force: boolean): Promise<void> {
   upsertEnvFile(updates);
 
   reportWrite(updates, adopted);
-  if (force && existing[CREDENTIAL_KEY_VAR]) {
+  if (force) {
     console.log(
-      `--force regenerated ${CREDENTIAL_KEY_VAR}. Once synced, every credential the deployment ` +
-        'stores can no longer be decrypted and must be entered again.',
+      `--force regenerated the three no-auth values; ${CREDENTIAL_KEY_VAR} is unchanged, so what ` +
+        'the deployment stores stays readable. To rotate that key on purpose: ' +
+        '`pnpm exec tsx scripts/rotate-credential-key.ts`.',
     );
   }
   console.log('Next: ./scripts/sync-convex-env.sh, then push your functions.\n');
@@ -322,7 +344,8 @@ function rotateUnlockSecret(): void {
  * read the key, so `pnpm dev` starts as it always did rather than failing.
  *
  * Args:
- *   force: Regenerate both values when true.
+ *   force: Regenerate the Notion transport token when true; the credential
+ *     key is never regenerated here.
  */
 function ensureRealSurfaceKeys(force: boolean): void {
   if (!existsSync(ENV_FILE)) return;

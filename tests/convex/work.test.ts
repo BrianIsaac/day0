@@ -3646,26 +3646,21 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       tracker: todo,
     });
     await harness.mutation(internal.work.seedItem, { ...listed(agentId), tracker: todo });
+    // The first listing rides on the discovery; the unchanged second adds nothing.
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('ticketListings').collect()),
+    ).toEqual([]);
     const planMadeAt = Date.now();
     const taken = { ...todo, assigned: true, assigneeId: 'user-ana', state: 'In Progress' };
     await harness.run(async (ctx) => {
       // A listing after the plan, as the next poll would keep it.
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: taken },
-        createdAt: planMadeAt + 60_000,
+        workItemId,
+        tracker: taken,
+        listedAt: planMadeAt + 60_000,
       });
     });
-    const listings = await harness.run(
-      async (ctx) =>
-        await ctx.db
-          .query('events')
-          .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.listed'))
-          .collect(),
-    );
-    // The first listing rides on the discovery; the unchanged second adds nothing.
-    expect(listings).toHaveLength(1);
     const discovered = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -3745,6 +3740,31 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     await expect(
       harness.query(internal.work.listedSnapshot, { workItemId, before: Date.now() }),
     ).resolves.toMatchObject({ planned: { state: 'Todo' } });
+  });
+
+  it('keeps a changed listing in ticketListings by work item and gives the apply that one (review M4)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const todo = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: todo,
+    });
+    const taken = { ...todo, assigned: true, assigneeId: 'user-ana', state: 'In Progress' };
+
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), tracker: taken });
+
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('ticketListings')
+          .withIndex('by_work_item_listed_at', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(kept.map((listing) => listing.tracker)).toEqual([taken]);
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: Date.now() }),
+    ).resolves.toEqual({ planned: taken, acknowledged: null });
   });
 
   it('withdraws a claimed row whose ticket left the queue, so no plan is stored for it (review B1)', async (): Promise<void> => {

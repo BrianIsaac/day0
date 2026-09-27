@@ -6703,11 +6703,11 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
       autonomousActions: true,
     });
     await harness.run(async (ctx): Promise<void> => {
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: asPlanned },
-        createdAt: 1,
+        workItemId,
+        tracker: asPlanned,
+        listedAt: 1,
       });
       const runId = await ctx.db.insert('events', {
         agentId,
@@ -6778,11 +6778,12 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     // A poll refused the ticket, the manager pressed Retry, and the plan was made after both.
     await harness.run(async (ctx): Promise<void> => {
       const row = (await ctx.db.get(workItemId))!;
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId: row.agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: taken, refused: 'the ticket is assigned to someone else' },
-        createdAt: 2,
+        workItemId,
+        tracker: taken,
+        refused: 'the ticket is assigned to someone else',
+        listedAt: 2,
       });
       await ctx.db.patch(workItemId, { planPendingAt: 3 });
     });
@@ -7054,11 +7055,11 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
       const row = (await ctx.db.get(workItemId))!;
       await ctx.db.patch(workItemId, { planPendingAt: 10 });
       // A listing after the plan showed In Review, and the manager pressed Retry after it.
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId: row.agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: inReview },
-        createdAt: 20,
+        workItemId,
+        tracker: inReview,
+        listedAt: 20,
       });
       await ctx.db.insert('events', {
         agentId: row.agentId,
@@ -7088,11 +7089,11 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
       const row = (await ctx.db.get(workItemId))!;
       await ctx.db.patch(workItemId, { planPendingAt: 10 });
       // A person labelled the failed row's ticket, and the manager pressed Retry after.
-      await ctx.db.insert('events', {
+      await ctx.db.insert('ticketListings', {
         agentId: row.agentId,
-        type: 'work.listed',
-        payload: { workItemId, tracker: labelled },
-        createdAt: 20,
+        workItemId,
+        tracker: labelled,
+        listedAt: 20,
       });
       await ctx.db.insert('events', {
         agentId: row.agentId,

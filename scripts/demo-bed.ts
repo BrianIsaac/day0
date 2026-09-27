@@ -26,14 +26,30 @@
  * it was first evaluated with. And the admin key is regenerated from the
  * volume's own instance secret, so a restored volume answers to a key the file
  * did not have yet.
+ *
+ * `up` takes the upgrade the setup takes: it refuses to push functions that
+ * skip a release over the volume's rows, runs the migrations after the push
+ * and stamps the release after the restart (`scripts/releases.ts`). A
+ * snapshot records the commit and the backend image that took it beside its
+ * checksum. Every command that removes data (`up --reset`, `restore
+ * --replace`, `down --volumes`) asks first unless `--yes`.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { PROFILES } from './compose';
+import {
+  checkoutReleases,
+  migrationLines,
+  MIGRATIONS_ARGUMENTS,
+  parseMigrationReport,
+  readReleaseVerdict,
+  releaseStampArguments,
+} from './releases';
 import {
   requirementsDigests,
   venvDevice,
@@ -239,6 +255,8 @@ export interface DemoBedOptions {
   volumes: boolean;
   /** `preflight`: seconds per probe request. */
   probeTimeout: number;
+  /** Take yes for the question every data-removing command asks. */
+  yes: boolean;
 }
 
 const USAGE = `Usage: pnpm demo:bed <command> [options]
@@ -267,6 +285,7 @@ Options:
                          (default: ${KIT_DIR}/revocation-<stamp>; evidence: evaluation/results/revocation-<stamp>)
   --volumes              down: also remove this project's volumes
   --probe-timeout <s>    preflight: per-request ceiling for the probe (default 15)
+  --yes                  up --reset, restore --replace, down --volumes: do not ask first
 `;
 
 /**
@@ -305,6 +324,7 @@ export function parseDemoBedArguments(
     replace: false,
     volumes: false,
     probeTimeout: 15,
+    yes: false,
   };
   let projectExplicit = false;
   const valueOf = (index: number, flag: string): string => {
@@ -368,6 +388,10 @@ export function parseDemoBedArguments(
         break;
       case '--volumes':
         options.volumes = true;
+        break;
+      case '--yes':
+      case '-y':
+        options.yes = true;
         break;
       case '--probe-timeout':
         options.probeTimeout = Number.parseInt(valueOf(index, flag), 10);
@@ -1284,6 +1308,63 @@ export function sha256SumsText(
 
 type Values = Record<string, string>;
 
+/** What a snapshot records beside its checksum: what took it, and from what. */
+export interface SnapshotManifest {
+  readonly volume: string;
+  readonly file: string;
+  readonly sha256: string;
+  readonly createdAt: string;
+  /** The release and commit of the checkout that took it. */
+  readonly release?: string;
+  readonly commit?: string;
+  /** The backend image the compose file pinned when it was taken. */
+  readonly backendImage?: string;
+}
+
+/**
+ * The manifest a snapshot is written with. The checksum sidecar keeps its
+ * `sha256sum -c` form; this file carries the rest (step 48).
+ *
+ * @param input - What the snapshot is and what took it.
+ *
+ * @returns The manifest's JSON text.
+ */
+export function snapshotManifestText(input: SnapshotManifest): string {
+  return `${JSON.stringify(input, null, 2)}\n`;
+}
+
+/**
+ * The question a data-removing command asks, answered from the terminal. A
+ * run with no terminal must say `--yes`; it is never taken as a yes.
+ *
+ * @param options - The command line; `yes` answers without asking.
+ * @param question - What is about to be removed.
+ *
+ * @throws When the answer is not yes, or there is no terminal to ask.
+ */
+async function confirmRemoval(options: DemoBedOptions, question: string): Promise<void> {
+  if (options.yes) return;
+  if (!process.stdin.isTTY) {
+    throw new Error(`${question} There is no terminal to ask; pass --yes to go on.`);
+  }
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await prompt.question(`${question} [y/N] `);
+    if (!['y', 'yes'].includes(answer.trim().toLowerCase())) {
+      throw new Error('Declined; nothing was removed.');
+    }
+  } finally {
+    prompt.close();
+  }
+}
+
+/** The short commit this checkout is at, when git can say. */
+function checkoutCommit(): string | undefined {
+  const head = run('git', ['rev-parse', '--short=12', 'HEAD'], { timeoutMs: 30_000 });
+  const commit = head.stdout.trim();
+  return head.status === 0 && /^[0-9a-f]{7,40}$/.test(commit) ? commit : undefined;
+}
+
 function readEnvFile(path: string = ENV_FILE): Values {
   const values: Values = {};
   if (!existsSync(path)) return values;
@@ -1684,6 +1765,24 @@ function snapshot(options: DemoBedOptions): void {
   }
   const digest = sha256(target);
   writeFileSync(`${target}.sha256`, `${digest}  ${basename(target)}\n`, 'utf8');
+  const checkout = checkoutReleases(process.cwd());
+  const commit = checkoutCommit();
+  const backendImage = composeImages(readFileSync(COMPOSE_FILE, 'utf8')).find(
+    (image) => image.service === 'backend',
+  )?.reference;
+  writeFileSync(
+    `${target}.json`,
+    snapshotManifestText({
+      volume: source,
+      file: basename(target),
+      sha256: digest,
+      createdAt: new Date().toISOString(),
+      ...('reason' in checkout ? {} : { release: checkout.release }),
+      ...(commit !== undefined ? { commit } : {}),
+      ...(backendImage !== undefined ? { backendImage } : {}),
+    }),
+    'utf8',
+  );
   const size = statSync(target).size;
   log(
     `Wrote ${target} (${(size / 1024 / 1024).toFixed(1)} MB, sha256 ${digest}) in ${elapsed(startedAt)}.`,
@@ -1693,7 +1792,7 @@ function snapshot(options: DemoBedOptions): void {
 
 /* --------------------------------- restore --------------------------------- */
 
-function restore(options: DemoBedOptions): void {
+async function restore(options: DemoBedOptions): Promise<void> {
   const target = restoreTargetVolume(options.project);
   assertProjectMatch(options.project, readEnvFile());
   if (!options.snapshot) throw new Error('restore needs --snapshot <file>.');
@@ -1709,6 +1808,17 @@ function restore(options: DemoBedOptions): void {
     throw new Error(`${source} does not match ${sidecar}: expected ${expected}, got ${actual}.`);
   }
   log(`Checksum matches ${basename(sidecar)}.`);
+  if (existsSync(`${source}.json`)) {
+    const manifest = JSON.parse(
+      readFileSync(`${source}.json`, 'utf8'),
+    ) as Partial<SnapshotManifest>;
+    const by = manifest.release ? ` by ${manifest.release}` : '';
+    const at = manifest.commit ? ` at ${manifest.commit}` : '';
+    log(
+      `Taken ${manifest.createdAt ?? 'at an unrecorded time'} from ` +
+        `${manifest.volume ?? 'an unnamed volume'}${by}${at}.`,
+    );
+  }
   if (volumeExists(target)) {
     if (!options.replace) {
       throw new Error(
@@ -1722,6 +1832,10 @@ function restore(options: DemoBedOptions): void {
         `volume ${target} is attached to ${users.join(', ')}; run "pnpm demo:bed down" first.`,
       );
     }
+    await confirmRemoval(
+      options,
+      `Remove ${target} and everything in it to make way for the snapshot?`,
+    );
     must(run('docker', ['volume', 'rm', target]), `removing ${target}`);
     log(`Removed the previous ${target}.`);
   }
@@ -1757,6 +1871,13 @@ async function up(options: DemoBedOptions): Promise<void> {
     if (options.warmFrom === options.project) {
       throw new Error(`--warm-from ${options.warmFrom} names this bed's own project.`);
     }
+  }
+  if (options.reset) {
+    await confirmRemoval(
+      options,
+      `--reset deletes the local boss's agents on ${options.project}` +
+        `${options.unlink ? ', unlinks its documentation and purges its credentials' : ''} after the push.`,
+    );
   }
   if (!existsSync(ENV_FILE)) {
     throw new Error(
@@ -1871,7 +1992,18 @@ async function up(options: DemoBedOptions): Promise<void> {
   }
   values = readEnvFile();
 
-  log("[5/10] What the volume's deployment already carries");
+  log("[5/10] The volume's release, and what its deployment already carries");
+  // Read before anything on the deployment changes, so a refusal leaves it as it was.
+  const checkout = checkoutReleases(process.cwd());
+  if ('reason' in checkout) {
+    throw new Error(`this checkout's release cannot be read: ${checkout.reason}.`);
+  }
+  const verdict = readReleaseVerdict(
+    (args) => run('npx', args, { env: bedEnvironment(options, values), timeoutMs: 120_000 }),
+    checkout,
+  );
+  if (!verdict.allowed) throw new Error(`nothing was changed, because ${verdict.reason}`);
+  log(`      release: ${verdict.note}`);
   const deployment = deploymentEnv(bedEnvironment(options, values));
   const adopt = credentialKeyToAdopt(
     values.DAY0_CREDENTIAL_KEY ?? '',
@@ -1904,29 +2036,65 @@ async function up(options: DemoBedOptions): Promise<void> {
   if (!adopt && stale.length === 0) log('      nothing to adopt or clear');
   const pushEnv = bedEnvironment(options, values);
 
-  log('[6/10] Deployment env: ./scripts/sync-convex-env.sh');
-  must(
-    run('bash', ['scripts/sync-convex-env.sh', ENV_FILE], { env: pushEnv, inherit: true }),
-    'sync:env',
-  );
-
-  log('[7/10] Functions: convex dev --once');
-  const pushStartedAt = Date.now();
-  must(
-    run('pnpm', ['exec', 'convex', 'dev', '--once', '--typecheck', 'disable'], {
-      env: pushEnv,
-      inherit: true,
-    }),
-    'convex dev --once',
-  );
-  log(`      pushed in ${elapsed(pushStartedAt)}`);
-  const corrections = publicUrlCorrections(readEnvFile(), ports);
-  if (Object.keys(corrections).length > 0) {
-    writeEnvValues(corrections);
-    log(
-      `      the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's own ` +
-        'container ports; put back the host addresses this bed publishes',
+  const syncEnv = (step: number): void => {
+    log(`[${step}/10] Deployment env: ./scripts/sync-convex-env.sh`);
+    must(
+      run('bash', ['scripts/sync-convex-env.sh', ENV_FILE], { env: pushEnv, inherit: true }),
+      'sync:env',
     );
+  };
+  const pushFunctions = (step: number): void => {
+    log(`[${step}/10] Functions: convex dev --once, then the migrations and the release stamp`);
+    const pushStartedAt = Date.now();
+    must(
+      run('pnpm', ['exec', 'convex', 'dev', '--once', '--typecheck', 'disable'], {
+        env: pushEnv,
+        inherit: true,
+      }),
+      'convex dev --once',
+    );
+    log(`      pushed in ${elapsed(pushStartedAt)}`);
+    for (let call = 0; ; call += 1) {
+      if (call === 12) {
+        throw new Error(
+          'the migrations had not finished after 12 calls; run ' +
+            '`npx convex run migrations:runPending` until nothing is pending.',
+        );
+      }
+      const migrated = must(
+        run('npx', [...MIGRATIONS_ARGUMENTS], { env: pushEnv, timeoutMs: 900_000 }),
+        'migrations',
+      );
+      const report = parseMigrationReport(migrated.stdout);
+      for (const line of migrationLines(report)) log(`      ${line}`);
+      if (report.pending.length === 0) break;
+    }
+    const corrections = publicUrlCorrections(readEnvFile(), ports);
+    if (Object.keys(corrections).length > 0) {
+      writeEnvValues(corrections);
+      log(
+        `      the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's own ` +
+          'container ports; put back the host addresses this bed publishes',
+      );
+    }
+    must(
+      run('npx', releaseStampArguments(checkout.release, checkoutCommit()), {
+        env: pushEnv,
+        timeoutMs: 120_000,
+      }),
+      'migrations:recordRelease',
+    );
+    log(`      the volume's rows are at ${checkout.release}`);
+  };
+  // A volume with rows takes the setup's upgrade order, functions before env,
+  // so a push the schema refuses leaves the old functions on the old env; a
+  // new one takes the env first, which the auth config reads at the first push.
+  if (verdict.from === undefined) {
+    syncEnv(6);
+    pushFunctions(7);
+  } else {
+    pushFunctions(6);
+    syncEnv(7);
   }
 
   log('[8/10] Restart the backend so the pushed env is what the modules read');
@@ -1938,7 +2106,6 @@ async function up(options: DemoBedOptions): Promise<void> {
     'restart',
   );
   await waitForBackend(ports.backend);
-
   log('[9/10] The redactor reports healthy, or real-mode documentation sync fails closed');
   if (options.profiles.includes('redactor')) {
     const redactorStartedAt = Date.now();
@@ -2450,7 +2617,7 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
 
 /* ---------------------------------- down ----------------------------------- */
 
-function down(options: DemoBedOptions): void {
+async function down(options: DemoBedOptions): Promise<void> {
   assertBedProject(options.project);
   const values = readEnvFile();
   assertProjectMatch(options.project, values);
@@ -2458,6 +2625,10 @@ function down(options: DemoBedOptions): void {
   const args = [...composeArgs(options, profiles), 'down'];
   if (options.volumes) {
     projectVolumeNames(options.project);
+    await confirmRemoval(
+      options,
+      `--volumes removes ${options.project}'s volumes and every row in them.`,
+    );
     args.push('--volumes');
   }
   must(
@@ -2492,7 +2663,7 @@ async function main(): Promise<number> {
         snapshot(options);
         return 0;
       case 'restore':
-        restore(options);
+        await restore(options);
         return 0;
       case 'up':
         await up(options);
@@ -2503,7 +2674,7 @@ async function main(): Promise<number> {
         await offlineRung(options);
         return 0;
       case 'down':
-        down(options);
+        await down(options);
         return 0;
     }
   } catch (error) {
