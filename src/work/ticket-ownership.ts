@@ -174,41 +174,50 @@ function sameState(left: string, right: string): boolean {
  * What changed on a ticket since the plan was made, by the Q11 primitives,
  * or undefined when it is still the ticket the plan was made for.
  *
- * The state is compared with the last state an earlier run of the item set,
- * when one did (that move was Day0's own), and otherwise with the listing
- * the plan was made under. The assignee is compared with that listing's;
- * a ticket assigned since is still the item's only when it is assigned to
- * the key's owner. With no listing to compare with, the rule intake applies
- * decides: nobody or the key's owner assigned, open, and not labelled.
+ * The state may be the one the listing the plan was made under showed, the
+ * one a listing showed when the manager last pressed Retry since (the
+ * manager has seen it), or one Day0 set itself; anything else is a move
+ * somebody else made. The assignee is compared with the plan's listing
+ * alone, since a Retry does not hand a person's ticket to Day0: a ticket
+ * assigned since is still the item's only when it is assigned to the key's
+ * owner. With no listing to compare with, the rule intake applies decides:
+ * nobody or the key's owner assigned, open, and not labelled.
  *
  * @param now - The ticket as it reads now.
- * @param context - The listing the plan was made under, the state an
- *   earlier run of the item last set, and the key's owner, read only when
- *   an assignee has to be compared with it.
+ * @param context - The plan's listing, the listing the manager's last
+ *   Retry saw, the states Day0 set on the ticket (names, or types when a run
+ *   set one by type), and the key's owner, read only when an assignee has
+ *   to be compared with it.
  * @returns The named change, or undefined.
  */
 export async function ticketChange(
   now: TicketSnapshot,
   context: {
     baseline?: TicketSnapshot;
-    ownState?: string;
+    acknowledged?: TicketSnapshot;
+    ownStates?: readonly string[];
     owner: () => Promise<PersonIdentity | undefined>;
   },
 ): Promise<string | undefined> {
   const { baseline } = context;
-  if (now.doNotAutomate && !baseline?.doNotAutomate) {
+  if (now.doNotAutomate && !baseline?.doNotAutomate && !context.acknowledged?.doNotAutomate) {
     return `it is labelled ${DO_NOT_AUTOMATE_LABEL}`;
   }
-  const before = context.ownState ?? baseline?.state;
-  if (before !== undefined && now.state !== undefined && !sameState(before, now.state)) {
-    return `its state moved from ${before} to ${now.state}`;
+  const own = context.ownStates ?? [];
+  const accepted = [baseline?.state, context.acknowledged?.state, ...own].filter(
+    (state): state is string => state !== undefined,
+  );
+  const matches = (state: string): boolean =>
+    (now.state !== undefined && sameState(state, now.state)) ||
+    (now.stateType !== undefined && sameState(state, now.stateType));
+  if (now.state !== undefined && accepted.length > 0 && !accepted.some(matches)) {
+    return `its state moved from ${baseline?.state ?? accepted[0]} to ${now.state}`;
   }
-  // A ticket an earlier run of the item closed is closed by Day0, not taken away from it.
-  const ownMove =
-    context.ownState !== undefined &&
-    now.state !== undefined &&
-    sameState(context.ownState, now.state);
-  if (!ownMove && isClosedStateType(now.stateType) && !isClosedStateType(baseline?.stateType)) {
+  // A ticket Day0 closed, or the manager retried once it was closed, is not taken away.
+  const closedKnown =
+    own.some(matches) ||
+    (context.acknowledged?.state !== undefined && matches(context.acknowledged.state));
+  if (!closedKnown && isClosedStateType(now.stateType) && !isClosedStateType(baseline?.stateType)) {
     return `it is ${now.stateType}`;
   }
   if (!now.assigned) {

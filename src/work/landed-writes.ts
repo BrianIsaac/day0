@@ -114,6 +114,16 @@ export function withReusedRunNumbers<T extends AppliedAction | undefined>(
   });
 }
 
+/**
+ * Whether a ledger row reports an earlier landed row rather than a send,
+ * whether it names its source or was persisted before reuses did.
+ *
+ * @param applied - A ledger row.
+ */
+export function isReusedRow(applied: AppliedAction): boolean {
+  return reusedFrom(applied) !== undefined || legacyReuse(applied);
+}
+
 /** A reused row persisted before reuses named their source: known only by its note. */
 function legacyReuse(applied: AppliedAction): boolean {
   return (

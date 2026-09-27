@@ -6507,6 +6507,85 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
     });
   });
 
+  it('reads the ticket again before a write the manager approved after the first phase landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        approvedIndexes: [0],
+        actionVerdicts: [
+          { disposition: 'auto' as const },
+          { disposition: 'held' as const, reason: 'the manager closes it' },
+        ],
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'Todo',
+      statusType: 'unstarted',
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+
+    // A colleague takes the ticket before the manager approves the Done.
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      assigneeId: 'user-ana',
+      status: 'Todo',
+      statusType: 'unstarted',
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: parked.pendingRunId!,
+      approvedIndexes: [1],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(linearTools()).toEqual(['get_issue', 'save_comment', 'get_issue']);
+    expect(ledger(stopped)[1]).toMatchObject({
+      held: true,
+      reason: expect.stringContaining('changed hands'),
+    });
+  });
+
+  it('takes a state the manager saw when pressing Retry as the one to compare with', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const workItemId = await atFirstWrite(harness);
+    const inReview = { ...asPlanned, state: 'In Review', stateType: 'started' };
+    await harness.run(async (ctx): Promise<void> => {
+      const row = (await ctx.db.get(workItemId))!;
+      await ctx.db.patch(workItemId, { planPendingAt: 10 });
+      // A listing after the plan showed In Review, and the manager pressed Retry after it.
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.listed',
+        payload: { workItemId, tracker: inReview },
+        createdAt: 20,
+      });
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.retry',
+        payload: { workItemId, resumeState: 'plan-approved', fromState: 'failed' },
+        createdAt: 30,
+      });
+    });
+    recorded.issueRecordText = JSON.stringify({
+      id: 'iss-1',
+      status: 'In Review',
+      statusType: 'started',
+    });
+
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect(linearTools()).toEqual(['get_issue', 'save_comment', 'save_issue']);
+  });
+
   it('withholds when the ticket cannot be re-read', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());

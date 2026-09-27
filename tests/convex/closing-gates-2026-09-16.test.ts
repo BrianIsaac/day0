@@ -471,7 +471,8 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     });
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(t, workItemId)).state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
+    // The approved Done is sent hours later, so the ticket is read again before it (Q11).
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'get_issue'], ['linear', 'save_issue']]);
   });
 
   it('accepts the run 3 REVOPS-7 closing set: the read-back step 3 conditions on is of the tile, and Linear is the write target', async (): Promise<void> => {
@@ -656,7 +657,8 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const done = await readItem(t, workItemId);
     expect(done.state).toBe('completed');
-    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'save_issue']]);
+    // The approved Done is sent hours later, so the ticket is read again before it (Q11).
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'get_issue'], ['linear', 'save_comment'], ['linear', 'get_issue'], ['linear', 'save_issue']]);
   });
 
   it('stops at the closing gate when the audit comment is withheld: the Done goes with it, nothing reaches Linear, and the retry resumes at the closing phase', async (): Promise<void> => {

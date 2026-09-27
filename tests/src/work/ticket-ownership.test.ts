@@ -98,13 +98,13 @@ describe('ticket ownership', () => {
     await expect(
       ticketChange(
         { ...todo, state: 'In Progress' },
-        { baseline: todo, ownState: 'in progress', owner: owner.read },
+        { baseline: todo, ownStates: ['in progress'], owner: owner.read },
       ),
     ).resolves.toBeUndefined();
     await expect(
       ticketChange(
         { ...todo, state: 'Done', stateType: 'completed' },
-        { baseline: todo, ownState: 'Done', owner: owner.read },
+        { baseline: todo, ownStates: ['Done'], owner: owner.read },
       ),
     ).resolves.toBeUndefined();
     // The same assignee as the listing: the owner is never asked.
@@ -114,6 +114,43 @@ describe('ticket ownership', () => {
       ticketChange(mine, { baseline: mine, owner: unasked.read }),
     ).resolves.toBeUndefined();
     expect(unasked.calls()).toBe(0);
+  });
+
+  it("accepts a state any of the listing, a Retry since or Day0 itself left, and names the listing's when it moved", async () => {
+    const owner = ownerRead();
+    const inReview = { ...todo, state: 'In Review', stateType: 'started' };
+    // Run 1 set In Progress; the plan was made under Todo; the manager retried once it read In Review.
+    const context = {
+      baseline: todo,
+      acknowledged: inReview,
+      ownStates: ['In Progress'],
+      owner: owner.read,
+    };
+    await expect(ticketChange(inReview, context)).resolves.toBeUndefined();
+    await expect(ticketChange({ ...todo, state: 'In Progress' }, context)).resolves.toBeUndefined();
+    await expect(ticketChange({ ...todo, state: 'Blocked' }, context)).resolves.toBe(
+      'its state moved from Todo to Blocked',
+    );
+    // An earlier run that set the state by id or by type: a type still matches, an id never names it.
+    await expect(
+      ticketChange(
+        { ...todo, state: 'Done', stateType: 'completed' },
+        { baseline: todo, ownStates: ['completed'], owner: owner.read },
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      ticketChange(
+        { ...todo, state: 'Done', stateType: 'completed' },
+        { baseline: todo, ownStates: ['6f1c2a4e-0d3b-4c55-9a1e-7b2d8c9e0f11'], owner: owner.read },
+      ),
+    ).resolves.toBe('its state moved from Todo to Done');
+    // A Retry acknowledges the state, never a person's assignment.
+    await expect(
+      ticketChange(
+        { ...inReview, assigned: true, assigneeId: 'user-ana' },
+        { ...context, acknowledged: { ...inReview, assigned: true, assigneeId: 'user-ana' } },
+      ),
+    ).resolves.toBe('it changed hands: it is assigned to another person');
   });
 
   it('applies the intake rule when there is no listing to compare with, and fails closed on an unread owner', async () => {

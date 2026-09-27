@@ -112,6 +112,7 @@ import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-re
 import {
   landedWritesOf,
   lastLandedState,
+  isReusedRow,
   reusedFrom,
   reusedLedger,
   withReusedRunNumbers,
@@ -2376,7 +2377,10 @@ export function thisRunWrites(
   const key = `${run.workItemId}:${run.runId}:`;
   return phase.actions.flatMap((action, index): LandedWrite[] => {
     const applied = phase.applied[index];
-    return applied?.idempotencyKey.startsWith(key) ? [{ action, applied }] : [];
+    // A reuse takes this run's key but sent nothing: it moved no ticket.
+    return applied?.idempotencyKey.startsWith(key) === true && !isReusedRow(applied)
+      ? [{ action, applied }]
+      : [];
   });
 }
 
@@ -2389,46 +2393,21 @@ function isRead(action: MockAction): boolean {
 /** The argument names a key-owner read takes, in the order they are tried. */
 const OWNER_READ_ARGUMENTS = ['query', 'id', 'userId', 'user'] as const;
 
-/** Whether an action is a write on one surface. */
-function isWriteOn(action: MockAction, slug: string): boolean {
-  const parsed = parseSurfaceAction(action);
-  return parsed.ok && parsed.action.surface === slug && actionIntent(parsed.action) === 'write';
-}
-
 /**
- * Whether an earlier phase of this run sent a write on the surface: the
- * re-read before that write stands for the run. A row an earlier run sent,
- * carried into a resumed set, does not: a retry reads the ticket again.
+ * The writes this run landed before this invocation: its first phase, and
+ * this set's automatic rows when the manager's approval is being applied.
  */
-function sentEarlierThisRun(
+function earlierThisRun(
   output: LedgerOutput | DependentPendingOutput,
   phase: 'auto' | 'approved',
-  slug: string,
   run: { workItemId: Id<'workItems'>; runId: Id<'events'> },
-): boolean {
-  const thisRun = `${run.workItemId}:${run.runId}:`;
-  // Phase one of a two-phase run, and this set's automatic rows when the
-  // manager's approval is being applied.
-  const earlier = [
-    ...(isDependentPendingOutput(output)
-      ? [{ actions: output.initial.actions, applied: output.initial.applied }]
-      : []),
+): LandedWrite[] {
+  return [
+    ...(isDependentPendingOutput(output) ? thisRunWrites(output.initial, run) : []),
     ...(phase === 'approved'
-      ? [{ actions: output.actions ?? [], applied: output.applied ?? [] }]
+      ? thisRunWrites({ actions: output.actions ?? [], applied: output.applied ?? [] }, run)
       : []),
   ];
-  return earlier.some(({ actions, applied }) =>
-    actions.some((action, index) => {
-      const entry = applied[index];
-      const sent =
-        entry?.ok === true &&
-        !entry.held &&
-        !entry.awaitingApproval &&
-        !reusedFrom(entry) &&
-        entry.idempotencyKey.startsWith(thisRun);
-      return sent && isWriteOn(action, slug);
-    }),
-  );
 }
 
 /**
@@ -2476,6 +2455,8 @@ async function ticketRereadRefusal(
     item: Doc<'workItems'>;
     surface: SurfaceRecord;
     output: LedgerOutput | DependentPendingOutput;
+    /** What this run landed before this invocation; its status changes are Day0's own. */
+    earlier: readonly LandedWrite[];
     surfaces: readonly SurfaceRecord[];
   },
 ): Promise<string | undefined> {
@@ -2496,10 +2477,12 @@ async function ticketRereadRefusal(
       true,
     );
   }
-  const carried =
-    (isDependentPendingOutput(args.output)
+  const carried = [
+    ...((isDependentPendingOutput(args.output)
       ? args.output.initial.landedWrites
-      : args.output.landedWrites) ?? [];
+      : args.output.landedWrites) ?? []),
+    ...args.earlier,
+  ];
   let bearer = '';
   try {
     bearer = await decryptCredential(ctx, surface.credentialId);
@@ -2522,17 +2505,18 @@ async function ticketRereadRefusal(
           true,
         );
       }
-      const baseline = await ctx.runQuery(internal.work.listedSnapshot, {
+      const listings = await ctx.runQuery(internal.work.listedSnapshot, {
         workItemId: item._id,
         before: item.planPendingAt ?? Date.now(),
       });
+      const ownStates = [ticket, item.externalAlias].flatMap((id) => {
+        const state = id === undefined ? undefined : lastLandedState(carried, surface.slug, id);
+        return state === undefined ? [] : [state];
+      });
       const change = await ticketChange(ticketSnapshot(record), {
-        baseline: baseline ?? undefined,
-        ownState:
-          lastLandedState(carried, surface.slug, ticket) ??
-          (item.externalAlias
-            ? lastLandedState(carried, surface.slug, item.externalAlias)
-            : undefined),
+        baseline: listings.planned ?? undefined,
+        acknowledged: listings.acknowledged ?? undefined,
+        ownStates,
         owner: () => rereadKeyOwner(tools, surface),
       });
       return change === undefined ? undefined : withheldBeforeFirstWrite(ticket, change);
@@ -2564,9 +2548,11 @@ interface TicketReread {
  * and grant checks. The first write on the ticket's surface re-reads it;
  * when the ticket changed, that write and every write after it on any
  * surface are held with the reason, and nothing more is sent. A write on
- * another surface before it is not held. Undefined outside real mode, for
- * an item that is not a ticket on an MCP kanban surface, and when an
- * earlier phase of this run already sent a write on it.
+ * another surface before it is not held. Every invocation reads again, so
+ * a write the manager approves hours later is checked against the ticket as
+ * it is then; what this run already landed counts as Day0's own. Undefined
+ * outside real mode and for an item that is not a ticket on an MCP kanban
+ * surface.
  */
 async function ticketReread(
   ctx: ActionCtx,
@@ -2585,7 +2571,7 @@ async function ticketReread(
   if (!item || item.sourceCategory !== 'ticket-queue') return undefined;
   const surface = args.surfaces.find((row) => row.slug === item.sourceSystem);
   if (!surface || surface.class !== 'kanban' || surface.path !== 'mcp') return undefined;
-  if (sentEarlierThisRun(args.output, args.phase, surface.slug, args)) return undefined;
+  const earlier = earlierThisRun(args.output, args.phase, args);
   // The registry asks about a parked row too; parking sends nothing, so it
   // is not the first write. Rows are matched by their parsed payload.
   const parked = new Set(
@@ -2610,6 +2596,7 @@ async function ticketReread(
         item,
         surface,
         output: args.output,
+        earlier,
         surfaces: args.surfaces,
       }).then((reason) => (refusal = reason));
       return await found;

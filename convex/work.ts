@@ -360,36 +360,46 @@ const trackerSnapshot = v.object({
 /** The event that keeps each listing's snapshot of a ticket. */
 export const WORK_LISTED_EVENT = 'work.listed';
 
-/** How many of an agent's latest listing events a lookup reads, newest first. */
-const LISTING_SCAN_LIMIT = 500;
-
 /**
  * The latest snapshot a listing kept for an item, at or before a time.
  *
- * Args:
- *   ctx: Query or mutation context.
- *   row: The item and its agent.
- *   before: The latest listing time that counts.
+ * The read is the agent's listing events, newest first, down to the item's;
+ * an item's listings are kept only when its ticket changed, so they are few,
+ * and none is lost behind other tickets' listings.
  *
- * Returns:
- *   The snapshot, or undefined when none is among the agent's latest listings.
+ * @param row - The item and its agent.
+ * @param before - The latest listing time that counts.
+ * @returns The snapshot, or undefined when the item was never listed by then.
  */
 async function listedSnapshotAt(
   ctx: QueryCtx,
   row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
   before: number,
 ): Promise<TicketSnapshot | undefined> {
-  const listings = await ctx.db
+  const listing = await ctx.db
     .query('events')
     .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', WORK_LISTED_EVENT))
     .order('desc')
-    .take(LISTING_SCAN_LIMIT);
-  const listing = listings.find(
-    (event) =>
-      (event.payload as { workItemId?: unknown }).workItemId === row._id &&
-      event.createdAt <= before,
-  );
+    .filter((q) =>
+      q.and(q.eq(q.field('payload.workItemId'), row._id), q.lte(q.field('createdAt'), before)),
+    )
+    .first();
   return (listing?.payload as { tracker?: TicketSnapshot } | undefined)?.tracker;
+}
+
+/** The snapshot fields, in one order, so two snapshots compare by value. */
+const SNAPSHOT_FIELDS = [
+  'assigned',
+  'assigneeId',
+  'assigneeEmail',
+  'state',
+  'stateType',
+  'doNotAutomate',
+] as const;
+
+/** Whether two snapshots say the same about a ticket, whatever order their fields were stored in. */
+function sameSnapshot(left: TicketSnapshot, right: TicketSnapshot): boolean {
+  return SNAPSHOT_FIELDS.every((field) => left[field] === right[field]);
 }
 
 /**
@@ -405,7 +415,7 @@ async function recordListing(
   if (tracker === undefined) return;
   const now = Date.now();
   const last = await listedSnapshotAt(ctx, row, now);
-  if (last !== undefined && JSON.stringify(last) === JSON.stringify(tracker)) return;
+  if (last !== undefined && sameSnapshot(last, tracker)) return;
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: WORK_LISTED_EVENT,
@@ -415,15 +425,31 @@ async function recordListing(
 }
 
 /**
- * The ticket as the listing a plan was made under showed it: the latest
- * listing kept at or before the given time. Internal; read by the apply.
+ * The ticket as the listing a plan was made under showed it (the latest
+ * listing kept at or before the given time), and as the latest listing
+ * showed it when the manager last pressed Retry after that time, which the
+ * manager has seen. Internal; read by the apply.
  */
 export const listedSnapshot = internalQuery({
   args: { workItemId: v.id('workItems'), before: v.number() },
-  handler: async (ctx, args): Promise<TicketSnapshot | null> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ planned: TicketSnapshot | null; acknowledged: TicketSnapshot | null }> => {
     const row = await ctx.db.get(args.workItemId);
-    if (!row) return null;
-    return (await listedSnapshotAt(ctx, row, args.before)) ?? null;
+    if (!row) return { planned: null, acknowledged: null };
+    const retry = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', 'work.retry'))
+      .order('desc')
+      .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
+      .first();
+    const retriedAt = retry && retry.createdAt > args.before ? retry.createdAt : undefined;
+    return {
+      planned: (await listedSnapshotAt(ctx, row, args.before)) ?? null,
+      acknowledged:
+        retriedAt === undefined ? null : ((await listedSnapshotAt(ctx, row, retriedAt)) ?? null),
+    };
   },
 });
 

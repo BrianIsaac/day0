@@ -3589,10 +3589,64 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     expect(listings).toHaveLength(2);
     await expect(
       harness.query(internal.work.listedSnapshot, { workItemId, before: planMadeAt }),
-    ).resolves.toEqual(todo);
+    ).resolves.toEqual({ planned: todo, acknowledged: null });
     await expect(
       harness.query(internal.work.listedSnapshot, { workItemId, before: planMadeAt + 120_000 }),
-    ).resolves.toEqual(taken);
+    ).resolves.toEqual({ planned: taken, acknowledged: null });
+
+    // The manager pressed Retry after reading the taken listing: that listing is acknowledged.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.retry',
+        payload: { workItemId, resumeState: 'plan-approved', fromState: 'failed' },
+        createdAt: planMadeAt + 90_000,
+      });
+    });
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: planMadeAt }),
+    ).resolves.toEqual({ planned: todo, acknowledged: taken });
+  });
+
+  it("keeps one listing for an unchanged ticket whatever order its fields were stored in, and finds it behind other tickets' listings", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const tracker = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
+    const workItemId = await harness.mutation(internal.work.seedItem, { ...listed(agentId), tracker });
+    await harness.run(async (ctx) => {
+      const [listing] = await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.listed'))
+        .collect();
+      // As a backend that sorts an object's fields would hand it back.
+      await ctx.db.patch(listing!._id, {
+        payload: {
+          tracker: { doNotAutomate: false, stateType: 'unstarted', state: 'Todo', assigned: false },
+          workItemId,
+        },
+      });
+      for (let index = 0; index < 600; index += 1) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.listed',
+          payload: { workItemId: `other-${index}`, tracker },
+          createdAt: Date.now(),
+        });
+      }
+    });
+    await harness.mutation(internal.work.seedItem, { ...listed(agentId), tracker });
+    const mine = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'work.listed'))
+          .collect()
+      ).filter((event) => (event.payload as { workItemId: unknown }).workItemId === workItemId),
+    );
+    expect(mine).toHaveLength(1);
+    await expect(
+      harness.query(internal.work.listedSnapshot, { workItemId, before: Date.now() }),
+    ).resolves.toMatchObject({ planned: { state: 'Todo' } });
   });
 
   it('leaves a row with a plan or a run to the re-read before apply, and a finished row alone', async (): Promise<void> => {
