@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
+import { ConvexError } from 'convex/values';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -5518,5 +5519,45 @@ describe('the manager’s estimate at plan approval (N11)', (): void => {
       manualEstimateMinutes: 45,
     });
     vi.useRealTimers();
+  });
+});
+
+describe('the resend refusals the card shows (wave 3 review m9)', (): void => {
+  it('throws each refusal as a ConvexError whose data is the sentence the card reads', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending', undefined, { withSlack: true });
+    const owner = harness.withIdentity(OWNER);
+    const refusal = async (): Promise<unknown> =>
+      await owner.mutation(api.work.resendDecisionRequest, { workItemId }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    const inFlight = await refusal();
+    expect(inFlight).toBeInstanceOf(ConvexError);
+    expect((inFlight as ConvexError<string>).data).toBe('The request is still being delivered.');
+
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787770700.000100',
+    });
+    const delivered = await refusal();
+    expect(delivered).toBeInstanceOf(ConvexError);
+    expect((delivered as ConvexError<string>).data).toBe(
+      'The request was delivered; the manager holds its code.',
+    );
+
+    await owner.mutation(api.work.approvePlan, { workItemId });
+    const decided = await refusal();
+    expect(decided).toBeInstanceOf(ConvexError);
+    expect((decided as ConvexError<string>).data).toBe(
+      'There is no open decision request to resend.',
+    );
   });
 });

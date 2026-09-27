@@ -3589,11 +3589,13 @@ export const resendDecisionRequest = mutation({
     }
     const expectedState = decision?.kind === 'plan' ? 'plan-pending' : 'actions-pending';
     if (!decision || decision.decidedAt || row.state !== expectedState) {
-      throw new Error('There is no open decision request to resend.');
+      throw new ConvexError('There is no open decision request to resend.');
     }
-    if (decision.ts) throw new Error('The request was delivered; the manager holds its code.');
+    if (decision.ts) {
+      throw new ConvexError('The request was delivered; the manager holds its code.');
+    }
     if (!undeliveredDecisionReason(decision, Date.now())) {
-      throw new Error('The request is still being delivered.');
+      throw new ConvexError('The request is still being delivered.');
     }
     await supersedeDecisionRequest(ctx, row, decision, 'resend requested from the dashboard');
     return { ok: true };
