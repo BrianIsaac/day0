@@ -6,7 +6,13 @@
  * here, and each caller skips what it cannot see.
  */
 
-import { actionIntent, isManagerDm, isStatusChange, parseSurfaceAction, type ParsedSurfaceAction } from '../surfaces/policy';
+import {
+  actionIntent,
+  isManagerDm,
+  isStatusChange,
+  parseSurfaceAction,
+  type ParsedSurfaceAction,
+} from '../surfaces/policy';
 import type { SurfaceRecord } from '../surfaces/types';
 import type { ExecutionPlan, MockAction, PlanObligations, PlanTransition } from './types';
 
@@ -34,7 +40,10 @@ const PROMISED_TRANSITIONS: ReadonlySet<PlanTransition> = new Set([
   'conditional-on-manager',
 ]);
 /** The transitions under which the state change is the manager's decision, whatever the switch says. */
-const WITHHELD_TRANSITIONS: ReadonlySet<PlanTransition> = new Set(['withheld', 'conditional-on-manager']);
+const WITHHELD_TRANSITIONS: ReadonlySet<PlanTransition> = new Set([
+  'withheld',
+  'conditional-on-manager',
+]);
 
 /**
  * The declared obligations of a plan, when they line up with its steps.
@@ -49,7 +58,9 @@ const WITHHELD_TRANSITIONS: ReadonlySet<PlanTransition> = new Set(['withheld', '
  * Returns:
  *   The obligations, or undefined when the plan declares none it can use.
  */
-export function planObligations(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): PlanObligations | undefined {
+export function planObligations(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+): PlanObligations | undefined {
   const declared = plan.obligations;
   if (!declared || !Array.isArray(declared.steps)) return undefined;
   if (declared.steps.length !== plan.steps.length) return undefined;
@@ -112,7 +123,9 @@ export function readingSteps(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>)
  * comment, the reply and the state change are authored from results that
  * do not exist when phase one is written.
  */
-export function planReadsBeforeClosing(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): boolean {
+export function planReadsBeforeClosing(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+): boolean {
   return readingSteps(plan).length > 0;
 }
 
@@ -127,14 +140,18 @@ export function planReadsBeforeClosing(plan: Pick<ExecutionPlan, 'steps' | 'obli
  * judged (mock mode, a row from before the field existed) is left to the
  * executor's own flag, and mock mode never consults this.
  */
-export function closingPhaseOwed(plan: Pick<ExecutionPlan, 'steps' | 'obligations' | 'obligationsFailedOpen'>): boolean {
+export function closingPhaseOwed(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations' | 'obligationsFailedOpen'>,
+): boolean {
   if (planReadsBeforeClosing(plan)) return true;
   if (plan.obligationsFailedOpen !== undefined) return true;
   return plan.obligations !== undefined && planObligations(plan) === undefined;
 }
 
 /** The plan's declared word on the ticket state, or undefined when it declares nothing. */
-export function planTransition(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): PlanTransition | undefined {
+export function planTransition(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+): PlanTransition | undefined {
   return planObligations(plan)?.transition;
 }
 
@@ -164,7 +181,8 @@ export function transitionWithheld(plan: Pick<ExecutionPlan, 'steps' | 'obligati
   if (!declared) return false;
   return (
     WITHHELD_TRANSITIONS.has(declared.transition) ||
-    (declared.plannerTransition !== undefined && WITHHELD_TRANSITIONS.has(declared.plannerTransition))
+    (declared.plannerTransition !== undefined &&
+      WITHHELD_TRANSITIONS.has(declared.plannerTransition))
   );
 }
 
@@ -172,7 +190,10 @@ type ObligedPlan = Pick<ExecutionPlan, 'steps' | 'obligations'>;
 
 /** Whether either reading of the plan conditions the ticket state on the manager. */
 function conditionedOnManager(declared: PlanObligations): boolean {
-  return declared.transition === 'conditional-on-manager' || declared.plannerTransition === 'conditional-on-manager';
+  return (
+    declared.transition === 'conditional-on-manager' ||
+    declared.plannerTransition === 'conditional-on-manager'
+  );
 }
 
 /**
@@ -205,7 +226,9 @@ const QUESTION_CHARS = 600;
 /** The text a manager message carries, whichever transport it takes. */
 function messageText(parsed: ParsedSurfaceAction): string {
   if (parsed.kind === 'mcp.call') {
-    const text = ['text', 'message', 'body'].map((key) => parsed.toolArgs[key]).find((value) => typeof value === 'string');
+    const text = ['text', 'message', 'body']
+      .map((key) => parsed.toolArgs[key])
+      .find((value) => typeof value === 'string');
     return typeof text === 'string' ? text : '';
   }
   return typeof parsed.bodyJson?.text === 'string' ? parsed.bodyJson.text : '';
@@ -215,7 +238,9 @@ function messageText(parsed: ParsedSurfaceAction): string {
 function questionsIn(text: string): string {
   const asked = text.split(/(?<=[.?!])\s+|\n+/).filter((sentence) => QUESTION_MARK.test(sentence));
   const question = (asked.length > 0 ? asked.join(' ') : text).trim();
-  return question.length > QUESTION_CHARS ? `${question.slice(0, QUESTION_CHARS - 1).trimEnd()}…` : question;
+  return question.length > QUESTION_CHARS
+    ? `${question.slice(0, QUESTION_CHARS - 1).trimEnd()}…`
+    : question;
 }
 
 /** A question put to the manager that the plan's conditional writes wait on. */
@@ -259,9 +284,13 @@ export function openManagerQuestion(args: {
   const steps = managerConditionalSteps(args.plan);
   const declared = planObligations(args.plan);
   if (steps.length === 0 || !declared) return undefined;
-  const parsedWith = (action: MockAction): { parsed: ParsedSurfaceAction; surface: SurfaceRecord } | undefined => {
+  const parsedWith = (
+    action: MockAction,
+  ): { parsed: ParsedSurfaceAction; surface: SurfaceRecord } | undefined => {
     const result = parseSurfaceAction(action);
-    const surface = result.ok ? args.surfaces.find((row) => row.slug === result.action.surface) : undefined;
+    const surface = result.ok
+      ? args.surfaces.find((row) => row.slug === result.action.surface)
+      : undefined;
     return result.ok && surface ? { parsed: result.action, surface } : undefined;
   };
   const asked = [...args.actions, ...(args.askedEarlier ?? [])].flatMap((action) => {
@@ -276,12 +305,15 @@ export function openManagerQuestion(args: {
     const slug = parsed.surface.toLowerCase();
     const writes = (step: number): boolean =>
       (declared.steps[step - 1]!.writes ?? []).some((written) => written.toLowerCase() === slug);
-    const unconditional = declared.steps.some((row, index) => row.kind === 'write' && writes(index + 1));
+    const unconditional = declared.steps.some(
+      (row, index) => row.kind === 'write' && writes(index + 1),
+    );
     return unconditional ? undefined : steps.find(writes);
   };
   const waiting = args.actions.flatMap((action, index) => {
     const row = parsedWith(action);
-    if (!row || actionIntent(row.parsed) !== 'write' || isManagerDm(row.parsed, row.surface)) return [];
+    if (!row || actionIntent(row.parsed) !== 'write' || isManagerDm(row.parsed, row.surface))
+      return [];
     const step = stepOf(row.parsed);
     return step === undefined ? [] : [{ index, step }];
   });
@@ -314,7 +346,9 @@ export function isWithheldForAnswer(reason: string): boolean {
  * Returns:
  *   The reason the card shows, with the question as it was asked.
  */
-export function openQuestionStopReason(open: Pick<OpenManagerQuestion, 'question' | 'steps'>): string {
+export function openQuestionStopReason(
+  open: Pick<OpenManagerQuestion, 'question' | 'steps'>,
+): string {
   const steps = open.steps.map((step) => `step ${step}`).join(' and ');
   return `the approved plan leaves ${steps} to the manager's answer, and the question is still open. Asked in the manager DM: ${open.question}`;
 }
