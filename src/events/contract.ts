@@ -522,6 +522,11 @@ export interface SurfaceAccessSetPayload extends SurfaceNamed {
 /** The payload of `surface.expiring`. */
 export interface SurfaceExpiringPayload extends SurfaceNamed {
   readonly expiresAt: number;
+  /**
+   * The calendar day, `YYYY-MM-DD` in the agent's zone, the week's notice
+   * falls due (Q5, N12). Absent on a notice written before the zone.
+   */
+  readonly noticeDay?: string;
 }
 
 /** The payload of `surface.approved`. */

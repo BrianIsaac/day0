@@ -26,6 +26,7 @@ import { intakeScopeValues } from '../src/surfaces/intake-scope';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent } from './eventLog';
 import { isEventOf } from '../src/events/contract';
+import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -1426,9 +1427,6 @@ export const SURFACE_ACCESS_DEFAULT_DAYS = 90;
 /** The longest access a card or the manager can set, in days. */
 export const SURFACE_ACCESS_MAX_DAYS = 365;
 
-/** How long before the end date the manager is told it is coming (Q5). */
-export const EXPIRY_NOTICE_MS = 7 * DAY_MS;
-
 /** Surfaces one page of the access-clock migration reads. */
 const ACCESS_BACKFILL_BATCH = 100;
 
@@ -1664,8 +1662,10 @@ export const setAccessDays = mutation({
 /**
  * Tell the manager, once per end date, that a surface's access ends within a week.
  *
- * Internal; the hourly re-probe sweep's. Writes one `surface.expiring` event
- * per end date, so a date the manager moves is noticed again.
+ * Internal; the hourly re-probe sweep's. The week is counted in the agent's
+ * zone (N12): the notice is due from the start of the day a week before the
+ * end date there, and the event names that day. Writes one `surface.expiring`
+ * event per end date, so a date the manager moves is noticed again.
  *
  * Returns:
  *   Whether a notice was written.
@@ -1678,17 +1678,23 @@ export const recordExpiryNotice = internalMutation({
       !surface ||
       !ACCESS_VERDICTS.includes(surface.verdict) ||
       surface.reason === 'expired' ||
-      surface.expiresAt === undefined ||
-      surface.expiresAt <= args.now ||
-      surface.expiresAt - args.now > EXPIRY_NOTICE_MS
+      surface.expiresAt === undefined
     ) {
       return false;
     }
+    const agent = await ctx.db.get(surface.agentId);
+    if (!agent) return false;
+    const zone = agentZone(agent);
+    if (!expiryNoticeDue(args.now, surface.expiresAt, zone)) return false;
     if (await surfaceEventExists(ctx, surface, 'surface.expiring', surface.expiresAt)) return false;
     await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.expiring',
-      payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
+      payload: {
+        surfaceId: surface._id,
+        expiresAt: surface.expiresAt,
+        noticeDay: expiryNoticeDay(surface.expiresAt, zone),
+      },
       createdAt: args.now,
     });
     return true;

@@ -2699,7 +2699,32 @@ describe('access expiry (Q5)', (): void => {
     for (const now of [expiresAt - 7 * DAY, expiresAt - 6 * DAY]) {
       await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now });
     }
-    expect(await payloads(harness, 'surface.expiring')).toEqual([{ surfaceId, expiresAt }]);
+    expect(await payloads(harness, 'surface.expiring')).toEqual([
+      { surfaceId, expiresAt, noticeDay: '2026-10-04' },
+    ]);
+  });
+
+  it('counts the week in the agent’s zone and names the notice day (Q5, N12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const agentId = (await readSurface(harness, surfaceId)).agentId;
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { zone: 'Asia/Singapore' }));
+    // Midnight UTC on 11 October is 08:00 on 11 October in Singapore; the
+    // notice day there is 4 October, which starts at 16:00 UTC on 3 October.
+    const expiresAt = APPROVED_AT + 30 * DAY;
+    const noticeDayStarts = Date.UTC(2026, 9, 3, 16);
+    await expect(
+      harness.mutation(internal.surfaces.recordExpiryNotice, {
+        surfaceId,
+        now: noticeDayStarts - 1,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: noticeDayStarts }),
+    ).resolves.toBe(true);
+    expect(await payloads(harness, 'surface.expiring')).toEqual([
+      { surfaceId, expiresAt, noticeDay: '2026-10-04' },
+    ]);
   });
 
   it('notices a new end date after the manager moves it', async (): Promise<void> => {
@@ -2714,8 +2739,8 @@ describe('access expiry (Q5)', (): void => {
     const second = first - DAY + 3 * DAY;
     await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: second - DAY });
     expect(await payloads(harness, 'surface.expiring')).toEqual([
-      { surfaceId, expiresAt: first },
-      { surfaceId, expiresAt: second },
+      { surfaceId, expiresAt: first, noticeDay: '2026-10-04' },
+      { surfaceId, expiresAt: second, noticeDay: '2026-10-06' },
     ]);
   });
 
