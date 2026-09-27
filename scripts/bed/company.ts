@@ -29,7 +29,7 @@ import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../../src/docs/host-di
 import { replaceSpans, structuralSpans } from '../../src/redaction/structural';
 import { containsProvenanceTrailer } from '../../src/surfaces/policy';
 import { composeArguments } from '../compose';
-import { UndoLedger } from '../rehearsal/cleanup';
+import { UndoLedger } from '../lib/cleanup';
 import {
   deleteComment,
   readComments,
@@ -37,7 +37,7 @@ import {
   type IssueComment,
   type LinearRequestError,
   type RetryIo,
-} from '../rehearsal/linear';
+} from '../lib/linear';
 import { DOCS_STUB } from '../setup';
 import { applyDocs, planDocs, readManifest, trackedPages, type DocsPlan } from './docs';
 import {

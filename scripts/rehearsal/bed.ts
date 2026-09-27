@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { parseAdminKey } from '../setup';
 import { upsertEnvText } from '../demo-bed';
 import { writePrivateEnv } from '../private-env';
-import { BED_PROFILES, bedComposeArgs, pinnedNodeImage, redactorVolumeClone } from './docker';
+import { pinnedNodeImage, redactorVolumeClone } from '../lib/docker';
+import { BED_PROFILES, bedComposeArgs } from './docker';
 import type { BedPorts } from './env';
 import { must, waitUntil, type Runner, type RunResult, type ServerHandle, type ServerStarter } from './process';
 

@@ -36,15 +36,15 @@ import {
   checkWrongKeyReadRepaired,
   type CheckResult,
 } from './checks';
-import type { UndoLedger } from './cleanup';
+import type { UndoLedger } from '../lib/cleanup';
 import type { Dashboard } from './driver';
 import { bedEnvValues, envRefusal, secretsRefusal, type RehearsalSecrets } from './env';
+import { deleteComment, readComments, type LinearClient } from '../lib/linear';
+import type { SlackClient } from '../lib/slack';
 import {
   assignIssue,
-  deleteComment,
   issueRestoreSteps,
   moveIssue,
-  readComments,
   readIssueSnapshot,
   readStateHistory,
   stateMovedByActor,
@@ -52,7 +52,6 @@ import {
   readViewer,
   ticketRestRefusal,
   type IssueSnapshot,
-  type LinearClient,
 } from './linear';
 import { projectRefusal, type RehearsalOptions } from './options';
 import type { RunDirectory } from './output';
@@ -60,7 +59,7 @@ import { pickFreePorts, portsFromBase, portsRefusal } from './ports';
 import { waitUntil, type Runner, type ServerHandle, type ServerStarter } from './process';
 import { shotPath } from './output';
 import type { RunRecord } from './report';
-import { belongsToWorkItems, botMessagesSince, type SlackClient } from './slack';
+import { belongsToWorkItems, botMessagesSince } from './slack';
 
 /** The agent the rehearsal deploys. */
 export const AGENT_NAME = 'rehearsal worker';

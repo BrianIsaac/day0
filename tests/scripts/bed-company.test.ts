@@ -15,7 +15,7 @@ import {
 } from '../../scripts/bed/company';
 import { MANIFEST_FILE } from '../../scripts/bed/docs';
 import { LABEL_DESCRIPTION, markedDescription } from '../../scripts/bed/linear';
-import { RETRY_PAUSE_MS } from '../../scripts/rehearsal/linear';
+import { RETRY_PAUSE_MS } from '../../scripts/lib/linear';
 import { comparePage, NOTION_READER_SCRIPT, parseNotionRead } from '../../scripts/bed/notion';
 import { standingAsksFromFile } from '../../scripts/bed/slack';
 import { loadBedSpec } from '../../scripts/bed/spec';

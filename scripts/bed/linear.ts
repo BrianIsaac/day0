@@ -1,5 +1,6 @@
 /**
- * The company bed's Linear calls, over the rehearsal's GraphQL client.
+ * The company bed's Linear calls, over the shared GraphQL client in
+ * `scripts/lib/linear.ts`.
  *
  * The bed owns exactly what carries its marker: an issue whose description
  * ends with `day0-demo-key: <key>`, and the label seed created (its
@@ -9,7 +10,7 @@
  */
 
 import { endsWithProvenanceTrailer } from '../../src/surfaces/policy';
-import { LinearClient } from '../rehearsal/linear';
+import { LinearClient } from '../lib/linear';
 
 export { LinearClient };
 

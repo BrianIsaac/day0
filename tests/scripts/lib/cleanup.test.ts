@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UndoLedger } from '../../../scripts/rehearsal/cleanup';
+import { UndoLedger } from '../../../scripts/lib/cleanup';
 
 describe('the undo ledger', (): void => {
   it('runs every registered step last-in first-out and reports each outcome', async (): Promise<void> => {

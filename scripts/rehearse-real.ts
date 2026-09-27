@@ -21,18 +21,18 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { composeDown, type Bed } from './rehearsal/bed';
 import { connectBackend } from './rehearsal/backend';
-import { UndoLedger } from './rehearsal/cleanup';
+import { UndoLedger } from './lib/cleanup';
 import { parseLines } from './rehearsal/docker';
 import { PlaywrightDashboard } from './rehearsal/driver';
 import { parseEnvText, parseSecrets } from './rehearsal/env';
-import { LinearClient } from './rehearsal/linear';
+import { LinearClient } from './lib/linear';
 import { parseComposeProjects, parseRehearsalArguments, rehearsalProjectName, USAGE } from './rehearsal/options';
 import { RunDirectory, runDirectory } from './rehearsal/output';
 import { portIsFree } from './rehearsal/ports';
 import { runCommand, startServer } from './rehearsal/process';
 import { runStamp, type RunRecord } from './rehearsal/report';
 import { runPhases, type RehearsalContext } from './rehearsal/run';
-import { SlackClient } from './rehearsal/slack';
+import { SlackClient } from './lib/slack';
 
 function fail(message: string): never {
   process.stderr.write(`error: ${message}\n`);

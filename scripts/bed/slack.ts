@@ -1,7 +1,8 @@
 /**
  * The company bed's Slack calls. The token check and deletes go through the
- * rehearsal's client; the channel listing and thread reads it has no method
- * for are the read-only calls below, over the same token and fetch.
+ * shared client in `scripts/lib/slack.ts`; the channel listing and thread
+ * reads it has no method for are the read-only calls below, over the same
+ * token and fetch.
  *
  * The bed never posts. What it deletes is only what the shared bot posted,
  * carrying the server's provenance trailer, in the bed's own conversations,
@@ -16,7 +17,7 @@ import {
   SlackClient,
   type SlackAnswer,
   type SlackRetryIo,
-} from '../rehearsal/slack';
+} from '../lib/slack';
 
 export { SlackClient };
 export type { SlackRetryIo };
@@ -55,7 +56,7 @@ export interface BedMessage {
 
 /**
  * A fetch that records the token's scopes from the header Slack returns on
- * every Web API call, so the rehearsal client's `auth.test` reports them too.
+ * every Web API call, so the shared client's `auth.test` reports them too.
  *
  * Args:
  *   fetchImpl: The fetch to wrap.
