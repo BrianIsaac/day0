@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -17,7 +18,9 @@ import {
   backendIdentityRefusal,
   buildEnvironmentRefusal,
   chooseLocalModel,
+  composeProjectRefusal,
   DEFAULT_PORTS,
+  defaultProjectName,
   localTargetRefusals,
   majorVersion,
   modelAddresses,
@@ -52,9 +55,11 @@ const directories: string[] = [];
  * Returns:
  *   The directory path.
  */
-function checkout(envLocal?: string): string {
-  const directory = mkdtempSync(join(tmpdir(), 'day0-setup-'));
-  directories.push(directory);
+function checkout(envLocal?: string, name?: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'day0-setup-'));
+  directories.push(root);
+  const directory = name === undefined ? root : join(root, name);
+  if (name !== undefined) mkdirSync(directory);
   mkdirSync(join(directory, 'scripts'));
   writeFileSync(join(directory, 'package.json'), '{"name":"day0"}\n', 'utf8');
   writeFileSync(join(directory, 'docker-compose.yml'), 'services:\n', 'utf8');
@@ -112,6 +117,8 @@ interface HarnessOptions {
   environment?: Record<string, string | undefined>;
   /** Whether the backend accepts the admin key the file already holds. */
   adminKeyAccepted?: boolean;
+  /** The checkout's directory name, as a clone would give it; a temporary name otherwise. */
+  name?: string;
 }
 
 /**
@@ -124,7 +131,7 @@ interface HarnessOptions {
  *   The injectable environment, the recorded commands and the printed lines.
  */
 function harness(options: HarnessOptions = {}): Harness {
-  const directory = checkout(options.envLocal);
+  const directory = checkout(options.envLocal, options.name);
   const commands: { command: string; args: string[] }[] = [];
   const output: string[] = [];
   const answers = [...(options.answers ?? [])];
@@ -405,6 +412,50 @@ describe('refusing anything that is not this machine', (): void => {
   it('says what to do about each refusal', (): void => {
     const [refusal] = localTargetRefusals({ CONVEX_DEPLOYMENT: 'dev:whispering-hare-123' }, {});
     expect(refusal.fix).toContain('.env.local');
+  });
+});
+
+describe('the Compose project a clone sets up under', (): void => {
+  it('sets a fresh clone in a directory called day0 up under a project of its own', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'], name: 'day0' });
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(0);
+    const project = readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME;
+    expect(project).toMatch(/^day0-[0-9a-f]{6}$/);
+    expect(h.output.join('\n')).toContain(`Compose project ${project}.`);
+    // The name is written, so a second run takes the file's and asks nothing.
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(0);
+    expect(readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME).toBe(project);
+  });
+
+  it('turns a directory name with capitals, spaces and dots into one Compose takes', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'], name: 'My Day0.Clone' });
+    expect(await runSetup(keyRoute({ project: undefined }), h.io)).toBe(0);
+    expect(readEnvValues(join(h.directory, '.env.local')).COMPOSE_PROJECT_NAME).toBe(
+      'my-day0-clone',
+    );
+  });
+
+  it('refuses a --project Compose would refuse before it writes anything, and names one it takes', async (): Promise<void> => {
+    const h = harness({ answers: ['synthetic-key'] });
+    expect(await runSetup(keyRoute({ project: 'Day0 Local' }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('--project day0-local');
+    expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
+    expect(h.commands.some((call) => call.command === 'pnpm')).toBe(false);
+  });
+
+  it('derives the default from the directory, adding a suffix from the path only where the name is taken', (): void => {
+    expect(defaultProjectName('/home/a/Day0 Work')).toBe('day0-work');
+    expect(defaultProjectName('/home/a/day0')).toMatch(/^day0-[0-9a-f]{6}$/);
+    expect(defaultProjectName('/home/a/day0')).toBe(defaultProjectName('/home/a/day0'));
+    expect(defaultProjectName('/home/a/day0')).not.toBe(defaultProjectName('/home/b/day0'));
+    expect(defaultProjectName('/home/a/day0-redactor-warm')).toMatch(
+      /^day0-redactor-warm-[0-9a-f]{6}$/,
+    );
+    expect(defaultProjectName('/home/a/...')).toMatch(/^day0-[0-9a-f]{6}$/);
+    expect(composeProjectRefusal('day0-setup-test')).toBeUndefined();
+    expect(composeProjectRefusal('day0_setup')).toBeUndefined();
+    expect(composeProjectRefusal('Day0')).toContain('--project day0');
+    expect(composeProjectRefusal('-day0')).toContain('--project day0');
   });
 });
 

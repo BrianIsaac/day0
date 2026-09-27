@@ -51,6 +51,7 @@
  * same project back on the same ports.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -609,6 +610,86 @@ export interface CheckoutClaim {
   mainWorktree: boolean;
   /** The project `.env.local` in this checkout names. */
   fileProject: string;
+}
+
+/** What Compose takes as a project name: lower case, digits, `-` and `_`, from a letter or digit. */
+const COMPOSE_PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+/**
+ * A name Compose takes, made from any other: lower-cased, every run of other
+ * characters one `-`, and nothing but a letter or digit at either end.
+ *
+ * Args:
+ *   name: A directory name or a name the reader typed.
+ *
+ * Returns:
+ *   The name, possibly empty when nothing in it survives.
+ */
+function composeSafeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+    .replace(/[^a-z0-9]+$/, '');
+}
+
+/**
+ * Whether a name, or a volume it implies, is one this helper never sets up.
+ *
+ * Args:
+ *   project: A Compose project name.
+ *
+ * Returns:
+ *   True for a protected or read-only project.
+ */
+function reservedProject(project: string): boolean {
+  return (
+    READ_ONLY_PROJECTS.includes(project) ||
+    [project, ...projectVolumes(project)].some(
+      (name: string): boolean =>
+        PROTECTED_PROJECTS.includes(name) || PROTECTED_VOLUMES.includes(name),
+    )
+  );
+}
+
+/**
+ * The Compose project a checkout sets up under when neither the command line
+ * nor `.env.local` names one: the directory's name as Compose takes it, with a
+ * short suffix from the checkout's path when that name is empty or is one of
+ * the protected ones. A clone into `day0`, the README's own command, then sets
+ * up beside the operator's stacks rather than being refused, and the suffix is
+ * stable, so a dry run and the run after it agree; the setup writes the name
+ * to `.env.local`, and every later run reads it from there.
+ *
+ * Args:
+ *   checkoutRoot: The checkout's real path.
+ *
+ * Returns:
+ *   A project name Compose takes and this helper may set up.
+ */
+export function defaultProjectName(checkoutRoot: string): string {
+  const name = composeSafeName(basename(checkoutRoot));
+  if (name !== '' && !reservedProject(name)) return name;
+  const suffix = createHash('sha256').update(checkoutRoot).digest('hex').slice(0, 6);
+  return `${name || 'day0'}-${suffix}`;
+}
+
+/**
+ * Refuse a project name Compose would refuse, naming one it takes.
+ *
+ * Args:
+ *   project: The name from the command line or `.env.local`.
+ *
+ * Returns:
+ *   The refusal, or undefined for a name Compose takes.
+ */
+export function composeProjectRefusal(project: string): string | undefined {
+  if (COMPOSE_PROJECT_PATTERN.test(project)) return undefined;
+  const suggestion = composeSafeName(project) || 'day0-local';
+  return (
+    `"${project}" is not a name Docker Compose takes for a project: lower-case letters, digits, ` +
+    `"-" and "_" only, starting with a letter or digit. Use \`--project ${suggestion}\`.`
+  );
 }
 
 /**
@@ -2020,7 +2101,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const project = options.project ?? existing.COMPOSE_PROJECT_NAME?.trim() ?? '';
-    const resolvedProject = project !== '' ? project : basename(io.cwd);
+    const resolvedProject = project !== '' ? project : defaultProjectName(realpathSync(io.cwd));
+    const nameRefusal = composeProjectRefusal(resolvedProject);
+    if (nameRefusal !== undefined) {
+      io.log(`error: ${nameRefusal}`);
+      return 1;
+    }
     assertLocalProject(resolvedProject, {
       mainWorktree: isMainWorktree(io.cwd),
       fileProject: existing.COMPOSE_PROJECT_NAME ?? '',
