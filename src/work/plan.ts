@@ -6,6 +6,7 @@ import { verdictFor } from '../surfaces/verdict';
 import { redactTokenShapes } from '../surfaces/redact';
 import type { SpanModel } from '../redaction/client';
 import { redactText } from '../redaction/redact';
+import { answeredQuestionLines } from './charter-answers';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
@@ -772,6 +773,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     `willDo: ${charter.proposedBoundaries.willDo.join(' | ')}`,
     `willNotDo: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
     `escalationTriggers: ${charter.proposedBoundaries.escalationTriggers.join(' | ')}`,
+    ...answeredQuestionLines(charter),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,

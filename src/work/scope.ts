@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Charter } from '../agent/charter';
 import { agentJson, makeAgent } from '../lib/mastra';
+import { answeredQuestionLines } from './charter-answers';
 import { qualityFit } from './quality-fit';
 import { comparableSurfaceText } from './skill-shape';
 import {
@@ -343,6 +344,7 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
       : []),
     `escalationTriggers: ${clauses(charter.proposedBoundaries.escalationTriggers)}`,
     `adjacentRoles: ${adjacent}`,
+    ...answeredQuestionLines(charter),
     ...(connected.length > 0
       ? [`Systems the role is connected to now: ${connected.join(', ')}`]
       : []),

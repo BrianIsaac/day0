@@ -182,6 +182,25 @@ describe('one scope judgement for the R6 card', (): void => {
     );
   });
 
+  it("hands the model the manager's answers to the charter's questions, which bind every later item", (): void => {
+    const answered = {
+      ...r6Charter,
+      answeredQuestions: [
+        {
+          question: 'Who owns the Q4 Revenue Tracker?',
+          answer: 'Finance ops.',
+          answeredAt: '2026-09-20T00:00:00.000Z',
+        },
+      ],
+    };
+    expect(
+      charterJudgementPrompt({ candidate: r6Card, charter: answered, agentsMd: '' }),
+    ).toContain('  - Who owns the Q4 Revenue Tracker? Finance ops.');
+    expect(
+      charterJudgementPrompt({ candidate: r6Card, charter: r6Charter, agentsMd: '' }),
+    ).not.toContain('Questions the manager answered');
+  });
+
   it('keeps the mock verdict the card had before, without a model call', async (): Promise<void> => {
     const verdict = await evaluateCandidate(r6Card, context('mock'), noSkill);
 
