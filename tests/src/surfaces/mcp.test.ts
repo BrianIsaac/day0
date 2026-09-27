@@ -1,5 +1,5 @@
 import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
-import { RedactorUnavailableError } from '../../../src/redaction/client';
+import { RedactorUnavailableError, type SpanModel } from '../../../src/redaction/client';
 import { describe, expect, it, vi } from 'vitest';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
@@ -796,7 +796,11 @@ describe('the browser floor across one run', (): void => {
    * browser context that starts blank, as the driver's `--isolated` mode does:
    * the page is only there once that client has navigated to it.
    */
-  function driver(snapshot = PAGE, tools: readonly string[] = BROWSER_TOOLS) {
+  function driver(
+    snapshot = PAGE,
+    tools: readonly string[] = BROWSER_TOOLS,
+    spanModel?: SpanModel,
+  ) {
     const calls: Array<{ args: unknown; tool: string }> = [];
     const disconnects = { count: 0 };
     const clientsBuilt = { count: 0 };
@@ -839,6 +843,7 @@ describe('the browser floor across one run', (): void => {
       },
       now: (): number => now,
       browserMcpUrl: DRIVER,
+      ...(spanModel ? { spanModel } : {}),
     });
     return { adapter, calls, clientsBuilt, disconnects };
   }
@@ -1015,6 +1020,34 @@ describe('the browser floor across one run', (): void => {
     );
     expect(JSON.stringify(clicked.elements)).not.toContain('pipeline-tile-local');
     expect(clicked.elements?.[0]).toMatchObject({ ref: 'e40', role: 'button' });
+  });
+
+  it('names no element, and asks the redactor nothing about one, for a call refused before it was sent', async (): Promise<void> => {
+    const asked: string[] = [];
+    const counting: SpanModel = {
+      name: 'counting',
+      spans: async (text: string): Promise<[]> => {
+        asked.push(text);
+        return [];
+      },
+    };
+    const { adapter, calls } = driver(
+      '- textbox "Password notes" [ref=e30]',
+      BROWSER_TOOLS,
+      counting,
+    );
+    await adapter.apply(ctx, run, open, 0, 'k-open');
+    const refused = await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
+      1,
+      'k-fill',
+    );
+    expect(refused.ok).toBe(false);
+    expect(refused).not.toHaveProperty('elements');
+    expect(asked.some((text) => text.includes('Password notes'))).toBe(false);
+    expect(calls.map((c) => c.tool)).not.toContain('browser_fill_form');
   });
 
   it('lets a read name a lone element of any role, which a write may not', async (): Promise<void> => {

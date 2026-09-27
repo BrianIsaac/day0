@@ -868,9 +868,7 @@ export class McpAdapter implements SurfaceAdapter {
         }
         writeAttempted = actionIntent(call) === 'write';
         let toolArgs = call.toolArgs;
-        // Set once the elements are resolved; every row for a call that was
-        // sent to them names them.
-        let actedOn: { elements?: ActedElement[]; redaction?: 'structural-only' } = {};
+        let resolvedElements: readonly SnapshotElement[] = [];
         if (browserDriven && needsElementRef(call.tool)) {
           const resolved = await this.resolveRefs(
             client,
@@ -902,7 +900,7 @@ export class McpAdapter implements SurfaceAdapter {
             };
           }
           toolArgs = resolved.toolArgs;
-          actedOn = await this.actedElements(resolved.refs, bearer);
+          resolvedElements = resolved.refs;
           if (carriesSecret) {
             const misplaced = secretPlacementRefusal(
               call.tool,
@@ -920,6 +918,8 @@ export class McpAdapter implements SurfaceAdapter {
         if (finalAuthorityRefusal) {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
+        // Named on every row for a call that was sent to the resolved elements.
+        const actedOn = await this.actedElements(resolvedElements, bearer);
         const send = async (): Promise<unknown> => await tool.execute?.(toolArgs, {});
         const result = interpretToolResult(
           writeAttempted && client.sendOnce ? await client.sendOnce(send) : await send(),
