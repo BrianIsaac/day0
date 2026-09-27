@@ -2,6 +2,17 @@
 
 Version maintenance record for Day0, from the git history, grouped by the milestones the project has shipped against. Releases are tagged with semantic versions from 27 September 2026: `v0.1.0` is the build of 19 September 2026 (the tag `goai-final` that once named it was retired on 27 September 2026); each engineering wave that reaches `main` takes the next minor, a hotfix on a release the next patch, and `v1.0.0` is the pilot release. Hashes are the commits on `main`, 1,607 of them at `f739614`; a merge of a job branch is listed by the substantive commits it carried, and counts are by author date. Every commit follows conventional-commit style, so `git log --no-merges --format='%ad %h %s' --date=short` is the full record and this file is its digest.
 
+## v0.2.0: wave 1 of the post-review engineering, 27 September 2026
+
+The first release cut from `staging` under the engineering plan (`docs/plans/engineering-plan-2026-09-27.md`): units U1, U2, U4, U5 and U11 of the consolidated backlog, one pane each, landed with the four-command gate on every merge, reviewed as one change, plus two fixes from that review. 101 commits; 3,761 tests in 267 files.
+
+- **First-run defects (U1).** Shift+C is left to a focused field; a plan rejected on one employee holds a sibling's plan for the manager and never reaches autonomy; cut or content-filtered model replies are refused, moderation and errors are read inside a 200, and a plan draft the model refuses fails instead of re-running every lease; the Day-1 1:1 gains a Finish control and a composer bound.
+- **The held question and the credential (U2).** With no chat surface, a question in the executor's notes withholds the writes that wait on it and renders as a hold; a superseded credential whose value returns is reactivated; a documentation source over 500 pages is paged, not refused, and its cursor resumes.
+- **The key, the session and the origin (U4).** Setup adopts an existing credential key before minting one; the unlock cookie is a signed per-browser session instead of the secret; every credentialed browser action checks the page it is on; the MCP client connects to the address that was checked; the two POST routes refuse a cross-origin request.
+- **Tickets, the README path and a second machine (U5).** A ticket assigned to a person is skipped and Retry never re-sends a status change; the README's setup path runs on a clean machine; setup reports an unreachable daemon or model endpoint instead of failing later.
+- **The evaluation figures (U11).** No grader reads text the harness wrote; the frozen results carry their task definitions; the gate matrix carries a commit; the published comparison carries a caveat naming the five ways the task set favoured one arm (decision N16); superseded result directories moved to the private archive.
+- **From the review.** A cut good-habits reply no longer aborts the steps after charter approval; the MCP and browser rungs refuse any placeholder other than the credential's before sending.
+
 ## v0.1.0: the finals build, 16 to 19 September 2026
 
 The tag `v0.1.0` marks this release at `7f59973`. The recording ran on `f739614`, the last commit dated 19 September, and the hosted halves were brought to it on 20 September 2026: the cloud Convex functions first (293 functions, three new empty tables, no row of the protected office changed), then the app at `day0-olive.vercel.app`. 415 commits dated 17 to 19 September; 3,517 tests in 252 files.
