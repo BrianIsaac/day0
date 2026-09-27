@@ -4294,3 +4294,22 @@ describe('the evaluation’s record (step 29)', (): void => {
     vi.useRealTimers();
   });
 });
+
+describe('the manager’s estimate at plan approval (N11)', (): void => {
+  it('keeps the optional minutes the manager says the work would have taken, and refuses a nonsense figure', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending');
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: -5 }),
+    ).rejects.toThrow('whole number of minutes');
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    await owner.mutation(api.work.approvePlan, { workItemId, manualEstimateMinutes: 45 });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-approved',
+      manualEstimateMinutes: 45,
+    });
+    vi.useRealTimers();
+  });
+});

@@ -1,6 +1,6 @@
 import { closingResume } from '../src/work/closing-resume';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -3204,6 +3204,9 @@ async function approvePlanInTransaction(
   await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
 }
 
+/** The longest manual estimate the plan card takes: a working month. */
+const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
+
 export const approvePlan = mutation({
   args: {
     workItemId: v.id('workItems'),
@@ -3213,12 +3216,24 @@ export const approvePlan = mutation({
     ),
     /** The manager's answer to the planner's own note, for this run. */
     note: v.optional(v.string()),
+    /** N11: "this would have taken me about N minutes", optional; hours saved sums it. */
+    manualEstimateMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     if (row.state !== 'plan-pending') {
       throw new Error(`workItem state is ${row.state}; expected plan-pending`);
     }
+    const estimate = args.manualEstimateMinutes;
+    if (
+      estimate !== undefined &&
+      (!Number.isInteger(estimate) || estimate < 1 || estimate > MANUAL_ESTIMATE_MAX_MINUTES)
+    ) {
+      throw new ConvexError(
+        `The estimate is a whole number of minutes from 1 to ${MANUAL_ESTIMATE_MAX_MINUTES}.`,
+      );
+    }
+    if (estimate !== undefined) await ctx.db.patch(row._id, { manualEstimateMinutes: estimate });
     // Approve-with-answer is one decision: the answers land, the charter is
     // amended where a question is still open there, and the plan is approved
     // in the same transaction, or none of it happens.
