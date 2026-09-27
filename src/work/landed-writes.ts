@@ -35,7 +35,10 @@ const PROMPT_ROWS = 24;
 const EXCERPT_CHARS = 160;
 
 /** The note on a ledger row that reused a landed comment or message. */
-export function reusedLandedNote(providerId: string | undefined, kind: 'comment' | 'message'): string {
+export function reusedLandedNote(
+  providerId: string | undefined,
+  kind: 'comment' | 'message',
+): string {
   return `reused landed ${kind} ${providerId ?? '(no provider id)'}: this target already carries the ${kind} an earlier run of this item landed; not sent again`;
 }
 
@@ -89,7 +92,9 @@ export function landedWritesOf(output: unknown): LandedWrite[] {
 /** The comment a reply comment sits under, when the action names one. */
 function parentComment(parsed: ParsedSurfaceAction): string | undefined {
   if (parsed.kind !== 'mcp.call') return undefined;
-  const parent = ['parentId', 'parent_id', 'parentCommentId', 'parent'].map((key) => parsed.toolArgs[key]).find((value) => typeof value === 'string' && value.trim() !== '');
+  const parent = ['parentId', 'parent_id', 'parentCommentId', 'parent']
+    .map((key) => parsed.toolArgs[key])
+    .find((value) => typeof value === 'string' && value.trim() !== '');
   return typeof parent === 'string' ? parent.trim() : undefined;
 }
 
@@ -119,13 +124,16 @@ export function writeTarget(
   const target = messageTarget(parsed);
   if (!target) return undefined;
   const channel = target.split('/')[0];
-  if (surface?.managerDmChannelId && channel === surface.managerDmChannelId.trim()) return undefined;
+  if (surface?.managerDmChannelId && channel === surface.managerDmChannelId.trim())
+    return undefined;
   return { key: `${parsed.surface}|message|${target}`, kind: 'message', target };
 }
 
-const CORRECTION_VERB = /\b(?:correct|fix|amend|revise|rewrite|redo|reword|edit|update|change|replace|adjust)\b/gi;
+const CORRECTION_VERB =
+  /\b(?:correct|fix|amend|revise|rewrite|redo|reword|edit|update|change|replace|adjust)\b/gi;
 const CORRECTION_NOUN = /\b(?:comment|note|message|reply|wording|text|body|summary|write-?up)\b/i;
-const FAULTED = /\b(?:is|was|are|were|reads|read)\s+(?:wrong|incorrect|inaccurate|misleading|incomplete|missing)\b/i;
+const FAULTED =
+  /\b(?:is|was|are|were|reads|read)\s+(?:wrong|incorrect|inaccurate|misleading|incomplete|missing)\b/i;
 /** "Amend it", "fix that": the verb's object is the message an earlier clause named. */
 const PRONOUN_OBJECT = /\b(?:it|that|this|them|that one|this one)\b/i;
 /** A further comment or message asked for outright: "add a second comment", "leave a new note". */
@@ -168,15 +176,22 @@ export function correctionRequested(feedback: string | undefined): boolean {
     if (CORRECTION_NOUN.test(clause)) {
       return FAULTED.test(clause) || affirmedCorrectionVerb(clause, () => true);
     }
-    return namesMessage && affirmedCorrectionVerb(clause, (after) => PRONOUN_OBJECT.test(after.trim().split(/\s+/).slice(0, 2).join(' ')));
+    return (
+      namesMessage &&
+      affirmedCorrectionVerb(clause, (after) =>
+        PRONOUN_OBJECT.test(after.trim().split(/\s+/).slice(0, 2).join(' ')),
+      )
+    );
   });
 }
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') {
-    return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
+      .join(',')}}`;
   }
   return JSON.stringify(value) ?? 'undefined';
 }
@@ -222,7 +237,11 @@ export function reusedLedger(
   actions: readonly MockAction[],
   sources: readonly LandedWrite[],
   run: { workItemId: string; runId: string; actionIndexOffset: number },
-  options: { surfaces?: readonly SurfaceRecord[]; managerFeedback?: string; identicalPayloads?: boolean } = {},
+  options: {
+    surfaces?: readonly SurfaceRecord[];
+    managerFeedback?: string;
+    identicalPayloads?: boolean;
+  } = {},
 ): Array<AppliedAction | undefined> {
   if (sources.length === 0) return actions.map(() => undefined);
   const surfaces = options.surfaces ?? [];
@@ -235,11 +254,14 @@ export function reusedLedger(
     if (key && !byPayload.has(key)) byPayload.set(key, source.applied);
     const parsed = parsedWrite(source.action);
     const target = parsed ? writeTarget(parsed, source.action, surfaces) : undefined;
-    if (target && !byTarget.has(target.key)) byTarget.set(target.key, { applied: source.applied, kind: target.kind });
+    if (target && !byTarget.has(target.key))
+      byTarget.set(target.key, { applied: source.applied, kind: target.kind });
   }
   return actions.map((action, index) => {
     const identity = actionIdempotencyKey({
-      workItemId: run.workItemId, runId: run.runId, actionIndex: run.actionIndexOffset + index,
+      workItemId: run.workItemId,
+      runId: run.runId,
+      actionIndex: run.actionIndexOffset + index,
     });
     const key = options.identicalPayloads ? payload(action) : undefined;
     const identical = key ? byPayload.get(key) : undefined;
@@ -253,7 +275,11 @@ export function reusedLedger(
     // one, as a second comment when it did not. Only an untouched target is
     // reused.
     if (correction) return undefined;
-    return { ...prior.applied, reason: reusedLandedNote(prior.applied.providerId, prior.kind), idempotencyKey: identity };
+    return {
+      ...prior.applied,
+      reason: reusedLandedNote(prior.applied.providerId, prior.kind),
+      idempotencyKey: identity,
+    };
   });
 }
 
@@ -264,12 +290,17 @@ export function reusedLedger(
  * in the room that leaves, so a run of browser writes never pushes the one
  * landed comment out of the list.
  */
-function shownWrites(writes: readonly LandedWrite[], surfaces: readonly SurfaceRecord[]): LandedWrite[] {
+function shownWrites(
+  writes: readonly LandedWrite[],
+  surfaces: readonly SurfaceRecord[],
+): LandedWrite[] {
   if (writes.length <= PROMPT_ROWS) return [...writes];
-  const targeted = new Set(writes.filter((write) => {
-    const parsed = parsedWrite(write.action);
-    return parsed !== undefined && writeTarget(parsed, write.action, surfaces) !== undefined;
-  }));
+  const targeted = new Set(
+    writes.filter((write) => {
+      const parsed = parsedWrite(write.action);
+      return parsed !== undefined && writeTarget(parsed, write.action, surfaces) !== undefined;
+    }),
+  );
   const keep = new Set([...targeted].slice(-PROMPT_ROWS));
   for (const write of [...writes].reverse()) {
     if (keep.size >= PROMPT_ROWS) break;
@@ -294,14 +325,19 @@ function describe(parsed: ParsedSurfaceAction): string {
  * Returns:
  *   Prompt lines, empty when nothing landed before.
  */
-export function landedWriteLines(writes: readonly LandedWrite[] | undefined, surfaces: readonly SurfaceRecord[] = []): string[] {
+export function landedWriteLines(
+  writes: readonly LandedWrite[] | undefined,
+  surfaces: readonly SurfaceRecord[] = [],
+): string[] {
   if (!writes || writes.length === 0) return [];
   const shown = shownWrites(writes, surfaces);
   const rows = shown.map((write, index): string => {
     const parsed = parsedWrite(write.action);
-    if (!parsed) return `  ${index}. ${write.action.tool} · provider id ${write.applied.providerId ?? '(none)'}`;
+    if (!parsed)
+      return `  ${index}. ${write.action.tool} · provider id ${write.applied.providerId ?? '(none)'}`;
     const target = writeTarget(parsed, write.action, surfaces);
-    const targetText = target?.target ?? targetIssue(parsed) ?? messageTarget(parsed) ?? '(no target)';
+    const targetText =
+      target?.target ?? targetIssue(parsed) ?? messageTarget(parsed) ?? '(no target)';
     const body = messageTexts(write.action)[0];
     const excerpt = body
       ? ` · "${body.length > EXCERPT_CHARS ? `${body.slice(0, EXCERPT_CHARS)} ...` : body}"`
@@ -309,13 +345,15 @@ export function landedWriteLines(writes: readonly LandedWrite[] | undefined, sur
     // The row was scrubbed of the owner's exact values when it was persisted;
     // the structural pass here is the same defence in depth the ledger
     // prompt applies, so no token shape a landed body quotes reaches a prompt.
-    return redactTokenShapes(`  ${index}. ${parsed.surface} · ${describe(parsed)} · ${targetText} · provider id ${write.applied.providerId ?? '(none)'}${excerpt}`);
+    return redactTokenShapes(
+      `  ${index}. ${parsed.surface} · ${describe(parsed)} · ${targetText} · provider id ${write.applied.providerId ?? '(none)'}${excerpt}`,
+    );
   });
   return [
     '',
     `--- Writes earlier runs of this item already landed (${writes.length}${writes.length > shown.length ? `, last ${shown.length} shown` : ''}) ---`,
     'Each line: surface · tool · target · provider id · excerpt of the body. Every one is on the provider now.',
     ...rows,
-    'Do not post a comment or message on a target listed here again: the plan step it fulfils is satisfied from that landed row (basis `ledger`, evidence quoting the line above). A comment or message on such a target is reused as the landed one and never sent. Only when the manager\'s note asks for a correction to it, rewrite the landed comment with `id` set to its provider id; never post a second one.',
+    "Do not post a comment or message on a target listed here again: the plan step it fulfils is satisfied from that landed row (basis `ledger`, evidence quoting the line above). A comment or message on such a target is reused as the landed one and never sent. Only when the manager's note asks for a correction to it, rewrite the landed comment with `id` set to its provider id; never post a second one.",
   ];
 }
