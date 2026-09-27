@@ -11,6 +11,7 @@ import { credentialSourceRef, redactCredentials } from '../src/docs/redaction';
 import { spanModelFromEnv, type SpanModel } from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
+import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 
 export const SYNC_BATCH_SIZE = 25;
@@ -296,7 +297,12 @@ export const syncBatch = internalAction({
         complete: true,
       };
     } catch (error) {
-      const reason = safeSyncError(error, secret, known);
+      // A read cut off mid-batch is recorded as the transient it is, with its cause.
+      const reason = safeSyncError(
+        interruptedReadError(error, 'The documentation read') ?? error,
+        secret,
+        known,
+      );
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: source._id,
         runId: args.runId,

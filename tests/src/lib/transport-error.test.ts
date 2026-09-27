@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  interruptedReadError,
   isTransportUnreachable,
   PROVIDER_BACKOFF,
   retryAfterMs,
@@ -118,5 +119,20 @@ describe('one bounded backoff', (): void => {
       ),
     ).rejects.toThrow('rate limited');
     expect(waits).toEqual([]);
+  });
+});
+
+describe('an interrupted read', (): void => {
+  it('is worded as a transient with its cause, and nothing else is', (): void => {
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const worded = interruptedReadError(new Error('request failed', { cause: reset }), 'The read');
+    expect(worded?.message).toBe(
+      'The read was interrupted (read ECONNRESET); this is transient, and the next attempt reads it again.',
+    );
+    expect(worded?.cause).toBeInstanceOf(Error);
+    const limited = new TransientProviderError('rate limited');
+    expect(interruptedReadError(limited)).toBe(limited);
+    expect(interruptedReadError(new Error('connect ECONNREFUSED 10.0.0.1:3000'))).toBeUndefined();
+    expect(interruptedReadError(new Error('HTTP 401'))).toBeUndefined();
   });
 });

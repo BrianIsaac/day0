@@ -12,6 +12,7 @@ import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { checkMcpAddress, pinnedFetch, resolveHostname } from '../../surfaces/mcp-address';
 import type { McpConnection } from '../../surfaces/mcp';
 import {
+  interruptedReadError,
   PROVIDER_BACKOFF,
   TransientProviderError,
   transportFailureKind,
@@ -374,19 +375,6 @@ function providerValue(result: unknown): unknown {
   return value;
 }
 
-/** The innermost message of an error's cause chain, for the recorded reason. */
-function rootMessage(error: unknown): string {
-  let current: unknown = error;
-  for (
-    let depth = 0;
-    depth < 5 && current instanceof Error && current.cause !== undefined;
-    depth += 1
-  ) {
-    current = current.cause;
-  }
-  return current instanceof Error ? current.message : String(current);
-}
-
 /**
  * Say what a failed batch means once its retries are spent.
  *
@@ -400,13 +388,7 @@ function batchFailure(source: DocSourceRecord, error: unknown): unknown {
   if (kind === 'refused' && componentFor(source) === DOCS_NOTION_SERVICE) {
     return new Error(NOTION_DRIVER_ABSENT_REASON, { cause: error });
   }
-  if (kind === 'interrupted') {
-    return new TransientProviderError(
-      `The documentation read was interrupted (${rootMessage(error)}); this is transient, and the next sync reads the source again.`,
-      { cause: error },
-    );
-  }
-  return error;
+  return interruptedReadError(error, 'The documentation read') ?? error;
 }
 
 /** Return an object-shaped provider payload. */

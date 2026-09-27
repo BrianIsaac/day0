@@ -164,6 +164,43 @@ export function transientFromResponse(
   );
 }
 
+/** The innermost message of an error's cause chain. */
+function rootMessage(error: unknown): string {
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    depth < 5 && current instanceof Error && current.cause !== undefined;
+    depth += 1
+  ) {
+    current = current.cause;
+  }
+  return current instanceof Error ? current.message : String(current);
+}
+
+/**
+ * Word a read that was timed out or reset as the transient it is, keeping its cause.
+ *
+ * A source's recorded reason is its message, so the cause goes into the
+ * message as well as onto `cause`: "the read was interrupted (read
+ * ECONNRESET)" tells the operator what happened, where the bare transport
+ * wording read as a component that is not running.
+ *
+ * @param error - Anything a read threw.
+ * @param what - What was being read, for the message.
+ * @returns The transient error, the error itself when it already is one, or undefined for anything else.
+ */
+export function interruptedReadError(
+  error: unknown,
+  what = 'The read',
+): TransientProviderError | undefined {
+  if (error instanceof TransientProviderError) return error;
+  if (transportFailureKind(error) !== 'interrupted') return undefined;
+  return new TransientProviderError(
+    `${what} was interrupted (${rootMessage(error)}); this is transient, and the next attempt reads it again.`,
+    { cause: error },
+  );
+}
+
 /** How many times a provider call is tried, and how long it may wait between tries. */
 export interface BackoffPolicy {
   readonly attempts: number;

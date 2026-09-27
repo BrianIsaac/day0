@@ -9,6 +9,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
+import { FolderReader } from '../../src/docs/readers/folder';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -344,6 +345,29 @@ describe('documentation sync batching', (): void => {
     const source = await harness.query(internal.docSources.getInternal, { sourceId });
     expect(source?.lastError).toMatch(/ENOENT|no such file/i);
     expect(source).not.toHaveProperty('activeSyncId');
+  });
+
+  it('records a read cut off mid-sync as a transient with its cause', async (): Promise<void> => {
+    const { root } = await sixtyPages();
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockRejectedValueOnce(
+      new Error('fetch failed', {
+        cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+      }),
+    );
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const source = await harness.query(internal.docSources.getInternal, { sourceId });
+    expect(source?.lastError).toBe(
+      'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again.',
+    );
   });
 
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {
