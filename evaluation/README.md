@@ -190,7 +190,7 @@ not pass, `day0-r2/write-closed-won-row`, is not a schema failure: the provider 
 schema applies, so the repair loop correctly did not engage. ~~Terra, Sol and the 8B have
 zero terminal schema failures in their frozen evidence, so this layer has nothing to
 engage on those recorded routes; their first-parse counters were never recorded and are
-held as `null` rather than assumed to be zero~~ REFUTED BY `frozen-structured-output-audit.json`, 12 Sep 2026. Zero terminal failures does not establish zero intermediate schema failures. Terra and Sol each record 45 Day0 rows, zero terminal schema failures and zero repeated-authoring rows; their semantic repair counts are 3 and 0. The 8B records 45 rows, zero terminal schema failures, 10 semantic repairs and 10 repeated-authoring rows (43 author invocations). Discarded earlier authoring errors are unmeasured, so a new repair could change those sequences. Frozen first-parse counters are `null`. Only the fresh three-task Terra control measures zero engagement: 10 calls, zero invalid first replies and zero repairs.
+held as `null` rather than assumed to be zero~~ REFUTED BY `frozen-structured-output-audit.json`, 12 Sep 2026. Zero terminal failures does not establish zero intermediate schema failures. Terra and Sol each record 45 Day0 rows, zero terminal schema failures and zero repeated-authoring rows; their semantic repair counts are 3 and 0. The 8B records 45 rows, zero terminal schema failures, 10 semantic repairs and 10 repeated-authoring rows (43 author invocations). Discarded earlier authoring errors are unmeasured, so a new repair could change those sequences. Frozen first-parse counters are `null`. Only the fresh three-task Terra control measures zero engagement: 10 calls, zero invalid first replies and zero repairs (its directory is in the private archive since 27 September 2026; see [Superseded history](#superseded-history)).
 ([`frozen-structured-output-audit.json`](results/2026-09-12T07-54-47Z-v5-glm53flash/frozen-structured-output-audit.json)).
 The [three-task pilot](results/2026-09-12T07-48-48Z-v5-glm53flash-pilot/provider-bed.md)
 that gated this bed is retained separately and is not pooled into it.
@@ -277,6 +277,13 @@ is **superseded for submission claims** by the three fresh beds above. The initi
 [`results/archive/2026-08-29-qwen3-8b-superseded/`](results/archive/2026-08-29-qwen3-8b-superseded/)
 with its specific invalidation reasons. None of those older figures should be used
 as final evidence.
+
+On 27 September 2026, under decision Q8, the 22 result directories that nothing in
+this README, the root README, the tests or the scripts cited (19 harness-v1 runs of
+30 and 31 August, the two hosted `v2` reruns of 2 September that the `v3` beds
+superseded, and the three-task Terra control of 12 September) moved out of the public
+tree into the operator's private archive with a provenance note and checksums. They
+remain in git history up to `dbdde97`; no figure quoted here came from them.
 
 ## Direction 2 - permissions and supervision
 
