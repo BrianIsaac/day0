@@ -6,7 +6,11 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { PLAN_CANCELLED_REASON, REEVALUATION_BATCH } from '../../convex/work';
+import {
+  INTERRUPTED_APPLY_REASON,
+  PLAN_CANCELLED_REASON,
+  REEVALUATION_BATCH,
+} from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
 import { openQuestionStopReason } from '../../src/work/obligations';
@@ -3909,5 +3913,42 @@ describe('the cap count behind every evaluation (P9-1)', (): void => {
     await expect(harness.query(internal.work.countOpenForAgentInternal, { agentId })).resolves.toBe(
       3,
     );
+  });
+});
+
+describe('the apply dead-man switch (P9-1)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('fires six minutes after the apply claim, not six minutes after the apply was scheduled', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await pend(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    // The apply action starts five minutes late, so its scheduled run is held back here.
+    await harness.run(async (ctx) => {
+      for (const job of await ctx.db.system.query('_scheduled_functions').collect()) {
+        if (job.name === 'workActions:applyApprovedActions') await ctx.scheduler.cancel(job._id);
+      }
+    });
+    vi.advanceTimersByTime(5 * 60_000);
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+
+    vi.advanceTimersByTime(60_000);
+    await harness.finishInProgressScheduledFunctions();
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'executing' });
+
+    vi.advanceTimersByTime(5 * 60_000);
+    await harness.finishInProgressScheduledFunctions();
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'failed',
+      skipReason: INTERRUPTED_APPLY_REASON,
+    });
   });
 });
