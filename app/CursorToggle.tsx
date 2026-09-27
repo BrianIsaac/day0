@@ -27,10 +27,36 @@ export function toggleCursorPreference(target: CursorPreferenceTarget = window):
   setCursorPreference(current === 'on' ? 'off' : 'on', target);
 }
 
+const TYPING_TAGS: ReadonlySet<string> = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
+
+/**
+ * Says whether a key event's target is somewhere the person is typing, so a
+ * page-wide shortcut must leave the key to it.
+ *
+ * @param target - The event's target; a non-element target is never a typing target.
+ * @returns True for an input, select, textarea, contenteditable region or anything inside a form.
+ */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  if (target === null) return false;
+  if ('tagName' in target && typeof target.tagName === 'string') {
+    if (TYPING_TAGS.has(target.tagName.toUpperCase())) return true;
+  }
+  if ('isContentEditable' in target && target.isContentEditable === true) return true;
+  if ('closest' in target && typeof target.closest === 'function') {
+    return target.closest('form, [contenteditable]:not([contenteditable="false"])') != null;
+  }
+  return false;
+}
+
+/**
+ * Toggles the whip cursor on a bare Shift+C that was not typed into a field.
+ *
+ * @returns True when the key was taken as the shortcut and its default prevented.
+ */
 export function handleCursorShortcut(
   event: Pick<
     KeyboardEvent,
-    'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'preventDefault' | 'repeat' | 'shiftKey'
+    'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'preventDefault' | 'repeat' | 'shiftKey' | 'target'
   >,
   target: CursorPreferenceTarget = window,
 ): boolean {
@@ -40,7 +66,8 @@ export function handleCursorShortcut(
     event.altKey ||
     event.ctrlKey ||
     event.metaKey ||
-    event.key.toLowerCase() !== 'c'
+    event.key.toLowerCase() !== 'c' ||
+    isTypingTarget(event.target)
   ) {
     return false;
   }

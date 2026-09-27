@@ -520,6 +520,100 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
   });
+
+  /**
+   * Another employee's row for the same provider item, its plan rejected.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   userId: The other employee's owner.
+   *
+   * Returns:
+   *   The other employee's rejected work item.
+   */
+  async function rejectedElsewhere(harness: Harness, userId: string): Promise<Id<'workItems'>> {
+    return await harness.run(async (ctx) => {
+      const colleague = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Mateo',
+        userId,
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('workItems', {
+        agentId: colleague,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        externalClaimKey: 'linear:REVOPS-1',
+        title: 'Add the close-summary audit note',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'cancelled',
+        planRejectedAt: 5,
+        observedAt: 1,
+        createdAt: 1,
+      });
+    });
+  }
+
+  it("holds a plan for the manager when the owner rejected another employee's plan for the same item", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed', undefined, {
+      autonomousActions: true,
+    });
+    await harness.run(
+      async (ctx) => await ctx.db.patch(workItemId, { externalClaimKey: 'linear:REVOPS-1' }),
+    );
+    const rejected = await rejectedElsewhere(harness, 'owner');
+
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: { summary: 'Check the issue, then update it.', steps: ['check', 'update'] },
+    });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: false,
+    });
+    expect(
+      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true }),
+    ).toEqual({
+      approved: false,
+    });
+
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect(await eventsOfType(harness, agentId, 'work.plan-approved')).toEqual([]);
+    expect(
+      (await eventsOfType(harness, agentId, 'work.plan-held')).map((event) => event.payload),
+    ).toEqual([
+      {
+        workItemId,
+        reason: 'plan-rejected-for-this-item',
+        rejectedWorkItemId: rejected,
+        rejectedAgentId: expect.any(String),
+        rejectedAt: 5,
+      },
+    ]);
+  });
+
+  it('approves autonomously when the rejected plan for the same item belongs to another owner', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'claimed', undefined, { autonomousActions: true });
+    await harness.run(
+      async (ctx) => await ctx.db.patch(workItemId, { externalClaimKey: 'linear:REVOPS-1' }),
+    );
+    await rejectedElsewhere(harness, 'someone-else');
+
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: { summary: 'Check the issue, then update it.', steps: ['check', 'update'] },
+    });
+
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+  });
 });
 
 describe('manager channel request claims', (): void => {

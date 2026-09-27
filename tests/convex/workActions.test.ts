@@ -127,6 +127,8 @@ afterAll(async (): Promise<void> => {
 
 
 const recorded = vi.hoisted(() => ({
+  /** Thrown by the next plan draft instead of returning a plan. */
+  planFailure: undefined as unknown,
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; method?: string; authorization: string | undefined; body: unknown }>,
   failMcpAfterRequest: false,
@@ -523,6 +525,7 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
       documents?: { howToGuides: unknown[]; teamDocs: unknown[] };
       record?: unknown;
     }) => {
+      if (recorded.planFailure !== undefined) throw recorded.planFailure;
       recorded.planSwitches.push(args.autonomousActions);
       recorded.planContexts.push({
         surfaces: args.surfaces?.map((surface) => surface.slug).sort(),
@@ -658,6 +661,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 });
 
 afterEach((): void => {
+  recorded.planFailure = undefined;
   recorded.mcp.length = 0;
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
@@ -2601,6 +2605,63 @@ describe('executing an approved plan through the gate', (): void => {
     expect(row.state).toBe('plan-pending');
     expect(row.plan).toMatchObject({ summary: 'Comment then close.' });
     expect(await scheduled(off)).toContain('managerChannelActions:requestDecision');
+  });
+
+  describe('a plan draft the model cannot finish', (): void => {
+    const toClaimed = async (harness: Harness, workItemId: Id<'workItems'>): Promise<void> => {
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, { state: 'claimed', plan: undefined });
+      });
+    };
+
+    it("fails the row with the provider's refusal on its card instead of holding the slot for the sweep", async (): Promise<void> => {
+      useSurfaceMode('real');
+      const { ModelRefusalError } = await import('../../src/lib/structured-fallback');
+      recorded.planFailure = new ModelRefusalError('day0-plan', 'I cannot help with that request.');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: false, reason: 'the plan draft failed on this item' });
+
+      const row = await readItem(harness, workItemId);
+      expect(row.state).toBe('failed');
+      expect(row.skipReason).toContain(
+        'plan draft failed: the model provider refused the request on content grounds: I cannot help with that request.',
+      );
+    });
+
+    it('fails the row when the plan reply was cut off at the output limit', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const { ModelReplyCutError } = await import('../../src/lib/structured-fallback');
+      recorded.planFailure = new ModelReplyCutError('day0-plan', '{"summary":"Comment');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+
+      await harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId });
+
+      expect(await readItem(harness, workItemId)).toMatchObject({ state: 'failed' });
+      expect((await readItem(harness, workItemId)).skipReason).toContain(
+        "the model's reply was cut off at the output limit",
+      );
+    });
+
+    it('leaves the row claimed for the sweep when the provider is only overloaded', async (): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.planFailure = Object.assign(new Error('service unavailable'), { statusCode: 503 });
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).rejects.toThrow('service unavailable');
+
+      expect((await readItem(harness, workItemId)).state).toBe('claimed');
+    });
   });
 
   describe('the grounding read before the plan', (): void => {

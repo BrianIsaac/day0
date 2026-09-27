@@ -69,21 +69,56 @@ describe('cursor preference', () => {
     const target = createTarget();
     const preventDefault = vi.fn();
 
-    const handled = handleCursorShortcut(
-      {
-        altKey: false,
-        ctrlKey: false,
-        key: 'C',
-        metaKey: false,
-        preventDefault,
-        repeat: false,
-        shiftKey: true,
-      },
-      target,
-    );
+    const handled = handleCursorShortcut(shiftC(preventDefault, null), target);
 
     expect(handled).toBe(true);
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(target.localStorage.getItem(CURSOR_STORAGE_KEY)).toBe('off');
   });
+
+  it.each([
+    ['a focused input', focusedElement({ tagName: 'INPUT' })],
+    ['a focused textarea', focusedElement({ tagName: 'TEXTAREA' })],
+    ['a focused select', focusedElement({ tagName: 'SELECT' })],
+    ['a contenteditable region', focusedElement({ tagName: 'DIV', isContentEditable: true })],
+    ['a button inside a form', focusedElement({ tagName: 'BUTTON', insideForm: true })],
+  ])('leaves a capital C typed into %s to the field', (_label, focused) => {
+    const target = createTarget();
+    const preventDefault = vi.fn();
+
+    const handled = handleCursorShortcut(shiftC(preventDefault, focused), target);
+
+    expect(handled).toBe(false);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(readCursorPreference(target.localStorage)).toBe('on');
+  });
 });
+
+function shiftC(preventDefault: () => void, focused: EventTarget | null) {
+  return {
+    altKey: false,
+    ctrlKey: false,
+    key: 'C',
+    metaKey: false,
+    preventDefault,
+    repeat: false,
+    shiftKey: true,
+    target: focused,
+  };
+}
+
+function focusedElement({
+  tagName,
+  isContentEditable = false,
+  insideForm = false,
+}: {
+  tagName: string;
+  isContentEditable?: boolean;
+  insideForm?: boolean;
+}): EventTarget {
+  return Object.assign(new EventTarget(), {
+    tagName,
+    isContentEditable,
+    closest: (selector: string) => (insideForm && selector.includes('form') ? {} : null),
+  });
+}

@@ -28,6 +28,8 @@ const recorded = vi.hoisted(() => ({
   /** Roles whose charter judgement finds the ask out of scope. */
   outOfScope: new Set<string>(),
   planCalls: [] as string[],
+  /** The correction texts each drafted plan was offered, in drafting order. */
+  planCorrections: [] as string[][],
   http: [] as string[],
 }));
 
@@ -51,8 +53,12 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/work/plan')>();
   return {
     ...original,
-    draftExecutionPlan: async (args: { candidate: { title: string } }) => {
+    draftExecutionPlan: async (args: {
+      candidate: { title: string };
+      corrections?: ReadonlyArray<{ text: string }>;
+    }) => {
       recorded.planCalls.push(args.candidate.title);
+      recorded.planCorrections.push((args.corrections ?? []).map((entry) => entry.text));
       return {
         summary: 'Send the close summary to the requester.',
         steps: ['Reply in the thread with the close summary.'],
@@ -83,6 +89,7 @@ afterEach((): void => {
   recorded.scopeGate = undefined;
   recorded.outOfScope.clear();
   recorded.planCalls.length = 0;
+  recorded.planCorrections.length = 0;
   recorded.http.length = 0;
   vi.useRealTimers();
   restoreSurfaceMode();
@@ -546,6 +553,51 @@ describe('releasing a claim', (): void => {
     expect(claims.filter((claim) => claim.releasedAt === undefined)).toEqual([
       expect.objectContaining({ agentId: mateo, workItemId: refused }),
     ]);
+  });
+
+  it("holds the colleague's plan for the manager with autonomous actions on, with the first rejection on its planner and timeline", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { mateo, held, refused } = await heldAndRefused(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(mateo, { autonomousActions: true }));
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
+    await drain(harness);
+
+    expect((await readItem(harness, refused)).state).toBe('plan-pending');
+    expect(await eventsOf(harness, 'work.plan-approved', mateo)).toEqual([]);
+    expect(await eventsOf(harness, 'work.plan-held', mateo)).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          workItemId: refused,
+          reason: 'plan-rejected-for-this-item',
+          rejectedWorkItemId: held,
+          rejection: 'finance owns this ask',
+        }),
+      }),
+    ]);
+    expect(recorded.planCorrections.at(-1)).toEqual(['finance owns this ask']);
+  });
+
+  it("holds the colleague's plan when the rejection gave no reason", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { mateo, held, refused } = await heldAndRefused(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(mateo, { autonomousActions: true }));
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.work.cancelPlan, { workItemId: held });
+    await drain(harness);
+
+    expect((await readItem(harness, refused)).state).toBe('plan-pending');
+    const [heldEvent] = await eventsOf(harness, 'work.plan-held', mateo);
+    expect(heldEvent?.payload).toMatchObject({ rejectedWorkItemId: held });
+    expect(heldEvent?.payload).not.toHaveProperty('rejection');
   });
 
   it('returns only the rows the released claim refused, not a colleague who skipped at scope', async (): Promise<void> => {

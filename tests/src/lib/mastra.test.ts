@@ -8,8 +8,11 @@ vi.hoisted(() => {
 import type { Agent } from '@mastra/core/agent';
 import {
   agentJson,
+  agentJsonWithMode,
   agentText,
   MODEL_CALL_TIMEOUT_MS,
+  ModelRefusalError,
+  ModelReplyCutError,
   resetStructuredModeMemo,
   withModelRetry,
 } from '../../../src/lib/mastra';
@@ -399,5 +402,105 @@ describe('model-call telemetry from the retry wrapper', (): void => {
         () => agentText({ agent, user: 'observed' }),
       ),
     ).resolves.toBe('done');
+  });
+});
+
+describe('replies the provider did not finish', (): void => {
+  /** An AI SDK call error carrying a server's JSON body inside an HTTP 200. */
+  function errorInsideOk(body: unknown): Error {
+    return Object.assign(new Error('Invalid JSON response'), {
+      statusCode: 200,
+      responseBody: JSON.stringify(body),
+      isRetryable: false,
+      requestBodyValues: { response_format: { type: 'json_schema' } },
+    });
+  }
+
+  it('refuses a structured reply cut at the output limit without a prompt-mode attempt', async (): Promise<void> => {
+    const generate = vi.fn().mockResolvedValue({
+      object: { rows: ['first'] },
+      finishReason: 'length',
+      text: '{"rows":["first"',
+    });
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+
+    await expect(agentJson({ agent, user: 'plan', schema: {} })).rejects.toBeInstanceOf(
+      ModelReplyCutError,
+    );
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a content-filter finish as the provider refusing, with the text it gave', async (): Promise<void> => {
+    const generate = vi
+      .fn()
+      .mockResolvedValue({ finishReason: 'content-filter', text: 'I cannot help with that.' });
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+
+    const refused = agentJson({ agent, user: 'plan', schema: {} });
+
+    await expect(refused).rejects.toBeInstanceOf(ModelRefusalError);
+    await expect(refused).rejects.toMatchObject({ refusal: 'I cannot help with that.' });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('turns a moderation 400 into a refusal and never re-sends it in prompt mode', async (): Promise<void> => {
+    const generate = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Bad Request'), {
+        statusCode: 400,
+        responseBody: '{"code":"DataInspectionFailed","message":"输入数据可能包含不当内容"}',
+        requestBodyValues: { response_format: { type: 'json_schema' } },
+      }),
+    );
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+
+    await expect(agentJson({ agent, user: 'plan', schema: {} })).rejects.toBeInstanceOf(
+      ModelRefusalError,
+    );
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries an error inside a 200 that says the server is busy, then uses the answer', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const generate = vi
+      .fn()
+      .mockRejectedValueOnce(errorInsideOk({ error: { message: 'Server busy, please retry' } }))
+      .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+
+    const result = agentJson<{ ok: boolean }>({ agent, user: 'plan', schema: {} });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await expect(result).resolves.toEqual({ ok: true });
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry an error inside a 200 whose body names a request status', async (): Promise<void> => {
+    const generate = vi
+      .fn()
+      .mockRejectedValue(errorInsideOk({ error: { code: 400, message: '参数错误' } }));
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+
+    await expect(agentJson({ agent, user: 'plan', schema: {} })).rejects.toMatchObject({
+      statusCode: 200,
+    });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps what the model said when a reply held no object', async (): Promise<void> => {
+    const generate = vi
+      .fn()
+      .mockResolvedValue({ finishReason: 'stop', text: 'Sorry, I will not plan this ticket.' });
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+
+    await expect(
+      agentJsonWithMode({ agent, user: 'plan', schema: {}, mode: 'prompt' }),
+    ).rejects.toMatchObject({ reply: 'Sorry, I will not plan this ticket.' });
+  });
+
+  it('refuses plain text cut at the output limit', async (): Promise<void> => {
+    const generate = vi.fn().mockResolvedValue({ finishReason: 'length', text: '## Good-habits' });
+    const agent = { name: 'day0-good-habits', generate } as unknown as Agent;
+
+    await expect(agentText({ agent, user: 'distil' })).rejects.toBeInstanceOf(ModelReplyCutError);
   });
 });
