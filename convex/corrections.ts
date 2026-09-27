@@ -18,6 +18,7 @@ import {
 } from '../src/work/corrections';
 import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
+import { appendEvent } from './eventLog';
 
 /**
  * The manager's corrections, kept per employee and fed back into its later
@@ -359,7 +360,7 @@ export const retire = mutation({
     await assertOwnsAgent(ctx, correction.agentId);
     if (correction.retiredAt !== undefined) return { ok: true };
     await ctx.db.patch(args.correctionId, { retiredAt: Date.now() });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: correction.agentId,
       type: 'work.correction-retired',
       payload: { correctionId: args.correctionId, workItemId: correction.workItemId },
