@@ -3,6 +3,12 @@ import { establishCaller } from '@/lib/dev-auth-server';
 import { env } from '@/env';
 import { log } from '@/lib/logger';
 
+/** How long the signed-URL request may take before the page is told voice is unreachable. */
+const SIGNED_URL_TIMEOUT_MS = 10_000;
+
+const UNCONFIGURED_REASON =
+  'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
+
 /**
  * Hand the browser the agent id so it can mount the ElevenLabs widget,
  * plus a one-time signed URL for private agents. Public agents return
@@ -29,12 +35,6 @@ import { log } from '@/lib/logger';
  * browser posts the transcript on disconnect, so the webhook only matters
  * when the tab dies mid-call.
  */
-/** How long the signed-URL request may take before the page is told voice is unreachable. */
-const SIGNED_URL_TIMEOUT_MS = 10_000;
-
-const UNCONFIGURED_REASON =
-  'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
-
 export async function GET(req: Request): Promise<NextResponse> {
   const caller = await establishCaller();
   if (!caller.ok) return caller.refusal;
