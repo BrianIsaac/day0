@@ -30,10 +30,10 @@ export function PinnedSequence({ steps }: { steps: readonly PinnedStep[] }) {
       ref={root}
       data-pin=""
       data-active={active + 1}
-      className="mt-6 grid items-start gap-0 md:grid-cols-[340px_minmax(0,1fr)] md:gap-12"
+      className="mt-6 grid grid-cols-[minmax(0,1fr)] items-start gap-0 md:grid-cols-[340px_minmax(0,1fr)] md:gap-12"
     >
       <div data-pin-side="" className="md:order-1">
-        <div data-pin-stack="" className="grid">
+        <div data-pin-stack="" className="grid grid-cols-[minmax(0,1fr)]">
           {steps.map((step, index) => (
             <div
               key={step.title}

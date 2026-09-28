@@ -8,7 +8,7 @@ const BUTTON = 'inline-flex min-h-9 items-center rounded-lg border px-3 text-sm 
 export function HeldWriteFrame() {
   return (
     <ProductFrame caption={`Work · ${HELD_WRITE.item} · write held`}>
-      <div className="grid gap-3 px-4 py-4">
+      <div className="grid grid-cols-1 gap-3 px-4 py-4">
         <div
           data-seq=""
           style={{ '--i': 0 } as CSSProperties}

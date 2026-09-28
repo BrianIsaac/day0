@@ -50,7 +50,7 @@ export function EvidenceTable() {
             {EVIDENCE.rows.map((row) => (
               <tr
                 key={row.label}
-                className="grid gap-1.5 border-b border-[var(--color-border)] px-2 py-3 last:border-b-0 sm:table-row sm:p-0"
+                className="grid grid-cols-1 gap-1.5 border-b border-[var(--color-border)] px-2 py-3 last:border-b-0 sm:table-row sm:p-0"
               >
                 <th scope="row" className="text-left font-normal sm:px-3 sm:py-3">
                   {row.label}

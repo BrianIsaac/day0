@@ -6,7 +6,7 @@ import { ProductFrame } from './ProductFrame';
 export function OneToOneFrame() {
   return (
     <ProductFrame caption={`Day-1 one-to-one · question 1 of ${ONE_TO_ONE.topics}`}>
-      <div className="grid gap-2.5 px-4 py-4">
+      <div className="grid grid-cols-1 gap-2.5 px-4 py-4">
         <div aria-hidden="true" className="mb-1 grid grid-cols-7 gap-1">
           {Array.from({ length: ONE_TO_ONE.topics }, (_, topic) => (
             <span

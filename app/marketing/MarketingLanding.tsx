@@ -56,7 +56,7 @@ export function MarketingLanding() {
   return (
     <PageMotion className="flex flex-1 flex-col">
       <section className="pb-8 pt-9 md:pb-14 md:pt-[72px]">
-        <div className={`${WRAP} grid items-center gap-8 md:grid-cols-2 md:gap-12`}>
+        <div className={`${WRAP} grid grid-cols-1 items-center gap-8 md:grid-cols-2 md:gap-12`}>
           <div>
             <h1
               data-rise=""
@@ -91,7 +91,7 @@ export function MarketingLanding() {
         <h2 data-rise="" className={H2}>
           {PROBLEM.heading}
         </h2>
-        <CardGroup className="mt-6 grid gap-4 md:grid-cols-2 md:gap-6">
+        <CardGroup className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
           {PROBLEM.cards.map((card, index) => (
             <div
               key={card.title}
@@ -111,7 +111,7 @@ export function MarketingLanding() {
         <p data-rise="" style={rise(1)} className={LEDE}>
           {WHY.lede}
         </p>
-        <CardGroup className="mt-8 grid gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
+        <CardGroup className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
           {WHY.items.map((item) => (
             <div key={item.title} className="border-t border-[var(--color-border)] pt-3.5">
               <h3 className="mb-1.5 font-semibold">{item.title}</h3>
@@ -129,7 +129,7 @@ export function MarketingLanding() {
       </Section>
 
       <Section id="evidence">
-        <div className="grid items-start gap-6 md:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2">
           <div>
             <h2 data-rise="" className={H2}>
               {EVIDENCE.heading}
@@ -155,7 +155,7 @@ export function MarketingLanding() {
         <h2 data-rise="" className={H2}>
           {TRY.heading}
         </h2>
-        <CardGroup className="mt-6 grid gap-4 md:grid-cols-2 md:gap-6">
+        <CardGroup className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
           <div className={`${CARD} flex flex-col items-start gap-3 border-[var(--color-border)]`}>
             <h3 className="text-base font-semibold">{TRY.hosted.title}</h3>
             <p className="leading-relaxed text-[var(--color-muted)]">{TRY.hosted.body}</p>

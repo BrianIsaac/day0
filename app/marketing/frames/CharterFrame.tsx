@@ -6,7 +6,7 @@ import { Chip, ProductFrame } from './ProductFrame';
 export function CharterFrame() {
   return (
     <ProductFrame caption={`Charter review · version ${CHARTER.version} · awaiting your approval`}>
-      <div className="grid gap-2.5 px-4 py-4">
+      <div className="grid grid-cols-1 gap-2.5 px-4 py-4">
         <p className="text-sm text-[var(--color-muted)]">
           These words will limit the work. Confirm or strike each one.
         </p>
@@ -24,7 +24,7 @@ function RuleRow({ rule, index }: { rule: CharterRule; index: number }) {
     <div
       data-seq=""
       style={{ '--i': index } as CSSProperties}
-      className={`grid gap-x-4 gap-y-2 rounded-[10px] border px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] ${
+      className={`grid grid-cols-1 gap-x-4 gap-y-2 rounded-[10px] border px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] ${
         struck
           ? 'border-[var(--color-border)] bg-[var(--color-card)]'
           : 'border-[var(--color-warn)]/40 bg-[var(--color-bg)]'
