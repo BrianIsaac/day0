@@ -27,7 +27,6 @@ and licence:
 
 - src/agent/charter.ts
 - src/agent/day-one-prompts.ts
-- src/memory/workspace.ts
 - src/work/evaluate.ts
 - src/work/execute-skill.ts
 - src/work/plan.ts
