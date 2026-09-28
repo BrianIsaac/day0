@@ -182,12 +182,18 @@ describe('signed-out landing page', (): void => {
   });
 
   const html = renderToStaticMarkup(<LandingPage />);
+  /** The page's text with the markup stripped, so a sentence split by a tag still reads whole. */
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
-  it('states the headline in agreement: plural employees, plural verb', (): void => {
-    expect(html).toContain('Enterprise digital employees');
-    expect(html).toContain('that just work.');
-    expect(html).not.toContain('just works');
-    expect(html).toContain('One name in. Everything else is learned state.');
+  it('states the claim with its answer in the accent, then the lede', (): void => {
+    expect(text).toContain(
+      'Every company that hires an agent pays a team to wire it in. Day0 is onboarded instead.',
+    );
+    expect(html).toMatch(
+      /<span class="[^"]*color-accent[^"]*">Day0 is onboarded instead\.<\/span>/,
+    );
+    expect(text).toContain('One name in. Day0 holds a five-minute one-to-one with its manager');
+    expect(html).not.toContain('Enterprise digital employees');
   });
 
   it('offers a stranger the hosted demo first, through sign-in, and setup second', (): void => {
@@ -202,15 +208,12 @@ describe('signed-out landing page', (): void => {
     expect(html).not.toContain('Deploy your first agent');
   });
 
-  it('keeps the recorded walkthrough as its own page, with a button below the loop', (): void => {
-    const walkthrough = /<a\b([^>]*)>Watch the recorded walkthrough<\/a>/.exec(html)?.[1] ?? '';
-    expect(walkthrough).toContain('href="/demo"');
-    // Below the hero and the four loop steps, not beside the two hero CTAs.
-    expect(html.indexOf('Watch the recorded walkthrough')).toBeGreaterThan(
-      html.indexOf('Skill creation'),
-    );
-    const hero = html.slice(html.indexOf('Try the demo'), html.indexOf('Set up Day0'));
-    expect(hero).not.toContain('href="/demo"');
+  it('links the recorded run as the walkthrough, below the hero and never at /demo', (): void => {
+    const walkthrough = /<a\b([^>]*)>Read the walkthrough<\/a>/.exec(html)?.[1] ?? '';
+    expect(walkthrough).toContain('href="/walkthrough"');
+    expect(html).not.toContain('href="/demo"');
+    const hero = html.slice(0, html.indexOf('id="problem"'));
+    expect(hero).not.toContain('href="/walkthrough"');
   });
 
   it('boxes the two hero CTAs identically, so neither sits a border taller', (): void => {
@@ -232,37 +235,66 @@ describe('signed-out landing page', (): void => {
     expect(primary).toContain('border-transparent');
   });
 
-  it('says what the demo is before the visitor spends a click on it', (): void => {
-    expect(html).toContain(
-      'Sign in, deploy an agent into the mock office, and hold its Day-1 1:1 yourself.',
+  it('says what the hosted demo is on its own card, and that sign-in states what it collects', (): void => {
+    expect(text).toContain(
+      'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system.',
+    );
+    expect(text).toContain(
+      'the sign-in page says what the hosted demo collects and who receives it',
     );
   });
 
-  it('keeps the source repository, smaller than the two routes into the product', (): void => {
-    expect(html).toContain('https://github.com/BrianIsaac/day0');
-    expect(html).toContain('>Source<');
+  it('links the repository by the GitHub name in the footer, never as "Source"', (): void => {
+    const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
+    expect(footer).toMatch(
+      /<a [^>]*href="https:\/\/github\.com\/BrianIsaac\/day0"[^>]*>GitHub<\/a>/,
+    );
+    expect(html).not.toMatch(/<a\b[^>]*>Source<\/a>/);
     expect(html).not.toContain('View source');
   });
 
-  it('describes the charter without naming who writes it', (): void => {
-    expect(html).toContain(
-      'The conversation becomes a charter for the boss to review and approve.',
-    );
+  it('says the charter is drafted by the employee and approved by the manager', (): void => {
+    expect(text).toContain('Drafts a charter the manager approves');
+    expect(text).toContain('drafts its own work charter (like a JD) for your approval');
   });
 
   it('names no model anywhere, because the operator picks the provider', (): void => {
-    for (const model of ['GPT-5.6', 'GPT-5.5', 'Terra', 'GLM', 'OpenAI', 'Gemini']) {
+    for (const model of ['GPT-5.6', 'GPT-5.5', 'Terra', 'GLM', 'Gemini', 'qwen']) {
       expect(html).not.toContain(model);
     }
+    // The protocol a model is reached by is not a model.
+    expect(html.replaceAll('OpenAI-compatible', '')).not.toContain('OpenAI');
+  });
+
+  it('calls what the manager deploys an employee, and "agent" only the industry\'s software', (): void => {
+    expect(text).toContain('name an employee');
+    expect(text).toContain('Give one employee a name');
+    const agentSentences = html
+      .split(/<[^>]+>/)
+      .flatMap((chunk) => chunk.split(/(?<=[.;:!?])\s+/))
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => /\bagents?\b/i.test(sentence));
+    expect(agentSentences).toEqual([
+      'Every company that hires an agent pays a team to wire it in.',
+      'Today, deploying an agent means engineering one.',
+      'A generic agent becomes a bounded, auditable colleague through the four things every new hire gets.',
+    ]);
+    expect(text).not.toMatch(/\bboss\b/i);
   });
 });
 
 describe('landing footer', (): void => {
   const html = renderToStaticMarkup(<LandingPage />);
 
-  it('describes what Day0 runs on without naming a provider', (): void => {
+  it('says what Day0 is and what its figures are, without naming a provider', (): void => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
-    expect(footer).toContain('Run Day0 with a compatible model provider or your own model server.');
+    expect(footer).toContain(
+      'Day0 is a working demonstration with no users and no production deployment. Figures are counts from single runs.',
+    );
+    expect(footer).toMatch(
+      /href="https:\/\/github\.com\/BrianIsaac\/day0#disclosures"[^>]*>Data and compliance</,
+    );
+    expect(footer).toMatch(/href="[^"]*\/CHANGELOG\.md"[^>]*>Changelog</);
     expect(footer).not.toContain('Cloudflare');
     expect(footer).not.toContain('ElevenLabs');
   });
