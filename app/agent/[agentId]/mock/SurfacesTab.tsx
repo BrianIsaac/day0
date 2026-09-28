@@ -1157,7 +1157,15 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
           throw failure;
         }
       },
-      { ...words, after: () => setOperation(null) },
+      {
+        ...words,
+        // Only this card's own state is cleared: another card's change may
+        // still be in flight.
+        after: () =>
+          setOperation((current) =>
+            current?.surfaceId === surface._id && current.kind === kind ? null : current,
+          ),
+      },
     );
   }
 
