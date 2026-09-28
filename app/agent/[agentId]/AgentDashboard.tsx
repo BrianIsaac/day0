@@ -1041,7 +1041,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
           onClick={() => onPick('voice')}
           disabled={voiceOff}
           title={voiceOff ? 'ElevenLabs credentials not set on this deployment' : undefined}
-          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+          className={`flex-1 min-h-11 px-4 py-3 rounded-lg font-medium ${
             voiceOff
               ? 'border border-[var(--color-border)] text-[var(--color-muted)] cursor-not-allowed'
               : 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
@@ -1051,7 +1051,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
         </button>
         <button
           onClick={() => onPick('chat')}
-          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+          className={`flex-1 min-h-11 px-4 py-3 rounded-lg font-medium ${
             voiceOff
               ? 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
               : 'border border-[var(--color-border)] hover:border-[var(--color-accent)]'

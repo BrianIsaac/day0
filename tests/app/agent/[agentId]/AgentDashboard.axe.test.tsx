@@ -297,7 +297,8 @@ describe('the dashboard against the accessibility floor (N14, step 45)', (): voi
  * what can be read here, and the browser job measures the public pages.
  */
 function underTarget(root: Element): string[] {
-  const tall = /(^|\s)(min-h-11|h-11|py-3)(\s|$)/;
+  // `min-h-11` or `h-11` only: padding alone gives 40 px on a `text-xs` line.
+  const tall = /(^|\s)(min-h-11|h-11)(\s|$)/;
   return [...root.querySelectorAll('button, input, select, textarea, summary')]
     .filter((control) => (control as HTMLInputElement).type !== 'hidden')
     .filter(
@@ -322,6 +323,24 @@ describe("the dashboard's pointer targets (N14: 44 by 44 CSS pixels)", (): void 
     for (const summary of view.container.querySelectorAll('details')) summary.open = true;
     await settle();
     expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  }, 30_000);
+});
+
+describe('the dashboard before the charter (N14: 44 by 44 CSS pixels)', (): void => {
+  it('gives the 1:1 mode picker 44 px targets and no axe violation', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': { ...(populated()['agents:get'] as object), state: 'deployed' },
+      'charters:latest': null,
+      'config:surfaceMode': { mode: 'mock', label: 'mock mode' },
+    };
+    const view = mount(<AgentDashboard agentId={agentId} />);
+    await settle();
+    await vi.waitFor((): void => {
+      expect(view.container.textContent).toContain('Chat');
+    }, CHUNK_WAIT);
+    expect(underTarget(view.container)).toEqual([]);
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
     view.unmount();
   }, 30_000);
 });
