@@ -5158,9 +5158,16 @@ export function PermissionRows({
   );
 }
 
-/** The id of a permission row's revoke or re-grant button, unique on the page. */
+/**
+ * The id of a permission row's revoke or re-grant button, unique on the page:
+ * every character an id cannot hold is spelt by its code, so `a:b` and `a-b`
+ * stay two ids.
+ *
+ * @param list - The permission list's own id.
+ * @param scope - The row's scope.
+ */
 function permissionControlId(list: string, scope: string): string {
-  return `${list}-${scope.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  return `${list}-${scope.replace(/[^A-Za-z0-9]/g, (character) => `_${character.charCodeAt(0)}_`)}`;
 }
 
 /**

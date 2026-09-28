@@ -80,6 +80,7 @@ import {
   WorkItemCard,
   sortedForQueue,
   phasedLedger,
+  PermissionRows,
   PermissionsCard,
   eventItemTitle,
   planApprovalRequest,
@@ -3454,6 +3455,26 @@ describe('approving held actions across items at once (step 45)', (): void => {
 });
 
 describe('revoking and granting a permission from the card (step 45, P6-7)', (): void => {
+  it('gives two scopes that differ only in punctuation two button ids', (): void => {
+    const markup = renderToStaticMarkup(
+      <PermissionRows
+        scopes={[
+          { scope: 'linear:write', active: true, source: 'deploy' },
+          { scope: 'linear-write', active: true, source: 'manager' },
+        ]}
+        confirmingScope={null}
+        busyScope={null}
+        onAskRevoke={() => undefined}
+        onCancelRevoke={() => undefined}
+        onRevoke={() => undefined}
+        onRegrant={() => undefined}
+      />,
+    );
+    const ids = [...markup.matchAll(/<button[^>]* id="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
   afterEach((): void => {
     backend.queries = {};
     backend.refusals = {};
