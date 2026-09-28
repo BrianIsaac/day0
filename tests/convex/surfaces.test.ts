@@ -1777,6 +1777,18 @@ describe('the in-flight probe guard (E-88)', (): void => {
     ).resolves.toEqual({ reserved: false, refusal: 'in-flight' });
   });
 
+  it('ends the probe in flight with a rejection, so the card holds no stamp of it (adversarial pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedCard(harness);
+    const inFlight = await reserve(harness, surfaceId, true);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId, reason: 'not this system' });
+    const row = await readSurface(harness, surfaceId);
+    expect(row).not.toHaveProperty('probeStartedAt');
+    expect(row.probeGeneration).toBe(inFlight + 1);
+  });
+
   it('ends the probe in flight with the access, so a renewal after the end cannot reconnect on its answer (wave 2 review M20, m9)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedCard(harness);

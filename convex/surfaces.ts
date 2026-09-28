@@ -2143,6 +2143,9 @@ export const reject = mutation({
     await ctx.db.patch(surface._id, {
       verdict: 'declared',
       reason: args.reason,
+      // The rejection ends any probe in flight with its generation.
+      probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      probeStartedAt: undefined,
       request: undefined,
       managerApprovedAt: undefined,
       endpoint: undefined,
