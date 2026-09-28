@@ -98,7 +98,10 @@ function StepCopy({ step, total }: { step: RunStep; total: number }) {
       className="flex scroll-mt-[25vh] flex-col max-md:scroll-mt-[50vh] justify-center border-t border-[var(--color-border)] py-8 first:border-t-0"
     >
       <p className="text-sm tabular-nums text-[var(--color-accent)]">
-        <a href={`#step-${step.number}`} className="rounded-sm underline-offset-4 hover:underline">
+        <a
+          href={`#step-${step.number}`}
+          className="-my-3 inline-flex min-h-11 min-w-11 items-center rounded-sm underline-offset-4 hover:underline"
+        >
           {step.number} of {total}
         </a>
         {step.elapsedSeconds !== null && (

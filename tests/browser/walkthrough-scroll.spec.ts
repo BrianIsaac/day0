@@ -167,6 +167,40 @@ test.describe('the walkthrough on a phone', () => {
   });
 });
 
+test.describe('the walkthrough and the sign-in page as pointer targets', () => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`give every control of their own at least 44 px, or keep it inside a sentence, at ${viewport.width}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      for (const path of ['/walkthrough', '/sign-in']) {
+        await page.goto(path);
+        // The page's own content only: the site header is the layout's.
+        const small = await page.evaluate(() =>
+          Array.from(
+            document.querySelectorAll<HTMLElement>('main a[href], main button, main input'),
+            (control) => {
+              const box = control.getBoundingClientRect();
+              const inline =
+                control.tagName === 'A' &&
+                getComputedStyle(control).display === 'inline' &&
+                (control.parentElement?.textContent ?? '').trim().length >
+                  (control.textContent ?? '').trim().length;
+              return inline || (box.width >= 44 && box.height >= 44)
+                ? null
+                : `${control.textContent?.trim()} ${Math.round(box.width)}x${Math.round(box.height)}`;
+            },
+          ).filter((entry) => entry !== null),
+        );
+        expect(small, path).toEqual([]);
+      }
+    });
+  }
+});
+
 test.describe('the walkthrough under reduced motion', () => {
   test.use({
     viewport: { width: 1440, height: 900 },

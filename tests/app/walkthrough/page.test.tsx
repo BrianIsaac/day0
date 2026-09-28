@@ -78,6 +78,12 @@ describe('the run', () => {
     }
   });
 
+  it('makes each step link a 44 px target without moving the line it sits on', () => {
+    const links = [...html.matchAll(/<a href="#step-\d+" class="([^"]*)"/g)].map(([, c]) => c);
+    expect(links).toHaveLength(16);
+    for (const classes of links) expect(classes).toMatch(/(?=.*min-h-11)(?=.*min-w-11)(?=.*-my-3)/);
+  });
+
   it('stacks every capture in the frame with its README alt text and measured size, the first shown', () => {
     for (const step of RECORDED_RUN.steps) {
       expect(text).toContain(`alt="${step.capture.alt}"`);
