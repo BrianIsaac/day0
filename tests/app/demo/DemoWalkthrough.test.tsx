@@ -36,6 +36,13 @@ describe('what the walkthrough tells a visitor it is', (): void => {
   it('explains the clock it is using instead of dates', (): void => {
     expect(text).toContain(HOSTED_DEMO_SNAPSHOT.recording.clock);
   });
+
+  it('dates the recording, names the build it came from and says the product has moved on (Q3)', (): void => {
+    expect(text).toContain(
+      'Recorded from the hosted deployment on 12 September 2026, frontend build 3ed8779.',
+    );
+    expect(text).toContain('The product has moved on since');
+  });
 });
 
 describe('the charter and its approval', (): void => {

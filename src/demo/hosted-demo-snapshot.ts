@@ -26,6 +26,34 @@ export interface RecordingMeta {
   clock: string;
   /** Offset of the last recorded event, as `+MM:SS`. */
   spanLabel: string;
+  /** The day the export this page is built from was taken, as `YYYY-MM-DD`. */
+  recordedOn: string;
+  /** The short commit of the frontend build the hosted deployment was serving that day. */
+  revision: string;
+}
+
+/** The recording's date as the page prints it, in British English: `12 September 2026`. */
+export function recordedOnLabel(recording: Pick<RecordingMeta, 'recordedOn'>): string {
+  return new Date(`${recording.recordedOn}T00:00:00Z`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/**
+ * The one sentence that dates the recording and names its build, and says
+ * the product has moved on since (decision Q3: date and caveat now,
+ * regenerate later).
+ */
+export function recordingProvenanceLine(
+  recording: Pick<RecordingMeta, 'recordedOn' | 'revision'>,
+): string {
+  return (
+    `Recorded from the hosted deployment on ${recordedOnLabel(recording)}, frontend build ` +
+    `${recording.revision}. The product has moved on since, and this page is not regenerated with it.`
+  );
 }
 
 export interface RecordedAgent {
