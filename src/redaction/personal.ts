@@ -21,9 +21,18 @@ export interface PersonalSpan {
   readonly kind: PersonalKind;
 }
 
-/** An e-mail address, not glued to a longer token on either side. */
+/** An e-mail address in any script (`张三@example.com`, `jane@bücher.de`), not glued to a longer token on either side. */
 const EMAIL =
-  /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}(?![A-Za-z0-9-])/g;
+  /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?)*\.\p{L}{2,}(?![\p{L}\p{N}-])/gu;
+
+/**
+ * Markdown emphasis a label may sit in (`**Phone:**`, `*DOB:*`), on either
+ * side of the label and again after its colon.
+ */
+const EMPHASIS = '[*_]{0,3}';
+
+/** The colon after a label, in either width, or the full stop after an abbreviation (`Tel.`). */
+const LABEL_END = `${EMPHASIS}\\s*[:：.]?${EMPHASIS}\\s*`;
 
 /** A number written with its country code: `+65 9123 4567`, `+1 (415) 555-0100`. */
 const INTERNATIONAL_PHONE = /(?<![\w+])\+\d{1,3}(?:[ .-]?\(?\d{1,4}\)?){2,6}(?![\w])/g;
@@ -40,13 +49,22 @@ const SIGNED_DATE = /^\+\d{4}-\d{1,2}-\d{1,2}$/;
 const FIGURE_AFTER =
   /^\s*(?:%|(?:AED|AUD|BRL|CAD|CHF|CNY|DKK|EUR|GBP|HKD|IDR|INR|JPY|KRW|MXN|MYR|NOK|NZD|PHP|RMB|SEK|SGD|THB|TWD|USD|VND|ZAR)\b)/;
 
-/** A value that is an endpoint, an e-mail or an IP address, which an address label may name. */
+/**
+ * A value that opens with an endpoint, an e-mail, an IP address, a host name
+ * or `localhost`, which an address label may name (`Address:
+ * https://mcp.linear.app/mcp (prod)`, `Address: api.linear.app`).
+ */
 const NETWORK_ADDRESS =
-  /^(?:[a-z][a-z0-9+.-]*:\/\/\S*|[^\s@]+@[^\s@]+|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|\[[0-9a-f:]+\](?::\d+)?)$/i;
+  /^(?:[a-z][a-z0-9+.-]*:\/\/\S*|[^\s@]+@[^\s@]+|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|\[[0-9a-f:]+\](?::\d+)?|localhost(?::\d+)?|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}(?::\d+)?(?:\/\S*)?)(?:\s|$)/i;
 
-/** A number after a phone label, in either language: `Tel: 6123 4567`, `手机：13800138000`. */
-const LABELLED_PHONE =
-  /(?:\b(?:phone|tel|telephone|mobile|cell|whatsapp)\b(?:\s*(?:no\.?|number))?|电话|手机|联系电话)\s*[:：]?\s*(\+?\(?\d[\d ().-]{5,}\d)/gi;
+/** A number after a phone label, in either language: `Tel: 6123 4567`, `**Phone:** 9123 4567`, `手机号：13800138000`. */
+const LABELLED_PHONE = new RegExp(
+  `(?:\\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:\\s*(?:no\\.?|number))?|(?:电话|手机|联系电话)(?:号码|号)?)${LABEL_END}(\\+?\\(?\\d[\\d ().-]{5,}\\d)`,
+  'gi',
+);
+
+/** A calendar date after a phone label is a date someone wrote on the wrong line, not a number to call. */
+const CALENDAR_DATE = /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/;
 
 /** The shortest and longest digit counts a phone number carries (E.164 caps it at 15). */
 const PHONE_DIGITS = { min: 7, max: 15 } as const;
@@ -54,24 +72,27 @@ const PHONE_DIGITS = { min: 7, max: 15 } as const;
 const MONTH =
   '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
 
-/** A calendar date in the shapes people write one. */
-const DATE = `(?:\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{1,2}\\s+${MONTH}\\.?\\s+\\d{4}|${MONTH}\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{4}年\\d{1,2}月\\d{1,2}日)`;
+/** A calendar date in the shapes people write one (`1990-03-12`, `1990/03/12`, `12/03/1990`, `12-Mar-1990`, `12 March 1990`, `March 12, 1990`, `1990年3月12日`). */
+const DATE = `(?:\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{1,2}[-. ]${MONTH}\\.?[-. ]\\d{4}|${MONTH}\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{4}年\\d{1,2}月\\d{1,2}日)`;
 
-/** A date after a birth label: `Date of birth: 12 March 1990`, `出生日期：1990年3月12日`. */
+/** A date after a birth label: `Date of birth: 12 March 1990`, `**DOB:** 12/03/1990`, `D.O.B.: 12/03/1990`, `出生年月日：1990年3月12日`. */
 const LABELLED_BIRTH_DATE = new RegExp(
-  `(?:\\b(?:date of birth|d\\.?o\\.?b\\.?|born(?: on)?|birthday)\\b|出生日期|生日)\\s*[:：]?\\s*(${DATE})`,
+  `(?:\\b(?:date of birth|birth ?date|d\\.?o\\.?b\\.?|born(?: on)?|birthday)|出生年月日|出生日期|生日)${LABEL_END}(${DATE})`,
   'gi',
 );
 
 /**
  * The rest of the line after an address label: a qualified one anywhere
- * (`home address: ...`), a bare `Address:` only where it opens a line or a
- * list item, so an e-mail, IP or endpoint address named mid-sentence is never
- * taken for one; a line that names one after a bare label is left to the
- * e-mail rule or to nothing (`NETWORK_ADDRESS`).
+ * (`home address: ...`), a bare `Address:` only where it opens a line, a list
+ * item or a field after a separator (`Name: Jane Tan, Address: 1 Raffles
+ * Place`), so an e-mail, IP or endpoint address named mid-sentence (`The IP
+ * address: ...`) is never taken for one; a line that names one after a bare
+ * label is left to the e-mail rule or to nothing (`NETWORK_ADDRESS`).
  */
-const LABELLED_ADDRESS =
-  /(?:\b(?:home|postal|mailing|residential|street|billing|delivery|shipping) address|(?:^|\n)[ \t]*(?:[-*][ \t]+)?address|地址|住址)[ \t]*[:：][ \t]*([^\n]*[^\s])/gim;
+const LABELLED_ADDRESS = new RegExp(
+  `(?:\\b(?:home|postal|mailing|residential|street|billing|delivery|shipping) address|(?:^|\\n|[,;|][ \\t]*)[ \\t]*(?:[-*][ \\t]+)?${EMPHASIS}address|地址|住址)${EMPHASIS}[ \\t]*[:：]${EMPHASIS}[ \\t]*([^\\n]*[^\\s])`,
+  'gim',
+);
 
 /** The span of a regex's first group within its match. */
 function groupSpan(match: RegExpMatchArray): { start: number; end: number } {
@@ -104,7 +125,9 @@ export function personalDataSpans(text: string): PersonalSpan[] {
     }
   }
   for (const match of text.matchAll(LABELLED_PHONE)) {
-    if (phoneLength(match[1]!)) spans.push({ ...groupSpan(match), kind: 'phone' });
+    if (phoneLength(match[1]!) && !CALENDAR_DATE.test(match[1]!)) {
+      spans.push({ ...groupSpan(match), kind: 'phone' });
+    }
   }
   for (const match of text.matchAll(LABELLED_BIRTH_DATE)) {
     spans.push({ ...groupSpan(match), kind: 'date-of-birth' });

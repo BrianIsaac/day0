@@ -83,6 +83,40 @@ describe('personalDataSpans', (): void => {
     expect(found('moved +12 345 678 this week')).toEqual([['+12 345 678', 'phone']]);
   });
 
+  it('finds the labelled forms the export floor claims: bold labels, 号 and 号码, a dotted D.O.B., two more date shapes, a non-ASCII e-mail and a mid-line Address (wave 3.5 review M22)', (): void => {
+    const cases: Array<[string, string, PersonalKind]> = [
+      ['**Phone:** 9123 4567', '9123 4567', 'phone'],
+      ['*Phone:* 9123 4567', '9123 4567', 'phone'],
+      ['Tel. 6123 4567', '6123 4567', 'phone'],
+      ['手机号：13800138000', '13800138000', 'phone'],
+      ['电话号码：138 0013 8000', '138 0013 8000', 'phone'],
+      ['**DOB:** 12/03/1990', '12/03/1990', 'date-of-birth'],
+      ['D.O.B.: 12/03/1990', '12/03/1990', 'date-of-birth'],
+      ['DOB: 1990/03/12', '1990/03/12', 'date-of-birth'],
+      ['DOB: 12-Mar-1990', '12-Mar-1990', 'date-of-birth'],
+      ['Birth date: 12/03/1990', '12/03/1990', 'date-of-birth'],
+      ['出生年月日：1990年3月12日', '1990年3月12日', 'date-of-birth'],
+      ['**Address:** 1 Raffles Place', '1 Raffles Place', 'address'],
+      ['Name: Jane Tan, Address: 1 Raffles Place', '1 Raffles Place', 'address'],
+      ['reach jane@bücher.de first', 'jane@bücher.de', 'email'],
+      ['reach 张三@example.com first', '张三@example.com', 'email'],
+    ];
+    for (const [text, value, kind] of cases) {
+      expect(found(text), text).toEqual([[value, kind]]);
+    }
+  });
+
+  it('leaves working data a label happens to sit beside: a date on a phone line, a host name or a URL with a note on an address line', (): void => {
+    for (const text of [
+      'phone 2026-09-28',
+      'Address: api.linear.app',
+      'Address: localhost:8080',
+      'Address: https://mcp.linear.app/mcp (prod)',
+    ]) {
+      expect(found(text), text).toEqual([]);
+    }
+  });
+
   it('leaves an endpoint, an e-mail or an IP on a bare Address line to its own rules', (): void => {
     expect(found('Address: https://mcp.linear.app/mcp')).toEqual([]);
     expect(found('- Address: 10.0.0.4:8080')).toEqual([]);
