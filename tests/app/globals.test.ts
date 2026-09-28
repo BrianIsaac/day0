@@ -96,6 +96,27 @@ describe('the public-page motion', () => {
     );
   });
 
+  it('plays the page transition as a 90 ms exit then a 200 ms entry, the header and the document still (UX 11)', () => {
+    expect(rulesFor(noPreference, '::view-transition-old(.day0-main-exit)')[0]).toMatch(
+      /animation:\s*day0-page-out 90ms var\(--ease-arrive\) both/,
+    );
+    expect(rulesFor(noPreference, '::view-transition-new(.day0-main-enter)')[0]).toMatch(
+      /animation:\s*day0-page-in 200ms var\(--ease-arrive\) 90ms both/,
+    );
+    expect(rulesFor(CSS, '::view-transition-old(root)')[0]).toMatch(/display:\s*none/);
+    expect(rulesFor(CSS, '::view-transition-new(root)')[0]).toMatch(/animation:\s*none/);
+    expect(rulesFor(CSS, '::view-transition-group(site-header)')[0]).toMatch(/animation:\s*none/);
+  });
+
+  it('swaps the page at once under reduced motion', () => {
+    expect(rulesFor(reduce, '::view-transition-old(.day0-main-exit)')[0]).toMatch(
+      /display:\s*none/,
+    );
+    expect(rulesFor(reduce, '::view-transition-new(.day0-main-enter)')[0]).toMatch(
+      /animation:\s*none/,
+    );
+  });
+
   it('draws the orbit traffic at rest under reduced motion, never leaving the packets invisible (m18)', () => {
     const [packet] = rulesFor(reduce, '.day0-surface-packet');
     expect(packet).toMatch(/opacity:\s*0\.85/);

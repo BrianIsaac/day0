@@ -141,7 +141,7 @@ describe('the header', (): void => {
    * React is pinned to the one Next 16.2.6 vendors (the operator's D1 (a)), so these tests render
    * with the React the app ships. If it ever loses the export, this fails before the layout does.
    */
-  it('renders with the React the app ships, which has ViewTransition (the operator’s D1 (a))', async (): Promise<void> => {
+  it('renders the one main inside the ViewTransition of the React the app ships, the header named above it', async (): Promise<void> => {
     const react: Record<string, unknown> = await import('react');
     // The React Next vendors and runs the app on, against the one these tests render with.
     const vendored = createRequire(import.meta.url)('next/dist/compiled/react') as {
@@ -149,6 +149,9 @@ describe('the header', (): void => {
     };
     expect(react.version).toBe(vendored.version);
     expect(react.ViewTransition).toBeDefined();
+    const html = await renderLayout();
+    expect(html).toMatch(/<header style="view-transition-name:site-header"/);
+    expect(html).toMatch(/<main id="main" tabindex="-1"[^>]*><p>Page<\/p><\/main>/);
   });
 
   it('colours the browser chrome with the page', async (): Promise<void> => {

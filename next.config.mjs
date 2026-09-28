@@ -20,6 +20,8 @@ const nextConfig = {
   // The demo is recorded from `next dev`; the development badge was in every frame.
   devIndicators: false,
   experimental: {
+    // The page transition (`app/MainTransition.tsx`); 16.2.6 reads the key in its schema only.
+    viewTransition: true,
     serverActions: {
       bodySizeLimit: '4mb',
     },

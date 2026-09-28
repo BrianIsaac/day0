@@ -1348,3 +1348,64 @@ body {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------------------------------------
+   The page transition (N29, UX 11; `app/MainTransition.tsx`). The document itself does not
+   animate and the header holds still; the old main fades out in 90 ms, then the new one rises
+   4 px and fades in over 200 ms, so two pages are never on screen together. Under reduced motion
+   the swap is instant.
+   --------------------------------------------------------------------------------------------- */
+
+@keyframes day0-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes day0-page-out {
+  to {
+    opacity: 0;
+  }
+}
+
+::view-transition-old(root) {
+  display: none;
+}
+
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-group(site-header) {
+  animation: none;
+  z-index: 1;
+}
+
+::view-transition-old(site-header) {
+  display: none;
+}
+
+::view-transition-new(site-header) {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(.day0-main-exit) {
+    animation: day0-page-out 90ms var(--ease-arrive) both;
+  }
+
+  ::view-transition-new(.day0-main-enter) {
+    animation: day0-page-in 200ms var(--ease-arrive) 90ms both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(.day0-main-exit) {
+    display: none;
+  }
+
+  ::view-transition-new(.day0-main-enter) {
+    animation: none;
+  }
+}
