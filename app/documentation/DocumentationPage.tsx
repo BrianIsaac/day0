@@ -187,15 +187,26 @@ export function DocumentationPage(): React.ReactNode {
   const [error, setError] = useState<string | null>(null);
   const list = useRef<HTMLElement>(null);
   const change = useChange(list);
-  const busySourceId = change.busy ? rotatingSourceId : null;
+  // Which source's rotation is in flight, so only its Save reads Rotating.
+  const [rotating, setRotating] = useState<string | null>(null);
 
-  /** One change to one linked source, said in the list's live region. */
+  /**
+   * One change to one linked source, said in the list's live region. A
+   * confirmation closes once the change lands, so a refusal leaves it open
+   * with focus on the control that met it; focus then goes to the row's own
+   * control, or to the list when the row went with the change.
+   */
   function onSourceChange(
     call: () => Promise<unknown>,
-    words: { done: string; refused: string; after?: () => void },
+    words: { done: string; refused: string; after?: () => void; focus?: () => HTMLElement | null },
   ): void {
-    setConfirming(null);
-    change.run(call, words);
+    change.run(call, {
+      ...words,
+      after: () => {
+        setConfirming(null);
+        words.after?.();
+      },
+    });
   }
 
   /** Link the submitted source and clear its write-only credential field. */
@@ -234,11 +245,22 @@ export function DocumentationPage(): React.ReactNode {
     const form = event.currentTarget;
     const credential = String(new FormData(form).get('credential') || '');
     form.reset();
-    onSourceChange(() => rotateCredential({ sourceId: source._id, credential }), {
-      done: `The secret for ${source.label} is replaced; the next sync reads with it.`,
-      refused: 'The secret was not replaced.',
-      after: () => setRotatingSourceId(null),
-    });
+    setRotating(source._id);
+    onSourceChange(
+      async (): Promise<void> => {
+        try {
+          await rotateCredential({ sourceId: source._id, credential });
+        } finally {
+          setRotating(null);
+        }
+      },
+      {
+        done: `The secret for ${source.label} is replaced; the next sync reads with it.`,
+        refused: 'The secret was not replaced.',
+        after: () => setRotatingSourceId(null),
+        focus: () => document.getElementById(`rotate-control-${source._id}`),
+      },
+    );
   }
 
   const isReal = config?.mode === 'real';
@@ -324,10 +346,10 @@ export function DocumentationPage(): React.ReactNode {
                         className="min-h-11 text-xs px-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
                       />
                       <button
-                        disabled={busySourceId === source._id}
+                        disabled={change.busy}
                         className="min-h-11 text-xs border border-[var(--color-border)] rounded px-3 disabled:opacity-50"
                       >
-                        {busySourceId === source._id ? 'Rotating...' : 'Save'}
+                        {rotating === source._id ? 'Rotating...' : 'Save'}
                       </button>
                     </form>
                   ) : null}
@@ -336,6 +358,7 @@ export function DocumentationPage(): React.ReactNode {
                       <button
                         type="button"
                         disabled={change.busy}
+                        id={`rotate-control-${source._id}`}
                         aria-label={`Rotate the secret for ${source.label}`}
                         onClick={() => setRotatingSourceId(source._id)}
                         className="min-h-11 text-xs border border-[var(--color-border)] rounded px-3 disabled:opacity-50"
@@ -401,6 +424,7 @@ export function DocumentationPage(): React.ReactNode {
                             {
                               done: `Revoked the secret for ${source.label}; the next sync cannot read until you rotate in a new one.`,
                               refused: 'The secret was not revoked.',
+                              focus: () => document.getElementById(`revoke-${source._id}`),
                             },
                           )
                     }

@@ -247,6 +247,24 @@ describe('the linked sources for a keyboard and a screen reader (step 45, P6-7)'
     view.unmount();
   });
 
+  it("keeps a refused revoke's confirmation open with focus on it, and returns to Revoke once one lands", async (): Promise<void> => {
+    state.sources = [{ ...source, credentialId: 'credential-1' }];
+    state.refusals = {
+      'credentials:revoke': `[CONVEX M(credentials:revoke)] [Request ID: 1] Server Error\nUncaught Error: Credential is already revoked.\n    at handler (../convex/credentials.ts:1:1)`,
+    };
+    const view = mount(<DocumentationPage />);
+    await press(view.container, `Revoke the secret for ${source.label}`);
+    await press(view.container, 'Confirm revoke');
+    expect(said(view.container)).toEqual(['Credential is already revoked.']);
+    expect(focusedName()).toBe('Confirm revoke');
+
+    state.refusals = {};
+    await press(view.container, 'Confirm revoke');
+    expect(view.container.querySelector('[role="group"]')).toBeNull();
+    expect(focusedName()).toBe(`Revoke the secret for ${source.label}`);
+    view.unmount();
+  });
+
   it('labels every field of the link form in the page, and gives each control a 44 px target', (): void => {
     state.sources = [source];
     const view = mount(<DocumentationPage />);
