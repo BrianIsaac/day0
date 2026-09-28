@@ -33,7 +33,6 @@ function agentMetrics(overrides: {
     charter: {
       timeToFirstDraftedMs: overrides.approvedAfterMs,
       timeToFirstApprovedMs: overrides.approvedAfterMs,
-      revisions: 0,
       requestChanges: 0,
     },
     decisions: {

@@ -771,7 +771,6 @@ function agentFigures(
     charter: {
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
       timeToFirstApprovedMs: timeFromDeploy(firstApprovedAt),
-      revisions: Math.max(0, Math.max(draftedEvents.length, charters.length) - 1),
       requestChanges: events.filter((event) => isEventOf(event, 'charter.request_changes')).length,
     },
     decisions: summariseDecisions(decisions),

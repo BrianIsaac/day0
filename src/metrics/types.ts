@@ -8,7 +8,6 @@ export interface AgentMetrics {
   charter: {
     timeToFirstDraftedMs: number | null;
     timeToFirstApprovedMs: number | null;
-    revisions: number;
     requestChanges: number;
   };
   decisions: {

@@ -391,7 +391,6 @@ const completeMetrics: AgentMetrics = {
   charter: {
     timeToFirstDraftedMs: 120_000,
     timeToFirstApprovedMs: 208_000,
-    revisions: 1,
     requestChanges: 1,
   },
   decisions: {

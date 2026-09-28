@@ -227,7 +227,6 @@ describe('agent evaluation metrics', (): void => {
       charter: {
         timeToFirstDraftedMs: 60_000,
         timeToFirstApprovedMs: 208_000,
-        revisions: 1,
         requestChanges: 1,
       },
       decisions: {

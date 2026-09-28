@@ -28,6 +28,7 @@ import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
 import { questionKey } from '../src/agent/manager-questions';
+import type { AmendmentVia } from '../src/events/contract';
 
 /**
  * Charter CRUD + binary-plus-edit approval mutation. Every public
@@ -341,7 +342,6 @@ export const charterChangeValidator = v.union(
 );
 
 /** Who sent an amendment. */
-export type AmendmentVia = 'dashboard' | 'plan-approval' | 'channel';
 
 /**
  * Amend the agent's approved charter: one new version, one event, the

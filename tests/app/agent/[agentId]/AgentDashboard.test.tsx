@@ -2153,7 +2153,6 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
       charter: {
         timeToFirstDraftedMs: 1,
         timeToFirstApprovedMs: 2,
-        revisions: 0,
         requestChanges: 0,
       },
       decisions: {
