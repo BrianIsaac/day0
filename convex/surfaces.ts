@@ -500,9 +500,8 @@ const credentialKind = v.union(v.literal('value'), v.literal('location'), v.lite
  *
  * A work-bearing card carries the queues its employee will read; they are
  * approved with the rest of the card and replaced only by a new proposal.
- * The access length the card shows is the request's; its clock starts when
- * the card is approved (Q5), so nothing here sets an end date, and
- * `expiresInDays` is the orientation's copy of the same draft value.
+ * A proposal names no access length and sets no end date: the approval
+ * starts Q5's 90 days and the manager is the only other source (Q5, U3 D2 (b)).
  */
 export const propose = internalMutation({
   args: {
@@ -516,7 +515,6 @@ export const propose = internalMutation({
     credentialId: v.optional(v.id('credentials')),
     credentialKind: v.optional(credentialKind),
     credentialLocation: v.optional(v.string()),
-    expiresInDays: v.number(),
     intakeScope: schema.tables.surfaces.validator.fields.intakeScope,
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -1424,10 +1422,10 @@ export const recordConnected = internalMutation({
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-/** Q5's access length, in days, for an approved card that names none. */
+/** Q5's access length at approval, in days; only the manager sets another (`setAccessDays`). */
 export const SURFACE_ACCESS_DEFAULT_DAYS = 90;
 
-/** The longest access a card or the manager can set, in days. */
+/** The longest access the manager can set, in days. */
 export const SURFACE_ACCESS_MAX_DAYS = 365;
 
 /** Surfaces one page of the access-clock migration reads. */
@@ -1443,26 +1441,6 @@ const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
 
 /** Who set an access end date: the approval that started it, the manager, or the upgrade. */
 type AccessSetBy = NonNullable<Doc<'surfaces'>['accessSetBy']>;
-
-/**
- * The access length an approved card carries, in whole days.
- *
- * Args:
- *   request: The proposal's stored request, which the card renders.
- *
- * Returns:
- *   The request's length capped at a year, or Q5's default when it names none.
- */
-function approvedAccessDays(request: unknown): number {
-  const days =
-    typeof request === 'object' && request !== null && 'expiresInDays' in request
-      ? request.expiresInDays
-      : undefined;
-  if (typeof days !== 'number' || !Number.isInteger(days) || days < 1) {
-    return SURFACE_ACCESS_DEFAULT_DAYS;
-  }
-  return Math.min(days, SURFACE_ACCESS_MAX_DAYS);
-}
 
 /** Whether an approved surface's access end date has passed; renewal moves the date. */
 function accessEndDatePassed(surface: Doc<'surfaces'>, now: number): boolean {
@@ -1944,7 +1922,7 @@ interface Approval {
 
 /**
  * Approve a proposed card in the caller's transaction (Q10): the manager's
- * stamp, the verdict, an access end date the card's length from `now` (the
+ * stamp, the verdict, an access end date Q5's 90 days from `now` (the
  * manager moves it with `setAccessDays`), the `surface.access-set` and
  * `surface.approved` events, and a probe at once.
  */
@@ -1953,8 +1931,7 @@ async function approveInTransaction(
   surface: Doc<'surfaces'>,
   approval: Approval,
 ): Promise<void> {
-  const days = approvedAccessDays(surface.request);
-  const expiresAt = approval.now + days * DAY_MS;
+  const expiresAt = approval.now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
   await ctx.db.patch(surface._id, {
     verdict: 'approved',
     managerApprovedAt: approval.approvedAt,
@@ -1963,7 +1940,7 @@ async function approveInTransaction(
   });
   await logAccessSet(ctx, surface, {
     by: approval.by,
-    days,
+    days: SURFACE_ACCESS_DEFAULT_DAYS,
     expiresAt,
     at: approval.now,
   });
@@ -1985,7 +1962,7 @@ async function approveInTransaction(
  * proposed card can be approved: an absent, declared or already approved card
  * has nothing to approve, and a rejected one is re-proposed from evidence
  * first. Writes `managerApprovedAt`, the verdict `approved`, an access end
- * date the card's length from now (`accessSetBy: 'approval'`),
+ * date Q5's 90 days from now (`accessSetBy: 'approval'`),
  * `surface.access-set` and `surface.approved`, and schedules the probe.
  *
  * @throws ConvexError when the card is not proposed, a documented intake

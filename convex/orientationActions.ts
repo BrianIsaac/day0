@@ -64,7 +64,6 @@ export const orientationSchema = z.object({
   }),
   blastRadius: z.string(),
   costBand: z.enum(['none', 'low', 'medium', 'high']),
-  expiresInDays: z.number().int().positive(),
   rollback: z.string(),
   openQuestions: z.array(z.string()),
 });
@@ -968,7 +967,6 @@ function fallbackDraft(surface: Doc<'surfaces'>, relevantText: string): Orientat
     credential: { found: 'none', method: 'unknown' },
     blastRadius: 'One named work system for this agent.',
     costBand: 'none',
-    expiresInDays: 90,
     rollback: 'Revoke the credential and reject the surface.',
     openQuestions: ['Confirm the approved connection details.'],
   };
@@ -1709,7 +1707,6 @@ export async function orientSurface(
       : undefined,
     blastRadius: draft.blastRadius,
     costBand: draft.costBand,
-    expiresInDays: draft.expiresInDays,
     rollback: draft.rollback,
     openQuestions,
   };
@@ -1729,7 +1726,6 @@ export async function orientSurface(
           ? undefined
           : 'Ask the system administrator to land a valid credential; the stored marker could not be resolved.'
         : credential.summary,
-    expiresInDays: draft.expiresInDays,
     intakeScope,
   });
   return { outcome: recorded ? 'proposed' : 'skipped', surfaceId: surface._id };

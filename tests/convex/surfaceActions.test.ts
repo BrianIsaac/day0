@@ -847,7 +847,6 @@ describe('surface probe action state', (): void => {
               credentialId: 'local-test-credential-id',
               credentialLanded: false,
               whereFound: [],
-              request: { expiresInDays: 30 },
               createdAt: 1,
             },
           };
@@ -2393,7 +2392,6 @@ describe('probing the browser floor', (): void => {
         credentialKind: 'location',
         credentialLanded: false,
         managerApprovedAt: 2,
-        request: { expiresInDays: 30 },
         createdAt: 1,
       });
       const sourceId = await ctx.db.insert('docSources', {
@@ -2599,7 +2597,6 @@ describe('one failed probe does not write listed-dead', (): void => {
         credentialKind: 'location',
         credentialLanded: false,
         managerApprovedAt: 2,
-        request: { expiresInDays: 30 },
         createdAt: 1,
       });
     });

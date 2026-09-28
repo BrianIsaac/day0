@@ -62,7 +62,6 @@ type ConnectRequestBody = {
   registrySuggestion?: { endpoint?: string; note?: string };
   blastRadius?: string;
   costBand?: string;
-  expiresInDays?: number;
   rollback?: string;
   openQuestions?: string[];
 };

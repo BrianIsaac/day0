@@ -973,7 +973,7 @@ describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b
         path: 'mcp',
         whereFound: [],
         credentialLanded: false,
-        request: { scopeRequested: ['read:issues'], costBand: 'free', expiresInDays: 30 },
+        request: { scopeRequested: ['read:issues'], costBand: 'free' },
       },
     ];
     try {
