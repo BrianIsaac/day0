@@ -1379,6 +1379,8 @@ describe('superseded page credentials that have aged out (C2 D2 (a))', (): void 
         supersededAt: NOW - DAY,
       }),
       live: await credential(harness, sourceId, 'page.md#live'),
+      // A person's revoke must outlive the prune, or the value returning revives unrevoked.
+      revoked: await credential(harness, sourceId, 'page.md#revoked', { ...aged, revokedAt: 5 }),
       elsewhere: await credential(harness, other, 'page.md#aged', aged),
     };
     await harness.run(async (ctx): Promise<void> => {
@@ -1409,7 +1411,14 @@ describe('superseded page credentials that have aged out (C2 D2 (a))', (): void 
         ),
       ),
     );
-    expect(left).toEqual({ aged: false, held: true, recent: true, live: true, elsewhere: true });
+    expect(left).toEqual({
+      aged: false,
+      held: true,
+      recent: true,
+      live: true,
+      revoked: true,
+      elsewhere: true,
+    });
     const run = await harness.run(async (ctx) => await ctx.db.get(runId));
     expect(run?.summary).toMatchObject({ credentialsPruned: 1 });
   });

@@ -1236,7 +1236,8 @@ export const prunePages = internalMutation({
 /**
  * Delete one bounded page of a finishing source's superseded page credentials
  * that have aged out (C2 D2 (a)): superseded longer than
- * `SUPERSEDED_CREDENTIAL_KEEP_MS` ago and bound to no surface. Internal; the
+ * `SUPERSEDED_CREDENTIAL_KEEP_MS` ago, bound to no surface and never revoked
+ * by a person, whose revoke the row must keep holding. Internal; the
  * finishing sync walks the source's credential rows with it, after the pages.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
@@ -1256,8 +1257,11 @@ export const pruneSupersededCredentials = internalMutation({
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const credential of page.page) {
+      // A person's revoke is kept for good: were the row gone, the same value
+      // returning to its page would be stored afresh, unrevoked.
       if (
         credential.status !== 'superseded' ||
+        credential.revokedAt !== undefined ||
         credential.supersededAt === undefined ||
         credential.supersededAt > cutoff
       ) {
