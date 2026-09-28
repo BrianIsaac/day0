@@ -87,13 +87,16 @@ export function activeTabForEnvironment(active: TabKey, hash: string, isReal: bo
   return isReal ? 'docs' : 'slack';
 }
 
+/** How long a count's roll plays (`.roll` in `app/globals.css`). */
+export const ROLL_MS = 220;
+
 /**
  * A tab's count. When it changes on the page, the old figure rolls up and out as the new one
- * rolls in (v3 section 5.2), after the card that caused it has settled; the first figure is
- * simply there, and under reduced motion only the new one shows.
+ * rolls in (v3 section 5.2); the first figure is simply there, and under reduced motion only
+ * the new one shows.
  */
 export function RollingCount({ value }: { value: number }) {
-  const previous = usePreviousValue(value);
+  const previous = usePreviousValue(value, ROLL_MS);
   if (previous === undefined) return <>{value}</>;
   return (
     <span key={value} className="roll">
@@ -132,7 +135,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
     };
     follow();
     // A cold load (the Slack OAuth redirect's `#surfaces`) performs its one
-    // fragment scroll while the dashboard still reads "loading agent", before
+    // fragment scroll while the dashboard still reads "loading employee", before
     // this panel exists, and the Surfaces tab is named only once the mode has
     // resolved. So the first time the hash names a tab, scroll here once; a
     // later hash change finds the panel present and the browser scrolls.

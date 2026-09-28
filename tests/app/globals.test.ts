@@ -178,14 +178,14 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     ['[data-arrive]', /day0-rise-in 240ms var\(--ease-arrive\)/],
     ['[data-just] [data-strike]', /day0-strike 400ms var\(--ease-arrive\) 150ms/],
     ['[data-just] [data-struck-mark]', /day0-settle 220ms var\(--ease-arrive\) 350ms/],
-    ['.roll > .from', /day0-roll-out 220ms var\(--ease-move\) 700ms/],
-    ['.roll > .to', /day0-roll-in 220ms var\(--ease-move\) 700ms/],
-    ['.chip-swap > .from', /day0-fade-out 200ms ease-out/],
+    ['.roll > .from', /day0-roll-out 220ms var\(--ease-move\) both/],
+    ['.roll > .to', /day0-roll-in 220ms var\(--ease-move\) both/],
+    ['.chip-swap > .from', /day0-fade-out 200ms var\(--ease-arrive\) both/],
     ['.chip-swap > .to', /day0-fade-in 220ms var\(--ease-arrive\) 100ms/],
-    ['[data-land]', /day0-settle 260ms var\(--ease-arrive\) 200ms/],
+    ['[data-land]', /day0-settle 260ms var\(--ease-arrive\) both/],
     [
       '[data-land] li',
-      /day0-rise-in 240ms var\(--ease-arrive\)[\s\S]*var\(--i, 0\) \* 70ms \+ 350ms/,
+      /day0-rise-in 240ms var\(--ease-arrive\)[\s\S]*var\(--i, 0\) \* 70ms \+ 120ms/,
     ],
     [
       '.rail[data-advanced] .rail-step.now::after',
@@ -196,7 +196,7 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
       /day0-dot-fill 240ms var\(--ease-arrive\)/,
     ],
     ['[data-dialog]', /day0-dialog-in 200ms var\(--ease-arrive\)/],
-    ['[data-dialog-backdrop]', /day0-fade-in 200ms ease-out/],
+    ['[data-dialog-backdrop]', /day0-fade-in 200ms var\(--ease-arrive\)/],
   ];
 
   it.each(moments)(

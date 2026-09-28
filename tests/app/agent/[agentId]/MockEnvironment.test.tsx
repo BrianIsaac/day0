@@ -70,6 +70,7 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import {
   activeTabForEnvironment,
   MockEnvironment,
+  ROLL_MS,
   tabFromHash,
 } from '../../../../app/agent/[agentId]/MockEnvironment';
 import { LOADING_SURFACES } from '../../../../app/agent/[agentId]/mock/SurfacesTab';
@@ -253,10 +254,22 @@ describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
     act((): void => root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} />));
     expect(docsBadge()?.innerHTML).toBe('2');
 
-    queries.newDoc = true;
-    act((): void => root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} />));
-    expect(docsBadge()?.innerHTML).toBe(
-      '<span class="roll"><span aria-hidden="true" class="from">2</span><span class="to">3</span></span>',
-    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      queries.newDoc = true;
+      act((): void => root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} />));
+      const roll = docsBadge()?.querySelector('.roll');
+      expect(roll?.querySelector('.from')?.textContent).toBe('2');
+      expect(roll?.querySelector('.from')?.getAttribute('aria-hidden')).toBe('true');
+      expect(roll?.querySelector('.to')?.textContent).toBe('3');
+
+      // Once rolled, the badge holds the new figure alone: nothing to replay, no old width.
+      act((): void => {
+        vi.advanceTimersByTime(ROLL_MS);
+      });
+      expect(docsBadge()?.innerHTML).toBe('3');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

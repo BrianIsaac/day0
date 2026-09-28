@@ -466,7 +466,7 @@ export function AutonomyConfirm({
   busy?: boolean;
 }) {
   return (
-    // It scales in from the corner that meets the switch it drops from (v3 section 5.2).
+    // It scales in from the corner it hangs from, not its centre (v3 section 5.2).
     <div
       role="alertdialog"
       aria-modal="true"
@@ -2778,13 +2778,22 @@ export function WorkQueue({
   );
 }
 
+/** How long a state chip's swap plays: the new chip's 100 ms offset and 220 ms fade. */
+export const CHIP_SWAP_MS = 320;
+
+/** How long a landing plays: the last line's 120 ms and three 70 ms steps, then its 240 ms rise. */
+export const LANDING_MS = 570;
+
+/** The ledger lines after the fourth rise with it, so a long ledger is not waited for. */
+const LANDING_STAGGER_CAP = 3;
+
 /**
  * A work item's state chip. When the state changes on the page, the old chip fades out as the
  * new one fades in, in the same cell (v3 section 5.2); the first state is simply there, and
  * under reduced motion only the new one shows.
  */
 export function StateChip({ state }: { state: string }) {
-  const previous = usePreviousValue(state);
+  const previous = usePreviousValue(state, CHIP_SWAP_MS);
   const chip = (shown: string, place?: 'from' | 'to') => (
     <span
       aria-hidden={place === 'from' ? true : undefined}
@@ -4394,9 +4403,9 @@ export function WorkItemCard({
     (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
   );
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
-  // A ledger first shown while the page is open is a landing the manager is watching (v3 section 5.2).
-  const [landedOnArrival] = useState(landedActions.length > 0);
-  const freshLanding = !landedOnArrival && landedActions.length > 0;
+  // A ledger that has just appeared is a landing the manager is watching (v3 section 5.2).
+  const landedBefore = usePreviousValue(landedActions.length > 0, LANDING_MS);
+  const freshLanding = landedBefore === false && landedActions.length > 0;
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
@@ -4762,7 +4771,14 @@ export function WorkItemCard({
           <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
           <ul className="space-y-0.5 text-[var(--color-fg)]">
             {landedActions.map((a, i) => (
-              <li key={i} style={freshLanding ? ({ '--i': i } as CSSProperties) : undefined}>
+              <li
+                key={i}
+                style={
+                  freshLanding
+                    ? ({ '--i': Math.min(i, LANDING_STAGGER_CAP) } as CSSProperties)
+                    : undefined
+                }
+              >
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
                 {clipLedgerRow(a.effect) ?? '(applied)'}
                 {a.providerId ? (

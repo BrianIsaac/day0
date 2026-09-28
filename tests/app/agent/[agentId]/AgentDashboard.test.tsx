@@ -78,6 +78,8 @@ import {
   RepairNote,
   SessionRestoreNote,
   WorkItemCard,
+  CHIP_SWAP_MS,
+  LANDING_MS,
   sortedForQueue,
   phasedLedger,
   PermissionRows,
@@ -3930,6 +3932,53 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
         (line as HTMLElement).style.getPropertyValue('--i'),
       ),
     ).toEqual(['0', '1']);
+    view.unmount();
+  });
+
+  it('drops the swap and the landing mark once they have played, so a card moved later replays nothing', (): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const view = mount(card(executing));
+      act((): void => view.root.render(card(landed)));
+      expect(view.container.querySelector('.chip-swap')).not.toBeNull();
+      expect(view.container.querySelector('[data-land]')).not.toBeNull();
+      act((): void => {
+        vi.advanceTimersByTime(Math.max(CHIP_SWAP_MS, LANDING_MS));
+      });
+      expect(view.container.querySelector('.chip-swap')).toBeNull();
+      expect(view.container.textContent).not.toContain('executing');
+      expect(view.container.querySelector('[data-land]')).toBeNull();
+      expect(
+        [...view.container.querySelectorAll('li')].filter(
+          (line) => (line as HTMLElement).style.getPropertyValue('--i') !== '',
+        ),
+      ).toEqual([]);
+      expect(view.container.textContent).toContain('Moved REVOPS-5 to Done');
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the stagger of the ledger lines at the fourth line', (): void => {
+    const long = {
+      ...landed,
+      output: {
+        draft: 'Closed.',
+        applied: Array.from({ length: 6 }, (_, index) => ({
+          tool: 'linear.save_comment',
+          ok: true,
+          effect: `Comment ${index}`,
+        })),
+      },
+    } as unknown as Doc<'workItems'>;
+    const view = mount(card(executing));
+    act((): void => view.root.render(card(long)));
+    expect(
+      [...view.container.querySelectorAll('[data-land] li')].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1', '2', '3', '3', '3']);
     view.unmount();
   });
 

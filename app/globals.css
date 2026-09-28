@@ -1117,10 +1117,11 @@ body {
    repaint, a single line of text. Under reduced motion every rule resolves to the settled state:
    a rolled count or a swapped chip shows only its new value.
 
-   The drawn delays counted from a page arriving; here a change happens in place, so each
-   sequence starts at the change and keeps its drawn order and gaps (the chip swap, then the
-   landed ledger settling, then its lines). The count roll keeps its drawn 700 ms, so it follows
-   the card that caused it.
+   The drawn delays counted from a page arriving (the roll's 700 ms, the landing's 450 to
+   800 ms); here a change happens in place and the manager is already looking, so each moment
+   starts at the change, keeps its drawn durations and order, and its markup leaves once it has
+   played, so a card React moves later never replays it. The strike keeps its 150 ms pause: it
+   answers the manager's own decision.
 
    Attributes and classes the markup sets:
    [data-cards]          as above, on a product page's columns for its first second only
@@ -1131,10 +1132,11 @@ body {
    [data-just]           a charter rule struck while the page was open: its [data-strike] line
                          draws through, then its [data-struck-mark] (an inline block, so it can
                          move) settles in.
-   .roll                 a count that changed: `.from` rolls up and out as `.to` rolls in.
-   .chip-swap            a state chip that changed: `.from` fades out as `.to` fades in, in one cell.
-   [data-land]           a work item's landed ledger, first shown while the page was open: it
-                         settles, then its lines rise, `--i` apart.
+   .roll                 a count that changed: `.from` rolls up and out as `.to` rolls in, 220 ms.
+   .chip-swap            a state chip that changed: `.from` fades out as `.to` fades in, in one
+                         cell, 320 ms.
+   [data-land]           a work item's landed ledger, just shown: it settles as its lines rise,
+                         `--i` (up to 3) 70 ms apart, 570 ms in all.
    .rail[data-advanced]  the first-week rail, just moved on: the fill slides into `.now` and the
                          dot before it fills. Drawn in round two; no rail is rendered yet.
    [data-dialog]         a dialog or popover: it scales in from 0.96 at its own transform origin;
@@ -1217,7 +1219,7 @@ body {
   display: inline-block;
 }
 
-.rail-step {
+.rail .rail-step {
   position: relative;
   isolation: isolate;
 }
@@ -1246,15 +1248,15 @@ body {
   }
 
   .roll > .from {
-    animation: day0-roll-out 220ms var(--ease-move) 700ms both;
+    animation: day0-roll-out 220ms var(--ease-move) both;
   }
 
   .roll > .to {
-    animation: day0-roll-in 220ms var(--ease-move) 700ms both;
+    animation: day0-roll-in 220ms var(--ease-move) both;
   }
 
   .chip-swap > .from {
-    animation: day0-fade-out 200ms ease-out both;
+    animation: day0-fade-out 200ms var(--ease-arrive) both;
   }
 
   .chip-swap > .to {
@@ -1262,12 +1264,12 @@ body {
   }
 
   [data-land] {
-    animation: day0-settle 260ms var(--ease-arrive) 200ms both;
+    animation: day0-settle 260ms var(--ease-arrive) both;
   }
 
   [data-land] li {
     animation: day0-rise-in 240ms var(--ease-arrive) both;
-    animation-delay: calc(var(--i, 0) * 70ms + 350ms);
+    animation-delay: calc(var(--i, 0) * 70ms + 120ms);
   }
 
   .rail[data-advanced] .rail-step.now {
@@ -1293,7 +1295,7 @@ body {
   }
 
   [data-dialog-backdrop] {
-    animation: day0-fade-in 200ms ease-out both;
+    animation: day0-fade-in 200ms var(--ease-arrive) both;
   }
 }
 
