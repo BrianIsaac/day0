@@ -5,8 +5,8 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { MIGRATION_NAMES } from '../../convex/migrations';
-import { RETIRED_DECLARATIONS } from '../../scripts/releases';
+import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
+import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { avatarById } from '../../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../../src/docs/types';
 import {
@@ -877,6 +877,35 @@ describe('the declarations the schema step retired (N10)', (): void => {
       ).fields;
       expect(fields, declaration).not.toHaveProperty(field);
     }
+  });
+});
+
+describe('the declarations the next release retires (N10, Q D2)', (): void => {
+  /** Whether the schema still declares a `table.field`. */
+  const declared = (declaration: string): boolean => {
+    const [table, field] = declaration.split('.') as [keyof typeof schema.tables, string];
+    const fields = (
+      schema.tables[table].validator as unknown as { fields: Record<string, unknown> }
+    ).fields;
+    return field in fields;
+  };
+
+  it('ships the clearing migration of each, at its release, naming it in thenRemoves, and still declares it', (): void => {
+    for (const { declaration, migration, release } of RETIRING_DECLARATIONS) {
+      expect(MIGRATION_NAMES as readonly string[]).toContain(migration);
+      const described = MIGRATIONS[migration as (typeof MIGRATION_NAMES)[number]];
+      expect(described.release).toBe(release);
+      expect(described.thenRemoves).toContain(`the ${declaration} declaration`);
+      expect(declared(declaration), declaration).toBe(true);
+    }
+  });
+
+  it('lists every declaration a shipped migration says the next release removes', (): void => {
+    const named = MIGRATION_NAMES.flatMap((name) => {
+      const match = /the (\w+\.\w+) declaration/.exec(MIGRATIONS[name].thenRemoves);
+      return match ? [match[1]] : [];
+    });
+    expect(RETIRING_DECLARATIONS.map((row) => row.declaration).sort()).toEqual(named.sort());
   });
 });
 
