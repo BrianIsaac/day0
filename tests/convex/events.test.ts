@@ -560,4 +560,24 @@ describe('export redaction', (): void => {
       redactForExport({ tracker: { assigneeEmail: 'aiko@example.com', state: 'Todo' } }),
     ).toEqual({ tracker: { state: 'Todo' } });
   });
+
+  it('drops every key that names a person: the ticket’s author and requester, the branch name, the charter’s manager and colleagues, and the manager a change replaced', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport({
+        issue: { createdBy: 'Aiko Tanaka', gitBranchName: 'aiko/revops-9', title: 'Refresh' },
+        requester: 'Aman',
+        charter: {
+          boss: 'Priya Raman',
+          namedCollaborators: [{ name: 'Wei', topic: 'close' }],
+          whyThisHire: 'Pipeline hygiene',
+        },
+        payload: { managerUserId: 'U2', previousManagerUserId: 'U1', reason: 'manager left' },
+      }),
+    ).toEqual({
+      issue: { title: 'Refresh' },
+      charter: { whyThisHire: 'Pipeline hygiene' },
+      payload: { reason: 'manager left' },
+    });
+  });
 });
