@@ -35,6 +35,23 @@ describe('surface credential presentation', (): void => {
     });
   });
 
+  it('names the page a value-keyed credential was found on, never the value fingerprint', (): void => {
+    const presented = presentSurfaceCredential({
+      credential: { found: 'value', method: 'api-key' },
+      credentialId: 'credential-1',
+      sourceLabel: 'Revenue operations',
+      summary: {
+        _id: 'credential-1',
+        label: 'linear service token',
+        source: {
+          sourceId: 'source-1',
+          ref: 'runbooks/linear.md#credential=0123456789abcdef0123456789abcdef',
+        },
+      },
+    });
+    expect(presented.text).toBe('located in Revenue operations / runbooks/linear.md (masked)');
+  });
+
   it('offers landing only when documentation names a credential location', (): void => {
     expect(
       presentSurfaceCredential({
@@ -86,7 +103,7 @@ describe('surface credential presentation', (): void => {
       governanceFinding: undefined,
       kind: 'masked',
       label: 'Slack shared bot token',
-      text: 'entered by IT (masked)',
+      text: 'entered on the card (masked)',
     });
   });
 
@@ -167,7 +184,10 @@ describe('the dedicated-app procedure on the card', (): void => {
 
   it('says nothing for a system whose docs describe no install procedure', (): void => {
     expect(
-      presentProvisioning({ credential: { found: 'value', method: 'api-key' }, hasPublicUrl: true }),
+      presentProvisioning({
+        credential: { found: 'value', method: 'api-key' },
+        hasPublicUrl: true,
+      }),
     ).toMatchObject({ offerProvisioning: false, stage: 'not-applicable' });
   });
 
@@ -177,6 +197,9 @@ describe('the dedicated-app procedure on the card', (): void => {
     expect(shown.offerProvisioning).toBe(true);
     expect(shown.title).toBe(PROVISION_LABEL);
     expect(shown.note).toBe(PROVISION_NOTE);
+    // Slack's docs do not promise the revoke, so the card says Day0 asks (U9 step 25).
+    expect(PROVISION_NOTE).toContain('asks Slack to revoke it');
+    expect(PROVISION_NOTE).not.toContain('revoked immediately');
     expect(shown.installUrl).toBeUndefined();
   });
 
@@ -245,7 +268,7 @@ describe('the dedicated-app procedure on the card', (): void => {
     });
   });
 
-  it('shows an installed token as the app\'s own, with no landing field', (): void => {
+  it("shows an installed token as the app's own, with no landing field", (): void => {
     expect(
       presentSurfaceCredential({
         credentialId: 'cred1',
@@ -284,6 +307,19 @@ describe('channels the app has not been invited to', (): void => {
   it('falls back to the employee when there is no dedicated app', (): void => {
     expect(presentChannelsNotJoined(['#revops'])).toContain('Invite this employee to #revops');
   });
+});
+
+it('points a failed manager lookup at the manager, not at a new credential (U9 step 18)', () => {
+  const presented = presentSurfaceCredential({
+    credentialId: 'credential-1',
+    verdict: 'ungranted',
+    reason: 'the manager email boss@day0.local is not a member of this Slack workspace',
+    summary: { _id: 'credential-1', label: 'Slack bot token', source: 'entered' as const },
+  });
+  expect(presented).toMatchObject({ canLand: false, kind: 'masked', label: 'Slack bot token' });
+  expect(presented.text).toBe(
+    'The credential works, but the manager could not be found: the manager email boss@day0.local is not a member of this Slack workspace. Change the manager on this employee’s page, then probe again.',
+  );
 });
 
 it('offers replacement beneath an authentication failure even with a bound credential', () => {

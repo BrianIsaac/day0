@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { RedactorUnavailableError, type ModelSpan } from '../../../src/redaction/client';
-import { personalDataMarker, redactStructural, redactText } from '../../../src/redaction/redact';
+import {
+  personalDataMarker,
+  redactFloorFor,
+  redactStructural,
+  redactText,
+} from '../../../src/redaction/redact';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
-import { RecordedSpanModel, ScriptedSpanModel, UnreachableSpanModel } from '../../fixtures/redaction-double';
+import {
+  RecordedSpanModel,
+  ScriptedSpanModel,
+  UnreachableSpanModel,
+} from '../../fixtures/redaction-double';
 
 const recorded = new RecordedSpanModel();
 
@@ -10,17 +19,23 @@ describe('redactText', (): void => {
   it('removes a known value literally, JSON-escaped and URL-encoded before anything else', async (): Promise<void> => {
     const value = 'opaque+value/with=chars';
     const text = `raw ${value} · json ${JSON.stringify(value).slice(1, -1)} · url ${encodeURIComponent(value)}`;
-    const result = await redactText(text, 'outcome', { known: [value], onUnavailable: 'structural' });
+    const result = await redactText(text, 'outcome', {
+      known: [value],
+      onUnavailable: 'structural',
+    });
     expect(result.text).toBe('raw <redacted> · json <redacted> · url <redacted>');
     expect(result.degraded).toBe('structural-only');
   });
 
   it('fails closed when asked to and no model is configured or reachable', async (): Promise<void> => {
-    await expect(redactText('x', 'documentation', { onUnavailable: 'throw' })).rejects.toBeInstanceOf(
-      RedactorUnavailableError,
-    );
     await expect(
-      redactText('x', 'documentation', { model: new UnreachableSpanModel(), onUnavailable: 'throw' }),
+      redactText('x', 'documentation', { onUnavailable: 'throw' }),
+    ).rejects.toBeInstanceOf(RedactorUnavailableError);
+    await expect(
+      redactText('x', 'documentation', {
+        model: new UnreachableSpanModel(),
+        onUnavailable: 'throw',
+      }),
     ).rejects.toBeInstanceOf(RedactorUnavailableError);
   });
 
@@ -28,7 +43,10 @@ describe('redactText', (): void => {
     // "the password is hunter2" has no separator, so only the model would find
     // it; "password: hunter2" is the grammar's now and would not show the floor.
     const text = `the password is hunter2 and DSN postgres://app:${CORPUS_SLOTS.db_password}@db/x`;
-    const result = await redactText(text, 'outcome', { model: new UnreachableSpanModel(), onUnavailable: 'structural' });
+    const result = await redactText(text, 'outcome', {
+      model: new UnreachableSpanModel(),
+      onUnavailable: 'structural',
+    });
     expect(result.degraded).toBe('structural-only');
     expect(result.text).toBe('the password is hunter2 and DSN postgres://app:<redacted>@db/x');
     expect(result.findings.map((finding) => finding.label)).toEqual(['connection password']);
@@ -38,13 +56,14 @@ describe('redactText', (): void => {
     const broken = new ScriptedSpanModel((): ModelSpan[] => {
       throw new TypeError('bad');
     });
-    await expect(redactText('x', 'outcome', { model: broken, onUnavailable: 'structural' })).rejects.toBeInstanceOf(
-      TypeError,
-    );
+    await expect(
+      redactText('x', 'outcome', { model: broken, onUnavailable: 'structural' }),
+    ).rejects.toBeInstanceOf(TypeError);
   });
 
   it('applies the guard to a secret span and the policy to a personal-data span', async (): Promise<void> => {
-    const text = 'Ticket REVOPS-7: password: hunter2; call Priya on +65 9123 4567 or priya@acme.example';
+    const text =
+      'Ticket REVOPS-7: password: hunter2; call Priya on +65 9123 4567 or priya@acme.example';
     const at = (value: string, label: string): ModelSpan => ({
       start: text.indexOf(value),
       end: text.indexOf(value) + value.length,
@@ -58,11 +77,16 @@ describe('redactText', (): void => {
       at('+65 9123 4567', 'phone number'),
       at('priya@acme.example', 'email'),
     ]);
-    const documentation = await redactText(text, 'documentation', { model, onUnavailable: 'throw' });
+    const documentation = await redactText(text, 'documentation', {
+      model,
+      onUnavailable: 'throw',
+    });
     expect(documentation.text).toBe(
       `Ticket REVOPS-7: password: <redacted>; call Priya on ${personalDataMarker('phone')} or priya@acme.example`,
     );
-    expect(documentation.findings.map((finding) => [finding.kind, finding.value, finding.redacted])).toEqual([
+    expect(
+      documentation.findings.map((finding) => [finding.kind, finding.value, finding.redacted]),
+    ).toEqual([
       ['secret', 'hunter2', true],
       ['person', 'Priya', false],
       ['phone', '+65 9123 4567', true],
@@ -87,7 +111,9 @@ describe('redactText', (): void => {
 
   it('lets a structural span win over a model span on the same text and uses the caller marker', async (): Promise<void> => {
     const text = `Bearer ${CORPUS_SLOTS.bearer_value} sent`;
-    const model = new ScriptedSpanModel((): ModelSpan[] => [{ start: 0, end: text.length, label: 'credential', score: 0.9 }]);
+    const model = new ScriptedSpanModel((): ModelSpan[] => [
+      { start: 0, end: text.length, label: 'credential', score: 0.9 },
+    ]);
     const result = await redactText(text, 'documentation', {
       model,
       onUnavailable: 'throw',
@@ -98,12 +124,18 @@ describe('redactText', (): void => {
 
   it('handles the review misses through the recorded model', async (): Promise<void> => {
     for (const [text, expected] of [
-      ['Sign in with the shared account (user revops, password: hunter2) and press Save.', 'password: <redacted>)'],
+      [
+        'Sign in with the shared account (user revops, password: hunter2) and press Save.',
+        'password: <redacted>)',
+      ],
       ['Password: hunter2\nNext line', 'Password: <redacted>\nNext line'],
       ['Client secret: abc123', 'Client secret: <redacted>'],
       ['共享账号的用户名是 revops，密码是 hunter2，请勿写入工单。', '密码是 <redacted>'],
     ]) {
-      const result = await redactText(text, 'documentation', { model: recorded, onUnavailable: 'throw' });
+      const result = await redactText(text, 'documentation', {
+        model: recorded,
+        onUnavailable: 'throw',
+      });
       expect(result.text, text).toContain(expected);
       expect(result.text).not.toContain('hunter2');
       expect(result.text).not.toContain('abc123');
@@ -114,17 +146,45 @@ describe('redactText', (): void => {
 describe('redactStructural', (): void => {
   it('is the synchronous floor: exact values and the grammar, nothing else', (): void => {
     expect(redactStructural(`x ${CORPUS_SLOTS.slack_bot_token} y`, [])).toBe('x <redacted> y');
-    expect(redactStructural('The password is hunter2', ['hunter2'])).toBe('The password is <redacted>');
+    expect(redactStructural('The password is hunter2', ['hunter2'])).toBe(
+      'The password is <redacted>',
+    );
     expect(redactStructural('The password is hunter2')).toBe('The password is hunter2');
     expect(redactStructural('Password: hunter2')).toBe('Password: <redacted>');
-    expect(redactStructural('Ticket key: REVOPS-7\nToken budget: none')).toBe('Ticket key: REVOPS-7\nToken budget: none');
+    expect(redactStructural('Ticket key: REVOPS-7\nToken budget: none')).toBe(
+      'Ticket key: REVOPS-7\nToken budget: none',
+    );
+  });
+});
+
+describe('redactFloorFor', (): void => {
+  it("removes the personal data the context's policy row redacts, each marked as its kind", (): void => {
+    const text =
+      'cc jane.doe@acme.com, call +65 9123 4567, DOB 1990-03-12\nHome address: 1 Raffles Place';
+    expect(redactFloorFor(text, 'export')).toBe(
+      'cc <redacted: email>, call <redacted: phone>, DOB <redacted: date-of-birth>\n' +
+        'Home address: <redacted: address>',
+    );
+    // Documentation keeps an e-mail, because a page names who to ask by it.
+    expect(redactFloorFor('ask jane.doe@acme.com', 'documentation')).toBe('ask jane.doe@acme.com');
+  });
+
+  it('still removes every exact value and structural secret, as the floor always does', (): void => {
+    expect(redactFloorFor(`token ${CORPUS_SLOTS.slack_bot_token}`, 'export')).toBe(
+      'token <redacted>',
+    );
+    expect(redactFloorFor('The password is hunter2', 'export', ['hunter2'])).toBe(
+      'The password is <redacted>',
+    );
   });
 });
 
 describe('overlapping classifications', () => {
   it('never lets a kept person span suppress a structural secret', async () => {
     const text = `Priya ${CORPUS_SLOTS.slack_bot_token}`;
-    const model = new ScriptedSpanModel(() => [{ start: 0, end: text.length, label: 'person', score: 0.99 }]);
+    const model = new ScriptedSpanModel(() => [
+      { start: 0, end: text.length, label: 'person', score: 0.99 },
+    ]);
     const result = await redactText(text, 'outcome', { model, onUnavailable: 'throw' });
     expect(result.text).toBe('Priya <redacted>');
   });
@@ -135,6 +195,8 @@ describe('overlapping classifications', () => {
       { start: 0, end: 10, label: 'password', score: 0.99 },
       { start: 6, end: 16, label: 'password', score: 0.99 },
     ]);
-    expect((await redactText(text, 'outcome', { model, onUnavailable: 'throw' })).text).toBe('<redacted>');
+    expect((await redactText(text, 'outcome', { model, onUnavailable: 'throw' })).text).toBe(
+      '<redacted>',
+    );
   });
 });

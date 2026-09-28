@@ -139,16 +139,29 @@ export function providerPrefix(value: string): string | undefined {
 /** A tail that is one short unit written again and again: `XXXX`, `0123abcd0123abcd`. */
 const REPEATED_UNIT = /^(.{1,8})\1+$/;
 
+/** The order a reader counts through when writing a sample tail: `0123456789abcdef`. */
+const COUNTING_ORDER = '0123456789abcdefghijklmnopqrstuvwxyz';
+
+/** The shortest counting run taken as a sample; a shorter one occurs in issued tokens by chance. */
+const COUNTING_RUN_MIN = 8;
+
+/** Whether a tail is one unbroken run of the counting order, in either case. */
+function isCountingRun(tail: string): boolean {
+  return tail.length >= COUNTING_RUN_MIN && COUNTING_ORDER.includes(tail.toLowerCase());
+}
+
 /**
  * Name why a provider-format value is a sample written for a reader rather
  * than an issued secret, or return undefined.
  *
- * A runbook that explains a rotation writes `lin_api_XXXXXXXXXXXX`; stored,
- * it becomes the system's bindable credential. The test is on the tail after
- * the provider prefix: one short unit written again and again. An issued
- * token never has that shape, so the check
+ * A runbook that explains a rotation writes `lin_api_XXXXXXXXXXXX` or
+ * `lin_api_0123456789abcdef`; stored, it becomes the system's bindable
+ * credential. The test is on the tail after the provider prefix: one short
+ * unit written again and again, or one unbroken run of `0-9a-z` counted in
+ * order. An issued token never has either shape, so the check
  * is narrow enough to run over the provider grammar, which the full guard is
- * not (`xoxb-1234567890-abcdefghij` reads as a branch name to it). A value
+ * not (`xoxb-1234567890-abcdefghij` reads as a branch name to it, and its
+ * tail breaks the count after the 9). A value
  * with no provider prefix is not judged here: a password may be anything.
  *
  * @param value - A candidate value, prefix included.
@@ -158,7 +171,7 @@ export function sampleValueReason(value: string): string | undefined {
   if (prefix === undefined) return undefined;
   const tail = value.slice(prefix.length).replace(/[_-]/g, '');
   if (tail.length < 4) return undefined;
-  return REPEATED_UNIT.test(tail) ? 'sample value' : undefined;
+  return REPEATED_UNIT.test(tail) || isCountingRun(tail) ? 'sample value' : undefined;
 }
 
 /** A stored row's label that records an explicit password assignment on the page. */

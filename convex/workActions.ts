@@ -13,6 +13,7 @@ import {
 import { spanModelFromEnv } from '../src/redaction/client';
 import {
   candidateRecordRead,
+  unreadCandidateRecord,
   redactGroundingRead,
   draftExecutionPlan,
   type CandidateRecord,
@@ -3714,7 +3715,8 @@ async function itemGroundingReads(
  *   args: The work item, agent, candidate and surfaces.
  *
  * Returns:
- *   The record or its unavailability, or undefined when there is no record to read.
+ *   The record or its unavailability (its system not connected, or the read
+ *   failed), or undefined when there is no record to read.
  */
 async function readCandidateRecord(
   ctx: ActionCtx,
@@ -3729,8 +3731,9 @@ async function readCandidateRecord(
     knownValues: readonly string[];
   },
 ): Promise<CandidateRecord | undefined> {
-  const read = candidateRecordRead(args.candidate, args.surfaces, Date.now());
-  if (!read) return undefined;
+  const now = Date.now();
+  const read = candidateRecordRead(args.candidate, args.surfaces, now);
+  if (!read) return unreadCandidateRecord(args.candidate, args.surfaces, now);
   try {
     const eventId = await ctx.runMutation(internal.work.beginPlanGroundingRead, {
       workItemId: args.workItemId,

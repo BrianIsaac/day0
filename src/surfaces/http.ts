@@ -466,6 +466,19 @@ export async function probeDocumentedApi(
   };
 }
 
+/** The start of an HTML document, after any leading whitespace. */
+const HTML_DOCUMENT = /^\s*(?:<!doctype\s+html\b|<html\b)/i;
+
+/**
+ * Whether a response is an HTML page rather than an API's answer: by its
+ * declared type, or by a body that opens an HTML document whatever the type
+ * says.
+ */
+function isHtmlPage(response: Response, body: string): boolean {
+  const type = response.headers.get('content-type') ?? '';
+  return /^\s*text\/html\b/i.test(type) || HTML_DOCUMENT.test(body);
+}
+
 /** Adapter for `http.request` against a documented HTTP API surface. */
 export class HttpAdapter implements SurfaceAdapter {
   readonly tools = HTTP_TOOLS;
@@ -657,6 +670,17 @@ export class HttpAdapter implements SurfaceAdapter {
           ok: false,
           reason: `HTTP ${response.status} · response exceeded ${RESPONSE_READ_LIMIT} bytes`,
           ...(response.ok && writeAttempted ? { outcomeUnknown: true } : {}),
+          idempotencyKey,
+        };
+      }
+      if (response.ok && writeAttempted && isHtmlPage(response, raw)) {
+        // A proxy, a gateway or a sign-in page answers 2xx with a page of its
+        // own; the API never saw the write, or nobody can tell (E-79).
+        return {
+          tool: action.tool,
+          ok: false,
+          outcomeUnknown: true,
+          reason: `HTTP ${response.status} · the answer was an HTML page, not the API's: a proxy or a sign-in page may have answered, so whether the write landed is unknown`,
           idempotencyKey,
         };
       }

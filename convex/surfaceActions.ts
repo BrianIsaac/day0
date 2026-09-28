@@ -67,6 +67,9 @@ const SLACK_METHOD_DEFAULTS = [
   'conversations.history',
   'conversations.replies',
   'chat.postMessage',
+  // Marks Day0's own decision request decided in the manager DM; optional,
+  // so a policy that does not name it leaves the request as sent.
+  'chat.update',
 ] as const;
 
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
@@ -1384,13 +1387,14 @@ export async function runSurfaceProbe(
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
-            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
+            ctx.runQuery(internal.docSources.cardPagesForSurface, { surfaceId: surface._id }),
         );
-        // Scoped to this surface's own documentation. Read across every page,
-        // one marker would serve every browser-driven surface the agent has,
-        // and the second such surface would be checked against the first's page
-        // title - which matters now that a public web UI reaches this rung
-        // without a login.
+        // Scoped to this surface's own documentation: the pages its card cites
+        // (D D3), and within them the text about the system. Read across every
+        // page, one marker would serve every browser-driven surface the agent
+        // has, and the second such surface would be checked against the
+        // first's page title - which matters now that a public web UI reaches
+        // this rung without a login.
         const documentation = pages
           .map((page: Doc<'docPages'>): string =>
             relevantSystemText(page.markdown, surface.displayName, page.title),
@@ -1427,7 +1431,7 @@ export async function runSurfaceProbe(
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
-            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
+            ctx.runQuery(internal.docSources.cardPagesForSurface, { surfaceId: surface._id }),
         );
         // Scoped to this surface's own pages, as the browser marker is: another
         // system's documented operations are not this one's to call.
@@ -1450,7 +1454,7 @@ export async function runSurfaceProbe(
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
-            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
+            ctx.runQuery(internal.docSources.cardPagesForSurface, { surfaceId: surface._id }),
         );
         const slack = await withOneRetry(credential, known, () =>
           dependencies.probeSlack(

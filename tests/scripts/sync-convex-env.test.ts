@@ -96,6 +96,16 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(cleared.calls).toContain('convex env remove OPENAI_REASONING_EFFORT');
   });
 
+  it('names the deployment an evaluation bed from .env.local, and stops naming it once the file drops the flag', (): void => {
+    const bed = runSync([], 'DAY0_EVALUATION_BED=comparison\n');
+    expect(bed.status).toBe(0);
+    expect(bed.calls).toContain('convex env set DAY0_EVALUATION_BED -- comparison');
+    const leaving = runSync(['DAY0_EVALUATION_BED=comparison'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(leaving.status).toBe(0);
+    expect(leaving.calls).toContain('convex env remove DAY0_EVALUATION_BED');
+    expect(leaving.deployment).not.toContain('DAY0_EVALUATION_BED=comparison');
+  });
+
   it('clears the retired credential names a deployment still carries', (): void => {
     const { status, calls } = runSync(
       [

@@ -34,6 +34,7 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { cardPageRefs } from '../src/docs/card-pages';
+import { credentialPageRef } from '../src/docs/credential-ref';
 import {
   FINISHING_CURSOR,
   finishingCursor,
@@ -651,43 +652,75 @@ export const pagesForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const sources = (
-      await ctx.db
-        .query('docSources')
-        .withIndex('by_user', (index) => index.eq('userId', agent.userId!))
-        .collect()
-    ).filter((source) => agentReadsSource(agent, source._id));
-    const byId = new Map(sources.map((source, index) => [String(source._id), { source, index }]));
     const surfaces = await ctx.db
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
       .take(CARD_SURFACE_LIMIT);
-    const refs = cardPageRefs(surfaces, new Set(byId.keys()), CARD_PAGE_LIMIT);
-    const encoder = new TextEncoder();
-    const pages: Array<Doc<'docPages'> & { sourceLabel: string; sourceKind: string }> = [];
-    let bytes = 0;
-    for (const { sourceId, ref } of refs) {
-      if (bytes >= CARD_PAGE_BYTES) break;
-      const owner = byId.get(sourceId);
-      if (!owner) continue;
-      const page = await ctx.db
-        .query('docPages')
-        .withIndex('by_source_ref', (index) =>
-          index.eq('sourceId', owner.source._id).eq('ref', ref),
-        )
-        .unique();
-      if (!page) continue;
-      bytes += encoder.encode(page.markdown).length;
-      pages.push({ ...page, sourceLabel: owner.source.label, sourceKind: owner.source.kind });
-    }
-    return pages.sort(
-      (left, right): number =>
-        (byId.get(String(left.sourceId))?.index ?? 0) -
-          (byId.get(String(right.sourceId))?.index ?? 0) ||
-        left._creationTime - right._creationTime,
-    );
+    return await readCardPages(ctx, agent, surfaces);
   },
 });
+
+/**
+ * The pages one surface's card reads (its approved scope's pages and its
+ * evidence), for the probe: the system's own documentation, read by ref
+ * rather than as the corpus (D D3 (b)). Internal; reads, writes nothing.
+ */
+export const cardPagesForSurface = internalQuery({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<CardPage[]> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) return [];
+    const agent = await ctx.db.get(surface.agentId);
+    if (!agent?.userId) return [];
+    return await readCardPages(ctx, agent, [surface]);
+  },
+});
+
+/** A page a card reads, with the label and kind of the source it came from. */
+type CardPage = Doc<'docPages'> & { sourceLabel: string; sourceKind: string };
+
+/**
+ * Read the pages some surface cards name, by ref, within the card bounds
+ * (`CARD_PAGE_LIMIT` pages, `CARD_PAGE_BYTES` of text), ordered by source
+ * then by when each page was first stored.
+ *
+ * @param agent - The employee, whose readable sources bound the refs.
+ * @param surfaces - The cards whose pages are read.
+ */
+async function readCardPages(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<CardPage[]> {
+  const sources = (
+    await ctx.db
+      .query('docSources')
+      .withIndex('by_user', (index) => index.eq('userId', agent.userId!))
+      .collect()
+  ).filter((source) => agentReadsSource(agent, source._id));
+  const byId = new Map(sources.map((source, index) => [String(source._id), { source, index }]));
+  const refs = cardPageRefs(surfaces, new Set(byId.keys()), CARD_PAGE_LIMIT);
+  const encoder = new TextEncoder();
+  const pages: CardPage[] = [];
+  let bytes = 0;
+  for (const { sourceId, ref } of refs) {
+    if (bytes >= CARD_PAGE_BYTES) break;
+    const owner = byId.get(sourceId);
+    if (!owner) continue;
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (index) => index.eq('sourceId', owner.source._id).eq('ref', ref))
+      .unique();
+    if (!page) continue;
+    bytes += encoder.encode(page.markdown).length;
+    pages.push({ ...page, sourceLabel: owner.source.label, sourceKind: owner.source.kind });
+  }
+  return pages.sort(
+    (left, right): number =>
+      (byId.get(String(left.sourceId))?.index ?? 0) -
+        (byId.get(String(right.sourceId))?.index ?? 0) || left._creationTime - right._creationTime,
+  );
+}
 
 /**
  * Count linked documentation sources by kind, for `pnpm check:setup`.
@@ -1537,6 +1570,9 @@ export const finishSync = internalMutation({
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
+      // An earlier sync already superseded it and unbound its surfaces; doing
+      // it again would rewrite nothing but the count.
+      if (credential.status === 'superseded') continue;
       await supersedeCredential(ctx, credential);
       credentialsSuperseded += 1;
     }
@@ -1587,18 +1623,18 @@ async function supersedeCredential(
   // decrypt and exact-value list, and the same value returning on a later
   // sync revives the row (`credentials.store`). Only a person's revoke
   // stamps `revokedAt`, so a sync never undoes one and never makes one. The
-  // first supersede's time stands through every later sync's, so the row ages.
+  // caller skips a row already superseded, so its first time stands and it ages.
   await ctx.db.patch(credential._id, {
     status: 'superseded',
     statusReason: 'No longer detected in synced documentation.',
-    supersededAt:
-      credential.status === 'superseded' ? (credential.supersededAt ?? Date.now()) : Date.now(),
+    supersededAt: Date.now(),
   });
   const surfaces = await ctx.db
     .query('surfaces')
     .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
     .take(1_001);
   if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
+  await recordSuperseded(ctx, credential, surfaces);
   for (const surface of surfaces) {
     const request = surface.request as { credential?: Record<string, unknown> } | undefined;
     const location =
@@ -1638,6 +1674,38 @@ async function supersedeCredential(
       managerUserId: undefined,
       managerName: undefined,
       channelsNotJoined: undefined,
+    });
+  }
+}
+
+/**
+ * Tell every agent whose card was bound to a superseded page credential, one
+ * event each through the contract, naming the page and never the value. A
+ * credential no card was bound to reaches no agent's feed.
+ */
+async function recordSuperseded(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<void> {
+  if (typeof credential.source === 'string') return;
+  const byAgent = new Map<Id<'agents'>, Id<'surfaces'>[]>();
+  for (const surface of surfaces) {
+    byAgent.set(surface.agentId, [...(byAgent.get(surface.agentId) ?? []), surface._id]);
+  }
+  const now = Date.now();
+  for (const [agentId, surfaceIds] of byAgent) {
+    await appendEvent(ctx, {
+      agentId,
+      type: 'credential.superseded',
+      payload: {
+        credentialId: credential._id,
+        label: credential.label,
+        sourceId: credential.source.sourceId,
+        page: credentialPageRef(credential.source.ref),
+        surfaceIds,
+      },
+      createdAt: now,
     });
   }
 }

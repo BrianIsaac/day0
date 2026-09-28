@@ -67,6 +67,24 @@ function orderFromPage(content: string): string[] {
 }
 
 /**
+ * What the documented order reads of one page: its title, which says whether
+ * it is an onboarding page, and its content only when it carries a systems
+ * table. A walk over a large corpus keeps this rather than the page, so it
+ * holds no body the order never reads (D D3).
+ *
+ * @param page - One documentation page.
+ */
+export function waterfallEntry(page: WaterfallPage): WaterfallPage {
+  const tabled = page.content
+    .split(/\r?\n/)
+    .some((line: string): boolean => SYSTEMS_HEADING.test(line.trim()));
+  return {
+    ...(page.title !== undefined ? { title: page.title } : {}),
+    content: tabled ? page.content : '',
+  };
+}
+
+/**
  * Extract the documented waterfall order from onboarding pages.
  *
  * Pages whose title contains "onboarding" are authoritative when present.

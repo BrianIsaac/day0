@@ -280,6 +280,19 @@ describe('HTTP adapter', (): void => {
     });
   });
 
+  it('does not call a write landed when an HTML page answered it, as a proxy or a sign-in page does (E-79)', async (): Promise<void> => {
+    const page =
+      '<!DOCTYPE html><html><head><title>Sign in</title></head><body>Sign in</body></html>';
+    for (const response of [
+      (): Response => new Response(page, { status: 200, headers: { 'content-type': 'text/html' } }),
+      (): Response => new Response(`\n  ${page}`, { status: 200 }),
+    ]) {
+      const result = await adapter(fakeFetch(response)).apply(ctx, run, post, 0, 'k');
+      expect(result).toMatchObject({ ok: false, outcomeUnknown: true, idempotencyKey: 'k' });
+      expect((result as { reason?: string }).reason).toContain('an HTML page, not the API');
+    }
+  });
+
   it('reads an id from a JSON response without a ts', async (): Promise<void> => {
     const fetchImpl = fakeFetch(
       (): Response => new Response(JSON.stringify({ id: 'rec_9' }), { status: 201 }),

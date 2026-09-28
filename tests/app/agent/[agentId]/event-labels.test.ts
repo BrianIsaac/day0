@@ -99,6 +99,29 @@ describe('the live feed labels', (): void => {
         payload: { surfaceId: 's1', by: 'manager', days: 30, expiresAt: 1, renewed: true },
       }),
     ).toBe('access renewed by the manager: 30 days');
+    expect(
+      eventLabel({
+        type: 'surface.access-set',
+        payload: { surfaceId: 's1', by: 'upgrade', days: 90, expiresAt: 1 },
+      }),
+    ).toBe('access set by the upgrade: 90 days');
+  });
+
+  it('says which credential the documentation dropped and how many cards need one again', (): void => {
+    expect(
+      eventLabel({
+        type: 'credential.superseded',
+        payload: {
+          credentialId: 'c1',
+          label: 'linear service token',
+          sourceId: 'd1',
+          page: 'runbooks/linear.md',
+          surfaceIds: ['s1', 's2'],
+        },
+      }),
+    ).toBe(
+      'credential "linear service token" no longer in the documentation (runbooks/linear.md); land one again on 2 cards',
+    );
   });
 
   it('says whether a failed run stopped, and names the slugs of an ambiguous charter match', (): void => {

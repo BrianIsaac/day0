@@ -81,7 +81,10 @@ const plainPlan = {
   expectedOutputType: 'reply',
 };
 
-async function questions(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'managerQuestions'>[]> {
+async function questions(
+  harness: Harness,
+  agentId: Id<'agents'>,
+): Promise<Doc<'managerQuestions'>[]> {
   return await harness.run(
     async (ctx) =>
       await ctx.db
@@ -108,7 +111,9 @@ async function answeredEvents(harness: Harness, agentId: Id<'agents'>): Promise<
     async (ctx) =>
       await ctx.db
         .query('events')
-        .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'charter.question-answered'))
+        .withIndex('by_agent_type', (q) =>
+          q.eq('agentId', agentId).eq('type', 'charter.question-answered'),
+        )
         .collect(),
   );
   return events.map((event) => event.payload);
@@ -137,7 +142,11 @@ describe('the question record', (): void => {
           agentId,
           key: 'who owns the looker pipeline tile',
           question: 'Who owns the Looker pipeline tile.',
-          context: { touchedBy: 'plan', text: 'Refresh the Looker pipeline tile.', words: ['looker'] },
+          context: {
+            touchedBy: 'plan',
+            text: 'Refresh the Looker pipeline tile.',
+            words: ['looker'],
+          },
           askedAt: 4,
           workItemId,
           charterId,
@@ -167,14 +176,19 @@ describe('asking open questions at plan approval', (): void => {
     });
     expect(asked[0]?.context.text).toContain('Refresh the Looker pipeline tile.');
     expect(asked[0]?.answer).toBeUndefined();
-    expect(await eventTypes(harness, agentId)).toEqual(['work.plan-drafted', 'charter.question-asked']);
+    expect(await eventTypes(harness, agentId)).toEqual([
+      'work.plan-drafted',
+      'charter.question-asked',
+    ]);
 
     const second = await seedClaimed(harness, agentId, 'Another Looker tile refresh');
     await harness.mutation(internal.work.setPlan, { workItemId: second, plan: lookerPlan });
     expect(await questions(harness, agentId)).toHaveLength(1);
     const owner = harness.withIdentity(OWNER);
     expect(await owner.query(api.managerQuestions.forWorkItem, { workItemId: second })).toEqual([]);
-    expect(await owner.query(api.managerQuestions.forWorkItem, { workItemId: first })).toHaveLength(1);
+    expect(await owner.query(api.managerQuestions.forWorkItem, { workItemId: first })).toHaveLength(
+      1,
+    );
     expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toHaveLength(1);
   });
 
@@ -206,14 +220,15 @@ describe('asking open questions at plan approval', (): void => {
     const { agentId, charterId } = await seedApprovedAgent(harness);
     const later =
       'Evidence check: 2 clauses in this draft quoted my own words back as if they were yours, so I dropped them. Which of this is actually what you told me?';
-    await harness.run(async (ctx) =>
-      await ctx.db.patch(charterId, {
-        body: {
-          ...runThroughBody(),
-          openQuestions: [...RECORDED_QUESTIONS_2026_09_16],
-          synthesisNotes: [later],
-        },
-      }),
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(charterId, {
+          body: {
+            ...runThroughBody(),
+            openQuestions: [...RECORDED_QUESTIONS_2026_09_16],
+            synthesisNotes: [later],
+          },
+        }),
     );
     const workItemId = await seedClaimed(harness, agentId, 'Audit note for the checklist');
     await harness.mutation(internal.work.setPlan, {
@@ -221,7 +236,10 @@ describe('asking open questions at plan approval', (): void => {
       plan: {
         ...plainPlan,
         summary: 'Read the tile back and quote its audit line as evidence.',
-        steps: ['Read the tile back.', 'Quote the words of the audit line as evidence; drop nothing you were not told.'],
+        steps: [
+          'Read the tile back.',
+          'Quote the words of the audit line as evidence; drop nothing you were not told.',
+        ],
       },
     });
     const asked = await questions(harness, agentId);
@@ -262,7 +280,11 @@ describe('answering a question', (): void => {
     const body = latest?.body as Charter;
     expect(body.openQuestions).toEqual(['Whether Northstar CRM access will be granted.']);
     expect(body.answeredQuestions).toEqual([
-      { question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.', answeredAt: expect.any(String) },
+      {
+        question: 'Who owns the Looker pipeline tile.',
+        answer: 'Priya owns it.',
+        answeredAt: expect.any(String),
+      },
     ]);
     const [answered] = await questions(harness, agentId);
     expect(answered?.answer).toEqual({
@@ -274,7 +296,12 @@ describe('answering a question', (): void => {
     expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toEqual([]);
     expect(await eventTypes(harness, agentId)).toContain('charter.amended');
     expect(await answeredEvents(harness, agentId)).toEqual([
-      { questionId: asked!._id, via: 'dashboard', amended: true, charterId: result.amendedCharterId },
+      {
+        questionId: asked!._id,
+        via: 'dashboard',
+        amended: true,
+        charterId: result.amendedCharterId,
+      },
     ]);
   });
 
@@ -300,29 +327,55 @@ describe('answering a question', (): void => {
     ).rejects.toThrow(/already been answered/);
   });
 
-  it('takes the answer without a second amendment when the card already answered the charter', async (): Promise<void> => {
+  it('settles the question a plan asked when the card answers it, so it is answered and counted once (U12)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApprovedAgent(harness);
     const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
     await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
     const [asked] = await questions(harness, agentId);
     const owner = harness.withIdentity(OWNER);
-    await owner.mutation(api.charters.amend, {
+    const amended = await owner.mutation(api.charters.amend, {
       agentId,
-      changes: [{ kind: 'answer-question', question: 'Who owns the Looker pipeline tile.', answer: 'Priya.' }],
+      changes: [
+        {
+          kind: 'answer-question',
+          question: 'Who owns the Looker pipeline tile.',
+          answer: 'Priya.',
+        },
+      ],
     });
-    const result = await owner.mutation(api.managerQuestions.answer, {
-      questionId: asked!._id,
-      text: 'Priya.',
-    });
-    expect(result.amendedCharterId).toBeNull();
-    expect(await owner.query(api.charters.listForAgent, { agentId })).toHaveLength(2);
     const [answered] = await questions(harness, agentId);
-    expect(answered?.answer).toMatchObject({ text: 'Priya.', via: 'dashboard' });
-    expect(answered?.answer?.amendedCharterId).toBeUndefined();
-    // An answer that changed nothing is still a reorientation the manager answered (A9).
+    expect(answered?.answer).toMatchObject({
+      text: 'Priya.',
+      via: 'dashboard',
+      amendedCharterId: amended.charterId,
+    });
+    // The card's answer is one reorientation the manager settled, with the charter amended (A9).
     expect(await answeredEvents(harness, agentId)).toEqual([
-      { questionId: asked!._id, via: 'dashboard', amended: false },
+      { questionId: asked!._id, via: 'dashboard', amended: true, charterId: amended.charterId },
+    ]);
+    await expect(
+      owner.mutation(api.managerQuestions.answer, { questionId: asked!._id, text: 'Priya.' }),
+    ).rejects.toThrow(/already been answered/);
+  });
+
+  it('counts a card answer to a question no plan asked, with no question row to name', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApprovedAgent(harness);
+    const owner = harness.withIdentity(OWNER);
+    const amended = await owner.mutation(api.charters.amend, {
+      agentId,
+      changes: [
+        {
+          kind: 'answer-question',
+          question: 'Who owns the Looker pipeline tile.',
+          answer: 'Priya.',
+        },
+      ],
+    });
+    expect(await questions(harness, agentId)).toEqual([]);
+    expect(await answeredEvents(harness, agentId)).toEqual([
+      { via: 'dashboard', amended: true, charterId: amended.charterId },
     ]);
   });
 });

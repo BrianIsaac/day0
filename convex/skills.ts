@@ -115,6 +115,16 @@ async function claimHolder(
 /** Everything a run releases when it stops holding the skill. */
 const RELEASED = { authoringRunId: undefined, authoringClaimedAt: undefined } as const;
 
+/** How long a deferred authoring waits before it is tried again. */
+export const AUTHORING_DEFERRAL_MS = 5 * 60 * 1000;
+
+/**
+ * How many authoring runs in a row may be deferred for the model provider
+ * before the skill fails for the manager's Retry: a provider outage longer
+ * than a quarter of an hour is the manager's to see.
+ */
+export const MAX_AUTHORING_DEFERRALS = 3;
+
 /**
  * Which of the employee's rows a skill's transition reaches.
  *
@@ -1073,6 +1083,7 @@ export const completeRegistration = internalMutation({
       refusedSmokeTest: undefined,
       pendingSmokeTest: undefined,
       registeredAt: row.registeredAt ?? Date.now(),
+      authoringDeferrals: undefined,
       ...RELEASED,
     });
     await appendEvent(ctx, {
@@ -1133,6 +1144,7 @@ export const failAuthoringRun = internalMutation({
       refusedSmokeTest:
         args.refusedSmokeTest === undefined ? undefined : redactTokenShapes(args.refusedSmokeTest),
       pendingSmokeTest: undefined,
+      authoringDeferrals: undefined,
       ...RELEASED,
     });
     for (const type of ['skill.failed', args.eventType] as const) {
@@ -1145,6 +1157,74 @@ export const failAuthoringRun = internalMutation({
     }
     await requeueWaitingWork(ctx, row, { decision: 'needs-skill', reason });
     return { recorded: true };
+  },
+});
+
+/**
+ * Defer an authoring run the model provider could not answer (U9 step 20): an
+ * outage, a rate limit, a timeout. Internal; the authoring action calls it
+ * with the run's own id. The skill stays at `authoring` - listed, uncallable,
+ * retryable - with the claim released and the reason on the row, and the run
+ * is tried again after `AUTHORING_DEFERRAL_MS`. After
+ * `MAX_AUTHORING_DEFERRALS` in a row it fails for the manager's Retry, as
+ * any authoring failure does.
+ *
+ * @returns Whether the run was deferred (false once it failed, or when the
+ *   run no longer holds the skill), and the reason the caller reports.
+ */
+export const deferAuthoringRun = internalMutation({
+  args: { skillId: v.id('skills'), runId: v.id('events'), reason: v.string() },
+  handler: async (ctx, args): Promise<{ deferred: boolean; reason: string }> => {
+    const row = await claimHolder(ctx, args.skillId, args.runId, 'defer');
+    if (!row) return { deferred: false, reason: 'another authoring run holds this skill' };
+    const reason = redactTokenShapes(args.reason);
+    const attempt = (row.authoringDeferrals ?? 0) + 1;
+    if (attempt > MAX_AUTHORING_DEFERRALS) {
+      const failed = `the model provider could not be reached through ${MAX_AUTHORING_DEFERRALS + 1} tries: ${reason}`;
+      await ctx.db.patch(args.skillId, {
+        state: 'failed',
+        verificationLog: failed,
+        pendingSmokeTest: undefined,
+        authoringDeferrals: undefined,
+        ...RELEASED,
+      });
+      for (const type of ['skill.failed', 'skill.author-failed'] as const) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type,
+          payload: { skillId: args.skillId, name: row.name, reason: failed },
+          createdAt: Date.now(),
+        });
+      }
+      await requeueWaitingWork(ctx, row, { decision: 'needs-skill', reason: failed });
+      return { deferred: false, reason: failed };
+    }
+    const minutes = Math.round(AUTHORING_DEFERRAL_MS / 60_000);
+    const deferred = `${reason}. The model provider could not be reached, so authoring is tried again in ${minutes} minutes (${attempt} of ${MAX_AUTHORING_DEFERRALS}).`;
+    await ctx.db.patch(args.skillId, {
+      state: 'authoring',
+      verificationLog: deferred,
+      authoringDeferrals: attempt,
+      ...RELEASED,
+    });
+    await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'skill.authoring-deferred',
+      payload: {
+        skillId: args.skillId,
+        name: row.name,
+        reason,
+        retryInMs: AUTHORING_DEFERRAL_MS,
+        attempt,
+      },
+      createdAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(
+      AUTHORING_DEFERRAL_MS,
+      internal.skillActions.authorAndRegisterSkillInternal,
+      { skillId: args.skillId },
+    );
+    return { deferred: true, reason: deferred };
   },
 });
 
@@ -1178,6 +1258,7 @@ export const parkUnverified = internalMutation({
       verificationLog: redactTokenShapes(args.verificationLog),
       refusedBody: undefined,
       refusedSmokeTest: undefined,
+      authoringDeferrals: undefined,
       ...RELEASED,
     });
     await appendEvent(ctx, {

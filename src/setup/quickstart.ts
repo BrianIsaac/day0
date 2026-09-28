@@ -310,7 +310,7 @@ export const FIRST_SUCCESS: readonly FirstSuccessStep[] = [
   {
     action: 'Approve the connection cards on the Surfaces tab.',
     detail:
-      'Each card needs both the manager and the IT approval; a Slack card with no DAY0_PUBLIC_URL takes a shared bot token before approval. A system with no approved path stays absent, and work that needs it defers.',
+      'Each card takes one approval, the manager; a Slack card with no DAY0_PUBLIC_URL takes a shared bot token before approval. A system with no approved path stays absent, and work that needs it defers.',
   },
 ];
 

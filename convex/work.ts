@@ -22,7 +22,6 @@ import {
 import {
   AWAITING_CHARTER,
   claimLoopStepInTransaction,
-  EVALUATION_ATTEMPTS_SPENT,
   EXECUTION_STALL_MS,
   isManagerChannel,
   OPEN_WORK_STATES,
@@ -32,6 +31,7 @@ import {
   STEP_LEASE_MS,
   type StepClaim,
 } from './workLoop';
+import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,
@@ -106,9 +106,10 @@ import {
 } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
+import { redactTokenShapes } from '../src/surfaces/redact';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
@@ -299,6 +300,42 @@ export const get = query({
   },
 });
 
+/**
+ * The newest listing intake kept of an item's ticket, refused or not, for the
+ * card's line on where the ticket stands now (K D3). Public, to the item's
+ * owner only; writes nothing. The assignee's address is left out, as the
+ * export leaves it out: the card names the assignee by id.
+ *
+ * @returns The listing, or null when intake kept none (a chat ask).
+ */
+export const latestListing = query({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    tracker: Omit<TicketSnapshot, 'assigneeEmail'>;
+    listedAt: number;
+    refused?: string;
+  } | null> => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    const kept = await keptListingAt(ctx, row, Number.MAX_SAFE_INTEGER, false);
+    if (kept === undefined) return null;
+    const { assigned, assigneeId, state, stateType, doNotAutomate } = kept.tracker;
+    return {
+      tracker: {
+        assigned,
+        doNotAutomate,
+        ...(assigneeId !== undefined ? { assigneeId } : {}),
+        ...(state !== undefined ? { state } : {}),
+        ...(stateType !== undefined ? { stateType } : {}),
+      },
+      listedAt: kept.listedAt,
+      ...(kept.refused !== undefined ? { refused: kept.refused } : {}),
+    };
+  },
+});
+
 /** Internal owner-free read for scheduler continuations already fenced by the work state. */
 export const getInternal = internalQuery({
   args: { workItemId: v.id('workItems') },
@@ -460,15 +497,9 @@ export async function keepTicketListing(
  * from the agent's discoveries at or after the row's creation.
  */
 async function discoveryListing(ctx: QueryCtx, row: ListedItem): Promise<KeptListing | undefined> {
-  const discoveries = await ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (q) =>
-      q
-        .eq('agentId', row.agentId)
-        .eq('type', 'work.discovered')
-        .gte('_creationTime', row._creationTime),
-    )
-    .take(DISCOVERY_SCAN);
+  const discoveries = await eventsOfType(ctx, row.agentId, 'work.discovered', {
+    from: row._creationTime,
+  }).take(DISCOVERY_SCAN);
   const discovery = discoveries.find(
     (event) => (event.payload as { workItemId?: unknown } | undefined)?.workItemId === row._id,
   );
@@ -619,14 +650,9 @@ export const listedSnapshot = internalQuery({
   ): Promise<{ planned: TicketSnapshot | null; acknowledged: TicketSnapshot | null }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return { planned: null, acknowledged: null };
-    const retries = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) =>
-        q
-          .eq('agentId', row.agentId)
-          .eq('type', 'work.retry')
-          .gt('_creationTime', args.before - CREATION_TIME_SLACK_MS),
-      )
+    const retries = await eventsOfType(ctx, row.agentId, 'work.retry', {
+      after: args.before - CREATION_TIME_SLACK_MS,
+    })
       .order('desc')
       .take(RETRY_SCAN);
     const retry = retries.find(
@@ -654,11 +680,7 @@ export const executionRunIds = internalQuery({
   handler: async (ctx, args): Promise<Array<Id<'events'>>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return [];
-    const claims = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) =>
-        q.eq('agentId', row.agentId).eq('type', 'work.execution-claimed'),
-      )
+    const claims = await eventsOfType(ctx, row.agentId, 'work.execution-claimed')
       .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
       .take(RUN_SCAN_LIMIT);
     return claims.map((claim) => claim._id);
@@ -850,6 +872,35 @@ export const seedItem = internalMutation({
 });
 
 /**
+ * Seed every item the mock generator made for an approved charter, and the
+ * `work.charter-derived` event, in one transaction. Internal; the charter's
+ * seeding calls it. All or nothing, so a retry after a failure never adds a
+ * second, different batch beside a partial first: the generator is a model
+ * call and the seed dedups on external ids only (U9 D4).
+ *
+ * @returns How many items were seeded.
+ */
+export const seedCharterDerived = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    role: v.string(),
+    items: v.array(v.object(workItemSeedFields)),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    for (const item of args.items) {
+      await seedItemInTransaction(ctx, { agentId: args.agentId, ...item });
+    }
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'work.charter-derived',
+      payload: { count: args.items.length, role: args.role },
+      createdAt: Date.now(),
+    });
+    return args.items.length;
+  },
+});
+
+/**
  * Bring the row of a ticket intake refused on this poll up to the listing
  * and withdraw it when it is only waiting. Internal; called by intake. A
  * ticket with no row gets none.
@@ -1008,11 +1059,7 @@ export async function backfillUnavailableCausePage(
     if (row.evaluationUnavailableAt === undefined || row.evaluationUnavailableCause !== undefined) {
       continue;
     }
-    const events = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (index) =>
-        index.eq('agentId', row.agentId).eq('type', 'work.scope-judgement-unavailable'),
-      )
+    const events = await eventsOfType(ctx, row.agentId, 'work.scope-judgement-unavailable')
       .order('desc')
       .take(UNAVAILABLE_EVENT_WALK);
     for (const event of events) {
@@ -2622,13 +2669,7 @@ export const recoverUnproposedSkill = internalMutation({
       return { recovered: 'ignored' };
     }
     const latest = (
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent_type', (q) =>
-          q.eq('agentId', row.agentId).eq('type', 'work.evaluated'),
-        )
-        .order('desc')
-        .take(REEVALUATION_BATCH)
+      await eventsOfType(ctx, row.agentId, 'work.evaluated').order('desc').take(REEVALUATION_BATCH)
     ).find((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
     if (latest?._id !== args.evaluatedId) return { recovered: 'ignored' };
     const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
@@ -3233,11 +3274,104 @@ async function openRequestsOn(ctx: QueryCtx, surface: Doc<'surfaces'>): Promise<
 
 /**
  * Undecided batches of one manager channel read, newest first, for the ones
- * with open members. A batch whose members were decided one by one is never
- * marked decided, so the read is bounded; an open batch is among the newest,
- * since it is no older than the open requests it names.
+ * with open members. A batch is marked decided by a reply to its code or by
+ * the decision of its last open member (`settleBatchesHolding`), so the
+ * undecided ones are those still waiting; the bound holds the read to the
+ * newest, where an open batch is, since it is no older than the requests it
+ * names.
  */
 const OPEN_BATCH_SCAN = 200;
+
+/**
+ * Whether a batch member is still open: its item parked on the run the
+ * request showed, under the code the request carried, undecided. The same
+ * test a reply to the batch's code applies before it decides a member.
+ */
+function batchMemberOpen(
+  item: Doc<'workItems'> | null,
+  member: Doc<'decisionBatches'>['members'][number],
+): boolean {
+  const decision = item?.decision;
+  return (
+    item !== null &&
+    decision !== undefined &&
+    decision.id === member.decisionId &&
+    decision.decidedAt === undefined &&
+    item.state === 'actions-pending' &&
+    item.pendingRunId === member.pendingRunId
+  );
+}
+
+/** Whether no member of a batch is open any more. */
+async function batchSettled(
+  ctx: Pick<QueryCtx, 'db'>,
+  batch: Doc<'decisionBatches'>,
+): Promise<boolean> {
+  for (const member of batch.members) {
+    if (batchMemberOpen(await ctx.db.get(member.workItemId), member)) return false;
+  }
+  return true;
+}
+
+/** Batches one page of the `decision-batches-settled` migration reads. */
+const BATCH_SETTLE_PAGE = 100;
+
+/**
+ * One page of the `decision-batches-settled` migration (S2 D6): an undecided
+ * batch none of whose members is open any more, left so by decisions made one
+ * member at a time before the decide paths settled it, is marked decided now.
+ * Run by `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function settleDecisionBatchesPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db
+    .query('decisionBatches')
+    .paginate({ cursor, numItems: BATCH_SETTLE_PAGE });
+  const now = Date.now();
+  let changed = 0;
+  for (const batch of page.page) {
+    if (batch.decidedAt !== undefined || !(await batchSettled(ctx, batch))) continue;
+    await ctx.db.patch(batch._id, { decidedAt: now });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Mark decided every undecided batch on a just-decided item's channel that
+ * holds its decision and has no member left open, in the decision's own
+ * transaction (S2 D6). A batch decided member by member has no one outcome
+ * and no reply that decided it, so only the time is stamped; a later reply to
+ * its code is answered as already decided.
+ *
+ * @param item - The item as the decision left it.
+ */
+async function settleBatchesHolding(ctx: MutationCtx, item: Doc<'workItems'>): Promise<void> {
+  const decision = item.decision;
+  if (!decision?.surfaceSlug || !decision.channel) return;
+  const { surfaceSlug, channel } = decision;
+  const batches = await ctx.db
+    .query('decisionBatches')
+    .withIndex('by_agent_channel_decided', (q) =>
+      q
+        .eq('agentId', item.agentId)
+        .eq('surfaceSlug', surfaceSlug)
+        .eq('channel', channel)
+        .eq('decidedAt', undefined),
+    )
+    .order('desc')
+    .take(OPEN_BATCH_SCAN);
+  const now = Date.now();
+  for (const batch of batches) {
+    if (!batch.members.some((member) => member.decisionId === decision.id)) continue;
+    if (await batchSettled(ctx, batch)) await ctx.db.patch(batch._id, { decidedAt: now });
+  }
+}
 
 /**
  * What one manager chat channel has open, for the decision poll (Q13).
@@ -3331,6 +3465,8 @@ export const recordDecisionRequest = internalMutation({
     workItemId: v.id('workItems'),
     decisionId: v.string(),
     ts: v.optional(v.string()),
+    /** The text the request carried, kept for the edit that marks it decided. */
+    text: v.optional(v.string()),
     failure: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -3341,6 +3477,9 @@ export const recordDecisionRequest = internalMutation({
       decision: {
         ...row.decision,
         ...(args.ts ? { ts: args.ts } : {}),
+        ...(args.ts && args.text
+          ? { requestText: redactTokenShapes(args.text).slice(0, REQUEST_TEXT_KEPT) }
+          : {}),
         ...(failure ? { requestFailedAt: Date.now(), requestFailure: failure } : {}),
       },
     });
@@ -3360,6 +3499,95 @@ export const recordDecisionRequest = internalMutation({
       });
     }
     return true;
+  },
+});
+
+/**
+ * The most of a request's text a decision keeps for the edit that marks it
+ * decided; Slack takes 40,000 characters, and a request is a few thousand.
+ */
+const REQUEST_TEXT_KEPT = 12_000;
+
+/**
+ * Schedule the one edit that marks a decided request in the manager DM
+ * (M finding 3), in the transaction that decided it. Only a request that
+ * reached the DM, and kept its text, has a message to edit; whether the card
+ * allows the edit is the action's to check.
+ *
+ * @param workItemId - The item just decided.
+ */
+async function scheduleRequestClose(ctx: MutationCtx, workItemId: Id<'workItems'>): Promise<void> {
+  const decision = (await ctx.db.get(workItemId))?.decision;
+  if (!decision?.decidedAt || !decision.ts || !decision.requestText) return;
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.closeDecisionRequest, {
+    workItemId,
+    decisionId: decision.id,
+  });
+}
+
+/**
+ * Claim the one edit that marks a decided request in the manager DM, and say
+ * what it writes: the request as it was sent, then how it was decided.
+ * Internal; the close action's. Refused when the request was never
+ * delivered, is not decided, was claimed already, or its chat card cannot
+ * edit a message (no `chat.update` on its allowlist).
+ */
+export const prepareRequestClose = internalMutation({
+  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.workItemId);
+    const decision = row?.decision;
+    if (
+      !row ||
+      !decision ||
+      decision.id !== args.decisionId ||
+      !decision.decidedAt ||
+      !decision.ts ||
+      !decision.requestText ||
+      decision.closeClaimedAt
+    ) {
+      return { prepared: false as const };
+    }
+    const [agent, surfaceRows, grants] = await Promise.all([
+      ctx.db.get(row.agentId),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect(),
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId))
+        .collect(),
+    ]);
+    const surface = surfaceRows.find(
+      (candidate) =>
+        candidate.slug === decision.surfaceSlug &&
+        candidate.class === 'chat' &&
+        candidate.verdict === 'connected' &&
+        candidate.managerDmChannelId === decision.channel &&
+        candidate.path === 'documented-api' &&
+        (candidate.toolAllowlist ?? []).includes('chat.update'),
+    );
+    if (!agent || !surface) return { prepared: false as const };
+    const requestRunId = await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.decision-request-closing',
+      payload: { workItemId: row._id, decisionId: decision.id },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: Date.now() } });
+    const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in day0';
+    return {
+      prepared: true as const,
+      agentId: row.agentId,
+      agentName: agent.name,
+      requestRunId,
+      surface: toSurfaceRecord(surface),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      ts: decision.ts,
+      text: `${decision.requestText}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
+    };
   },
 });
 
@@ -3415,6 +3643,8 @@ export const prepareDecisionNotice = internalMutation({
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${origin}.`,
+      // The notice answers the request, so it goes in the request's thread.
+      ...(row.decision.ts ? { threadTs: row.decision.ts } : {}),
     };
   },
 });
@@ -3479,8 +3709,10 @@ export const prepareManagerReplyNotice = internalMutation({
       createdAt: Date.now(),
     });
     await ctx.db.patch(notice._id, { claimedAt: Date.now() });
+    const threadTs = await requestThreadOf(ctx, workItem, notice.decisionId);
     return {
       prepared: true as const,
+      ...(threadTs ? { threadTs } : {}),
       workItemId: notice.workItemId,
       agentId: notice.agentId,
       agentName: agent.name,
@@ -3492,6 +3724,31 @@ export const prepareManagerReplyNotice = internalMutation({
     };
   },
 });
+
+/**
+ * The provider timestamp of the request message a decision's acknowledgement
+ * answers, so it goes in that message's thread (M finding 3): the item's own
+ * request for its code, or, for a batch code, the request it was sent in,
+ * which is the one of the member that anchors the batch.
+ *
+ * @returns The timestamp, or undefined when the request left none.
+ */
+async function requestThreadOf(
+  ctx: QueryCtx,
+  workItem: Doc<'workItems'>,
+  decisionId: string,
+): Promise<string | undefined> {
+  const decision = workItem.decision;
+  if (!decision?.ts) return undefined;
+  if (decision.id === decisionId) return decision.ts;
+  const batch = await ctx.db
+    .query('decisionBatches')
+    .withIndex('by_agent_id', (q) => q.eq('agentId', workItem.agentId).eq('id', decisionId))
+    .unique();
+  return batch?.members.some((member) => member.decisionId === decision.id)
+    ? decision.ts
+    : undefined;
+}
 
 /** Store provider evidence for one manager-reply acknowledgement. */
 export const recordManagerReplyNotice = internalMutation({
@@ -3773,6 +4030,7 @@ async function approvePlanInTransaction(
     ...(answers.length > 0 ? { managerAnswers: answers } : {}),
     ...decidedPatch(row, 'plan', via, 'approved', messageTs),
   });
+  await scheduleRequestClose(ctx, row._id);
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.plan-approved',
@@ -4095,6 +4353,7 @@ async function cancelPlanInTransaction(
       : {}),
     ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
+  await scheduleRequestClose(ctx, row._id);
   await releaseExternalClaim(ctx, row._id, Date.now());
   await appendEvent(ctx, {
     agentId: row.agentId,
@@ -4453,11 +4712,7 @@ async function executionResumesSinceRetry(
 ): Promise<number> {
   const forRow = async (type: 'work.execution-resumed' | 'work.retry'): Promise<Doc<'events'>[]> =>
     (
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
-        .order('desc')
-        .take(EXECUTION_RESUME_HISTORY)
+      await eventsOfType(ctx, row.agentId, type).order('desc').take(EXECUTION_RESUME_HISTORY)
     ).filter((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
   const [resumes, retries] = await Promise.all([
     forRow('work.execution-resumed'),
@@ -4887,25 +5142,42 @@ export const recordManagerNote = internalMutation({
   },
 });
 
-/** The most unsent notes one digest check reads across agents, and one agent's digest takes. */
+/** The most unsent notes one agent's digest takes. */
 const DIGEST_NOTE_LIMIT = 500;
 
 /** A digest this soon after the last one waits: at most one per quarter hour, whatever triggered it. */
 const DIGEST_MIN_GAP_MS = 15 * 60_000;
 
+/** The most agents one page of digest candidates reads. */
+const DIGEST_AGENT_PAGE = 100;
+
 /**
- * The agents holding notes not sent yet: digest agents, and agents switched
- * to per run with notes the switch stranded. Reads the unsent notes only;
- * `prepareManagerDigest` decides which agents are due now.
+ * One page of the agents holding notes not sent yet: digest agents, and
+ * agents switched to per run with notes the switch stranded. Internal; reads
+ * one page of agents and at most one note of each, by the agent's own unsent
+ * index, so notes that can never go out (no manager channel, a channel gone)
+ * pile up under their agent and never hide another agent's digest (review
+ * m18). `prepareManagerDigest` decides which agents are due now.
+ *
+ * @returns The page's candidates and the cursor of the next page, null after the last.
  */
 export const digestCandidates = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<Id<'agents'>[]> => {
-    const unsent = await ctx.db
-      .query('managerNotes')
-      .withIndex('by_unsent', (q) => q.eq('claimedAt', undefined).eq('providerTs', undefined))
-      .take(DIGEST_NOTE_LIMIT);
-    return [...new Set(unsent.map((note) => note.agentId))];
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args): Promise<{ agentIds: Id<'agents'>[]; cursor: string | null }> => {
+    const page = await ctx.db
+      .query('agents')
+      .paginate({ cursor: args.cursor, numItems: DIGEST_AGENT_PAGE });
+    const agentIds: Id<'agents'>[] = [];
+    for (const agent of page.page) {
+      const unsent = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent_unsent', (q) =>
+          q.eq('agentId', agent._id).eq('claimedAt', undefined).eq('providerTs', undefined),
+        )
+        .first();
+      if (unsent !== null) agentIds.push(agent._id);
+    }
+    return { agentIds, cursor: page.isDone ? null : page.continueCursor };
   },
 });
 
@@ -4920,11 +5192,7 @@ async function digestNoteFilter(
   agent: Doc<'agents'>,
 ): Promise<(note: Doc<'managerNotes'>) => boolean> {
   if (managerNotificationMode(agent) === 'digest') return () => true;
-  const lastSwitch = await ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (q) =>
-      q.eq('agentId', agent._id).eq('type', 'agent.notifications-changed'),
-    )
+  const lastSwitch = await eventsOfType(ctx, agent._id, 'agent.notifications-changed')
     .order('desc')
     .first();
   const keptUntil = lastSwitch?.createdAt ?? Number.NEGATIVE_INFINITY;
@@ -4978,11 +5246,7 @@ export const prepareManagerDigest = internalMutation({
     const now = Date.now();
     if (!agent || !digestDue(agent, now)) return { prepared: false as const };
     if (managerNotificationMode(agent) === 'digest') {
-      const last = await ctx.db
-        .query('events')
-        .withIndex('by_agent_type', (q) =>
-          q.eq('agentId', args.agentId).eq('type', 'work.manager-digest-sending'),
-        )
+      const last = await eventsOfType(ctx, args.agentId, 'work.manager-digest-sending')
         .order('desc')
         .first();
       if (last && now - last.createdAt < DIGEST_MIN_GAP_MS) return { prepared: false as const };
@@ -5599,6 +5863,9 @@ async function approveActionsInTransaction(
     applyPhase: 'approved',
     ...decidedPatch(row, 'actions', via, 'approved', messageTs),
   });
+  const approved = await ctx.db.get(args.workItemId);
+  if (approved) await settleBatchesHolding(ctx, approved);
+  await scheduleRequestClose(ctx, args.workItemId);
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.actions-approved',
@@ -5717,6 +5984,9 @@ async function rejectActionsInTransaction(
     applyClaimedAt: undefined,
     ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
   });
+  const rejected = await ctx.db.get(args.workItemId);
+  if (rejected) await settleBatchesHolding(ctx, rejected);
+  await scheduleRequestClose(ctx, args.workItemId);
   if (feedback)
     await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
   await releaseItemClaim(ctx, args.workItemId, now);

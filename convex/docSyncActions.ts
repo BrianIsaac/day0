@@ -8,7 +8,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import { readerFor } from '../src/docs/readers';
 import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
-import { credentialSourceRef, redactCredentials } from '../src/docs/redaction';
+import { credentialSourceRef } from '../src/docs/credential-ref';
+import { redactCredentials } from '../src/docs/redaction';
 import {
   RedactorUnavailableError,
   spanModelFromEnv,

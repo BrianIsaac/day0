@@ -192,6 +192,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `skill check failed: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.sandbox-skipped': (payload) =>
     `skill check skipped, no sandbox: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
+  'skill.authoring-deferred': (payload) =>
+    `skill authoring waiting for the model provider: ${text(payload.name) ?? 'unnamed'}${
+      duration(payload.retryInMs) ? `, again in ${duration(payload.retryInMs)}` : ''
+    }${because(payload.reason)}`,
   'skill.sandbox-waiting': (payload) =>
     `skill check waiting for the sandbox: ${text(payload.name) ?? 'unnamed'}${
       duration(payload.retryInMs) ? `, again in ${duration(payload.retryInMs)}` : ''
@@ -213,6 +217,13 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.install-failed': (payload) => `app install failed${because(payload.reason)}`,
   'surface.shared-credential-retired': (payload) =>
     `shared credential retired${because(payload.reason)}`,
+  'credential.superseded': (payload) => {
+    const label = text(payload.label);
+    const page = text(payload.page);
+    const cards = counted(payload.surfaceIds?.length, 'card');
+    return `credential${label ? ` "${label}"` : ''} no longer in the documentation${page ? ` (${page})` : ''}${cards ? `; land one again on ${cards}` : ''}`;
+  },
+  'surface.reoriented': 'orientation run again at the manager’s request',
   'surface.app-installed': 'app installed by the administrator',
   'surface.probe-failed': (payload) =>
     `connection check failed${payload.verdict === 'listed-dead' ? ', no route left' : ''}${because(payload.reason)}`,
@@ -227,8 +238,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.expired': 'access ended: the card needs renewing',
   'surface.access-set': (payload) => {
     const days = counted(payload.days, 'day');
-    if (payload.by === 'upgrade')
-      return `access clock restarted by the upgrade${days ? `: ${days}` : ''}`;
+    if (payload.by === 'upgrade') return `access set by the upgrade${days ? `: ${days}` : ''}`;
     if (payload.by === 'approval') return `access started at approval${days ? `: ${days}` : ''}`;
     return `${payload.renewed === true ? 'access renewed' : 'access length set'} by the manager${days ? `: ${days}` : ''}`;
   },
@@ -312,6 +322,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.decision-request-asked': (payload) =>
     `${decisionNoun(payload.kind)} request asked on the chat surface`,
   'work.decision-notifying': 'telling the manager what was decided',
+  'work.decision-request-closing': 'marking the decided request in the manager DM',
   'work.decision-acknowledging': (payload) =>
     payload.kind === 'unknown'
       ? 'a reply with no open request answered'

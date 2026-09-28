@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -457,6 +457,9 @@ describe('the outbound manager-channel action', (): void => {
       `Approval ${decision.id} received. I’m starting the approved plan now.`,
     );
     expect(JSON.parse(sent[1].body).text).toContain('-- ops worker (Day0) · run ');
+    // The acknowledgement answers the request, so it sits in the request's thread (M finding 3).
+    expect(decision.ts).toBe('provider-1');
+    expect(JSON.parse(sent[1].body).thread_ts).toBe('provider-1');
     expect(await harness.run(async (ctx) => await ctx.db.get(notice._id))).toMatchObject({
       claimedAt: expect.any(Number),
       providerTs: 'provider-2',
@@ -467,6 +470,102 @@ describe('the outbound manager-channel action', (): void => {
       }),
     ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
     expect(sent).toHaveLength(2);
+  });
+});
+
+describe('a decided request in the manager DM (M finding 3)', (): void => {
+  /** A Slack double that answers every call, recording it. */
+  function recordSlack(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  /** A request for the parked plan, sent, and the manager's approval of it in the DM. */
+  async function decideInDm(
+    harness: TestConvex<typeof schema>,
+    allowlist: string[],
+  ): Promise<{ workItemId: Id<'workItems'>; decisionId: string }> {
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    const surfaceId = await harness.run(async (ctx) => {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique();
+      await ctx.db.patch(surface!._id, { toolAllowlist: allowlist });
+      return surface!._id;
+    });
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const decisionId = await harness.run(
+      async (ctx) => (await ctx.db.get(workItemId))!.decision!.id,
+    );
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768407.000100',
+      reply: { verb: 'approve', id: decisionId },
+    });
+    return { workItemId, decisionId };
+  }
+
+  it('edits the request once to say it was decided, keeping what it asked', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, [
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain(
+      'managerChannelActions:closeDecisionRequest',
+    );
+
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: true });
+    const updates = sent.filter((call) => call.url.endsWith('/chat.update'));
+    expect(updates).toHaveLength(1);
+    const body = JSON.parse(updates[0]!.body) as { channel: string; ts: string; text: string };
+    expect(body.channel).toBe('D0MANAGER');
+    expect(body.ts).toBe('provider-1');
+    expect(body.text).toContain('needs your decision on “Verify the runbook”');
+    expect(body.text).toContain(`Decided: approved in this DM (${decisionId}).`);
+
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: false });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toHaveLength(1);
+  });
+
+  it('leaves the request as sent when the card does not allow chat.update', async (): Promise<void> => {
+    recordSlack();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, decisionId } = await decideInDm(harness, ['chat.postMessage']);
+    await expect(
+      harness.action(internal.managerChannelActions.closeDecisionRequest, {
+        workItemId,
+        decisionId,
+      }),
+    ).resolves.toEqual({ closed: false });
+    expect(sent.filter((call) => call.url.endsWith('/chat.update'))).toEqual([]);
   });
 });
 
@@ -802,7 +901,9 @@ describe('the notes the gate sends for the manager', (): void => {
     expect(note?.providerTs).toBeUndefined();
     expect(note?.claimedAt).toBeUndefined();
     expect(note?.failure).toBeTruthy();
-    expect(await harness.query(internal.work.digestCandidates, {})).toEqual([agentId]);
+    expect(
+      (await harness.query(internal.work.digestCandidates, { cursor: null })).agentIds,
+    ).toEqual([agentId]);
   });
 });
 

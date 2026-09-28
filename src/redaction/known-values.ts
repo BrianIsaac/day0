@@ -59,8 +59,13 @@ export type FetchOwnerValues = (ctx: ActionCtx, userId: string) => Promise<reado
  */
 export async function ownerKnownValues(ctx: ActionCtx, userId: string): Promise<readonly string[]> {
   const values: unknown = await ctx.runAction(ownerValuesRef, { userId });
-  if (!Array.isArray(values) || values.some((value: unknown): boolean => typeof value !== 'string')) {
-    throw new Error('known credential values unavailable: the source answered with something other than a list');
+  if (
+    !Array.isArray(values) ||
+    values.some((value: unknown): boolean => typeof value !== 'string')
+  ) {
+    throw new Error(
+      'known credential values unavailable: the source answered with something other than a list',
+    );
   }
   return values as string[];
 }
@@ -90,7 +95,10 @@ export function scrubKnownValues<T>(value: T, known: readonly string[]): T {
     if (Array.isArray(entry)) return entry.map(walk);
     if (entry !== null && typeof entry === 'object') {
       return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>).map(([key, child]): [string, unknown] => [key, walk(child)]),
+        Object.entries(entry as Record<string, unknown>).map(([key, child]): [string, unknown] => [
+          key,
+          walk(child),
+        ]),
       );
     }
     return entry;

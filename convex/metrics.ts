@@ -667,7 +667,7 @@ function pilotTotals(
   const firstItemOfSkill = new Map<string, string>();
   const runs = new Set<string>();
   let reused = 0;
-  const firstEnd = new Map<string, number>();
+  const standingEnd = new Map<string, number>();
   const firstCompletion = new Map<string, number>();
   const discoveredAt = new Map<string, number>();
   let answered = 0;
@@ -695,8 +695,14 @@ function pilotTotals(
       discoveredAt.set(workItemId, event.createdAt);
       continue;
     }
+    // An end the manager's Retry took back (a skip overruled with "Take it
+    // anyway") did not end the item; its next end is the one that stands.
+    if (isEventOf(event, 'work.retry') && workItemId) {
+      standingEnd.delete(workItemId);
+      continue;
+    }
     if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
-      if (!firstEnd.has(workItemId)) firstEnd.set(workItemId, event.createdAt);
+      if (!standingEnd.has(workItemId)) standingEnd.set(workItemId, event.createdAt);
       if (isEventOf(event, 'work.completed') && !firstCompletion.has(workItemId)) {
         firstCompletion.set(workItemId, event.createdAt);
       }
@@ -722,7 +728,7 @@ function pilotTotals(
   return {
     runs: runs.size,
     reused,
-    toEnd: durations(firstEnd),
+    toEnd: durations(standingEnd),
     toCompletion: durations(firstCompletion),
     answered,
     amended,

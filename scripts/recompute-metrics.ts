@@ -264,8 +264,8 @@ export function recomputeFromTraces(
 /**
  * Read the command line's inputs: one or more trace files, or one snapshot export.
  *
- * Raises:
- *   Error: A JSON file is not a trace of this version, or traces and a snapshot are mixed.
+ * @throws Error when a JSON file is not a trace of a version this reads, or
+ *   traces and a snapshot are mixed.
  */
 export function recompute(
   paths: readonly string[],
@@ -281,7 +281,7 @@ export function recompute(
       const trace = readAgentTrace(JSON.parse(readFileSync(path, 'utf8')));
       if (trace === undefined) {
         throw new Error(
-          `${path} is not a day0 trace (version 2 or 3); export it with scripts/export-trace.ts`,
+          `${path} is not a day0 trace (version 2 or 3); export it with pnpm export:trace`,
         );
       }
       return trace;

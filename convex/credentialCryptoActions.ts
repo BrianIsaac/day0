@@ -15,7 +15,7 @@ import {
   type SealedCredential,
 } from '../src/lib/credential-crypto';
 import { log } from '../src/lib/logger';
-import { credentialPageRef, credentialSourceRef } from '../src/docs/redaction';
+import { credentialPageRef, credentialSourceRef } from '../src/docs/credential-ref';
 import { assignedByLabel, guardReason } from '../src/redaction/guard';
 import {
   OWNER_KNOWN_VALUE_CAP,

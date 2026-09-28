@@ -21,6 +21,7 @@ import {
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
 import { EVENT_TYPES } from '../src/events/contract';
+import { eventsOfType } from './eventLog';
 
 /**
  * Events feed — append-only, drives the live UI ticker. The reading side
@@ -37,6 +38,19 @@ const TICKER_HIDDEN_TYPES = new Set([WORK_LISTED_EVENT]);
 /** The most events one ticker read walks to fill its window. */
 const TICKER_SCAN_LIMIT = 500;
 
+/** The ticker's window when the caller names none. */
+const TICKER_DEFAULT_WINDOW = 50;
+
+/**
+ * The window a ticker read fills: the caller's, whole, between one and the
+ * scan bound, since the limit comes from the client and one read may not
+ * walk more than `TICKER_SCAN_LIMIT` events whatever it asks (review m17).
+ */
+function tickerWindow(limit: number | undefined): number {
+  if (limit === undefined || Number.isNaN(limit)) return TICKER_DEFAULT_WINDOW;
+  return Math.min(Math.max(1, Math.floor(limit)), TICKER_SCAN_LIMIT);
+}
+
 /**
  * The newest events of one agent for the dashboard ticker, newest first,
  * intake listings left out. Public; owner-guarded; reads at most
@@ -46,7 +60,7 @@ export const recent = query({
   args: { agentId: v.id('agents'), limit: v.optional(v.number()) },
   handler: async (ctx, args): Promise<Doc<'events'>[]> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const limit = args.limit ?? 50;
+    const limit = tickerWindow(args.limit);
     const shown: Doc<'events'>[] = [];
     let scanned = 0;
     for await (const event of ctx.db
@@ -55,7 +69,7 @@ export const recent = query({
       .order('desc')) {
       scanned += 1;
       if (!TICKER_HIDDEN_TYPES.has(event.type)) shown.push(event);
-      if (shown.length >= limit || scanned >= Math.max(limit, TICKER_SCAN_LIMIT)) break;
+      if (shown.length >= limit || scanned >= TICKER_SCAN_LIMIT) break;
     }
     return shown;
   },
@@ -73,12 +87,7 @@ export const autonomyChanges = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Array<{ at: number; on: boolean }>> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const events = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) =>
-        q.eq('agentId', args.agentId).eq('type', 'agent.autonomy-changed'),
-      )
-      .collect();
+    const events = await eventsOfType(ctx, args.agentId, 'agent.autonomy-changed').collect();
     return events.map((event) => ({
       at: event.createdAt,
       on: (event.payload as { to?: unknown } | undefined)?.to === true,
@@ -88,17 +97,27 @@ export const autonomyChanges = query({
 
 /**
  * Keys an export never carries: those that identify a person rather than
- * describe an action, and a surface's live install claim (a single-use
- * state nonce and the URL that spends it).
+ * describe an action (a ticket's author, requester and branch, which carries
+ * its assignee's handle; the charter's manager and named colleagues; a
+ * manager change's previous manager as well as the new one), and a
+ * surface's live install claim (a single-use state nonce and the URL that
+ * spends it). The export's policy keeps names as working material in text
+ * (U12 D1 (c)); a key whose whole value is a name has none to keep.
  */
 const PERSONAL_KEYS = new Set([
   'assigneeEmail',
+  'boss',
   'bossEmail',
+  'createdBy',
   'email',
+  'gitBranchName',
   'managerEmail',
   'managerName',
   'managerUserId',
+  'namedCollaborators',
+  'previousManagerUserId',
   'provisioning',
+  'requester',
 ]);
 
 /**

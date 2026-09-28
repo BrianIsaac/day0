@@ -10,7 +10,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import { storedCredentialGuardReason } from './credentialCryptoActions';
-import { browserTitleMarker } from '../src/surfaces/browser';
+import { browserSignedInMarker, browserTitleMarker } from '../src/surfaces/browser';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
@@ -813,9 +813,10 @@ export function connectionLadder(
   // The browser rung used to need a stored web login, which was literal
   // evidence. Dropping it for the public floor left the model's own draft path
   // deciding whether a rung is admitted, which is the one thing the model does
-  // not decide here. The documented page-title marker restores an evidence
-  // condition, and it is the condition the browser probe already refuses
-  // without - so both approvers now ratify only rungs that can actually run.
+  // not decide here. A documented probe marker (the page title, or the element
+  // a signed-in page shows) restores an evidence condition, and it is the
+  // condition the browser probe already refuses without - so the manager
+  // ratifies only rungs that can actually run.
   if (endpoints.webUi && hasProbeMarker && (draftPath === 'browser-driven' || hasLoginCredential)) {
     candidates.push({ path: 'browser-driven', endpoint: endpoints.webUi });
   }
@@ -1513,9 +1514,7 @@ export async function orientSurface(
   ) {
     return { outcome: 'not-in-charter', surfaceId };
   }
-  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-    agentId: surface.agentId,
-  });
+  const pages = await pagesForSystem(ctx, surface.agentId, surface.displayName);
   const { matches, relevantText, endpoints, absent } = surfaceDocumentation(pages, surface);
   const evidence: Evidence[] = selectEvidence(matches, surface.displayName, surface.slug);
   if (absent) {
@@ -1543,7 +1542,9 @@ export async function orientSurface(
       ? validatedDraftCredential(draft.credential, credentialPages)
       : extractedCredential;
   const hasBrowserLogin = isBrowserLoginCredential(credential);
-  const hasProbeMarker = browserTitleMarker(relevantText) !== undefined;
+  const hasProbeMarker =
+    browserTitleMarker(relevantText) !== undefined ||
+    browserSignedInMarker(relevantText) !== undefined;
   const pathCandidates = connectionLadder(draft.path, endpoints, hasBrowserLogin, hasProbeMarker);
   const selected: { path: OrientationPath; endpoint?: string } = pathCandidates[0] ?? {
     path: 'escalate',
@@ -1567,7 +1568,7 @@ export async function orientSurface(
   }
   if (endpoints.webUi && !hasProbeMarker && draft.path === 'browser-driven') {
     openQuestions.push(
-      `Document the page title Day0 should see at ${endpoints.webUi}, as "Probe marker: page title" followed by the title in backticks, before approving browser-driven access.`,
+      `Document a probe marker for ${endpoints.webUi} before approving browser-driven access: the page title Day0 should see, as "Probe marker: page title" followed by the title in backticks, or, for a page behind a login, an element it shows once signed in, as "Probe marker: after sign-in, element" followed by its name in backticks.`,
     );
   }
   if (endpoints.insecure) {
@@ -1587,7 +1588,7 @@ export async function orientSurface(
   }
   if (registrySuggestion) {
     openQuestions.push(
-      `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
+      `Confirm the MCP endpoint before you approve; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
     );
   } else if (!endpoint && openQuestions.length === 0) {
     openQuestions.push('Confirm the approved connection endpoint.');
@@ -1639,7 +1640,7 @@ export async function orientSurface(
     registrySuggestion: registrySuggestion
       ? {
           endpoint: registrySuggestion,
-          note: 'Public MCP Registry match, not linked evidence. IT enters the endpoint after confirming it.',
+          note: 'Public MCP Registry match, not linked evidence. Confirm the endpoint before you approve.',
         }
       : undefined,
     blastRadius: draft.blastRadius,
@@ -1708,7 +1709,8 @@ export const orientOne = internalAction({
  *
  * @param absent - The agent's `absent` surfaces.
  * @param charterNamesSystems - Whether the employee's approved charter names any work system.
- * @param syncedSourceId - The source whose completed sync prompted the pass, if one did.
+ * @param options - The source whose completed sync prompted the pass, if one did, and whether
+ *   the manager's re-run asked for it, which records each orientation it places.
  * @returns How many surfaces were re-opened, and how many of them were given an orientation job.
  */
 async function reopenDocumentedAbsences(
@@ -1716,8 +1718,9 @@ async function reopenDocumentedAbsences(
   agentId: Id<'agents'>,
   absent: readonly Doc<'surfaces'>[],
   charterNamesSystems: boolean,
-  syncedSourceId?: Id<'docSources'>,
+  options: { readonly syncedSourceId?: Id<'docSources'>; readonly byManager?: boolean } = {},
 ): Promise<ReopenedAbsences> {
+  const { syncedSourceId } = options;
   const reopened: ReopenedAbsences = { reopened: 0, oriented: 0 };
   if (absent.length === 0) return reopened;
   const sources: Doc<'docSources'>[] = await ctx.runQuery(
@@ -1752,6 +1755,7 @@ async function reopenDocumentedAbsences(
     const outcome: ReopenOutcome = await ctx.runMutation(internal.surfaceReopen.reopenAbsent, {
       surfaceId: surface._id,
       charterNamesSystems,
+      ...(options.byManager === true ? { byManager: true } : {}),
     });
     if (outcome !== 'not-absent') reopened.reopened += 1;
     if (outcome === 'oriented') reopened.oriented += 1;
@@ -1764,9 +1768,34 @@ function pageText(page: Pick<Doc<'docPages'>, 'title' | 'markdown'>): string {
   return `${page.title}\n${page.markdown}`;
 }
 
-/** Visit every stored page of some sources, one bounded read at a time. */
-async function forEachStoredPage(
+/**
+ * The pages an agent reads, as one system's orientation needs them, read a
+ * bounded page at a time (D D3): each page that names the system whole, and
+ * every other with its title and body left out, since it counts only for its
+ * address, which is never taken for the system's endpoint.
+ *
+ * @param agentId - The agent whose sources are read.
+ * @param system - The system's display name.
+ */
+async function pagesForSystem(
   ctx: OrientationCtx,
+  agentId: Id<'agents'>,
+  system: string,
+): Promise<Doc<'docPages'>[]> {
+  const sources: Doc<'docSources'>[] = await ctx.runQuery(
+    internal.docSources.sourcesForAgentInternal,
+    { agentId },
+  );
+  const pages: Doc<'docPages'>[] = [];
+  await forEachStoredPage(ctx, sources, (page): void => {
+    pages.push(namesSystem(pageText(page), system) ? page : { ...page, title: '', markdown: '' });
+  });
+  return pages;
+}
+
+/** Visit every stored page of some sources, one bounded read at a time. */
+export async function forEachStoredPage(
+  ctx: Pick<ActionCtx, 'runQuery'>,
   sources: readonly Doc<'docSources'>[],
   visit: (page: Doc<'docPages'>) => void,
 ): Promise<void> {
@@ -1836,7 +1865,7 @@ export const reorientAbsent = internalAction({
           await charterNamesSystemsFor(ctx, agent._id),
           // A page the sync removed may have held the only denial of a system
           // another source names, so every source can have changed the absence.
-          (args.pagesRemoved ?? 0) > 0 ? undefined : args.sourceId,
+          (args.pagesRemoved ?? 0) > 0 ? {} : { syncedSourceId: args.sourceId },
         )
       ).reopened;
     }
@@ -1852,23 +1881,27 @@ export const reorientAbsent = internalAction({
  *
  * Args:
  *   agentId: Agent whose declared systems should be oriented.
+ *   byManager: The manager's re-run asked for it (`surfaces.reorient`), so
+ *     each orientation it places is recorded as `surface.reoriented`.
  *
  * Returns:
  *   Number of per-surface actions placed on the scheduler.
  */
 export const run = internalAction({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.id('agents'), byManager: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<{ scheduled: number }> => {
     const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
       internal.orientationData.surfacesForAgent,
-      args,
+      { agentId: args.agentId },
     );
     const namesSystems = await charterNamesSystemsFor(ctx, args.agentId);
+    const byManager = args.byManager === true ? { byManager: true } : {};
     const { oriented } = await reopenDocumentedAbsences(
       ctx,
       args.agentId,
       absentSurfaces(surfaces),
       namesSystems,
+      byManager,
     );
     // A system the charter does not name waits for the manager's Propose;
     // scheduling it here would only be a job that decides to do nothing.
@@ -1880,6 +1913,7 @@ export const run = internalAction({
     for (const surface of declared) {
       const claimed: boolean = await ctx.runMutation(internal.surfaces.scheduleOrientation, {
         surfaceId: surface._id,
+        ...byManager,
       });
       if (claimed) scheduled += 1;
     }

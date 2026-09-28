@@ -29,7 +29,7 @@ import {
   encrypt,
   openOwnedCredential as openSpy,
 } from '../../src/lib/credential-crypto';
-import { credentialSourceRef } from '../../src/docs/redaction';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import { temporaryDirectories } from '../setup/temporary-directories';
 

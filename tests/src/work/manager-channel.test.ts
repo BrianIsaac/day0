@@ -8,6 +8,7 @@ import {
   MANAGER_FEEDBACK_MAX_CHARS,
   MANAGER_MESSAGE_MAX_CHARS,
   managerMessageAction,
+  managerMessageUpdateAction,
   parseDecisionReply,
 } from '../../../src/work/manager-channel';
 import type { MockAction } from '../../../src/work/types';
@@ -116,6 +117,40 @@ describe('manager channel decision requests', (): void => {
     );
   });
 
+  it('names the ask’s channel and thread for a held reply, and quotes a body up to the plan line’s length (U9 step 24)', (): void => {
+    const body = `Pipeline coverage is ${'three point one times, '.repeat(6).trim()}.`;
+    const reply: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0ASKS', thread_ts: '1787746453.202809', text: body }),
+      },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Coverage for standup',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [reply],
+      heldIndexes: [0],
+      surfaces: [slack],
+      item: {
+        sourceCategory: 'inbox',
+        externalId: 'C0ASKS:1787746453.202809',
+        replyTarget: {
+          channel: 'C0ASKS',
+          channelName: 'revops-asks',
+          threadTs: '1787746453.202809',
+        },
+      },
+    });
+    expect(body.length).toBeGreaterThan(120);
+    expect(text).toContain(`1. Reply in #revops-asks thread: "${body}"`);
+    expect(text).not.toContain('C0ASKS (in thread)');
+  });
+
   it('says an approval covers every held action listed, and where to approve some (P5-8)', (): void => {
     const held: MockAction = {
       tool: 'mcp.call',
@@ -222,6 +257,61 @@ describe('manager channel decision requests', (): void => {
         toolArgsJson: JSON.stringify({ conversationId: 'D0MANAGER', content: 'Decide this.' }),
       },
     });
+  });
+
+  it('threads a message under the request when told to, where the rung takes a thread (M finding 3)', (): void => {
+    const threaded = managerMessageAction(slack, 'Received.', { threadTs: '1.100' });
+    expect(JSON.parse((threaded.args as { body: string }).body)).toEqual({
+      channel: 'D0MANAGER',
+      text: 'Received.',
+      thread_ts: '1.100',
+    });
+    const mcp = {
+      ...slack,
+      path: 'mcp' as const,
+      toolAllowlist: ['send_message'],
+    };
+    // An MCP tool that advertised no thread argument posts at the top of the DM.
+    expect(
+      managerMessageAction(
+        { ...mcp, toolArguments: [{ tool: 'send_message', arguments: ['channel', 'text'] }] },
+        'Received.',
+        { threadTs: '1.100' },
+      ).args,
+    ).toMatchObject({ toolArgsJson: JSON.stringify({ channel: 'D0MANAGER', text: 'Received.' }) });
+    expect(
+      managerMessageAction(
+        {
+          ...mcp,
+          toolArguments: [{ tool: 'send_message', arguments: ['channel', 'text', 'threadTs'] }],
+        },
+        'Received.',
+        { threadTs: '1.100' },
+      ).args,
+    ).toMatchObject({
+      toolArgsJson: JSON.stringify({ channel: 'D0MANAGER', text: 'Received.', threadTs: '1.100' }),
+    });
+  });
+
+  it('edits a message in the manager DM only on a documented API that allows chat.update', (): void => {
+    const updating = { ...slack, toolAllowlist: [...slack.toolAllowlist!, 'chat.update'] };
+    expect(managerMessageUpdateAction(updating, '1.100', 'Decided.')).toEqual({
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.update',
+        headersJson: JSON.stringify({
+          Authorization: 'Bearer {{secret}}',
+          'Content-Type': 'application/json; charset=utf-8',
+        }),
+        body: JSON.stringify({ channel: 'D0MANAGER', ts: '1.100', text: 'Decided.' }),
+      },
+    });
+    expect(managerMessageUpdateAction(slack, '1.100', 'Decided.')).toBeUndefined();
+    expect(
+      managerMessageUpdateAction({ ...updating, path: 'mcp' }, '1.100', 'Decided.'),
+    ).toBeUndefined();
   });
 
   it('parses only bounded approve and reject prefixes', (): void => {

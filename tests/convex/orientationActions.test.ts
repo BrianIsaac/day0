@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { credentialValueFingerprint, encrypt, sealForOwner } from '../../src/lib/credential-crypto';
-import { credentialSourceRef } from '../../src/docs/redaction';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { presentSurfaceCredential } from '../../src/surfaces/credential-presentation';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1146,6 +1146,54 @@ describe('orientation run', (): void => {
     );
   });
 
+  it('orients a system from a corpus larger than one read, a page at a time (D D3)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest({
+      schema,
+      modules: orientationModules(),
+      transactionLimits: true,
+    });
+    const { agentId, sourceId } = await seedOrientation(harness, {}, [
+      { name: 'NetLedger', class: 'other' },
+    ]);
+    const body = `# Runbook\n\n${'Follow the documented steps in order.\n'.repeat(14_000)}`;
+    for (let start = 0; start < 40; start += 4) {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let index = start; index < start + 4; index += 1) {
+          await ctx.db.insert('docPages', {
+            sourceId,
+            ref: `runbooks/page-${index}.md`,
+            title: `Page ${index}`,
+            markdown: body,
+            updatedAt: 1,
+          });
+        }
+      });
+    }
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'systems/netledger.md',
+        title: 'NetLedger',
+        markdown:
+          '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.',
+        updatedAt: 1,
+      });
+    });
+
+    await orientDeclared(harness, agentId);
+    const netledger = (await surfacesBySlug(harness, agentId)).netledger;
+    expect(netledger).toMatchObject({
+      verdict: 'proposed',
+      path: 'documented-api',
+      endpoint: 'https://api.netledger.example/v2',
+    });
+    expect(netledger.whereFound).toEqual([
+      expect.objectContaining({ ref: 'systems/netledger.md' }),
+    ]);
+  });
+
   it('re-opens a system another source names once the sync removed the only page denying it (adversarial pass on m30)', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'escalate';
@@ -1245,13 +1293,21 @@ describe('orientation run', (): void => {
     expect(surfaces.slack).toMatchObject({ verdict: 'proposed', path: 'escalate' });
     expect(surfaces.slack.endpoint).toBeUndefined();
     const request = surfaces.slack.request as {
-      registrySuggestion?: { endpoint: string };
+      registrySuggestion?: { endpoint: string; note: string };
       openQuestions: string[];
     };
     expect(request.registrySuggestion?.endpoint).toBe(
       'https://server.smithery.ai/@smithery-ai/slack/mcp',
     );
+    // The manager approves alone (Q10), so nothing may name a second approver.
+    expect(request.registrySuggestion?.note).toBe(
+      'Public MCP Registry match, not linked evidence. Confirm the endpoint before you approve.',
+    );
     expect(request.openQuestions.join(' ')).toContain('not linked evidence');
+    expect(request.openQuestions.join(' ')).toContain(
+      'Confirm the MCP endpoint before you approve',
+    );
+    expect(JSON.stringify(request)).not.toMatch(/\bIT\b/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain('search=Slack');
   });
@@ -1802,10 +1858,20 @@ describe('orientation run', (): void => {
           };
         }
         if (name.includes('charterForOrientation')) return null;
-        if (name.includes('pagesForAgent')) {
-          return await harness.query(internal.orientationData.pagesForAgent, {
-            agentId: (args as { agentId: Id<'agents'> }).agentId,
-          });
+        if (name.includes('sourcesForAgentInternal')) {
+          return await harness.query(
+            internal.docSources.sourcesForAgentInternal,
+            args as { agentId: Id<'agents'> },
+          );
+        }
+        if (name.includes('pagesForSourceInternal')) {
+          return await harness.query(
+            internal.docSources.pagesForSourceInternal,
+            args as {
+              sourceId: Id<'docSources'>;
+              paginationOpts: { numItems: number; cursor: string | null };
+            },
+          );
         }
         throw new Error(`unexpected query ${name}`);
       },
@@ -1976,6 +2042,13 @@ describe('orientation run', (): void => {
       scheduled: 1,
     });
     expect(await pending()).toBe(1);
+    // Only the manager's re-run is in the feed, once per surface it placed a
+    // job for: charter approval's run and a re-run that placed none are not.
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+        .filter((event): boolean => event.type === 'surface.reoriented')
+        .map((event) => event.payload),
+    ).toEqual([{ surfaceId: oriented.linear._id }]);
   });
 
   it('lets the owner re-run orientation for declared surfaces in real mode', async (): Promise<void> => {
@@ -2080,6 +2153,28 @@ describe('the browser floor in orientation', (): void => {
     );
   });
 
+  it('admits a login page that documents only the element it shows once signed in', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.\n\n- Probe marker: after sign-in, element `Pipeline coverage`.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    // The probe accepts either marker, so orientation offers the rung on either.
+    expect(reports).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+      endpoint: 'https://reports.example.test/forecast',
+    });
+  });
+
   it('escalates a web UI whose page title marker is not documented', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'browser-driven';
@@ -2095,11 +2190,14 @@ describe('the browser floor in orientation', (): void => {
     await orientDeclared(harness, agentId);
     const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
     // The probe refuses a browser rung with no documented marker, so the rung
-    // is not put in front of two approvers as though it could connect.
+    // is not put in front of the manager as though it could connect.
     expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
     expect(reports).not.toHaveProperty('pathCandidates');
     expect(reports.request?.openQuestions).toContainEqual(
-      expect.stringContaining('Document the page title Day0 should see at'),
+      expect.stringContaining('Document a probe marker for https://reports.example.test/forecast'),
+    );
+    expect(reports.request?.openQuestions).toContainEqual(
+      expect.stringContaining('"Probe marker: after sign-in, element"'),
     );
   });
 

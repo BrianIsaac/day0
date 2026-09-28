@@ -52,6 +52,13 @@ const SLACK_POLICY = [
 ].join('\n');
 
 /** Create one Slack-shaped JSON response. */
+/** Whether a fake `runQuery` is answering the probe's read of the card's own pages. */
+function readsCardPages(reference: unknown): boolean {
+  return (
+    getFunctionName(reference as never) === getFunctionName(internal.docSources.cardPagesForSurface)
+  );
+}
+
 /**
  * A probe's action context answers two actions: the owner's stored values
  * (none, for these fixtures) and the surface credential's decryption.
@@ -474,6 +481,15 @@ describe('Slack documented API probing', (): void => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(slackMethodsFromPolicy('notauth.testimony')).toEqual([]);
   });
+
+  it('allowlists chat.update when the policy names it, so a decided request can be marked (M finding 3)', (): void => {
+    expect(slackMethodsFromPolicy('`chat.postMessage`, `chat.update`')).toEqual([
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    // A policy that does not name it leaves it out, and nothing requires it.
+    expect(slackMethodsFromPolicy('`chat.postMessage`')).toEqual(['chat.postMessage']);
+  });
 });
 
 describe('probe error hygiene', (): void => {
@@ -683,8 +699,8 @@ describe('surface probe action state', (): void => {
             if ('verifiedAt' in args || 'providerBotId' in args) return true;
             return null;
           },
-          runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
-            'surfaceId' in args
+          runQuery: async (reference: unknown): Promise<unknown> =>
+            !readsCardPages(reference)
               ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
               : [],
           runAction: fakeRunAction('slack-contract-value'),
@@ -748,8 +764,8 @@ describe('surface probe action state', (): void => {
             }
             return null;
           },
-          runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
-            'surfaceId' in args
+          runQuery: async (reference: unknown): Promise<unknown> =>
+            !readsCardPages(reference)
               ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
               : [],
           runAction: fakeRunAction('slack-contract-value'),
@@ -816,8 +832,8 @@ describe('surface probe action state', (): void => {
           if ('verifiedAt' in args) return true;
           return null;
         },
-        runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
-          'surfaceId' in args
+        runQuery: async (reference: unknown): Promise<unknown> =>
+          !readsCardPages(reference)
             ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
             : pages,
         runAction: fakeRunAction('slack-contract-value'),
@@ -1133,8 +1149,8 @@ describe('probing a documented API that is not Slack', (): void => {
           if ('retryAfterMs' in args) return true;
           return null;
         },
-        runQuery: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> =>
-          'surfaceId' in args
+        runQuery: async (reference: unknown): Promise<unknown> =>
+          !readsCardPages(reference)
             ? {
                 surface: { ...surface, probeGeneration: 1 },
                 agent: { _id: agentId, bossEmail: 'boss@day0.local' },
@@ -2040,6 +2056,10 @@ describe('probing the browser floor', (): void => {
           markdown: `# Looker pipeline tile\n\n- Probe marker: page title \`${TITLE}\`.`,
           updatedAt: 1,
         });
+        // The card cites its page, which is what the probe reads (D D3).
+        await ctx.db.patch(surfaceId, {
+          whereFound: [{ sourceId, ref: 'looker-pipeline-tile.md', quote: 'Looker pipeline tile' }],
+        });
         return { agentId, surfaceId };
       },
     );
@@ -2274,7 +2294,9 @@ describe('probing the browser floor', (): void => {
         displayName: 'Forecast reports',
         class: 'analytics',
         verdict: 'approved',
-        whereFound: [],
+        whereFound: [
+          { sourceId: source._id, ref: 'forecast-reports.md', quote: 'Forecast reports' },
+        ],
         path: 'browser-driven',
         endpoint: 'https://reports.example.test/forecast',
         pathCandidates: [
@@ -2431,6 +2453,7 @@ describe('probing the browser floor', (): void => {
         markdown: '# Jira\n\n- Probe marker: page title `Jira - Issues`.',
         updatedAt: 1,
       });
+      await ctx.db.patch(surfaceId, { whereFound: [{ sourceId, ref: 'jira.md', quote: 'Jira' }] });
       return { surfaceId };
     });
     vi.stubEnv('DAY0_BROWSER_MCP_URL', DEFAULT_BROWSER_MCP_URL);
@@ -2602,7 +2625,8 @@ describe('one failed probe does not write listed-dead', (): void => {
               : 'Looker pipeline tile',
         class: options.path === 'documented-api' ? 'chat' : 'kanban',
         verdict: 'approved',
-        whereFound: [],
+        // The card cites the page its probe reads (D D3).
+        whereFound: [{ sourceId, ref: 'systems.md', quote: 'Systems' }],
         path: options.path,
         ...(options.fallback
           ? {

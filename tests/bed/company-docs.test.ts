@@ -168,7 +168,8 @@ describe('the company bed pages', (): void => {
   });
 
   it.fails(
-    'sends every question an employee asks to the manager DM (fails until the bed pane re-records the spans)',
+    // until the bed pane re-records the spans: handbook.md and looker-pipeline-tile.md still send a question elsewhere
+    'sends every question an employee asks to the manager DM',
     (): void => {
       const elsewhere = [...folderPages, ...notionPages].flatMap((bedPage) =>
         bedPage.markdown

@@ -20,8 +20,8 @@ import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
-import { appendEvent } from './eventLog';
-import { isEventOf } from '../src/events/contract';
+import { appendEvent, eventsOfType } from './eventLog';
+import { isEventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 
 const surfaceVerdict = v.union(
@@ -595,13 +595,31 @@ export const markAbsent = internalMutation({
  * only the surface id crosses the scheduler boundary.
  */
 export const scheduleOrientation = internalMutation({
-  args: { surfaceId: v.id('surfaces') },
+  args: { surfaceId: v.id('surfaces'), byManager: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) return false;
-    return await scheduleOrientationFor(ctx, surface);
+    const placed = await scheduleOrientationFor(ctx, surface);
+    if (placed && args.byManager === true) await recordReoriented(ctx, surface);
+    return placed;
   },
 });
+
+/**
+ * Record that the manager's re-run placed orientation for a surface, in the
+ * transaction that placed it; charter approval's run writes nothing here.
+ */
+export async function recordReoriented(
+  ctx: MutationCtx,
+  surface: Pick<Doc<'surfaces'>, '_id' | 'agentId'>,
+): Promise<void> {
+  await appendEvent(ctx, {
+    agentId: surface.agentId,
+    type: 'surface.reoriented',
+    payload: { surfaceId: surface._id },
+    createdAt: Date.now(),
+  });
+}
 
 /**
  * Schedule orientation for one declared surface unless a job is already on it.
@@ -1604,12 +1622,7 @@ async function endedBeforeProbeLanded(
  * before it: the latest `surface.expired` event for it carries the end date.
  */
 async function endedByThisRelease(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<boolean> {
-  for await (const event of ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (index) =>
-      index.eq('agentId', surface.agentId).eq('type', 'surface.expired'),
-    )
-    .order('desc')) {
+  for await (const event of eventsOfType(ctx, surface.agentId, 'surface.expired').order('desc')) {
     const payload = event.payload as { surfaceId?: unknown; expiresAt?: unknown } | undefined;
     if (payload?.surfaceId === surface._id) return typeof payload.expiresAt === 'number';
   }
@@ -1651,13 +1664,10 @@ async function logAccessSet(
 async function surfaceEventExists(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
-  type: string,
+  type: EventType,
   expiresAt?: number,
 ): Promise<boolean> {
-  for await (const event of ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (index) => index.eq('agentId', surface.agentId).eq('type', type))
-    .order('desc')) {
+  for await (const event of eventsOfType(ctx, surface.agentId, type).order('desc')) {
     const payload = event.payload as { surfaceId?: unknown; expiresAt?: unknown } | undefined;
     if (
       payload?.surfaceId === surface._id &&
@@ -1922,11 +1932,7 @@ export async function backfillWithheldToolsPage(
   let changed = 0;
   for (const surface of page.page) {
     if (surface.verdict !== 'connected' || surface.withheldTools !== undefined) continue;
-    const events = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (index) =>
-        index.eq('agentId', surface.agentId).eq('type', 'surface.connected'),
-      )
+    const events = await eventsOfType(ctx, surface.agentId, 'surface.connected')
       .order('desc')
       .take(CONNECTED_EVENT_WALK);
     let offered: readonly string[] = [];
@@ -2002,12 +2008,9 @@ async function latestAccessSetter(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
 ): Promise<AccessSetBy | undefined> {
-  for await (const event of ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (index) =>
-      index.eq('agentId', surface.agentId).eq('type', 'surface.access-set'),
-    )
-    .order('desc')) {
+  for await (const event of eventsOfType(ctx, surface.agentId, 'surface.access-set').order(
+    'desc',
+  )) {
     if (!isEventOf(event, 'surface.access-set') || event.payload.surfaceId !== surface._id)
       continue;
     const by: unknown = event.payload.by;
@@ -2309,6 +2312,9 @@ export const reorient = action({
   handler: async (ctx, args): Promise<{ scheduled: number }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
     assertRealMode('Surface orientation');
-    return await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
+    return await ctx.runAction(internal.orientationActions.run, {
+      agentId: args.agentId,
+      byManager: true,
+    });
   },
 });

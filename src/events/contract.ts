@@ -263,9 +263,13 @@ export interface CharterQuestionAskedPayload {
   readonly touchedBy: 'plan' | 'candidate';
 }
 
-/** The payload of `charter.question-answered`. */
+/**
+ * The payload of `charter.question-answered`. The question row is named when
+ * a plan asked the question; an answer given on the charter card to a
+ * question no plan asked has none.
+ */
 export interface CharterQuestionAnsweredPayload {
-  readonly questionId: Id<'managerQuestions'>;
+  readonly questionId?: Id<'managerQuestions'>;
   readonly via: AmendmentVia;
   readonly amended: boolean;
   readonly charterId?: CharterId;
@@ -362,7 +366,7 @@ export interface VoiceFinalisationAbandonedPayload {
 
 /** The payload of `skill.authoring-refused`. */
 export interface SkillAuthoringRefusedPayload extends SkillNamed {
-  readonly attempted: 'authoring-progress' | 'register' | 'fail' | 'park-unverified';
+  readonly attempted: 'authoring-progress' | 'register' | 'fail' | 'park-unverified' | 'defer';
   readonly state: Doc<'skills'>['state'];
 }
 
@@ -426,6 +430,13 @@ export interface SkillSandboxWaitingPayload extends SkillNamed {
   readonly retryInMs: number;
 }
 
+/** The payload of `skill.authoring-deferred`: the model provider could not be reached. */
+export interface SkillAuthoringDeferredPayload extends SkillReason {
+  readonly retryInMs: number;
+  /** This deferral's place in the run of them, from 1. */
+  readonly attempt: number;
+}
+
 // Surfaces.
 
 /** The payload of `surface.charter-match-ambiguous`. */
@@ -476,6 +487,24 @@ export type SurfaceInstallFailedPayload = SurfaceReason;
 export interface SurfaceSharedCredentialRetiredPayload extends SurfaceReason {
   readonly credentialId: Id<'credentials'>;
 }
+
+/**
+ * The payload of `credential.superseded`: a page credential the synced
+ * documentation no longer carries, as one agent's feed tells it. Never the
+ * value, and never the ref's value fingerprint: the page alone.
+ */
+export interface CredentialSupersededPayload {
+  readonly credentialId: Id<'credentials'>;
+  readonly label: string;
+  readonly sourceId: Id<'docSources'>;
+  /** The page the credential was found on. */
+  readonly page: string;
+  /** This agent's surfaces it was bound to, each sent back to landing a credential. */
+  readonly surfaceIds: readonly SurfaceId[];
+}
+
+/** The payload of `surface.reoriented`: orientation the manager's re-run placed for one surface. */
+export type SurfaceReorientedPayload = SurfaceNamed;
 
 /** The payload of `surface.app-installed`. */
 export interface SurfaceAppInstalledPayload extends SurfaceNamed {
@@ -784,6 +813,9 @@ export interface WorkDecisionRequestAskedPayload extends WorkItemNamed {
   readonly kind: DecisionKind;
 }
 
+/** The payload of `work.decision-request-closing`: the edit that marks a decided request so in the DM. */
+export type WorkDecisionRequestClosingPayload = DecisionNamed;
+
 /** The payload of `work.decision-notifying`. */
 export type WorkDecisionNotifyingPayload = DecisionNamed;
 
@@ -1028,6 +1060,7 @@ export interface EventPayloads {
   'skill.verification-failed': SkillVerificationFailedPayload;
   'skill.sandbox-skipped': SkillSandboxSkippedPayload;
   'skill.sandbox-waiting': SkillSandboxWaitingPayload;
+  'skill.authoring-deferred': SkillAuthoringDeferredPayload;
   'surface.charter-match-ambiguous': SurfaceCharterMatchAmbiguousPayload;
   'surface.proposed': SurfaceProposedPayload;
   'surface.oriented': SurfaceOrientedPayload;
@@ -1036,6 +1069,8 @@ export interface EventPayloads {
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
   'surface.install-failed': SurfaceInstallFailedPayload;
   'surface.shared-credential-retired': SurfaceSharedCredentialRetiredPayload;
+  'credential.superseded': CredentialSupersededPayload;
+  'surface.reoriented': SurfaceReorientedPayload;
   'surface.app-installed': SurfaceAppInstalledPayload;
   'surface.probe-failed': SurfaceProbeFailedPayload;
   'surface.probe-retried': SurfaceProbeRetriedPayload;
@@ -1083,6 +1118,7 @@ export interface EventPayloads {
   'work.decision-request-failed': WorkDecisionRequestFailedPayload;
   'work.decision-request-asked': WorkDecisionRequestAskedPayload;
   'work.decision-notifying': WorkDecisionNotifyingPayload;
+  'work.decision-request-closing': WorkDecisionRequestClosingPayload;
   'work.decision-acknowledging': WorkDecisionAcknowledgingPayload;
   'work.decision-ignored': WorkDecisionIgnoredPayload;
   'work.decision-duplicate': WorkDecisionDuplicatePayload;
@@ -1169,6 +1205,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.verification-failed',
   'skill.sandbox-skipped',
   'skill.sandbox-waiting',
+  'skill.authoring-deferred',
   'surface.charter-match-ambiguous',
   'surface.proposed',
   'surface.oriented',
@@ -1177,6 +1214,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.app-provisioned',
   'surface.install-failed',
   'surface.shared-credential-retired',
+  'credential.superseded',
+  'surface.reoriented',
   'surface.app-installed',
   'surface.probe-failed',
   'surface.probe-retried',
@@ -1224,6 +1263,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.decision-request-failed',
   'work.decision-request-asked',
   'work.decision-notifying',
+  'work.decision-request-closing',
   'work.decision-acknowledging',
   'work.decision-ignored',
   'work.decision-duplicate',

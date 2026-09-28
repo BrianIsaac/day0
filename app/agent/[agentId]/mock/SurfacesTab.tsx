@@ -1237,6 +1237,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             provisioning,
             sourceLabel: summarySourceLabel,
             summary,
+            reason: surface.reason,
           });
           const provisioningPresentation = presentProvisioning({
             credential: request?.credential,
@@ -1328,7 +1329,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                         <span className="font-mono">{request.registrySuggestion.endpoint}</span>
                         <span className="block text-[var(--color-warn)]">
                           {request.registrySuggestion.note ||
-                            'Not linked evidence; IT confirms and enters the endpoint.'}
+                            'Not linked evidence; confirm the endpoint before you approve.'}
                         </span>
                       </dd>
                     </>

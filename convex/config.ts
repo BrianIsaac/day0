@@ -2,6 +2,7 @@ import { query } from './_generated/server';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { modelName } from '../src/lib/model-name';
 import { browserComponent } from '../src/surfaces/browser';
+import { evaluationBedName } from '../src/evaluation/bed-flag';
 
 /** Return the non-secret surface mode for consistent UI labels. */
 export const surfaceMode = query({
@@ -17,14 +18,21 @@ export const surfaceMode = query({
  *
  * The evaluation harness compares it with the model the local environment
  * names, so that the evidence file records the model that actually ran both
- * arms rather than whatever the operator's shell happened to say. Nothing
- * about the provider - key, base URL - is returned.
+ * arms rather than whatever the operator's shell happened to say. It also
+ * names the evaluation bed the deployment is, if any, so a harness refuses
+ * before it spends anything (N9). Nothing about the provider - key, base URL
+ * - is returned.
  */
 export const modelSettings = query({
   args: {},
-  handler: (): { model: string; skillSandboxBackend: 'daytona' | 'local' } => ({
+  handler: (): {
+    model: string;
+    skillSandboxBackend: 'daytona' | 'local';
+    evaluationBed: string | null;
+  } => ({
     model: modelName(),
     skillSandboxBackend: process.env.DAYTONA_API_KEY?.trim() ? 'daytona' : 'local',
+    evaluationBed: evaluationBedName() ?? null,
   }),
 });
 

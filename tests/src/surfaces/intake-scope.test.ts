@@ -10,7 +10,6 @@ import {
   roleScopeCandidates,
   scopeCandidates,
   restatedScope,
-  scopeDrift,
   scopeFieldsFor,
   sentenceScopePicks,
   type IntakeScope,
@@ -747,29 +746,6 @@ describe('the scope an approved card reads', (): void => {
     const slack = presentIntakeScope('Slack', 'chat', finance);
     expect(slack.quotes).toEqual([finance.channels![0]]);
     expect(slack.quotes[0].quote).toBe('- Channels: #finance-close, #ops-requests');
-  });
-
-  it('names a value whose page line has changed since the card was approved', (): void => {
-    const edited = pages('revops-first').map(
-      (page): ScopePage =>
-        page.ref === 'finance/handbook.md'
-          ? {
-              ...page,
-              markdown: page.markdown.replace(
-                '- Project: `September close`',
-                '- Project: `October close`',
-              ),
-            }
-          : page,
-    );
-    expect(scopeDrift(finance, pages('revops-first'))).toEqual([]);
-    expect(scopeDrift(finance, edited)).toEqual([finance.project]);
-    expect(
-      scopeDrift(
-        finance,
-        edited.filter((page): boolean => page.ref !== 'finance/handbook.md'),
-      ),
-    ).toHaveLength(4);
   });
 
   it('compares values, not lines: a rename or a reflowed line is no drift, a removed value is', (): void => {

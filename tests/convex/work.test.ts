@@ -417,6 +417,38 @@ describe('batched decisions', (): void => {
     return { agentId: ids.agentId, surfaceId, first: ids, second };
   }
 
+  it('marks a batch decided once its last member is decided one at a time, so it leaves the open read (S2 D6)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, first, second } = await batchOnChannel(harness);
+    const batch = async (): Promise<Doc<'decisionBatches'> | null> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('decisionBatches')
+            .withIndex('by_agent_id', (q) => q.eq('agentId', agentId).eq('id', 'bq2wxy'))
+            .unique(),
+      );
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: second.workItemId,
+      pendingRunId: second.runId,
+      approvedIndexes: [0],
+    });
+    // One member is still open, so the batch is too.
+    expect((await batch())?.decidedAt).toBeUndefined();
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+      workItemId: first.workItemId,
+      pendingRunId: first.runId,
+      reason: 'not this week',
+    });
+    // Decided member by member: no single outcome, and no reply decided it.
+    expect(await batch()).toMatchObject({ decidedAt: expect.any(Number) });
+    expect((await batch())?.outcome).toBeUndefined();
+    expect((await batch())?.decidedTs).toBeUndefined();
+    const open = await harness.query(internal.work.openDecisions, { surfaceId });
+    expect(open.batches).toEqual([]);
+  });
+
   it('decides every open member of a batch code from one channel reply, and names what it left', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -3568,7 +3600,62 @@ describe('the exact-action gate', (): void => {
     expect(await scheduledFunctionNames(harness)).not.toContain(
       'managerChannelActions:sendManagerNote',
     );
-    expect(await harness.query(internal.work.digestCandidates, {})).toEqual([agentId]);
+    expect(
+      (await harness.query(internal.work.digestCandidates, { cursor: null })).agentIds,
+    ).toEqual([agentId]);
+  });
+
+  it("finds every agent holding an unsent note, however many one agent's stuck notes pile up first (review m18)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [stuck, waiting] = await harness.run(async (ctx) => {
+      const ids: Id<'agents'>[] = [];
+      for (const [name, notes] of [
+        ['Stuck', 600],
+        ['Waiting', 1],
+      ] as const) {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `${name}-1`,
+          title: 'A ticket',
+          contentSummary: 'A ticket.',
+          contentRefs: [],
+          state: 'completed',
+          observedAt: 1,
+          createdAt: 1,
+        });
+        for (let index = 0; index < notes; index += 1) {
+          await ctx.db.insert('managerNotes', {
+            agentId,
+            workItemId,
+            kind: 'landed',
+            text: 'landed',
+            createdAt: index,
+          });
+        }
+        ids.push(agentId);
+      }
+      return ids;
+    });
+    const found: Id<'agents'>[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: { agentIds: Id<'agents'>[]; cursor: string | null } = await harness.query(
+        internal.work.digestCandidates,
+        { cursor },
+      );
+      found.push(...page.agentIds);
+      cursor = page.cursor;
+    } while (cursor !== null);
+    expect(found.sort()).toEqual([stuck, waiting].sort());
   });
 
   it('records a failure with nothing landed as stopped, and one after a landed write as failed', async (): Promise<void> => {
@@ -4966,6 +5053,52 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       }),
     ).resolves.toBeNull();
     expect(await harness.run(async (ctx) => await ctx.db.query('workItems').collect())).toEqual([]);
+  });
+
+  it('shows the owner the newest listing of the ticket, without the assignee address, and no one else', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const todo = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: todo,
+    });
+    const owner = harness.withIdentity(OWNER);
+    // Only the discovery's listing so far: that is the newest.
+    expect(await owner.query(api.work.latestListing, { workItemId })).toMatchObject({
+      tracker: todo,
+    });
+    const taken = {
+      ...todo,
+      assigned: true,
+      assigneeId: 'user-ana',
+      assigneeEmail: 'ana@example.test',
+      state: 'In Progress',
+    };
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('ticketListings', {
+        agentId,
+        workItemId,
+        tracker: taken,
+        refused: 'assigned to someone else',
+        listedAt: Date.now() + 60_000,
+      });
+    });
+    const latest = await owner.query(api.work.latestListing, { workItemId });
+    expect(latest).toEqual({
+      tracker: {
+        assigned: true,
+        assigneeId: 'user-ana',
+        state: 'In Progress',
+        stateType: 'unstarted',
+        doNotAutomate: false,
+      },
+      refused: 'assigned to someone else',
+      listedAt: expect.any(Number),
+    });
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).query(api.work.latestListing, { workItemId }),
+    ).rejects.toThrow();
   });
 
   it('keeps each changed listing of the ticket and gives the apply the one the plan was made under', async (): Promise<void> => {

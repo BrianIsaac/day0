@@ -17,7 +17,8 @@ import {
   encrypt,
   sealForOwner,
 } from '../../src/lib/credential-crypto';
-import { credentialSourceRef } from '../../src/docs/redaction';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
+import { listingCursor } from '../../src/docs/readers/batch';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -157,13 +158,14 @@ describe('the upgrade migrations', (): void => {
     });
   });
 
-  it('runs the second schema step’s migrations on the runner, each at 0.6.0, and records each finished', async (): Promise<void> => {
+  it('runs the second schema step’s migrations and the batch settling on the runner, each at 0.6.0, and records each finished', async (): Promise<void> => {
     const secondStep = [
       'surfaces-withheld-tools',
       'work-evaluation-unavailable-cause',
       'sync-runs-unread',
       'doc-page-listings',
       'credentials-superseded-at',
+      'decision-batches-settled',
     ];
     expect(MIGRATION_NAMES.slice(-secondStep.length)).toEqual(secondStep);
     const harness = limitedHarness();
@@ -1029,21 +1031,118 @@ describe('the release stamp', (): void => {
 
     await runAll(harness);
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.3.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.3.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.6.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.6.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.3.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.3.0', previous: '0.3.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.6.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.6.0', previous: '0.6.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.4.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.4.0', previous: '0.3.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.10.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.10.0', previous: '0.6.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.4.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.10.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
+  });
+});
+
+describe('the release a stamp may name', (): void => {
+  it('refuses a release older than the newest one a shipped migration names, and a malformed one', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await runAll(harness);
+    const newest = Object.values(MIGRATIONS)
+      .map((migration) => migration.release)
+      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
+      .at(-1)!;
+    // A deployment set up from a tree whose package still says the release
+    // before its migrations would otherwise read as a release that lacks them.
+    for (const release of ['0.5.0', '0.3.0', 'v0.6.0', '0.6', 'latest']) {
+      await expect(
+        harness.mutation(internal.migrations.recordRelease, { release }),
+        release,
+      ).rejects.toThrow(newest);
+    }
+    expect(await harness.query(internal.migrations.status, {})).toMatchObject({ release: null });
+    await expect(
+      harness.mutation(internal.migrations.recordRelease, { release: newest }),
+    ).resolves.toMatchObject({ release: newest });
+  });
+});
+
+describe('the decision batches decided one member at a time before 0.6.0 (S2 D6)', (): void => {
+  it('marks a batch with no open member decided, and leaves one a member still waits on', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [settledId, openId] = await harness.run(async (ctx) => {
+      const pendingRunId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: {},
+        createdAt: 1,
+      });
+      const item = async (
+        externalId: string,
+        decided: boolean,
+      ): Promise<{
+        workItemId: Id<'workItems'>;
+        decisionId: string;
+        pendingRunId: Id<'events'>;
+      }> => ({
+        workItemId: await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: externalId,
+          contentSummary: externalId,
+          contentRefs: [],
+          state: 'actions-pending',
+          pendingRunId,
+          observedAt: 1,
+          createdAt: 1,
+          decision: {
+            id: externalId.toLowerCase(),
+            kind: 'actions',
+            surfaceSlug: 'slack',
+            surfaceName: 'Slack',
+            channel: 'D0MANAGER',
+            requestedAt: 1,
+            ...(decided ? { decidedAt: 2, outcome: 'approved' as const } : {}),
+          },
+        }),
+        decisionId: externalId.toLowerCase(),
+        pendingRunId,
+      });
+      const batch = async (id: string, members: unknown[]): Promise<Id<'decisionBatches'>> =>
+        await ctx.db.insert('decisionBatches', {
+          agentId,
+          id,
+          surfaceSlug: 'slack',
+          channel: 'D0MANAGER',
+          members: members as Doc<'decisionBatches'>['members'],
+          requestedAt: 1,
+        });
+      return [
+        await batch('settled', [await item('A-1', true), await item('A-2', true)]),
+        await batch('waiting', [await item('B-1', true), await item('B-2', false)]),
+      ];
+    });
+    await runAll(harness);
+    const [settled, open] = await harness.run(async (ctx) => [
+      await ctx.db.get(settledId),
+      await ctx.db.get(openId),
+    ]);
+    expect(settled?.decidedAt).toEqual(expect.any(Number));
+    expect(settled?.outcome).toBeUndefined();
+    expect(open?.decidedAt).toBeUndefined();
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'decision-batches-settled')).toMatchObject({
+      read: 2,
+      changed: 1,
+    });
   });
 });
 
@@ -1528,6 +1627,8 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
   });
 
   it("carries a moved row's ref into a sync that ended short, so the sync that takes it over keeps the row", async (): Promise<void> => {
+    // A cursor a resume can check (D D5): the offset bound to the listing it continues.
+    const PAGE_2 = listingCursor(1, ['runbook.md', 'policy.md']);
     vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
     const harness = limitedHarness();
     const sourceId = await source(harness, 'owner');
@@ -1557,7 +1658,7 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
         endedShort: await ctx.db.insert('docSyncRuns', {
           ...run,
           state: 'error',
-          cursor: 'page-2',
+          cursor: PAGE_2,
           completedAt: Date.now(),
         }),
       };
@@ -1577,7 +1678,7 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
       harness.mutation(internal.docSources.finishSync, {
         sourceId,
         runId,
-        currentCursor: 'page-2',
+        currentCursor: PAGE_2,
         refs: [],
         credentialRefs: [],
         pageCount: 0,

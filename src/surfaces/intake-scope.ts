@@ -758,41 +758,11 @@ export function restatedScope<V extends ScopeValue>(
 }
 
 /**
- * The approved values whose page line is no longer on their page.
- *
- * Intake keeps reading what was approved; this is what the card shows so a
- * changed page is re-proposed and approved rather than silently followed.
- * It compares lines because the card reads the scope as stored: a sync that
- * finds the value still stated re-points the stored line (`restatedScope`),
- * after which this finds nothing.
- *
- * Args:
- *   scope: The approved scope.
- *   pages: The employee's current pages.
- *
- * Returns:
- *   Each value whose page is gone or no longer carries its quoted line.
- */
-export function scopeDrift(scope: IntakeScope, pages: readonly ScopePage[]): ScopeValue[] {
-  const values = intakeScopeValues(scope);
-  return values.filter((value): boolean => {
-    const page = pages.find(
-      (candidate): boolean =>
-        candidate.ref === value.ref &&
-        (value.sourceId === undefined ||
-          candidate.sourceId === undefined ||
-          candidate.sourceId === value.sourceId),
-    );
-    return !page?.markdown.split(/\r?\n/).some((line): boolean => line.trim() === value.quote);
-  });
-}
-
-/**
  * Say which approved values' page lines have changed, and what to do.
  *
  * Args:
  *   scope: The approved scope.
- *   drift: The values `scopeDrift` found, in scope order.
+ *   drift: The values `restatedScope` found drifted, in scope order.
  *
  * Returns:
  *   One message for the card, or undefined when nothing has changed.

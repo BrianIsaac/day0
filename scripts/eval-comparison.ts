@@ -35,6 +35,7 @@ import {
   INTENTIONAL_ARM_DIFFERENCES,
 } from '../src/evaluation/harness-parity';
 import { isTerminalWorkState } from '../src/evaluation/states';
+import { refuseUnlessBed } from '../src/evaluation/bed-flag';
 import { auditActionArguments } from '../evaluation/action-audit';
 
 /** Each invocation writes its own directory; pass `--out` with an earlier path to resume it. */
@@ -1107,6 +1108,7 @@ export async function runEvaluation(options: CliOptions): Promise<EvaluationEvid
   if (mode.mode !== 'mock')
     throw new Error(`evaluation requires mock mode; backend reports ${mode.mode}`);
   const backend = await context.client.query(api.config.modelSettings, {});
+  refuseUnlessBed(backend.evaluationBed, 'pnpm eval:comparison');
   if (backend.model !== MODEL) {
     throw new Error(
       `the backend is configured for model ${backend.model} but this environment names ${MODEL}; ` +

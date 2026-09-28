@@ -19,7 +19,7 @@ import {
   decrypt as decryptCredential,
   openOwnedCredential,
 } from '../../src/lib/credential-crypto';
-import { credentialSourceRef } from '../../src/docs/redaction';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 import { temporaryDirectories } from '../setup/temporary-directories';
 

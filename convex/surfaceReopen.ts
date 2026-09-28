@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { internalMutation } from './_generated/server';
-import { scheduleOrientationFor } from './surfaces';
+import { recordReoriented, scheduleOrientationFor } from './surfaces';
 import { appendEvent } from './eventLog';
 import { namedByCharter } from '../src/surfaces/charter-cards';
 
@@ -27,7 +27,11 @@ export type ReopenOutcome = 'oriented' | 'awaiting-proposal' | 'not-absent';
  * @returns What the re-open did.
  */
 export const reopenAbsent = internalMutation({
-  args: { surfaceId: v.id('surfaces'), charterNamesSystems: v.boolean() },
+  args: {
+    surfaceId: v.id('surfaces'),
+    charterNamesSystems: v.boolean(),
+    byManager: v.optional(v.boolean()),
+  },
   handler: async (ctx, args): Promise<ReopenOutcome> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface || surface.verdict !== 'absent') return 'not-absent';
@@ -43,7 +47,8 @@ export const reopenAbsent = internalMutation({
       createdAt: Date.now(),
     });
     if (waitsForManager) return 'awaiting-proposal';
-    await scheduleOrientationFor(ctx, { ...surface, verdict: 'declared', reason });
+    const placed = await scheduleOrientationFor(ctx, { ...surface, verdict: 'declared', reason });
+    if (placed && args.byManager === true) await recordReoriented(ctx, surface);
     return 'oriented';
   },
 });

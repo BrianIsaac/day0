@@ -40,7 +40,12 @@ import {
   restartAccessClocksPage,
   singleApprovalPage,
 } from './surfaces';
-import { backfillUnavailableCausePage, keepTicketListing, WORK_LISTED_EVENT } from './work';
+import {
+  backfillUnavailableCausePage,
+  keepTicketListing,
+  settleDecisionBatchesPage,
+  WORK_LISTED_EVENT,
+} from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -76,6 +81,7 @@ export const MIGRATION_NAMES = [
   'sync-runs-unread',
   'doc-page-listings',
   'credentials-superseded-at',
+  'decision-batches-settled',
 ] as const;
 
 /** One migration's name. */
@@ -205,6 +211,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'gives every stored documentation page a listing row stamped 0, older than any listing a sync starts, so the next finish that does not name the page removes it and one that does restamps it',
     thenRemoves:
       'the reading of docSyncRuns.refs as a pre-0.6.0 run’s listing (legacyListedRefs), once no run begun before this release can be resumed; the refs declaration the release after, with a migration clearing it',
+  },
+  'decision-batches-settled': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'marks decided each batch whose members were all decided one at a time before the decide paths settled it, so the channel’s open-batch read holds only batches still waiting',
+    thenRemoves: 'nothing: the decide paths settle a batch from here on',
   },
   'credentials-superseded-at': {
     release: SCHEMA_STEP_RELEASE,
@@ -656,6 +667,7 @@ const MIGRATION_PAGES: Readonly<
   'sync-runs-unread': moveUnreadRecords,
   'doc-page-listings': stampPageListings,
   'credentials-superseded-at': stampSupersededAt,
+  'decision-batches-settled': async (ctx, cursor) => await settleDecisionBatchesPage(ctx, cursor),
 };
 
 /** A migration's row, if it has started. */
@@ -885,13 +897,54 @@ export const status = internalQuery({
   },
 });
 
+/** A release as a stamp names it: three dot-separated numbers, no prefix. */
+const RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+/** A release's three numbers, or undefined when it is not shaped as one. */
+function releaseParts(release: string): readonly [number, number, number] | undefined {
+  const match = RELEASE.exec(release);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
+}
+
+/** Negative when `older` precedes `newer`, zero when they are the same release. */
+function compareReleaseParts(
+  older: readonly [number, number, number],
+  newer: readonly [number, number, number],
+): number {
+  return older[0] - newer[0] || older[1] - newer[1] || older[2] - newer[2];
+}
+
+/** The newest release any shipped migration names: no stamp may be older (S D8). */
+const NEWEST_MIGRATION_RELEASE = Object.values(MIGRATIONS)
+  .map((migration) => migration.release)
+  .reduce((newest, release) =>
+    compareReleaseParts(releaseParts(release)!, releaseParts(newest)!) > 0 ? release : newest,
+  );
+
+/**
+ * Why a release may not be stamped, or undefined when it may: a stamp names
+ * a release shaped as three numbers and no older than the newest one a
+ * shipped migration names, so a deployment set up from a tree whose package
+ * still names the release before its migrations never reads as lacking them.
+ */
+function releaseRefusal(release: string): string | undefined {
+  const parts = releaseParts(release);
+  const newest = releaseParts(NEWEST_MIGRATION_RELEASE)!;
+  if (parts !== undefined && compareReleaseParts(parts, newest) >= 0) return undefined;
+  return (
+    `release ${release} cannot be stamped: a stamp names a release as X.Y.Z no older than ` +
+    `${NEWEST_MIGRATION_RELEASE}, the newest release a shipped migration names`
+  );
+}
+
 /**
  * Stamp the release the rows are now at. Internal; the upgrade calls it last.
  * Refused while any migration is unfinished, so a stamp always means every
- * row has the shape that release expects. Stamping the release and commit the
- * deployment already carries writes nothing.
+ * row has the shape that release expects, and refused for a release older
+ * than the newest one a shipped migration names. Stamping the release and
+ * commit the deployment already carries writes nothing.
  *
- * @throws Error naming the unfinished migrations.
+ * @throws Error naming the unfinished migrations, or the release refused.
  */
 export const recordRelease = internalMutation({
   args: { release: v.string(), commit: v.optional(v.string()) },
@@ -905,6 +958,8 @@ export const recordRelease = internalMutation({
         `migrations still to run (${unfinished.join(', ')}); run \`npx convex run migrations:runPending\` first`,
       );
     }
+    const refusal = releaseRefusal(args.release);
+    if (refusal !== undefined) throw new Error(refusal);
     const latest = await latestRelease(ctx);
     if (latest?.release !== args.release || latest.commit !== args.commit) {
       await ctx.db.insert('deploymentVersions', {

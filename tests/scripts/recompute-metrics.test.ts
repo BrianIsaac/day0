@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
@@ -14,6 +15,10 @@ import {
 } from '../../scripts/recompute-metrics';
 import { assembleTrace, type AgentTrace } from '../../src/export/trace';
 import { allConvexModules } from '../convex/all-modules';
+import { hasHostTool } from '../setup/host-tools';
+
+/** The repository root, found from this file rather than the working directory. */
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 const OWNER = 'company-owner';
 const temporary: string[] = [];
@@ -199,16 +204,19 @@ describe('recomputing the supervision figures from an export', (): void => {
     });
   });
 
-  it('reads the zip Convex writes as it reads the directory', async (): Promise<void> => {
-    const directory = await exportDirectory(await companyBackend());
-    const archive = join(mkdtempSync(join(tmpdir(), 'day0-recompute-zip-')), 'export.zip');
-    temporary.push(resolve(archive, '..'));
-    execFileSync('zip', ['-q', '-r', archive, '.'], { cwd: directory });
+  it.skipIf(!hasHostTool('zip'))(
+    'reads the zip Convex writes as it reads the directory (needs zip)',
+    async (): Promise<void> => {
+      const directory = await exportDirectory(await companyBackend());
+      const archive = join(mkdtempSync(join(tmpdir(), 'day0-recompute-zip-')), 'export.zip');
+      temporary.push(resolve(archive, '..'));
+      execFileSync('zip', ['-q', '-r', archive, '.'], { cwd: directory });
 
-    expect(recomputeFromExport(archive, { owner: OWNER, now: 1 })).toEqual(
-      recomputeFromExport(directory, { owner: OWNER, now: 1 }),
-    );
-  });
+      expect(recomputeFromExport(archive, { owner: OWNER, now: 1 })).toEqual(
+        recomputeFromExport(directory, { owner: OWNER, now: 1 }),
+      );
+    },
+  );
 
   it('anchors the timeline on the owner’s first documentation sync and names each employee', async (): Promise<void> => {
     const directory = await exportDirectory(await companyBackend());
@@ -394,8 +402,8 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
  * file beside it holds the figures the Supervision card showed on the day
  * (numbers.md), written down independently of this recompute.
  */
-const RECORDING_TRACE = resolve('tests/fixtures/recording-2026-09-17-trace.json');
-const RECORDING_CARD = resolve('tests/fixtures/recording-2026-09-17-card.json');
+const RECORDING_TRACE = join(ROOT, 'tests/fixtures/recording-2026-09-17-trace.json');
+const RECORDING_CARD = join(ROOT, 'tests/fixtures/recording-2026-09-17-card.json');
 
 describe('the 17 September recording, as a tracked trace', (): void => {
   it('reproduces the Supervision card the manager saw, with --expect', (): void => {
@@ -419,9 +427,11 @@ describe('the 17 September recording, as a tracked trace', (): void => {
     });
     expect(figures.company.pilot).toEqual({
       skillReuse: { runs: 3, reused: 0, rate: 0 },
+      // One item's stop was retried by the manager and it then completed, so
+      // its end is the completion (review m36), not the stop.
       cycleTime: {
         ended: 3,
-        medianToEndMs: 283_549,
+        medianToEndMs: 382_466,
         completed: 3,
         medianToCompletionMs: 382_466,
         p90ToCompletionMs: 616_459,
@@ -438,54 +448,57 @@ describe('the 17 September recording, as a tracked trace', (): void => {
  * it lives under the ignored `docs/` tree and is never committed; this reads
  * it where the primary checkout keeps it and is skipped on a fresh clone.
  */
-const RECORDING_EXPORT = resolve('docs/plans/progress/recording-run-2026-09-17/export.zip');
+const RECORDING_EXPORT = join(ROOT, 'docs/plans/progress/recording-run-2026-09-17/export.zip');
 
-describe.skipIf(!existsSync(RECORDING_EXPORT))('the 17 September recording export', (): void => {
-  it('reproduces its own Supervision card from the zip', async (): Promise<void> => {
-    const { figures, anchor, timeline } = recomputeFromExport(RECORDING_EXPORT);
+describe.skipIf(!existsSync(RECORDING_EXPORT))(
+  'the 17 September recording export (needs the ignored docs/ export, absent from a clone)',
+  (): void => {
+    it('reproduces its own Supervision card from the zip', async (): Promise<void> => {
+      const { figures, anchor, timeline } = recomputeFromExport(RECORDING_EXPORT);
 
-    expect(figures.employees.map((row) => row.name)).toEqual(['ops worker']);
-    expect(figures.excludedAgents).toBe(0);
-    // numbers.md, "Supervision card (metrics:forAgent)".
-    const card = {
-      charter: {
-        timesToFirstApprovedMs: [66_924],
-        medianTimeToFirstApprovedMs: 66_924,
-        approvedEmployees: 1,
-      },
-      decisions: {
-        requested: 2,
-        approved: 2,
-        rejected: 0,
-        partiallyApproved: 0,
-        medianLatencyMs: 48_211,
-        p90LatencyMs: 48_662,
-        byVia: { dashboard: { decided: 2 }, channel: { decided: 0 } },
-      },
-      actions: {
-        autoApplied: 25,
-        approved: 1,
-        held: 1,
-        refused: 0,
-        rejected: 0,
-        blockedAfterRevocation: null,
-      },
-      auditTrail: { complete: 26, total: 26, fraction: 1 },
-    };
-    expect(figures.company).toMatchObject({ employees: 1, ...card });
-    expect(figures.employees[0].metrics).toMatchObject({
-      charter: { timeToFirstApprovedMs: 66_924 },
-      decisions: card.decisions,
-      actions: card.actions,
-      auditTrail: card.auditTrail,
+      expect(figures.employees.map((row) => row.name)).toEqual(['ops worker']);
+      expect(figures.excludedAgents).toBe(0);
+      // numbers.md, "Supervision card (metrics:forAgent)".
+      const card = {
+        charter: {
+          timesToFirstApprovedMs: [66_924],
+          medianTimeToFirstApprovedMs: 66_924,
+          approvedEmployees: 1,
+        },
+        decisions: {
+          requested: 2,
+          approved: 2,
+          rejected: 0,
+          partiallyApproved: 0,
+          medianLatencyMs: 48_211,
+          p90LatencyMs: 48_662,
+          byVia: { dashboard: { decided: 2 }, channel: { decided: 0 } },
+        },
+        actions: {
+          autoApplied: 25,
+          approved: 1,
+          held: 1,
+          refused: 0,
+          rejected: 0,
+          blockedAfterRevocation: null,
+        },
+        auditTrail: { complete: 26, total: 26, fraction: 1 },
+      };
+      expect(figures.company).toMatchObject({ employees: 1, ...card });
+      expect(figures.employees[0].metrics).toMatchObject({
+        charter: { timeToFirstApprovedMs: 66_924 },
+        decisions: card.decisions,
+        actions: card.actions,
+        auditTrail: card.auditTrail,
+      });
+      // numbers.md, "Timeline": the documentation link at 21:00:22, the deploy
+      // at 0:43 and the charter approval at 1:49.
+      expect(anchor?.source).toBe('documentation sync');
+      expect(new Date(anchor!.at).toISOString()).toBe('2026-09-16T21:00:22.551Z');
+      const offset = (type: string): number | undefined =>
+        timeline.find((row) => row.type === type)?.offsetMs;
+      expect(Math.floor(offset('agent.deployed')! / 1_000)).toBe(43);
+      expect(Math.floor(offset('charter.approved')! / 1_000)).toBe(109);
     });
-    // numbers.md, "Timeline": the documentation link at 21:00:22, the deploy
-    // at 0:43 and the charter approval at 1:49.
-    expect(anchor?.source).toBe('documentation sync');
-    expect(new Date(anchor!.at).toISOString()).toBe('2026-09-16T21:00:22.551Z');
-    const offset = (type: string): number | undefined =>
-      timeline.find((row) => row.type === type)?.offsetMs;
-    expect(Math.floor(offset('agent.deployed')! / 1_000)).toBe(43);
-    expect(Math.floor(offset('charter.approved')! / 1_000)).toBe(109);
-  });
-});
+  },
+);

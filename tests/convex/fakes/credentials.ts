@@ -1,5 +1,5 @@
 import { sealForOwner } from '../../../src/lib/credential-crypto';
-import { credentialPageRef } from '../../../src/docs/redaction';
+import { credentialPageRef } from '../../../src/docs/credential-ref';
 import type { GenericId } from 'convex/values';
 import { v } from 'convex/values';
 import { internalAction, internalQuery } from '../../../convex/_generated/server';

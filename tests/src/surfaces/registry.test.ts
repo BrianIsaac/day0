@@ -896,11 +896,14 @@ describe('applying surface actions', (): void => {
         now,
       },
     );
-    expect(escaped.map((entry) => entry.reason)).toEqual([
-      'no grant (slack:write)',
-      'no grant (slack:write)',
-    ]);
-    expect(recorded.http).toHaveLength(1);
+    // A reply in a thread of the manager DM is the manager DM (M finding 3):
+    // it lands on boss:message alone; the join dressed as a message does not.
+    expect(escaped.map((entry) => entry.reason)).toEqual(['no grant (slack:write)', undefined]);
+    expect(recorded.http).toHaveLength(2);
+    expect(recorded.http[1]).toMatchObject({
+      url: 'https://slack.com/api/chat.postMessage',
+      body: { channel: 'D0MANAGER', thread_ts: '1787738163.314789' },
+    });
   });
 
   it('appends provenance to a generic MCP manager message', async (): Promise<void> => {

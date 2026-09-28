@@ -5,7 +5,6 @@ import {
   compareWaitingRows,
   queueRank,
 } from '../../../src/work/queue-order';
-import * as loop from '../../../convex/workLoop';
 
 const PRIORITIES = [
   undefined,
@@ -23,15 +22,14 @@ const PRIORITIES = [
   'Highest',
 ];
 
-describe('the waiting queue order readers share with the loop', (): void => {
-  it('ranks every priority label exactly as the loop does', (): void => {
-    expect(PRIORITIES.map(queueRank)).toEqual(PRIORITIES.map(loop.queueRank));
+describe('the waiting queue order the loop runs and its readers show', (): void => {
+  it('ranks every priority label from urgent to none', (): void => {
     expect(PRIORITIES.map(queueRank)).toEqual([4, 4, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4]);
   });
 
-  it('parks after as many attempts, under the same reason, as the loop', (): void => {
-    expect(MAX_EVALUATION_ATTEMPTS).toBe(loop.MAX_EVALUATION_ATTEMPTS);
-    expect(EVALUATION_ATTEMPTS_SPENT).toBe(loop.EVALUATION_ATTEMPTS_SPENT);
+  it('parks a row after three evaluations die, under a reason of its own', (): void => {
+    expect(MAX_EVALUATION_ATTEMPTS).toBe(3);
+    expect(EVALUATION_ATTEMPTS_SPENT).toBe('evaluation-attempts-spent');
   });
 
   it('serves the unattempted before the attempted, then the most urgent, then the oldest', (): void => {

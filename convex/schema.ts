@@ -729,7 +729,7 @@ export default defineSchema({
     /**
      * Real mode: how many evaluations of this row began since it last had a
      * verdict. A row whose evaluation keeps dying ranks behind unattempted
-     * rows and is parked after `MAX_EVALUATION_ATTEMPTS` (`convex/workLoop.ts`),
+     * rows and is parked after `MAX_EVALUATION_ATTEMPTS` (`src/work/queue-order.ts`),
      * so it cannot hold the queue at a cap of one. Cleared by a verdict and by
      * every re-admission.
      */
@@ -799,6 +799,10 @@ export default defineSchema({
         duplicateNoticeClaimedAt: v.optional(v.number()),
         duplicateNoticeTs: v.optional(v.string()),
         duplicateNoticeFailure: v.optional(v.string()),
+        /** The request's text as the manager's DM received it, for the edit that marks it decided. */
+        requestText: v.optional(v.string()),
+        /** When the one edit marking the decided request was claimed; never made twice. */
+        closeClaimedAt: v.optional(v.number()),
       }),
     ),
     // ---- Lane C (executors and the gate) ----
@@ -1005,8 +1009,7 @@ export default defineSchema({
     keptFor: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
   })
     .index('by_agent', ['agentId'])
-    /** The notes not sent yet, across agents, so the digest never reads the sent history. */
-    .index('by_unsent', ['claimedAt', 'providerTs'])
+    /** One agent's notes not sent yet, so the digest never reads the sent history. */
     .index('by_agent_unsent', ['agentId', 'claimedAt', 'providerTs']),
 
   /**
@@ -1093,6 +1096,8 @@ export default defineSchema({
      * See `convex/skills.ts`. */
     authoringRunId: v.optional(v.id('events')),
     authoringClaimedAt: v.optional(v.number()),
+    /** How many authoring runs in a row were deferred because the model provider could not be reached. */
+    authoringDeferrals: v.optional(v.number()),
     /** Names the run that checked this body: a Daytona sandbox id, or
      * `local:<run id>` from the bundled local sandbox. */
     sandboxId: v.optional(v.string()),

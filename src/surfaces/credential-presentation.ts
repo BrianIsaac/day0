@@ -1,3 +1,6 @@
+import { credentialPageRef } from '../docs/credential-ref';
+import { isManagerLookupFailure } from './manager-lookup';
+
 export type CredentialMethod = 'api-key' | 'bot-token' | 'oauth' | 'unknown';
 
 export interface SurfaceCredentialFinding {
@@ -68,8 +71,9 @@ export const PROVISION_LABEL = 'Provision a dedicated app';
 export const PROVISION_NOTE =
   'Paste an app configuration token (api.slack.com/apps, Your App Configuration Tokens). Day0 ' +
   'registers this employee its own app from the manifest on the policy page, then shows the ' +
-  'install link for you to click. The token is stored encrypted for that one call and revoked ' +
-  'immediately afterwards; it is never kept for the twelve hours it would otherwise live.';
+  'install link for you to click. The token is stored encrypted for that one call; straight ' +
+  "afterwards Day0 asks Slack to revoke it and records Slack's answer, rather than keeping it for " +
+  'the twelve hours it would otherwise live.';
 
 export interface CredentialPresentationInput {
   verdict?: string;
@@ -79,6 +83,8 @@ export interface CredentialPresentationInput {
   provisioning?: SurfaceProvisioning;
   sourceLabel?: string;
   summary?: CredentialOwnerSummary;
+  /** Why the last probe left the surface where it is, as the row stores it. */
+  reason?: string;
 }
 
 /**
@@ -204,6 +210,17 @@ export function presentSurfaceCredential(
   input: CredentialPresentationInput,
 ): CredentialPresentation {
   const governanceFinding = input.credential?.governanceFinding;
+  const lookupFailure = isManagerLookupFailure(input.reason) ? input.reason : undefined;
+  if (input.verdict === 'ungranted' && input.credentialId && lookupFailure !== undefined) {
+    // The credential works; a new one would fail the same way (U9 step 18).
+    return {
+      canLand: false,
+      kind: 'masked',
+      label: input.summary?.label,
+      governanceFinding,
+      text: `The credential works, but the manager could not be found: ${lookupFailure.replace(/\.$/, '')}. Change the manager on this employee’s page, then probe again.`,
+    };
+  }
   if (input.verdict === 'ungranted' && input.credentialId) {
     return {
       canLand: true,
@@ -259,7 +276,7 @@ export function presentSurfaceCredential(
         governanceFinding,
         kind: 'masked',
         label: input.summary.label,
-        text: 'entered by IT (masked)',
+        text: 'entered on the card (masked)',
       };
     }
     return {
@@ -267,7 +284,7 @@ export function presentSurfaceCredential(
       governanceFinding,
       kind: 'masked',
       label: input.summary.label,
-      text: `located in ${input.sourceLabel ?? 'documentation'} / ${input.summary.source.ref} (masked)`,
+      text: `located in ${input.sourceLabel ?? 'documentation'} / ${credentialPageRef(input.summary.source.ref)} (masked)`,
     };
   }
 

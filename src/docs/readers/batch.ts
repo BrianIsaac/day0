@@ -140,6 +140,20 @@ export function listingCursor(offset: number, listing: readonly string[]): strin
   return `${offset}@${listingDigest(listing)}`;
 }
 
+/** A cursor `listingCursor` made: an offset bound to the digest of the listing it continues. */
+const LISTING_CURSOR = /^(0|[1-9][0-9]*)@([0-9a-z]{7})$/;
+
+/**
+ * Whether a cursor is one `listingCursor` made, so a resume can check it
+ * against the listing it continues; a provider's own cursor or a bare offset
+ * cannot be checked.
+ *
+ * @param cursor - A run's cursor.
+ */
+export function isListingCursor(cursor: string): boolean {
+  return LISTING_CURSOR.test(cursor);
+}
+
 /**
  * The offset a listing cursor continues at, when the listing is still the one it was taken from.
  *
@@ -150,7 +164,7 @@ export function listingCursor(offset: number, listing: readonly string[]): strin
  */
 export function offsetInListing(cursor: string | undefined, listing: readonly string[]): number {
   if (cursor === undefined) return 0;
-  const match = /^(0|[1-9][0-9]*)@([0-9a-z]{7})$/.exec(cursor);
+  const match = LISTING_CURSOR.exec(cursor);
   if (!match || match[2] !== listingDigest(listing)) throw new ListingChangedError();
   return Number(match[1]);
 }

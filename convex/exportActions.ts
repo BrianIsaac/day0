@@ -6,7 +6,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgentAction } from './ownership';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
-import { redactStructural } from '../src/redaction/redact';
+import { redactFloorFor } from '../src/redaction/redact';
 import { TRACE_SECTIONS, type TraceHead, type TracePage } from '../src/export/trace';
 
 /*
@@ -16,8 +16,9 @@ import { TRACE_SECTIONS, type TraceHead, type TracePage } from '../src/export/tr
  * The synchronous trace queries apply the structural floor but cannot
  * decrypt, so the export is an action: it checks ownership, runs the internal
  * query under the same identity (which checks ownership again), then removes
- * every value the owner stores, and every structural secret, from every
- * string before returning. Nothing decrypted is returned or persisted; the
+ * every value the owner stores, every structural secret, and the e-mail,
+ * phone, address, id number and date of birth its policy row redacts, from
+ * every string before returning. Nothing decrypted is returned or persisted; the
  * values exist only to be removed.
  *
  * No call returns the whole trace: the pinned backend image refuses an array
@@ -27,10 +28,13 @@ import { TRACE_SECTIONS, type TraceHead, type TracePage } from '../src/export/tr
  * nothing is left and writes the one file `metrics:recompute` reads.
  */
 
-/** Every string in a value with the owner's stored values and every structural secret replaced. */
+/**
+ * Every string in a value with the owner's stored values, every structural
+ * secret and the personal data the export's policy row redacts replaced.
+ */
 function redactStrings<T>(value: T, known: readonly string[]): T {
   const walk = (entry: unknown): unknown => {
-    if (typeof entry === 'string') return redactStructural(entry);
+    if (typeof entry === 'string') return redactFloorFor(entry, 'export');
     if (Array.isArray(entry)) return entry.map(walk);
     if (entry !== null && typeof entry === 'object') {
       return Object.fromEntries(

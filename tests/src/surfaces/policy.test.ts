@@ -494,11 +494,12 @@ describe('the manager DM grant', (): void => {
     ).toBe(false);
     expect(isManagerDm(parsed(chatJoin('D0MANAGER')), slack)).toBe(false);
     expect(isManagerDm(parsed(textSmuggledJoin), slack)).toBe(false);
-    expect(isManagerDm(parsed(threadedReply), slack)).toBe(false);
+    // A thread inside the manager DM has the DM's audience (M finding 3).
+    expect(isManagerDm(parsed(threadedReply), slack)).toBe(true);
     expect(isManagerDm(parsed(deleteMessage), mcpChat)).toBe(false);
     expect(isManagerDm(parsed(smuggledChannel), mcpChat)).toBe(false);
     expect(isManagerDm(parsed(alternateSmuggledChannel), mcpChat)).toBe(false);
-    expect(isManagerDm(parsed(alternateThread), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed(alternateThread), mcpChat)).toBe(true);
     expect(
       isManagerDm(
         parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }),
@@ -509,6 +510,40 @@ describe('the manager DM grant', (): void => {
     expect(
       isManagerDm(parsed(comment()), { ...linear, class: 'chat', managerDmChannelId: 'iss-1' }),
     ).toBe(false);
+  });
+
+  it('keeps a threaded post outside the manager DM a public post, and a thread target that is not a timestamp out of the DM', (): void => {
+    expect(isManagerDm(parsed(chatPost('C0PUBLIC', { thread_ts: '1.1' })), slack)).toBe(false);
+    expect(isManagerDm(parsed(chatPost('D0MANAGER', { thread_ts: { ts: '1.1' } })), slack)).toBe(
+      false,
+    );
+  });
+
+  it('counts an edit of a message in the manager DM as the manager DM, and no other edit', (): void => {
+    const update = (channel: string, extra: Record<string, unknown> = {}): MockAction => ({
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.update',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify({ channel, ts: '1787738163.314789', text: 'Decided.', ...extra }),
+      },
+    });
+    expect(isManagerDm(parsed(update('D0MANAGER')), slack)).toBe(true);
+    expect(isManagerDm(parsed(update('C0PUBLIC')), slack)).toBe(false);
+    expect(isManagerDm(parsed(update('D0MANAGER', { ts: '' })), slack)).toBe(false);
+    const signed = applyProvenance(parsed(update('D0MANAGER')), slack, run, 'value');
+    // chat.update takes no name or icon, so the edit carries the trailer alone.
+    expect(signed).toMatchObject({ ok: true });
+    const body = (signed as { ok: true; action: ParsedSurfaceAction }).action as {
+      bodyJson?: Record<string, unknown>;
+    };
+    expect(body.bodyJson?.text).toBe(`Decided.\n\n${provenanceTrailer('Priya', 'wi_1', 'run_1')}`);
+    expect(body.bodyJson?.username).toBeUndefined();
+    expect(
+      applyProvenance(parsed(update('D0MANAGER', { username: 'Someone' })), slack, run, 'value'),
+    ).toMatchObject({ ok: false });
   });
 
   it('lets boss:message authorise the manager DM and nothing else', (): void => {
