@@ -1,19 +1,56 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, type Dirent } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   LICENCE_TEXTS,
+  PACKAGE_EXCEPTIONS,
   collectNoticeInput,
   composePins,
   copyrightLine,
+  installedLibvipsComponents,
   libvipsRelease,
   lockedLibvips,
   productionGraph,
   renderNotice,
   type NoticeInput,
 } from '../../scripts/notice';
+import { temporaryDirectories } from '../setup/temporary-directories';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const temporaryDirectory = temporaryDirectories();
+
+/** The components sharp-libvips 1.2.4's versions.json lists, as the installed package states them. */
+const LIBVIPS_COMPONENTS: Readonly<Record<string, string>> = {
+  aom: '3.13.1',
+  archive: '3.8.2',
+  cairo: '1.18.4',
+  cgif: '0.5.0',
+  exif: '0.6.25',
+  expat: '2.7.3',
+  ffi: '3.5.2',
+  fontconfig: '2.17.1',
+  freetype: '2.14.1',
+  fribidi: '1.0.16',
+  glib: '2.86.1',
+  harfbuzz: '12.1.0',
+  heif: '1.20.2',
+  highway: '1.3.0',
+  imagequant: '2.4.1',
+  lcms: '2.17',
+  mozjpeg: '0826579',
+  pango: '1.57.0',
+  pixman: '0.46.4',
+  png: '1.6.50',
+  'proxy-libintl': '0.5',
+  rsvg: '2.61.2',
+  spng: '0.7.4',
+  tiff: '4.7.1',
+  vips: '8.17.3',
+  webp: '1.6.0',
+  xml2: '2.15.1',
+  'zlib-ng': '2.2.5',
+};
 
 /** A small input with one of everything the renderer groups. */
 function input(overrides: Partial<NoticeInput> = {}): NoticeInput {
@@ -75,6 +112,7 @@ function input(overrides: Partial<NoticeInput> = {}): NoticeInput {
       },
     ],
     libvips: ['@img/sharp-libvips-linux-x64@1.2.4'],
+    libvipsComponents: LIBVIPS_COMPONENTS,
     pins: {
       notionMcpServer: '2.5.1',
       redactorModel: 'urchade/gliner_multi_pii-v1',
@@ -157,10 +195,52 @@ describe('renderNotice', () => {
       }),
     );
     expect(moved).toContain('@notionhq/notion-mcp-server 9.9.9');
-    expect(moved).toContain('(sharp-libvips 9.8.7, THIRD-PARTY-NOTICES.md)');
+    expect(moved).toContain('The libvips binaries of sharp-libvips 9.8.7');
     expect(moved).toContain('Qwen3 (qwen3:14b through Ollama');
     expect(moved).not.toContain('2.5.1');
     expect(moved).not.toContain('qwen3:8b');
+  });
+
+  it('lists each bundled libvips component at the version its release states, under its licence', () => {
+    const text = renderNotice(
+      input({ libvipsComponents: { ...LIBVIPS_COMPONENTS, vips: '8.18.0', aom: '3.14.0' } }),
+    );
+    expect(text).toContain('libvips 8.18.0');
+    expect(text).toContain(
+      '  BSD-2-Clause and the Alliance for Open Media Patent License 1.0: aom 3.14.0',
+    );
+    expect(text).toContain('libnsgif (in libvips)');
+    for (const line of text.split('\n')) expect(line.length, line).toBeLessThanOrEqual(200);
+  });
+
+  it('refuses a libvips release whose components its licence table does not match', () => {
+    expect(() =>
+      renderNotice(input({ libvipsComponents: { ...LIBVIPS_COMPONENTS, jxl: '0.11.1' } })),
+    ).toThrow(/new: jxl; gone: none/);
+    const withoutAom = Object.fromEntries(
+      Object.entries(LIBVIPS_COMPONENTS).filter(([component]) => component !== 'aom'),
+    );
+    expect(() => renderNotice(input({ libvipsComponents: withoutAom }))).toThrow(
+      /new: none; gone: aom/,
+    );
+  });
+
+  it('says what a direct dependency ships outside its manifest licence', () => {
+    expect(renderNotice(input())).toContain(
+      '  its auth/ee entry point is marked in its source as under the Mastra',
+    );
+  });
+
+  it('names every source it is generated from in its header', () => {
+    const text = renderNotice(input());
+    for (const source of [
+      'package.json',
+      'pnpm-lock.yaml',
+      'docker-compose.yml',
+      'scripts/models.ts',
+    ]) {
+      expect(text.slice(0, text.indexOf('1. Works'))).toContain(source);
+    }
   });
 
   it('refuses a model it has no credit for, so the gate fails until one is written', () => {
@@ -255,6 +335,43 @@ describe('composePins', () => {
 
   it('refuses a compose file that no longer pins either', () => {
     expect(() => composePins('services: {}\n')).toThrow(/no longer pins/);
+  });
+});
+
+describe('installedLibvipsComponents', () => {
+  it("reads the components and versions of the installed package of the lockfile's release", () => {
+    const directory = temporaryDirectory('day0-notice-');
+    const libvips = join(directory, 'sharp-libvips-linux-x64');
+    mkdirSync(libvips);
+    writeFileSync(
+      join(libvips, 'versions.json'),
+      JSON.stringify({ vips: '8.17.3', aom: '3.13.1' }),
+    );
+    const graph = new Map([
+      ['@img/sharp-libvips-linux-x64@1.2.4', libvips],
+      ['next@16.2.6', directory],
+    ]);
+    expect(installedLibvipsComponents(graph, '1.2.4')).toEqual({ aom: '3.13.1', vips: '8.17.3' });
+    expect(() => installedLibvipsComponents(graph, '1.3.0')).toThrow(
+      /1\.3\.0 package is installed/,
+    );
+  });
+});
+
+describe('the parts of a dependency NOTICE says Day0 does not use', () => {
+  it('are imported nowhere in the tree', () => {
+    const sources = ['app', 'convex', 'src', 'scripts'].flatMap((top) =>
+      (readdirSync(join(ROOT, top), { recursive: true, withFileTypes: true }) as Dirent[])
+        .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
+        .map((entry) => join(entry.parentPath, entry.name)),
+    );
+    for (const { entry } of Object.values(PACKAGE_EXCEPTIONS)) {
+      const imports = new RegExp(
+        `(?:from|import\\()\\s*['"]${entry.replace(/[/.]/g, '\\$&')}['"/]`,
+      );
+      const importers = sources.filter((path) => imports.test(readFileSync(path, 'utf8')));
+      expect(importers, entry).toEqual([]);
+    }
   });
 });
 
