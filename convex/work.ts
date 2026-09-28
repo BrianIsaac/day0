@@ -1,6 +1,6 @@
 import { closingResume } from '../src/work/closing-resume';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
-import { ConvexError, v } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -12,7 +12,13 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
+import { isEvaluationAgent } from './metrics';
+import {
+  skillWaitsOnManager,
+  stoppedRowNeedsManager,
+  stoppedRowOffersMove,
+} from '../src/work/needs-manager';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
 import {
   firstTicketRejection,
@@ -6716,4 +6722,402 @@ export const findExistingClaim = query({
 export const findExistingClaimInternal = internalQuery({
   args: existingClaimArgs,
   handler: async (ctx, args) => await findExistingClaimImpl(ctx, args),
+});
+
+/*
+ * The needs-you inbox (v2 section 7 step 3, decision N7): everything waiting
+ * on the manager across every employee, one entry per thing to decide,
+ * ordered by how long it has waited.
+ */
+
+/** How many of the owner's agent rows the inbox reads to find its employees, as the roster does. */
+const NEEDS_YOU_SCAN_LIMIT = 100;
+
+/** The most employees the inbox covers, the roster's twenty. */
+const NEEDS_YOU_EMPLOYEE_LIMIT = 20;
+
+/** Bound on each waiting state's read; open rows are held to the work-in-progress cap. */
+const NEEDS_YOU_STATE_READ_LIMIT = 100;
+
+/** Bound on the stopped-row read, the roster's: nothing caps the failed rows an employee has. */
+const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
+
+/** Bound on an employee's surfaces read for the ones proposed to the manager. */
+const NEEDS_YOU_SURFACE_READ_LIMIT = 100;
+
+/** Bound on the questions read for one plan. */
+const NEEDS_YOU_QUESTION_READ_LIMIT = 20;
+
+/**
+ * How many of an employee's events of one type the inbox reads back to find
+ * when each waiting item entered its state. The rows record no entry time of
+ * their own, so the event each transition writes is the source.
+ */
+const ENTRY_EVENT_SCAN_LIMIT = 100;
+
+/** The most entries the inbox returns; `total` says how many there are. */
+const NEEDS_YOU_LIMIT = 50;
+
+/** What every inbox entry carries: whose it is, what it is about and how long it has waited. */
+const needsYouBaseFields = {
+  key: v.string(),
+  agentId: v.id('agents'),
+  employeeName: v.string(),
+  /** What the entry is about: the item's title, the skill's name, the system's name. */
+  subject: v.string(),
+  waitingSince: v.number(),
+  /** True when the entry lay beyond the bounded read, so it has waited at least since `waitingSince`. */
+  waitingAtLeast: v.boolean(),
+};
+
+const needsYouEntryValidator = v.union(
+  v.object({ kind: v.literal('charter'), ...needsYouBaseFields }),
+  v.object({
+    kind: v.literal('plan'),
+    ...needsYouBaseFields,
+    workItemId: v.id('workItems'),
+    /** The charter questions the plan raised that are still unanswered. */
+    questions: v.number(),
+  }),
+  v.object({
+    kind: v.literal('held'),
+    ...needsYouBaseFields,
+    workItemId: v.id('workItems'),
+    heldWrites: v.number(),
+  }),
+  v.object({
+    kind: v.literal('skill'),
+    ...needsYouBaseFields,
+    skillId: v.id('skills'),
+    /** The items parked until the skill is registered. */
+    waitingItems: v.number(),
+  }),
+  v.object({
+    kind: v.literal('parked'),
+    ...needsYouBaseFields,
+    workItemId: v.id('workItems'),
+    reason: v.union(v.literal('connection'), v.literal('permission'), v.literal('evaluation')),
+  }),
+  v.object({ kind: v.literal('stopped'), ...needsYouBaseFields, workItemId: v.id('workItems') }),
+  v.object({ kind: v.literal('surface'), ...needsYouBaseFields, surfaceId: v.id('surfaces') }),
+);
+
+const needsYouValidator = v.object({
+  entries: v.array(needsYouEntryValidator),
+  total: v.number(),
+});
+
+/** One thing waiting on the manager. */
+type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
+
+/** The event types whose rows mark an item or a system entering a state that waits on the manager. */
+type EntryEventType =
+  | 'work.plan-drafted'
+  | 'work.actions-pending'
+  | 'work.evaluated'
+  | 'work.evaluation-parked'
+  | 'work.failed'
+  | 'work.actions-interrupted'
+  | 'surface.proposed';
+
+/** When a waiting row entered its state, and whether that is exact or a bound. */
+interface EnteredAt {
+  readonly at: number;
+  readonly atLeast: boolean;
+}
+
+/** The item or system an entering event names. */
+function enteredSubject(event: Doc<'events'>): string | undefined {
+  const payload: unknown = event.payload;
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const named = payload as { workItemId?: unknown; surfaceId?: unknown };
+  const id = named.workItemId ?? named.surfaceId;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/**
+ * When each waiting row entered its state: the newest entering event that
+ * names it, read newest first with a bound per type. A row whose event lies
+ * beyond the bound has waited at least since the oldest event read; a row
+ * with no event at all (a seeded or imported row) is dated by its insert.
+ *
+ * @param ctx - Query context.
+ * @param agentId - The employee.
+ * @param types - The events that mark entry into the rows' state.
+ * @param rows - The waiting rows.
+ */
+async function enteredAtByRow(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  types: readonly EntryEventType[],
+  rows: ReadonlyArray<{ readonly _id: string; readonly _creationTime: number }>,
+): Promise<Map<string, EnteredAt>> {
+  if (rows.length === 0) return new Map();
+  const wanted = new Set(rows.map((row) => row._id));
+  const found = new Map<string, number>();
+  // The entry of a row not found lies before the oldest event read of a type whose read hit the bound.
+  let unreadBefore: number | undefined;
+  for (const type of types) {
+    const seen = new Set<string>();
+    let scanned = 0;
+    let oldest = Number.POSITIVE_INFINITY;
+    for await (const event of eventsOfType(ctx, agentId, type).order('desc')) {
+      scanned += 1;
+      oldest = event._creationTime;
+      const id = enteredSubject(event);
+      if (id !== undefined && wanted.has(id) && !seen.has(id)) {
+        seen.add(id);
+        found.set(id, Math.max(found.get(id) ?? 0, event._creationTime));
+      }
+      if (seen.size === wanted.size) break;
+      if (scanned >= ENTRY_EVENT_SCAN_LIMIT) {
+        unreadBefore = Math.max(unreadBefore ?? 0, oldest);
+        break;
+      }
+    }
+  }
+  return new Map(
+    rows.map((row): [string, EnteredAt] => {
+      const at = found.get(row._id);
+      if (at !== undefined) return [row._id, { at, atLeast: false }];
+      if (unreadBefore !== undefined) return [row._id, { at: unreadBefore, atLeast: true }];
+      return [row._id, { at: row._creationTime, atLeast: false }];
+    }),
+  );
+}
+
+/**
+ * Which manager's move releases a deferred row, or none when approving the
+ * charter does (the charter's own entry already asks for that).
+ */
+function deferralWaitsOn(row: Doc<'workItems'>): 'connection' | 'permission' | 'evaluation' | null {
+  const verdict: unknown = row.verdict;
+  const reason =
+    typeof verdict === 'object' && verdict !== null
+      ? (verdict as { reason?: unknown }).reason
+      : undefined;
+  if (reason === AWAITING_CHARTER) return null;
+  if (reason === 'awaiting-connection') return 'connection';
+  if (reason === EVALUATION_ATTEMPTS_SPENT || reason === SCOPE_JUDGEMENT_UNAVAILABLE) {
+    return 'evaluation';
+  }
+  return 'permission';
+}
+
+/**
+ * Everything one employee waits on the manager for.
+ *
+ * The rows are the roster's (`src/work/needs-manager.ts`), with three
+ * differences because the inbox lists decisions rather than counting rows: a
+ * held action set the manager already decided is not listed, a skill several
+ * items wait on is one entry, and a row parked until the charter is approved
+ * is covered by the charter's entry. A system the employee proposed is
+ * listed too, since only the manager approves it.
+ *
+ * @param ctx - Query context.
+ * @param agent - The employee.
+ * @param now - The instant an authoring claim is judged against.
+ */
+async function needsYouOfEmployee(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<NeedsYouEntry[]> {
+  const rowsIn = async (
+    state: Doc<'workItems'>['state'],
+    limit: number = NEEDS_YOU_STATE_READ_LIMIT,
+  ): Promise<Doc<'workItems'>[]> =>
+    await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
+      .take(limit);
+  const [charter, planRows, heldRows, deferredRows, skillRows, failedRows, surfaces] =
+    await Promise.all([
+      ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+        .order('desc')
+        .first(),
+      rowsIn('plan-pending'),
+      rowsIn('actions-pending'),
+      rowsIn('deferred'),
+      rowsIn('needs-skill'),
+      rowsIn('failed', NEEDS_YOU_STOPPED_READ_LIMIT),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+        .take(NEEDS_YOU_SURFACE_READ_LIMIT),
+    ]);
+
+  const plans = planRows.filter((row) => !isRevocationTrialRow(row));
+  const held = heldRows.filter(
+    (row) => row.approvedIndexes === undefined && !isRevocationTrialRow(row),
+  );
+  const parked = deferredRows.flatMap((row) => {
+    const reason = deferralWaitsOn(row);
+    return reason === null ? [] : [{ row, reason }];
+  });
+  const stopped = failedRows.filter(
+    (row) => stoppedRowOffersMove(row) && stoppedRowNeedsManager(row),
+  );
+  const proposed = surfaces.filter((surface) => surface.verdict === 'proposed');
+
+  const skillIds = [...new Set(skillRows.flatMap((row) => row.proposedSkillId ?? []))];
+  const [
+    skills,
+    questions,
+    planEntered,
+    heldEntered,
+    parkedEntered,
+    stoppedEntered,
+    surfaceEntered,
+  ] = await Promise.all([
+    Promise.all(skillIds.map(async (id) => await ctx.db.get(id))),
+    Promise.all(
+      plans.map(
+        async (row) =>
+          (
+            await ctx.db
+              .query('managerQuestions')
+              .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+              .take(NEEDS_YOU_QUESTION_READ_LIMIT)
+          ).filter((question) => question.answer === undefined).length,
+      ),
+    ),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.plan-drafted'],
+      plans.filter((row) => row.planPendingAt === undefined),
+    ),
+    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], held),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.evaluated', 'work.evaluation-parked'],
+      parked.map(({ row }) => row),
+    ),
+    enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], stopped),
+    enteredAtByRow(ctx, agent._id, ['surface.proposed'], proposed),
+  ]);
+
+  const base = (
+    key: string,
+    subject: string,
+    entered: EnteredAt,
+  ): {
+    key: string;
+    agentId: Id<'agents'>;
+    employeeName: string;
+    subject: string;
+    waitingSince: number;
+    waitingAtLeast: boolean;
+  } => ({
+    key,
+    agentId: agent._id,
+    employeeName: agent.name,
+    subject,
+    waitingSince: entered.at,
+    waitingAtLeast: entered.atLeast,
+  });
+  const exact = (at: number): EnteredAt => ({ at, atLeast: false });
+  const enteredOf = (map: Map<string, EnteredAt>, row: Doc<'workItems'>): EnteredAt =>
+    map.get(row._id) ?? exact(row._creationTime);
+
+  return [
+    ...(charter && !charter.approved
+      ? [
+          {
+            kind: 'charter' as const,
+            ...base(`charter:${charter._id}`, 'charter', exact(charter.createdAt)),
+          },
+        ]
+      : []),
+    ...plans.map((row, index) => ({
+      kind: 'plan' as const,
+      ...base(
+        `plan:${row._id}`,
+        row.title,
+        row.planPendingAt !== undefined ? exact(row.planPendingAt) : enteredOf(planEntered, row),
+      ),
+      workItemId: row._id,
+      questions: questions[index] ?? 0,
+    })),
+    ...held.map((row) => ({
+      kind: 'held' as const,
+      ...base(`held:${row._id}`, row.title, enteredOf(heldEntered, row)),
+      workItemId: row._id,
+      heldWrites: verdictList(row.actionVerdicts, actionsOf(row.output).length).filter(
+        (verdict) => verdict.disposition === 'held',
+      ).length,
+    })),
+    ...skills.flatMap((skill) =>
+      skill && skillWaitsOnManager(skill, now)
+        ? [
+            {
+              kind: 'skill' as const,
+              ...base(`skill:${skill._id}`, skill.name, exact(skill.createdAt)),
+              skillId: skill._id,
+              waitingItems: skillRows.filter((row) => row.proposedSkillId === skill._id).length,
+            },
+          ]
+        : [],
+    ),
+    ...parked.map(({ row, reason }) => ({
+      kind: 'parked' as const,
+      ...base(`parked:${row._id}`, row.title, enteredOf(parkedEntered, row)),
+      workItemId: row._id,
+      reason,
+    })),
+    ...stopped.map((row) => ({
+      kind: 'stopped' as const,
+      ...base(`stopped:${row._id}`, row.title, enteredOf(stoppedEntered, row)),
+      workItemId: row._id,
+    })),
+    ...proposed.map((surface) => ({
+      kind: 'surface' as const,
+      ...base(
+        `surface:${surface._id}`,
+        surface.displayName,
+        surfaceEntered.get(surface._id) ?? exact(surface._creationTime),
+      ),
+      surfaceId: surface._id,
+    })),
+  ];
+}
+
+/**
+ * Public, owner-scoped: everything waiting on the manager across their
+ * employees, longest wait first, for the needs-you inbox on the signed-in
+ * home (N7). Evaluation agents and the baseline arm are left out, as on the
+ * roster. An anonymous caller gets an empty inbox. Writes nothing.
+ *
+ * @returns At most `NEEDS_YOU_LIMIT` entries and how many there are in all.
+ */
+export const needsYou = query({
+  args: {},
+  returns: needsYouValidator,
+  handler: async (ctx): Promise<Infer<typeof needsYouValidator>> => {
+    const caller = await getCaller(ctx);
+    if (!caller?.ownerKey) return { entries: [], total: 0 };
+    const employees = (
+      await ctx.db
+        .query('agents')
+        .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
+        .order('desc')
+        .take(NEEDS_YOU_SCAN_LIMIT)
+    )
+      .filter((agent) => !isEvaluationAgent(agent))
+      .slice(0, NEEDS_YOU_EMPLOYEE_LIMIT);
+    const now = Date.now();
+    const entries = (
+      await Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now)))
+    )
+      .flat()
+      .sort(
+        (left, right) =>
+          left.waitingSince - right.waitingSince || left.key.localeCompare(right.key),
+      );
+    return { entries: entries.slice(0, NEEDS_YOU_LIMIT), total: entries.length };
+  },
 });
