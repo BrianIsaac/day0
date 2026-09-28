@@ -623,7 +623,10 @@ describe('the cross-item approval panel', (): void => {
         onApproveBatch: vi.fn(async (): Promise<void> => {}),
       }),
     );
-    expect(html).toBe('');
+    // Nothing to see, only the live region that says what the last batch came to.
+    expect(html).toBe(
+      '<p role="status" aria-live="polite" aria-atomic="true" class="text-[11px] leading-snug text-[var(--color-muted)]"></p>',
+    );
   });
 });
 

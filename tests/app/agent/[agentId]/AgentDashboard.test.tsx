@@ -34,6 +34,7 @@ vi.mock('convex/react', () => {
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
 import type { AgentMetrics } from '../../../../src/metrics/types';
+import type { MockAction } from '../../../../src/work/types';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
@@ -41,6 +42,7 @@ import {
   AutonomyControl,
   CheckForNewWork,
   NotificationModeControl,
+  PendingDecisionsPanel,
   CharterCard,
   ConstraintList,
   DashboardHeader,
@@ -3394,6 +3396,51 @@ describe('every decision on a work item card is said in its live region and give
     for (const field of view.container.querySelectorAll('input')) {
       expect(field.className).toMatch(/\bmin-h-11\b/);
     }
+    view.unmount();
+  });
+});
+
+describe('approving held actions across items at once (step 45)', (): void => {
+  const action: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Covered.' }),
+    },
+  };
+  const member = (id: string) => ({
+    workItemId: id as Id<'workItems'>,
+    pendingRunId: `run-${id}` as Id<'events'>,
+    title: `Answer ${id}`,
+    actions: [action],
+    heldIndexes: [0],
+    refused: 0,
+  });
+
+  it('says what the batch came to, and keeps saying it once the panel has emptied', async (): Promise<void> => {
+    const sent: unknown[] = [];
+    const panel = (members: ReturnType<typeof member>[]) => (
+      <PendingDecisionsPanel
+        members={members}
+        surfaces={[]}
+        onApproveBatch={async (batch) => {
+          sent.push(batch);
+        }}
+      />
+    );
+    const view = mount(panel([member('w1'), member('w2')]));
+    expect(button(view.container, 'Approve 2 held actions across 2 items').className).toMatch(
+      /\bmin-h-11\b/,
+    );
+    await press(view.container, 'Approve 2 held actions across 2 items');
+    expect(sent).toHaveLength(1);
+    act((): void => view.root.render(panel([])));
+    expect(said(view.container)).toEqual([
+      'Approved 2 held actions across 2 items: they apply now.',
+    ]);
     view.unmount();
   });
 });

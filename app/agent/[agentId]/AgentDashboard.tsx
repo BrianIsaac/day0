@@ -9,7 +9,6 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
-import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import {
@@ -2602,6 +2601,7 @@ export function WorkQueue({
   const resendDecision = useMutation(api.work.resendDecisionRequest);
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
+  const queue = useRef<HTMLElement>(null);
 
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
@@ -2653,6 +2653,7 @@ export function WorkQueue({
         `Work queue · ${items.length} ${items.length === 1 ? 'item' : 'items'} · ` +
         `${registeredSkillCount} ${registeredSkillCount === 1 ? 'skill' : 'skills'} available`
       }
+      focusRef={queue}
     >
       {surfaceMode === 'real' && charterApproved ? <CheckForNewWork agentId={agentId} /> : null}
       {items.length === 0 ? (
@@ -2665,6 +2666,7 @@ export function WorkQueue({
             members={pendingDecisionMembers(items)}
             surfaces={surfaces}
             onApproveBatch={(members) => approveActionsBatch({ members })}
+            fallback={queue}
           />
           {items.map((item) => (
             <WorkItemCard
@@ -4035,6 +4037,7 @@ export function PendingDecisionsPanel({
   members,
   surfaces,
   onApproveBatch,
+  fallback,
 }: {
   members: PendingDecisionMember[];
   surfaces: SurfaceRecord[];
@@ -4045,10 +4048,13 @@ export function PendingDecisionsPanel({
       approvedIndexes: number[];
     }>,
   ) => Promise<unknown>;
+  /** Where focus goes when the approval empties the panel: the work queue. */
+  fallback?: React.RefObject<HTMLElement | null>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (members.length < 2) return null;
+  const change = useChange(fallback);
+  // The panel keeps its live region when an approval empties it, so what the
+  // approval came to is still said.
+  if (members.length < 2) return <LiveStatus outcome={change.outcome} />;
   const eligible = members.filter((member) => member.refused === 0);
   const heldCount = eligible.reduce((sum, member) => sum + member.heldIndexes.length, 0);
   return (
@@ -4085,21 +4091,24 @@ export function PendingDecisionsPanel({
       <div className="flex flex-wrap items-center gap-2 mt-2">
         <button
           type="button"
-          disabled={busy || eligible.length === 0}
-          onClick={() => {
-            setBusy(true);
-            setError(null);
-            onApproveBatch(
-              eligible.map((member) => ({
-                workItemId: member.workItemId,
-                pendingRunId: member.pendingRunId,
-                approvedIndexes: member.heldIndexes,
-              })),
+          disabled={change.busy || eligible.length === 0}
+          onClick={() =>
+            change.run(
+              () =>
+                onApproveBatch(
+                  eligible.map((member) => ({
+                    workItemId: member.workItemId,
+                    pendingRunId: member.pendingRunId,
+                    approvedIndexes: member.heldIndexes,
+                  })),
+                ),
+              {
+                done: `Approved ${heldCount} held ${heldCount === 1 ? 'action' : 'actions'} across ${eligible.length} ${eligible.length === 1 ? 'item' : 'items'}: they apply now.`,
+                refused: 'Nothing was approved.',
+              },
             )
-              .catch((err: unknown) => setError(errorMessage(err)))
-              .finally(() => setBusy(false));
-          }}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+          }
+          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
           Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across {eligible.length}{' '}
           {eligible.length === 1 ? 'item' : 'items'}
@@ -4109,7 +4118,7 @@ export function PendingDecisionsPanel({
           list refreshes.
         </span>
       </div>
-      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
