@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation } from 'convex/react';
 import Link from 'next/link';
@@ -44,6 +44,7 @@ interface DocSourceChoice {
  * @param surfaceMode - Whether the deployment runs the mock office or real systems.
  * @param pickerOpen - Whether the faces show at first: for the first employee they do.
  * @param onCancel - Closes the form, where the page offers it as "Deploy another".
+ * @param focusOnMount - Puts the caret in the name field when the form opens on request.
  */
 export function DeployForm({
   boss,
@@ -51,12 +52,14 @@ export function DeployForm({
   surfaceMode,
   pickerOpen,
   onCancel,
+  focusOnMount = false,
 }: {
   boss: Boss;
   docSources: readonly DocSourceChoice[] | undefined;
   surfaceMode: 'mock' | 'real' | undefined;
   pickerOpen: boolean;
   onCancel?: () => void;
+  focusOnMount?: boolean;
 }) {
   const router = useRouter();
   const deploy = useMutation(api.agents.deploy);
@@ -68,8 +71,13 @@ export function DeployForm({
   const headingId = useId();
   const nameId = useId();
   const nameHelpId = useId();
+  const nameInput = useRef<HTMLInputElement>(null);
   const avatar = avatarById(avatarId);
   const trimmed = name.trim();
+
+  useEffect(() => {
+    if (focusOnMount) nameInput.current?.focus();
+  }, [focusOnMount]);
 
   async function onDeploy(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -139,6 +147,7 @@ export function DeployForm({
             Name
           </label>
           <input
+            ref={nameInput}
             id={nameId}
             type="text"
             required

@@ -128,7 +128,7 @@ export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
   }, [agents]);
 
   return (
-    <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
+    <section className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
         <h2 className="text-sm font-semibold">Mini office world</h2>
         <span className="text-xs text-[var(--color-muted)]">{visibleAgents.length} total</span>

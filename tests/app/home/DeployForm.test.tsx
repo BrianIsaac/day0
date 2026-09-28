@@ -167,6 +167,26 @@ describe('DeployForm, deploying', (): void => {
     lines.mockRestore();
   });
 
+  it('puts the caret in the name field when opened as Deploy another, and not otherwise', (): void => {
+    act(() =>
+      root.render(
+        <DeployForm
+          boss={boss}
+          docSources={[]}
+          surfaceMode="mock"
+          pickerOpen={false}
+          focusOnMount
+        />,
+      ),
+    );
+    expect(document.activeElement).toBe(host.querySelector('input[type="text"]'));
+    act(() => root.render(<></>));
+    act(() =>
+      root.render(<DeployForm boss={boss} docSources={[]} surfaceMode="mock" pickerOpen />),
+    );
+    expect(document.activeElement).toBe(document.body);
+  });
+
   it('says why when the address cannot be read, and deploys nothing', async (): Promise<void> => {
     act(() =>
       root.render(
