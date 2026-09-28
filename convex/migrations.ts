@@ -37,6 +37,7 @@ import {
 import {
   backfillAccessSetByPage,
   backfillWithheldToolsPage,
+  newestConnectedEvent,
   restartAccessClocksPage,
   singleApprovalPage,
 } from './surfaces';
@@ -468,29 +469,44 @@ async function copyRetirements(ctx: MutationCtx, cursor: string | null): Promise
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
+/** Cards one page of the approved-list copy reads; a card with no list may walk its agent's events. */
+const APPROVED_TOOLS_PAGE = 20;
+
 /**
  * Give each card that stores a tool list an approved list of the same tools,
  * stamped at its last verification, so the freeze reads the approved list
- * whatever became of the stored one. A card with an approved list already is
- * left alone.
+ * whatever became of the stored one. A card the manager approved that holds
+ * no list because a failed probe cleared it before the upgrade gets an empty
+ * approved list, stamped at its newest connection, so the connection after
+ * the upgrade withholds every tool until the manager approves them: the list
+ * the manager saw is gone, and a re-probe never widens (wave 3.5 review M1).
+ * A card that never connected is left to its first connection, which fixes
+ * the list as it does for a card approved under this release. A card with an
+ * approved list already is left alone.
  */
 async function copyApprovedTools(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter(
-    (surface) => surface.toolAllowlist !== undefined && surface.approvedToolAllowlist === undefined,
-  );
-  for (const surface of carrying) {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: APPROVED_TOOLS_PAGE });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.approvedToolAllowlist !== undefined) continue;
+    if (surface.toolAllowlist !== undefined) {
+      await ctx.db.patch(surface._id, {
+        approvedToolAllowlist: surface.toolAllowlist,
+        toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+      });
+      changed += 1;
+      continue;
+    }
+    if (surface.managerApprovedAt === undefined) continue;
+    const connected = await newestConnectedEvent(ctx, surface);
+    if (connected === undefined) continue;
     await ctx.db.patch(surface._id, {
-      approvedToolAllowlist: surface.toolAllowlist,
-      toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+      approvedToolAllowlist: [],
+      toolAllowlistApprovedAt: connected.createdAt,
     });
+    changed += 1;
   }
-  return {
-    read: page.page.length,
-    changed: carrying.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
 /**

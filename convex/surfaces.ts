@@ -25,7 +25,7 @@ import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
-import { isEventOf, type EventType } from '../src/events/contract';
+import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 
 const surfaceVerdict = v.union(
@@ -1088,6 +1088,16 @@ export const recordProbeFailure = internalMutation({
       reason: args.reason,
       credentialLanded: false,
       toolAllowlist: undefined,
+      // A card connected before the approved list existed keeps its list as
+      // the approved one, so the connection after this failure is frozen
+      // against what the manager saw and not against whatever the provider
+      // lists then (wave 3.5 review M1).
+      ...(surface.approvedToolAllowlist === undefined && surface.toolAllowlist !== undefined
+        ? {
+            approvedToolAllowlist: surface.toolAllowlist,
+            toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+          }
+        : {}),
       withheldTools: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
@@ -1919,6 +1929,32 @@ const WITHHELD_BACKFILL_BATCH = 20;
  */
 const CONNECTED_EVENT_WALK = 200;
 
+/** A `surface.connected` event as the contract types it. */
+type SurfaceConnectedEvent = Doc<'events'> & EventOf<'surface.connected'>;
+
+/**
+ * The newest `surface.connected` event of one card among its agent's last
+ * `CONNECTED_EVENT_WALK`, or undefined when none is that near: the card then
+ * reads as never connected.
+ *
+ * @param ctx - A migration's context.
+ * @param surface - The card.
+ */
+export async function newestConnectedEvent(
+  ctx: Pick<MutationCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+): Promise<SurfaceConnectedEvent | undefined> {
+  const events = await eventsOfType(ctx, surface.agentId, 'surface.connected')
+    .order('desc')
+    .take(CONNECTED_EVENT_WALK);
+  for (const event of events) {
+    if (isEventOf(event, 'surface.connected') && event.payload.surfaceId === surface._id) {
+      return event;
+    }
+  }
+  return undefined;
+}
+
 /**
  * One page of the `surfaces-withheld-tools` migration (K D2 (b)). A connected
  * card's withheld tools were carried only on its newest `surface.connected`
@@ -1939,17 +1975,8 @@ export async function backfillWithheldToolsPage(
   let changed = 0;
   for (const surface of page.page) {
     if (surface.verdict !== 'connected' || surface.withheldTools !== undefined) continue;
-    const events = await eventsOfType(ctx, surface.agentId, 'surface.connected')
-      .order('desc')
-      .take(CONNECTED_EVENT_WALK);
-    let offered: readonly string[] = [];
-    for (const event of events) {
-      if (!isEventOf(event, 'surface.connected') || event.payload.surfaceId !== surface._id) {
-        continue;
-      }
-      offered = event.payload.withheldTools ?? [];
-      break;
-    }
+    const offered: readonly string[] =
+      (await newestConnectedEvent(ctx, surface))?.payload.withheldTools ?? [];
     const approved = new Set(surface.approvedToolAllowlist ?? []);
     const withheld = offered.filter((tool) => !approved.has(tool));
     if (withheld.length === 0) continue;

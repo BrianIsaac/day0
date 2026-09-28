@@ -390,6 +390,63 @@ describe('the approved tool list backfill (U10 D2 (b))', (): void => {
       completedAt: expect.any(Number),
     });
   });
+
+  it('gives an approved card whose failed probe cleared its list an empty approved list at its last connection, and leaves one that never connected', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [cleared, neverConnected, unapproved] = await harness.run(async (ctx) => {
+      const card = async (
+        slug: string,
+        fields: Partial<Doc<'surfaces'>>,
+      ): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict: 'listed-dead',
+          whereFound: [],
+          credentialLanded: false,
+          createdAt: 1,
+          ...fields,
+        });
+      const ids = await Promise.all([
+        card('linear', { reason: 'no answer', managerApprovedAt: 5 }),
+        card('jira', { verdict: 'ungranted', reason: '401', managerApprovedAt: 6 }),
+        card('asana', { reason: 'no answer' }),
+      ]);
+      for (const [surfaceId, createdAt] of [
+        [ids[0], 40],
+        [ids[0], 70],
+        [ids[2], 50],
+      ] as const) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'surface.connected',
+          payload: { surfaceId },
+          createdAt,
+        });
+      }
+      return ids;
+    });
+
+    await runAll(harness);
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await Promise.all([cleared, neverConnected, unapproved].map((id) => ctx.db.get(id))),
+    );
+    expect(rows.map((row) => [row?.approvedToolAllowlist, row?.toolAllowlistApprovedAt])).toEqual([
+      [[], 70],
+      [undefined, undefined],
+      [undefined, undefined],
+    ]);
+    expect(
+      (await harness.query(internal.migrations.status, {})).migrations.find(
+        (row) => row.name === 'surfaces-approved-tools',
+      ),
+    ).toMatchObject({ read: 3, changed: 1 });
+  });
 });
 
 describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {

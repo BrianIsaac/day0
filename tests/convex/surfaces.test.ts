@@ -3515,6 +3515,55 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
     });
   });
 
+  it('seeds the approved list from the stored one when a probe of a card connected before the list existed fails, so the success after it withholds what is new', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues', 'save_comment'], 100);
+    // As a v0.5.0 connection left the row: the list stored, no approved list.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, {
+        approvedToolAllowlist: undefined,
+        toolAllowlistApprovedAt: undefined,
+      });
+    });
+    const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!failing.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: failing.generation,
+      verdict: 'listed-dead',
+      reason: 'the server did not answer',
+    });
+    const failed = await readSurface(harness, surfaceId);
+    expect(failed).toMatchObject({
+      verdict: 'listed-dead',
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+      toolAllowlistApprovedAt: 100,
+    });
+    expect(failed.toolAllowlist).toBeUndefined();
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 300);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      toolAllowlist: ['list_issues', 'save_comment'],
+      withheldTools: ['delete_issue'],
+      approvedToolAllowlist: ['list_issues', 'save_comment'],
+    });
+  });
+
+  it('withholds every tool of a card the upgrade gave an empty approved list, until the manager approves them', async (): Promise<void> => {
+    const { harness, surfaceId, probe } = await approvedCard();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { approvedToolAllowlist: [], toolAllowlistApprovedAt: 70 });
+    });
+    await probe(['list_issues', 'save_comment'], 300);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      toolAllowlist: [],
+      withheldTools: ['list_issues', 'save_comment'],
+      approvedToolAllowlist: [],
+      toolAllowlistApprovedAt: 70,
+    });
+  });
+
   it('brings back an approved tool a narrower probe dropped, and nothing it never approved', async (): Promise<void> => {
     const { harness, surfaceId, probe } = await approvedCard();
     await probe(['list_issues', 'save_comment'], 100);
