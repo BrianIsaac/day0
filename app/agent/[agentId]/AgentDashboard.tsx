@@ -3549,6 +3549,7 @@ export function PendingActions({
   replyTarget,
   autonomousActions = false,
   repairs,
+  busy = false,
   onApprove,
   onReject,
 }: {
@@ -3560,9 +3561,14 @@ export function PendingActions({
   autonomousActions?: boolean;
   /** The one repair each held write earned before the hold, by action index. */
   repairs?: ArgumentRepairAttempt[];
-  onApprove: (approvedIndexes: number[]) => Promise<unknown>;
-  onReject: (reason: string) => Promise<unknown>;
+  /** A decision on this card is in flight; the controls wait for it. */
+  busy?: boolean;
+  /** Approve the rows; the card says what it came to in its live region. */
+  onApprove: (approvedIndexes: number[]) => void;
+  /** Reject the run with the manager's reason; said on the card too. */
+  onReject: (reason: string) => void;
 }) {
+  const reasonId = useId();
   // The gate decided each row when it held the run: `auto` rows are already
   // applied and are not shown here; `refused` rows (a missing grant, an
   // unconnected surface, a forged trailer) cannot be ticked and the server
@@ -3589,20 +3595,6 @@ export function PendingActions({
   );
   const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(call: () => Promise<unknown>): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      await call();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   function toggle(index: number, on: boolean): void {
     setSelected((current) => {
@@ -3639,19 +3631,21 @@ export function PendingActions({
             const verdict = verdicts[index];
             const refused = verdict?.disposition === 'refused';
             const on = selected.has(index);
+            const summary = summariseAction(action, surfaces, { replyTarget });
             return (
               <li key={index} className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={on}
-                  disabled={busy || refused}
-                  onChange={(event) => toggle(index, event.target.checked)}
-                  aria-label={`approve action ${index + 1}`}
-                />
+                <label className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={busy || refused}
+                    onChange={(event) => toggle(index, event.target.checked)}
+                    aria-label={`approve: ${summary}`}
+                  />
+                </label>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-[var(--color-fg)] break-words">
-                    {summariseAction(action, surfaces, { replyTarget })}
+                    {summary}
                     {refused ? (
                       <span className="text-[var(--color-warn)]">
                         {' '}
@@ -3662,7 +3656,7 @@ export function PendingActions({
                     ) : null}
                   </p>
                   <details className="mt-0.5">
-                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                    <summary className="min-h-11 py-3 text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
                       exact payload
                     </summary>
                     <ActionPayload action={action} />
@@ -3679,7 +3673,8 @@ export function PendingActions({
                         type="button"
                         disabled={busy}
                         onClick={() => toggle(index, false)}
-                        className="text-[10px] text-[var(--color-danger)] underline"
+                        aria-label={`reject this action: ${summary}`}
+                        className="min-h-11 px-1 text-[10px] text-[var(--color-danger)] underline"
                       >
                         reject this action
                       </button>
@@ -3688,7 +3683,8 @@ export function PendingActions({
                         type="button"
                         disabled={busy}
                         onClick={() => toggle(index, true)}
-                        className="text-[10px] text-[var(--color-accent)] underline"
+                        aria-label={`include: ${summary}`}
+                        className="min-h-11 px-1 text-[10px] text-[var(--color-accent)] underline"
                       >
                         include
                       </button>
@@ -3704,45 +3700,53 @@ export function PendingActions({
         <button
           type="button"
           disabled={busy || actions.length === 0}
-          onClick={() => submit(() => onApprove([...selected].sort((a, b) => a - b)))}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+          onClick={() => onApprove([...selected].sort((a, b) => a - b))}
+          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
           Approve selected ({selected.size})
         </button>
         <button
           type="button"
           disabled={busy || anyRefused || heldIndexes.length === 0}
-          title={
-            anyRefused
-              ? 'A row in this run is refused by the gate and cannot be approved; approve the rest by selection.'
-              : undefined
-          }
-          onClick={() => submit(() => onApprove(heldIndexes))}
-          className="px-3 py-1 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+          title={anyRefused ? APPROVE_ALL_REFUSED : undefined}
+          aria-describedby={anyRefused ? `${reasonId}-all` : undefined}
+          onClick={() => onApprove(heldIndexes)}
+          className="min-h-11 px-3 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Approve all
         </button>
+        {anyRefused ? (
+          <p id={`${reasonId}-all`} className="basis-full text-[10px] text-[var(--color-muted)]">
+            {APPROVE_ALL_REFUSED}
+          </p>
+        ) : null}
+        <label htmlFor={reasonId} className="basis-full text-[10px] text-[var(--color-muted)]">
+          Reason for rejecting the run
+        </label>
         <input
+          id={reasonId}
           type="text"
           value={reason}
           disabled={busy}
           onChange={(event) => setReason(event.target.value)}
-          placeholder="reason for rejecting"
-          className="flex-1 min-w-[10rem] px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+          className="min-h-11 flex-1 min-w-[10rem] px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
         />
         <button
           type="button"
           disabled={busy}
-          onClick={() => submit(() => onReject(reason))}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
+          onClick={() => onReject(reason)}
+          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
         >
           Reject run
         </button>
       </div>
-      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
     </div>
   );
 }
+
+/** Why Approve all is disabled while the gate refuses a row, beside the button and for its hover. */
+const APPROVE_ALL_REFUSED =
+  'A row in this run is refused by the gate and cannot be approved; approve the rest by selection.';
 
 /** What the manager decided with the plan: the answers given, and a note to the planner's own. */
 export interface PlanApproval {
@@ -3856,22 +3860,26 @@ export function PlanApprovalForm({
           <ul className="space-y-1.5">
             {open.map((question) => (
               <li key={question._id}>
-                <p className="text-[var(--color-fg)]">{question.question}</p>
+                <label htmlFor={`${estimateId}-${question._id}`} className="text-[var(--color-fg)]">
+                  {question.question}
+                </label>
                 <p className="text-[10px] text-[var(--color-muted)]">
                   from the charter · touched by the {question.context.touchedBy}
                   {question.context.words.length > 0
                     ? `: ${question.context.words.join(', ')}`
                     : ''}
+                  {' · your answer is written into the charter with the approval (optional)'}
                 </p>
                 <input
+                  id={`${estimateId}-${question._id}`}
                   type="text"
                   value={answers[question._id] ?? ''}
+                  disabled={busy}
                   onChange={(event) =>
                     setAnswers((current) => ({ ...current, [question._id]: event.target.value }))
                   }
-                  placeholder="your answer, written into the charter with the approval (optional)"
                   aria-label={`answer: ${question.question}`}
-                  className="mt-0.5 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+                  className="mt-0.5 min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
                 />
               </li>
             ))}
@@ -3884,24 +3892,40 @@ export function PlanApprovalForm({
             Planner&apos;s note
           </p>
           <p className="text-[var(--color-fg)]">{planNote}</p>
+          <label
+            htmlFor={`${estimateId}-note`}
+            className="mt-1 block text-[10px] text-[var(--color-muted)]"
+          >
+            Your answer to the note, for this run (optional)
+          </label>
           <input
+            id={`${estimateId}-note`}
             type="text"
             value={note}
+            disabled={busy}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="your answer to the note, for this run (optional)"
             aria-label="answer to the planner's note"
-            className="mt-1 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+            className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
           />
         </div>
       ) : null}
-      <input
-        type="text"
-        value={cancelReason}
-        onChange={(event) => setCancelReason(event.target.value)}
-        placeholder="reason, if you cancel (optional)"
-        aria-label="reason for cancelling the plan"
-        className="w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-      />
+      <div>
+        <label
+          htmlFor={`${estimateId}-cancel`}
+          className="block text-[10px] text-[var(--color-muted)]"
+        >
+          Reason, if you cancel (optional)
+        </label>
+        <input
+          id={`${estimateId}-cancel`}
+          type="text"
+          value={cancelReason}
+          disabled={busy}
+          onChange={(event) => setCancelReason(event.target.value)}
+          aria-label="reason for cancelling the plan"
+          className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+        />
+      </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-fg)]">
         <label htmlFor={estimateId}>This would have taken me about</label>
         <input
@@ -3927,18 +3951,20 @@ export function PlanApprovalForm({
             : 'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.'}
         </span>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
+          type="button"
           onClick={() => onApprove(decision())}
           disabled={busy || minutes === null}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
+          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
         >
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
         </button>
         <button
+          type="button"
           onClick={() => onCancel(cancelReason.trim())}
           disabled={busy}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
+          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
         >
           Cancel
         </button>
@@ -4045,7 +4071,7 @@ export function PendingDecisionsPanel({
                 <li key={index} className="text-[var(--color-fg)] break-words">
                   {summariseAction(member.actions[index], surfaces)}
                   <details className="mt-0.5">
-                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                    <summary className="min-h-11 py-3 text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
                       exact payload
                     </summary>
                     <ActionPayload action={member.actions[index]} />
@@ -4184,25 +4210,14 @@ export function WorkItemCard({
 }) {
   const now = useNow();
   const zone = useAgentZone();
-  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
-  const [deciding, setDeciding] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
-  // A decision moves the row, and the control that made it goes with it, so
-  // the outcome is said in the card's own live region and focus comes back to
-  // the card rather than falling to the page.
-  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void => {
-    setDeciding(true);
-    setOutcome(null);
-    // The chain ends in its own catch, which says the refusal in the live region.
-    void Promise.resolve()
-      .then(call)
-      .then(() => {
-        setOutcome({ tone: 'done', text: done });
-        cardRef.current?.focus();
-      })
-      .catch((err: unknown) => setOutcome({ tone: 'refused', text: refusalText(err, refused) }))
-      .finally(() => setDeciding(false));
-  };
+  // A decision moves the row, and the control that made it often goes with it,
+  // so the outcome is said in the card's own live region and focus comes back
+  // to the control when it stayed, or to the card rather than the page.
+  const change = useChange(cardRef);
+  const deciding = change.busy;
+  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void =>
+    change.run(call, { done, refused });
   const verdict = item.verdict as
     | {
         decision: string;
@@ -4300,20 +4315,9 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
-  const [askError, setAskError] = useState<string | null>(null);
-  // Resend and Ask share one mutation; its refusal is the card's to show.
-  const askAgain = (): void => {
-    setAskError(null);
-    onResendDecision().catch((err: unknown) =>
-      setAskError(
-        err instanceof ConvexError
-          ? String(err.data)
-          : err instanceof Error
-            ? err.message
-            : 'The request was not sent.',
-      ),
-    );
-  };
+  // Resend and Ask share one mutation; what it came to is the card's to say.
+  const askAgain = (surfaceName: string): void =>
+    decide(onResendDecision, `Asked again on ${surfaceName}.`, 'The request was not sent.');
   // A row that parked while no manager channel was connected was never asked;
   // once a channel is, the card can ask (the sweep also does, a lease later).
   const askableChannel =
@@ -4372,30 +4376,33 @@ export function WorkItemCard({
       ) : null}
 
       {askableChannel ? (
-        <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-muted)]">
+        <p className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--color-muted)]">
           <span>
             {item.state === 'plan-pending' ? 'This plan was' : 'These actions were'} not asked on{' '}
             {askableChannel.displayName} yet: they parked while no manager channel was connected.
           </span>
           <button
-            onClick={askAgain}
-            className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
+            type="button"
+            disabled={deciding}
+            onClick={() => askAgain(askableChannel.displayName)}
+            className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)] disabled:opacity-50"
           >
             Ask on {askableChannel.displayName}
           </button>
         </p>
       ) : null}
-      {askError ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{askError}</p> : null}
 
       {undelivered && item.decision ? (
-        <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-warn)]">
+        <p className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--color-warn)]">
           <span>
             {item.decision.surfaceName} request not delivered
             {undelivered === 'request not delivered' ? '' : ` (${undelivered})`}
           </span>
           <button
-            onClick={askAgain}
-            className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
+            type="button"
+            disabled={deciding}
+            onClick={() => askAgain(item.decision?.surfaceName ?? 'the manager channel')}
+            className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)] disabled:opacity-50"
           >
             Resend
           </button>
@@ -4569,8 +4576,23 @@ export function WorkItemCard({
           replyTarget={replyTargetFor(item)}
           autonomousActions={autonomousActions}
           repairs={output.argumentRepairs}
-          onApprove={onApproveActions}
-          onReject={onRejectActions}
+          busy={deciding}
+          onApprove={(approvedIndexes) =>
+            decide(
+              () => onApproveActions(approvedIndexes),
+              approvedIndexes.length === 0
+                ? `Approved with nothing selected: ${item.title} lands nothing.`
+                : `Approved ${approvedIndexes.length} ${approvedIndexes.length === 1 ? 'action' : 'actions'}: they apply now.`,
+              'The actions were not approved.',
+            )
+          }
+          onReject={(reason) =>
+            decide(
+              () => onRejectActions(reason),
+              `Run rejected: nothing held on ${item.title} is sent.`,
+              'The run was not rejected.',
+            )
+          }
         />
       ) : item.state === 'actions-pending' && item.approvedIndexes !== undefined ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">applying the approved actions…</p>
@@ -4739,28 +4761,43 @@ export function WorkItemCard({
             <ProviderReconciliationControl
               entries={reconciliationEntries}
               reconciliation={item.providerReconciliation}
-              onConfirm={onReconcileFailed}
+              busy={deciding}
+              onConfirm={() =>
+                decide(
+                  () => onReconcileFailed(true),
+                  'Reconciliation recorded: Retry is enabled.',
+                  'Could not record reconciliation.',
+                )
+              }
             />
           ) : null}
           {item.state === 'failed' || item.state === 'completed' || cancelledPlan ? (
-            <input
-              type="text"
-              value={retryNote}
-              onChange={(event) =>
-                setTypedRetryNote({ text: event.target.value, token: noteToken })
-              }
-              placeholder={
-                item.state === 'completed'
-                  ? 'note for the retry: say what to change or answer what the agent asked'
+            <>
+              <label
+                htmlFor={`retry-note-${item._id}`}
+                className="block text-[10px] text-[var(--color-muted)]"
+              >
+                {item.state === 'completed'
+                  ? 'Note for the retry: say what to change or answer what the employee asked'
                   : cancelledPlan
-                    ? 'note for the new plan (optional)'
-                    : 'note for the retry (optional): answer what the agent asked, or say what to change'
-              }
-              aria-label="note for the retry"
-              className="w-full mb-1.5 px-2 py-1 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
-            />
+                    ? 'Note for the new plan (optional)'
+                    : 'Note for the retry (optional): answer what the employee asked, or say what to change'}
+              </label>
+              <input
+                id={`retry-note-${item._id}`}
+                type="text"
+                value={retryNote}
+                disabled={deciding}
+                onChange={(event) =>
+                  setTypedRetryNote({ text: event.target.value, token: noteToken })
+                }
+                aria-label="note for the retry"
+                className="min-h-11 w-full mb-1.5 px-2 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
+              />
+            </>
           ) : null}
           <button
+            type="button"
             onClick={() =>
               decide(
                 () => onRetryFailed(retryNote),
@@ -4772,7 +4809,7 @@ export function WorkItemCard({
             }
             disabled={deciding || retryBlocked || (item.state === 'completed' && !sendingBack)}
             title={takeAnywayNote}
-            className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="min-h-11 px-3 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {takeAnywayNote ? TAKE_IT_ANYWAY : 'Retry'}
           </button>
@@ -4805,7 +4842,7 @@ export function WorkItemCard({
           ) : null}
         </div>
       ) : null}
-      <LiveStatus outcome={outcome} />
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
@@ -4814,29 +4851,18 @@ export function WorkItemCard({
 export function ProviderReconciliationControl({
   entries,
   reconciliation,
+  busy = false,
   onConfirm,
 }: {
   entries: readonly ReconciliationEntry[];
   reconciliation?: { actor: string; confirmedAt: number };
-  onConfirm: (confirmed: boolean) => Promise<unknown>;
+  /** A decision on the card is in flight; the confirmation waits for it. */
+  busy?: boolean;
+  /** Record the manager's confirmation; the card says what it came to. */
+  onConfirm: () => void;
 }) {
   const zone = useAgentZone();
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (): Promise<void> => {
-    if (!confirmed || busy || reconciliation) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onConfirm(confirmed);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not record reconciliation.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="mb-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
@@ -4884,7 +4910,7 @@ export function ProviderReconciliationControl({
         </p>
       ) : (
         <>
-          <label className="mt-2 flex items-start gap-2 text-[var(--color-fg)]">
+          <label className="mt-2 flex min-h-11 items-center gap-2 text-[var(--color-fg)]">
             <input
               type="checkbox"
               checked={confirmed}
@@ -4896,12 +4922,11 @@ export function ProviderReconciliationControl({
           <button
             type="button"
             disabled={!confirmed || busy || entries.length === 0}
-            onClick={() => void submit()}
-            className="mt-2 px-3 py-1 rounded-md border border-[var(--color-warn)]/40 text-[var(--color-warn)] text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={onConfirm}
+            className="mt-2 min-h-11 px-3 rounded-md border border-[var(--color-warn)]/40 text-[var(--color-warn)] text-xs disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Confirm reconciliation
           </button>
-          {error ? <p className="mt-1 text-[var(--color-danger)]">{error}</p> : null}
         </>
       )}
     </div>

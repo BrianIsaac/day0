@@ -3186,3 +3186,214 @@ describe('checking for new work now (step 45)', (): void => {
     view.unmount();
   });
 });
+
+describe('every decision on a work item card is said in its live region and gives focus back (step 45)', (): void => {
+  const base = {
+    _id: 'w-card',
+    _creationTime: 1,
+    agentId: 'a1',
+    title: 'Close summary for REVOPS-9',
+    contentSummary: 'Post the close summary.',
+    sourceSystem: 'linear',
+    sourceCategory: 'ticket-queue',
+    externalId: 'REVOPS-9',
+    observedAt: 1,
+    contentRefs: [],
+  };
+  const plan = {
+    summary: 'Comment then close.',
+    steps: ['comment', 'close'],
+    expectedOutputType: 'ticket-update',
+    riskNotes: '',
+    reversibility: 'reversible',
+    estimatedMinutes: 5,
+  };
+  const dmAction: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel: 'D0MANAGER', text: 'Draft ready.' }),
+    },
+  };
+  const refusedWith = (sentence: string) => async (): Promise<never> => {
+    throw refusal('work:x', sentence);
+  };
+
+  /** The card with every decision wired to a recorder, and one handler overridden. */
+  function card(
+    item: Record<string, unknown>,
+    handlers: Partial<Record<string, (...args: never[]) => Promise<unknown>>> = {},
+  ) {
+    const calls: Array<[string, unknown]> = [];
+    const record =
+      (name: string) =>
+      async (arg?: unknown): Promise<void> => {
+        calls.push([name, arg]);
+        await (handlers[name] as ((value?: unknown) => Promise<unknown>) | undefined)?.(arg);
+      };
+    const view = mount(
+      <WorkItemCard
+        item={{ ...base, ...item } as unknown as Doc<'workItems'>}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={record('approvePlan')}
+        onCancelPlan={record('cancelPlan')}
+        onRetryFailed={record('retry')}
+        onReconcileFailed={record('reconcile')}
+        onApproveActions={record('approveActions')}
+        onRejectActions={record('rejectActions')}
+        onResendDecision={record('resend')}
+      />,
+    );
+    return { ...view, calls };
+  }
+
+  it('approves a plan, says so, and keeps focus on the control while the row has not moved', async (): Promise<void> => {
+    const view = card({ state: 'plan-pending', plan });
+    await press(view.container, 'Approve plan');
+    expect(view.calls.map(([name]) => name)).toEqual(['approvePlan']);
+    expect(said(view.container)).toEqual(['Plan approved: Close summary for REVOPS-9.']);
+    expect(focusedName()).toBe('Approve plan');
+    view.unmount();
+  });
+
+  it('gives focus to the card when the decided control leaves with the row', async (): Promise<void> => {
+    const view = card({ state: 'plan-pending', plan });
+    const approve = button(view.container, 'Approve plan');
+    approve.focus();
+    await act(async (): Promise<void> => {
+      approve.click();
+      // The subscription answers before the call settles: the row has moved on.
+      view.root.render(
+        <WorkItemCard
+          item={{ ...base, state: 'plan-approved', plan } as unknown as Doc<'workItems'>}
+          surfaces={[]}
+          autonomousActions={false}
+          onApprovePlan={async () => undefined}
+          onCancelPlan={async () => undefined}
+          onRetryFailed={async () => undefined}
+          onReconcileFailed={async () => undefined}
+          onApproveActions={async () => undefined}
+          onRejectActions={async () => undefined}
+          onResendDecision={async () => undefined}
+        />,
+      );
+    });
+    await settle();
+    expect(focusedName()).toBe('Close summary for REVOPS-9');
+    view.unmount();
+  });
+
+  it('says a refused cancel without the envelope, and keeps focus on Cancel', async (): Promise<void> => {
+    const view = card(
+      { state: 'plan-pending', plan },
+      { cancelPlan: refusedWith('The plan already ran.') },
+    );
+    await press(view.container, 'Cancel');
+    expect(said(view.container)).toEqual(['The plan already ran.']);
+    expect(focusedName()).toBe('Cancel');
+    view.unmount();
+  });
+
+  it('says the refused Retry P8-1 names (another employee holds this) instead of dropping it', async (): Promise<void> => {
+    const view = card(
+      { state: 'failed', plan, skipReason: 'stopped: nothing landed' },
+      { retry: refusedWith('another employee holds this: Mateo holds REVOPS-9') },
+    );
+    await press(view.container, 'Retry');
+    expect(said(view.container)).toEqual(['another employee holds this: Mateo holds REVOPS-9']);
+    expect(focusedName()).toBe('Retry');
+    view.unmount();
+  });
+
+  it('approves and rejects held actions from the card, each said once', async (): Promise<void> => {
+    const held = {
+      state: 'actions-pending',
+      plan,
+      pendingRunId: 'run-1',
+      output: { draft: 'd', notes: '', actions: [dmAction] },
+      actionVerdicts: [
+        { disposition: 'held', reason: 'system-of-record mutation held for the manager' },
+      ],
+    };
+    const approving = card(held);
+    await press(approving.container, 'Approve all');
+    expect(approving.calls).toEqual([['approveActions', [0]]]);
+    expect(said(approving.container)).toEqual(['Approved 1 action: they apply now.']);
+    approving.unmount();
+
+    const rejecting = card(held);
+    const reason = [...rejecting.container.querySelectorAll('label')].find(
+      (label) => label.textContent === 'Reason for rejecting the run',
+    )?.control as HTMLInputElement | null;
+    if (!reason) throw new Error('the reason field has no visible label');
+    typeInto(reason, 'wrong ticket');
+    await press(rejecting.container, 'Reject run');
+    expect(rejecting.calls).toEqual([['rejectActions', 'wrong ticket']]);
+    expect(said(rejecting.container)).toEqual([
+      'Run rejected: nothing held on Close summary for REVOPS-9 is sent.',
+    ]);
+    rejecting.unmount();
+  });
+
+  it('resends an undelivered decision request and says where it asked', async (): Promise<void> => {
+    const view = card({
+      state: 'plan-pending',
+      plan,
+      decision: {
+        kind: 'plan',
+        surfaceName: 'Slack',
+        requestedAt: 1,
+        requestFailedAt: 2,
+        requestFailure: 'channel_not_found',
+      },
+    });
+    await press(view.container, 'Resend');
+    expect(view.calls.map(([name]) => name)).toEqual(['resend']);
+    expect(said(view.container)).toEqual(['Asked again on Slack.']);
+    expect(focusedName()).toBe('Resend');
+    view.unmount();
+  });
+
+  it('records a reconciliation and says Retry is enabled', async (): Promise<void> => {
+    const view = card({
+      state: 'failed',
+      plan,
+      skipReason: 'a write may have landed',
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [dmAction],
+        applied: [
+          {
+            tool: 'http.request',
+            ok: false,
+            outcomeUnknown: true,
+            reason: 'socket closed after the request',
+            idempotencyKey: 'w-card:run:0',
+          },
+        ],
+      },
+    });
+    const box = view.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    act((): void => box?.click());
+    await press(view.container, 'Confirm reconciliation');
+    expect(view.calls).toEqual([['reconcile', true]]);
+    expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
+    view.unmount();
+  });
+
+  it('gives every decision control on the card a 44 px target', (): void => {
+    const view = card({ state: 'plan-pending', plan });
+    for (const name of ['Approve plan', 'Cancel']) {
+      expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
+    }
+    for (const field of view.container.querySelectorAll('input')) {
+      expect(field.className).toMatch(/\bmin-h-11\b/);
+    }
+    view.unmount();
+  });
+});
