@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { v } from 'convex/values';
 import type { GenericId } from 'convex/values';
-import type { FunctionReference, PaginationResult } from 'convex/server';
+import type { PaginationResult } from 'convex/server';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
@@ -74,48 +74,11 @@ type OrientationPath = OrientationDraft['path'];
 type Evidence = { sourceId: string; ref: string; quote: string; url?: string };
 type CredentialId = GenericId<'credentials'>;
 
-type StoredCredentialSummary = {
-  _id: CredentialId;
-  kind: 'value' | 'location' | 'oauth';
-  label: string;
-  revokedAt?: number;
-  status?: 'suspect' | 'superseded';
-  ciphertext?: string;
-  iv?: string;
-  explicitlyAssigned?: boolean;
-  quoted?: boolean;
-};
-
 /** The stored row an orientation run attaches to a surface. */
 interface ResolvedCredential {
   credentialId: CredentialId;
-  kind: StoredCredentialSummary['kind'];
+  kind: Doc<'credentials'>['kind'];
 }
-
-/**
- * Lane A's read for a page-derived row, keyed the way its sync stored it.
- *
- * Orientation never calls `store`: the value was encrypted at sync time and
- * the marker is the only thing left on the page, so resolving it is a read.
- * Calling `store` without plaintext would be refused by lane A for a value
- * kind, and inventing a value is exactly what this run must never do.
- */
-const credentialInternal = internal as unknown as {
-  credentials: {
-    bySourceForStore: FunctionReference<
-      'query',
-      'internal',
-      { userId: string; sourceId: Id<'docSources'>; ref: string },
-      StoredCredentialSummary | null
-    >;
-  };
-};
-
-/**
- * How many values lane A's sync can qualify on one page before its
- * label-qualified refs stop being tried here.
- */
-const MAX_CREDENTIALS_PER_PAGE = 8;
 
 export type CredentialMethod = 'api-key' | 'bot-token' | 'oauth' | 'unknown';
 
@@ -1339,30 +1302,13 @@ function sanitisedDraft(draft: OrientationDraft): OrientationDraft {
 }
 
 /**
- * Source references lane A's sync may have used for a marker on one page.
+ * Resolve a redacted marker to the encrypted row the sync stored for it.
  *
- * A page holding a single value is keyed by the page ref alone; a page
- * holding several is keyed by the page ref qualified with the value's
- * position and label. Both shapes are tried, exact page ref first.
- *
- * Args:
- *   pageRef: Stable page reference the marker was found on.
- *   label: Label carried by the marker.
- *
- * Returns:
- *   Candidate refs in the order they should be looked up.
- */
-export function candidateCredentialRefs(pageRef: string, label: string): string[] {
-  const qualified = Array.from(
-    { length: MAX_CREDENTIALS_PER_PAGE },
-    (_unused: unknown, index: number): string =>
-      `${pageRef}#credential=${index + 1}-${encodeURIComponent(label)}`,
-  );
-  return [pageRef, ...qualified];
-}
-
-/**
- * Resolve a redacted marker to the encrypted row lane A stored at sync time.
+ * A page-derived row's ref is keyed by its value, which the marker does not
+ * carry, so the marker is bound by its label over the page's live rows
+ * (`credentials.pageRowsByLabel`), oldest first. A row the guard refuses is
+ * marked suspect and the next is tried. Orientation never stores a value:
+ * the marker is all the page holds, so binding it is a read.
  *
  * Args:
  *   ctx: Action context used for the internal read.
@@ -1372,8 +1318,8 @@ export function candidateCredentialRefs(pageRef: string, label: string): string[
  *   label: Marker label, which must match the stored row's label.
  *
  * Returns:
- *   The active row id, or undefined when no matching row exists or the read
- *   itself is unavailable (lane A not deployed).
+ *   The active row id, or undefined when no live row on the page carries the
+ *   label or the guard refuses every one that does.
  */
 async function resolveStoredCredential(
   ctx: OrientationCtx,
@@ -1382,32 +1328,23 @@ async function resolveStoredCredential(
   pageRef: string,
   label: string,
 ): Promise<ResolvedCredential | undefined> {
-  const wanted = label.trim().toLowerCase();
-  for (const ref of candidateCredentialRefs(pageRef, label)) {
-    let row: StoredCredentialSummary | null;
-    try {
-      row = await ctx.runQuery(credentialInternal.credentials.bySourceForStore, {
-        userId,
-        sourceId,
-        ref,
+  const rows = await ctx.runQuery(internal.credentials.pageRowsByLabel, {
+    userId,
+    sourceId,
+    pageRef,
+    label,
+  });
+  for (const row of rows) {
+    const reason = row.kind === 'location' ? undefined : storedCredentialGuardReason(row);
+    if (reason) {
+      await ctx.runMutation(internal.credentials.markSuspect, {
+        credentialId: row._id,
+        ciphertext: row.ciphertext,
+        reason,
       });
-    } catch {
-      return undefined;
+      continue;
     }
-    if (!row) continue;
-    if (row.revokedAt !== undefined || row.status !== undefined) continue;
-    if (row.label.trim().toLowerCase() === wanted) {
-      const reason = row.kind === 'location' ? undefined : storedCredentialGuardReason(row);
-      if (reason) {
-        await ctx.runMutation(internal.credentials.markSuspect, {
-          credentialId: row._id,
-          ciphertext: row.ciphertext,
-          reason,
-        });
-        continue;
-      }
-      return { credentialId: row._id, kind: row.kind };
-    }
+    return { credentialId: row._id, kind: row.kind };
   }
   return undefined;
 }

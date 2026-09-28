@@ -1,8 +1,10 @@
-import { encrypt } from '../../../src/lib/credential-crypto';
+import { sealForOwner } from '../../../src/lib/credential-crypto';
+import { credentialPageRef } from '../../../src/docs/redaction';
 import type { GenericId } from 'convex/values';
 import { v } from 'convex/values';
 import { internalAction, internalQuery } from '../../../convex/_generated/server';
-import { fakeCredentialKey, fakeCredentialState } from './credential-registry';
+import type { Doc } from '../../../convex/_generated/dataModel';
+import { fakeCredentialState } from './credential-registry';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -42,34 +44,44 @@ export const store = internalAction({
   },
 });
 
-/** Mirror lane A's `by_user_source_ref` read used to resolve a page marker. */
-export const bySourceForStore = internalQuery({
-  args: { userId: v.string(), sourceId: v.id('docSources'), ref: v.string() },
-  handler: async (
-    _ctx,
-    args,
-  ): Promise<{
-    _id: GenericId<'credentials'>;
-    kind: 'value' | 'location' | 'oauth';
-    label: string;
-    revokedAt?: number;
-    ciphertext: string;
-    iv: string;
-    explicitlyAssigned?: boolean;
-  } | null> => {
-    const row = fakeCredentialState().rows.get(
-      fakeCredentialKey(args.userId, String(args.sourceId), args.ref),
-    );
-    return row
-      ? {
+/**
+ * Mirror lane A's `pageRowsByLabel`, the read orientation binds a page marker
+ * through: the live rows of one page carrying the marker's label, oldest
+ * (first seeded) first, each sealed to its owner as the store seals it.
+ */
+export const pageRowsByLabel = internalQuery({
+  args: {
+    userId: v.string(),
+    sourceId: v.id('docSources'),
+    pageRef: v.string(),
+    label: v.string(),
+  },
+  handler: async (_ctx, args): Promise<Doc<'credentials'>[]> => {
+    const wanted = args.label.trim().toLowerCase();
+    return [...fakeCredentialState().rows.values()]
+      .filter(
+        (row): boolean =>
+          row.userId === args.userId &&
+          row.sourceId === String(args.sourceId) &&
+          credentialPageRef(row.ref) === args.pageRef &&
+          row.revokedAt === undefined &&
+          row.label.trim().toLowerCase() === wanted,
+      )
+      .map((row): Doc<'credentials'> => {
+        const key = process.env.DAY0_CREDENTIAL_KEY;
+        if (key === undefined) throw new Error('DAY0_CREDENTIAL_KEY is not configured.');
+        return {
           _id: row._id,
+          _creationTime: 1,
+          userId: row.userId,
           kind: 'value',
           label: row.label,
-          revokedAt: row.revokedAt,
+          source: { sourceId: args.sourceId, ref: row.ref },
+          createdAt: 1,
           explicitlyAssigned: row.explicitlyAssigned,
-          ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!),
-        }
-      : null;
+          ...sealForOwner(row.plaintext, { current: key }, row.userId),
+        };
+      });
   },
 });
 
