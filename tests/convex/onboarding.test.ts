@@ -229,7 +229,10 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
     const { agentId, charterId } = await seedApprovedCharter(harness);
     await breakNamedSystems(harness, charterId);
 
-    const first = await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
+    const first = await harness.action(internal.onboarding.postCharterApproval, {
+      agentId,
+      charterId,
+    });
     expect(first).toMatchObject({ failed: expect.any(String) });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
@@ -241,7 +244,10 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
       true,
       false,
     ]);
-    expect(failures[0]).toMatchObject({ charterId, reason: expect.stringContaining('Validator error') });
+    expect(failures[0]).toMatchObject({
+      charterId,
+      reason: expect.stringContaining('Validator error'),
+    });
   });
 
   it('seeds nothing for a charter that is no longer the approved latest', async (): Promise<void> => {
