@@ -1348,13 +1348,36 @@ async function resolveStoredCredential(
   return undefined;
 }
 
+/** The most pages a card cites for a system. */
+const EVIDENCE_LIMIT = 8;
+
+/**
+ * The first page carrying each probe marker the browser probe checks (the
+ * page title, the element after sign-in): at most two pages, since the probe
+ * reads the first of each across the pages the card cites.
+ */
+function probeMarkerPages<Entry extends { readonly page: Doc<'docPages'> }>(
+  entries: readonly Entry[],
+  system: string,
+): Entry[] {
+  const texts = entries.map((entry) =>
+    relevantSystemText(entry.page.markdown, system, entry.page.title),
+  );
+  const title = entries.find((_, index) => browserTitleMarker(texts[index]!) !== undefined);
+  const signedIn = entries.find((_, index) => browserSignedInMarker(texts[index]!) !== undefined);
+  return [...new Set([title, signedIn].filter((entry): entry is Entry => entry !== undefined))];
+}
+
 /**
  * Choose the pages and quotes a surface card cites.
  *
  * Every page that attributes something to the system is cited with its
  * attributing sentence. Pages that only mention the system are cited only
  * when no page attributes anything, so a card never quotes a co-occurrence
- * beside real evidence. At most eight pages are cited, in page order.
+ * beside real evidence. At most eight pages are cited, in page order, and
+ * always the first page carrying each probe marker the browser rung rests on,
+ * since the probe reads only the pages the card cites; that page is cited even
+ * where it only mentions the system.
  *
  * Args:
  *   pages: Pages whose text names the system.
@@ -1379,14 +1402,24 @@ export function selectEvidence(
     }),
   );
   const attributed = quoted.filter(({ quote }): boolean => quote.attributed);
-  return (attributed.length > 0 ? attributed : quoted).slice(0, 8).map(
-    ({ page, quote }): Evidence => ({
-      sourceId: String(page.sourceId),
-      ref: page.ref,
-      quote: redactTokenShapes(quote.quote),
-      url: page.url,
-    }),
+  const marked = probeMarkerPages(quoted, system);
+  const chosen = (attributed.length > 0 ? attributed : quoted).filter(
+    (entry): boolean => !marked.includes(entry),
   );
+  const cited = new Set([
+    ...chosen.slice(0, Math.max(0, EVIDENCE_LIMIT - marked.length)),
+    ...marked,
+  ]);
+  return quoted
+    .filter((entry): boolean => cited.has(entry))
+    .map(
+      ({ page, quote }): Evidence => ({
+        sourceId: String(page.sourceId),
+        ref: page.ref,
+        quote: redactTokenShapes(quote.quote),
+        url: page.url,
+      }),
+    );
 }
 
 /**

@@ -111,11 +111,31 @@ describe('the interfaces page', (): void => {
     expect(missing.map((entry) => entry.join(':'))).toEqual([]);
   });
 
+  it('names in its prose only functions the backend still exports', (): void => {
+    const referenced = [...INTERFACES.matchAll(/`([a-zA-Z]+):([a-zA-Z]+)`/g)]
+      .map(([, module, name]) => [module!, name!] as const)
+      // A scope such as `docs:read` has the same shape; only a Convex module's names are checked.
+      .filter(([module]) => existsSync(new URL(`../../../convex/${module}.ts`, import.meta.url)));
+    expect(referenced.length).toBeGreaterThan(10);
+    const missing = referenced.filter(([module, name]) => {
+      const source = readFileSync(new URL(`../../../convex/${module}.ts`, import.meta.url), 'utf8');
+      return !new RegExp(`export const ${name}\\b`).test(source);
+    });
+    expect(missing.map((entry) => entry.join(':'))).toEqual([]);
+  });
+
   it("says a card takes the manager's one approval and the export returns its trace a page at a time", (): void => {
     // Q10: the IT approval and `surfaces.approve`'s role argument are gone.
     expect(INTERFACES).not.toMatch(/two approvals|by `role`/);
     expect(INTERFACES).toContain("`surfaces:approve` | mutation | The manager's one approval");
     // m24: the action returns the head; the whole trace is `pnpm export:trace`.
     expect(INTERFACES).toContain('pnpm export:trace');
+    expect(INTERFACES).not.toMatch(/exportForAgent` returns the agent, its events/);
+    const scripts = (
+      JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as {
+        scripts: Record<string, string>;
+      }
+    ).scripts;
+    expect(scripts['export:trace']).toBe('tsx scripts/export-trace.ts');
   });
 });

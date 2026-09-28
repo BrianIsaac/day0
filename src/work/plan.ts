@@ -493,6 +493,18 @@ export type CandidateRecord =
   | { surface: string; tool: string; subject: CandidateRecordSubject; text: string }
   | { surface: string; tool: string; subject: CandidateRecordSubject; unavailable: string };
 
+/**
+ * Why a plan was drafted without its candidate's record (P7-18): the source
+ * system, what was not read, and whether the system was not connected or was
+ * and the read did not land.
+ */
+export interface PlanDraftedWithout {
+  /** The source system's surface slug. */
+  readonly surfaceSlug: string;
+  readonly subject: CandidateRecordSubject;
+  readonly cause: 'not-connected' | 'read-failed';
+}
+
 /** A grounding read before it is applied: the action and what it fetches. */
 export interface CandidateGroundingRead {
   surface: string;

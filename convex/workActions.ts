@@ -17,6 +17,7 @@ import {
   redactGroundingRead,
   draftExecutionPlan,
   type CandidateRecord,
+  type PlanDraftedWithout,
   type DraftPlanArgs,
 } from '../src/work/plan';
 import type { ObligationEvent } from '../src/work/plan-obligations';
@@ -695,7 +696,7 @@ async function draftPlanHandler(
   const candidate = rowToCandidate(item);
   const grounding = await planGrounding(ctx, agentId, internalCaller);
   const knownValues = await knownValuesForAgent(ctx, agent);
-  const record =
+  const grounded =
     SURFACE_MODE === 'real' && agent
       ? await readCandidateRecord(ctx, {
           workItemId: args.workItemId,
@@ -707,6 +708,7 @@ async function draftPlanHandler(
           knownValues,
         })
       : undefined;
+  const record = grounded?.record;
   const corrections =
     SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
@@ -734,7 +736,10 @@ async function draftPlanHandler(
   const stored = await ctx.runMutation(internal.work.setPlan, {
     workItemId: args.workItemId,
     plan,
+    ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
   });
+  // Its system connected while it was drafting, so it is being drafted again.
+  if (stored.redrafting) return { ok: true };
   if (!stored.stored) {
     return { ok: false, reason: 'another draft stored a plan for this work item first' };
   }
@@ -3708,7 +3713,8 @@ async function itemGroundingReads(
  * One standing-authority read through the same registry, rules and adapter as
  * an executed action, keyed on an event minted for it so the ledger row is on
  * the timeline. A failed read, including a provider error body, becomes
- * "unavailable" with the reason; nothing here stops the plan.
+ * "unavailable" with the reason; nothing here stops the plan, but the plan
+ * is stored as drafted without the record (P7-18).
  *
  * Args:
  *   ctx: Convex action context.
@@ -3716,7 +3722,8 @@ async function itemGroundingReads(
  *
  * Returns:
  *   The record or its unavailability (its system not connected, or the read
- *   failed), or undefined when there is no record to read.
+ *   failed) with what the plan was then drafted without, or nothing when
+ *   there is no record to read.
  */
 async function readCandidateRecord(
   ctx: ActionCtx,
@@ -3730,10 +3737,31 @@ async function readCandidateRecord(
     /** The owner's stored values, resolved once by the calling action. */
     knownValues: readonly string[];
   },
-): Promise<CandidateRecord | undefined> {
+): Promise<{ record?: CandidateRecord; draftedWithout?: PlanDraftedWithout }> {
   const now = Date.now();
   const read = candidateRecordRead(args.candidate, args.surfaces, now);
-  if (!read) return unreadCandidateRecord(args.candidate, args.surfaces, now);
+  if (!read) {
+    const record = unreadCandidateRecord(args.candidate, args.surfaces, now);
+    return record
+      ? {
+          record,
+          draftedWithout: {
+            surfaceSlug: record.surface,
+            subject: record.subject,
+            cause: 'not-connected',
+          },
+        }
+      : {};
+  }
+  const readFailed = (
+    unavailable: string,
+  ): {
+    record: CandidateRecord;
+    draftedWithout: PlanDraftedWithout;
+  } => ({
+    record: { surface: read.surface, tool: read.tool, subject: read.subject, unavailable },
+    draftedWithout: { surfaceSlug: read.surface, subject: read.subject, cause: 'read-failed' },
+  });
   try {
     const eventId = await ctx.runMutation(internal.work.beginPlanGroundingRead, {
       workItemId: args.workItemId,
@@ -3772,17 +3800,11 @@ async function readCandidateRecord(
     await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
     const { surface, tool, subject } = read;
     if (!applied || !applied.ok || applied.held) {
-      return { surface, tool, subject, unavailable: applied?.reason ?? 'the read did not land' };
+      return readFailed(applied?.reason ?? 'the read did not land');
     }
-    return { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` };
+    return { record: { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` } };
   } catch (error) {
-    const { surface, tool, subject } = read;
-    return {
-      surface,
-      tool,
-      subject,
-      unavailable: error instanceof Error ? error.message : String(error),
-    };
+    return readFailed(error instanceof Error ? error.message : String(error));
   }
 }
 

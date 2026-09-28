@@ -21,6 +21,9 @@ import {
   isMessage,
   isStatusChange,
   MALFORMED_ACTION,
+  MESSAGE_EDIT_REFUSED,
+  messageEditRefusal,
+  refusalFor,
   MOCK_VERB_REFUSED,
   needsStandingGrant,
   NOT_AUTOMATIC,
@@ -544,6 +547,54 @@ describe('the manager DM grant', (): void => {
     expect(
       applyProvenance(parsed(update('D0MANAGER', { username: 'Someone' })), slack, run, 'value'),
     ).toMatchObject({ ok: false });
+  });
+
+  it('refuses every chat message edit but the one decided request its caller names', (): void => {
+    const update = (body: Record<string, unknown>, path = '/chat.update'): MockAction => ({
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path,
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify(body),
+      },
+    });
+    const request = { channel: 'D0MANAGER', ts: '1787738163.314789' };
+    const decided = { ...request, text: 'Decided: approved in this DM (ab3xyz).' };
+    expect(messageEditRefusal(parsed(update(decided)), slack, request)).toBeUndefined();
+    expect(
+      messageEditRefusal(parsed(update(decided, 'chat.update')), slack, request),
+    ).toBeUndefined();
+    expect(messageEditRefusal(parsed(update(decided)), slack, undefined)).toBe(
+      MESSAGE_EDIT_REFUSED,
+    );
+    expect(
+      messageEditRefusal(parsed(update({ ...decided, ts: '1787738000.000001' })), slack, request),
+    ).toBe(MESSAGE_EDIT_REFUSED);
+    expect(
+      messageEditRefusal(parsed(update({ ...decided, channel: 'C0PUBLIC' })), slack, request),
+    ).toBe(MESSAGE_EDIT_REFUSED);
+    // An edit with no text (blocks only) is still an edit, and still refused.
+    expect(
+      messageEditRefusal(parsed(update({ channel: 'D0MANAGER', ts: request.ts })), slack, request),
+    ).toBe(MESSAGE_EDIT_REFUSED);
+    expect(messageEditRefusal(parsed(chatPost('D0MANAGER')), slack, undefined)).toBeUndefined();
+    // The URL parser drops a tab or a newline, so these are sent as chat.update.
+    for (const path of ['chat.upda\tte', 'chat.up\ndate', '/chat.update?x=1']) {
+      expect(messageEditRefusal(parsed(update(decided, path)), slack, undefined), path).toBe(
+        MESSAGE_EDIT_REFUSED,
+      );
+    }
+    // A plan's edit is refused when the run is held, not first at apply.
+    expect(
+      refusalFor(
+        update(decided),
+        [{ ...slack, toolAllowlist: ['chat.update'] }],
+        new Set(['boss:message']),
+        now,
+      ),
+    ).toEqual({ refused: true, reason: MESSAGE_EDIT_REFUSED });
   });
 
   it('lets boss:message authorise the manager DM and nothing else', (): void => {
@@ -1168,6 +1219,23 @@ describe('provenance', (): void => {
     expect(
       applyProvenance(parsed(chatPost('D0MANAGER', { icon_emoji: ':x:' })), slack, run, 'oauth'),
     ).toEqual({ ok: false, reason: USERNAME_REFUSED });
+  });
+
+  it('reads a chat post by the operation it is sent to, however its path is spelled', (): void => {
+    // The URL parser drops a tab or a newline, so each of these is sent as chat.postMessage.
+    for (const path of ['chat.post\tMessage', 'chat.postMes\nsage', 'chat.postMessage?pretty=1']) {
+      const post = (extra: Record<string, unknown>): MockAction => ({
+        ...chatPost('D0MANAGER', extra),
+        args: { ...chatPost('D0MANAGER', extra).args, path },
+      });
+      expect(applyProvenance(parsed(post({ username: 'Bob' })), slack, run, 'oauth'), path).toEqual(
+        {
+          ok: false,
+          reason: USERNAME_REFUSED,
+        },
+      );
+      expect(isManagerDm(parsed(post({})), slack), path).toBe(true);
+    }
   });
 
   it('omits identity fields and the trailer for a dedicated oauth app', (): void => {

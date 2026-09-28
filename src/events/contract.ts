@@ -720,6 +720,15 @@ export interface WorkPlanDraftedPayload extends WorkItemNamed {
   readonly plan: ExecutionPlan;
 }
 
+/**
+ * The payload of `work.plan-redrafting`: a plan drafted while its system was
+ * not connected, sent back to drafting now that it is (P7-18).
+ */
+export interface WorkPlanRedraftingPayload extends WorkItemNamed {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly slug: string;
+}
+
 /** The payload of `work.corrections-applied`. */
 export interface WorkCorrectionsAppliedPayload extends WorkItemNamed {
   readonly correctionIds: Id<'corrections'>[];
@@ -775,11 +784,24 @@ export interface PlanHeldObligationsFailedOpen extends WorkItemNamed {
   readonly failure: string;
 }
 
+/**
+ * `work.plan-held` for a plan drafted without its ticket or thread (P7-18):
+ * nobody read what it acts on, so the switch does not run it.
+ */
+export interface PlanHeldDraftedWithout extends WorkItemNamed {
+  readonly reason: 'drafted-without-record';
+  /** The source system's surface slug. */
+  readonly surfaceSlug: string;
+  /** The system was not connected, or it was and the read did not land. */
+  readonly cause: 'not-connected' | 'read-failed';
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
   | PlanHeldForRejection
-  | PlanHeldObligationsFailedOpen;
+  | PlanHeldObligationsFailedOpen
+  | PlanHeldDraftedWithout;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
@@ -1106,6 +1128,7 @@ export interface EventPayloads {
   'work.check-requested': WorkCheckRequestedPayload;
   'work.plan-grounding-read': WorkPlanGroundingReadPayload;
   'work.plan-drafted': WorkPlanDraftedPayload;
+  'work.plan-redrafting': WorkPlanRedraftingPayload;
   'work.corrections-applied': WorkCorrectionsAppliedPayload;
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
@@ -1251,6 +1274,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.check-requested',
   'work.plan-grounding-read',
   'work.plan-drafted',
+  'work.plan-redrafting',
   'work.corrections-applied',
   'work.corrections-redaction-limited',
   'work.correction-retired',

@@ -8,8 +8,8 @@ import { structuralSystemCandidates } from '../docs/system-discovery';
  * some team's project and channels. The candidates are read per page, each
  * with the line that states it; orientation picks the ones that belong to
  * the employee's role by their numbers, so every kept value, page and line
- * is the candidate's own; and the manager and IT approve the result with
- * the card. Intake then reads the approved values and nothing else, so a
+ * is the candidate's own; and the manager approves the result with the
+ * card. Intake then reads the approved values and nothing else, so a
  * later page edit never widens what an employee reads.
  */
 

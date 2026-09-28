@@ -6,6 +6,7 @@ import {
   type JsonObject,
   type ParsedSurfaceAction,
 } from './policy';
+import { isSlackApiEndpoint } from './slack-endpoint';
 import type { SurfaceRecord } from './types';
 
 /**
@@ -29,7 +30,16 @@ export interface SummaryContext {
    * Slack request, quotes more (U9 step 24).
    */
   textLimit?: number;
+  /**
+   * Whether Slack renders the text, so a Slack channel is named by Slack's
+   * own mention (`<#C…>`), which its client shows as the channel's name to a
+   * reader who can see it (P8-6). Plain text elsewhere keeps the id.
+   */
+  slackMarkup?: boolean;
 }
+
+/** A Slack public or private channel id, the only kind a `<#…>` mention names. */
+const SLACK_CHANNEL_ID = /^[CG][A-Z0-9]{6,}$/;
 
 /** How much of a comment or message body the line quotes. */
 export const SUMMARY_TEXT_LIMIT = 120;
@@ -329,7 +339,16 @@ function describeHttpRequest(
         : `Post in ${where}, in another thread${quoted}${extras}`;
     }
     const thread = threadTs !== undefined ? ' (in thread)' : '';
-    return `Post to ${name} channel ${channel ? label(channel) : '(unknown)'}${thread}${quoted}${extras}`;
+    const named =
+      channel &&
+      context.slackMarkup &&
+      isSlackApiEndpoint(surface?.endpoint) &&
+      SLACK_CHANNEL_ID.test(channel)
+        ? `<#${channel}>`
+        : channel
+          ? label(channel)
+          : '(unknown)';
+    return `Post to ${name} channel ${named}${thread}${quoted}${extras}`;
   }
   return `${parsed.method} ${label(parsed.path, 120)} on ${name}`;
 }

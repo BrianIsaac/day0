@@ -16,6 +16,17 @@ export const ticketSnapshotValidator = v.object({
 });
 
 /**
+ * Why a plan was drafted without reading its candidate's record (P7-18): the
+ * source system, what was not read, and whether the system was not
+ * connected or was and the read did not land.
+ */
+export const planDraftedWithoutValidator = v.object({
+  surfaceSlug: v.string(),
+  subject: v.union(v.literal('record'), v.literal('thread')),
+  cause: v.union(v.literal('not-connected'), v.literal('read-failed')),
+});
+
+/**
  * Day0 schema — one world per agent, by design.
  *
  * Every other table FK-points back at an `agents` row, the mock work
@@ -746,6 +757,12 @@ export default defineSchema({
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),
+    /**
+     * Set with a plan drafted without its ticket or thread: the plan waits
+     * for the manager, and one drafted while its system was down is drafted
+     * again when the system connects (P7-18). Cleared by the next plan.
+     */
+    planDraftedWithout: v.optional(planDraftedWithoutValidator),
     /**
      * A manager rejected an earlier plan for this item; its own redraft needs
      * explicit approval. A plan rejection also sets `rejectedAt`, which is

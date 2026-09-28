@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseAdminKey } from '../../setup';
 import { upsertEnvText } from '../../demo-bed';
+import { nextTelemetrySetting } from '../../dev';
 import { writePrivateEnv } from '../../private-env';
 import { pinnedNodeImage, redactorVolumeClone } from '../../lib/docker';
 import { BED_PROFILES, bedComposeArgs } from './docker';
@@ -422,7 +423,7 @@ export async function startApp(
     ['exec', 'next', 'dev', '-H', 'localhost', '-p', String(bed.ports.app)],
     {
       cwd: bed.clone,
-      env: { ...bed.env, PORT: String(bed.ports.app) },
+      env: { ...bed.env, PORT: String(bed.ports.app), ...nextTelemetrySetting(process.env) },
     },
   );
   try {

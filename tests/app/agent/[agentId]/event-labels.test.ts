@@ -14,6 +14,26 @@ describe('the live feed labels', (): void => {
     }
   });
 
+  it('says why each held plan waits, by its reason', (): void => {
+    const held = (payload: Record<string, unknown>): string =>
+      eventLabel({ type: 'work.plan-held', payload: { workItemId: 'w1', ...payload } });
+    expect(held({ reason: 'skip-overruled', waived: 'quality-fit' })).toBe(
+      'plan held for you: you waived the skip',
+    );
+    expect(held({ reason: 'plan-rejected-for-this-item' })).toBe(
+      "plan held for you: a colleague's plan for this ticket was rejected",
+    );
+    expect(held({ reason: 'obligations-failed-open', failure: 'model unavailable' })).toBe(
+      'plan held for you: its reads and writes could not be checked',
+    );
+    expect(
+      held({ reason: 'drafted-without-record', surfaceSlug: 'linear', cause: 'not-connected' }),
+    ).toBe('plan held for you: it was drafted without reading its ticket or thread');
+    expect(held({ reason: 'a reason from a later build' })).toBe(
+      'plan held for you: it waits for your decision',
+    );
+  });
+
   it('labels the eleven wave 3 types the review found printed raw (m37)', (): void => {
     const labels = [
       eventLabel({

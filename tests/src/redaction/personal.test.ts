@@ -51,4 +51,41 @@ describe('personalDataSpans', (): void => {
       expect(found(text), text).toEqual([]);
     }
   });
+
+  it('leaves a signed amount with its currency and a signed date alone, which only look like a country code', (): void => {
+    for (const text of [
+      'variance +1.234.567 EUR',
+      'moved +12 345 678 SGD this week',
+      'margin +1 234 567% on plan',
+      'shifted +2026-09-28',
+    ]) {
+      expect(found(text), text).toEqual([]);
+    }
+  });
+
+  it('finds a phone however its country writes it, and a signed number with nothing beside it', (): void => {
+    for (const phone of [
+      '+6591234567',
+      '+44 20 7946 0958',
+      '+34 612 345 678',
+      '+351 912 345 678',
+      '+48 123 456 789',
+      '+420 601 123 456',
+      '+34.612.345.678',
+      '+447911 123456',
+      '+6012-3456789',
+      '+65 9123 4567 SMS',
+    ]) {
+      const [span] = found(`reach me on ${phone}`);
+      expect(span, phone).toEqual([phone.replace(/ SMS$/, ''), 'phone']);
+    }
+    // Nothing marks it a figure, and a missed phone leaves the export.
+    expect(found('moved +12 345 678 this week')).toEqual([['+12 345 678', 'phone']]);
+  });
+
+  it('leaves an endpoint, an e-mail or an IP on a bare Address line to its own rules', (): void => {
+    expect(found('Address: https://mcp.linear.app/mcp')).toEqual([]);
+    expect(found('- Address: 10.0.0.4:8080')).toEqual([]);
+    expect(found('Address: ops@finance.example')).toEqual([['ops@finance.example', 'email']]);
+  });
 });

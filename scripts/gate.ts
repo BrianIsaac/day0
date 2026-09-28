@@ -10,9 +10,11 @@
  * (`CLAUDECODE`, `AI_AGENT` and the rest vitest reads to turn colour off) and
  * a shell's exported deployment keys never reach it, so an output-sensitive
  * test sees what the runner sees (the wave 2 red run was one that did not).
+ * The build still reads the local env files from disk, as Next always does;
+ * the gate names the keys it takes from them that the runner never has.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
@@ -74,6 +76,64 @@ export function gateEnvironment(
   return { ...Object.fromEntries(kept), CI: 'true', ...step.env };
 }
 
+/**
+ * The env files `next build` loads, highest precedence first; the runner has
+ * none of them.
+ */
+export const BUILD_ENV_FILES = [
+  '.env.production.local',
+  '.env.local',
+  '.env.production',
+  '.env',
+] as const;
+
+/** One key a local env file gives the build, and the file it comes from. */
+export interface EnvFileKey {
+  readonly key: string;
+  readonly file: string;
+}
+
+/** The names an env file assigns, `export` or not. */
+function assignedKeys(text: string): string[] {
+  return text
+    .split('\n')
+    .flatMap((line) => /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line)?.[1] ?? []);
+}
+
+/** The names a command assigns inline before its program (`NAME= pnpm build`). */
+function inlineKeys(run: string): string[] {
+  const prefix = /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/.exec(run)?.[0] ?? '';
+  return [...prefix.matchAll(/([A-Za-z_][A-Za-z0-9_]*)=/g)].map((match) => match[1]!);
+}
+
+/**
+ * What the local env files give a build step that the runner's build never
+ * sees: every key they assign that neither the step's environment nor its
+ * command sets, since Next never overrides a variable the process has. A
+ * step that does not build reads no env file.
+ *
+ * @param files - Each env file's text, by name, for those that exist.
+ */
+export function buildEnvFileReach(
+  step: GateStep,
+  environment: Readonly<Record<string, string>>,
+  files: Readonly<Partial<Record<string, string>>>,
+): EnvFileKey[] {
+  if (!/\b(?:pnpm|next) build\b/.test(step.run)) return [];
+  const set = new Set([...Object.keys(environment), ...inlineKeys(step.run)]);
+  const reach = new Map<string, string>();
+  for (const file of BUILD_ENV_FILES) {
+    const text = files[file];
+    if (text === undefined) continue;
+    for (const key of assignedKeys(text)) {
+      if (!set.has(key) && !reach.has(key)) reach.set(key, file);
+    }
+  }
+  return [...reach.entries()]
+    .map(([key, file]) => ({ key, file }))
+    .sort((a, b) => a.key.localeCompare(b.key, 'en'));
+}
+
 /** Run every step in order, stopping at the first that fails. */
 function main(): number {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,11 +145,25 @@ function main(): number {
   }
   for (const step of gateSteps(readFileSync(join(root, '.github/workflows/gate.yml'), 'utf8'))) {
     console.log(`\n== ${step.name}: ${step.run}`);
+    const environment = gateEnvironment(process.env, step);
+    const files = Object.fromEntries(
+      BUILD_ENV_FILES.filter((file) => existsSync(join(root, file))).map((file) => [
+        file,
+        readFileSync(join(root, file), 'utf8'),
+      ]),
+    );
+    const reach = buildEnvFileReach(step, environment, files);
+    if (reach.length > 0) {
+      console.error(
+        `This build also reads ${reach.map(({ key, file }) => `${key} (${file})`).join(', ')}, ` +
+          'which the runner never has; a build green here and red there may be one of them.',
+      );
+    }
     const result = spawnSync('sh', ['-c', step.run], {
       cwd: root,
       // Next declares NODE_ENV on every ProcessEnv; the runner's steps start
       // without it and each tool sets its own, so the clean one does too.
-      env: gateEnvironment(process.env, step) as NodeJS.ProcessEnv,
+      env: environment as NodeJS.ProcessEnv,
       stdio: 'inherit',
     });
     if (result.status !== 0) {

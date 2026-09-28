@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
+import type { WithoutSystemFields } from 'convex/server';
 import { ConvexError } from 'convex/values';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -447,6 +448,37 @@ describe('batched decisions', (): void => {
     expect((await batch())?.decidedTs).toBeUndefined();
     const open = await harness.query(internal.work.openDecisions, { surfaceId });
     expect(open.batches).toEqual([]);
+  });
+
+  it('settles a batch whose last open member left by a new code, not a decision', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, first, second } = await batchOnChannel(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: second.workItemId,
+      pendingRunId: second.runId,
+      approvedIndexes: [0],
+    });
+    // The first member's thread is gone, so its request is marked failed and
+    // sent again under a new code: the batch's code no longer decides it.
+    await expect(
+      harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: 'gh6npq' }),
+    ).resolves.toBe(true);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: first.workItemId,
+      kind: 'actions',
+      decisionId: 'jm8uvw',
+      supersedes: 'gh6npq',
+    });
+    const batch = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('decisionBatches')
+          .withIndex('by_agent_id', (q) => q.eq('agentId', agentId).eq('id', 'bq2wxy'))
+          .unique(),
+    );
+    expect(batch).toMatchObject({ decidedAt: expect.any(Number) });
+    expect(batch?.outcome).toBeUndefined();
   });
 
   it('decides every open member of a batch code from one channel reply, and names what it left', async (): Promise<void> => {
@@ -5893,6 +5925,163 @@ describe('what an outage leaves for the manager (P7-18)', (): void => {
     await expect(
       harness.mutation(internal.work.recoverUnsentManagerNote, { noteId }),
     ).resolves.toEqual({ recovered: 'ignored' });
+  });
+});
+
+describe('a plan drafted while its system was down (P7-18)', (): void => {
+  it('is drafted again when the system connects, and a plan whose read failed is left to the manager', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    const request = {
+      id: 'ab3xyz',
+      kind: 'plan' as const,
+      requestedAt: 1,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      ts: '1787770700.000100',
+    };
+    const { linearId, readFailedId } = await harness.run(async (ctx) => {
+      const linear = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'linear'))
+        .unique();
+      await ctx.db.patch(linear!._id, { verdict: 'listed-dead' });
+      await ctx.db.patch(workItemId, {
+        plan: { summary: 'Close the month.', steps: [] },
+        planPendingAt: 1,
+        decision: request,
+        planDraftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'not-connected' },
+      });
+      const row = Object.fromEntries(
+        Object.entries((await ctx.db.get(workItemId))!).filter(([key]) => !key.startsWith('_')),
+      ) as WithoutSystemFields<Doc<'workItems'>>;
+      const readFailedId = await ctx.db.insert('workItems', {
+        ...row,
+        externalId: 'iss-2',
+        decision: undefined,
+        planDraftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'read-failed' },
+      });
+      return { linearId: linear!._id, readFailedId };
+    });
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: linearId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: linearId,
+      generation: probe.generation,
+      toolAllowlist: ['get_issue', 'save_comment', 'save_issue'],
+      toolArguments: [],
+      verifiedAt: Date.now(),
+    });
+
+    const redrafted = await readItem(harness, workItemId);
+    expect(redrafted.state).toBe('claimed');
+    expect(redrafted.plan).toBeUndefined();
+    expect(redrafted.decision).toBeUndefined();
+    expect(redrafted.planDraftedWithout).toBeUndefined();
+    expect(
+      (await eventsOfType(harness, agentId, 'work.plan-redrafting')).map((event) => event.payload),
+    ).toEqual([{ workItemId, surfaceId: linearId, slug: 'linear' }]);
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(
+      scheduled.filter(
+        (job) =>
+          job.name === 'workActions:draftPlanInternal' &&
+          (job.args[0] as { workItemId?: string }).workItemId === workItemId,
+      ),
+    ).toHaveLength(1);
+    // Its system was connected when its read failed; the manager decides it.
+    expect(await readItem(harness, readFailedId)).toMatchObject({
+      state: 'plan-pending',
+      planDraftedWithout: { cause: 'read-failed' },
+    });
+    vi.useRealTimers();
+  });
+});
+
+describe('a plan drafted while its system was down, when the system is back first (P7-18)', (): void => {
+  it('is drafted again at once when the system connected while it was being drafted', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+    // Linear was down when the draft read it and connected before the plan was stored.
+    const stored = await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: { summary: 'Close the month.', steps: [] },
+      draftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'not-connected' },
+    });
+    expect(stored).toEqual({ stored: false, redrafting: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('claimed');
+    expect(row.plan).toBeUndefined();
+    expect(
+      (await eventsOfType(harness, agentId, 'work.plan-redrafting')).map((event) => event.payload),
+    ).toEqual([{ workItemId, surfaceId: expect.any(String), slug: 'linear' }]);
+    vi.useRealTimers();
+  });
+
+  it('is drafted again when a probe finds the system alive, even if its stored verdict never changed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    const linearId = await harness.run(async (ctx) => {
+      const linear = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'linear'))
+        .unique();
+      // Stored as connected, but unverified for a day: the planner read it as dead.
+      await ctx.db.patch(linear!._id, { lastVerifiedAt: Date.now() - 24 * 60 * 60 * 1000 });
+      await ctx.db.patch(workItemId, {
+        plan: { summary: 'Close the month.', steps: [] },
+        planPendingAt: 1,
+        planDraftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'not-connected' },
+      });
+      return linear!._id;
+    });
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: linearId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: linearId,
+      generation: probe.generation,
+      toolAllowlist: ['get_issue', 'save_comment', 'save_issue'],
+      toolArguments: [],
+      verifiedAt: Date.now(),
+    });
+    expect((await readItem(harness, workItemId)).state).toBe('claimed');
+    vi.useRealTimers();
+  });
+});
+
+describe('the plan-grounding read the evidence check cites (P7-18)', (): void => {
+  it('cites the newest read that landed, not a newer one that failed, and never another item’s', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+    const action = { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue' } };
+    await harness.run(async (ctx): Promise<void> => {
+      const read = async (payload: Record<string, unknown>): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.plan-grounding-read',
+          payload: { action, ...payload },
+          createdAt: Date.now(),
+        });
+      };
+      await read({ workItemId, applied: { ok: true, effect: 'REVOPS-5: close August' } });
+      // Linear went down before the next draft: its read failed.
+      await read({ workItemId, applied: { ok: false, reason: 'HTTP 503' } });
+      await read({ workItemId, applied: { ok: true, held: true, reason: 'held' } });
+      await read({ workItemId: 'another-item', applied: { ok: true, effect: 'REVOPS-9' } });
+    });
+    await expect(harness.query(internal.work.planGroundingReads, { workItemId })).resolves.toEqual([
+      { action, applied: { ok: true, effect: 'REVOPS-5: close August' } },
+    ]);
   });
 });
 

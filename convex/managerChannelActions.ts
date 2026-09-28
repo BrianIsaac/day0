@@ -16,8 +16,10 @@ import {
   surfaceRefusal,
   toolRefusal,
   UNKNOWN_SURFACE,
+  type RequestEdit,
 } from '../src/surfaces/policy';
 import { applySurfaceActions } from '../src/surfaces/registry';
+import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import type { BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import {
@@ -91,7 +93,7 @@ async function deliverManagerMessage(
     workItemId,
     delivery,
     managerMessageAction(delivery.surface, text, threadTs ? { threadTs } : {}),
-    decisionId,
+    decisionId ? { decisionId } : {},
   );
 }
 
@@ -106,8 +108,9 @@ async function applyManagerAction(
   workItemId: Id<'workItems'>,
   delivery: ManagerDelivery,
   action: MockAction,
-  decisionId?: string,
+  options: { readonly decisionId?: string; readonly requestEdit?: RequestEdit } = {},
 ) {
+  const { decisionId, requestEdit } = options;
   const applied = await applySurfaceActions(
     ctx,
     'real',
@@ -131,6 +134,7 @@ async function applyManagerAction(
       approvedIndexes: new Set([0]),
       autoPhase: true,
       autonomousActions: false,
+      ...(requestEdit ? { requestEdit } : {}),
     },
   );
   const result = applied[0];
@@ -206,12 +210,15 @@ export const requestDecision = internalAction({
       id: prepared.decisionId,
       kind: args.kind as DecisionKind,
       plan: prepared.plan,
+      ...(prepared.draftedWithout ? { draftedWithout: prepared.draftedWithout } : {}),
       actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
       heldIndexes: prepared.heldIndexes,
       refused: prepared.refused,
       item: prepared.item,
       surfaces: prepared.surfaces,
       closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
+      slackMarkup:
+        prepared.surface.path === 'documented-api' && isSlackApiEndpoint(prepared.surface.endpoint),
     });
     // Other held action sets are already waiting on this channel: offer one
     // code that decides them all, each named with its own.
@@ -283,7 +290,9 @@ export const closeDecisionRequest = internalAction({
     const action = managerMessageUpdateAction(prepared.surface, prepared.ts, prepared.text);
     if (!action) return { closed: false };
     try {
-      await applyManagerAction(ctx, args.workItemId, prepared, action);
+      await applyManagerAction(ctx, args.workItemId, prepared, action, {
+        requestEdit: { channel: prepared.channel, ts: prepared.ts },
+      });
       return { closed: true };
     } catch (error) {
       log.warn('the decided request could not be marked in the manager DM; the decision stands', {

@@ -229,6 +229,7 @@ describe('bringing the bed up', (): void => {
     expect(started[0].options.env).toMatchObject({
       COMPOSE_PROJECT_NAME: 'day0-rehearsal-abc123',
       PORT: '45213',
+      NEXT_TELEMETRY_DISABLED: process.env.NEXT_TELEMETRY_DISABLED ?? '1',
     });
     expect(stopped).toBe(0);
 

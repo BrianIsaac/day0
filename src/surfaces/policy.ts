@@ -69,6 +69,8 @@ export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
 export const LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION =
   'shared credential write without attributable content';
 export const REPLY_TARGET_REFUSED = 'chat reply does not match the work item reply target';
+export const MESSAGE_EDIT_REFUSED =
+  'a chat message edit is sent only as the edit that marks a decided request';
 
 /** Every reason the gate refuses a row by before anything is sent; several take a detail in brackets. */
 const GATE_REFUSAL_REASONS: readonly string[] = [
@@ -86,6 +88,7 @@ const GATE_REFUSAL_REASONS: readonly string[] = [
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
   LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION,
   REPLY_TARGET_REFUSED,
+  MESSAGE_EDIT_REFUSED,
 ];
 const PATH_REFUSAL = /^(?:mcp\.call|http\.request) is not allowed on surface path /;
 
@@ -815,6 +818,55 @@ export function replyTargetRefusal(
     : REPLY_TARGET_REFUSED;
 }
 
+/** The one message an apply may edit: Day0's own decided request in the manager DM. */
+export interface RequestEdit {
+  /** The manager DM's channel id. */
+  readonly channel: string;
+  /** The request message's provider timestamp. */
+  readonly ts: string;
+}
+
+/**
+ * Why a chat message edit may not be sent, if it may not (M finding 3).
+ *
+ * Day0 edits one message: its own decision request in the manager DM, once
+ * decided, from the manager channel. Any other edit, a plan's above all,
+ * would rewrite what a person has read or is deciding, so an edit is refused
+ * unless it names exactly the request its caller closes.
+ *
+ * @param allowed - The request the caller closes, when it closes one.
+ */
+export function messageEditRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  allowed: RequestEdit | undefined,
+): string | undefined {
+  if (parsed.kind !== 'http.request' || surface.class !== 'chat') return undefined;
+  if (requestOperation(parsed, surface) !== 'chat.update') return undefined;
+  if (!allowed || !isChatUpdate(parsed, surface)) return MESSAGE_EDIT_REFUSED;
+  const ts = parsed.bodyJson?.ts;
+  return targetsOnlyChannel(parsed, allowed.channel) &&
+    typeof ts === 'string' &&
+    ts.trim() === allowed.ts
+    ? undefined
+    : MESSAGE_EDIT_REFUSED;
+}
+
+/**
+ * The operation a request names as the allowlist and the transport read it:
+ * its path resolved under the surface's endpoint, so a spelling the URL parser
+ * rewrites (a tab, a newline, extra slashes) names what is sent.
+ */
+function requestOperation(parsed: ParsedHttpRequest, surface: SurfaceRecord): string | undefined {
+  const endpoint = surface.endpoint ?? '';
+  try {
+    return operationUnderBase(resolveRequestUrl(endpoint, parsed.path), endpoint);
+  } catch {
+    // A path that does not resolve is not sent: the allowlist check refuses it.
+    return undefined;
+  }
+}
+
 /**
  * The scopes any one of which authorises an action.
  *
@@ -1282,6 +1334,8 @@ export function refusalFor(
   const reason =
     pathRefusal(parsed.action, surface) ??
     toolRefusal(parsed.action, surface) ??
+    // No plan's row is the edit that closes a decided request.
+    messageEditRefusal(parsed.action, surface, undefined) ??
     (needsStandingGrant(parsed.action, surface)
       ? grantRefusal(parsed.action, surface, grants)
       : undefined) ??
@@ -1626,7 +1680,7 @@ function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean 
   return (
     parsed.method === 'POST' &&
     surface.class === 'chat' &&
-    /^\/*chat\.postMessage$/.test(parsed.path) &&
+    requestOperation(parsed, surface) === 'chat.postMessage' &&
     typeof parsed.bodyJson?.text === 'string'
   );
 }
@@ -1636,7 +1690,7 @@ function isChatUpdate(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolea
   return (
     parsed.method === 'POST' &&
     surface.class === 'chat' &&
-    /^\/*chat\.update$/.test(parsed.path) &&
+    requestOperation(parsed, surface) === 'chat.update' &&
     typeof parsed.bodyJson?.text === 'string' &&
     typeof parsed.bodyJson.ts === 'string' &&
     parsed.bodyJson.ts.trim() !== ''

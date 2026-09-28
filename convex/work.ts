@@ -10,7 +10,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { ticketSnapshotValidator } from './schema';
+import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
@@ -74,6 +74,7 @@ import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   askedFor,
   batchDecisionNoticeText,
+  canEditManagerMessage,
   DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
@@ -2738,40 +2739,41 @@ export const finishPlanGroundingRead = internalMutation({
   },
 });
 
-/** The most events `planGroundingReads` walks back through before it gives up. */
+/** The most reads of the item's type `planGroundingReads` walks back through before it gives up. */
 const GROUNDING_READ_SCAN_LIMIT = 2_000;
 
+/** Whether a grounding read's ledger row says the record was read: landed, not held. */
+function groundingReadLanded(applied: unknown): boolean {
+  if (typeof applied !== 'object' || applied === null) return false;
+  const row = applied as { ok?: unknown; held?: unknown };
+  return row.ok === true && row.held !== true;
+}
+
 /**
- * The current plan-grounding read of a work item: the most recent one whose
- * ledger row was attached, as the event stored it (already redacted). The
- * executor's evidence check reads it as what the item says; an earlier
- * reading is superseded, and another item's is never returned.
+ * The current plan-grounding read of a work item: the most recent one that
+ * read the record, as the event stored it (already redacted). The executor's
+ * evidence check reads it as what the item says; an earlier reading is
+ * superseded, a later read that failed or was held says nothing about the
+ * item (P7-18), and another item's is never returned.
  */
 export const planGroundingReads = internalQuery({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<Array<{ action: unknown; applied: unknown }>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return [];
-    // Newest first and stopped at the first match, within a bound: the
-    // events table is indexed by agent alone, and an item with no read in
-    // reach simply has none to cite.
-    const newestFirst = ctx.db
-      .query('events')
-      .withIndex('by_agent', (q) =>
-        q.eq('agentId', row.agentId).gt('_creationTime', row._creationTime),
-      )
-      .order('desc');
+    const newestFirst = eventsOfType(ctx, row.agentId, 'work.plan-grounding-read', {
+      after: row._creationTime,
+    }).order('desc');
     let scanned = 0;
     for await (const event of newestFirst) {
       scanned += 1;
       if (scanned > GROUNDING_READ_SCAN_LIMIT) break;
-      if (event.type !== 'work.plan-grounding-read') continue;
       const { workItemId, action, applied } = event.payload as {
         workItemId?: string;
         action?: unknown;
         applied?: unknown;
       };
-      if (workItemId === args.workItemId && action !== undefined && applied != null)
+      if (workItemId === args.workItemId && action !== undefined && groundingReadLanded(applied))
         return [{ action, applied }];
     }
     return [];
@@ -2806,16 +2808,43 @@ async function withAppliedCorrections(
   return { plan: applied.length > 0 ? { ...rest, appliedCorrections: applied } : rest, applied };
 }
 
+/**
+ * Store a drafted plan and park the row for its decision. Internal; the
+ * drafting action's. `draftedWithout` says the plan was drafted without its
+ * ticket or thread (P7-18); a plan drafted with it clears an earlier one's. A
+ * plan drafted while its system was down, which is connected by now, is not
+ * stored: the row goes straight back to drafting (`redrafting`).
+ */
 export const setPlan = internalMutation({
-  args: { workItemId: v.id('workItems'), plan: v.any() },
-  handler: async (ctx, args): Promise<{ stored: boolean }> => {
+  args: {
+    workItemId: v.id('workItems'),
+    plan: v.any(),
+    draftedWithout: v.optional(planDraftedWithoutValidator),
+  },
+  handler: async (ctx, args): Promise<{ stored: boolean; redrafting?: true }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'claimed') return { stored: false };
+    // The system the draft could not read connected while the model drafted:
+    // a connection that landed first found no plan to send back, so this does.
+    if (args.draftedWithout?.cause === 'not-connected') {
+      const source = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', row.agentId).eq('slug', args.draftedWithout!.surfaceSlug),
+        )
+        .unique();
+      const now = Date.now();
+      if (source && verdictFor(toSurfaceRecord(source), now) === 'connected') {
+        await sendBackToDrafting(ctx, row, source, now);
+        return { stored: false, redrafting: true };
+      }
+    }
     const { plan, applied } = await withAppliedCorrections(ctx, row, args.plan);
     await ctx.db.patch(args.workItemId, {
       plan,
       state: 'plan-pending',
+      planDraftedWithout: args.draftedWithout,
       ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
@@ -2843,6 +2872,70 @@ export const setPlan = internalMutation({
     return { stored: true };
   },
 });
+
+/**
+ * Plan-pending rows one connection reads for plans to draft again; an
+ * employee's parked plans are bounded by its work cap, far below this.
+ */
+const REDRAFT_SCAN = 200;
+
+/**
+ * Send back to drafting every undecided plan drafted while this surface was
+ * not connected, now that it is (P7-18): the plan is drafted again from the
+ * record it could not read, and its request gives way to the new plan's, as
+ * a Retry's re-draft does. A plan whose read failed on a connected system is
+ * left to the manager.
+ *
+ * @param surface - The surface that has just connected.
+ * @param now - When it connected.
+ */
+export async function redraftPlansDraftedWithout(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<void> {
+  const parked = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) =>
+      q.eq('agentId', surface.agentId).eq('state', 'plan-pending'),
+    )
+    .take(REDRAFT_SCAN);
+  for (const row of parked) {
+    const without = row.planDraftedWithout;
+    if (without?.surfaceSlug !== surface.slug || without.cause !== 'not-connected') continue;
+    if (row.decision?.decidedAt !== undefined) continue;
+    await sendBackToDrafting(ctx, row, surface, now);
+  }
+}
+
+/**
+ * Send one row back to drafting because the system its plan could not read
+ * is connected now, as a Retry's re-draft resets it: no plan, no request, no
+ * answers, and the draft scheduled in the same transaction.
+ */
+async function sendBackToDrafting(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<void> {
+  await ctx.db.patch(row._id, {
+    state: 'claimed',
+    plan: undefined,
+    planPendingAt: undefined,
+    planDraftedWithout: undefined,
+    decision: undefined,
+    managerAnswers: undefined,
+    draftClaimedAt: undefined,
+  });
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'work.plan-redrafting',
+    payload: { workItemId: row._id, surfaceId: surface._id, slug: surface.slug },
+    createdAt: now,
+  });
+  await scheduleNextStep(ctx, { ...row, state: 'claimed', plan: undefined });
+}
 
 /**
  * Why a stored plan's obligations judgement failed open, if it did.
@@ -2876,7 +2969,9 @@ function obligationsFailedOpen(plan: unknown): string | undefined {
  * plan comes back to them. So does a plan whose obligations judgement failed
  * open (`reason: 'obligations-failed-open'`): its declared reads and writes
  * stand unchecked, and the gates the switch trusts read exactly those
- * (E-70 D4). Internal; called by the drafting action and the stalled-step
+ * (E-70 D4). So does a plan drafted without its ticket or thread
+ * (`reason: 'drafted-without-record'`, P7-18): nobody read what it acts on.
+ * Internal; called by the drafting action and the stalled-step
  * sweep.
  */
 export const decidePlan = internalMutation({
@@ -2922,6 +3017,26 @@ export const decidePlan = internalMutation({
             workItemId: args.workItemId,
             reason: 'obligations-failed-open',
             failure: unchecked,
+          },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    // Nobody read what a plan drafted without its ticket or thread acts on,
+    // so the switch does not run it (P7-18); the manager may.
+    const without = row.planDraftedWithout;
+    if (without !== undefined) {
+      if (!args.recovery) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'drafted-without-record',
+            surfaceSlug: without.surfaceSlug,
+            cause: without.cause,
           },
           createdAt: Date.now(),
         });
@@ -3089,6 +3204,11 @@ export const prepareDecisionRequest = internalMutation({
       surfaceName: chat.displayName,
     };
     await ctx.db.patch(row._id, { decision });
+    await settleClosedBatchesOn(ctx, {
+      agentId: row.agentId,
+      surfaceSlug: chat.slug,
+      id: chat.managerDmChannelId,
+    });
     // The claim's dead-man's switch, in the same transaction as the claim.
     await ctx.scheduler.runAfter(
       DECISION_REQUEST_RECOVERY_MS,
@@ -3107,6 +3227,17 @@ export const prepareDecisionRequest = internalMutation({
         ...(row.replyTarget ? { replyTarget: row.replyTarget } : {}),
       },
       plan: row.plan,
+      ...(args.kind === 'plan' && row.planDraftedWithout
+        ? {
+            draftedWithout: {
+              system:
+                surfaceRows.find((surface) => surface.slug === row.planDraftedWithout?.surfaceSlug)
+                  ?.displayName ?? row.planDraftedWithout.surfaceSlug,
+              subject: row.planDraftedWithout.subject,
+              cause: row.planDraftedWithout.cause,
+            },
+          }
+        : {}),
       output: row.output,
       heldIndexes,
       refused,
@@ -3374,6 +3505,36 @@ async function settleBatchesHolding(ctx: MutationCtx, item: Doc<'workItems'>): P
 }
 
 /**
+ * Mark decided every undecided batch on a channel that has no member open any
+ * more, whatever closed its members: a decision one at a time, a request sent
+ * again under a new code, or an item that left the parked state (S2 D6). Run
+ * where a new request is claimed on the channel, so the open-batch read never
+ * fills with batches nothing can decide.
+ *
+ * @param channel - The manager DM, as its surface names it.
+ */
+async function settleClosedBatchesOn(
+  ctx: MutationCtx,
+  channel: { readonly agentId: Id<'agents'>; readonly surfaceSlug: string; readonly id: string },
+): Promise<void> {
+  const batches = await ctx.db
+    .query('decisionBatches')
+    .withIndex('by_agent_channel_decided', (q) =>
+      q
+        .eq('agentId', channel.agentId)
+        .eq('surfaceSlug', channel.surfaceSlug)
+        .eq('channel', channel.id)
+        .eq('decidedAt', undefined),
+    )
+    .order('desc')
+    .take(OPEN_BATCH_SCAN);
+  const now = Date.now();
+  for (const batch of batches) {
+    if (await batchSettled(ctx, batch)) await ctx.db.patch(batch._id, { decidedAt: now });
+  }
+}
+
+/**
  * What one manager chat channel has open, for the decision poll (Q13).
  *
  * Internal; intake's. A request is open from its claim until it is decided,
@@ -3565,8 +3726,7 @@ export const prepareRequestClose = internalMutation({
         candidate.class === 'chat' &&
         candidate.verdict === 'connected' &&
         candidate.managerDmChannelId === decision.channel &&
-        candidate.path === 'documented-api' &&
-        (candidate.toolAllowlist ?? []).includes('chat.update'),
+        canEditManagerMessage(toSurfaceRecord(candidate)),
     );
     if (!agent || !surface) return { prepared: false as const };
     const requestRunId = await appendEvent(ctx, {
@@ -3585,6 +3745,7 @@ export const prepareRequestClose = internalMutation({
       surface: toSurfaceRecord(surface),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      channel: decision.channel,
       ts: decision.ts,
       text: `${decision.requestText}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
     };

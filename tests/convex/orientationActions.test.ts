@@ -491,6 +491,57 @@ describe('orientation evidence selection', (): void => {
     ]);
   });
 
+  it('cites every page whose probe marker the browser rung rests on, since the probe reads only cited pages', (): void => {
+    const page = (ref: string, markdown: string): Doc<'docPages'> =>
+      ({
+        _id: ref,
+        _creationTime: 1,
+        sourceId: 'source-1',
+        ref,
+        title: ref,
+        markdown,
+        updatedAt: 1,
+      }) as unknown as Doc<'docPages'>;
+    const attributing = Array.from({ length: 9 }, (_, index) =>
+      page(
+        `tile-${index + 1}.md`,
+        `# Pipeline tile ${index + 1}\n\nThe Pipeline tile refreshes nightly.`,
+      ),
+    );
+    const marker = page(
+      'tile-9.md',
+      '# Pipeline tile 9\n\nThe Pipeline tile signs in at /login.\n\nProbe marker: page title `Pipeline tile`',
+    );
+    const cited = selectEvidence(
+      [...attributing.slice(0, 8), marker],
+      'Pipeline tile',
+      'pipeline-tile',
+    );
+    expect(cited).toHaveLength(8);
+    expect(cited.map((item) => item.ref)).toContain('tile-9.md');
+    // A marker on a page that only mentions the system is cited beside the attributing ones.
+    const mention = page(
+      'runbook.md',
+      '# Close runbook\n\nPipeline tile: Probe marker: after sign-in, element `Refresh`',
+    );
+    const withMention = selectEvidence(
+      [attributing[0]!, mention],
+      'Pipeline tile',
+      'pipeline-tile',
+    );
+    expect(withMention.map((item) => item.ref)).toEqual(['tile-1.md', 'runbook.md']);
+    // A marker repeated on every page is cited once per kind, within the eight.
+    const everywhere = Array.from({ length: 12 }, (_, index) =>
+      page(
+        `repeat-${index + 1}.md`,
+        `# Pipeline tile ${index + 1}\n\nThe Pipeline tile: Probe marker: page title \`Pipeline tile\``,
+      ),
+    );
+    const repeated = selectEvidence(everywhere, 'Pipeline tile', 'pipeline-tile');
+    expect(repeated).toHaveLength(8);
+    expect(repeated[0]!.ref).toBe('repeat-1.md');
+  });
+
   it('uses the whole content of a dedicated runbook', (): void => {
     const page = '# How to update Linear\n\nUse MCP.\n\nEndpoint: https://mcp.linear.app/mcp';
     expect(relevantSystemText(page, 'Linear')).toContain('https://mcp.linear.app/mcp');

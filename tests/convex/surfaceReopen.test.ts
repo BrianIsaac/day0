@@ -65,6 +65,29 @@ describe('reopenAbsent', (): void => {
     expect(events.map((event) => event.type)).toEqual(['surface.reopened']);
   });
 
+  it("records surface.reoriented when the manager's re-run re-opened it, and not when a sync did", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const byManager = await seedSurface(harness, 'absent');
+    await expect(
+      harness.mutation(internal.surfaceReopen.reopenAbsent, {
+        surfaceId: byManager,
+        charterNamesSystems: false,
+        byManager: true,
+      }),
+    ).resolves.toBe('oriented');
+    const bySync = await seedSurface(harness, 'absent');
+    await harness.mutation(internal.surfaceReopen.reopenAbsent, {
+      surfaceId: bySync,
+      charterNamesSystems: false,
+    });
+    const reoriented = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'surface.reoriented',
+      ),
+    );
+    expect(reoriented.map((event) => event.payload)).toEqual([{ surfaceId: byManager }]);
+  });
+
   it('re-opens a system the charter does not name to wait for the manager, with no orientation job (review m34)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await seedSurface(harness, 'absent');

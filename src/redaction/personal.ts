@@ -28,6 +28,22 @@ const EMAIL =
 /** A number written with its country code: `+65 9123 4567`, `+1 (415) 555-0100`. */
 const INTERNATIONAL_PHONE = /(?<![\w+])\+\d{1,3}(?:[ .-]?\(?\d{1,4}\)?){2,6}(?![\w])/g;
 
+/** A signed calendar date (`+2026-09-28`), which only looks like a country code. */
+const SIGNED_DATE = /^\+\d{4}-\d{1,2}-\d{1,2}$/;
+
+/**
+ * What marks a signed number as a figure rather than a phone: a currency code
+ * or a percent sign after it (`+1.234.567 EUR`, `+12 345 678 SGD`). A signed
+ * number with nothing beside it stays a phone, since a missed phone leaves
+ * the export and a redacted figure does not.
+ */
+const FIGURE_AFTER =
+  /^\s*(?:%|(?:AED|AUD|BRL|CAD|CHF|CNY|DKK|EUR|GBP|HKD|IDR|INR|JPY|KRW|MXN|MYR|NOK|NZD|PHP|RMB|SEK|SGD|THB|TWD|USD|VND|ZAR)\b)/;
+
+/** A value that is an endpoint, an e-mail or an IP address, which an address label may name. */
+const NETWORK_ADDRESS =
+  /^(?:[a-z][a-z0-9+.-]*:\/\/\S*|[^\s@]+@[^\s@]+|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|\[[0-9a-f:]+\](?::\d+)?)$/i;
+
 /** A number after a phone label, in either language: `Tel: 6123 4567`, `手机：13800138000`. */
 const LABELLED_PHONE =
   /(?:\b(?:phone|tel|telephone|mobile|cell|whatsapp)\b(?:\s*(?:no\.?|number))?|电话|手机|联系电话)\s*[:：]?\s*(\+?\(?\d[\d ().-]{5,}\d)/gi;
@@ -50,7 +66,9 @@ const LABELLED_BIRTH_DATE = new RegExp(
 /**
  * The rest of the line after an address label: a qualified one anywhere
  * (`home address: ...`), a bare `Address:` only where it opens a line or a
- * list item, so an e-mail, IP or endpoint address is never taken for one.
+ * list item, so an e-mail, IP or endpoint address named mid-sentence is never
+ * taken for one; a line that names one after a bare label is left to the
+ * e-mail rule or to nothing (`NETWORK_ADDRESS`).
  */
 const LABELLED_ADDRESS =
   /(?:\b(?:home|postal|mailing|residential|street|billing|delivery|shipping) address|(?:^|\n)[ \t]*(?:[-*][ \t]+)?address|地址|住址)[ \t]*[:：][ \t]*([^\n]*[^\s])/gim;
@@ -79,7 +97,9 @@ export function personalDataSpans(text: string): PersonalSpan[] {
     spans.push({ start: match.index, end: match.index + match[0].length, kind: 'email' });
   }
   for (const match of text.matchAll(INTERNATIONAL_PHONE)) {
-    if (phoneLength(match[0])) {
+    const end = match.index + match[0].length;
+    const figure = SIGNED_DATE.test(match[0]) || FIGURE_AFTER.test(text.slice(end, end + 8));
+    if (phoneLength(match[0]) && !figure) {
       spans.push({ start: match.index, end: match.index + match[0].length, kind: 'phone' });
     }
   }
@@ -90,7 +110,7 @@ export function personalDataSpans(text: string): PersonalSpan[] {
     spans.push({ ...groupSpan(match), kind: 'date-of-birth' });
   }
   for (const match of text.matchAll(LABELLED_ADDRESS)) {
-    spans.push({ ...groupSpan(match), kind: 'address' });
+    if (!NETWORK_ADDRESS.test(match[1]!)) spans.push({ ...groupSpan(match), kind: 'address' });
   }
   return spans.sort((left, right) => left.start - right.start);
 }

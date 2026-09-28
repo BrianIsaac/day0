@@ -293,6 +293,26 @@ export function managerMessageAction(
   throw new Error(`manager chat path ${surface.path ?? 'unknown'} cannot send messages`);
 }
 
+/** The Slack method that edits a message; the gate matches it by this exact name. */
+const MESSAGE_EDIT_METHOD = 'chat.update';
+
+/**
+ * Whether a surface can edit one of Day0's messages in the manager DM: a
+ * documented-API chat card with a manager DM whose allowlist names
+ * `chat.update` exactly, as the gate's allowlist check reads it.
+ */
+export function canEditManagerMessage(
+  surface: Pick<SurfaceRecord, 'class' | 'managerDmChannelId' | 'path' | 'toolAllowlist'>,
+): boolean {
+  return (
+    surface.class === 'chat' &&
+    surface.managerDmChannelId !== undefined &&
+    surface.managerDmChannelId !== '' &&
+    surface.path === 'documented-api' &&
+    (surface.toolAllowlist ?? []).includes(MESSAGE_EDIT_METHOD)
+  );
+}
+
 /**
  * Build the edit of one of Day0's own messages in the manager DM, when the
  * surface can make one: a documented API whose card allowlisted
@@ -306,16 +326,13 @@ export function managerMessageUpdateAction(
   ts: string,
   text: string,
 ): MockAction | undefined {
-  if (surface.class !== 'chat' || !surface.managerDmChannelId) return undefined;
-  if (surface.path !== 'documented-api') return undefined;
-  const updateTool = surface.toolAllowlist?.find((tool) => /^\/*chat\.update$/.test(tool));
-  if (!updateTool) return undefined;
+  if (!canEditManagerMessage(surface) || !surface.managerDmChannelId) return undefined;
   return {
     tool: 'http.request',
     args: {
       surface: surface.slug,
       method: 'POST',
-      path: updateTool,
+      path: MESSAGE_EDIT_METHOD,
       headersJson: SLACK_JSON_HEADERS,
       body: JSON.stringify({ channel: surface.managerDmChannelId, ts, text }),
     },
@@ -351,6 +368,10 @@ export function decisionRequestText(args: {
   item?: DecisionRequestItem;
   /** The set's rows the gate refused, which no decision sends. */
   refused?: ReadonlyArray<{ readonly index: number; readonly reason: string }>;
+  /** Whether Slack renders the request, so another channel reads by its Slack mention. */
+  slackMarkup?: boolean;
+  /** For a plan drafted without its ticket or thread: the system and why (P7-18). */
+  draftedWithout?: DraftedWithoutLine;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
@@ -360,6 +381,7 @@ export function decisionRequestText(args: {
   const summary: SummaryContext = {
     ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
     textLimit: PLAN_LINE_MAX_CHARS,
+    ...(args.slackMarkup ? { slackMarkup: true } : {}),
   };
   const refused =
     args.kind === 'actions'
@@ -371,7 +393,10 @@ export function decisionRequestText(args: {
   let scope: string | undefined;
   if (args.kind === 'plan') {
     listHeading = planHeading(args.plan);
-    lines = planLines(args.plan);
+    lines = [
+      ...(args.draftedWithout ? [draftedWithoutLine(args.draftedWithout)] : []),
+      ...planLines(args.plan),
+    ];
     noun = 'plan steps';
   } else {
     const actions = args.actions ?? [];
@@ -452,6 +477,9 @@ function itemLines(item: DecisionRequestItem): string[] {
 /** The most refused rows a request lists by name. */
 const REFUSED_LINES_SHOWN = 5;
 
+/** The most of a refusal's reason a request quotes; the gate's own reasons are far shorter. */
+const REFUSED_REASON_MAX_CHARS = 120;
+
 /**
  * The rows of a held set the gate refused, each with its reason: no decision
  * sends them, and a manager approving the set should know what it leaves out.
@@ -463,12 +491,15 @@ function refusedLines(
   context: SummaryContext,
 ): string[] {
   if (refused.length === 0) return [];
-  const clip = (line: string): string =>
-    line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
+  const clip = (text: string, limit: number): string =>
+    text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+  // The reason is what the manager needs from the line, so the action gives
+  // way to it within the line's length, never the other way round.
   const shown = refused.slice(0, REFUSED_LINES_SHOWN).map(({ index, reason }) => {
     const action = actions[index];
     const what = action ? summariseAction(action, surfaces, context) : `action ${index + 1}`;
-    return clip(`- ${what} (${oneLine(reason, 'refused')})`);
+    const why = ` (${clip(oneLine(reason, 'refused'), REFUSED_REASON_MAX_CHARS)})`;
+    return `- ${clip(what, PLAN_LINE_MAX_CHARS - '- '.length - why.length)}${why}`;
   });
   const more = refused.length - shown.length;
   return [
@@ -476,6 +507,26 @@ function refusedLines(
     ...shown,
     ...(more > 0 ? [`…and ${more} more refused; the full list is in day0.`] : []),
   ];
+}
+
+/** What a plan request says of a plan drafted without its ticket or thread (P7-18). */
+export interface DraftedWithoutLine {
+  /** The source system's display name. */
+  readonly system: string;
+  readonly subject: 'record' | 'thread';
+  readonly cause: 'not-connected' | 'read-failed';
+}
+
+/**
+ * The line that tells the manager a plan was drafted without what it acts
+ * on, and what approving it now means: in the request and on the card.
+ */
+export function draftedWithoutLine(without: DraftedWithoutLine): string {
+  const noun = without.subject === 'record' ? 'ticket' : 'thread';
+  const system = oneLine(without.system, 'its system');
+  return without.cause === 'not-connected'
+    ? `Drafted without reading the ${noun}: ${system} was not connected. Day0 drafts the plan again when ${system} is back; approving now runs it as drafted.`
+    : `Drafted without reading the ${noun}: the read on ${system} did not land. Approving runs it as drafted.`;
 }
 
 /** The first line of a plan request: its summary, or where to read the plan. */

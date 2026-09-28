@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
   askedFor,
+  canEditManagerMessage,
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
   decisionRequestText,
@@ -314,6 +315,19 @@ describe('manager channel decision requests', (): void => {
     ).toBeUndefined();
   });
 
+  it('can edit a manager DM message only where the gate would allow chat.update', (): void => {
+    const withEdit = { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'chat.update'] };
+    expect(canEditManagerMessage(withEdit)).toBe(true);
+    expect(canEditManagerMessage(slack)).toBe(false);
+    // The gate names the operation exactly, so a spelling it refuses edits nothing.
+    expect(canEditManagerMessage({ ...slack, toolAllowlist: ['/chat.update'] })).toBe(false);
+    expect(
+      managerMessageUpdateAction({ ...slack, toolAllowlist: ['/chat.update'] }, '1.1', 'x'),
+    ).toBeUndefined();
+    expect(canEditManagerMessage({ ...withEdit, managerDmChannelId: undefined })).toBe(false);
+    expect(canEditManagerMessage({ ...withEdit, path: 'mcp' })).toBe(false);
+  });
+
   it('parses only bounded approve and reject prefixes', (): void => {
     expect(parseDecisionReply('  APPROVE   ab3xyz  ')).toEqual({
       verb: 'approve',
@@ -468,5 +482,74 @@ describe('what a decision request says about its item (P8-6, U9 step 24)', (): v
       ].join('\n'),
     );
     expect(text.indexOf('Held actions:')).toBeLessThan(text.indexOf('Refused by'));
+  });
+
+  it('tells the manager a plan was drafted without its ticket, and what approving it means (P7-18)', (): void => {
+    const request = (cause: 'not-connected' | 'read-failed'): string[] =>
+      decisionRequestText({
+        agentName: 'ops worker',
+        title: 'Close August',
+        id: 'ab3xyz',
+        kind: 'plan',
+        plan: { summary: 'Close the month.', steps: ['Comment the figures.'] },
+        draftedWithout: { system: 'Linear', subject: 'record', cause },
+      }).split('\n');
+    expect(request('not-connected').slice(2, 4)).toEqual([
+      'Plan: Close the month.',
+      'Drafted without reading the ticket: Linear was not connected. Day0 drafts the plan again when Linear is back; approving now runs it as drafted.',
+    ]);
+    expect(request('read-failed')[3]).toBe(
+      'Drafted without reading the ticket: the read on Linear did not land. Approving runs it as drafted.',
+    );
+  });
+
+  it('names another channel by its Slack mention when Slack renders the request', (): void => {
+    const post: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close completed.' }),
+      },
+    };
+    const request = (slackMarkup: boolean): string =>
+      decisionRequestText({
+        agentName: 'ops worker',
+        title: 'Close August',
+        id: 'ab3xyz',
+        kind: 'actions',
+        actions: [post],
+        heldIndexes: [0],
+        surfaces: [slack],
+        slackMarkup,
+      });
+    expect(request(true)).toContain('1. Post to Slack channel <#C0PUBLIC>: "Close completed."');
+    expect(request(false)).toContain('1. Post to Slack channel C0PUBLIC: "Close completed."');
+  });
+
+  it('keeps the gate’s reason on a refused row whose body fills the quote', (): void => {
+    const long: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close figures. '.repeat(40) }),
+      },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [close, long],
+      heldIndexes: [0],
+      refused: [{ index: 1, reason: 'reply outside the source channel' }],
+      surfaces: [slack],
+    });
+    const line = text.split('\n').find((entry) => entry.startsWith('- Post to Slack'))!;
+    expect(line.endsWith('… (reply outside the source channel)')).toBe(true);
+    expect(line.length).toBeLessThanOrEqual(300);
   });
 });

@@ -66,6 +66,34 @@ export function resolveAppHost(shellHost: string | undefined, envText: string | 
   return fromEnvText(envText, APP_HOST_VAR) ?? DEFAULT_APP_HOST;
 }
 
+/**
+ * Next's anonymous usage report switch for a server this product starts: off
+ * unless the shell sets it (C-34), since a local run reports nothing it was
+ * not asked to. `next dev` is the one command of ours that reports while it
+ * runs; the gate's build takes the switch from the workflow.
+ *
+ * @param shell - The environment the operator ran the command from.
+ */
+export function nextTelemetrySetting(shell: Readonly<Record<string, string | undefined>>): {
+  NEXT_TELEMETRY_DISABLED: string;
+} {
+  return { NEXT_TELEMETRY_DISABLED: shell.NEXT_TELEMETRY_DISABLED ?? '1' };
+}
+
+/**
+ * The environment `next dev` runs with: the shell's, the chosen port, and
+ * Next's telemetry off unless the shell says otherwise.
+ *
+ * @param shell - The environment the operator ran `pnpm dev` from.
+ * @param port - The port the server binds.
+ */
+export function devServerEnvironment<Shell extends Readonly<Record<string, string | undefined>>>(
+  shell: Shell,
+  port: string,
+): Shell & { PORT: string; NEXT_TELEMETRY_DISABLED: string } {
+  return { ...shell, PORT: port, ...nextTelemetrySetting(shell) };
+}
+
 function main(): void {
   const envText = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : undefined;
   const port = resolveAppPort(process.env.PORT, envText);
@@ -79,7 +107,7 @@ function main(): void {
   }
   const server = spawn('next', ['dev', '-H', host, '-p', port], {
     stdio: 'inherit',
-    env: { ...process.env, PORT: port },
+    env: devServerEnvironment(process.env, port),
   });
   // Ctrl-C reaches both processes as the foreground group; this one only
   // waits for the server and reports its exit.

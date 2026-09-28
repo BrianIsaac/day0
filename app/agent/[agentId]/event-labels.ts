@@ -1,5 +1,10 @@
 import type { Doc } from '@convex/_generated/dataModel';
-import { isEventType, type EventPayloads, type EventType } from '@/events/contract';
+import {
+  isEventType,
+  type EventPayloads,
+  type EventType,
+  type WorkPlanHeldPayload,
+} from '@/events/contract';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -96,6 +101,21 @@ function modelCallLabel(payload: Read<'work.model-call'>): string {
  * here fails the typecheck (review m37): the feed never falls back to a raw
  * type string for an event Day0 writes today.
  */
+/** Why a held plan waits, in the manager's words, by the hold's reason. */
+const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: string } = {
+  'skip-overruled': 'you waived the skip',
+  'plan-rejected-for-this-item': "a colleague's plan for this ticket was rejected",
+  'obligations-failed-open': 'its reads and writes could not be checked',
+  'drafted-without-record': 'it was drafted without reading its ticket or thread',
+};
+
+/** Why a held plan waits, or a plain line for a reason this build does not know. */
+function planHeldWords(reason: unknown): string {
+  return typeof reason === 'string' && Object.hasOwn(PLAN_HELD_WORDS, reason)
+    ? PLAN_HELD_WORDS[reason as WorkPlanHeldPayload['reason']]
+    : 'it waits for your decision';
+}
+
 const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'agent.deployed': (payload) =>
     `deployed, reporting to ${text(payload.bossEmail) ?? 'the manager'}${
@@ -297,6 +317,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `checked for new work${counted(payload.surfaceIds?.length, 'surface') ? ` on ${counted(payload.surfaceIds?.length, 'surface')}` : ''}`,
   'work.plan-grounding-read': 'plan read what it rests on',
   'work.plan-drafted': 'plan drafted',
+  'work.plan-redrafting': (payload) =>
+    `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
   'work.corrections-applied': (payload) =>
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
   'work.corrections-redaction-limited': 'kept corrections read with limited redaction',
@@ -305,10 +327,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>
     `execution restarted after it failed outside the item${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}${typeof payload.reason === 'string' && payload.reason !== '' ? `: ${payload.reason}` : ''}`,
-  'work.plan-held': (payload) =>
-    payload.reason === 'plan-rejected-for-this-item'
-      ? "plan held for you: a colleague's plan for this ticket was rejected"
-      : 'plan held for you: you waived the skip',
+  'work.plan-held': (payload) => `plan held for you: ${planHeldWords(payload.reason)}`,
   'work.plan-approved': (payload) =>
     payload.by === 'autonomous'
       ? 'plan approved under autonomous actions'
