@@ -1,13 +1,21 @@
 /** @vitest-environment node */
 
+import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS } from '../../scripts/releases';
 import { avatarById } from '../../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../../src/docs/types';
+import {
+  CREDENTIAL_KEY_CHANGED_MESSAGE,
+  credentialKeyId,
+  credentialOwnerBinding,
+  encrypt,
+  sealForOwner,
+} from '../../src/lib/credential-crypto';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -51,8 +59,17 @@ async function runAll(harness: Harness): Promise<void> {
   expect(result.pending).toEqual([]);
 }
 
+afterEach((): void => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
 describe('the upgrade migrations', (): void => {
   it('clears a revokedAt the sync stamped when it superseded a credential, and keeps a person’s earlier revoke', async (): Promise<void> => {
+    // Stored values mean a deployment key; the re-seal logs these unreadable
+    // placeholders and leaves them as they are.
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
     const harness = limitedHarness();
     const sourceId = await source(harness, 'owner');
     const { syncStamped, personRevoked, active } = await harness.run(async (ctx) => {
@@ -544,5 +561,243 @@ describe('the release stamp', (): void => {
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
+  });
+});
+
+/** One stored credential row, sealed as the release named in `shape` would have sealed it. */
+async function sealedRow(
+  harness: Harness,
+  row: {
+    userId: string;
+    plaintext: string;
+    key: string;
+    shape: 'unbound' | 'bound' | 'keyed' | 'purged';
+  },
+): Promise<Id<'credentials'>> {
+  const sealed =
+    row.shape === 'unbound'
+      ? encrypt(row.plaintext, row.key)
+      : row.shape === 'bound'
+        ? encrypt(row.plaintext, row.key, credentialOwnerBinding(row.userId))
+        : row.shape === 'keyed'
+          ? sealForOwner(row.plaintext, { current: row.key }, row.userId)
+          : {};
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('credentials', {
+        userId: row.userId,
+        kind: 'value',
+        label: `${row.shape} value`,
+        source: 'entered',
+        createdAt: 1,
+        ...sealed,
+        ...(row.shape === 'purged' ? { revokedAt: 2 } : {}),
+      }),
+  );
+}
+
+/** The re-seal migration's row in `migrations:status`. */
+async function resealStatus(harness: Harness): Promise<Record<string, unknown> | undefined> {
+  return (await harness.query(internal.migrations.status, {})).migrations.find(
+    (row) => row.name === 'credentials-reseal',
+  ) as Record<string, unknown> | undefined;
+}
+
+/** Run one page of the re-seal the way `runPending` does: start, page, record. */
+async function resealOnePage(harness: Harness): Promise<void> {
+  const start = await harness.query(internal.migrations.migrationStart, {
+    name: 'credentials-reseal',
+  });
+  const page = await harness.action(internal.credentialCryptoActions.resealPage, {
+    cursor: start.cursor,
+  });
+  await harness.mutation(internal.migrations.recordActionPage, {
+    name: 'credentials-reseal',
+    fromCursor: start.cursor,
+    page: { read: page.read, changed: page.changed, cursor: page.cursor, isDone: page.isDone },
+  });
+}
+
+describe('the credential re-seal (Q15, step 14)', (): void => {
+  const KEY = randomBytes(32).toString('base64');
+  const LOST_KEY = randomBytes(32).toString('base64');
+
+  /**
+   * A bed-shaped table: three owners' rows in every shape an upgraded volume
+   * holds, 120 in all, so the re-seal takes three pages.
+   */
+  async function bed(harness: Harness): Promise<{
+    unbound: Id<'credentials'>[];
+    bound: Id<'credentials'>[];
+    keyed: Id<'credentials'>[];
+    purged: Id<'credentials'>[];
+    unreadable: Id<'credentials'>[];
+  }> {
+    // Rows needing no change first, so the unbound ones sit in the last page.
+    const shapes = { keyed: 30, purged: 5, unreadable: 5, bound: 40, unbound: 40 } as const;
+    const made = { unbound: [], bound: [], keyed: [], purged: [], unreadable: [] } as Record<
+      keyof typeof shapes,
+      Id<'credentials'>[]
+    >;
+    for (const [shape, count] of Object.entries(shapes) as Array<[keyof typeof shapes, number]>) {
+      for (let index = 0; index < count; index += 1) {
+        made[shape].push(
+          await sealedRow(harness, {
+            userId: `owner-${index % 3}`,
+            plaintext: `${shape}-value-${index}`,
+            key: shape === 'unreadable' ? LOST_KEY : KEY,
+            shape: shape === 'unreadable' ? 'bound' : shape,
+          }),
+        );
+      }
+    }
+    return made;
+  }
+
+  it('runs in pages on the runner, says how many rows remain, and binds every value it can open to its owner under the current key', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const harness = limitedHarness();
+    const rows = await bed(harness);
+
+    expect(await resealStatus(harness)).toMatchObject({ release: '0.6.0', remaining: 85 });
+    await resealOnePage(harness);
+    const partway = await resealStatus(harness);
+    expect(partway).toMatchObject({ read: 50 });
+    expect(partway?.completedAt).toBeUndefined();
+    expect(partway?.remaining).toBeLessThan(85);
+    expect(partway?.remaining).toBeGreaterThan(5);
+
+    await runAll(harness);
+
+    expect(await resealStatus(harness)).toMatchObject({
+      read: 120,
+      changed: 80,
+      remaining: 5,
+    });
+    const keyId = credentialKeyId(KEY);
+    for (const id of [...rows.unbound, ...rows.bound, ...rows.keyed]) {
+      const row = await harness.run(async (ctx) => await ctx.db.get(id));
+      expect(row?.keyId).toBe(keyId);
+      await expect(
+        harness.action(internal.credentials.decrypt, { credentialId: id }),
+      ).resolves.toMatch(/-value-/);
+    }
+    for (const id of rows.purged) {
+      expect((await harness.run(async (ctx) => await ctx.db.get(id)))?.keyId).toBeUndefined();
+    }
+  });
+
+  it('keeps opening a row sealed before binding while the re-seal is part-way, and refuses an unbound value once it has finished', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const harness = limitedHarness();
+    const rows = await bed(harness);
+    const last = rows.unbound[rows.unbound.length - 1];
+
+    await resealOnePage(harness);
+    // The page has not reached this row, and the checks are not on yet.
+    expect((await harness.run(async (ctx) => await ctx.db.get(last)))?.keyId).toBeUndefined();
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: last }),
+    ).resolves.toBe(`unbound-value-${rows.unbound.length - 1}`);
+
+    await runAll(harness);
+    // An unbound value put on a row after the re-seal finished opens nowhere.
+    const planted = await sealedRow(harness, {
+      userId: 'owner-0',
+      plaintext: 'planted-value',
+      key: KEY,
+      shape: 'unbound',
+    });
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: planted }),
+    ).rejects.toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
+    await expect(
+      harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner-0' }),
+    ).resolves.not.toContain('planted-value');
+  });
+
+  it('logs by id each row the key cannot open, leaves it as it was, and still finishes', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const harness = limitedHarness();
+    const rows = await bed(harness);
+    const before = await harness.run(
+      async (ctx) => await Promise.all(rows.unreadable.map(async (id) => await ctx.db.get(id))),
+    );
+
+    await runAll(harness);
+
+    const after = await harness.run(
+      async (ctx) => await Promise.all(rows.unreadable.map(async (id) => await ctx.db.get(id))),
+    );
+    expect(after.map((row) => row?.ciphertext)).toEqual(before.map((row) => row?.ciphertext));
+    expect(after.every((row) => row?.keyId === undefined)).toBe(true);
+    const lines = log.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    const logged = lines
+      .filter((line) => line.reason === CREDENTIAL_KEY_CHANGED_MESSAGE)
+      .flatMap((line) => line.credentialIds as string[]);
+    expect(logged.sort()).toEqual([...rows.unreadable].sort());
+    expect(JSON.stringify(lines)).not.toMatch(/-value-/);
+    expect((await resealStatus(harness))?.completedAt).toBeDefined();
+  });
+
+  it('finishes with no key on a deployment that stores no value', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await sealedRow(harness, { userId: 'owner', plaintext: '', key: KEY, shape: 'purged' });
+    await runAll(harness);
+    expect(await resealStatus(harness)).toMatchObject({ read: 1, changed: 0, remaining: 0 });
+  });
+
+  it('records a page once when two runners reach it together', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const harness = limitedHarness();
+    await bed(harness);
+    const page = { read: 50, changed: 20, cursor: 'next', isDone: false };
+
+    await harness.mutation(internal.migrations.recordActionPage, {
+      name: 'credentials-reseal',
+      fromCursor: null,
+      page,
+    });
+    await harness.mutation(internal.migrations.recordActionPage, {
+      name: 'credentials-reseal',
+      fromCursor: null,
+      page,
+    });
+
+    expect(await resealStatus(harness)).toMatchObject({ read: 50, changed: 20 });
+  });
+
+  it('leaves a row a sync rewrote while the page was sealing it', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const harness = limitedHarness();
+    const id = await sealedRow(harness, {
+      userId: 'owner',
+      plaintext: 'old-value',
+      key: KEY,
+      shape: 'unbound',
+    });
+    const opened = await harness.run(async (ctx) => await ctx.db.get(id));
+    const rewritten = sealForOwner('new-value', { current: KEY }, 'owner');
+    await harness.run(async (ctx) => await ctx.db.patch(id, rewritten));
+
+    const applied = await harness.mutation(internal.credentials.applyReseal, {
+      rows: [
+        {
+          credentialId: id,
+          fromCiphertext: opened?.ciphertext ?? '',
+          ...sealForOwner('old-value', { current: KEY }, 'owner'),
+        },
+      ],
+    });
+
+    expect(applied).toBe(0);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId: id })).resolves.toBe(
+      'new-value',
+    );
   });
 });

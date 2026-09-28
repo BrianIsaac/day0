@@ -575,9 +575,13 @@ describe('associated data on the owner-bound paths', (): void => {
     await expect(
       harness.action(internal.credentialCryptoActions.open, { ...sealed, userId: 'neighbour' }),
     ).rejects.toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
-    await expect(harness.action(internal.credentialCryptoActions.open, sealed)).rejects.toThrow(
-      CREDENTIAL_KEY_CHANGED_MESSAGE,
-    );
+    await expect(
+      harness.action(internal.credentialCryptoActions.open, {
+        ...sealed,
+        userId: 'owner',
+        keyId: '0000000000000000',
+      }),
+    ).rejects.toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
   });
 
   it('opens an owner-bound row for exact removal and skips ciphertext copied from another owner', async (): Promise<void> => {
@@ -613,16 +617,16 @@ describe('associated data on the owner-bound paths', (): void => {
     expect(JSON.stringify(lines)).not.toContain('neighbour-bound-value');
   });
 
-  it('logs how many rows the key could not open instead of shrinking exact removal silently', async (): Promise<void> => {
+  it('logs each row the key could not open, by id, instead of shrinking exact removal silently', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await insertRow(harness, { userId: 'owner', label: 'Current', plaintext: 'current-value' });
-    await insertRow(harness, {
+    const rotatedOne = await insertRow(harness, {
       userId: 'owner',
       label: 'Rotated one',
       plaintext: 'rotated-one',
       key: OTHER_KEY,
     });
-    await insertRow(harness, {
+    const rotatedTwo = await insertRow(harness, {
       userId: 'owner',
       label: 'Rotated two',
       plaintext: 'rotated-two',
@@ -641,10 +645,22 @@ describe('associated data on the owner-bound paths', (): void => {
       expect.objectContaining({
         level: 'warn',
         skipped: 2,
+        credentialIds: [rotatedOne, rotatedTwo],
         reason: CREDENTIAL_KEY_CHANGED_MESSAGE,
       }),
     );
     expect(JSON.stringify(lines)).not.toMatch(/rotated-one|rotated-two/);
+  });
+
+  it('gives the one "the credential key changed" message as the guard reason for a row the key cannot open (U14 carried item 1)', (): void => {
+    const sealed = encrypt('chat:write', OTHER_KEY, credentialOwnerBinding('owner'));
+    expect(
+      cryptoActions.storedCredentialGuardReason({
+        ...sealed,
+        userId: 'owner',
+        label: 'slack credential',
+      }),
+    ).toBe(CREDENTIAL_KEY_CHANGED_MESSAGE);
   });
 
   it('reads the guard reason of a row bound to its owner', (): void => {

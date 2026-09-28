@@ -2,10 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
+  credentialKeyId,
   credentialOwnerBinding,
   decrypt,
   encrypt,
   openOwnedCredential,
+  sealForOwner,
 } from '../../../src/lib/credential-crypto';
 
 /** Generate one valid AES-256 key for a test case. */
@@ -98,29 +100,97 @@ describe('credential crypto associated data', (): void => {
   });
 
   it('binds a value to its owner so ciphertext moved to another owner does not open', (): void => {
-    const credentialKey = key();
-    const sealed = encrypt(
-      'local test credential',
-      credentialKey,
-      credentialOwnerBinding('owner-a'),
-    );
-    expect(() => openOwnedCredential(sealed, credentialKey, 'owner-b')).toThrow(
-      'Credential decryption failed',
-    );
-    expect(openOwnedCredential(sealed, credentialKey, 'owner-a')).toBe('local test credential');
+    const keyring = { current: key() };
+    const sealed = sealForOwner('local test credential', keyring, 'owner-a');
+    expect(() =>
+      openOwnedCredential({ ...sealed, userId: 'owner-b' }, keyring, { allowUnbound: true }),
+    ).toThrow('Credential decryption failed');
+    expect(
+      openOwnedCredential({ ...sealed, userId: 'owner-a' }, keyring, { allowUnbound: false }),
+    ).toBe('local test credential');
   });
 
-  it('still opens a value sealed before associated data existed', (): void => {
-    const credentialKey = key();
-    const legacy = encrypt('local test credential', credentialKey);
-    expect(openOwnedCredential(legacy, credentialKey, 'owner-a')).toBe('local test credential');
+  it('still opens a value sealed before associated data existed, until the re-seal has bound every row', (): void => {
+    const keyring = { current: key() };
+    const legacy = { ...encrypt('local test credential', keyring.current), userId: 'owner-a' };
+    expect(openOwnedCredential(legacy, keyring, { allowUnbound: true })).toBe(
+      'local test credential',
+    );
+    expect(() => openOwnedCredential(legacy, keyring, { allowUnbound: false })).toThrow(
+      CREDENTIAL_KEY_CHANGED_MESSAGE,
+    );
+  });
+
+  it('never opens a keyed row unbound, even while legacy rows may still open that way', (): void => {
+    const keyring = { current: key() };
+    const unbound = encrypt('local test credential', keyring.current);
+    expect(() =>
+      openOwnedCredential(
+        { ...unbound, userId: 'owner-a', keyId: credentialKeyId(keyring.current) },
+        keyring,
+        { allowUnbound: true },
+      ),
+    ).toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
   });
 
   it('says the credential key changed when the key cannot open a value', (): void => {
-    const sealed = encrypt('local test credential', key(), credentialOwnerBinding('owner-a'));
-    expect(() => openOwnedCredential(sealed, key(), 'owner-a')).toThrow(
-      CREDENTIAL_KEY_CHANGED_MESSAGE,
-    );
+    const sealed = sealForOwner('local test credential', { current: key() }, 'owner-a');
+    expect(() =>
+      openOwnedCredential(
+        { ...sealed, userId: 'owner-a' },
+        { current: key() },
+        {
+          allowUnbound: true,
+        },
+      ),
+    ).toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
     expect(CREDENTIAL_KEY_CHANGED_MESSAGE).toMatch(/credential key changed/);
+  });
+});
+
+describe('credential key ids and the keyring', (): void => {
+  it('names a key by a stable id that is not the key and differs between keys', (): void => {
+    const first = key();
+    const id = credentialKeyId(first);
+    expect(id).toMatch(/^[0-9a-f]{16}$/);
+    expect(credentialKeyId(first)).toBe(id);
+    expect(credentialKeyId(key())).not.toBe(id);
+    expect(first).not.toContain(id);
+  });
+
+  it('seals under the current key and writes its id', (): void => {
+    const keyring = { current: key(), previous: key() };
+    const sealed = sealForOwner('local test credential', keyring, 'owner-a');
+    expect(sealed.keyId).toBe(credentialKeyId(keyring.current));
+    expect(decrypt(sealed, keyring.current, credentialOwnerBinding('owner-a'))).toBe(
+      'local test credential',
+    );
+  });
+
+  it('opens a row sealed under the previous key while a rotation is under way, and not after', (): void => {
+    const old = key();
+    const sealed = {
+      ...sealForOwner('local test credential', { current: old }, 'owner-a'),
+      userId: 'owner-a',
+    };
+    const rotating = { current: key(), previous: old };
+    expect(openOwnedCredential(sealed, rotating, { allowUnbound: false })).toBe(
+      'local test credential',
+    );
+    expect(() =>
+      openOwnedCredential(sealed, { current: rotating.current }, { allowUnbound: false }),
+    ).toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
+  });
+
+  it('opens a legacy row sealed under the previous key, bound or not, while unbound rows may open', (): void => {
+    const old = key();
+    const rotating = { current: key(), previous: old };
+    const unbound = { ...encrypt('unbound value', old), userId: 'owner-a' };
+    const bound = {
+      ...encrypt('bound value', old, credentialOwnerBinding('owner-a')),
+      userId: 'owner-a',
+    };
+    expect(openOwnedCredential(unbound, rotating, { allowUnbound: true })).toBe('unbound value');
+    expect(openOwnedCredential(bound, rotating, { allowUnbound: true })).toBe('bound value');
   });
 });
