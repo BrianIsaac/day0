@@ -50,11 +50,11 @@ export default function WalkthroughPage() {
   return (
     <PageMotion className="flex flex-1 flex-col">
       <section className="pb-6 pt-9 md:pt-[72px]">
-        <div className={`${WRAP} max-w-3xl`}>
+        <div className={WRAP}>
           <h1
             data-rise=""
             style={rise(0)}
-            className="text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-balance"
+            className="max-w-[22ch] text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-balance"
           >
             {WALKTHROUGH.heading}
           </h1>

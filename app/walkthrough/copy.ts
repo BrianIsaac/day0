@@ -13,7 +13,7 @@ export const WALKTHROUGH = {
     `A single run of real mode, start to finish, on ${dayLabel(run.runOn)}: a fresh clone, a ` +
     "hosted model, the author's own Linear and Slack workspaces, and the synthetic Looker-style " +
     'tile the repository ships. One person acted as both the manager and the IT approver. Every ' +
-    'capture is the day0 dashboard as it was.',
+    'capture is the Day0 dashboard as it was.',
   readOnly:
     'This page replays a recording. Nothing here is live: no employee is created, no work is ' +
     'claimed, and no approval on this page can be given or taken back.',
@@ -36,7 +36,7 @@ export const WALKTHROUGH = {
   tryHeading: 'Try it yourself',
   hosted: {
     title: 'The hosted mock office',
-    body: 'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system.',
+    body: 'Sign in, name an employee and hold its one-to-one yourself, in the seeded, synthetic office.',
   },
   local: {
     title: 'Run it on your own machine',

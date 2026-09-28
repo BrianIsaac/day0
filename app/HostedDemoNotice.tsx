@@ -9,7 +9,7 @@ export function HostedDemoNotice() {
   return (
     <div
       role="note"
-      className="grid gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3.5 text-sm leading-relaxed text-[var(--color-muted)]"
+      className="grid gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3.5 text-sm leading-relaxed text-[var(--color-muted)]"
     >
       <strong className="font-semibold text-[var(--color-fg)]">{HOSTED_DEMO_NOTICE.heading}</strong>
       {HOSTED_DEMO_NOTICE.paragraphs.map((paragraph) => (
