@@ -2199,7 +2199,10 @@ export function RegisteredSkillsPanel({
               {s.sourceType === 'agent-authored' ? (
                 <button
                   type="button"
-                  onClick={(event) => void reauthor(s._id, s.name, true, event.currentTarget)}
+                  onClick={(event) => {
+                    // reauthor files every outcome as the attempt and never rejects.
+                    void reauthor(s._id, s.name, true, event.currentTarget);
+                  }}
                   disabled={retrying === s._id}
                   title={REVISE_HINT}
                   aria-label={`Revise ${s.name}`}
@@ -2261,7 +2264,10 @@ export function RegisteredSkillsPanel({
                   </div>
                   <button
                     type="button"
-                    onClick={(event) => void reauthor(s._id, s.name, false, event.currentTarget)}
+                    onClick={(event) => {
+                      // reauthor files every outcome as the attempt and never rejects.
+                      void reauthor(s._id, s.name, false, event.currentTarget);
+                    }}
                     disabled={retrying === s._id}
                     title={retryVerifiesSavedDraft(s) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT}
                     aria-label={`Retry ${s.name}`}
