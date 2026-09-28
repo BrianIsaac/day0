@@ -1333,6 +1333,35 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
   expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(surface);
 });
 
+it("reads one surface's own pages for its probe, the ones its card cites, and no other (D D3)", async () => {
+  useSurfaceMode('real');
+  const harness = convexTest(schema, allConvexModules());
+  const { sourceId, agentId } = await seedSyncedSource(harness);
+  const surfaceId = await harness.run(async (ctx) => {
+    for (const ref of ['tile.md', 'unrelated.md']) {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref,
+        title: ref,
+        markdown: `# ${ref}`,
+        updatedAt: 1,
+      });
+    }
+    return await ctx.db.insert('surfaces', {
+      agentId,
+      slug: 'tile',
+      displayName: 'Tile',
+      class: 'analytics',
+      verdict: 'approved',
+      whereFound: [{ sourceId, ref: 'tile.md', quote: 'Tile' }],
+      credentialLanded: false,
+      createdAt: 1,
+    });
+  });
+  const pages = await harness.query(internal.docSources.cardPagesForSurface, { surfaceId });
+  expect(pages.map((page) => page.ref)).toEqual(['tile.md']);
+});
+
 it('leaves a credential an earlier sync superseded alone, and counts only what this sync superseded', async () => {
   useSurfaceMode('real');
   const harness = convexTest(schema, allConvexModules());
