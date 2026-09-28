@@ -219,6 +219,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     const cards = counted(payload.surfaceIds?.length, 'card');
     return `credential${label ? ` "${label}"` : ''} no longer in the documentation${page ? ` (${page})` : ''}${cards ? `; land one again on ${cards}` : ''}`;
   },
+  'surface.reoriented': 'orientation run again at the manager’s request',
   'surface.app-installed': 'app installed by the administrator',
   'surface.probe-failed': (payload) =>
     `connection check failed${payload.verdict === 'listed-dead' ? ', no route left' : ''}${because(payload.reason)}`,

@@ -2042,6 +2042,13 @@ describe('orientation run', (): void => {
       scheduled: 1,
     });
     expect(await pending()).toBe(1);
+    // Only the manager's re-run is in the feed, once per surface it placed a
+    // job for: charter approval's run and a re-run that placed none are not.
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+        .filter((event): boolean => event.type === 'surface.reoriented')
+        .map((event) => event.payload),
+    ).toEqual([{ surfaceId: oriented.linear._id }]);
   });
 
   it('lets the owner re-run orientation for declared surfaces in real mode', async (): Promise<void> => {

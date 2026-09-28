@@ -1709,7 +1709,8 @@ export const orientOne = internalAction({
  *
  * @param absent - The agent's `absent` surfaces.
  * @param charterNamesSystems - Whether the employee's approved charter names any work system.
- * @param syncedSourceId - The source whose completed sync prompted the pass, if one did.
+ * @param options - The source whose completed sync prompted the pass, if one did, and whether
+ *   the manager's re-run asked for it, which records each orientation it places.
  * @returns How many surfaces were re-opened, and how many of them were given an orientation job.
  */
 async function reopenDocumentedAbsences(
@@ -1717,8 +1718,9 @@ async function reopenDocumentedAbsences(
   agentId: Id<'agents'>,
   absent: readonly Doc<'surfaces'>[],
   charterNamesSystems: boolean,
-  syncedSourceId?: Id<'docSources'>,
+  options: { readonly syncedSourceId?: Id<'docSources'>; readonly byManager?: boolean } = {},
 ): Promise<ReopenedAbsences> {
+  const { syncedSourceId } = options;
   const reopened: ReopenedAbsences = { reopened: 0, oriented: 0 };
   if (absent.length === 0) return reopened;
   const sources: Doc<'docSources'>[] = await ctx.runQuery(
@@ -1753,6 +1755,7 @@ async function reopenDocumentedAbsences(
     const outcome: ReopenOutcome = await ctx.runMutation(internal.surfaceReopen.reopenAbsent, {
       surfaceId: surface._id,
       charterNamesSystems,
+      ...(options.byManager === true ? { byManager: true } : {}),
     });
     if (outcome !== 'not-absent') reopened.reopened += 1;
     if (outcome === 'oriented') reopened.oriented += 1;
@@ -1862,7 +1865,7 @@ export const reorientAbsent = internalAction({
           await charterNamesSystemsFor(ctx, agent._id),
           // A page the sync removed may have held the only denial of a system
           // another source names, so every source can have changed the absence.
-          (args.pagesRemoved ?? 0) > 0 ? undefined : args.sourceId,
+          (args.pagesRemoved ?? 0) > 0 ? {} : { syncedSourceId: args.sourceId },
         )
       ).reopened;
     }
@@ -1878,23 +1881,27 @@ export const reorientAbsent = internalAction({
  *
  * Args:
  *   agentId: Agent whose declared systems should be oriented.
+ *   byManager: The manager's re-run asked for it (`surfaces.reorient`), so
+ *     each orientation it places is recorded as `surface.reoriented`.
  *
  * Returns:
  *   Number of per-surface actions placed on the scheduler.
  */
 export const run = internalAction({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.id('agents'), byManager: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<{ scheduled: number }> => {
     const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
       internal.orientationData.surfacesForAgent,
-      args,
+      { agentId: args.agentId },
     );
     const namesSystems = await charterNamesSystemsFor(ctx, args.agentId);
+    const byManager = args.byManager === true ? { byManager: true } : {};
     const { oriented } = await reopenDocumentedAbsences(
       ctx,
       args.agentId,
       absentSurfaces(surfaces),
       namesSystems,
+      byManager,
     );
     // A system the charter does not name waits for the manager's Propose;
     // scheduling it here would only be a job that decides to do nothing.
@@ -1906,6 +1913,7 @@ export const run = internalAction({
     for (const surface of declared) {
       const claimed: boolean = await ctx.runMutation(internal.surfaces.scheduleOrientation, {
         surfaceId: surface._id,
+        ...byManager,
       });
       if (claimed) scheduled += 1;
     }

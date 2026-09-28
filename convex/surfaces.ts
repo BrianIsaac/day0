@@ -595,13 +595,31 @@ export const markAbsent = internalMutation({
  * only the surface id crosses the scheduler boundary.
  */
 export const scheduleOrientation = internalMutation({
-  args: { surfaceId: v.id('surfaces') },
+  args: { surfaceId: v.id('surfaces'), byManager: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) return false;
-    return await scheduleOrientationFor(ctx, surface);
+    const placed = await scheduleOrientationFor(ctx, surface);
+    if (placed && args.byManager === true) await recordReoriented(ctx, surface);
+    return placed;
   },
 });
+
+/**
+ * Record that the manager's re-run placed orientation for a surface, in the
+ * transaction that placed it; charter approval's run writes nothing here.
+ */
+export async function recordReoriented(
+  ctx: MutationCtx,
+  surface: Pick<Doc<'surfaces'>, '_id' | 'agentId'>,
+): Promise<void> {
+  await appendEvent(ctx, {
+    agentId: surface.agentId,
+    type: 'surface.reoriented',
+    payload: { surfaceId: surface._id },
+    createdAt: Date.now(),
+  });
+}
 
 /**
  * Schedule orientation for one declared surface unless a job is already on it.
@@ -2294,6 +2312,9 @@ export const reorient = action({
   handler: async (ctx, args): Promise<{ scheduled: number }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
     assertRealMode('Surface orientation');
-    return await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
+    return await ctx.runAction(internal.orientationActions.run, {
+      agentId: args.agentId,
+      byManager: true,
+    });
   },
 });

@@ -496,6 +496,9 @@ export interface CredentialSupersededPayload {
   readonly surfaceIds: readonly SurfaceId[];
 }
 
+/** The payload of `surface.reoriented`: orientation the manager's re-run placed for one surface. */
+export type SurfaceReorientedPayload = SurfaceNamed;
+
 /** The payload of `surface.app-installed`. */
 export interface SurfaceAppInstalledPayload extends SurfaceNamed {
   readonly appId?: string;
@@ -1056,6 +1059,7 @@ export interface EventPayloads {
   'surface.install-failed': SurfaceInstallFailedPayload;
   'surface.shared-credential-retired': SurfaceSharedCredentialRetiredPayload;
   'credential.superseded': CredentialSupersededPayload;
+  'surface.reoriented': SurfaceReorientedPayload;
   'surface.app-installed': SurfaceAppInstalledPayload;
   'surface.probe-failed': SurfaceProbeFailedPayload;
   'surface.probe-retried': SurfaceProbeRetriedPayload;
@@ -1198,6 +1202,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.install-failed',
   'surface.shared-credential-retired',
   'credential.superseded',
+  'surface.reoriented',
   'surface.app-installed',
   'surface.probe-failed',
   'surface.probe-retried',
