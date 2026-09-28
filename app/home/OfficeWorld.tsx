@@ -110,8 +110,8 @@ type OfficeStyle = CSSProperties & {
  */
 const FIGURE_EDGE_INSET = '4.5rem';
 
-/** Half the widest desk: a desk's centre keeps this far from the box's edge, so none is cut off. */
-const DESK_EDGE_INSET = '3rem';
+/** Half the widest desk and the office's frame: a desk's centre keeps this far from the box's edge. */
+const DESK_EDGE_INSET = '3.5rem';
 
 /** The fewest desks a phone draws (UX 12, v3 option c): the ones the first four employees take. */
 const PHONE_DESK_MINIMUM = 4;

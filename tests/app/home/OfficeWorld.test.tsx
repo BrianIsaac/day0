@@ -103,6 +103,6 @@ describe('OfficeWorld', (): void => {
 
   it('keeps every desk inside the office at a phone’s width', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[]} />);
-    expect(html).toContain('left:clamp(3rem, 86%, calc(100% - 3rem))');
+    expect(html).toContain('left:clamp(3.5rem, 86%, calc(100% - 3.5rem))');
   });
 });
