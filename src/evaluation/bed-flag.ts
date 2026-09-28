@@ -4,8 +4,9 @@
  * The harness and the baseline arm seed rows, approve stub charters and spend
  * model calls on the deployment owner's keys, so a deployment serves them
  * only when its environment names the evaluation bed it is (decision N9). The
- * hosted demo never sets it; a bed sets it with
- * `npx convex env set DAY0_EVALUATION_BED <bed name>`.
+ * hosted demo never sets it; a bed names itself in `.env.local`
+ * (`DAY0_EVALUATION_BED=<bed name>`) and `pnpm sync:env` pushes it, and
+ * removes it from a deployment whose file no longer names one.
  */
 export const EVALUATION_BED_FLAG = 'DAY0_EVALUATION_BED';
 
@@ -32,6 +33,6 @@ export function evaluationBedName(
 export function evaluationBedRefusal(what: string): string {
   return (
     `${what} runs only on an evaluation bed: this deployment does not set ${EVALUATION_BED_FLAG}. ` +
-    `On a bed, run \`npx convex env set ${EVALUATION_BED_FLAG} <bed name>\` first.`
+    `On a bed, set ${EVALUATION_BED_FLAG}=<bed name> in .env.local and run \`pnpm sync:env\` first.`
   );
 }

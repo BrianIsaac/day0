@@ -145,7 +145,7 @@ pnpm eval:revocation         # a grant revoked while an action is queued
 pnpm eval:gate               # the exact-action gate matrix, no model
 ```
 
-The deployment must also name itself an evaluation bed: `npx convex env set DAY0_EVALUATION_BED <bed name>`. Without it the harness and the baseline arm refuse every call, so a hosted or production deployment can never be driven by them (their model calls run on the deployment owner's keys).
+The deployment must also name itself an evaluation bed: `DAY0_EVALUATION_BED=<bed name>` in `.env.local`, pushed by `pnpm sync:env` (which removes it again from a deployment whose file names no bed, so a `convex env set` by hand would not survive the next sync). Without it the harness and the baseline arm refuse every call, so a hosted or production deployment can never be driven by them (their model calls run on the deployment owner's keys).
 
 Each run writes a new timestamped directory under `evaluation/results/`. The directories that are already there are **frozen evidence**: they are the files `evaluation/README.md` and the README quote, the cited beds carry a `SHA256SUMS` beside their evidence JSON (named `semifinal.json` in the directories written before 27 September 2026, `comparison.json` since), and none of them is edited, re-graded in place or deleted. A re-grade with `--regrade` writes a fresh directory and leaves the source alone. Earlier directories that no claim uses any more are kept as audit history rather than removed.
 

@@ -35,6 +35,7 @@ KEYS=(
   DAY0_REDACTOR_URL
   DAY0_TEST_SLACK_API_URL
   DAY0_TEST_SLACK_AUTHORIZE_URL
+  DAY0_EVALUATION_BED
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
 )
 
@@ -101,6 +102,9 @@ CLEAR_WHEN_EMPTY=(
   DAY0_REDACTOR_URL
   DAY0_TEST_SLACK_API_URL
   DAY0_TEST_SLACK_AUTHORIZE_URL
+  # A deployment that stops being an evaluation bed must stop serving the
+  # harness, which seeds rows and spends model calls on the owner's keys (N9).
+  DAY0_EVALUATION_BED
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
