@@ -1154,16 +1154,25 @@ export function allowlistEntry(method: HttpMethod, operation: string): string {
  * Whether one request segment may stand in for a `{name}` segment: not empty,
  * and not a path in disguise. An encoded slash or backslash would reach a
  * server that decodes it as a deeper path the entry never documented, so
- * `issues/{id}` would admit `issues/7%2Fdelete`.
+ * `issues/{id}` would admit `issues/7%2Fdelete`; a proxy and a server that
+ * each decode once reach the same path through `7%252Fdelete`, so the value
+ * is decoded to a fixpoint (the passes `resolveRequestUrl` makes) and a
+ * slash, a backslash or a percent sign left after them is refused.
  */
 function templateValue(segment: string): boolean {
   if (segment === '') return false;
-  try {
-    return !/[/\\]/.test(decodeURIComponent(segment));
-  } catch {
-    // Not decodable, so not a value a server would read the same way.
-    return false;
+  let decoded = segment;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      // Not decodable, so not a value a server would read the same way.
+      return false;
+    }
   }
+  return !/[/\\%]/.test(decoded);
 }
 
 /** Whether a path matches an entry's path, a `{name}` segment standing for any one value segment. */
@@ -1691,7 +1700,10 @@ export type ProvenanceResult =
   | { ok: false; reason: string };
 
 /**
- * Whether an HTTP request posts a chat message.
+ * Whether an HTTP request posts a chat message, by the operation the request
+ * resolves to on the surface's endpoint, however its path is spelled. The
+ * summary reads the same predicate, so a held post the policy read as a chat
+ * post is described as one, channel and text included.
  *
  * Args:
  *   parsed: A parsed HTTP request.

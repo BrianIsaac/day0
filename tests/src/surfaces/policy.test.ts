@@ -1876,6 +1876,10 @@ describe('the operations a documented API allowlist admits', (): void => {
       'issues/7%2fdelete',
       'issues/7%5Cadmin',
       'issues/%E0%A4',
+      'issues/7%252Fcomments',
+      'issues/7%25252Fcomments',
+      'issues/7%255Cadmin',
+      'issues/7%2525',
     ]) {
       expect(operationRefusal(['GET issues/{id}'], 'GET', operation)).toBeDefined();
     }
