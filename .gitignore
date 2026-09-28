@@ -35,7 +35,9 @@ CLAUDE.md
 *.log
 .vercel
 
-# playwright test artifacts
+# playwright test artifacts (`playwright.config.ts` writes under `.next/`; a bare
+# `playwright test` run elsewhere writes `test-results/`)
+test-results/
 *.png
 phase*.txt
 
