@@ -188,7 +188,7 @@ function VoiceRoomInner({
   const isListening = conversation.isListening;
 
   // No ElevenLabs credentials on this deployment - say so plainly and
-  // hand the boss to chat mode, which runs the identical 1:1.
+  // hand the boss to chat mode, which asks the same seven topics in text.
   if (start && !start.configured) {
     return (
       <section className="bg-[var(--color-card)] border border-[var(--color-warn)]/40 rounded-xl p-4">

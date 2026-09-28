@@ -523,7 +523,7 @@ export function NotificationModeControl({
   return (
     <label
       className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
-      title="Decision requests are always sent at once. This sets how you hear that work landed or a run stopped."
+      title="Decision requests go to your manager channel at once whenever one is connected. This sets how you hear that work landed or a run stopped."
     >
       <span>Manager DMs</span>
       <select
@@ -959,8 +959,8 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
       </div>
       {voiceOff ? (
         <p className="text-xs text-[var(--color-muted)] mt-3">
-          Voice is off on this deployment: no ElevenLabs credentials. Chat runs the identical
-          seven-topic 1:1.
+          Voice is off on this deployment: no ElevenLabs credentials. Chat asks the same seven
+          topics in text.
         </p>
       ) : null}
     </Card>

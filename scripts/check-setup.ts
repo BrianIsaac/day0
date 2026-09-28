@@ -1310,7 +1310,7 @@ function voiceSection(v: Values): Section {
     status: 'warn',
     lines: [
       `Missing ${gaps.join(' and ')}.`,
-      'The mode picker greys voice out and chat runs the identical Day-1 1:1,',
+      'The mode picker greys voice out and chat asks the same seven Day-1 topics in text,',
       'so this is a complete setup if you meant to skip voice.',
     ],
   };

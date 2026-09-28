@@ -632,7 +632,9 @@ describe('the manager DM mode control', (): void => {
     expect(html).toContain('Manager DMs');
     expect(html).toContain('<option value="per-run">per run</option>');
     expect(html).toContain('<option value="digest" selected="">hourly digest</option>');
-    expect(html).toContain('Decision requests are always sent at once');
+    expect(html).toContain(
+      'Decision requests go to your manager channel at once whenever one is connected',
+    );
   });
 });
 
