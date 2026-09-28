@@ -1500,6 +1500,34 @@ describe('the employee roster', (): void => {
     const glyph = '\u{1F600}';
     expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
   });
+  it('counts a new stop under needs-you even when older rejected rows fill the stopped read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 26; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId: mira,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${index}`,
+          title: `REVOPS-${index}`,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'failed',
+          skipReason: index < 25 ? 'rejected by the manager: not now' : 'the run stopped',
+          observedAt: 1,
+          createdAt: 1,
+        });
+      }
+    });
+
+    const [row] = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.agents.rosterForUser, {});
+
+    expect(row?.needsYou).toBe(1);
+  });
+
   it('keeps today’s landings when a busy month passes the bound, and says the count is a floor', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const harness = convexTest(schema, allConvexModules());

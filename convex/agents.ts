@@ -105,7 +105,7 @@ const OPEN_STATE_READ_LIMIT = 100;
 /**
  * Bound on the stopped-row read. Nothing caps how many rows an employee has
  * in `failed`, and each carries its run's output, so the bound is lower than
- * the open one and is the most the list can show.
+ * the open one and is the most the list can show, the newest first.
  */
 const STOPPED_READ_LIMIT = 25;
 
@@ -295,6 +295,8 @@ async function workCounts(
     await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+      // Newest first: past a bound, what the manager has not seen yet is what is kept.
+      .order('desc')
       .take(limit);
   const [open, parked, discovered, failed] = await Promise.all([
     Promise.all(OPEN_WORK_STATES.map((state) => rowsIn(state))),
