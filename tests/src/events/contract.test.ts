@@ -111,4 +111,12 @@ describe('the event contract (decisions N10 and Q14)', (): void => {
       .map((path) => relative(ROOT, path));
     expect(direct).toEqual([]);
   });
+
+  it('reads events by type only through eventsOfType, so a type is always one the contract lists', (): void => {
+    const direct = [...sourceFiles('convex'), ...sourceFiles('src')]
+      .filter((path) => path !== WRITER_MODULE)
+      .filter((path) => /withIndex\(\s*['"]by_agent_type['"]/.test(readFileSync(path, 'utf8')))
+      .map((path) => relative(ROOT, path));
+    expect(direct).toEqual([]);
+  });
 });
