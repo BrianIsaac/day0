@@ -247,6 +247,14 @@ describe('the /setup guide', (): void => {
     }
   });
 
+  it('gives the hosted way its two links at 44 px, the sign-in one in the manager’s word', (): void => {
+    for (const label of ['Sign in and deploy an employee', 'Open the walkthrough']) {
+      const link = new RegExp(`<a [^>]*>${label}</a>`).exec(html)?.[0] ?? '';
+      expect(link, label).toMatch(/\bmin-h-11\b/);
+    }
+    expect(text).not.toContain('deploy an agent');
+  });
+
   it('gives every section link a 44 px target at every width (N14)', (): void => {
     const links = [...html.matchAll(/<a [^>]*data-section-link=""[^>]*>/g)].map(([tag]) => tag);
     expect(links.length).toBeGreaterThan(0);

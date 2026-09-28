@@ -207,7 +207,10 @@ export function MarketingLanding() {
           <ul className="flex flex-wrap gap-x-5 gap-y-2">
             {FOOTER.links.map((link) => (
               <li key={link.label}>
-                <a href={link.href} className={`${INLINE_LINK} inline-flex min-h-11 items-center`}>
+                <a
+                  href={link.href}
+                  className={`${INLINE_LINK} inline-flex min-h-11 min-w-11 items-center justify-center`}
+                >
                   {link.label}
                 </a>
               </li>

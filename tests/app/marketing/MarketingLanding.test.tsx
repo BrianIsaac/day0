@@ -84,7 +84,7 @@ describe('the marketing landing', () => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
     const links = [...footer.matchAll(/<a [^>]*>/g)].map(([tag]) => tag);
     expect(links).toHaveLength(3);
-    for (const link of links) expect(link).toMatch(/\bmin-h-11\b/);
+    for (const link of links) expect(link).toMatch(/\bmin-h-11\b[^"]*\bmin-w-11\b/);
   });
 
   it('lets a keyboard reach the command block, which scrolls sideways on a phone', () => {

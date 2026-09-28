@@ -241,12 +241,12 @@ export default function SetupPage() {
                     {way.body}
                   </p>
                   {way.links ? (
-                    <ul className="space-y-1.5">
+                    <ul>
                       {way.links.map((link) => (
                         <li key={link.href}>
                           <Link
                             href={link.href}
-                            className="text-sm text-[var(--color-accent)] underline underline-offset-4"
+                            className="inline-flex min-h-11 items-center text-sm text-[var(--color-accent)] underline underline-offset-4"
                           >
                             {link.label}
                           </Link>
