@@ -6736,10 +6736,18 @@ const NEEDS_YOU_SCAN_LIMIT = 100;
 /** The most employees the inbox covers, the roster's twenty. */
 const NEEDS_YOU_EMPLOYEE_LIMIT = 20;
 
-/** Bound on each waiting state's read; open rows are held to the work-in-progress cap. */
+/**
+ * Bound on each waiting state's read. Plans and held sets are held to the
+ * work-in-progress cap, so for them the bound is never reached; parked rows
+ * hold no slot, so for them it is the most the inbox lists.
+ */
 const NEEDS_YOU_STATE_READ_LIMIT = 100;
 
-/** Bound on the stopped-row read, the roster's: nothing caps the failed rows an employee has. */
+/**
+ * Bound on the stopped-row read, the roster's. Nothing caps the failed rows an
+ * employee has, so the newest are read: a failure the manager has not seen yet
+ * is never pushed out by old ones.
+ */
 const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
 
 /** Bound on an employee's surfaces read for the ones proposed to the manager. */
@@ -6763,12 +6771,16 @@ const needsYouBaseFields = {
   key: v.string(),
   agentId: v.id('agents'),
   employeeName: v.string(),
+  /** The employee's zone (N12), so a stamp on the entry is in the employee's day. */
+  zone: v.string(),
   /** What the entry is about: the item's title, the skill's name, the system's name. */
   subject: v.string(),
   waitingSince: v.number(),
   /** True when the entry lay beyond the bounded read, so it has waited at least since `waitingSince`. */
   waitingAtLeast: v.boolean(),
 };
+
+const needsYouBaseValidator = v.object(needsYouBaseFields);
 
 const needsYouEntryValidator = v.union(
   v.object({ kind: v.literal('charter'), ...needsYouBaseFields }),
@@ -6812,6 +6824,9 @@ const needsYouValidator = v.object({
 /** One thing waiting on the manager. */
 type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
 
+/** The fields every entry shares. */
+type NeedsYouBase = Infer<typeof needsYouBaseValidator>;
+
 /** The event types whose rows mark an item or a system entering a state that waits on the manager. */
 type EntryEventType =
   | 'work.plan-drafted'
@@ -6828,6 +6843,12 @@ interface EnteredAt {
   readonly atLeast: boolean;
 }
 
+/** A row the inbox dates: its id and when it was inserted. */
+interface DatedRow {
+  readonly _id: string;
+  readonly _creationTime: number;
+}
+
 /** The item or system an entering event names. */
 function enteredSubject(event: Doc<'events'>): string | undefined {
   const payload: unknown = event.payload;
@@ -6839,9 +6860,14 @@ function enteredSubject(event: Doc<'events'>): string | undefined {
 
 /**
  * When each waiting row entered its state: the newest entering event that
- * names it, read newest first with a bound per type. A row whose event lies
- * beyond the bound has waited at least since the oldest event read; a row
- * with no event at all (a seeded or imported row) is dated by its insert.
+ * names it, read newest first, at most `ENTRY_EVENT_SCAN_LIMIT` per type.
+ *
+ * Where a type had more events than the read took, anything older than the
+ * oldest one read is unseen. A row whose newest event found is older than that
+ * point, or whose event is not found at all while it is older than that point,
+ * may have entered later than it seems, so it is reported as waiting at least
+ * since that point. A row with no event that is newer than that point (a
+ * seeded or imported row) had none to find and is dated by its insert.
  *
  * @param ctx - Query context.
  * @param agentId - The employee.
@@ -6852,38 +6878,37 @@ async function enteredAtByRow(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
   types: readonly EntryEventType[],
-  rows: ReadonlyArray<{ readonly _id: string; readonly _creationTime: number }>,
+  rows: readonly DatedRow[],
 ): Promise<Map<string, EnteredAt>> {
   if (rows.length === 0) return new Map();
   const wanted = new Set(rows.map((row) => row._id));
   const found = new Map<string, number>();
-  // The entry of a row not found lies before the oldest event read of a type whose read hit the bound.
-  let unreadBefore: number | undefined;
+  let unseenBefore: number | undefined;
   for (const type of types) {
     const seen = new Set<string>();
-    let scanned = 0;
-    let oldest = Number.POSITIVE_INFINITY;
-    for await (const event of eventsOfType(ctx, agentId, type).order('desc')) {
-      scanned += 1;
-      oldest = event._creationTime;
+    // One more than the bound, so a type with exactly the bound's events reads as complete.
+    const events = eventsOfType(ctx, agentId, type)
+      .order('desc')
+      .take(ENTRY_EVENT_SCAN_LIMIT + 1);
+    const read = await events;
+    for (const event of read.slice(0, ENTRY_EVENT_SCAN_LIMIT)) {
       const id = enteredSubject(event);
-      if (id !== undefined && wanted.has(id) && !seen.has(id)) {
-        seen.add(id);
-        found.set(id, Math.max(found.get(id) ?? 0, event._creationTime));
-      }
-      if (seen.size === wanted.size) break;
-      if (scanned >= ENTRY_EVENT_SCAN_LIMIT) {
-        unreadBefore = Math.max(unreadBefore ?? 0, oldest);
-        break;
-      }
+      if (id === undefined || !wanted.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      found.set(id, Math.max(found.get(id) ?? 0, event._creationTime));
+    }
+    const oldestRead = read[ENTRY_EVENT_SCAN_LIMIT - 1];
+    if (read.length > ENTRY_EVENT_SCAN_LIMIT && oldestRead && seen.size < wanted.size) {
+      unseenBefore = Math.max(unseenBefore ?? 0, oldestRead._creationTime);
     }
   }
   return new Map(
     rows.map((row): [string, EnteredAt] => {
-      const at = found.get(row._id);
-      if (at !== undefined) return [row._id, { at, atLeast: false }];
-      if (unreadBefore !== undefined) return [row._id, { at: unreadBefore, atLeast: true }];
-      return [row._id, { at: row._creationTime, atLeast: false }];
+      const at = found.get(row._id) ?? row._creationTime;
+      if (unseenBefore !== undefined && at < unseenBefore) {
+        return [row._id, { at: unseenBefore, atLeast: true }];
+      }
+      return [row._id, { at, atLeast: false }];
     }),
   );
 }
@@ -6906,15 +6931,92 @@ function deferralWaitsOn(row: Doc<'workItems'>): 'connection' | 'permission' | '
   return 'permission';
 }
 
+/** Everything of one employee's that waits on the manager, read and filtered, before it is dated. */
+interface WaitingRows {
+  readonly charter: Doc<'charters'> | null;
+  readonly plans: readonly Doc<'workItems'>[];
+  readonly held: readonly Doc<'workItems'>[];
+  readonly parked: ReadonlyArray<{
+    readonly row: Doc<'workItems'>;
+    readonly reason: 'connection' | 'permission' | 'evaluation';
+  }>;
+  readonly skills: ReadonlyArray<{ readonly skill: Doc<'skills'>; readonly waitingItems: number }>;
+  readonly stopped: readonly Doc<'workItems'>[];
+  readonly proposed: readonly Doc<'surfaces'>[];
+}
+
 /**
- * Everything one employee waits on the manager for.
+ * Read one employee's rows that wait on the manager.
  *
  * The rows are the roster's (`src/work/needs-manager.ts`), with three
  * differences because the inbox lists decisions rather than counting rows: a
  * held action set the manager already decided is not listed, a skill several
  * items wait on is one entry, and a row parked until the charter is approved
- * is covered by the charter's entry. A system the employee proposed is
- * listed too, since only the manager approves it.
+ * is covered by the charter's entry. A system the employee proposed is listed
+ * too, since only the manager approves it.
+ *
+ * @param ctx - Query context.
+ * @param agentId - The employee.
+ * @param now - The instant an authoring claim is judged against.
+ */
+async function waitingRowsOf(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<WaitingRows> {
+  const rowsIn = async (
+    state: Doc<'workItems'>['state'],
+    limit: number = NEEDS_YOU_STATE_READ_LIMIT,
+  ): Promise<Doc<'workItems'>[]> =>
+    await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+      .order('desc')
+      .take(limit);
+  const [charter, planRows, heldRows, deferredRows, skillRows, failedRows, surfaces] =
+    await Promise.all([
+      ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .order('desc')
+        .first(),
+      rowsIn('plan-pending'),
+      rowsIn('actions-pending'),
+      rowsIn('deferred'),
+      rowsIn('needs-skill'),
+      rowsIn('failed', NEEDS_YOU_STOPPED_READ_LIMIT),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .take(NEEDS_YOU_SURFACE_READ_LIMIT),
+    ]);
+  const skillIds = [...new Set(skillRows.flatMap((row) => row.proposedSkillId ?? []))];
+  const skills = await Promise.all(skillIds.map(async (id) => await ctx.db.get(id)));
+  return {
+    charter: charter && !charter.approved ? charter : null,
+    plans: planRows.filter((row) => !isRevocationTrialRow(row)),
+    held: heldRows.filter((row) => row.approvedIndexes === undefined && !isRevocationTrialRow(row)),
+    parked: deferredRows.flatMap((row) => {
+      const reason = deferralWaitsOn(row);
+      return reason === null ? [] : [{ row, reason }];
+    }),
+    skills: skills.flatMap((skill) =>
+      skill && skillWaitsOnManager(skill, now)
+        ? [
+            {
+              skill,
+              waitingItems: skillRows.filter((row) => row.proposedSkillId === skill._id).length,
+            },
+          ]
+        : [],
+    ),
+    stopped: failedRows.filter((row) => stoppedRowOffersMove(row) && stoppedRowNeedsManager(row)),
+    proposed: surfaces.filter((surface) => surface.verdict === 'proposed'),
+  };
+}
+
+/**
+ * Everything one employee waits on the manager for, each entry dated.
  *
  * @param ctx - Query context.
  * @param agent - The employee.
@@ -6925,117 +7027,61 @@ async function needsYouOfEmployee(
   agent: Doc<'agents'>,
   now: number,
 ): Promise<NeedsYouEntry[]> {
-  const rowsIn = async (
-    state: Doc<'workItems'>['state'],
-    limit: number = NEEDS_YOU_STATE_READ_LIMIT,
-  ): Promise<Doc<'workItems'>[]> =>
-    await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
-      .take(limit);
-  const [charter, planRows, heldRows, deferredRows, skillRows, failedRows, surfaces] =
+  const waiting = await waitingRowsOf(ctx, agent._id, now);
+  const [questions, planEntered, heldEntered, parkedEntered, stoppedEntered, surfaceEntered] =
     await Promise.all([
-      ctx.db
-        .query('charters')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .order('desc')
-        .first(),
-      rowsIn('plan-pending'),
-      rowsIn('actions-pending'),
-      rowsIn('deferred'),
-      rowsIn('needs-skill'),
-      rowsIn('failed', NEEDS_YOU_STOPPED_READ_LIMIT),
-      ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .take(NEEDS_YOU_SURFACE_READ_LIMIT),
+      Promise.all(
+        waiting.plans.map(
+          async (row) =>
+            (
+              await ctx.db
+                .query('managerQuestions')
+                .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+                .take(NEEDS_YOU_QUESTION_READ_LIMIT)
+            ).filter((question) => question.answer === undefined).length,
+        ),
+      ),
+      enteredAtByRow(
+        ctx,
+        agent._id,
+        ['work.plan-drafted'],
+        waiting.plans.filter((row) => row.planPendingAt === undefined),
+      ),
+      enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held),
+      enteredAtByRow(
+        ctx,
+        agent._id,
+        ['work.evaluated', 'work.evaluation-parked'],
+        waiting.parked.map(({ row }) => row),
+      ),
+      enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], waiting.stopped),
+      enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
     ]);
 
-  const plans = planRows.filter((row) => !isRevocationTrialRow(row));
-  const held = heldRows.filter(
-    (row) => row.approvedIndexes === undefined && !isRevocationTrialRow(row),
-  );
-  const parked = deferredRows.flatMap((row) => {
-    const reason = deferralWaitsOn(row);
-    return reason === null ? [] : [{ row, reason }];
-  });
-  const stopped = failedRows.filter(
-    (row) => stoppedRowOffersMove(row) && stoppedRowNeedsManager(row),
-  );
-  const proposed = surfaces.filter((surface) => surface.verdict === 'proposed');
-
-  const skillIds = [...new Set(skillRows.flatMap((row) => row.proposedSkillId ?? []))];
-  const [
-    skills,
-    questions,
-    planEntered,
-    heldEntered,
-    parkedEntered,
-    stoppedEntered,
-    surfaceEntered,
-  ] = await Promise.all([
-    Promise.all(skillIds.map(async (id) => await ctx.db.get(id))),
-    Promise.all(
-      plans.map(
-        async (row) =>
-          (
-            await ctx.db
-              .query('managerQuestions')
-              .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-              .take(NEEDS_YOU_QUESTION_READ_LIMIT)
-          ).filter((question) => question.answer === undefined).length,
-      ),
-    ),
-    enteredAtByRow(
-      ctx,
-      agent._id,
-      ['work.plan-drafted'],
-      plans.filter((row) => row.planPendingAt === undefined),
-    ),
-    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], held),
-    enteredAtByRow(
-      ctx,
-      agent._id,
-      ['work.evaluated', 'work.evaluation-parked'],
-      parked.map(({ row }) => row),
-    ),
-    enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], stopped),
-    enteredAtByRow(ctx, agent._id, ['surface.proposed'], proposed),
-  ]);
-
-  const base = (
-    key: string,
-    subject: string,
-    entered: EnteredAt,
-  ): {
-    key: string;
-    agentId: Id<'agents'>;
-    employeeName: string;
-    subject: string;
-    waitingSince: number;
-    waitingAtLeast: boolean;
-  } => ({
+  const zone = agentZone(agent);
+  const base = (key: string, subject: string, entered: EnteredAt): NeedsYouBase => ({
     key,
     agentId: agent._id,
     employeeName: agent.name,
+    zone,
     subject,
     waitingSince: entered.at,
     waitingAtLeast: entered.atLeast,
   });
   const exact = (at: number): EnteredAt => ({ at, atLeast: false });
-  const enteredOf = (map: Map<string, EnteredAt>, row: Doc<'workItems'>): EnteredAt =>
-    map.get(row._id) ?? exact(row._creationTime);
+  const enteredOf = (dates: Map<string, EnteredAt>, row: DatedRow): EnteredAt =>
+    dates.get(row._id) ?? exact(row._creationTime);
 
   return [
-    ...(charter && !charter.approved
+    ...(waiting.charter
       ? [
           {
             kind: 'charter' as const,
-            ...base(`charter:${charter._id}`, 'charter', exact(charter.createdAt)),
+            ...base(`charter:${waiting.charter._id}`, 'charter', exact(waiting.charter.createdAt)),
           },
         ]
       : []),
-    ...plans.map((row, index) => ({
+    ...waiting.plans.map((row, index) => ({
       kind: 'plan' as const,
       ...base(
         `plan:${row._id}`,
@@ -7045,7 +7091,7 @@ async function needsYouOfEmployee(
       workItemId: row._id,
       questions: questions[index] ?? 0,
     })),
-    ...held.map((row) => ({
+    ...waiting.held.map((row) => ({
       kind: 'held' as const,
       ...base(`held:${row._id}`, row.title, enteredOf(heldEntered, row)),
       workItemId: row._id,
@@ -7053,36 +7099,26 @@ async function needsYouOfEmployee(
         (verdict) => verdict.disposition === 'held',
       ).length,
     })),
-    ...skills.flatMap((skill) =>
-      skill && skillWaitsOnManager(skill, now)
-        ? [
-            {
-              kind: 'skill' as const,
-              ...base(`skill:${skill._id}`, skill.name, exact(skill.createdAt)),
-              skillId: skill._id,
-              waitingItems: skillRows.filter((row) => row.proposedSkillId === skill._id).length,
-            },
-          ]
-        : [],
-    ),
-    ...parked.map(({ row, reason }) => ({
+    ...waiting.skills.map(({ skill, waitingItems }) => ({
+      kind: 'skill' as const,
+      ...base(`skill:${skill._id}`, skill.name, exact(skill.createdAt)),
+      skillId: skill._id,
+      waitingItems,
+    })),
+    ...waiting.parked.map(({ row, reason }) => ({
       kind: 'parked' as const,
       ...base(`parked:${row._id}`, row.title, enteredOf(parkedEntered, row)),
       workItemId: row._id,
       reason,
     })),
-    ...stopped.map((row) => ({
+    ...waiting.stopped.map((row) => ({
       kind: 'stopped' as const,
       ...base(`stopped:${row._id}`, row.title, enteredOf(stoppedEntered, row)),
       workItemId: row._id,
     })),
-    ...proposed.map((surface) => ({
+    ...waiting.proposed.map((surface) => ({
       kind: 'surface' as const,
-      ...base(
-        `surface:${surface._id}`,
-        surface.displayName,
-        surfaceEntered.get(surface._id) ?? exact(surface._creationTime),
-      ),
+      ...base(`surface:${surface._id}`, surface.displayName, enteredOf(surfaceEntered, surface)),
       surfaceId: surface._id,
     })),
   ];

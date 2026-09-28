@@ -6747,3 +6747,112 @@ describe('work.needsYou', (): void => {
     expect(inbox.entries.at(-1)?.subject).toBe('Plan 49');
   });
 });
+
+describe('work.needsYou, dating a wait', (): void => {
+  async function employee(harness: Harness): Promise<Id<'agents'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Mira',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+          zone: 'Asia/Singapore',
+        }),
+    );
+  }
+
+  async function row(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    title: string,
+    state: Doc<'workItems'>['state'],
+    fields: Partial<WithoutSystemFields<Doc<'workItems'>>> = {},
+  ): Promise<Doc<'workItems'>> {
+    return await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: title,
+        title,
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state,
+        observedAt: 1,
+        createdAt: 1,
+        ...fields,
+      });
+      return (await ctx.db.get(id))!;
+    });
+  }
+
+  async function otherEvents(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    count: number,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < count; index += 1) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.actions-pending',
+          payload: { workItemId: `elsewhere-${index}` },
+          createdAt: Date.now(),
+        });
+      }
+    });
+  }
+
+  it('dates a row with no entering event by its insert when every event was read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    const held = await row(harness, mira, 'Seeded held write', 'actions-pending', {
+      output: pendingOutput,
+    });
+    await otherEvents(harness, mira, 100);
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ waitingSince: held._creationTime, waitingAtLeast: false });
+  });
+
+  it('never dates a wait before its row existed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    await otherEvents(harness, mira, 101);
+    const held = await row(harness, mira, 'Imported held write', 'actions-pending', {
+      output: pendingOutput,
+    });
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ waitingSince: held._creationTime, waitingAtLeast: false });
+  });
+
+  it('lists a new stop even when older rejected rows fill the stopped read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    for (let index = 0; index < 25; index += 1) {
+      await row(harness, mira, `Rejected ${index}`, 'failed', {
+        skipReason: 'rejected by the manager: not now',
+      });
+    }
+    await row(harness, mira, 'Stopped today', 'failed', { skipReason: 'the run stopped' });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries.map((entry) => entry.subject)).toEqual(['Stopped today']);
+  });
+
+  it('carries the employee’s zone, so the home stamps the wait in the employee’s day', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    await row(harness, mira, 'Plan', 'plan-pending', { planPendingAt: 1 });
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry?.zone).toBe('Asia/Singapore');
+  });
+});
