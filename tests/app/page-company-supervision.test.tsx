@@ -66,8 +66,8 @@ const EMPLOYEE_METRICS = {
   },
 };
 
-vi.mock('convex/react', () => ({
-  useQuery: (reference: FunctionReference<'query'>) => {
+vi.mock('convex/react', () => {
+  const answer = (reference: FunctionReference<'query'>): unknown => {
     const name = getFunctionName(reference);
     if (name === 'agents:listForUser') {
       return [
@@ -107,9 +107,15 @@ vi.mock('convex/react', () => ({
     // Every other query is still loading, so the test does not depend on
     // what the rest of the page reads.
     return undefined;
-  },
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-}));
+  };
+  return {
+    useQuery: answer,
+    // The home reads its inbox through `useQueries`, which answers a failed read as a value.
+    useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
+      Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
+    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  };
+});
 
 vi.mock('next/navigation', () => ({
   useRouter: (): { push: () => void } => ({ push: (): void => undefined }),

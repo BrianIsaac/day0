@@ -30,6 +30,10 @@ export function waitingFor(since: number, now: number, atLeast: boolean): string
   return `${prefix} ${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
+/** Said in place of the inbox when the backend could not read it. */
+export const NEEDS_YOU_UNREADABLE =
+  'The inbox could not be read just now. Each employee’s page still shows what waits on you there.';
+
 /** What the manager is asked for and what it is about, in the manager's words. */
 function described(entry: NeedsYouEntry): { readonly ask: string; readonly about: string } {
   switch (entry.kind) {
@@ -120,10 +124,19 @@ function NeedsYouItem({ entry, now }: { entry: NeedsYouEntry; now: number }) {
  * their employees, longest wait first, each a link to the employee's page
  * where it is decided.
  *
- * @param inbox - The inbox as `work.needsYou` returns it, undefined while it loads.
+ * @param inbox - The inbox as `work.needsYou` returns it, undefined while it loads, and the
+ *   `Error` the backend answered with when the read failed.
  * @param now - The page's clock, so the waits age.
  */
-export function NeedsYouList({ inbox, now }: { inbox: NeedsYouInbox | undefined; now: number }) {
+export function NeedsYouList({
+  inbox: read,
+  now,
+}: {
+  inbox: NeedsYouInbox | undefined | Error;
+  now: number;
+}) {
+  const failed = read instanceof Error;
+  const inbox = failed ? undefined : read;
   const more = inbox ? inbox.total - inbox.entries.length : 0;
   // The entries are a second tier inside the card, as the Work tab's rows are (v4 section 1.3).
   const arriving = useArrival(inbox !== undefined && inbox.entries.length > 0);
@@ -133,7 +146,11 @@ export function NeedsYouList({ inbox, now }: { inbox: NeedsYouInbox | undefined;
         <h2 className="text-sm font-semibold">Needs you</h2>
         <span className="text-xs text-[var(--color-muted)]">ordered by wait</span>
       </div>
-      {inbox === undefined ? (
+      {failed ? (
+        <p role="status" className="px-5 py-4 text-sm text-[var(--color-muted)]">
+          {NEEDS_YOU_UNREADABLE}
+        </p>
+      ) : inbox === undefined ? (
         <p className="px-5 py-4 text-sm text-[var(--color-muted)]">Loading</p>
       ) : inbox.entries.length === 0 ? (
         <p className="px-5 py-4 text-sm text-[var(--color-muted)]">Nothing is waiting on you.</p>

@@ -127,8 +127,8 @@ const oneEmployeeMetrics = {
   },
 };
 
-vi.mock('convex/react', () => ({
-  useQuery: (reference: FunctionReference<'query'>) => {
+vi.mock('convex/react', () => {
+  const answer = (reference: FunctionReference<'query'>): unknown => {
     if (!authState.signedIn) return undefined;
     const name = getFunctionName(reference);
     if (name === 'agents:listForUser') {
@@ -177,9 +177,15 @@ vi.mock('convex/react', () => ({
     if (name === 'work:needsYou') return { entries: [], total: 0, waitingByEmployee: [] };
     if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
     return 0;
-  },
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-}));
+  };
+  return {
+    useQuery: answer,
+    // The home reads its inbox through `useQueries`, which answers a failed read as a value.
+    useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
+      Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
+    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  };
+});
 
 vi.mock('next/navigation', () => ({
   useRouter: (): { push: () => void } => ({ push: (): void => undefined }),

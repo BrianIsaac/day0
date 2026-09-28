@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { useQuery } from 'convex/react';
+import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
 import { useNow } from '../agent/[agentId]/time';
@@ -14,6 +14,22 @@ import { NeedsYouList } from './NeedsYouList';
 import { OfficeWorld } from './OfficeWorld';
 import { ResetCard } from './ResetCard';
 import type { Boss, NeedsYouInbox, RosterRow } from './types';
+
+/**
+ * The inbox's read, subscribed through `useQueries` so a failure comes back as a value: the
+ * query reads the most of any on the page, and an overrun of Convex's read limits must lose the
+ * inbox only, not the roster, the office, the month and Reset with it.
+ */
+const NEEDS_YOU = { inbox: { query: api.work.needsYou, args: {} } };
+
+/**
+ * The needs-you inbox, undefined while it loads and an `Error` when the backend refused the read.
+ * Nothing is swallowed: the list says it could not be read, and the rest of the page reads on.
+ */
+function useNeedsYou(): NeedsYouInbox | undefined | Error {
+  const { inbox }: Record<string, NeedsYouInbox | undefined | Error> = useQueries(NEEDS_YOU);
+  return inbox;
+}
 
 /**
  * The signed-in home at `/`. With nobody deployed it is the deploy page: the
@@ -29,7 +45,8 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   // whether Reset has anything to wipe, evaluation agents included.
   const agents = useQuery(api.agents.listForUser);
   const roster = useQuery(api.agents.rosterForUser);
-  const inbox = useQuery(api.work.needsYou);
+  const inboxRead = useNeedsYou();
+  const inbox = inboxRead instanceof Error ? undefined : inboxRead;
   const figures = useQuery(api.metrics.forOwner);
   const docSources = useQuery(api.docSources.listMine);
   const surfaceMode = useQuery(api.config.surfaceMode);
@@ -89,11 +106,11 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               focusOnMount={staffed}
             />
           ) : null}
-          {staffed ? <NeedsYouList inbox={inbox} now={now} /> : null}
+          {staffed ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
           <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
           <OfficeWorld
             agents={roster}
-            settled={roster !== undefined && (!staffed || inbox !== undefined)}
+            settled={roster !== undefined && (!staffed || inboxRead !== undefined)}
           />
           {staffed ? (
             <MonthCard roster={roster} figures={figures} waiting={inbox?.total ?? 0} now={now} />
