@@ -267,7 +267,8 @@ export function ChatRoom({
     startSession({ agentId, mode: 'chat' }).then(
       (started) => {
         sessionRef.current = started.sessionId;
-        if (!cancelled) sendMessage({ text: INIT_PROMPT });
+        // A turn that fails is reported through useChat's onError, which says it in the room.
+        if (!cancelled) void sendMessage({ text: INIT_PROMPT });
       },
       // A 1:1 that could not start says why, with the way to try again,
       // rather than leaving the composer waiting for an opening that never comes.
@@ -325,7 +326,8 @@ export function ChatRoom({
     const trimmed = draft.trim().slice(0, REPLY_MAX_CHARS);
     if (!trimmed || composerDisabled) return;
     setStreamError(null);
-    sendMessage({ text: trimmed });
+    // A turn that fails is reported through useChat's onError, which says it in the room.
+    void sendMessage({ text: trimmed });
     setDraft('');
   }
 
