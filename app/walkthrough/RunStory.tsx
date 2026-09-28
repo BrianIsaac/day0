@@ -69,7 +69,7 @@ function Ledger({ steps, active }: { steps: readonly RunStep[]; active: number }
       {steps.slice(0, active + 1).map((step, index) => (
         <li
           key={step.number}
-          className={`grid shrink-0 grid-cols-[12px_minmax(0,1fr)_auto] items-baseline gap-2.5 text-[13px] leading-snug motion-safe:animate-[day0-rise-in_300ms_var(--ease-arrive)_both] ${
+          className={`grid shrink-0 grid-cols-[12px_minmax(0,1fr)_auto] items-baseline gap-2.5 text-[13px] leading-snug motion-safe:animate-[day0-rise-in_260ms_var(--ease-arrive)_both] ${
             index === active ? 'text-[var(--color-fg)]' : 'text-[var(--color-muted)]'
           }`}
         >

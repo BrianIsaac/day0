@@ -24,8 +24,8 @@ const SECONDARY = `${BUTTON} border-[var(--color-border)] bg-[var(--color-card)]
 const QUIET = `${BUTTON} border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]`;
 const H2 =
   'max-w-[26ch] text-[clamp(1.625rem,2.8vw,2.125rem)] font-semibold leading-[1.15] tracking-[-0.02em] text-balance';
-const CARD =
-  'flex flex-col items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5';
+/** A way on from the page: a hairline above it rather than a card, so the notice is never a card in a card. */
+const WAY = 'flex flex-col items-start gap-3 border-t border-[var(--color-border)] pt-5';
 
 /** The scrubbed reveal's stagger among siblings, read by `[data-rise]` in the stylesheet. */
 const rise = (index: number): CSSProperties => ({ '--i': index }) as CSSProperties;
@@ -122,8 +122,8 @@ export default function WalkthroughPage() {
         <h2 data-rise="" className={H2}>
           {WALKTHROUGH.tryHeading}
         </h2>
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
-          <div className={CARD}>
+        <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-12">
+          <div className={WAY}>
             <h3 className="text-base font-semibold">{WALKTHROUGH.hosted.title}</h3>
             <p className="leading-relaxed text-[var(--color-muted)]">{WALKTHROUGH.hosted.body}</p>
             <HostedDemoNotice />
@@ -131,7 +131,7 @@ export default function WalkthroughPage() {
               {HERO.tryDemo}
             </Link>
           </div>
-          <div className={CARD}>
+          <div className={WAY}>
             <h3 className="text-base font-semibold">{WALKTHROUGH.local.title}</h3>
             <p className="leading-relaxed text-[var(--color-muted)]">{WALKTHROUGH.local.body}</p>
             <div className="flex w-full flex-wrap gap-3">
