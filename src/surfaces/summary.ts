@@ -1,11 +1,11 @@
 import type { MockAction, ReplyTarget } from '../work/types';
 import {
+  isChatPost,
   isManagerDm,
   parseSurfaceAction,
   targetChannel,
   type JsonObject,
   type ParsedSurfaceAction,
-  isChatPost,
 } from './policy';
 import { isSlackApiEndpoint } from './slack-endpoint';
 import type { SurfaceRecord } from './types';

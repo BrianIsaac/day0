@@ -931,6 +931,23 @@ export function grantRefusal(
 }
 
 /**
+ * A session restore repeats a run's login controls and the controls its login
+ * ended on, and nothing else: the recipe is built from the run's landed rows,
+ * so this is the check that holds when a recorded restore or a later reader
+ * carries any other click.
+ */
+function replayedClickRefusal(parsed: ParsedSurfaceAction): string | undefined {
+  if (parsed.kind !== 'mcp.call' || parsed.tool !== 'browser_click') return undefined;
+  const element = parsed.toolArgs.element;
+  const name = typeof element === 'string' ? element.trim() : '';
+  if (name === '') return `${REPLAY_NOT_INTERSTITIAL} (unnamed element)`;
+  if (SIGN_IN_CONTROL.test(name) || NEXT_CONTROL.test(name) || isInterstitialControl(name)) {
+    return undefined;
+  }
+  return `${REPLAY_NOT_INTERSTITIAL} (${name})`;
+}
+
+/**
  * Why a replayed browser call may not be sent now, if it may not.
  *
  * A new browser is signed in again by repeating calls the run already landed,
@@ -952,23 +969,6 @@ export function grantRefusal(
  * Returns:
  *   The refusal, or undefined when the call may be sent.
  */
-/**
- * A session restore repeats a run's login controls and the controls its login
- * ended on, and nothing else: the recipe is built from the run's landed rows,
- * so this is the check that holds when a recorded restore or a later reader
- * carries any other click.
- */
-function replayedClickRefusal(parsed: ParsedSurfaceAction): string | undefined {
-  if (parsed.kind !== 'mcp.call' || parsed.tool !== 'browser_click') return undefined;
-  const element = parsed.toolArgs.element;
-  const name = typeof element === 'string' ? element.trim() : '';
-  if (name === '') return `${REPLAY_NOT_INTERSTITIAL} (unnamed element)`;
-  if (SIGN_IN_CONTROL.test(name) || NEXT_CONTROL.test(name) || isInterstitialControl(name)) {
-    return undefined;
-  }
-  return `${REPLAY_NOT_INTERSTITIAL} (${name})`;
-}
-
 export function replayAuthorityRefusal(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
