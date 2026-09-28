@@ -31,6 +31,7 @@
     "fixtures:substitute": "tsx scripts/fixture-substitution.ts",
     "demo:bed": "tsx scripts/demo-bed.ts",
     "test": "vitest run",
+    "test:browser": "playwright test",
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint . && prettier --check src convex app scripts tests",
