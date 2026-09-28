@@ -192,6 +192,13 @@ function probeFailureVerdict(error: unknown, safeReason: string): 'ungranted' | 
   return 'listed-dead';
 }
 
+/**
+ * The verdicts whose cards the hourly sweep probes again, with a credential
+ * and an approval (`orientationData.isReprobeCandidate`); a card with any
+ * other verdict is probed only when something asks.
+ */
+const SWEPT_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = ['connected', 'listed-dead'];
+
 /** How long a probe waits before its one retry. */
 export const PROBE_RETRY_WAIT_MS = 5_000;
 
@@ -1152,7 +1159,18 @@ export async function runSurfaceProbe(
     surfaceId,
     ...(request.routine === true ? { routine: true } : {}),
   });
-  if (!claimed.reserved) return { verdict: 'skipped', reason: PROBE_REFUSED[claimed.refusal] };
+  if (!claimed.reserved) {
+    // A re-ask on a card no hourly sweep covers is the only probe that card
+    // gets, so one that met a probe in flight is asked again once it ends.
+    if (claimed.refusal === 'in-flight' && !SWEPT_VERDICTS.includes(claimed.verdict)) {
+      await ctx.scheduler.runAfter(
+        Math.max(0, claimed.leaseEndsAt - Date.now()),
+        internal.surfaceActions.probeInternal,
+        { surfaceId, routine: true },
+      );
+    }
+    return { verdict: 'skipped', reason: PROBE_REFUSED[claimed.refusal] };
+  }
   let { surface, generation } = claimed;
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
@@ -1267,7 +1285,7 @@ export async function runSurfaceProbe(
    * scheduled for when the provider said it could answer, within bounds.
    */
   const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> => {
-    const swept = surface.verdict === 'connected' || surface.verdict === 'listed-dead';
+    const swept = SWEPT_VERDICTS.includes(surface.verdict);
     const next = swept
       ? RATE_LIMITED_REPROBE_MS.max
       : Math.min(

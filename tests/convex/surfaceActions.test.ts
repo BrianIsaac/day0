@@ -7,6 +7,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
+import { PROBE_LEASE_MS } from '../../convex/surfaces';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import {
   argumentNamesFromSchema,
@@ -2838,6 +2839,10 @@ describe('one failed probe does not write listed-dead', (): void => {
   it('makes one provider round-trip for two routine probes of one card within the lease (E-88)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    // A connected card: the hourly sweep's, so the refused probe is not asked again.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { verdict: 'connected', credentialLanded: true });
+    });
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve): void => {
       release = resolve;
@@ -3071,6 +3076,41 @@ describe('one failed probe does not write listed-dead', (): void => {
       'retried',
       'retried',
     ]);
+  });
+
+  it('asks again after the lease when a re-ask meets a probe in flight on a card no sweep covers, and not on one the sweep does (adversarial pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const approved = await approvedSurface(harness, { path: 'mcp' });
+    const connected = await approvedSurface(harness, { path: 'mcp' });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(connected, { verdict: 'connected', credentialLanded: true });
+    });
+    const probeMcp = vi.fn();
+    for (const surfaceId of [approved, connected]) {
+      const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!first.reserved) throw new Error('the person’s probe was not reserved');
+    }
+    const reask = async (surfaceId: Id<'surfaces'>) => {
+      const runAfter = vi.fn(async (): Promise<void> => undefined);
+      const outcome = await runSurfaceProbe(
+        { ...probeContext(harness), scheduler: { runAfter } } as unknown as ActionCtx,
+        { surfaceId, routine: true },
+        { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+      );
+      return { outcome, runAfter };
+    };
+
+    const onApproved = await reask(approved);
+    expect(onApproved.outcome.verdict).toBe('skipped');
+    expect(onApproved.runAfter).toHaveBeenCalledWith(expect.any(Number), expect.anything(), {
+      surfaceId: approved,
+      routine: true,
+    });
+    const [[delay]] = onApproved.runAfter.mock.calls as unknown as [[number]];
+    expect(delay).toBeGreaterThan(0);
+    expect(delay).toBeLessThanOrEqual(PROBE_LEASE_MS);
+    expect((await reask(connected)).runAfter).not.toHaveBeenCalled();
+    expect(probeMcp).not.toHaveBeenCalled();
   });
 
   it('does not wait out a long Retry-After inside the action, and probes an approved card again when it ends', async (): Promise<void> => {

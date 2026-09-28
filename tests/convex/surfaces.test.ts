@@ -1659,7 +1659,12 @@ describe('the in-flight probe guard (E-88)', (): void => {
     vi.setSystemTime(STARTED_AT + PROBE_LEASE_MS - 1);
     await expect(
       harness.mutation(internal.surfaces.beginProbe, { surfaceId, routine: true }),
-    ).resolves.toEqual({ reserved: false, refusal: 'in-flight' });
+    ).resolves.toEqual({
+      reserved: false,
+      refusal: 'in-flight',
+      verdict: 'approved',
+      leaseEndsAt: STARTED_AT + PROBE_LEASE_MS,
+    });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       probeGeneration: first,
       probeStartedAt: STARTED_AT,
@@ -1774,7 +1779,7 @@ describe('the in-flight probe guard (E-88)', (): void => {
     vi.setSystemTime(STARTED_AT + PROBE_LEASE_MS);
     await expect(
       harness.mutation(internal.surfaces.beginProbe, { surfaceId, routine: true }),
-    ).resolves.toEqual({ reserved: false, refusal: 'in-flight' });
+    ).resolves.toMatchObject({ reserved: false, refusal: 'in-flight' });
   });
 
   it('ends the probe in flight with a rejection, so the card holds no stamp of it (adversarial pass)', async (): Promise<void> => {

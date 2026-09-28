@@ -963,14 +963,26 @@ export interface ProbeReserved {
   readonly generation: number;
 }
 
-/** A probe `beginProbe` did not reserve, and why. */
+/** A probe `beginProbe` did not reserve because the card cannot be probed now. */
 export interface ProbeRefused {
   readonly reserved: false;
-  readonly refusal: ProbeRefusal;
+  readonly refusal: Exclude<ProbeRefusal, 'in-flight'>;
+}
+
+/**
+ * A routine probe `beginProbe` did not reserve because another probe of the
+ * card is in flight: the card's verdict, and when the lease on it ends, so a
+ * re-ask no sweep would repeat can be asked again then.
+ */
+export interface ProbeInFlight {
+  readonly reserved: false;
+  readonly refusal: 'in-flight';
+  readonly verdict: Doc<'surfaces'>['verdict'];
+  readonly leaseEndsAt: number;
 }
 
 /** What `beginProbe` answers. */
-export type ProbeReservation = ProbeReserved | ProbeRefused;
+export type ProbeReservation = ProbeReserved | ProbeRefused | ProbeInFlight;
 
 /** Whether the probe of a card's current generation began within the lease. */
 function probeInFlight(surface: Doc<'surfaces'>, now: number): boolean {
@@ -1003,8 +1015,17 @@ export const beginProbe = internalMutation({
       if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
       return { reserved: false, refusal: 'access-ended' };
     }
-    if (args.routine === true && probeInFlight(surface, now)) {
-      return { reserved: false, refusal: 'in-flight' };
+    if (
+      args.routine === true &&
+      surface.probeStartedAt !== undefined &&
+      probeInFlight(surface, now)
+    ) {
+      return {
+        reserved: false,
+        refusal: 'in-flight',
+        verdict: surface.verdict,
+        leaseEndsAt: surface.probeStartedAt + PROBE_LEASE_MS,
+      };
     }
     const started = { probeGeneration: (surface.probeGeneration ?? 0) + 1, probeStartedAt: now };
     await ctx.db.patch(surface._id, started);
