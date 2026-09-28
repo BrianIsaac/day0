@@ -117,6 +117,18 @@ describe('the public-page motion', () => {
     );
   });
 
+  it('sets the walkthrough frame beside the copy on a phone on its side, and caps it there (M-a)', () => {
+    const sideways = blocks('@media (max-width: 767px) and (max-height: 559px)').join('\n');
+    expect(rulesFor(sideways, '[data-run]')[0]).toMatch(
+      /grid-template-columns:\s*minmax\(0, 1\.15fr\) minmax\(0, 1fr\)/,
+    );
+    expect(rulesFor(sideways, '[data-run] > [data-pin-side]')[0]).toMatch(/top:\s*64px/);
+    const short = blocks('@media (max-height: 559px)').join('\n');
+    expect(rulesFor(short, '[data-run] [data-pin-stack]')[0]).toMatch(
+      /max-height:\s*calc\(100svh - 204px\)/,
+    );
+  });
+
   it('draws the orbit traffic at rest under reduced motion, never leaving the packets invisible (m18)', () => {
     const [packet] = rulesFor(reduce, '.day0-surface-packet');
     expect(packet).toMatch(/opacity:\s*0\.85/);
