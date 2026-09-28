@@ -50,6 +50,7 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | `pnpm eval:comparison`, `eval:revocation`, `eval:gate` | The evaluation, below |
 | `pnpm metrics:recompute <export>` | Recomputes an owner's supervision figures from a snapshot export |
 | `pnpm lint`, `typecheck`, `test`, `build` | The gate, below |
+| `pnpm gate` | The whole gate as the runner runs it, below |
 
 The company bed's tools are maintainers' tooling rather than product commands, so they have no `pnpm` script and are run by their paths: `pnpm exec tsx scripts/bed/company.ts <verb>` (the synthetic company bed: its pages, its check and its seed), `pnpm exec tsx scripts/bed/record-spans.ts` (the span model's answers over the bed's pages) and `pnpm exec tsx scripts/bed/rehearse.ts` (the rehearsal).
 
@@ -64,7 +65,9 @@ pnpm lint && pnpm typecheck && pnpm test
 NEXT_PUBLIC_DEV_NO_AUTH= pnpm build
 ```
 
-Run the first three before every commit, including a documentation-only one; a Markdown change cannot break them, but the habit is what keeps the tree green. Run the build before you open a pull request. The build refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment, by design, so clear it as shown. Without a `.env.local` the build wants the three public placeholders the workflow sets: `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CONVEX_SITE_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`; the workflow's own values work.
+Run the first three before every commit, including a documentation-only one; a Markdown change cannot break them, but the habit is what keeps the tree green. Run the build before you open a pull request.
+
+`pnpm gate` runs all four as the runner does: the workflow's own steps and environment, from a clean environment that keeps only `HOME`, `PATH` and `TMPDIR`, so neither your shell's deployment keys nor a coding agent's variables (which switch Vitest's colour off) reach it. The runner uses the Node release in `.nvmrc`, and `pnpm gate` says so when yours differs; `nvm use` or `fnm use` picks it up. The build refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment, by design, so clear it as shown. Without a `.env.local` the build wants the three public placeholders the workflow sets: `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CONVEX_SITE_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`; the workflow's own values work.
 
 `pnpm test` runs two Vitest projects: `convex` for everything in `tests/convex/`, and `node` for the rest. The `convex` project's default environment is `edge-runtime`, the Convex runtime's; many of its files switch to Node with a `@vitest-environment node` comment on their first line, and a new file does so only when it needs Node's APIs. The `convex` project has no `@` or `@convex` alias, so its tests import by relative path; the `node` project has both, and its tests use relative paths too, so one spelling works everywhere. Both projects run `tests/setup/clean-env.ts` first, which removes every deployment variable your shell exports (`DAY0_*`, `OPENAI_*`, `CONVEX_*` and the rest), so the suite gives the same answer on every machine; a test that needs one stubs it with `vi.stubEnv`. It takes a few minutes. `pnpm test -- tests/convex/work.test.ts` runs one file.
 

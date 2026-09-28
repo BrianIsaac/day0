@@ -34,6 +34,7 @@
     "start": "next start -p 3000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "gate": "tsx scripts/gate.ts",
     "eval:comparison": "tsx --env-file-if-exists=.env.local scripts/eval-comparison.ts",
     "eval:gate": "tsx evaluation/gate/run.ts",
     "metrics:recompute": "tsx scripts/recompute-metrics.ts",
