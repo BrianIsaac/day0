@@ -27,6 +27,7 @@ const MARKER_LINE = /(?:^|\n)day0-demo-key: ([a-z0-9-]+)\s*$/;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 20;
 
+/** One Linear team of the workspace, with its key. */
 export interface WorkspaceTeam {
   id: string;
   key: string;
@@ -35,12 +36,14 @@ export interface WorkspaceTeam {
   projects: Array<{ id: string; name: string }>;
 }
 
+/** The Linear workspace as the bed reads it: the viewer, the organisation and the teams. */
 export interface Workspace {
   viewer: { id: string; name: string };
   organization: string;
   teams: WorkspaceTeam[];
 }
 
+/** One issue the bed seeded or found, with its identifier and state. */
 export interface BedIssue {
   id: string;
   identifier: string;
@@ -56,6 +59,7 @@ export interface BedIssue {
   labelIds: string[];
 }
 
+/** One issue of a project as the bed lists it. */
 export interface ProjectIssue {
   id: string;
   identifier: string;
@@ -72,6 +76,7 @@ export interface RunIssue {
   createdAt: string;
 }
 
+/** One label of the workspace. */
 export interface BedLabel {
   id: string;
   description: string | null;

@@ -37,13 +37,18 @@ import type {
 } from './types';
 import { errorMessage } from '../lib/errors';
 
+/** The one verb the documented-API adapter serves. */
 export const HTTP_TOOLS = ['http.request'] as const satisfies readonly MockAction['tool'][];
+/** How long one documented-API request may take. */
 export const HTTP_TIMEOUT_MS = 20_000;
+/** How much of a response the ledger keeps as a write's effect line. */
 export const EFFECT_LENGTH = 180;
 const RESPONSE_READ_LIMIT = 64 * 1024;
 
+/** The transport the adapter sends through, so a test can hand it a double. */
 export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
 
+/** What the documented-API adapter depends on: the decrypt and the two transports. */
 export interface HttpAdapterDeps {
   decrypt: DecryptCredential;
   /** The transport to Slack's fixed Web API base, which the code names and no page can move. */

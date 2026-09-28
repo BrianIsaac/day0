@@ -27,22 +27,26 @@ const SYSTEM_PROMPT = [
 
 const qualityFitAgent = makeAgent('day0-quality-fit', SYSTEM_PROMPT);
 
+/** The quality-fit reply, validated: whether the candidate fits the role norms and why. */
 export const qualityFitSchema = z.object({
   pass: z.boolean(),
   reason: z.string(),
 });
 
+/** What the quality-fit filter reads: the candidate and the good-habits memory. */
 export interface QualityFitArgs {
   candidate: WorkCandidate;
   agentsMd: string;
   role: string;
 }
 
+/** Whether a candidate passed the quality-fit filter and why. */
 export interface QualityFitResult {
   pass: boolean;
   reason: string;
 }
 
+/** Ask the model whether a candidate fits the role norms in AGENTS.md; passes when there is no memory yet. */
 export async function qualityFit(args: QualityFitArgs): Promise<QualityFitResult> {
   if (!/## Good-habits memory/i.test(args.agentsMd)) {
     return { pass: true, reason: 'no good-habits memory yet — defer slop filtering to Layer 3' };

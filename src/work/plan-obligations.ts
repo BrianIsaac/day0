@@ -28,6 +28,7 @@ import type {
  */
 
 export const PLAN_STEP_KINDS = ['read', 'write', 'report', 'conditional-write'] as const;
+/** The ways a plan step may promise a ticket state transition. */
 export const PLAN_TRANSITIONS = [
   'promised',
   'conditional-on-evidence',
@@ -69,6 +70,7 @@ function agent(): ReturnType<typeof makeAgent> {
   return planObligationsAgent;
 }
 
+/** The judgement's reply, validated: what each step declares it will read, write or transition. */
 export const planObligationsSchema = z.object({
   steps: z.array(
     z.object({
@@ -84,11 +86,13 @@ export const planObligationsSchema = z.object({
   reason: z.string(),
 });
 
+/** A validated obligations judgement. */
 export type PlanObligationsJudgement = z.infer<typeof planObligationsSchema>;
 
 /** The documentation the judgement may read: the same pages the planner and the executor cite. */
 export type ObligationDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>;
 
+/** What the obligations judgement reads: the plan, the charter, the candidate and the documentation. */
 export interface PlanObligationsArgs {
   plan: Pick<ExecutionPlan, 'summary' | 'steps' | 'expectedOutputType'>;
   charter: Charter;
@@ -213,6 +217,7 @@ export type ObligationEvent =
       payload: { planner: PlannerObligations; judgement: PlanObligations; differences: string[] };
     };
 
+/** The obligations a plan settled on, with the events that record how they were reached. */
 export interface SettledObligations {
   obligations: PlanObligations | undefined;
   events: ObligationEvent[];

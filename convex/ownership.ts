@@ -80,6 +80,7 @@ export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx):
   return identity;
 }
 
+/** The employee, if the caller owns it; throws otherwise. Every public function on an employee's rows calls this. */
 export async function assertOwnsAgent(
   ctx: QueryCtx | MutationCtx,
   agentId: Id<'agents'>,
@@ -92,6 +93,7 @@ export async function assertOwnsAgent(
   return agent;
 }
 
+/** The employee, if the caller owns it, for an action that has no database handle. */
 export async function assertOwnsAgentAction(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
@@ -104,6 +106,7 @@ export async function assertOwnsAgentAction(
   return agent;
 }
 
+/** The charter, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsCharter(
   ctx: QueryCtx | MutationCtx,
   charterId: Id<'charters'>,
@@ -114,6 +117,7 @@ export async function assertOwnsCharter(
   return charter;
 }
 
+/** The work item, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsWorkItem(
   ctx: QueryCtx | MutationCtx,
   workItemId: Id<'workItems'>,
@@ -124,6 +128,7 @@ export async function assertOwnsWorkItem(
   return item;
 }
 
+/** The skill, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsSkill(
   ctx: QueryCtx | MutationCtx,
   skillId: Id<'skills'>,
@@ -134,6 +139,7 @@ export async function assertOwnsSkill(
   return skill;
 }
 
+/** The voice session, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsVoiceSession(
   ctx: QueryCtx | MutationCtx,
   sessionId: Id<'voiceSessions'>,

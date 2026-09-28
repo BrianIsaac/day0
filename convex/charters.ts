@@ -41,6 +41,7 @@ export const workspaceFileValidator = v.object({
   content: v.string(),
 });
 
+/** One workspace file as a charter commit writes it. */
 export interface WorkspaceFile {
   fileName: string;
   content: string;
@@ -85,6 +86,7 @@ export async function commitCharterAndWorkspace(
   return charterId;
 }
 
+/** Public, owner-guarded: an employee's latest charter version. */
 export const latest = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -97,6 +99,7 @@ export const latest = query({
   },
 });
 
+/** Internal: an employee's latest charter version, for a scheduled step with no caller. */
 export const latestInternal = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) =>
@@ -107,6 +110,7 @@ export const latestInternal = internalQuery({
       .first(),
 });
 
+/** Public, owner-guarded: every version of an employee's charter. */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -178,6 +182,7 @@ const strikeResultValidator = v.union(
   v.object({ ok: v.literal(false), reason: v.string() }),
 );
 
+/** Whether a strike went through, and why not when it was refused. */
 export type StrikeResult = { ok: true } | { ok: false; reason: string };
 
 /**

@@ -2,9 +2,12 @@ import { summariseAction, type SummaryContext } from '../surfaces/summary';
 import type { SurfaceRecord } from '../surfaces/types';
 import type { MockAction } from './types';
 
+/** How many characters a decision code has. */
 export const DECISION_ID_LENGTH = 6;
+/** The characters a decision code is drawn from: no look-alikes. */
 export const DECISION_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
 
+/** What a decision request asks the manager to decide: a plan or a set of actions. */
 export type DecisionKind = 'plan' | 'actions';
 
 /**
@@ -17,6 +20,7 @@ export type DecisionKind = 'plan' | 'actions';
  */
 export const DECISION_REQUEST_RECOVERY_MS = 3 * 60 * 1000;
 
+/** How a decision request was delivered: when, and the message it became. */
 export interface DecisionDeliveryFields {
   requestedAt: number;
   ts?: string;
@@ -143,6 +147,7 @@ export function heldReplyCodes(
   ]);
 }
 
+/** A manager's reply as the channel parses it: approve or reject, with the code and any reason. */
 export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string };

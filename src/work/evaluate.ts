@@ -68,12 +68,14 @@ export interface EvaluateLookups {
   ) => Promise<{ name: string; description: string } | null>;
 }
 
+/** The knobs an evaluation takes: the work-in-progress cap and an observer for the scope judgement. */
 export interface EvaluateOptions {
   wipLimit?: number;
   /** Observes the scope judgement, admitted or not, before the rest of the chain runs. */
   onScopeJudgement?: (judgement: ScopeJudgement) => void;
 }
 
+/** A surface as the evaluator sees it: its liveness, name and slug. */
 export interface EvaluationSurface extends SurfaceLiveness {
   displayName: string;
   slug: string;
@@ -89,6 +91,7 @@ export interface EvaluationSurface extends SurfaceLiveness {
   };
 }
 
+/** What the evaluator reads beyond the agent context: the autonomy switch, the mode and the surfaces. */
 export interface EvalContext extends AgentContext {
   autonomousActions: boolean;
   surfaceMode: SurfaceMode;
@@ -161,6 +164,7 @@ function unadmittedVerdict(scope: Extract<ScopeJudgement, { admitted: false }>):
     : { decision: 'skip', reason: scope.reason };
 }
 
+/** The permission scopes a candidate needs, from its source system and the manager channel. */
 export function inferRequiredPermissions(candidate: WorkCandidate): string[] {
   const required = new Set<string>();
   // Day0 always needs to be able to message the boss.
@@ -367,6 +371,7 @@ export function missingConnectionSurface(
   })?.slug;
 }
 
+/** A candidate's value score from its priority and its wording. */
 export function scoreValue(candidate: WorkCandidate): number {
   let score = 50;
   const lower = (candidate.priority ?? '').toLowerCase();
@@ -383,6 +388,7 @@ export function scoreValue(candidate: WorkCandidate): number {
   return Math.max(0, Math.min(100, score));
 }
 
+/** A candidate's risk score from the destructive and external words its body carries. */
 export function scoreRisk(candidate: WorkCandidate): number {
   let score = 30;
   const body = candidate.contentSummary.toLowerCase();

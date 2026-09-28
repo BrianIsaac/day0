@@ -29,8 +29,10 @@ import {
 import { mergeSpans, replaceSpans, structuralSpans } from './structural';
 import { personalDataSpans } from './personal';
 
+/** What a redacted value becomes in stored text. */
 export const REDACTED = '<redacted>';
 
+/** One value the redaction found, its kind, and which layer found it. */
 export interface Finding {
   kind: EntityKind;
   /** The model's label or the structural rule that found it. */
@@ -42,8 +44,10 @@ export interface Finding {
   redacted: boolean;
 }
 
+/** How a redaction fell short: only the structural layer ran. */
 export type RedactionDegradation = 'structural-only';
 
+/** Text after redaction with what was found and how far the redaction went. */
 export interface RedactedText {
   text: string;
   findings: Finding[];
@@ -51,6 +55,7 @@ export interface RedactedText {
   degraded?: RedactionDegradation;
 }
 
+/** What a redaction takes: the span model, the known values and the context it runs in. */
 export interface RedactOptions {
   /** The span model; undefined means none is configured. */
   model?: SpanModel;

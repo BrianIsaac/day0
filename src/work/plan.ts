@@ -390,6 +390,7 @@ function procedureAsksFor(body: string, words: RegExp): boolean {
   });
 }
 
+/** Which plan steps check a candidate property nothing asked for, with the issues found. */
 export interface PlanPreconditionAudit {
   /** One-based steps that check a candidate property nothing asked for. */
   flagged: number[];
@@ -441,6 +442,7 @@ export function planPreconditionAudit(
   return { flagged, issues };
 }
 
+/** The planner's reply, validated: one to eight steps with the summary, output type and risk notes. */
 export const planSchema = z.object({
   summary: z.string(),
   steps: z.array(z.string()).min(1).max(8),
@@ -753,6 +755,7 @@ export async function redactGroundingRead(
   return degraded ? { ...redacted, redaction: 'structural-only' } : redacted;
 }
 
+/** What drafting a plan takes: the candidate, the charter, the switch, the mode, the surfaces and the documents. */
 export interface DraftPlanArgs {
   candidate: WorkCandidate;
   charter: Charter;
@@ -872,6 +875,7 @@ function materialisePlan(raw: z.infer<typeof planSchema>): ExecutionPlan {
   };
 }
 
+/** Draft the execution plan for one candidate through the model, with its obligations judged. */
 export async function draftExecutionPlan(args: DraftPlanArgs): Promise<ExecutionPlan> {
   const { autonomousActions, onObligationEvent, ...prompt } = args;
   const planAgent = makeAgent('day0-plan', planSystemPrompt(autonomousActions, args.surfaceMode));
@@ -985,6 +989,7 @@ async function withObligations(
   return failedOpen ? { ...plan, obligationsFailedOpen: failedOpen.payload.reason } : plan;
 }
 
+/** Render a plan as the one paragraph a decision request carries. */
 export function renderPlanSummary(plan: ExecutionPlan): string {
   const stepsRendered = plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ');
   return [

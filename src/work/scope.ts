@@ -117,6 +117,7 @@ export interface ItemSource {
   channel?: string;
 }
 
+/** What the scope judgement reads beyond the agent context: the mode and whether quality fit is waived. */
 export interface ScopeContext extends AgentContext {
   surfaceMode: SurfaceMode;
   qualityFitWaived?: boolean;
@@ -281,6 +282,7 @@ const SYSTEM_PROMPT = [
 
 const scopeJudgementAgent = makeAgent('day0-scope-judgement', SYSTEM_PROMPT);
 
+/** The scope judgement's reply, validated: in scope, fit, and the reasons. */
 export const scopeJudgementSchema = z.object({
   inScope: z.boolean(),
   fit: z.boolean(),
@@ -291,6 +293,7 @@ export const scopeJudgementSchema = z.object({
   }),
 });
 
+/** What the charter judgement reads: the candidate, the charter and the documentation. */
 export interface CharterJudgementArgs {
   candidate: WorkCandidate;
   charter: Charter;
@@ -305,6 +308,7 @@ export interface CharterJudgementArgs {
   liveSystems?: readonly string[];
 }
 
+/** A validated scope judgement. */
 export type CharterJudgement = z.infer<typeof scopeJudgementSchema>;
 
 /**
