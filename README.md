@@ -502,13 +502,13 @@ Then, in the browser:
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
-5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one action, which removes every credential value stored for the owner before it answers, and because every per-agent function checks the caller, the CLI has to present the local owner's identity to run it:
+5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one command, which writes the agent's whole trace to one file a page at a time (one call cannot return it whole: the export action answers with the head and where the pages start), with every credential value stored for the owner and the personal data the export's redaction policy names removed:
 
    ```bash
-   npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   pnpm export:trace <id> --out trace.json
    ```
 
-   Without `--identity` the call is refused as not authenticated - that is the no-auth boundary, not a broken export. The agent id is the last segment of the dashboard URL.
+   Every per-agent function checks the caller, so the command presents the local owner's identity (`dev-no-auth|local-boss`; `--identity` names another). The agent id is the last segment of the dashboard URL, and `pnpm metrics:recompute trace.json` recomputes the card from the file.
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
@@ -985,7 +985,7 @@ Every figure this README quotes comes from a file in this repository or from a r
 | The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` (the harness's earlier file names, which these recorded directories keep) | `pnpm eval:comparison` with the bed's model in `.env.local`; `pnpm eval:comparison -- --regrade <path>` re-scores a directory with no model call while its run's mock backend is kept; these directories' backends were not retained, so they cannot be re-scored from a clone |
 | The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
-| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of a recorded 17 September 2026 real-mode run of the same route, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is not in this repository | Run [either local way](#local-dev); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#real-mode) |
+| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of a recorded 17 September 2026 real-mode run of the same route, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is not in this repository | Run [either local way](#local-dev); read the card, or export the ledger with `pnpm export:trace` as in [Read the ledger](#real-mode) |
 | This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), the route's documented run on `gpt-5.6-terra` at an earlier commit, paced for screenshots | The same |
 
 The two real-mode runs are single observations of the same route a fortnight apart, on different commits, different models and different human pacing; the README run exercised a rejection and a revocation and the recorded run did not, so its blocked-after-revocation figure has no value. Neither is a distribution, and the table above names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
@@ -1035,7 +1035,7 @@ pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json
 pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
-`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - on a real-mode deployment that also names itself a bed (`DAY0_EVALUATION_BED` in `.env.local`, then `pnpm sync:env`), and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
+`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - on a real-mode deployment that also names itself a bed (`DAY0_EVALUATION_BED` in `.env.local`, then `pnpm sync:env`), and writes `evaluation/results/revocation-<timestamp>/`. `pnpm export:trace <id> --out trace.json` exports one agent's whole trace as JSON, a page at a time, which is the same ledger the Supervision card counts; it presents the local owner's identity so the per-agent ownership check passes in no-auth mode.
 
 The frozen evidence directories this README quotes, and their numbers, are listed on the [evaluation page](evaluation/README.md). They were written before 27 September 2026 and keep the file names the harness wrote then, `semifinal.json` and `semifinal.md`; a new run writes `comparison.json` and `comparison.md`. Earlier directories are kept as superseded audit history and are not used for any conclusion.
 
@@ -1550,13 +1550,13 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
-5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条 action 导出为 JSON，导出前会移除为该 owner 存储的所有凭据值；由于每个按 Agent 划分的函数都会校验调用者，CLI 必须以本机 owner 的身份运行：
+5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条命令导出为 JSON：它逐页把该 Agent 的完整轨迹写入一个文件（一次调用无法返回全部：导出 action 只返回头部及各页的起点），导出前会移除为该 owner 存储的所有凭据值，以及导出脱敏策略列出的个人数据：
 
    ```bash
-   npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   pnpm export:trace <id> --out trace.json
    ```
 
-   不带 `--identity` 时调用会以未认证被拒绝，这是无认证边界在起作用，而不是导出损坏。Agent id 是 dashboard URL 的最后一段。
+   每个按 Agent 划分的函数都会校验调用者，因此该命令以本机 owner 的身份运行（`dev-no-auth|local-boss`；`--identity` 可指定其他身份）。Agent id 是 dashboard URL 的最后一段，`pnpm metrics:recompute trace.json` 可从该文件重新计算卡片。
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
@@ -1687,7 +1687,7 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 | 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS`（harness 早期的文件名，这些已记录的目录保留原名） | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:comparison`；`pnpm eval:comparison -- --regrade <path>` 在保留该次运行 mock 后端的前提下不调用模型重新评分；这些目录的后端未保留，无法从克隆重新评分 |
 | 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
-| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `exportActions:exportForAgent` 命令导出 ledger |
+| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `pnpm export:trace` 导出 ledger |
 | 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢 | 同上 |
 
 两次 real-mode 运行是同一路径相隔两周的单次观察，commit、模型与人工节奏均不同；README 运行经历了一次驳回与一次撤权，录制运行没有，因此其撤权后阻断一项没有数值。两者都不是分布，上表说明了每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
@@ -1736,7 +1736,7 @@ pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json
 pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
-`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断；它运行在同样声明自己是评测环境的真实模式 deployment 上（在 `.env.local` 中设置 `DAY0_EVALUATION_BED`，然后 `pnpm sync:env`），结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
+`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断；它运行在同样声明自己是评测环境的真实模式 deployment 上（在 `.env.local` 中设置 `DAY0_EVALUATION_BED`，然后 `pnpm sync:env`），结果写入 `evaluation/results/revocation-<timestamp>/`。`pnpm export:trace <id> --out trace.json` 逐页导出单个 Agent 的完整轨迹为 JSON，与 Supervision 卡片统计的是同一条轨迹；它以本机 owner 的身份运行，从而在无认证模式下通过按 Agent 划分的所有权校验。
 
 本文件引用的冻结证据目录及其数字列在[评测页面](evaluation/README.md)。这些目录写于 2026 年 9 月 27 日之前，保留 harness 当时写出的文件名 `semifinal.json` 与 `semifinal.md`；新的运行写出 `comparison.json` 与 `comparison.md`。更早的目录仅保留为 superseded audit history，不用于任何结论。
 
