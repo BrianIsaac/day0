@@ -1012,7 +1012,10 @@ It wants Node 22+, pnpm, a self-hosted backend in **mock** mode and the local sa
 pnpm install
 
 # .env.local: self-hosted URL/admin key, no-auth keys, model settings,
-# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. For bundled qwen3:8b:
+# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. Name the deployment an
+# evaluation bed, or the harness refuses every call:
+# DAY0_EVALUATION_BED=comparison
+# For bundled qwen3:8b:
 # OPENAI_MODEL=qwen3:8b
 # OLLAMA_CONTEXT_LENGTH=16384
 pnpm convex:up
@@ -1032,7 +1035,7 @@ pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json
 pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
-`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
+`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - on a real-mode deployment that also names itself a bed (`DAY0_EVALUATION_BED` in `.env.local`, then `pnpm sync:env`), and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
 
 The frozen evidence directories this README quotes, and their numbers, are listed on the [evaluation page](evaluation/README.md). They were written before 27 September 2026 and keep the file names the harness wrote then, `semifinal.json` and `semifinal.md`; a new run writes `comparison.json` and `comparison.md`. Earlier directories are kept as superseded audit history and are not used for any conclusion.
 
@@ -1710,7 +1713,10 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 pnpm install
 
 # .env.local: self-hosted URL/admin key, no-auth keys, model settings,
-# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. For bundled qwen3:8b:
+# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. Name the deployment an
+# evaluation bed, or the harness refuses every call:
+# DAY0_EVALUATION_BED=comparison
+# For bundled qwen3:8b:
 # OPENAI_MODEL=qwen3:8b
 # OLLAMA_CONTEXT_LENGTH=16384
 pnpm convex:up
@@ -1730,7 +1736,7 @@ pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json
 pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
-`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
+`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断；它运行在同样声明自己是评测环境的真实模式 deployment 上（在 `.env.local` 中设置 `DAY0_EVALUATION_BED`，然后 `pnpm sync:env`），结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
 
 本文件引用的冻结证据目录及其数字列在[评测页面](evaluation/README.md)。这些目录写于 2026 年 9 月 27 日之前，保留 harness 当时写出的文件名 `semifinal.json` 与 `semifinal.md`；新的运行写出 `comparison.json` 与 `comparison.md`。更早的目录仅保留为 superseded audit history，不用于任何结论。
 

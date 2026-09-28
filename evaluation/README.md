@@ -583,7 +583,10 @@ service after changing it and confirm the loaded context in its startup log.
 pnpm install
 
 # .env.local: self-hosted URL/admin key, no-auth keys, model settings,
-# DAY0_SURFACE_MODE=mock. For bundled qwen3:8b, also set:
+# DAY0_SURFACE_MODE=mock, and the evaluation bed flag, without which the
+# harness refuses every call:
+# DAY0_EVALUATION_BED=comparison
+# For bundled qwen3:8b, also set:
 # OPENAI_MODEL=qwen3:8b
 # OLLAMA_CONTEXT_LENGTH=16384
 # Then push the same settings to the deployment.
