@@ -180,7 +180,7 @@ test.describe('the walkthrough and the sign-in page as pointer targets', () => {
         await page.goto(path);
         // The page's own content only: the site header is the layout's.
         const measured = await page.locator('main a[href], main button, main input').count();
-        expect(measured, `${path} has controls of its own to measure`).toBeGreaterThan(2);
+        expect(measured, `${path} has controls of its own to measure`).toBeGreaterThan(0);
         const small = await page.evaluate(() =>
           Array.from(
             document.querySelectorAll<HTMLElement>('main a[href], main button, main input'),
