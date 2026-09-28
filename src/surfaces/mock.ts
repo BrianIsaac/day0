@@ -1,6 +1,6 @@
 import type { ActionCtx } from '../../convex/_generated/server';
-import { api, internal } from '../../convex/_generated/api';
-import type { Doc, Id } from '../../convex/_generated/dataModel';
+import { internal } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
 import {
   MOCK_ACTION_TOOLS,
   type MockAction,
@@ -40,73 +40,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
    *   Hydrated documents, sheets, messages, tweets and tickets.
    */
   async read(ctx: ActionCtx, agentId: Id<'agents'>): Promise<MockSurfaceSnapshot> {
-    const docs: Doc<'mockDocs'>[] = await ctx.runQuery(api.mock.listDocs, { agentId });
-    const sheets: Doc<'mockSpreadsheets'>[] = await ctx.runQuery(api.mock.listSpreadsheets, {
-      agentId,
-    });
-    const channels: Doc<'mockSlackChannels'>[] = await ctx.runQuery(api.mock.listChannels, {
-      agentId,
-    });
-    const tweets: Doc<'mockTweets'>[] = await ctx.runQuery(api.mock.listTweets, { agentId });
-    const tickets: Doc<'mockTickets'>[] = await ctx.runQuery(api.mock.listTickets, { agentId });
-
-    const spreadsheetsHydrated = await Promise.all(
-      sheets.map(async (s) => {
-        const detail = await ctx.runQuery(api.mock.getSpreadsheet, { agentId, slug: s.slug });
-        const rows = (detail?.rows ?? []) as Doc<'mockSpreadsheetRows'>[];
-        return {
-          slug: s.slug,
-          title: s.title,
-          tabs: s.tabs,
-          rows: rows.map((r) => ({
-            tabName: r.tabName,
-            cells: r.cells as Record<string, string>,
-          })),
-        };
-      }),
-    );
-
-    const channelsHydrated = await Promise.all(
-      channels.map(async (c) => {
-        const messages = (await ctx.runQuery(api.mock.listMessages, {
-          agentId,
-          channelSlug: c.slug,
-        })) as Doc<'mockSlackMessages'>[];
-        return {
-          slug: c.slug,
-          displayName: c.displayName,
-          kind: c.kind,
-          recentMessages: messages.slice(-12).map((m) => ({
-            sender: m.sender,
-            body: m.body,
-            threadKey: m.threadKey,
-          })),
-        };
-      }),
-    );
-
-    return {
-      howToGuides: docs
-        .filter((d) => d.category === 'how-to-guide')
-        .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
-      teamDocs: docs
-        .filter((d) => d.category === 'team-doc')
-        .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
-      spreadsheets: spreadsheetsHydrated,
-      slackChannels: channelsHydrated,
-      tweets: tweets.map((t) => ({
-        slug: t.slug,
-        author: t.author,
-        handle: t.handle,
-        body: t.body,
-      })),
-      tickets: tickets.map((t) => ({
-        slug: t.slug,
-        title: t.title,
-        status: t.status,
-        body: t.body,
-      })),
-    };
+    return await ctx.runQuery(internal.mock.snapshotInternal, { agentId });
   }
 
   /**

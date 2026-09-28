@@ -1376,6 +1376,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                     currentOperation?.kind === 'provision' ? currentOperation.error : undefined
                   }
                   onProvision={(configurationToken: string): void => {
+                    // onProvision ends in its own catch, which shows the refusal on the row.
                     void onProvision(surface._id, configurationToken);
                   }}
                   presentation={provisioningPresentation}
@@ -1389,6 +1390,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   error={currentOperation?.kind === 'landing' ? currentOperation.error : undefined}
                   landing={currentOperation?.kind === 'landing' && !currentOperation.error}
                   onLand={(plaintext: string): void => {
+                    // onLand ends in its own catch, which shows the refusal on the row.
                     void onLand(
                       surface._id,
                       presentation.label ?? `${surface.displayName} credential`,
@@ -1484,6 +1486,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             : undefined
         }
         onPropose={(surfaceId: string): void => {
+          // onPropose ends in its own catch, which shows the refusal on the row.
           void onPropose(surfaceId as Id<'surfaces'>);
         }}
         proposing={

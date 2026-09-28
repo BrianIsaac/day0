@@ -103,6 +103,10 @@ function VoiceRoomInner({
           .join('\n\n');
         if (text) {
           finalisePosted.current = true;
+          // Posted once and not awaited: the transcript is set below whether
+          // or not the post lands, and a failed post is shown by the charter
+          // card staying at its draft, where the manager retries (P10-3 names
+          // the retry as its own step).
           void fetch('/api/onboarding/synthesise', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

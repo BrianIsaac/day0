@@ -273,9 +273,12 @@ export function DocumentationPage(): React.ReactNode {
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
-                          void revokeCredential({ credentialId: source.credentialId! })
-                        }
+                        onClick={() => {
+                          revokeCredential({ credentialId: source.credentialId! }).catch(
+                            (failure: unknown) =>
+                              setError(plainErrorMessage(errorMessage(failure))),
+                          );
+                        }}
                         className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
                       >
                         Revoke

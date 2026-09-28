@@ -308,7 +308,6 @@ export function AgentDashboard({ agentId }: Props) {
             {charter ? <CharterCard charter={charter} manager={agent.bossEmail} /> : null}
 
             <ProposedSkillsPanel
-              agentId={agentId}
               skills={proposedSkills ?? []}
               surfaces={surfaces}
               onAuthoringAttempt={setLastAttempt}
@@ -1365,8 +1364,11 @@ function AddLine({
       <button
         className={AMEND_BUTTON}
         disabled={!draft.trim()}
-        onClick={async () => {
-          if (await onAdd(draft)) setDraft('');
+        onClick={() => {
+          // onAdd never rejects: a refusal is shown on the panel.
+          void onAdd(draft).then((added) => {
+            if (added) setDraft('');
+          });
         }}
       >
         {label}
@@ -1533,15 +1535,14 @@ export function AmendCharterPanel({
             <button
               className={AMEND_BUTTON}
               disabled={!rule.quote.trim()}
-              onClick={async () => {
-                if (
-                  await onAmend({
-                    kind: 'add-constraint',
-                    constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
-                  })
-                ) {
-                  setRule({ quote: '', kind: rule.kind });
-                }
+              onClick={() => {
+                // onAmend never rejects: a refusal is shown on the panel.
+                void onAmend({
+                  kind: 'add-constraint',
+                  constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
+                }).then((amended) => {
+                  if (amended) setRule({ quote: '', kind: rule.kind });
+                });
               }}
             >
               Add rule
@@ -1632,10 +1633,11 @@ export function AmendCharterPanel({
               <button
                 className={AMEND_BUTTON}
                 disabled={!system.name.trim() || !system.whereMentioned.trim()}
-                onClick={async () => {
-                  if (await onAmend({ kind: 'add-system', system })) {
-                    setSystem({ name: '', class: 'other', whereMentioned: '' });
-                  }
+                onClick={() => {
+                  // onAmend never rejects: a refusal is shown on the panel.
+                  void onAmend({ kind: 'add-system', system }).then((amended) => {
+                    if (amended) setSystem({ name: '', class: 'other', whereMentioned: '' });
+                  });
                 }}
               >
                 Add system
@@ -1720,12 +1722,10 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
 }
 
 function ProposedSkillsPanel({
-  agentId,
   skills,
   surfaces,
   onAuthoringAttempt,
 }: {
-  agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
   /** The agent's surfaces in real mode; a skill targeting one that is not
    *  connected cannot be approved yet, and the button says why. */
@@ -1772,26 +1772,27 @@ function ProposedSkillsPanel({
                 <button
                   disabled={Boolean(refusal)}
                   title={refusal}
-                  onClick={async () => {
-                    await approve({ skillId: s._id });
-                    void agentId;
+                  onClick={() => {
+                    // The chain ends in its own catch, which files the attempt on the row.
                     onAuthoringAttempt(null);
-                    try {
-                      const result = await author({ skillId: s._id });
-                      if (!result.ok) {
+                    void approve({ skillId: s._id })
+                      .then(() => author({ skillId: s._id }))
+                      .then((result) => {
+                        if (!result.ok) {
+                          onAuthoringAttempt({
+                            skillId: s._id,
+                            name: s.name,
+                            reason: result.reason ?? 'authoring did not finish',
+                          });
+                        }
+                      })
+                      .catch((err: unknown) => {
                         onAuthoringAttempt({
                           skillId: s._id,
                           name: s.name,
-                          reason: result.reason ?? 'authoring did not finish',
+                          reason: errorMessage(err),
                         });
-                      }
-                    } catch (err) {
-                      onAuthoringAttempt({
-                        skillId: s._id,
-                        name: s.name,
-                        reason: errorMessage(err),
                       });
-                    }
                   }}
                   className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
                 >

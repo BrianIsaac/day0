@@ -290,6 +290,9 @@ export function ChatRoom({
     if (!done || synthFired.current) return;
     synthFired.current = true;
     const transcript = charterTranscript(messages);
+    // Posted once and not awaited: a failed post is shown by the charter card
+    // staying at its draft, where the manager retries (P10-3 names the retry
+    // as its own step).
     void fetch('/api/onboarding/synthesise', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -318,6 +321,7 @@ export function ChatRoom({
 
   function retryTurn() {
     setStreamError(null);
+    // askAgain reports its own failure through setStreamError and never rejects.
     void askAgain({ messages, regenerate, sendMessage });
   }
 
