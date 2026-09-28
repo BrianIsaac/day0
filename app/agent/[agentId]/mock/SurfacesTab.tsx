@@ -294,7 +294,9 @@ export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNod
                   </p>
                 ) : null}
                 {props.error?.surfaceId === system._id ? (
-                  <p className="mt-1 text-[var(--color-danger)]">{props.error.message}</p>
+                  <p role="alert" className="mt-1 text-[var(--color-danger)]">
+                    {props.error.message}
+                  </p>
                 ) : null}
               </div>
               <button
@@ -456,7 +458,11 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
           </button>
         </form>
       ) : null}
-      {props.error ? <p className="mt-1 text-[var(--color-danger)]">{props.error}</p> : null}
+      {props.error ? (
+        <p role="alert" className="mt-1 text-[var(--color-danger)]">
+          {props.error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -548,7 +554,11 @@ export function CredentialRow(props: CredentialRowProps): React.ReactNode {
           </button>
         </form>
       ) : null}
-      {props.error ? <p className="mt-1 text-[var(--color-danger)]">{props.error}</p> : null}
+      {props.error ? (
+        <p role="alert" className="mt-1 text-[var(--color-danger)]">
+          {props.error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1155,7 +1165,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     words: { done: string | ((result: Result) => string); refused: string },
   ): void {
     putOperation(surface._id, { kind, surfaceId: surface._id });
-    cardFocus.current = document.getElementById(`surface-${surface.slug}`);
+    // An unnamed system has no card yet: its disclosure stands in for it.
+    cardFocus.current =
+      document.getElementById(`surface-${surface.slug}`) ??
+      document.activeElement?.closest('details')?.querySelector<HTMLElement>('summary') ??
+      null;
     change.run(
       async (): Promise<Result> => {
         try {
@@ -1205,10 +1219,10 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
 
   return (
     <div className="space-y-3">
-      {/* What each change came to, said once for the tab; the card shows its
-          own state and keeps a refusal beside the control that met it. */}
+      {/* A refusal is said once, by the alert beside the control that met it;
+          what a change that landed came to is said here, once for the tab. */}
       <div className="sr-only">
-        <LiveStatus outcome={change.outcome} />
+        <LiveStatus outcome={change.outcome?.tone === 'done' ? change.outcome : null} />
       </div>
       {declared.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">

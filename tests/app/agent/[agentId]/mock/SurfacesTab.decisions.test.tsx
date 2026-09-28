@@ -113,7 +113,7 @@ describe('a decision on a surface card', (): void => {
     const refusal =
       'A documented intake queue changed; reject this card and re-run orientation before approval.';
     expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(refusal);
-    expect(view.container.querySelector('[role="status"]')?.textContent).toBe(refusal);
+    expect(view.container.querySelector('[role="status"]')?.textContent).toBe('');
     expect(focusedName()).toBe('Approve');
     view.unmount();
   });
