@@ -139,7 +139,7 @@ describe('the three ways to run it', (): void => {
   it('go to pages this app serves, or type commands this repository ships', (): void => {
     const [hosted, ...local] = RUN_WAYS;
     expect(hosted.commands).toBeUndefined();
-    expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/demo']);
+    expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/walkthrough']);
     for (const way of local) {
       expect(way.links).toBeUndefined();
       expect(way.commands?.slice(0, 3)).toEqual(QUICKSTART_COMMANDS.slice(0, 3));
