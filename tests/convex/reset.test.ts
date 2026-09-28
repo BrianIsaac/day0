@@ -860,9 +860,20 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
         });
       const retiring = await insertAgent('Priya');
       const colleague = await insertAgent('Mateo');
-      const item = await insertMinimalRow(ctx, 'workItems', retiring);
+      const item = await ctx.db.insert('workItems', {
+        agentId: retiring,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-9',
+        title: 'Follow up on the close',
+        contentSummary: 'Follow up.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 1,
+        createdAt: 1,
+      });
       await ctx.scheduler.runAfter(60_000, internal.workActions.evaluateWorkItemInternal, {
-        workItemId: item as Id<'workItems'>,
+        workItemId: item,
       });
       await ctx.scheduler.runAfter(60_000, internal.work.reevaluatePending, {
         agentId: retiring,
