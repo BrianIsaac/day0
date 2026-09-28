@@ -3841,7 +3841,7 @@ async function readCandidateRecord(
     }
     return { record: { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` } };
   } catch (error) {
-    return readFailed(error instanceof Error ? error.message : String(error));
+    return readFailed(safeFailureMessage(error, '', 'the read failed', 300, args.knownValues));
   }
 }
 
@@ -3996,7 +3996,7 @@ async function claimLandedTicketWrites(
     // the claim, which only keeps a colleague from repeating them.
     log.warn('landed ticket writes not claimed', {
       workItemId,
-      reason: error instanceof Error ? error.message : String(error),
+      reason: safeFailureMessage(error, '', 'the claim failed'),
     });
   }
 }
