@@ -24,7 +24,7 @@ export default function SignInPage() {
   if (DEV_NO_AUTH) redirect('/');
 
   return (
-    <main className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-10 px-6 py-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:gap-12 md:py-16">
+    <div className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-10 px-6 py-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:gap-12 md:py-16">
       <div className="flex flex-col gap-5">
         <h1 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em] text-balance">
           Sign in to deploy an employee
@@ -61,6 +61,6 @@ export default function SignInPage() {
           }}
         />
       </div>
-    </main>
+    </div>
   );
 }

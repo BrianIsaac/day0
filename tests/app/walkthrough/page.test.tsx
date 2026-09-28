@@ -67,10 +67,8 @@ describe('what the walkthrough tells a visitor it is', () => {
 });
 
 describe('the page as landmarks', () => {
-  it('holds everything it says in one main landmark', () => {
-    expect(html.match(/<main[ >]/g)).toHaveLength(1);
-    expect(html.indexOf('<main')).toBeLessThan(html.indexOf('<h1'));
-    expect(html.lastIndexOf('</main>')).toBeGreaterThan(html.indexOf(WALKTHROUGH.tryHeading));
+  it('leaves the one main landmark to the layout', () => {
+    expect(html).not.toMatch(/<main[\s>]/);
   });
 });
 

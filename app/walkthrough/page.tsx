@@ -50,7 +50,7 @@ export default function WalkthroughPage() {
   const run = RECORDED_RUN;
   return (
     <PageMotion className="flex flex-1 flex-col">
-      <main className="flex flex-1 flex-col">
+      <div className="flex flex-1 flex-col">
         <section className="pb-6 pt-9 md:pt-[72px]">
           <div className={WRAP}>
             <h1
@@ -150,7 +150,7 @@ export default function WalkthroughPage() {
             </div>
           </div>
         </Section>
-      </main>
+      </div>
     </PageMotion>
   );
 }

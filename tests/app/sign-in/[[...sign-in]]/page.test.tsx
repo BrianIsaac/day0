@@ -40,6 +40,10 @@ describe('the sign-in page', () => {
     );
   });
 
+  it('leaves the one main landmark to the layout', async () => {
+    expect(await render()).not.toMatch(/<main[\s>]/);
+  });
+
   it('promises a decision only on the writes the employee holds, and a strike before approval', async () => {
     const html = await render();
     expect(html).toContain(
