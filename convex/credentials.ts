@@ -13,7 +13,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
-import { credentialPageRef, credentialRefRange, isValueKeyedRef } from '../src/docs/redaction';
+import { credentialPageRef, credentialRefRange, isValueKeyedRef } from '../src/docs/credential-ref';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));

@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { credentialValueFingerprint, encrypt, sealForOwner } from '../../src/lib/credential-crypto';
-import { credentialSourceRef } from '../../src/docs/redaction';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { presentSurfaceCredential } from '../../src/surfaces/credential-presentation';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

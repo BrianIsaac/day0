@@ -17,7 +17,7 @@ import {
   encrypt,
   sealForOwner,
 } from '../../src/lib/credential-crypto';
-import { credentialSourceRef } from '../../src/docs/redaction';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
