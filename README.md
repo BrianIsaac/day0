@@ -956,7 +956,7 @@ The contracts a third party calls, reuses or extends are documented in [`docs/ru
 - **The surface record and the action shapes.** The `surfaces` row (verdict, path ladder, approvals, credential reference, tool allowlist), the mock verbs, the real verbs `mcp.call` and `http.request`, the allowlisted `browser_*` operations, and the idempotency key.
 - **The exact-action policy, the adapter interface and the ledger row.** Dispositions, scopes and authorities; what an adapter implements; what an applied action records and what the export returns.
 
-The optional components, what each is for and what it never sees, are in [`docs/running/components.md`](docs/running/components.md). The environment contract is `.env.example`, and [Environment](#environment) explains each variable.
+The optional components, what each is for and what it never sees, are in [`docs/running/components.md`](docs/running/components.md). The environment contract is `.env.example`, and [Environment](#environment) explains each variable. For whoever writes your company's documentation, [`docs/running/documentation.md`](docs/running/documentation.md) is the author guide to the page shapes day0 reads and acts on (which pages it reads, how a system is named and reached, the probe marker, how to write a credential, a team's channels), with every example run by a test.
 
 ## Evaluation
 
@@ -1655,7 +1655,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 - **surface 记录与 action 形状。** `surfaces` 行（verdict、path ladder、审批、凭据引用、工具 allowlist）、mock 动词、真实动词 `mcp.call` 与 `http.request`、allowlist 中的 `browser_*` 操作，以及幂等键。
 - **exact-action policy、adapter 接口与 ledger 行。** disposition、scope 与 authority；adapter 需要实现什么；一次已应用的 action 记录什么，导出返回什么。
 
-各可选组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。环境变量契约是 `.env.example`，[环境变量](#environment)一节解释每个变量。
+各可选组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。环境变量契约是 `.env.example`，[环境变量](#environment)一节解释每个变量。为公司编写文档的人可阅读 [`docs/running/documentation.md`](docs/running/documentation.md)：这是 day0 读取并据以行动的页面写法指南（读取哪些页面、如何命名和访问一个系统、探测标记、如何书写凭据、团队的频道），其中每个示例都由测试运行。
 
 ### 评测
 
