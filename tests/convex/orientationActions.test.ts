@@ -1146,6 +1146,54 @@ describe('orientation run', (): void => {
     );
   });
 
+  it('orients a system from a corpus larger than one read, a page at a time (D D3)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest({
+      schema,
+      modules: orientationModules(),
+      transactionLimits: true,
+    });
+    const { agentId, sourceId } = await seedOrientation(harness, {}, [
+      { name: 'NetLedger', class: 'other' },
+    ]);
+    const body = `# Runbook\n\n${'Follow the documented steps in order.\n'.repeat(14_000)}`;
+    for (let start = 0; start < 40; start += 4) {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let index = start; index < start + 4; index += 1) {
+          await ctx.db.insert('docPages', {
+            sourceId,
+            ref: `runbooks/page-${index}.md`,
+            title: `Page ${index}`,
+            markdown: body,
+            updatedAt: 1,
+          });
+        }
+      });
+    }
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'systems/netledger.md',
+        title: 'NetLedger',
+        markdown:
+          '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.',
+        updatedAt: 1,
+      });
+    });
+
+    await orientDeclared(harness, agentId);
+    const netledger = (await surfacesBySlug(harness, agentId)).netledger;
+    expect(netledger).toMatchObject({
+      verdict: 'proposed',
+      path: 'documented-api',
+      endpoint: 'https://api.netledger.example/v2',
+    });
+    expect(netledger.whereFound).toEqual([
+      expect.objectContaining({ ref: 'systems/netledger.md' }),
+    ]);
+  });
+
   it('re-opens a system another source names once the sync removed the only page denying it (adversarial pass on m30)', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'escalate';
@@ -1810,10 +1858,20 @@ describe('orientation run', (): void => {
           };
         }
         if (name.includes('charterForOrientation')) return null;
-        if (name.includes('pagesForAgent')) {
-          return await harness.query(internal.orientationData.pagesForAgent, {
-            agentId: (args as { agentId: Id<'agents'> }).agentId,
-          });
+        if (name.includes('sourcesForAgentInternal')) {
+          return await harness.query(
+            internal.docSources.sourcesForAgentInternal,
+            args as { agentId: Id<'agents'> },
+          );
+        }
+        if (name.includes('pagesForSourceInternal')) {
+          return await harness.query(
+            internal.docSources.pagesForSourceInternal,
+            args as {
+              sourceId: Id<'docSources'>;
+              paginationOpts: { numItems: number; cursor: string | null };
+            },
+          );
         }
         throw new Error(`unexpected query ${name}`);
       },

@@ -1514,9 +1514,7 @@ export async function orientSurface(
   ) {
     return { outcome: 'not-in-charter', surfaceId };
   }
-  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-    agentId: surface.agentId,
-  });
+  const pages = await pagesForSystem(ctx, surface.agentId, surface.displayName);
   const { matches, relevantText, endpoints, absent } = surfaceDocumentation(pages, surface);
   const evidence: Evidence[] = selectEvidence(matches, surface.displayName, surface.slug);
   if (absent) {
@@ -1765,6 +1763,31 @@ async function reopenDocumentedAbsences(
 /** The text a page names a system in: its title and its body. */
 function pageText(page: Pick<Doc<'docPages'>, 'title' | 'markdown'>): string {
   return `${page.title}\n${page.markdown}`;
+}
+
+/**
+ * The pages an agent reads, as one system's orientation needs them, read a
+ * bounded page at a time (D D3): each page that names the system whole, and
+ * every other with its title and body left out, since it counts only for its
+ * address, which is never taken for the system's endpoint.
+ *
+ * @param agentId - The agent whose sources are read.
+ * @param system - The system's display name.
+ */
+async function pagesForSystem(
+  ctx: OrientationCtx,
+  agentId: Id<'agents'>,
+  system: string,
+): Promise<Doc<'docPages'>[]> {
+  const sources: Doc<'docSources'>[] = await ctx.runQuery(
+    internal.docSources.sourcesForAgentInternal,
+    { agentId },
+  );
+  const pages: Doc<'docPages'>[] = [];
+  await forEachStoredPage(ctx, sources, (page): void => {
+    pages.push(namesSystem(pageText(page), system) ? page : { ...page, title: '', markdown: '' });
+  });
+  return pages;
 }
 
 /** Visit every stored page of some sources, one bounded read at a time. */
