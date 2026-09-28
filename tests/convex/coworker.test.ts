@@ -78,7 +78,7 @@ describe('coworker replies in the mock office', (): void => {
       for (const reply of replies) {
         expect(reply.channelSlug).toBe(channelSlug);
         expect(reply.body).not.toMatch(ASKS_FOR_ACTION);
-        expect(reply.body).not.toContain('—');
+        expect(reply.body).not.toContain(' - ');
       }
     },
   );

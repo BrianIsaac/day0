@@ -92,11 +92,7 @@ vi.mock('../../src/lib/mastra', () => ({
   agentText: async (): Promise<string> => '',
 }));
 
-vi.mock('../../src/surfaces/credentials', () => ({
-  decryptCredentialRef: { name: 'credentials:decrypt' },
-  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> =>
-    `plain-${credentialId}`,
-}));
+vi.mock('../../src/surfaces/credentials', () => import('./fakes/surface-credentials'));
 
 vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/surfaces/mcp')>();
