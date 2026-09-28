@@ -427,9 +427,11 @@ describe('the 17 September recording, as a tracked trace', (): void => {
     });
     expect(figures.company.pilot).toEqual({
       skillReuse: { runs: 3, reused: 0, rate: 0 },
+      // One item's stop was retried by the manager and it then completed, so
+      // its end is the completion (review m36), not the stop.
       cycleTime: {
         ended: 3,
-        medianToEndMs: 283_549,
+        medianToEndMs: 382_466,
         completed: 3,
         medianToCompletionMs: 382_466,
         p90ToCompletionMs: 616_459,

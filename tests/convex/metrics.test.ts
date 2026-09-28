@@ -1363,4 +1363,32 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       retrieval: { tokens: null, recall: null },
     });
   });
+
+  it('does not count a skip the manager overruled as the end of the item (review m36)', (): void => {
+    const events = [
+      // Skipped, then "Take it anyway": the item ends when its run does.
+      event('work.skipped', { workItemId: 'e' }, 2_000),
+      event(
+        'work.retry',
+        { workItemId: 'e', resumeState: 'discovered', fromState: 'skipped' },
+        3_000,
+      ),
+      event('work.completed', { workItemId: 'e' }, 11_000),
+      // Skipped and taken back, still running: it has not ended.
+      event('work.skipped', { workItemId: 'f' }, 4_000),
+      event(
+        'work.retry',
+        { workItemId: 'f', resumeState: 'discovered', fromState: 'skipped' },
+        5_000,
+      ),
+    ];
+    const items = [item('e'), item('f', { state: 'executing' })];
+    expect(computeAgentMetrics(events, items, []).pilot.cycleTime).toEqual({
+      ended: 1,
+      medianToEndMs: 10_000,
+      completed: 1,
+      medianToCompletionMs: 10_000,
+      p90ToCompletionMs: 10_000,
+    });
+  });
 });
