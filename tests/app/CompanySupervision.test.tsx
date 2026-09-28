@@ -319,3 +319,40 @@ describe('the company supervision card', (): void => {
     expect(companyRow).toContain('no estimates yet');
   });
 });
+
+describe('the company supervision card at a narrow width', (): void => {
+  const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+
+  it('never scrolls sideways: no minimum table width and no horizontal scroller', (): void => {
+    expect(html).not.toContain('min-w-[640px]');
+    expect(html).not.toContain('overflow-x-auto');
+  });
+
+  it('stacks both tables below lg, each row a grid whose cells carry their column’s label', (): void => {
+    const tables = [...html.matchAll(/<table class="([^"]*)"/g)].map((match) => match[1]);
+    expect(tables).toHaveLength(2);
+    for (const table of tables) expect(table).toContain('max-lg:block');
+    const heads = [...html.matchAll(/<thead class="([^"]*)"/g)].map((match) => match[1]);
+    for (const head of heads) expect(head).toContain('max-lg:sr-only');
+    const bodyRows = [...html.matchAll(/<tbody[\s\S]*?<\/tbody>/g)].flatMap(
+      (body) => body[0].match(/<tr class="[^"]*"/g) ?? [],
+    );
+    expect(bodyRows).toHaveLength(8);
+    for (const row of bodyRows) expect(row).toContain('max-lg:grid');
+    const labels = [...html.matchAll(/<span class="[^"]*lg:hidden[^"]*">([^<]*)</g)].map(
+      (match) => match[1],
+    );
+    expect(labels.slice(0, 5)).toEqual([
+      'Charter',
+      'Decisions',
+      'Decision wait',
+      'Actions',
+      'Audit trail',
+    ]);
+    expect(labels).toContain('Skill reuse');
+  });
+
+  it('sets no type below the 12 px floor', (): void => {
+    expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
+  });
+});

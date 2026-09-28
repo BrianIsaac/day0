@@ -45,23 +45,30 @@ export const DEFINITIONS = {
 } as const;
 
 interface Column {
-  label: string;
-  unit: string;
-  definition: string;
-  width?: string;
+  readonly label: string;
+  readonly unit: string;
+  readonly definition: string;
 }
 
-const COLUMNS: readonly Column[] = [
-  // Wide enough for the company row to quote three times on one line.
-  { label: 'Charter', unit: 'approved after', definition: DEFINITIONS.charter, width: 'w-[17rem]' },
-  { label: 'Decisions', unit: 'approved / rejected', definition: DEFINITIONS.decisions },
-  { label: 'Decision wait', unit: 'median / p90', definition: DEFINITIONS.wait },
-  {
+/** The supervision table's columns after the employee, by figure. */
+const COLUMN = {
+  charter: { label: 'Charter', unit: 'approved after', definition: DEFINITIONS.charter },
+  decisions: { label: 'Decisions', unit: 'approved / rejected', definition: DEFINITIONS.decisions },
+  wait: { label: 'Decision wait', unit: 'median / p90', definition: DEFINITIONS.wait },
+  actions: {
     label: 'Actions',
     unit: 'automatic changes · approved · held · rejected · refused',
     definition: DEFINITIONS.actions,
   },
-  { label: 'Audit trail', unit: 'complete', definition: DEFINITIONS.audit },
+  audit: { label: 'Audit trail', unit: 'complete', definition: DEFINITIONS.audit },
+} as const satisfies Record<string, Column>;
+
+const COLUMNS: readonly Column[] = [
+  COLUMN.charter,
+  COLUMN.decisions,
+  COLUMN.wait,
+  COLUMN.actions,
+  COLUMN.audit,
 ];
 
 function count(n: number, noun: string, plural = `${noun}s`): string {
@@ -173,6 +180,26 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
   },
 ];
 
+/** The label a stacked row prints above a cell's value, hidden where the table has its header. */
+function StackLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="mb-0.5 block font-sans text-xs text-[var(--color-muted)] lg:hidden">
+      {children}
+    </span>
+  );
+}
+
+/** Classes for a cell that sits in a table row at `lg` and in a stacked grid below it. */
+const CELL = 'px-3 py-2.5 align-top max-lg:p-0';
+
+/** Classes for a body row: a table row at `lg`, a two-column grid below it. */
+const ROW =
+  'max-lg:grid max-lg:grid-cols-2 max-lg:gap-x-4 max-lg:gap-y-2.5 max-lg:px-5 max-lg:py-3.5';
+
+/** Classes for a row's employee header: its own full line when stacked. */
+const ROW_HEADER =
+  'px-5 py-2.5 text-left align-top font-sans font-semibold max-lg:col-span-2 max-lg:p-0';
+
 function FigureCells({
   charter,
   decisions,
@@ -186,16 +213,29 @@ function FigureCells({
 }) {
   return (
     <>
-      <td className="px-3 py-2.5 align-top">{charter}</td>
-      <td className="whitespace-nowrap px-3 py-2.5 align-top">{decisionsCell(decisions)}</td>
-      <td className="whitespace-nowrap px-3 py-2.5 align-top">{waitCell(decisions)}</td>
-      <td className="whitespace-nowrap px-3 py-2.5 align-top">
-        <span className="block">{actionsCell(actions)}</span>
+      <td className={`${CELL} max-lg:col-span-2`}>
+        <StackLabel>{COLUMN.charter.label}</StackLabel>
+        {charter}
+      </td>
+      <td className={`${CELL} whitespace-nowrap`}>
+        <StackLabel>{COLUMN.decisions.label}</StackLabel>
+        {decisionsCell(decisions)}
+      </td>
+      <td className={`${CELL} whitespace-nowrap`}>
+        <StackLabel>{COLUMN.wait.label}</StackLabel>
+        {waitCell(decisions)}
+      </td>
+      <td className={CELL}>
+        <StackLabel>{COLUMN.actions.label}</StackLabel>
+        <span className="block whitespace-nowrap">{actionsCell(actions)}</span>
         <span className="block text-[var(--color-muted)]">
           + {readsAndMessages(actions.automatic)}
         </span>
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5 align-top">{formatAuditTrail(auditTrail)}</td>
+      <td className={`${CELL} whitespace-nowrap`}>
+        <StackLabel>{COLUMN.audit.label}</StackLabel>
+        {formatAuditTrail(auditTrail)}
+      </td>
     </>
   );
 }
@@ -223,6 +263,48 @@ function CompanyCharterCell({ charter }: { charter: OwnerMetrics['company']['cha
   );
 }
 
+/** A column header: the figure's name, its unit, and its definition as the tooltip. */
+function ColumnHeader({ column }: { column: Column }) {
+  return (
+    <th
+      scope="col"
+      title={column.definition}
+      className="cursor-help px-3 py-2 align-bottom font-medium"
+    >
+      <span className="block underline decoration-dotted underline-offset-2">{column.label}</span>
+      <span className="block normal-case tracking-normal">{column.unit}</span>
+    </th>
+  );
+}
+
+/** The header row both tables share: the employee, then one header per figure. */
+function HeaderRow({ columns }: { columns: readonly Column[] }) {
+  return (
+    <thead className="max-lg:sr-only">
+      <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wider text-[var(--color-muted)]">
+        <th scope="col" className="px-5 py-2 align-bottom font-medium">
+          Employee
+        </th>
+        {columns.map((column) => (
+          <ColumnHeader key={column.label} column={column} />
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
+/** Classes for one of the card's tables: a table at `lg`, stacked rows below it. */
+const TABLE = 'w-full text-left text-xs tabular-nums max-lg:block';
+
+/** Classes for a table body: the rows stack below `lg`. */
+const BODY = 'font-mono text-[var(--color-fg)] max-lg:block';
+
+/** Classes for the company row, set apart from the employees above it. */
+const COMPANY_ROW = `bg-[var(--color-bg)]/60 ${ROW}`;
+
+/** Classes for an employee's row. */
+const EMPLOYEE_ROW = `border-b border-[var(--color-border)] ${ROW}`;
+
 /**
  * The five pilot figures (A9), one row per employee and a company row pooled
  * before any median or rate is taken, beside the supervision figures.
@@ -237,46 +319,21 @@ function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
     { key: 'company', name: 'Company', pilot: figures.company.pilot },
   ];
   return (
-    <div className="overflow-x-auto border-t border-[var(--color-border)]">
-      <table className="w-full min-w-[640px] text-left text-xs tabular-nums">
-        <caption className="px-5 pt-3 text-left text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+    <div className="border-t border-[var(--color-border)]">
+      <table className={TABLE}>
+        <caption className="px-5 pt-3 text-left text-xs uppercase tracking-wider text-[var(--color-muted)] max-lg:block">
           Pilot figures
         </caption>
-        <thead>
-          <tr className="border-b border-[var(--color-border)] text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-            <th scope="col" className="px-5 py-2 align-bottom font-medium">
-              Employee
-            </th>
-            {PILOT_FIGURES.map((figure) => (
-              <th
-                key={figure.label}
-                scope="col"
-                title={figure.definition}
-                className="cursor-help px-3 py-2 align-bottom font-medium"
-              >
-                <span className="block underline decoration-dotted underline-offset-2">
-                  {figure.label}
-                </span>
-                <span className="block normal-case tracking-normal">{figure.unit}</span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="font-mono text-[var(--color-fg)]">
+        <HeaderRow columns={PILOT_FIGURES} />
+        <tbody className={BODY}>
           {rows.map((row) => (
-            <tr
-              key={row.key}
-              className={
-                row.key === 'company'
-                  ? 'bg-[var(--color-bg)]/60'
-                  : 'border-b border-[var(--color-border)]'
-              }
-            >
-              <th scope="row" className="px-5 py-2.5 align-top font-sans font-semibold">
+            <tr key={row.key} className={row.key === 'company' ? COMPANY_ROW : EMPLOYEE_ROW}>
+              <th scope="row" className={ROW_HEADER}>
                 {row.name}
               </th>
               {PILOT_FIGURES.map((figure) => (
-                <td key={figure.label} className="px-3 py-2.5 align-top">
+                <td key={figure.label} className={CELL}>
+                  <StackLabel>{figure.label}</StackLabel>
                   {figure.value(row.pilot)}
                 </td>
               ))}
@@ -290,7 +347,9 @@ function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
 
 /**
  * The company's supervision figures: one row per employee and a company
- * row, as `metrics:forOwner` computes them.
+ * row, as `metrics:forOwner` computes them. At `lg` each is a table; below
+ * it every row stacks with its cells labelled, so the card never scrolls
+ * sideways.
  *
  * Args:
  *   figures: The owner's figures.
@@ -309,74 +368,53 @@ export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
       : null,
   ].filter((note): note is string => note !== null);
   return (
-    <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
+    <section className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
         <h2 className="text-sm font-semibold">Company supervision</h2>
-        <span className="text-[10px] text-[var(--color-muted)]">
+        <span className="text-xs text-[var(--color-muted)]">
           {count(company.employees, 'employee')}, one manager
         </span>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-left text-xs tabular-nums">
-          <thead>
-            <tr className="border-b border-[var(--color-border)] text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
-              <th scope="col" className="px-5 py-2 align-bottom font-medium">
-                Employee
-              </th>
-              {COLUMNS.map((column) => (
-                <th
-                  key={column.label}
-                  scope="col"
-                  title={column.definition}
-                  className={`cursor-help px-3 py-2 align-bottom font-medium ${column.width ?? ''}`}
-                >
-                  <span className="block underline decoration-dotted underline-offset-2">
-                    {column.label}
-                  </span>
-                  <span className="block normal-case tracking-normal">{column.unit}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="font-mono text-[var(--color-fg)]">
-            {figures.employees.map((employee) => (
-              <tr key={employee.agentId} className="border-b border-[var(--color-border)]">
-                <th scope="row" className="px-5 py-2.5 align-top font-sans font-semibold">
-                  {employee.name}
-                </th>
-                <FigureCells
-                  charter={
-                    <span className="whitespace-nowrap">
-                      {formatMetricDuration(employee.metrics.charter.timeToFirstApprovedMs)}
-                    </span>
-                  }
-                  decisions={employee.metrics.decisions}
-                  actions={employee.metrics.actions}
-                  auditTrail={employee.metrics.auditTrail}
-                />
-              </tr>
-            ))}
-            <tr className="bg-[var(--color-bg)]/60">
-              <th
-                scope="row"
-                title={DEFINITIONS.company}
-                className="cursor-help px-5 py-2.5 align-top font-sans font-semibold underline decoration-dotted underline-offset-2"
-              >
-                Company
+      <table className={TABLE} aria-label="Company supervision">
+        <HeaderRow columns={COLUMNS} />
+        <tbody className={BODY}>
+          {figures.employees.map((employee) => (
+            <tr key={employee.agentId} className={EMPLOYEE_ROW}>
+              <th scope="row" className={ROW_HEADER}>
+                {employee.name}
               </th>
               <FigureCells
-                charter={<CompanyCharterCell charter={company.charter} />}
-                decisions={company.decisions}
-                actions={company.actions}
-                auditTrail={company.auditTrail}
+                charter={
+                  <span className="whitespace-nowrap">
+                    {formatMetricDuration(employee.metrics.charter.timeToFirstApprovedMs)}
+                  </span>
+                }
+                decisions={employee.metrics.decisions}
+                actions={employee.metrics.actions}
+                auditTrail={employee.metrics.auditTrail}
               />
             </tr>
-          </tbody>
-        </table>
-      </div>
+          ))}
+          <tr className={COMPANY_ROW}>
+            <th
+              scope="row"
+              title={DEFINITIONS.company}
+              className={`${ROW_HEADER} cursor-help underline decoration-dotted underline-offset-2`}
+            >
+              Company
+            </th>
+            <FigureCells
+              charter={<CompanyCharterCell charter={company.charter} />}
+              decisions={company.decisions}
+              actions={company.actions}
+              auditTrail={company.auditTrail}
+            />
+          </tr>
+        </tbody>
+      </table>
       <PilotFiguresTable figures={figures} />
       {notes.length > 0 ? (
-        <p className="border-t border-[var(--color-border)] px-5 py-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
+        <p className="border-t border-[var(--color-border)] px-5 py-2 text-xs leading-relaxed text-[var(--color-muted)]">
           {notes.join(' · ')}
         </p>
       ) : null}
