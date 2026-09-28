@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageMotion } from '../PageMotion';
-import { HOSTED_DEMO_SNAPSHOT, recordingProvenanceLine } from '@/demo/hosted-demo-snapshot';
+import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '@/demo/hosted-demo-snapshot';
 
 import {
   DATA_LOCATION,
@@ -128,13 +128,13 @@ export default function SetupPage() {
           <p className="text-base text-[var(--color-muted)] leading-relaxed mb-4">
             The product the hosted demo shows, running locally in real mode: a self-hosted backend,
             your own documentation and the systems it names, and a sandbox that verifies the skills
-            the agent writes. The backend and sandbox run locally. A cloud model receives your chat
-            and relevant content from your documentation; the local-model way runs the model here
-            too. The seeded mock office the hosted demo works in is mock mode, which the evaluation
-            harness uses and which no local way runs.
+            the employee writes. The backend and sandbox run locally. A cloud model receives your
+            chat and relevant content from your documentation; the local-model way runs the model
+            here too. The seeded mock office the hosted demo works in is mock mode, which the
+            evaluation harness uses and which no local way runs.
           </p>
           <p className="text-xs text-[var(--color-muted)] leading-relaxed mb-4">
-            {recordingProvenanceLine(HOSTED_DEMO_SNAPSHOT.recording)}
+            {hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording)}
           </p>
           <div
             role="note"
@@ -158,7 +158,7 @@ export default function SetupPage() {
                 <a
                   href={`#${section.id}`}
                   data-section-link=""
-                  className="flex h-full min-h-11 lg:min-h-0 items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
+                  className="flex h-full min-h-11 items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
                 >
                   <span className="font-mono text-[10px] text-[var(--color-muted)]">
                     {String(index + 1).padStart(2, '0')}
@@ -255,7 +255,13 @@ export default function SetupPage() {
                     </ul>
                   ) : null}
                   {way.commands ? (
-                    <code className="font-mono text-xs text-[var(--color-accent)] leading-relaxed block overflow-x-auto whitespace-nowrap">
+                    // Focusable so a keyboard can scroll it where a command runs wider than the panel.
+                    <code
+                      tabIndex={0}
+                      role="region"
+                      aria-label={`Commands: ${way.title}`}
+                      className="font-mono text-xs text-[var(--color-accent)] leading-relaxed block overflow-x-auto whitespace-nowrap"
+                    >
                       {way.commands.map((command) => (
                         <span key={command} className="block">
                           {command}
@@ -341,7 +347,12 @@ export default function SetupPage() {
             title="The commands"
             lede="Five, from an empty directory. The fourth is the one that does the work, in real mode; run it again whenever you want, because it keeps what is already there rather than starting over."
           >
-            <pre className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-4 overflow-x-auto">
+            <pre
+              tabIndex={0}
+              role="region"
+              aria-label="The five commands"
+              className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-4 overflow-x-auto"
+            >
               <code className="font-mono text-sm leading-relaxed">
                 {QUICKSTART_COMMANDS.map((command) => (
                   <span key={command} className="block">
@@ -393,12 +404,12 @@ export default function SetupPage() {
                 src="/setup/first-success-day-one-chat.webp"
                 width={817}
                 height={447}
-                alt="The Day-1 one-to-one in chat mode, the agent opening the conversation by asking what triggered the decision to bring it on and what the team is trying to make easier"
+                alt="The Day-1 one-to-one in chat mode, the employee opening the conversation by asking what triggered the decision to bring it on and what the team is trying to make easier"
                 className="rounded-xl border border-[var(--color-border)] w-full h-auto"
               />
               <figcaption className="text-xs text-[var(--color-muted)] mt-2 leading-relaxed">
-                Step three, as it arrives: the agent opens the one-to-one itself. Captured locally
-                on a run of this repository.
+                Step three, as it arrives: the employee opens the one-to-one itself. Captured
+                locally on a run of this repository.
               </figcaption>
             </figure>
           </Section>
