@@ -29,10 +29,33 @@ export interface SummaryContext {
 export const SUMMARY_TEXT_LIMIT = 120;
 
 const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'] as const;
-const STATE_KEYS = ['state', 'status', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'] as const;
+const STATE_KEYS = [
+  'state',
+  'status',
+  'stateId',
+  'state_id',
+  'statusId',
+  'status_id',
+  'workflowState',
+] as const;
 const TEXT_KEYS = ['body', 'text', 'comment', 'message'] as const;
-const CHANNEL_KEYS = ['channel', 'channel_id', 'channelId', 'conversation', 'conversationId'] as const;
-const THREAD_KEYS = ['thread_ts', 'threadTs', 'thread_id', 'threadId', 'threadKey', 'parentId', 'replyTo', 'reply_to'] as const;
+const CHANNEL_KEYS = [
+  'channel',
+  'channel_id',
+  'channelId',
+  'conversation',
+  'conversationId',
+] as const;
+const THREAD_KEYS = [
+  'thread_ts',
+  'threadTs',
+  'thread_id',
+  'threadId',
+  'threadKey',
+  'parentId',
+  'replyTo',
+  'reply_to',
+] as const;
 const READ_VERB = /^(?:get|read|fetch|retrieve|show|describe)$/i;
 const LIST_VERB = /^(?:list|search|query|find)$/i;
 const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
@@ -137,15 +160,24 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
         const record = field as JsonObject;
         const fieldName = firstString(record, ['name', 'element', 'ref']);
         const value = record.value;
-        if (!fieldName || (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean')) return [];
+        if (
+          !fieldName ||
+          (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean')
+        )
+          return [];
         // A credential typed as a literal is named, never quoted: this line goes to a DM.
-        const shownValue = CREDENTIAL_FIELD.test(fieldName) ? '[credential]' : excerpt(String(value), 60);
+        const shownValue = CREDENTIAL_FIELD.test(fieldName)
+          ? '[credential]'
+          : excerpt(String(value), 60);
         return [`${label(fieldName, 40)} to ${JSON.stringify(shownValue)}`];
       });
       if (set.length === 0) return undefined;
       const shown = set.slice(0, BROWSER_FIELD_LIMIT);
       const rest = set.length - shown.length;
-      const listed = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0];
+      const listed =
+        shown.length > 1
+          ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`
+          : shown[0];
       return `Set ${listed}${rest > 0 ? ` (+${rest} more)` : ''} on ${name}`;
     }
     case 'browser_click':
@@ -157,8 +189,12 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
       return `Set ${label(element, 40)} to ${JSON.stringify(shownValue)} on ${name}`;
     }
     case 'browser_select_option': {
-      const values = Array.isArray(args.values) ? args.values.filter((value): value is string => typeof value === 'string') : [];
-      return element && values.length > 0 ? `Choose ${quote(values.join(', '))} in ${label(element, 40)} on ${name}` : undefined;
+      const values = Array.isArray(args.values)
+        ? args.values.filter((value): value is string => typeof value === 'string')
+        : [];
+      return element && values.length > 0
+        ? `Choose ${quote(values.join(', '))} in ${label(element, 40)} on ${name}`
+        : undefined;
     }
     case 'browser_snapshot':
       return `Read the page on ${name}`;
@@ -173,7 +209,9 @@ function describeMcpCall(
 ): string {
   const name = surfaceName(parsed.surface, surfaces);
   const args = parsed.toolArgs;
-  const browserStep = parsed.tool.startsWith('browser_') ? describeBrowserStep(parsed.tool, args, name) : undefined;
+  const browserStep = parsed.tool.startsWith('browser_')
+    ? describeBrowserStep(parsed.tool, args, name)
+    : undefined;
   if (browserStep) return browserStep;
   const { verb, noun } = verbAndNoun(parsed.tool);
   const ref = firstString(args, ISSUE_KEYS);
@@ -185,7 +223,8 @@ function describeMcpCall(
     if (commentId) {
       return `Edit comment ${label(commentId)} on ${name}${target ? ` for ${label(target)}` : ''}${quoted}`;
     }
-    if (firstString(args, ['parentId'])) return `Reply on ${target ? label(target) : name}${quoted}`;
+    if (firstString(args, ['parentId']))
+      return `Reply on ${target ? label(target) : name}${quoted}`;
     return `Comment on ${target ? label(target) : name}${quoted}`;
   }
   if (/^(?:save|update|set|change|transition|move)$/i.test(verb) && noun) {
@@ -200,7 +239,9 @@ function describeMcpCall(
       return `Move ${label(ref)} to ${label(state)} on ${name}${extras}`;
     }
     if (ref) {
-      const fields = Object.keys(args).filter((key) => !(ISSUE_KEYS as readonly string[]).includes(key));
+      const fields = Object.keys(args).filter(
+        (key) => !(ISSUE_KEYS as readonly string[]).includes(key),
+      );
       return `Update ${label(noun)} ${label(ref)} on ${name}${fields.length ? ` (${fieldList(fields)})` : ''}`;
     }
     const title = firstString(args, ['title', 'name']);
@@ -248,7 +289,8 @@ function describeHttpRequest(
         !(CHANNEL_KEYS as readonly string[]).includes(key) &&
         !(THREAD_KEYS as readonly string[]).includes(key),
     );
-    const extras = extraFields.length && body ? `; also send ${fieldEffects(body, extraFields)}` : '';
+    const extras =
+      extraFields.length && body ? `; also send ${fieldEffects(body, extraFields)}` : '';
     if (surface && isManagerDm(parsed, surface)) {
       return `Send ${surface.managerName ? label(surface.managerName) : 'the manager'} a ${name} DM${quoted}${extras}`;
     }
@@ -295,7 +337,8 @@ export function summariseAction(
         ? describeMcpCall(parsed.action, surfaces)
         : describeHttpRequest(parsed.action, surfaces, context);
     }
-    const tool = action.tool === 'mcp.call' ? firstString(args, ['tool']) ?? action.tool : action.tool;
+    const tool =
+      action.tool === 'mcp.call' ? (firstString(args, ['tool']) ?? action.tool) : action.tool;
     return `${label(tool)} on ${surfaceName(slug, surfaces)}`;
   }
   return slug ? `${label(action.tool)} on ${label(slug)}` : label(action.tool);
