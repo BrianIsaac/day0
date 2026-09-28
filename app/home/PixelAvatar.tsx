@@ -18,10 +18,10 @@ export function AgentPixelAvatar({
   avatar: AgentAvatarPet;
   state: EmployeeState;
   label: string;
-  size?: 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg';
   compact?: boolean;
 }) {
-  const sizeClass = size === 'lg' ? 'h-24 w-24' : 'h-14 w-14';
+  const sizeClass = { sm: 'h-7 w-7', md: 'h-14 w-14', lg: 'h-24 w-24' }[size];
   const tone = agentStateTone(state);
 
   return (
@@ -62,24 +62,44 @@ export function PixelAvatarSprite({
   );
 }
 
-function agentStateTone(state: EmployeeState) {
-  if (state === 'active') {
-    return {
-      bg: 'bg-[var(--color-ok)]/10',
-      border: 'border-[var(--color-ok)]/35',
-      dot: 'bg-[var(--color-ok)]',
-    };
-  }
-  if (state === 'day-one-in-progress') {
-    return {
-      bg: 'bg-[var(--color-accent)]/10',
-      border: 'border-[var(--color-accent)]/35',
-      dot: 'bg-[var(--color-accent)]',
-    };
-  }
-  return {
-    bg: 'bg-[var(--color-warn)]/10',
-    border: 'border-[var(--color-warn)]/35',
-    dot: 'bg-[var(--color-warn)]',
-  };
+/** The Tailwind classes that tone an employee's frame, fill, dot and text. */
+export interface StateTone {
+  readonly bg: string;
+  readonly border: string;
+  readonly dot: string;
+  readonly text: string;
+}
+
+const OK_TONE: StateTone = {
+  bg: 'bg-[var(--color-ok)]/10',
+  border: 'border-[var(--color-ok)]/35',
+  dot: 'bg-[var(--color-ok)]',
+  text: 'text-[var(--color-ok)]',
+};
+
+const ACCENT_TONE: StateTone = {
+  bg: 'bg-[var(--color-accent)]/10',
+  border: 'border-[var(--color-accent)]/35',
+  dot: 'bg-[var(--color-accent)]',
+  text: 'text-[var(--color-accent)]',
+};
+
+const WARN_TONE: StateTone = {
+  bg: 'bg-[var(--color-warn)]/10',
+  border: 'border-[var(--color-warn)]/35',
+  dot: 'bg-[var(--color-warn)]',
+  text: 'text-[var(--color-warn)]',
+};
+
+/** Each state's tone: active is well, the one-to-one is under way, the rest wait on the manager. */
+const STATE_TONES: Readonly<Record<EmployeeState, StateTone>> = {
+  active: OK_TONE,
+  'day-one-in-progress': ACCENT_TONE,
+  deployed: WARN_TONE,
+  'charter-pending': WARN_TONE,
+};
+
+/** The tone for an employee's state. */
+export function agentStateTone(state: EmployeeState): StateTone {
+  return STATE_TONES[state];
 }
