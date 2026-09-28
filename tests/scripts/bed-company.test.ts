@@ -1794,7 +1794,7 @@ describe('check', (): void => {
       'note #ops-requests: once the employees are deployed, post "please refresh the pipeline tile to the standup figure" as yourself, mentioning the bot (type @ and pick it)',
     );
     expect(printed).toContain(
-      "note the full sitting posts all three of slack-asks.md's asks; a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting",
+      "note the full sitting posts all three of slack-asks.md's asks; a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting, unless the deployment was stopped or restored from a snapshot: it resumes from its last poll and reads every mention posted since, so delete later sittings' asks before you start or restore it",
     );
   });
 
