@@ -20,8 +20,9 @@ import { errorMessage } from '../lib/errors';
  *
  *   OPENAI_BASE_URL=http://localhost:11434/v1   OPENAI_MODEL=qwen3:8b
  *
- * Verified shapes: ollama, vLLM, llama.cpp `llama-server`, LM Studio,
- * and hosted OpenAI-compatible gateways (Qwen, DeepSeek, OpenRouter,
+ * Verified on a bed: Ollama (qwen3), Featherless (GLM 5.3 Flash) and OpenAI
+ * itself. Spoken by protocol only, unverified here: vLLM, llama.cpp
+ * `llama-server`, LM Studio and hosted OpenAI-compatible gateways (Qwen, DeepSeek, OpenRouter,
  * Groq, Together). Leave OPENAI_BASE_URL unset for api.openai.com.
  */
 

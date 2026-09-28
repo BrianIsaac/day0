@@ -24,7 +24,8 @@ import { EVENT_TYPES } from '../src/events/contract';
 import { eventsOfType } from './eventLog';
 
 /**
- * Events feed - append-only, drives the live UI ticker. The reading side
+ * Events feed - written once by the browser's side and patched in place by the
+ * server when a later phase completes a row (`work.ts`); drives the live UI ticker. The reading side
  * enforces per-account ownership; the writing side is internal-only.
  */
 

@@ -33,7 +33,8 @@ export const planDraftedWithoutValidator = v.object({
  * environment included, so an agent's workspace, queue, skills and grants
  * are its own and are never shared with another agent or another user.
  * `workspace` stores the 8-file convention as one row per (agent, file).
- * `events` is an append-only feed driving the live UI.
+ * `events` is the feed driving the live UI; the server patches a row's payload in
+ * place when a later phase completes it, so it is not strictly append-only.
  */
 export default defineSchema({
   agents: defineTable({

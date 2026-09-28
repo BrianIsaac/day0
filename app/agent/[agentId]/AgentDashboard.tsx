@@ -2315,8 +2315,8 @@ export function WorkQueue({
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
   // moved the row, so without this the same item is handed to the same action
-  // several times over. The backend refuses the duplicates (`claimForExecution`
-  // is the authority), but a refusal is not a reason to keep asking.
+  // several times over. Each step's claim mutation refuses the duplicate, but
+  // a refusal is not a reason to keep asking.
   const inFlight = useRef(new Set<string>());
   const once = useCallback((step: string, id: string, call: () => Promise<unknown>) => {
     const key = `${step}:${id}`;
