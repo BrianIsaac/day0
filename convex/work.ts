@@ -106,7 +106,7 @@ import {
 } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 
@@ -496,15 +496,9 @@ export async function keepTicketListing(
  * from the agent's discoveries at or after the row's creation.
  */
 async function discoveryListing(ctx: QueryCtx, row: ListedItem): Promise<KeptListing | undefined> {
-  const discoveries = await ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (q) =>
-      q
-        .eq('agentId', row.agentId)
-        .eq('type', 'work.discovered')
-        .gte('_creationTime', row._creationTime),
-    )
-    .take(DISCOVERY_SCAN);
+  const discoveries = await eventsOfType(ctx, row.agentId, 'work.discovered', {
+    from: row._creationTime,
+  }).take(DISCOVERY_SCAN);
   const discovery = discoveries.find(
     (event) => (event.payload as { workItemId?: unknown } | undefined)?.workItemId === row._id,
   );
@@ -655,14 +649,9 @@ export const listedSnapshot = internalQuery({
   ): Promise<{ planned: TicketSnapshot | null; acknowledged: TicketSnapshot | null }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return { planned: null, acknowledged: null };
-    const retries = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) =>
-        q
-          .eq('agentId', row.agentId)
-          .eq('type', 'work.retry')
-          .gt('_creationTime', args.before - CREATION_TIME_SLACK_MS),
-      )
+    const retries = await eventsOfType(ctx, row.agentId, 'work.retry', {
+      after: args.before - CREATION_TIME_SLACK_MS,
+    })
       .order('desc')
       .take(RETRY_SCAN);
     const retry = retries.find(
@@ -690,11 +679,7 @@ export const executionRunIds = internalQuery({
   handler: async (ctx, args): Promise<Array<Id<'events'>>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return [];
-    const claims = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) =>
-        q.eq('agentId', row.agentId).eq('type', 'work.execution-claimed'),
-      )
+    const claims = await eventsOfType(ctx, row.agentId, 'work.execution-claimed')
       .filter((q) => q.eq(q.field('payload.workItemId'), args.workItemId))
       .take(RUN_SCAN_LIMIT);
     return claims.map((claim) => claim._id);
@@ -1044,11 +1029,7 @@ export async function backfillUnavailableCausePage(
     if (row.evaluationUnavailableAt === undefined || row.evaluationUnavailableCause !== undefined) {
       continue;
     }
-    const events = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (index) =>
-        index.eq('agentId', row.agentId).eq('type', 'work.scope-judgement-unavailable'),
-      )
+    const events = await eventsOfType(ctx, row.agentId, 'work.scope-judgement-unavailable')
       .order('desc')
       .take(UNAVAILABLE_EVENT_WALK);
     for (const event of events) {
@@ -2658,13 +2639,7 @@ export const recoverUnproposedSkill = internalMutation({
       return { recovered: 'ignored' };
     }
     const latest = (
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent_type', (q) =>
-          q.eq('agentId', row.agentId).eq('type', 'work.evaluated'),
-        )
-        .order('desc')
-        .take(REEVALUATION_BATCH)
+      await eventsOfType(ctx, row.agentId, 'work.evaluated').order('desc').take(REEVALUATION_BATCH)
     ).find((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
     if (latest?._id !== args.evaluatedId) return { recovered: 'ignored' };
     const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
@@ -4489,11 +4464,7 @@ async function executionResumesSinceRetry(
 ): Promise<number> {
   const forRow = async (type: 'work.execution-resumed' | 'work.retry'): Promise<Doc<'events'>[]> =>
     (
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
-        .order('desc')
-        .take(EXECUTION_RESUME_HISTORY)
+      await eventsOfType(ctx, row.agentId, type).order('desc').take(EXECUTION_RESUME_HISTORY)
     ).filter((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
   const [resumes, retries] = await Promise.all([
     forRow('work.execution-resumed'),
@@ -4956,11 +4927,7 @@ async function digestNoteFilter(
   agent: Doc<'agents'>,
 ): Promise<(note: Doc<'managerNotes'>) => boolean> {
   if (managerNotificationMode(agent) === 'digest') return () => true;
-  const lastSwitch = await ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (q) =>
-      q.eq('agentId', agent._id).eq('type', 'agent.notifications-changed'),
-    )
+  const lastSwitch = await eventsOfType(ctx, agent._id, 'agent.notifications-changed')
     .order('desc')
     .first();
   const keptUntil = lastSwitch?.createdAt ?? Number.NEGATIVE_INFINITY;
@@ -5014,11 +4981,7 @@ export const prepareManagerDigest = internalMutation({
     const now = Date.now();
     if (!agent || !digestDue(agent, now)) return { prepared: false as const };
     if (managerNotificationMode(agent) === 'digest') {
-      const last = await ctx.db
-        .query('events')
-        .withIndex('by_agent_type', (q) =>
-          q.eq('agentId', args.agentId).eq('type', 'work.manager-digest-sending'),
-        )
+      const last = await eventsOfType(ctx, args.agentId, 'work.manager-digest-sending')
         .order('desc')
         .first();
       if (last && now - last.createdAt < DIGEST_MIN_GAP_MS) return { prepared: false as const };
