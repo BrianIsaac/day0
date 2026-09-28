@@ -481,6 +481,15 @@ describe('Slack documented API probing', (): void => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(slackMethodsFromPolicy('notauth.testimony')).toEqual([]);
   });
+
+  it('allowlists chat.update when the policy names it, so a decided request can be marked (M finding 3)', (): void => {
+    expect(slackMethodsFromPolicy('`chat.postMessage`, `chat.update`')).toEqual([
+      'chat.postMessage',
+      'chat.update',
+    ]);
+    // A policy that does not name it leaves it out, and nothing requires it.
+    expect(slackMethodsFromPolicy('`chat.postMessage`')).toEqual(['chat.postMessage']);
+  });
 });
 
 describe('probe error hygiene', (): void => {

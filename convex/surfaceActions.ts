@@ -67,6 +67,9 @@ const SLACK_METHOD_DEFAULTS = [
   'conversations.history',
   'conversations.replies',
   'chat.postMessage',
+  // Marks Day0's own decision request decided in the manager DM; optional,
+  // so a policy that does not name it leaves the request as sent.
+  'chat.update',
 ] as const;
 
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
