@@ -1,7 +1,44 @@
+/** @vitest-environment jsdom */
+
 import { Chat } from '@ai-sdk/react';
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const room = vi.hoisted(() => ({
+  /** What `voice.start` rejects with on its next calls, when set. */
+  startRefusal: undefined as Error | undefined,
+  /** The transcript `useChat` hands the room. */
+  messages: [] as UIMessage[],
+  sent: [] as unknown[],
+}));
+
+// The seams are the Convex client and the chat hook; the room's own logic runs.
+vi.mock('convex/react', () => ({
+  useMutation: () => async (): Promise<{ sessionId: string }> => {
+    if (room.startRefusal) throw room.startRefusal;
+    return { sessionId: 'session-1' };
+  },
+}));
+vi.mock('@ai-sdk/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@ai-sdk/react')>()),
+  useChat: () => ({
+    messages: room.messages,
+    sendMessage: (message: unknown): void => void room.sent.push(message),
+    regenerate: (): void => undefined,
+    status: 'ready',
+  }),
+}));
+
+import { ChatRoom } from '../../../../app/agent/[agentId]/ChatRoom';
+import type { Id } from '../../../../convex/_generated/dataModel';
+import {
+  focusedName,
+  mount,
+  press,
+  said as liveRegions,
+  settle,
+} from '../../../fixtures/dom/press';
 import {
   FinishControl,
   REPLY_MAX_CHARS,
@@ -353,5 +390,41 @@ describe('the composer', (): void => {
     expect(REPLY_MAX_CHARS).toBe(4000);
     expect(markup).toContain(`maxLength="${REPLY_MAX_CHARS}"`);
     expect(markup).toContain('aria-label="Your reply"');
+  });
+});
+
+describe('the chat room for a screen reader, and a 1:1 that could not start (step 45)', (): void => {
+  it('says who spoke on every turn inside a focusable, named log', (): void => {
+    room.messages = [
+      { id: 'u0', role: 'user', parts: [{ type: 'text', text: INIT_PROMPT }] },
+      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Why this hire?' }] },
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Close week is heavy.' }] },
+    ] as UIMessage[];
+    const view = mount(<ChatRoom agentId={'agent-1' as Id<'agents'>} bossLabel="Sam" />);
+    const log = view.container.querySelector('[role="log"]');
+    expect(log?.getAttribute('aria-label')).toBe('The 1:1 so far');
+    expect(log?.getAttribute('tabindex')).toBe('0');
+    expect(log?.textContent).toContain('Employee: Why this hire?');
+    expect(log?.textContent).toContain('You: Close week is heavy.');
+    view.unmount();
+    room.messages = [];
+  });
+
+  it('says why the session could not start and starts it again on Ask again', async (): Promise<void> => {
+    (globalThis as { Element: typeof Element }).Element.prototype.scrollTo = (): void => undefined;
+    room.startRefusal = new Error(
+      '[CONVEX M(voice:start)] [Request ID: 1] Server Error\nUncaught Error: The employee is retired.\n    at handler (../convex/voice.ts:1:1)',
+    );
+    room.sent = [];
+    const view = mount(<ChatRoom agentId={'agent-1' as Id<'agents'>} bossLabel="Sam" />);
+    await settle();
+    expect(liveRegions(view.container)).toEqual(['The employee is retired.Ask again']);
+
+    room.startRefusal = undefined;
+    await press(view.container, 'Ask again');
+    expect(room.sent).toEqual([{ text: INIT_PROMPT }]);
+    expect(liveRegions(view.container)).toEqual([]);
+    expect(focusedName()).not.toBe('Ask again');
+    view.unmount();
   });
 });
