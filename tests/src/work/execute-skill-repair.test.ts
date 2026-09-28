@@ -3,11 +3,7 @@ import type { Charter } from '../../../src/agent/charter';
 import { auditActionArguments } from '../../../evaluation/action-audit';
 import { reviewPayload } from '../../../src/surfaces/policy';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
-import type {
-  ExecutionPlan,
-  MockSurfaceSnapshot,
-  WorkCandidate,
-} from '../../../src/work/types';
+import type { ExecutionPlan, MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
 import liveFailures from '../../fixtures/work/procedure-trail-live-failures.json';
 
 const recorded = vi.hoisted(() => ({
@@ -517,9 +513,7 @@ describe('real dependent procedure trails', (): void => {
         },
       ],
       procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
-      planStepOutcomes: [
-        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
-      ],
+      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'The report is action 0.' }],
     };
     recorded.outputs.push(wrong, wrong);
 
@@ -565,9 +559,7 @@ describe('real dependent procedure trails', (): void => {
       draft: 'Reported completion.',
       notes: '',
       procedureTrails: [{ trailId: 'trail-1', state: 'mapped', actionIndex: 0 }],
-      planStepOutcomes: [
-        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
-      ],
+      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'The report is action 0.' }],
     } as const;
     recorded.outputs.push(
       {
@@ -643,7 +635,9 @@ describe('real dependent procedure trails', (): void => {
     expect(correction).toContain(
       'procedure-trail transport payload contradicts the prescribed effect',
     );
-    expect(correction).not.toMatch(/C-PUBLIC|D-MANAGER|team-chat|chat\.postMessage|channel|payload:/);
+    expect(correction).not.toMatch(
+      /C-PUBLIC|D-MANAGER|team-chat|chat\.postMessage|channel|payload:/,
+    );
     expect(output.actions[0]!.args.body).toContain('D-MANAGER-42');
   });
 
@@ -664,9 +658,7 @@ describe('real dependent procedure trails', (): void => {
         },
       ],
       procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
-      planStepOutcomes: [
-        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
-      ],
+      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'The report is action 0.' }],
     });
 
     const output = await runDependentSkill({
@@ -1071,15 +1063,15 @@ describe('real initial procedure trails', (): void => {
       {
         trailId: 'trail-1',
         state: 'deferred',
-          dependsOnActionIndex: 0,
-          dependsOnField: 'record',
+        dependsOnActionIndex: 0,
+        dependsOnField: 'record',
         reason: 'This trail depends on the result of prerequisite actions.',
       },
       {
         trailId: 'trail-2',
         state: 'deferred',
-          dependsOnActionIndex: 0,
-          dependsOnField: 'record',
+        dependsOnActionIndex: 0,
+        dependsOnField: 'record',
         reason: 'This trail depends on the result of prerequisite actions.',
       },
     ]);
@@ -1154,9 +1146,9 @@ describe('real initial procedure trails', (): void => {
     });
     expect(recorded.calls).toHaveLength(1);
     expect(direct.procedureTrails).toEqual(valid.procedureTrails);
-    const applicability = recorded.calls[0]!.user
-      .split('--- Procedure trail applicability for this candidate ---')[1]!
-      .split('--- Team docs (read-only context) ---')[0]!;
+    const applicability = recorded.calls[0]!.user.split(
+      '--- Procedure trail applicability for this candidate ---',
+    )[1]!.split('--- Team docs (read-only context) ---')[0]!;
     expect(applicability.trim().split('\n')).toEqual([
       'trail-1: choose exactly one procedure-trail state for this response',
       'trail-2: choose exactly one procedure-trail state for this response',
@@ -1212,16 +1204,16 @@ describe('real initial procedure trails', (): void => {
           {
             trailId: 'trail-1',
             state: 'deferred',
-          dependsOnActionIndex: 0,
-          dependsOnField: 'record',
+            dependsOnActionIndex: 0,
+            dependsOnField: 'record',
             reason: 'A result-dependent phase is required.',
           },
           ticketSource
             ? {
                 trailId: 'trail-2',
                 state: 'deferred',
-          dependsOnActionIndex: 0,
-          dependsOnField: 'record',
+                dependsOnActionIndex: 0,
+                dependsOnField: 'record',
                 reason: 'A result-dependent phase is required.',
               }
             : {
@@ -1306,7 +1298,10 @@ describe('real-mode argument repair', (): void => {
     answers: Record<string, AppliedAction>,
   ): (action: MockAction, index: number) => Promise<AppliedAction> {
     return async (action: MockAction, index: number): Promise<AppliedAction> => {
-      applied.push({ ...answers[action.args.toolArgsJson ?? '']!, idempotencyKey: `wi:run:${index}` });
+      applied.push({
+        ...answers[action.args.toolArgsJson ?? '']!,
+        idempotencyKey: `wi:run:${index}`,
+      });
       return applied[applied.length - 1]!;
     };
   }
@@ -1401,22 +1396,40 @@ describe('real-mode argument repair', (): void => {
     const RIGHT_KEY = '{"issueId":"REVOPS-7","body":"Set to 74%."}';
 
     it('names an argument the probed schema does not list, and nothing else', (): void => {
-      const call = { kind: 'mcp.call' as const, surface: 'linear', tool: 'save_comment', toolArgs: {} };
-      expect(probedArgumentIssue({ ...call, toolArgs: { issueId: 'REVOPS-7', comment: 'x' } }, linear)).toBe(
+      const call = {
+        kind: 'mcp.call' as const,
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgs: {},
+      };
+      expect(
+        probedArgumentIssue({ ...call, toolArgs: { issueId: 'REVOPS-7', comment: 'x' } }, linear),
+      ).toBe(
         'Tool input validation failed against the probed schema: unknown argument comment for save_comment on linear; the schema accepts issueId, body',
       );
-      expect(probedArgumentIssue({ ...call, toolArgs: { issue: 'REVOPS-7', comment: 'x' } }, linear)).toContain(
-        'unknown arguments issue, comment',
-      );
-      expect(probedArgumentIssue({ ...call, toolArgs: { issueId: 'REVOPS-7', body: 'x' } }, linear)).toBeUndefined();
+      expect(
+        probedArgumentIssue({ ...call, toolArgs: { issue: 'REVOPS-7', comment: 'x' } }, linear),
+      ).toContain('unknown arguments issue, comment');
+      expect(
+        probedArgumentIssue({ ...call, toolArgs: { issueId: 'REVOPS-7', body: 'x' } }, linear),
+      ).toBeUndefined();
       // No probed names, no judgement.
-      expect(probedArgumentIssue({ ...call, tool: 'save_issue', toolArgs: { anything: 1 } }, linear)).toBeUndefined();
-      expect(isArgumentFailure(probedArgumentIssue({ ...call, toolArgs: { comment: 'x' } }, linear))).toBe(true);
+      expect(
+        probedArgumentIssue({ ...call, tool: 'save_issue', toolArgs: { anything: 1 } }, linear),
+      ).toBeUndefined();
+      expect(
+        isArgumentFailure(probedArgumentIssue({ ...call, toolArgs: { comment: 'x' } }, linear)),
+      ).toBe(true);
     });
 
     it('selects writes the schema refuses and leaves reads, unprobed tools and accepted payloads alone', (): void => {
       const rows = repairableWriteArguments(
-        [read('{"issueId":"REVOPS-7"}'), write(WRONG_KEY), write(RIGHT_KEY), write('{"x":1}', 'save_issue')],
+        [
+          read('{"issueId":"REVOPS-7"}'),
+          write(WRONG_KEY),
+          write(RIGHT_KEY),
+          write('{"x":1}', 'save_issue'),
+        ],
         [linear],
       );
       expect(rows.map((row) => [row.index, row.call.tool])).toEqual([[1, 'save_comment']]);
@@ -1441,7 +1454,9 @@ describe('real-mode argument repair', (): void => {
       expect(prompt).toContain('Tool: save_comment');
       expect(prompt).toContain('Probed argument names: issueId, body');
       expect(prompt).toContain(`Refused arguments: ${WRONG_KEY}`);
-      expect(prompt).toContain('Provider message: Tool input validation failed against the probed schema: unknown argument comment');
+      expect(prompt).toContain(
+        'Provider message: Tool input validation failed against the probed schema: unknown argument comment',
+      );
       expect(result.actions).toEqual([read('{"id":"REVOPS-7"}'), write(RIGHT_KEY)]);
       expect(result.argumentRepairs).toEqual([
         {
@@ -1452,14 +1467,36 @@ describe('real-mode argument repair', (): void => {
         },
       ]);
       // The ledger row the approved write produces carries the attempt; a row still awaiting approval does not.
-      const landed: AppliedAction = { tool: 'mcp.call', ok: true, effect: 'save_comment on linear', idempotencyKey: 'wi:run:1' };
-      const awaiting: AppliedAction = { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, idempotencyKey: 'wi:run:1' };
-      const readRow: AppliedAction = { tool: 'mcp.call', ok: true, effect: 'get_issue on linear', idempotencyKey: 'wi:run:0' };
+      const landed: AppliedAction = {
+        tool: 'mcp.call',
+        ok: true,
+        effect: 'save_comment on linear',
+        idempotencyKey: 'wi:run:1',
+      };
+      const awaiting: AppliedAction = {
+        tool: 'mcp.call',
+        ok: true,
+        held: true,
+        awaitingApproval: true,
+        idempotencyKey: 'wi:run:1',
+      };
+      const readRow: AppliedAction = {
+        tool: 'mcp.call',
+        ok: true,
+        effect: 'get_issue on linear',
+        idempotencyKey: 'wi:run:0',
+      };
       expect(withArgumentRepairs([readRow, landed], result.argumentRepairs)).toEqual([
         readRow,
-        { ...landed, repair: { reason: result.argumentRepairs[0]!.reason, toolArgsJson: WRONG_KEY } },
+        {
+          ...landed,
+          repair: { reason: result.argumentRepairs[0]!.reason, toolArgsJson: WRONG_KEY },
+        },
       ]);
-      expect(withArgumentRepairs([readRow, awaiting], result.argumentRepairs)).toEqual([readRow, awaiting]);
+      expect(withArgumentRepairs([readRow, awaiting], result.argumentRepairs)).toEqual([
+        readRow,
+        awaiting,
+      ]);
       expect(withArgumentRepairs([readRow, landed], undefined)).toEqual([readRow, landed]);
     });
 
@@ -1471,7 +1508,10 @@ describe('real-mode argument repair', (): void => {
     ])('refuses a key repair that changes or loses a payload value: %s', async (toolArgsJson) => {
       recorded.outputs.push({ toolArgsJson });
       const result = await repairHeldWriteArguments({
-        actions: [write(WRONG_KEY)], surfaces: [linear], skill: { name: 'refresh-tile' }, candidate,
+        actions: [write(WRONG_KEY)],
+        surfaces: [linear],
+        skill: { name: 'refresh-tile' },
+        candidate,
       });
       expect(result.actions).toEqual([write(WRONG_KEY)]);
       expect(result.argumentRepairs[0]?.repaired).toBe(false);
@@ -1487,7 +1527,12 @@ describe('real-mode argument repair', (): void => {
       });
       expect(unparsable.actions).toEqual([write(WRONG_KEY)]);
       expect(unparsable.argumentRepairs).toEqual([
-        { index: 0, reason: expect.stringContaining('unknown argument comment'), toolArgsJson: WRONG_KEY, repaired: false },
+        {
+          index: 0,
+          reason: expect.stringContaining('unknown argument comment'),
+          toolArgsJson: WRONG_KEY,
+          repaired: false,
+        },
       ]);
 
       recorded.outputs.push({ toolArgsJson: '{"issueId":"REVOPS-7","text":"Set to 74%."}' });
@@ -1500,7 +1545,12 @@ describe('real-mode argument repair', (): void => {
       expect(stillWrong.actions).toEqual([write(WRONG_KEY)]);
       expect(stillWrong.argumentRepairs[0]!.repaired).toBe(false);
       // A failed attempt never reaches the ledger as a repair: the row is the first attempt.
-      const refused: AppliedAction = { tool: 'mcp.call', ok: false, reason: 'provider refused', idempotencyKey: 'wi:run:0' };
+      const refused: AppliedAction = {
+        tool: 'mcp.call',
+        ok: false,
+        reason: 'provider refused',
+        idempotencyKey: 'wi:run:0',
+      };
       expect(withArgumentRepairs([refused], stillWrong.argumentRepairs)).toEqual([refused]);
 
       const modelDown = await repairHeldWriteArguments({

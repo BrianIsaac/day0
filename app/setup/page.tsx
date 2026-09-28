@@ -125,12 +125,12 @@ export default function SetupPage() {
             Run Day0 on your own machine.
           </h1>
           <p className="text-base text-[var(--color-muted)] leading-relaxed mb-4">
-            The same product this demo records, running locally in real mode: a self-hosted
-            backend, your own documentation and the systems it names, and a sandbox that verifies
-            the skills the agent writes. The backend and sandbox run locally. A cloud model
-            receives your chat and relevant content from your documentation; the local-model way
-            runs the model here too. The seeded mock office the hosted demo works in is mock mode,
-            which the evaluation harness uses and which no local way runs.
+            The same product this demo records, running locally in real mode: a self-hosted backend,
+            your own documentation and the systems it names, and a sandbox that verifies the skills
+            the agent writes. The backend and sandbox run locally. A cloud model receives your chat
+            and relevant content from your documentation; the local-model way runs the model here
+            too. The seeded mock office the hosted demo works in is mock mode, which the evaluation
+            harness uses and which no local way runs.
           </p>
           <div
             role="note"
@@ -207,8 +207,7 @@ export default function SetupPage() {
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
               Move the backend ports and choose an installation name:{' '}
               <code className="font-mono text-[var(--color-fg)]">
-                ./setup.sh --project day0-new --port 4210 --site-port 4211 --dashboard-port
-                4791
+                ./setup.sh --project day0-new --port 4210 --site-port 4211 --dashboard-port 4791
               </code>
               . Two installations on one machine need different ports and different Compose project
               names, and the command refuses to attach a new installation to another one&rsquo;s

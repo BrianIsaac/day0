@@ -1,4 +1,10 @@
-import { actionIntent, isAuditComment, isSurfaceTool, messageTarget, parseSurfaceAction } from '../surfaces/policy';
+import {
+  actionIntent,
+  isAuditComment,
+  isSurfaceTool,
+  messageTarget,
+  parseSurfaceAction,
+} from '../surfaces/policy';
 import { messageTexts } from './evidence-claims';
 import type { MockAction, ReplyTarget } from './types';
 
@@ -27,13 +33,9 @@ export function replyTargetFor(row: {
   title: string;
 }): ReplyTarget | undefined {
   const match =
-    row.sourceCategory === 'event-stream'
-      ? SLACK_EXTERNAL_ID.exec(row.externalId)
-      : null;
+    row.sourceCategory === 'event-stream' ? SLACK_EXTERNAL_ID.exec(row.externalId) : null;
   if (row.replyTarget) {
-    return match
-      ? { ...row.replyTarget, channel: match[1], threadTs: match[2] }
-      : row.replyTarget;
+    return match ? { ...row.replyTarget, channel: match[1], threadTs: match[2] } : row.replyTarget;
   }
   if (!match) return undefined;
   const channelName = MENTION_TITLE.exec(row.title)?.[1];
@@ -90,7 +92,11 @@ function rawThreadReference(target: ReplyTarget & { threadTs: string }): string 
  *   The text without the raw reference; the same text when it has none, when
  *   the target has no thread, or when nothing else would be left.
  */
-export function withoutThreadReference(text: string, target: ReplyTarget | undefined, place: ThreadReferencePlace): string {
+export function withoutThreadReference(
+  text: string,
+  target: ReplyTarget | undefined,
+  place: ThreadReferencePlace,
+): string {
   if (!target?.threadTs) return text;
   const raw = rawThreadReference({ ...target, threadTs: target.threadTs });
   if (!new RegExp(raw, 'i').test(text)) return text;
@@ -99,7 +105,10 @@ export function withoutThreadReference(text: string, target: ReplyTarget | undef
     return text.replace(new RegExp(raw, 'gi'), words);
   }
   // At the end of a line the labelled reference goes whole; inside a sentence it is said as "this thread".
-  const tail = new RegExp(String.raw`[ \t]*[([]?\s*(?:${REFERENCE_LABEL})?${raw}\s*[)\]]?\.?(?=[ \t]*(?:\n|$))`, 'gi');
+  const tail = new RegExp(
+    String.raw`[ \t]*[([]?\s*(?:${REFERENCE_LABEL})?${raw}\s*[)\]]?\.?(?=[ \t]*(?:\n|$))`,
+    'gi',
+  );
   const inline = new RegExp(String.raw`(?:${REFERENCE_LABEL})?${raw}`, 'gi');
   const next = text
     .replace(tail, '')
@@ -142,7 +151,9 @@ export function withoutOwnThreadReferences<T extends MockAction>(
     // A message or a comment is read by a person; a value typed into a system is data and stays as written.
     if (surface?.class !== 'chat' && !isAuditComment(parsed.action)) return action;
     const place: ThreadReferencePlace =
-      surface?.class === 'chat' && messageTarget(parsed.action) === thread ? 'in-thread' : 'elsewhere';
+      surface?.class === 'chat' && messageTarget(parsed.action) === thread
+        ? 'in-thread'
+        : 'elsewhere';
     let record: unknown;
     try {
       record = JSON.parse(payload);
@@ -163,7 +174,13 @@ export function withoutOwnThreadReferences<T extends MockAction>(
     if (!touched) return action;
     changed.push(index);
     const body = JSON.stringify(rewritten);
-    return { ...action, args: { ...action.args, ...(action.tool === 'http.request' ? { body } : { toolArgsJson: body }) } };
+    return {
+      ...action,
+      args: {
+        ...action.args,
+        ...(action.tool === 'http.request' ? { body } : { toolArgsJson: body }),
+      },
+    };
   });
   return changed.length === 0 ? { actions, changed } : { actions: next, changed };
 }

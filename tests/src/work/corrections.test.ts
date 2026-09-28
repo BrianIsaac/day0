@@ -35,11 +35,13 @@ function correction(overrides: Partial<CorrectionRecord> & { _id: string }): Cor
 const candidate = { agentId: AGENT, sourceCategory: 'ticket-queue', sourceSystem: 'Linear' };
 
 describe('which kept corrections reach a later item', (): void => {
-  it('takes only this employee\'s active corrections, never another\'s and never a retired one', (): void => {
+  it("takes only this employee's active corrections, never another's and never a retired one", (): void => {
     const own = correction({ _id: 'own' });
     const other = correction({ _id: 'other', agentId: 'agent-finance' });
     const retired = correction({ _id: 'retired', retiredAt: 2_000 });
-    expect(selectCorrections([own, other, retired], candidate).map((row) => row._id)).toEqual(['own']);
+    expect(selectCorrections([own, other, retired], candidate).map((row) => row._id)).toEqual([
+      'own',
+    ]);
   });
 
   it('matches on the kind of work: the same source category, or a surface the earlier plan touched', (): void => {
@@ -57,7 +59,9 @@ describe('which kept corrections reach a later item', (): void => {
       surfaces: ['slack'],
     });
     expect(
-      selectCorrections([sameCategory, sameSurface, unrelated], candidate).map((row) => row._id).sort(),
+      selectCorrections([sameCategory, sameSurface, unrelated], candidate)
+        .map((row) => row._id)
+        .sort(),
     ).toEqual(['category', 'surface']);
   });
 
@@ -111,7 +115,9 @@ describe('which kept corrections reach a later item', (): void => {
 
 describe('what a correction is on the prompt', (): void => {
   it('names its id, where it came from, when, and the text', (): void => {
-    const entry = correctionEntry(correction({ _id: 'c1', createdAt: Date.UTC(2026, 8, 18, 7, 40) }));
+    const entry = correctionEntry(
+      correction({ _id: 'c1', createdAt: Date.UTC(2026, 8, 18, 7, 40) }),
+    );
     expect(entry).toEqual({
       id: 'c1',
       from: 'Retry note on "Exception: SH-4471 held at customs"',
@@ -126,7 +132,9 @@ describe('what a correction is on the prompt', (): void => {
     expect(lines).toContain(CORRECTIONS_HEADING);
     const text = lines.join('\n');
     expect(text).toContain('apply those that fit this candidate');
-    expect(text).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
+    expect(text).toContain(
+      'none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate',
+    );
     expect(text).toContain('revocation');
     expect(text).toContain('`appliedCorrections`');
     expect(text).toContain(JSON.stringify(entries));
@@ -136,7 +144,9 @@ describe('what a correction is on the prompt', (): void => {
   it('gives the executor the corrections the approved plan applied, as directions and not evidence', (): void => {
     const entries = [correctionEntry(correction({ _id: 'c1' }))];
     const text = executorCorrectionLines(entries).join('\n');
-    expect(text).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
+    expect(text).toContain(
+      'none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate',
+    );
     expect(text).toContain('revocation');
     expect(text).toContain('not evidence');
     expect(text).toContain(JSON.stringify(entries));
@@ -146,7 +156,10 @@ describe('what a correction is on the prompt', (): void => {
 
 describe('the corrections a plan says it applied', (): void => {
   it('keeps only ids the planner was offered, once each, in the order given', (): void => {
-    const offered = [correctionEntry(correction({ _id: 'c1' })), correctionEntry(correction({ _id: 'c2' }))];
+    const offered = [
+      correctionEntry(correction({ _id: 'c1' })),
+      correctionEntry(correction({ _id: 'c2' })),
+    ];
     expect(appliedCorrectionIds(['c2', 'forged', 'c2', 'c1'], offered)).toEqual(['c2', 'c1']);
     expect(appliedCorrectionIds(null, offered)).toEqual([]);
     expect(appliedCorrectionIds(['c1'], [])).toEqual([]);
@@ -154,7 +167,7 @@ describe('the corrections a plan says it applied', (): void => {
 });
 
 describe('the surfaces a correction is kept against', (): void => {
-  it('is the item\'s own source surface and every surface its plan declared it reads or writes', (): void => {
+  it("is the item's own source surface and every surface its plan declared it reads or writes", (): void => {
     expect(correctionSurfaces('Linear', undefined)).toEqual(['linear']);
     expect(
       correctionSurfaces('Linear', {

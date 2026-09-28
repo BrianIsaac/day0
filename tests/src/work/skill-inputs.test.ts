@@ -57,7 +57,9 @@ describe('skill input placeholders', (): void => {
       'reply-thread',
       'originating-surface',
     ]);
-    expect(skillInputPlaceholders('Last updated by <user> at <time> UTC, <credential: stored>')).toEqual([]);
+    expect(
+      skillInputPlaceholders('Last updated by <user> at <time> UTC, <credential: stored>'),
+    ).toEqual([]);
   });
 
   it('declares the inputs under the Inputs heading and nothing from other sections', (): void => {
@@ -113,28 +115,61 @@ describe('skill input placeholders', (): void => {
     ]);
     expect(undeclaredSkillInputs(table)).toEqual([]);
 
-    const numbered = ['# Skill', '## Inputs', '1. analytics-surface - the tile', '2) `record-id` the ticket', procedure].join('\n');
+    const numbered = [
+      '# Skill',
+      '## Inputs',
+      '1. analytics-surface - the tile',
+      '2) `record-id` the ticket',
+      procedure,
+    ].join('\n');
     expect(declaredSkillInputs(numbered)).toEqual(['analytics-surface', 'record-id']);
   });
 
   it('declares a bare or backticked name only when the body uses it as a placeholder, and only as the first token', (): void => {
-    const unused = ['# Skill', '## Inputs', '- record-id: the ticket.', '- `audit-expectation`: the read-back.', '## Procedure', 'Comment on <record-id>.'].join('\n');
+    const unused = [
+      '# Skill',
+      '## Inputs',
+      '- record-id: the ticket.',
+      '- `audit-expectation`: the read-back.',
+      '## Procedure',
+      'Comment on <record-id>.',
+    ].join('\n');
     expect(declaredSkillInputs(unused)).toEqual(['record-id']);
 
-    const midLine = ['# Skill', '## Inputs', '- the surface analytics-surface: the tile.', '## Procedure', 'Open <analytics-surface>.'].join('\n');
+    const midLine = [
+      '# Skill',
+      '## Inputs',
+      '- the surface analytics-surface: the tile.',
+      '## Procedure',
+      'Open <analytics-surface>.',
+    ].join('\n');
     expect(declaredSkillInputs(midLine)).toEqual([]);
     expect(undeclaredSkillInputs(midLine)).toEqual(['analytics-surface']);
 
-    const prose = ['# Skill', '## Inputs', 'analytics-surface is the tile.', '## Procedure', 'Open <analytics-surface>.'].join('\n');
+    const prose = [
+      '# Skill',
+      '## Inputs',
+      'analytics-surface is the tile.',
+      '## Procedure',
+      'Open <analytics-surface>.',
+    ].join('\n');
     expect(undeclaredSkillInputs(prose)).toEqual(['analytics-surface']);
 
-    const bracketUnused = ['# Skill', '## Inputs', '- <reply-thread>: the thread.', '## Procedure', 'Nothing varies.'].join('\n');
+    const bracketUnused = [
+      '# Skill',
+      '## Inputs',
+      '- <reply-thread>: the thread.',
+      '## Procedure',
+      'Nothing varies.',
+    ].join('\n');
     expect(declaredSkillInputs(bracketUnused)).toEqual(['reply-thread']);
   });
 
   it('names every placeholder used without a declaration', (): void => {
     expect(undeclaredSkillInputs(body)).toEqual([]);
-    expect(undeclaredSkillInputs(`${body}\nAlso post to <audit-channel>.`)).toEqual(['audit-channel']);
+    expect(undeclaredSkillInputs(`${body}\nAlso post to <audit-channel>.`)).toEqual([
+      'audit-channel',
+    ]);
     expect(undeclaredSkillInputs('# Bare\nComment on <record-id>.')).toEqual(['record-id']);
   });
 });
@@ -149,8 +184,14 @@ describe('binding skill inputs from the candidate', (): void => {
         source:
           'read it from the candidate body, its Refs line or the runbook for this run; the skill body carries no value for it',
       },
-      { name: 'reply-channel', source: 'no Reply target line: the work did not come from a chat channel' },
-      { name: 'reply-thread', source: 'no Reply target line: the work did not come from a chat channel' },
+      {
+        name: 'reply-channel',
+        source: 'no Reply target line: the work did not come from a chat channel',
+      },
+      {
+        name: 'reply-thread',
+        source: 'no Reply target line: the work did not come from a chat channel',
+      },
       { name: 'originating-surface', value: 'linear', source: 'the surface the work came from' },
     ]);
   });
@@ -160,7 +201,11 @@ describe('binding skill inputs from the candidate', (): void => {
       ...candidate,
       sourceSystem: 'slack',
       externalId: 'C0BSF04TZ19:1789000500.000200',
-      replyTarget: { channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1789000500.000200' },
+      replyTarget: {
+        channel: 'C0BSF04TZ19',
+        channelName: 'revops-asks',
+        threadTs: '1789000500.000200',
+      },
     };
     const bindings = bindSkillInputs(body, ask);
     expect(bindings.find((binding) => binding.name === 'reply-channel')).toEqual({
@@ -183,7 +228,10 @@ describe('binding skill inputs from the candidate', (): void => {
   it('binds nothing for a body that declares no inputs', (): void => {
     expect(bindSkillInputs('Comment, then close.', candidate)).toEqual([]);
     expect(
-      bindSkillInputs('## Inputs\n- record-id: the ticket.\n## Procedure\nComment on <record-id>.', candidate),
+      bindSkillInputs(
+        '## Inputs\n- record-id: the ticket.\n## Procedure\nComment on <record-id>.',
+        candidate,
+      ),
     ).toEqual([{ name: 'record-id', value: 'REVOPS-11', source: 'the candidate id' }]);
     expect(renderSkillInputs([])).toEqual([]);
   });
@@ -232,7 +280,11 @@ describe('declaring the inputs an author used but did not declare', (): void => 
       ].join('\n'),
     );
     expect(undeclaredSkillInputs(repaired.body)).toEqual([]);
-    expect(declareUndeclaredInputs(repaired.body)).toEqual({ body: repaired.body, declared: [], credentials: [] });
+    expect(declareUndeclaredInputs(repaired.body)).toEqual({
+      body: repaired.body,
+      declared: [],
+      credentials: [],
+    });
   });
 
   it('marks each line it added, so whoever reads the body later can tell the system wrote it', (): void => {
@@ -241,13 +293,24 @@ describe('declaring the inputs an author used but did not declare', (): void => 
     expect(systemDeclaredInputs(body)).toEqual([]);
     expect(systemDeclaredInputs(repaired.body)).toEqual(['closing-state', 'reply-text']);
     // The marker survives a park, a refusal and a retry that keeps the line, because it is in the body.
-    expect(systemDeclaredInputs(declareUndeclaredInputs(repaired.body).body)).toEqual(['closing-state', 'reply-text']);
+    expect(systemDeclaredInputs(declareUndeclaredInputs(repaired.body).body)).toEqual([
+      'closing-state',
+      'reply-text',
+    ]);
     // An author that writes the binding words itself has declared the input itself.
-    expect(systemDeclaredInputs(body.replace('the candidate id.', 'read it from the candidate body, its Refs line or the runbook for this run.'))).toEqual([]);
+    expect(
+      systemDeclaredInputs(
+        body.replace(
+          'the candidate id.',
+          'read it from the candidate body, its Refs line or the runbook for this run.',
+        ),
+      ),
+    ).toEqual([]);
   });
 
   it('declares in a section that ends the body, and gives a body without one its own', (): void => {
-    const last = '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n';
+    const last =
+      '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n';
     expect(declareUndeclaredInputs(last).body).toBe(
       '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n' +
         '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.\n',
@@ -274,8 +337,15 @@ describe('declaring the inputs an author used but did not declare', (): void => 
   });
 
   it('leaves a body with nothing missing exactly as it was', (): void => {
-    const complete = body.replace('- `<record-id>`: the candidate id.', '- `<record-id>`, `<closing-state>`, `<reply-text>`: from the candidate.');
-    expect(declareUndeclaredInputs(complete)).toEqual({ body: complete, declared: [], credentials: [] });
+    const complete = body.replace(
+      '- `<record-id>`: the candidate id.',
+      '- `<record-id>`, `<closing-state>`, `<reply-text>`: from the candidate.',
+    );
+    expect(declareUndeclaredInputs(complete)).toEqual({
+      body: complete,
+      declared: [],
+      credentials: [],
+    });
   });
 
   it('names what was declared in the log', (): void => {
@@ -296,7 +366,11 @@ describe('the surface that carries the reply', (): void => {
     sourceCategory: 'event-stream',
     sourceSystem: 'Slack',
     externalId: 'C0BSF04TZ19:1789000500.000200',
-    replyTarget: { channel: 'C0BSF04TZ19', channelName: 'ops-requests', threadTs: '1789000500.000200' },
+    replyTarget: {
+      channel: 'C0BSF04TZ19',
+      channelName: 'ops-requests',
+      threadTs: '1789000500.000200',
+    },
   };
   const taught = `${body}`.replace(
     '- `<originating-surface>`: where the ticket lives.',
@@ -307,10 +381,10 @@ describe('the surface that carries the reply', (): void => {
     expect(executionInputLines('mock')).toBe(EXECUTION_INPUT_LINES);
     const real = executionInputLines('real');
     expect(real).toContain(
-      '  - `<reply-channel>` and `<reply-thread>`: the channel and thread of the `Reply target:` line when the work came from a chat channel or thread. The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface\'s own path (`http.request` on an API surface); never on `<originating-surface>` unless that is the chat surface.',
+      "  - `<reply-channel>` and `<reply-thread>`: the channel and thread of the `Reply target:` line when the work came from a chat channel or thread. The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface's own path (`http.request` on an API surface); never on `<originating-surface>` unless that is the chat surface.",
     );
     expect(real).toContain(
-      '  - `<reply-surface>`: the slug of the connected chat surface the `Reply target:` line\'s channel is on; the executor binds it whenever there is a `Reply target:` line. Every reply action\'s `surface` is `<reply-surface>`: a ticket surface never carries a reply.',
+      "  - `<reply-surface>`: the slug of the connected chat surface the `Reply target:` line's channel is on; the executor binds it whenever there is a `Reply target:` line. Every reply action's `surface` is `<reply-surface>`: a ticket surface never carries a reply.",
     );
     expect(real.join('\n')).not.toContain('a reply in the thread on chat');
     expect(real[0]).toBe(EXECUTION_INPUT_LINES[0]);
@@ -318,12 +392,16 @@ describe('the surface that carries the reply', (): void => {
 
   it('binds the reply surface from the surface the Reply target line is on', (): void => {
     expect(REPLY_SURFACE_INPUT).toBe('reply-surface');
-    expect(bindSkillInputs(taught, ask).find((binding) => binding.name === 'reply-surface')).toEqual({
+    expect(
+      bindSkillInputs(taught, ask).find((binding) => binding.name === 'reply-surface'),
+    ).toEqual({
       name: 'reply-surface',
       value: 'slack',
       source: 'the chat surface the Reply target line is on; every reply action goes to it',
     });
-    expect(bindSkillInputs(taught, candidate).find((binding) => binding.name === 'reply-surface')).toEqual({
+    expect(
+      bindSkillInputs(taught, candidate).find((binding) => binding.name === 'reply-surface'),
+    ).toEqual({
       name: 'reply-surface',
       source: 'no Reply target line: the work did not come from a chat channel',
     });
@@ -332,7 +410,11 @@ describe('the surface that carries the reply', (): void => {
   it('binds it in real mode for a skill registered before the input was taught, after the inputs it declares', (): void => {
     expect(impliedSkillInputs(body)).toEqual(['reply-surface']);
     expect(impliedSkillInputs(taught)).toEqual([]);
-    expect(impliedSkillInputs('## Inputs\n- `<record-id>`: the ticket.\n## Procedure\nComment on <record-id>.')).toEqual([]);
+    expect(
+      impliedSkillInputs(
+        '## Inputs\n- `<record-id>`: the ticket.\n## Procedure\nComment on <record-id>.',
+      ),
+    ).toEqual([]);
 
     const bound = bindSkillInputs(body, ask, 'real');
     expect(bound.map((binding) => binding.name)).toEqual([
@@ -352,8 +434,14 @@ describe('the surface that carries the reply', (): void => {
   });
 
   it('adds nothing for such a skill in mock mode, or when the work has no Reply target', (): void => {
-    expect(bindSkillInputs(body, ask).map((binding) => binding.name)).not.toContain('reply-surface');
-    expect(bindSkillInputs(body, ask, 'mock').map((binding) => binding.name)).not.toContain('reply-surface');
-    expect(bindSkillInputs(body, candidate, 'real').map((binding) => binding.name)).not.toContain('reply-surface');
+    expect(bindSkillInputs(body, ask).map((binding) => binding.name)).not.toContain(
+      'reply-surface',
+    );
+    expect(bindSkillInputs(body, ask, 'mock').map((binding) => binding.name)).not.toContain(
+      'reply-surface',
+    );
+    expect(bindSkillInputs(body, candidate, 'real').map((binding) => binding.name)).not.toContain(
+      'reply-surface',
+    );
   });
 });

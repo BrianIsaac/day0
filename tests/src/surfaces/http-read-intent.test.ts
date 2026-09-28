@@ -56,7 +56,10 @@ function parsed(action: MockAction): ParsedSurfaceAction {
 }
 
 function post(path: string, body: Record<string, unknown> = {}, method = 'POST'): MockAction {
-  return { tool: 'http.request', args: { surface: 'slack', method, path, body: JSON.stringify(body) } };
+  return {
+    tool: 'http.request',
+    args: { surface: 'slack', method, path, body: JSON.stringify(body) },
+  };
 }
 
 function deps(sent: string[]): RealAdapterDeps {
@@ -78,7 +81,10 @@ describe('a documented-API read carried by POST (19 Sep third run, finding R)', 
 
   it("is the run's own row: POST /conversations.list with an empty body, refused as a write", (): void => {
     expect(refused.args).toMatchObject({ method: 'POST', path: '/conversations.list', body: '{}' });
-    expect(FIN_1_ITEM.applied[1]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
+    expect(FIN_1_ITEM.applied[1]).toMatchObject({
+      ok: false,
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
+    });
   });
 
   it('classes the row by its operation: a read, needing the read scope', (): void => {
@@ -106,9 +112,12 @@ describe('a documented-API read carried by POST (19 Sep third run, finding R)', 
     '/users.list',
     '/chat.getPermalink',
     '/team.info',
-  ])('reads an undocumented dotted method that leads with a read verb, %s, as a read', (path): void => {
-    expect(actionIntent(parsed(post(path)))).toBe('read');
-  });
+  ])(
+    'reads an undocumented dotted method that leads with a read verb, %s, as a read',
+    (path): void => {
+      expect(actionIntent(parsed(post(path)))).toBe('read');
+    },
+  );
 
   it.each([
     '/chat.postMessage',
@@ -149,9 +158,12 @@ describe('a documented-API read carried by POST (19 Sep third run, finding R)', 
     expect(actionIntent(parsed(action))).toBe('write');
   });
 
-  it.each(['PUT', 'PATCH', 'DELETE'])('keeps %s a write whatever the operation is called', (method): void => {
-    expect(actionIntent(parsed(post('/conversations.list', {}, method)))).toBe('write');
-  });
+  it.each(['PUT', 'PATCH', 'DELETE'])(
+    'keeps %s a write whatever the operation is called',
+    (method): void => {
+      expect(actionIntent(parsed(post('/conversations.list', {}, method)))).toBe('write');
+    },
+  );
 
   it('keeps a read method whose query smuggles a mutation a write', (): void => {
     expect(actionIntent(parsed(post('/conversations.history?operation=delete')))).toBe('write');
@@ -178,7 +190,12 @@ describe('a documented-API read carried by POST (19 Sep third run, finding R)', 
       [slack],
       run,
       [post('/conversations.open', { users: 'U0BTFHN6MKJ' })],
-      { deps: deps(sent), grants: new Set(['slack:read', 'slack:write']), approvedIndexes: new Set([0]), now },
+      {
+        deps: deps(sent),
+        grants: new Set(['slack:read', 'slack:write']),
+        approvedIndexes: new Set([0]),
+        now,
+      },
     );
     expect(applied[0]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
     expect(sent).toEqual([]);
@@ -187,13 +204,19 @@ describe('a documented-API read carried by POST (19 Sep third run, finding R)', 
   it('applies on its own as any read does, switch off, while the write beside it waits for the manager', (): void => {
     expect(isAutomatic(parsed(refused), slack, false)).toBe(true);
     expect(needsStandingGrant(parsed(refused), slack)).toBe(true);
-    expect(isAutomatic(parsed(post('/conversations.open', { users: 'U0BTFHN6MKJ' })), slack, false)).toBe(false);
+    expect(
+      isAutomatic(parsed(post('/conversations.open', { users: 'U0BTFHN6MKJ' })), slack, false),
+    ).toBe(false);
   });
 
   it('still asks the write scope of a chat post, which the read grant alone does not carry', (): void => {
-    const chat = parsed(post('/chat.postMessage', { channel: 'C0C2P932A2H', text: 'Where the close stands.' }));
+    const chat = parsed(
+      post('/chat.postMessage', { channel: 'C0C2P932A2H', text: 'Where the close stands.' }),
+    );
     expect(grantRefusal(chat, slack, new Set(['slack:read']))).toBe('no grant (slack:write)');
     expect(grantRefusal(parsed(refused), slack, new Set(['slack:read']))).toBeUndefined();
-    expect(grantRefusal(parsed(refused), slack, new Set(['slack:write']))).toBe('no grant (slack:read)');
+    expect(grantRefusal(parsed(refused), slack, new Set(['slack:write']))).toBe(
+      'no grant (slack:read)',
+    );
   });
 });

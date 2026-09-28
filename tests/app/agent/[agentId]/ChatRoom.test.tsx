@@ -25,11 +25,13 @@ describe('the Day-1 transcript bubble', (): void => {
   });
 
   it('marks an emphasised label as strong and drops its markers', (): void => {
-    expect(emphasisSegments('Three intros queued. **Topic 4:** what should I read first?')).toEqual([
-      { text: 'Three intros queued. ', strong: false },
-      { text: 'Topic 4:', strong: true },
-      { text: ' what should I read first?', strong: false },
-    ]);
+    expect(emphasisSegments('Three intros queued. **Topic 4:** what should I read first?')).toEqual(
+      [
+        { text: 'Three intros queued. ', strong: false },
+        { text: 'Topic 4:', strong: true },
+        { text: ' what should I read first?', strong: false },
+      ],
+    );
   });
 
   it('handles several emphasised runs in one turn', (): void => {
@@ -204,7 +206,10 @@ const lastText = (messages: UIMessage[]): string =>
 
 describe('Ask again, against the SDK chat the room runs on', (): void => {
   it('re-sends the opening prompt after an empty opening turn', async (): Promise<void> => {
-    const { transport, requests } = scriptedTransport([EMPTY_TURN, spoken('Welcome. Why this hire?')]);
+    const { transport, requests } = scriptedTransport([
+      EMPTY_TURN,
+      spoken('Welcome. Why this hire?'),
+    ]);
     const failures: (string | null)[] = [];
     const chat = new Chat<UIMessage>({ transport, onFinish: (f) => failures.push(turnFailure(f)) });
 

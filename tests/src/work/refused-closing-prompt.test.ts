@@ -10,24 +10,40 @@ import type { RefusedClosing } from '../../../src/work/types';
  */
 
 const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({
-  tool: 'mcp.call', args: { surface, tool, toolArgsJson: JSON.stringify(args) },
+  tool: 'mcp.call',
+  args: { surface, tool, toolArgsJson: JSON.stringify(args) },
 });
 const dm: MockAction = {
   tool: 'http.request',
-  args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: JSON.stringify({ channel: 'D0MANAGER', text: 'REVOPS-7: comment and Done held for you.' }) },
+  args: {
+    surface: 'slack',
+    method: 'POST',
+    path: '/chat.postMessage',
+    headersJson: '{}',
+    body: JSON.stringify({
+      channel: 'D0MANAGER',
+      text: 'REVOPS-7: comment and Done held for you.',
+    }),
+  },
 };
 const refused = (actions: MockAction[]): RefusedClosing => ({
   actions,
-  planStepOutcomes: [{ step: 3, status: 'satisfied', evidence: 'the audit comment in this response' }],
-  draft: '', notes: '',
-  reason: 'dependent phase omitted the approved ticket state transition without a blocked plan step',
+  planStepOutcomes: [
+    { step: 3, status: 'satisfied', evidence: 'the audit comment in this response' },
+  ],
+  draft: '',
+  notes: '',
+  reason:
+    'dependent phase omitted the approved ticket state transition without a blocked plan step',
   at: 1,
 });
 
 describe('the refused closing set in the retry prompt', (): void => {
   it('shows every action on its own line and clips only the long one, saying so', (): void => {
     const long = 'Refreshed the tile. '.repeat(600);
-    const lines = refusedClosingLines(refused([call('linear', 'save_comment', { issueId: 'REVOPS-7', body: long }), dm]));
+    const lines = refusedClosingLines(
+      refused([call('linear', 'save_comment', { issueId: 'REVOPS-7', body: long }), dm]),
+    );
     const text = lines.join('\n');
     expect(text).toContain('REVOPS-7: comment and Done held for you.');
     expect(text).toContain('save_comment');
@@ -37,11 +53,18 @@ describe('the refused closing set in the retry prompt', (): void => {
   });
 
   it('shows a short set whole', (): void => {
-    const lines = refusedClosingLines(refused([call('linear', 'save_comment', { issueId: 'REVOPS-7', body: 'Refreshed the tile to 74%.' }), dm]));
+    const lines = refusedClosingLines(
+      refused([
+        call('linear', 'save_comment', { issueId: 'REVOPS-7', body: 'Refreshed the tile to 74%.' }),
+        dm,
+      ]),
+    );
     const text = lines.join('\n');
     expect(text).toContain('Refreshed the tile to 74%.');
     expect(text).not.toContain('clipped');
-    expect(text).toContain('Refusal: dependent phase omitted the approved ticket state transition without a blocked plan step');
+    expect(text).toContain(
+      'Refusal: dependent phase omitted the approved ticket state transition without a blocked plan step',
+    );
     expect(text).toContain('3 satisfied (the audit comment in this response)');
   });
 });

@@ -133,7 +133,7 @@ const SYSTEM_PROMPT = [
   'Return exactly one namedSystems row per product or service. Channels, DMs, pages, files, runbooks, queues, dashboards, tiles, views, sheets and tabs are locations inside a system, never separate systems.',
   'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
   'Constraints: under constraints, list every rule the manager stated that limits which work you take or how you do it: a property a candidate must have (candidate-property), a system you must or must not touch (system-boundary), a person you report to or must not contact (reporting-line).',
-  'For each, quote is the manager\'s own sentence, copied, and wording is the exact phrase or phrases in your proposedFunction, willDo, willNotDo or escalationTriggers that encode it. Leave constraints empty when the manager stated no such rule; never add one they did not state.',
+  "For each, quote is the manager's own sentence, copied, and wording is the exact phrase or phrases in your proposedFunction, willDo, willNotDo or escalationTriggers that encode it. Leave constraints empty when the manager stated no such rule; never add one they did not state.",
 ].join('\n');
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
@@ -551,7 +551,11 @@ export function renderCharter(c: Charter, date = new Date()): string {
         ]
       : []),
     ...((c.synthesisNotes ?? []).length > 0
-      ? ['SYNTHESIS NOTES                                            [from the draft itself]', ...renderBullets(c.synthesisNotes ?? [], '  '), '']
+      ? [
+          'SYNTHESIS NOTES                                            [from the draft itself]',
+          ...renderBullets(c.synthesisNotes ?? [], '  '),
+          '',
+        ]
       : []),
   ];
   return lines.join('\n');

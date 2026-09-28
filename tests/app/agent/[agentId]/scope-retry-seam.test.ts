@@ -21,7 +21,11 @@ vi.mock('../../../../src/lib/mastra', () => ({
 import { api } from '../../../../convex/_generated/api';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
 import schema from '../../../../convex/schema';
-import { WorkItemCard, nextItemToEvaluate, retryRequest } from '../../../../app/agent/[agentId]/AgentDashboard';
+import {
+  WorkItemCard,
+  nextItemToEvaluate,
+  retryRequest,
+} from '../../../../app/agent/[agentId]/AgentDashboard';
 import { OUT_OF_SCOPE_SKIP_PREFIX } from '../../../../src/work/types';
 import { allConvexModules } from '../../../convex/all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from '../../../convex/surface-mode-env';
@@ -34,7 +38,9 @@ afterEach((): void => {
   restoreSurfaceMode();
 });
 
-async function seed(harness: Harness): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
+async function seed(
+  harness: Harness,
+): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -113,61 +119,97 @@ function card(item: Doc<'workItems'>, onRetryFailed: (feedback?: string) => void
 
 // The seam loads every Convex module and renders the card; on a loaded machine
 // that alone can pass the default five-second timeout.
-describe('the manager retries an out-of-scope skip from the card', { timeout: 30_000 }, (): void => {
-  it('reaches the evaluator with the scope rule waived, from the Retry the card offers to the claim', async (): Promise<void> => {
-    useSurfaceMode('mock');
-    const harness = convexTest(schema, allConvexModules());
-    const { agentId, workItemId } = await seed(harness);
-    const owner = harness.withIdentity(OWNER);
-    const items = async (): Promise<Doc<'workItems'>[]> => await owner.query(api.work.listForAgent, { agentId });
-    const events = async (type: string): Promise<unknown[]> =>
-      (await harness.run(async (ctx) => await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()))
-        .filter((event) => event.type === type)
-        .map((event) => event.payload);
+describe(
+  'the manager retries an out-of-scope skip from the card',
+  { timeout: 30_000 },
+  (): void => {
+    it('reaches the evaluator with the scope rule waived, from the Retry the card offers to the claim', async (): Promise<void> => {
+      useSurfaceMode('mock');
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await seed(harness);
+      const owner = harness.withIdentity(OWNER);
+      const items = async (): Promise<Doc<'workItems'>[]> =>
+        await owner.query(api.work.listForAgent, { agentId });
+      const events = async (type: string): Promise<unknown[]> =>
+        (
+          await harness.run(
+            async (ctx) =>
+              await ctx.db
+                .query('events')
+                .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+                .collect(),
+          )
+        )
+          .filter((event) => event.type === type)
+          .map((event) => event.payload);
 
-    // The queue evaluates the discovered item on its own and the scope judgement skips it.
-    expect(nextItemToEvaluate(await items())?._id).toBe(workItemId);
-    await expect(owner.action(api.workActions.evaluateWorkItem, { workItemId })).resolves.toEqual({ decision: 'skip' });
-    const skipped = (await items())[0];
-    expect(skipped).toMatchObject({
-      state: 'skipped',
-      verdict: { decision: 'skip', reason: `${OUT_OF_SCOPE_SKIP_PREFIX}no charter or current documented-system overlap` },
-    });
+      // The queue evaluates the discovered item on its own and the scope judgement skips it.
+      expect(nextItemToEvaluate(await items())?._id).toBe(workItemId);
+      await expect(owner.action(api.workActions.evaluateWorkItem, { workItemId })).resolves.toEqual(
+        { decision: 'skip' },
+      );
+      const skipped = (await items())[0];
+      expect(skipped).toMatchObject({
+        state: 'skipped',
+        verdict: {
+          decision: 'skip',
+          reason: `${OUT_OF_SCOPE_SKIP_PREFIX}no charter or current documented-system overlap`,
+        },
+      });
 
-    // The card offers Retry as the manager's scope decision; its button sends
-    // exactly the request the page hands to work.retryFailed.
-    const sent: Array<string | undefined> = [];
-    const markup = card(skipped, (feedback) => sent.push(feedback));
-    expect(markup).toContain('>Take it anyway<');
-    expect(markup).toContain('Take it anyway re-evaluates this item as in scope, on your decision');
-    expect(retryRequest(skipped._id, '  ')).toEqual({ workItemId });
-    expect(retryRequest(skipped._id, 'The venue is ours to book.')).toEqual({
-      workItemId,
-      feedback: 'The venue is ours to book.',
-    });
-    expect(sent).toEqual([]);
+      // The card offers Retry as the manager's scope decision; its button sends
+      // exactly the request the page hands to work.retryFailed.
+      const sent: Array<string | undefined> = [];
+      const markup = card(skipped, (feedback) => sent.push(feedback));
+      expect(markup).toContain('>Take it anyway<');
+      expect(markup).toContain(
+        'Take it anyway re-evaluates this item as in scope, on your decision',
+      );
+      expect(retryRequest(skipped._id, '  ')).toEqual({ workItemId });
+      expect(retryRequest(skipped._id, 'The venue is ours to book.')).toEqual({
+        workItemId,
+        feedback: 'The venue is ours to book.',
+      });
+      expect(sent).toEqual([]);
 
-    await expect(owner.mutation(api.work.retryFailed, retryRequest(skipped._id, 'The venue is ours to book.'))).resolves.toEqual({
-      ok: true,
-      resumeState: 'discovered',
-    });
-    expect(await events('work.retry')).toEqual([
-      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope', feedback: 'The venue is ours to book.' },
-    ]);
+      await expect(
+        owner.mutation(
+          api.work.retryFailed,
+          retryRequest(skipped._id, 'The venue is ours to book.'),
+        ),
+      ).resolves.toEqual({
+        ok: true,
+        resumeState: 'discovered',
+      });
+      expect(await events('work.retry')).toEqual([
+        {
+          workItemId,
+          resumeState: 'discovered',
+          fromState: 'skipped',
+          waived: 'scope',
+          feedback: 'The venue is ours to book.',
+        },
+      ]);
 
-    // The queue picks the re-admitted row up again, and this time the
-    // evaluator leaves the scope rule out.
-    const readmitted = await items();
-    expect(nextItemToEvaluate(readmitted)?._id).toBe(workItemId);
-    expect(typeof readmitted[0].scopeWaivedAt).toBe('number');
-    await expect(owner.action(api.workActions.evaluateWorkItem, { workItemId })).resolves.toEqual({ decision: 'claim' });
-    const claimed = (await items())[0];
-    expect(claimed.state).toBe('claimed');
-    expect(claimed.qualityFitWaivedAt).toBeUndefined();
-    expect(claimed.managerFeedback).toMatchObject({ reason: 'The venue is ours to book.', kind: 'retry-note' });
-    expect(nextItemToEvaluate(await items())).toBeUndefined();
-    expect(card(claimed, noop)).not.toContain('>Retry<');
-    // The whole seam in one test: the card's render, the retry, the evaluation. It passes in
-    // under two seconds alone and overran the default five beside other suites on a loaded machine.
-  }, 30_000);
-});
+      // The queue picks the re-admitted row up again, and this time the
+      // evaluator leaves the scope rule out.
+      const readmitted = await items();
+      expect(nextItemToEvaluate(readmitted)?._id).toBe(workItemId);
+      expect(typeof readmitted[0].scopeWaivedAt).toBe('number');
+      await expect(owner.action(api.workActions.evaluateWorkItem, { workItemId })).resolves.toEqual(
+        { decision: 'claim' },
+      );
+      const claimed = (await items())[0];
+      expect(claimed.state).toBe('claimed');
+      expect(claimed.qualityFitWaivedAt).toBeUndefined();
+      expect(claimed.managerFeedback).toMatchObject({
+        reason: 'The venue is ours to book.',
+        kind: 'retry-note',
+      });
+      expect(nextItemToEvaluate(await items())).toBeUndefined();
+      expect(card(claimed, noop)).not.toContain('>Retry<');
+      // The whole seam in one test: the card's render, the retry, the evaluation. It passes in
+      // under two seconds alone and overran the default five beside other suites on a loaded machine.
+    }, 30_000);
+  },
+);

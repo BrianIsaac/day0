@@ -30,7 +30,11 @@ function item(id: string, applied: readonly unknown[]): Doc<'workItems'> {
 
 describe('a write the gate refused at apply time is a refusal on the card (19 Sep run, finding N)', (): void => {
   it("counts the run's refused ticket create, which no hold-time review saw", (): void => {
-    const metrics = computeAgentMetrics([], [item(REFUSED_CREATE_RUN.workItemId, REFUSED_CREATE_RUN.applied)], []);
+    const metrics = computeAgentMetrics(
+      [],
+      [item(REFUSED_CREATE_RUN.workItemId, REFUSED_CREATE_RUN.applied)],
+      [],
+    );
     expect(metrics.actions).toMatchObject({ autoApplied: 7, held: 0, rejected: 0, refused: 1 });
   });
 
@@ -54,7 +58,12 @@ describe('a write the gate refused at apply time is a refusal on the card (19 Se
       _creationTime: 1,
       agentId: 'agent' as Id<'agents'>,
       type: 'work.actions-auto-applying',
-      payload: { workItemId: REFUSED_CREATE_RUN.workItemId, runId, heldIndexes: [], refusedIndexes: [0] },
+      payload: {
+        workItemId: REFUSED_CREATE_RUN.workItemId,
+        runId,
+        heldIndexes: [],
+        refusedIndexes: [0],
+      },
       createdAt: 1,
     } as unknown as Doc<'events'>;
     const row = item(REFUSED_CREATE_RUN.workItemId, REFUSED_CREATE_RUN.applied);
@@ -69,9 +78,27 @@ describe('a write the gate refused at apply time is a refusal on the card (19 Se
         reason: 'Error POSTing to endpoint: {"title":"Error 1101: Worker threw exception"}',
         idempotencyKey: 'wi:run:0',
       },
-      { tool: 'http.request', ok: true, held: true, reason: WITHHELD_AFTER_FAILED_WRITE, idempotencyKey: 'wi:run:1' },
-      { tool: 'mcp.call', ok: true, authority: 'autonomous', effect: 'ok', idempotencyKey: 'wi:run:2' },
-      { tool: 'mcp.call', ok: false, outcomeUnknown: true, reason: 'timed out', idempotencyKey: 'wi:run:3' },
+      {
+        tool: 'http.request',
+        ok: true,
+        held: true,
+        reason: WITHHELD_AFTER_FAILED_WRITE,
+        idempotencyKey: 'wi:run:1',
+      },
+      {
+        tool: 'mcp.call',
+        ok: true,
+        authority: 'autonomous',
+        effect: 'ok',
+        idempotencyKey: 'wi:run:2',
+      },
+      {
+        tool: 'mcp.call',
+        ok: false,
+        outcomeUnknown: true,
+        reason: 'timed out',
+        idempotencyKey: 'wi:run:3',
+      },
     ];
     expect(computeAgentMetrics([], [item('wi', ledger)], []).actions.refused).toBe(0);
   });
@@ -79,8 +106,18 @@ describe('a write the gate refused at apply time is a refusal on the card (19 Se
   it('counts every rule the gate refuses by, not only a missing grant', (): void => {
     const ledger = [
       { tool: 'mcp.call', ok: false, reason: STATUS_WITHOUT_COMMENT, idempotencyKey: 'wi:run:0' },
-      { tool: 'mcp.call', ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION, idempotencyKey: 'wi:run:1' },
-      { tool: 'mcp.call', ok: false, reason: 'no grant (linear:write)', idempotencyKey: 'wi:run:2' },
+      {
+        tool: 'mcp.call',
+        ok: false,
+        reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
+        idempotencyKey: 'wi:run:1',
+      },
+      {
+        tool: 'mcp.call',
+        ok: false,
+        reason: 'no grant (linear:write)',
+        idempotencyKey: 'wi:run:2',
+      },
     ];
     expect(computeAgentMetrics([], [item('wi', ledger)], []).actions.refused).toBe(3);
   });

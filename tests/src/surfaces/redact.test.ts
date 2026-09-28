@@ -53,16 +53,18 @@ describe('the synchronous surface floor', (): void => {
     }
     expect(redactSecret('401 for local-value-only', 'local-value-only')).toBe('401 for <redacted>');
     const message = safeFailureMessage(
-      new Error(`local-value Bearer ${SLACK} ${'x'.repeat(400)}\n    at Transport._send (/srv/app/index.mjs:1:1)`),
+      new Error(
+        `local-value Bearer ${SLACK} ${'x'.repeat(400)}\n    at Transport._send (/srv/app/index.mjs:1:1)`,
+      ),
       'local-value',
       'Provider failed.',
     );
     expect(message.startsWith('<redacted> Bearer <redacted> ')).toBe(true);
     expect(message).toHaveLength(300);
     expect(message).not.toContain('/srv/app');
-    expect(safeFailureMessage(new Error('\n\nFailed to connect: 401 Unauthorized\n    at x'), '', 'f')).toBe(
-      'Failed to connect: 401 Unauthorized',
-    );
+    expect(
+      safeFailureMessage(new Error('\n\nFailed to connect: 401 Unauthorized\n    at x'), '', 'f'),
+    ).toBe('Failed to connect: 401 Unauthorized');
     expect(safeFailureMessage(new Error('   '), '', 'Provider failed.')).toBe('Provider failed.');
     expect(safeFailureMessage('plain string', '', 'Provider failed.')).toBe('plain string');
   });
@@ -80,8 +82,15 @@ describe('redactOutcome', (): void => {
   });
 
   it('keeps the exact value and the grammar when the model is unreachable, and says so', async (): Promise<void> => {
-    const result = await redactOutcome(`HTTP 401 · Bearer plain-cred-slack · ${LINEAR}`, 'plain-cred-slack', new UnreachableSpanModel());
-    expect(result).toEqual({ text: 'HTTP 401 · Bearer <redacted> · <redacted>', redaction: 'structural-only' });
+    const result = await redactOutcome(
+      `HTTP 401 · Bearer plain-cred-slack · ${LINEAR}`,
+      'plain-cred-slack',
+      new UnreachableSpanModel(),
+    );
+    expect(result).toEqual({
+      text: 'HTTP 401 · Bearer <redacted> · <redacted>',
+      redaction: 'structural-only',
+    });
     const none = await redactOutcome('HTTP 200 · ok', '', undefined);
     expect(none).toEqual({ text: 'HTTP 200 · ok', redaction: 'structural-only' });
   });

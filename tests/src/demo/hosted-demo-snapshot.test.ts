@@ -31,7 +31,9 @@ describe('the committed hosted-demo snapshot', (): void => {
       expect(evidence.source).toContain('summary');
       expect(evidence.text).not.toMatch(/^"/);
     }
-    expect(HOSTED_DEMO_SNAPSHOT.timeline.find((event) => event.type === 'charter.drafted')?.detail).toContain('summar');
+    expect(
+      HOSTED_DEMO_SNAPSHOT.timeline.find((event) => event.type === 'charter.drafted')?.detail,
+    ).toContain('summar');
   });
 
   it('carries no address that could reach a real person', (): void => {
@@ -45,7 +47,8 @@ describe('the committed hosted-demo snapshot', (): void => {
   });
 
   it('carries no link, host, sandbox id or Clerk subject', (): void => {
-    const forbidden = /https?:\/\/|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\buser_[A-Za-z0-9]{10,}|\bBearer\s/;
+    const forbidden =
+      /https?:\/\/|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\buser_[A-Za-z0-9]{10,}|\bBearer\s/;
     expect(text.filter(({ text: value }) => forbidden.test(value)).map((t) => t.path)).toEqual([]);
   });
 

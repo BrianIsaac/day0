@@ -135,7 +135,10 @@ describe('Mastra MCP client safety configuration', (): void => {
     ) => Promise<Response>;
     const plain = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
     await transport('http://playwright:8931/mcp', { method: 'POST', body: '{}' });
-    expect(plain).toHaveBeenCalledWith('http://playwright:8931/mcp', { method: 'POST', body: '{}' });
+    expect(plain).toHaveBeenCalledWith('http://playwright:8931/mcp', {
+      method: 'POST',
+      body: '{}',
+    });
     plain.mockRestore();
   });
 

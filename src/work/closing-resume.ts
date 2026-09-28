@@ -1,8 +1,20 @@
 import { reusedLedger } from './landed-writes';
-import { actionIntent, isAuditComment, isStatusChange, parseSurfaceAction } from '../surfaces/policy';
+import {
+  actionIntent,
+  isAuditComment,
+  isStatusChange,
+  parseSurfaceAction,
+} from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import { declaredReads, readingSteps } from './obligations';
-import type { DeclaredQuestion, ExecutionOutput, ExecutionPlan, LandedWrite, PlanStepOutcome, RefusedClosing } from './types';
+import type {
+  DeclaredQuestion,
+  ExecutionOutput,
+  ExecutionPlan,
+  LandedWrite,
+  PlanStepOutcome,
+  RefusedClosing,
+} from './types';
 
 export interface ClosingResume extends ExecutionOutput {
   phase: 'dependent-authoring';
@@ -34,12 +46,20 @@ function isRead(action: ExecutionOutput['actions'][number]): boolean {
  * surface, has nothing here to check; the landed-read rule beside this one
  * is what covers it.
  */
-function declaredSurfacesRead(actions: readonly ExecutionOutput['actions'][number][], plan: ExecutionPlan, surfaces: readonly Surface[]): boolean {
-  const reads = new Set(actions.flatMap(action => {
-    const parsed = parseSurfaceAction(action);
-    return parsed.ok && actionIntent(parsed.action) === 'read' ? [parsed.action.surface.toLowerCase()] : [];
-  }));
-  return declaredReads(plan, surfaces).every(read => reads.has(read.surface.slug.toLowerCase()));
+function declaredSurfacesRead(
+  actions: readonly ExecutionOutput['actions'][number][],
+  plan: ExecutionPlan,
+  surfaces: readonly Surface[],
+): boolean {
+  const reads = new Set(
+    actions.flatMap((action) => {
+      const parsed = parseSurfaceAction(action);
+      return parsed.ok && actionIntent(parsed.action) === 'read'
+        ? [parsed.action.surface.toLowerCase()]
+        : [];
+    }),
+  );
+  return declaredReads(plan, surfaces).every((read) => reads.has(read.surface.slug.toLowerCase()));
 }
 
 /**
@@ -65,21 +85,43 @@ function carriedQuestions(row: {
 }
 
 /** The landed writes a failed row carries, to ride on the resume it becomes. */
-function carriedWrites(row: { landedWrites?: unknown }): { landedWrites: LandedWrite[] } | Record<string, never> {
-  return Array.isArray(row.landedWrites) && row.landedWrites.length > 0 ? { landedWrites: row.landedWrites as LandedWrite[] } : {};
+function carriedWrites(row: {
+  landedWrites?: unknown;
+}): { landedWrites: LandedWrite[] } | Record<string, never> {
+  return Array.isArray(row.landedWrites) && row.landedWrites.length > 0
+    ? { landedWrites: row.landedWrites as LandedWrite[] }
+    : {};
 }
 
-function gateRefusalResume(row: ExecutionOutput & { phase?: unknown; applied?: AppliedAction[]; refusedClosing?: RefusedClosing }, plan: ExecutionPlan, failure: string, surfaces: readonly Surface[]): ClosingResume | undefined {
-  if (row.phase !== 'dependent-authoring' || !Array.isArray(row.actions) || !Array.isArray(row.applied)) return undefined;
+function gateRefusalResume(
+  row: ExecutionOutput & {
+    phase?: unknown;
+    applied?: AppliedAction[];
+    refusedClosing?: RefusedClosing;
+  },
+  plan: ExecutionPlan,
+  failure: string,
+  surfaces: readonly Surface[],
+): ClosingResume | undefined {
+  if (
+    row.phase !== 'dependent-authoring' ||
+    !Array.isArray(row.actions) ||
+    !Array.isArray(row.applied)
+  )
+    return undefined;
   if (row.actions.length === 0 || row.applied.length !== row.actions.length) return undefined;
-  if (row.applied.some(entry => !landedEntry(entry))) return undefined;
+  if (row.applied.some((entry) => !landedEntry(entry))) return undefined;
   if (!row.actions.some(isRead)) return undefined;
   if (!declaredSurfacesRead(row.actions, plan, surfaces)) return undefined;
   const refused = row.refusedClosing;
   return {
-    draft: row.draft, notes: row.notes,
-    actions: row.actions, applied: row.applied,
-    needsDependentPhase: true, phase: 'dependent-authoring', resumedClosing: true,
+    draft: row.draft,
+    notes: row.notes,
+    actions: row.actions,
+    applied: row.applied,
+    needsDependentPhase: true,
+    phase: 'dependent-authoring',
+    resumedClosing: true,
     initialFailure: failure,
     previousClosing: { actions: refused?.actions ?? [], applied: [] },
     ...(refused ? { refusedClosing: refused } : {}),
@@ -89,7 +131,12 @@ function gateRefusalResume(row: ExecutionOutput & { phase?: unknown; applied?: A
 }
 
 /** Older completed ledgers have no phase boundary; only an unambiguous closing suffix is reusable. */
-export function closingResume(output: unknown, plan: ExecutionPlan, failure: string | undefined, surfaces: readonly Surface[]): ClosingResume | undefined {
+export function closingResume(
+  output: unknown,
+  plan: ExecutionPlan,
+  failure: string | undefined,
+  surfaces: readonly Surface[],
+): ClosingResume | undefined {
   if (!output || typeof output !== 'object' || !failure) return undefined;
   const row = output as ExecutionOutput & {
     phase?: unknown;
@@ -100,40 +147,69 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
   };
   if (row.phase === 'dependent-authoring') return gateRefusalResume(row, plan, failure, surfaces);
   if (!Array.isArray(row.actions) || !Array.isArray(row.applied)) return undefined;
-  const boundary = row.prerequisiteCount ?? row.actions.findIndex(action => {
-    const parsed = parseSurfaceAction(action);
-    return parsed.ok && (isAuditComment(parsed.action) || isStatusChange(parsed.action));
-  });
-  if (!Number.isInteger(boundary) || boundary <= 0 || boundary >= row.actions.length) return undefined;
+  const boundary =
+    row.prerequisiteCount ??
+    row.actions.findIndex((action) => {
+      const parsed = parseSurfaceAction(action);
+      return parsed.ok && (isAuditComment(parsed.action) || isStatusChange(parsed.action));
+    });
+  if (!Number.isInteger(boundary) || boundary <= 0 || boundary >= row.actions.length)
+    return undefined;
   const actions = row.actions.slice(0, boundary);
   const applied = row.applied.slice(0, boundary);
-  if (applied.length !== actions.length || actions.some((_, index) => {
-    const entry = applied[index];
-    return !entry?.ok || entry.held || entry.awaitingApproval;
-  })) return undefined;
+  if (
+    applied.length !== actions.length ||
+    actions.some((_, index) => {
+      const entry = applied[index];
+      return !entry?.ok || entry.held || entry.awaitingApproval;
+    })
+  )
+    return undefined;
   if (!actions.some(isRead)) return undefined;
   const prerequisites = readingSteps(plan);
-  if (prerequisites.length === 0 || prerequisites.some(step => !row.planStepOutcomes?.some(
-    outcome => outcome.step === step && outcome.status === 'satisfied' && outcome.basis !== 'manager-feedback' && outcome.evidence.trim(),
-  ))) return undefined;
+  if (
+    prerequisites.length === 0 ||
+    prerequisites.some(
+      (step) =>
+        !row.planStepOutcomes?.some(
+          (outcome) =>
+            outcome.step === step &&
+            outcome.status === 'satisfied' &&
+            outcome.basis !== 'manager-feedback' &&
+            outcome.evidence.trim(),
+        ),
+    )
+  )
+    return undefined;
   if (!declaredSurfacesRead(actions, plan, surfaces)) return undefined;
   const closingActions = row.actions.slice(boundary);
   const closingApplied = row.applied.slice(boundary);
-  if (row.prerequisiteCount === undefined && closingActions.some(action => {
-    const parsed = parseSurfaceAction(action);
-    return !parsed.ok || actionIntent(parsed.action) === 'read' ||
-      (parsed.action.kind === 'mcp.call' && /^browser[._-]/i.test(parsed.action.tool));
-  })) return undefined;
-  if (closingActions.every((_, index) => closingApplied[index]?.ok && !closingApplied[index]?.held)) return undefined;
+  if (
+    row.prerequisiteCount === undefined &&
+    closingActions.some((action) => {
+      const parsed = parseSurfaceAction(action);
+      return (
+        !parsed.ok ||
+        actionIntent(parsed.action) === 'read' ||
+        (parsed.action.kind === 'mcp.call' && /^browser[._-]/i.test(parsed.action.tool))
+      );
+    })
+  )
+    return undefined;
+  if (closingActions.every((_, index) => closingApplied[index]?.ok && !closingApplied[index]?.held))
+    return undefined;
   const landedClosing = closingActions.flatMap((action, index) => {
     const entry = closingApplied[index];
     return entry?.ok && !entry.held && !entry.awaitingApproval ? [{ action, entry }] : [];
   });
   return {
-    draft: row.draft, notes: row.notes,
-    actions: [...actions, ...landedClosing.map(row => row.action)],
-    applied: [...applied, ...landedClosing.map(row => row.entry)],
-    needsDependentPhase: true, phase: 'dependent-authoring', resumedClosing: true,
+    draft: row.draft,
+    notes: row.notes,
+    actions: [...actions, ...landedClosing.map((row) => row.action)],
+    applied: [...applied, ...landedClosing.map((row) => row.entry)],
+    needsDependentPhase: true,
+    phase: 'dependent-authoring',
+    resumedClosing: true,
     initialFailure: failure,
     previousClosing: { actions: closingActions, applied: closingApplied },
     ...carriedWrites(row),
@@ -153,9 +229,11 @@ export function resumedClosingLedger(
   run: { workItemId: string; runId: string; actionIndexOffset: number },
   options: { surfaces?: readonly SurfaceRecord[]; managerFeedback?: string } = {},
 ): Array<AppliedAction | undefined> {
-  const sources: LandedWrite[] = (previous?.actions ?? []).flatMap((action, index): LandedWrite[] => {
-    const entry = previous?.applied[index];
-    return entry ? [{ action, applied: entry }] : [];
-  });
+  const sources: LandedWrite[] = (previous?.actions ?? []).flatMap(
+    (action, index): LandedWrite[] => {
+      const entry = previous?.applied[index];
+      return entry ? [{ action, applied: entry }] : [];
+    },
+  );
   return reusedLedger(actions, sources, run, { ...options, identicalPayloads: true });
 }

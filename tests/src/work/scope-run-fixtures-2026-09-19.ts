@@ -70,7 +70,8 @@ export const priyaCharter: Charter = charter(
     },
     {
       who: 'Business systems',
-      staysOutOfTheirLaneBy: 'Not touching the CRM or its administration; routing CRM matters to them.',
+      staysOutOfTheirLaneBy:
+        'Not touching the CRM or its administration; routing CRM matters to them.',
     },
   ],
 );
@@ -97,7 +98,10 @@ export const mateoCharter: Charter = charter(
     ],
   },
   [
-    { who: 'Accounting team', staysOutOfTheirLaneBy: 'Reading their step tickets without changing them.' },
+    {
+      who: 'Accounting team',
+      staysOutOfTheirLaneBy: 'Reading their step tickets without changing them.',
+    },
     {
       who: 'Manager',
       staysOutOfTheirLaneBy:
@@ -112,7 +116,12 @@ export const K_REASON =
 export const L_REASON =
   "The charter's willNotDo forbids posting the status note without asking until the manager approves autonomous posting, and this request is to post it directly.";
 
-function ticket(externalId: string, title: string, contentSummary: string, ref: string): WorkCandidate {
+function ticket(
+  externalId: string,
+  title: string,
+  contentSummary: string,
+  ref: string,
+): WorkCandidate {
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: 'linear',
@@ -165,7 +174,11 @@ export const opsRequestsMention: WorkCandidate = {
   contentRefs: [],
   observedAt: new Date(NOW - 1_000),
   requesterLabel: 'U0BTFHN6MKJ',
-  replyTarget: { channel: 'C0C2U2UJUTU', threadTs: '1789761553.312049', channelName: 'ops-requests' },
+  replyTarget: {
+    channel: 'C0C2U2UJUTU',
+    threadTs: '1789761553.312049',
+    channelName: 'ops-requests',
+  },
 };
 
 function surface(
@@ -196,12 +209,20 @@ function surface(
   };
 }
 
-function bound(value: string, quote: string, ref: string): { value: string; quote: string; ref: string } {
+function bound(
+  value: string,
+  quote: string,
+  ref: string,
+): { value: string; quote: string; ref: string } {
   return { value, quote, ref };
 }
 
 const lookerTile = surface('looker-pipeline-tile', 'Looker pipeline tile', 'analytics');
-const notConnected = { verdict: 'declared', credentialLanded: false, lastVerifiedAt: undefined } as const;
+const notConnected = {
+  verdict: 'declared',
+  credentialLanded: false,
+  lastVerifiedAt: undefined,
+} as const;
 const netledger = surface('netledger', 'NetLedger', 'other', notConnected);
 const northstar = surface('northstar-crm', 'Northstar CRM', 'crm', {
   verdict: 'declared',
@@ -219,8 +240,16 @@ export const priyaSurfaces: EvaluationSurface[] = [
   surface('slack', 'Slack', 'chat', {
     intakeScope: {
       channels: [
-        bound('revops-asks', '- Channels: #revops-asks, #revops, #ops-requests', 'revops/handbook.md'),
-        bound('ops-requests', '- Channels: #revops-asks, #revops, #ops-requests', 'revops/handbook.md'),
+        bound(
+          'revops-asks',
+          '- Channels: #revops-asks, #revops, #ops-requests',
+          'revops/handbook.md',
+        ),
+        bound(
+          'ops-requests',
+          '- Channels: #revops-asks, #revops, #ops-requests',
+          'revops/handbook.md',
+        ),
       ],
     },
   }),

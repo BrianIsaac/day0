@@ -78,7 +78,9 @@ describe('frozen quality-fit text', (): void => {
   });
 
   it('passes without a model call while AGENTS.md has no good-habits memory', async (): Promise<void> => {
-    await expect(qualityFit({ candidate, agentsMd: '', role: 'Operations coordination' })).resolves.toEqual({
+    await expect(
+      qualityFit({ candidate, agentsMd: '', role: 'Operations coordination' }),
+    ).resolves.toEqual({
       pass: true,
       reason: 'no good-habits memory yet — defer slop filtering to Layer 3',
     });

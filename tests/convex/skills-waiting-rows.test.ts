@@ -1045,15 +1045,30 @@ describe('the verdict write and the registration side meeting on one late item',
    * bound now holds whatever the others do: the row keeps the keys it has
    * spent.
    */
-  const OUT_OF_SCOPE = { decision: 'skip', reason: 'out-of-scope: nothing in the charter covers a shipment note' };
-  const AWAITING_LINEAR = { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' };
+  const OUT_OF_SCOPE = {
+    decision: 'skip',
+    reason: 'out-of-scope: nothing in the charter covers a shipment note',
+  };
+  const AWAITING_LINEAR = {
+    decision: 'defer',
+    reason: 'awaiting-connection',
+    missingSurface: 'linear',
+  };
 
-  async function charterChanged(harness: Harness, agentId: Id<'agents'>, key: string): Promise<number> {
-    const result = await harness.mutation(internal.work.reevaluatePending, { agentId, trigger: 'charter', key });
+  async function charterChanged(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    key: string,
+  ): Promise<number> {
+    const result = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key,
+    });
     return result.readmitted;
   }
 
-  it('keeps once per registration when a charter change re-admits the row between the owner\'s two visits', async (): Promise<void> => {
+  it("keeps once per registration when a charter change re-admits the row between the owner's two visits", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -1067,7 +1082,10 @@ describe('the verdict write and the registration side meeting on one late item',
     // The evaluator names the same registered skill again: it was tried, under this registration.
     await landNeedsSkill(harness, agentId, late);
 
-    expect(await readItem(harness, late)).toMatchObject({ state: 'skipped', skipReason: SKIP_REASON });
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'skipped',
+      skipReason: SKIP_REASON,
+    });
     expect(await requeueTriggers(harness, late)).toEqual(['skill-registered', 'charter']);
   });
 
@@ -1097,13 +1115,19 @@ describe('the verdict write and the registration side meeting on one late item',
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, late } = await seedRegisteredAndLate(harness);
     // Linear is connected: a verdict that waits on it is sent back once, at the write.
-    const first = await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: AWAITING_LINEAR });
+    const first = await harness.mutation(internal.work.setVerdict, {
+      workItemId: late,
+      verdict: AWAITING_LINEAR,
+    });
     expect(first.decision).toBe('pending-reevaluation');
     await landNeedsSkill(harness, agentId, late);
     expect((await readItem(harness, late)).reevaluation?.trigger).toBe('skill-registered');
 
     // The evaluator waits on the same connection again: that connection has had its turn.
-    const second = await harness.mutation(internal.work.setVerdict, { workItemId: late, verdict: AWAITING_LINEAR });
+    const second = await harness.mutation(internal.work.setVerdict, {
+      workItemId: late,
+      verdict: AWAITING_LINEAR,
+    });
     expect(second.decision).toBe('defer');
     await check(harness, agentId);
 

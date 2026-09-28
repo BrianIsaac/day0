@@ -174,7 +174,10 @@ function isReadOnlyRequest(
   if (!READ_REQUEST.test(candidate.title.trim())) return false;
   if (!READ_ONLY_BOUNDARY.test(candidate.contentSummary)) return false;
   // A surface name is not a request ("Close tracker" asks for no close).
-  const names = namedSurfacesFor(candidate, surfaces).flatMap((surface) => [surface.displayName, surface.slug]);
+  const names = namedSurfacesFor(candidate, surfaces).flatMap((surface) => [
+    surface.displayName,
+    surface.slug,
+  ]);
   const outsideBoundary = names.reduce(
     (text: string, name: string): string =>
       text.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' '),
@@ -207,7 +210,11 @@ export function skillShapeFor(
     target && isSystemClass(target.class)
       ? target.class
       : (SOURCE_CLASS_BY_NAME[candidate.sourceSystem.toLowerCase()] ?? 'other');
-  if (mode === 'real' && isReadOnlyRequest(candidate, surfaces) && !['chat', 'social', 'docs'].includes(surfaceClass)) {
+  if (
+    mode === 'real' &&
+    isReadOnlyRequest(candidate, surfaces) &&
+    !['chat', 'social', 'docs'].includes(surfaceClass)
+  ) {
     return { surfaceClass, operation: 'read' };
   }
   return { surfaceClass, operation: OPERATION_BY_CLASS[surfaceClass].operation };

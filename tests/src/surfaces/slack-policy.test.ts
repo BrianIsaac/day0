@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  channelsAwaitingInvite,
-  documentedChannelNames,
-} from '../../../src/surfaces/slack-policy';
+import { channelsAwaitingInvite, documentedChannelNames } from '../../../src/surfaces/slack-policy';
 
 const POLICY = {
   title: 'Slack automation policy',

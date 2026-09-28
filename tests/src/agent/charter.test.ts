@@ -202,7 +202,10 @@ describe('the evidence guard', (): void => {
   it('renders the notes in their own section, apart from the open questions', (): void => {
     const { charter: reviewed } = withoutAgentQuotedEvidence(charter, turns);
     const rendered = renderCharter(reviewed, new Date('2026-09-16T09:00:00.000Z'));
-    const questions = rendered.slice(rendered.indexOf('OPEN QUESTIONS'), rendered.indexOf('SYNTHESIS NOTES'));
+    const questions = rendered.slice(
+      rendered.indexOf('OPEN QUESTIONS'),
+      rendered.indexOf('SYNTHESIS NOTES'),
+    );
     expect(questions).not.toContain('Evidence check');
     expect(rendered.slice(rendered.indexOf('SYNTHESIS NOTES'))).toContain(
       `  - ${SYNTHESIS_SELF_CHECK_NOTE_2026_09_16}`,

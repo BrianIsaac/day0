@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
-import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
+import type {
+  ExecutionPlan,
+  MockAction,
+  MockSurfaceSnapshot,
+  WorkCandidate,
+} from '../../../src/work/types';
 import rehearsal from '../../fixtures/work/demo-rehearsal-2-2026-09-19.json';
 
 /**
@@ -26,7 +31,11 @@ vi.mock('../../../src/lib/mastra', () => ({
   },
 }));
 
-import { OWN_THREAD_REFERENCE_REMOVED, executorPreamble, runSkill } from '../../../src/work/execute-skill';
+import {
+  OWN_THREAD_REFERENCE_REMOVED,
+  executorPreamble,
+  runSkill,
+} from '../../../src/work/execute-skill';
 import { withoutOwnThreadReferences, withoutThreadReference } from '../../../src/work/reply-target';
 
 const priya = rehearsal.workItems.priyaCompleted;
@@ -35,8 +44,24 @@ const recordedReply = priya.output.actions[6] as MockAction;
 const RAW = 'C0C2U2UJUTU:1789761553.312049';
 const live = { verdict: 'connected' as const, credentialLanded: true, lastVerifiedAt: 1 };
 const surfaces = [
-  { slug: 'slack', displayName: 'Slack', class: 'chat', path: 'documented-api', endpoint: 'https://slack.com/api/', toolAllowlist: ['chat.postMessage'], ...live },
-  { slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp', endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['save_comment'], ...live },
+  {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage'],
+    ...live,
+  },
+  {
+    slug: 'linear',
+    displayName: 'Linear',
+    class: 'kanban',
+    path: 'mcp',
+    endpoint: 'https://mcp.linear.app/mcp',
+    toolAllowlist: ['save_comment'],
+    ...live,
+  },
 ];
 
 function textOf(action: MockAction): string {
@@ -70,24 +95,32 @@ describe('the raw thread reference in a visible message', (): void => {
   });
 
   it('in the middle of a sentence it becomes "this thread", never a hole in the sentence', (): void => {
-    expect(withoutThreadReference(`See thread 1789761553.312049 for the figure; more soon.`, target, 'in-thread')).toBe(
-      'See this thread for the figure; more soon.',
-    );
-    expect(withoutThreadReference(`I have answered ${RAW} with the figure.`, target, 'in-thread')).toBe(
-      'I have answered this thread with the figure.',
-    );
+    expect(
+      withoutThreadReference(
+        `See thread 1789761553.312049 for the figure; more soon.`,
+        target,
+        'in-thread',
+      ),
+    ).toBe('See this thread for the figure; more soon.');
+    expect(
+      withoutThreadReference(`I have answered ${RAW} with the figure.`, target, 'in-thread'),
+    ).toBe('I have answered this thread with the figure.');
   });
 
   it('becomes words a person reads anywhere else: a DM or a ticket comment', (): void => {
     expect(withoutThreadReference(`Tile refreshed to 74%. Ref: ${RAW}.`, target, 'elsewhere')).toBe(
       'Tile refreshed to 74%. Ref: the ask in #ops-requests.',
     );
-    expect(withoutThreadReference(`Answering ${RAW} now.`, { channel: target.channel, threadTs: target.threadTs }, 'elsewhere')).toBe(
-      'Answering the Slack thread now.',
-    );
+    expect(
+      withoutThreadReference(
+        `Answering ${RAW} now.`,
+        { channel: target.channel, threadTs: target.threadTs },
+        'elsewhere',
+      ),
+    ).toBe('Answering the Slack thread now.');
   });
 
-  it('leaves alone a text without it, another thread\'s reference, and a text that is nothing else', (): void => {
+  it("leaves alone a text without it, another thread's reference, and a text that is nothing else", (): void => {
     const clean = 'Done - the tile shows 74%. See FIN-1 and 2026-09-19 03:27:49 UTC.';
     expect(withoutThreadReference(clean, target, 'in-thread')).toBe(clean);
     const other = 'As said in C0C2P932A2H:1789757862.783069.';
@@ -111,7 +144,14 @@ describe('the action set', (): void => {
   it('rewrites a ticket comment and a manager DM in words, and returns the same set when nothing carries it', (): void => {
     const comment: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body: `Tile refreshed to 74% for ${RAW}.` }) },
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-5',
+          body: `Tile refreshed to 74% for ${RAW}.`,
+        }),
+      },
     };
     const result = withoutOwnThreadReferences([comment], surfaces, target);
     expect(JSON.parse(result.actions[0]!.args!.toolArgsJson as string)).toEqual({
@@ -121,9 +161,24 @@ describe('the action set', (): void => {
     // A value typed into a system is data, not a message: a runbook that pastes the id into a field gets it as written.
     const typed: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'looker-pipeline-tile', tool: 'browser_type', toolArgsJson: JSON.stringify({ element: 'Source thread', text: RAW }) },
+      args: {
+        surface: 'looker-pipeline-tile',
+        tool: 'browser_type',
+        toolArgsJson: JSON.stringify({ element: 'Source thread', text: RAW }),
+      },
     };
-    const tile = [...surfaces, { slug: 'looker-pipeline-tile', displayName: 'Looker', class: 'analytics', path: 'browser-driven', endpoint: 'http://looker-tile:8080/', toolAllowlist: ['browser_type'], ...live }];
+    const tile = [
+      ...surfaces,
+      {
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker',
+        class: 'analytics',
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        toolAllowlist: ['browser_type'],
+        ...live,
+      },
+    ];
     expect(withoutOwnThreadReferences([typed], tile, target).changed).toEqual([]);
     const browser = priya.output.actions.slice(0, 6) as MockAction[];
     const untouched = withoutOwnThreadReferences(browser, surfaces, target);
@@ -140,58 +195,125 @@ describe('a run whose reply cites its own thread', (): void => {
   });
 
   const charter: Charter = {
-    version: '0.0', source: 'test', whyThisHire: 'Keep the dashboards current.',
+    version: '0.0',
+    source: 'test',
+    whyThisHire: 'Keep the dashboards current.',
     proposedFunction: 'Revenue operations: keep the pipeline dashboards current.',
-    evidence: [], shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
-    proposedBoundaries: { willDo: ['Refresh the pipeline tile when asked.'], willNotDo: [], escalationTriggers: [] },
-    namedCollaborators: [], namedSystems: [], priorityReading: [], adjacentRoles: [],
-    approvalChain: { boss: 'Manager', confidence: 'high' }, openQuestions: [], createdAt: '2026-09-19T00:00:00.000Z',
+    evidence: [],
+    shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
+    proposedBoundaries: {
+      willDo: ['Refresh the pipeline tile when asked.'],
+      willNotDo: [],
+      escalationTriggers: [],
+    },
+    namedCollaborators: [],
+    namedSystems: [],
+    priorityReading: [],
+    adjacentRoles: [],
+    approvalChain: { boss: 'Manager', confidence: 'high' },
+    openQuestions: [],
+    createdAt: '2026-09-19T00:00:00.000Z',
   };
   const ask: WorkCandidate = {
-    sourceCategory: 'event-stream', sourceSystem: 'slack', externalId: priya.externalId, title: priya.title,
-    contentSummary: priya.contentSummary, contentRefs: [], replyTarget: target, observedAt: new Date(priya.observedAt),
+    sourceCategory: 'event-stream',
+    sourceSystem: 'slack',
+    externalId: priya.externalId,
+    title: priya.title,
+    contentSummary: priya.contentSummary,
+    contentRefs: [],
+    replyTarget: target,
+    observedAt: new Date(priya.observedAt),
   };
   // A plan with no declared read, so the reply is phase one's to write (Priya's own plan leaves it to the closing phase).
   const plan: ExecutionPlan = {
-    summary: 'Tell the asker the refresh is under way.', steps: ['Reply in the thread.'],
-    expectedOutputType: 'message', riskNotes: '', reversibility: 'reversible', estimatedMinutes: 2,
+    summary: 'Tell the asker the refresh is under way.',
+    steps: ['Reply in the thread.'],
+    expectedOutputType: 'message',
+    riskNotes: '',
+    reversibility: 'reversible',
+    estimatedMinutes: 2,
   };
-  const mockEnv = { howToGuides: [], teamDocs: [], spreadsheets: [], slackChannels: [], tweets: [], tickets: [] } as unknown as MockSurfaceSnapshot;
+  const mockEnv = {
+    howToGuides: [],
+    teamDocs: [],
+    spreadsheets: [],
+    slackChannels: [],
+    tweets: [],
+    tickets: [],
+  } as unknown as MockSurfaceSnapshot;
   const holding: MockAction = {
     ...recordedReply,
     args: {
       ...recordedReply.args,
-      body: JSON.stringify({ channel: target.channel, thread_ts: target.threadTs, text: `On it; I will answer here once the tile is refreshed. Ref: ${RAW}.` }),
+      body: JSON.stringify({
+        channel: target.channel,
+        thread_ts: target.threadTs,
+        text: `On it; I will answer here once the tile is refreshed. Ref: ${RAW}.`,
+      }),
     },
   };
-  const authored = { draft: 'Answering.', notes: '', needsDependentPhase: false, deferredActions: [], actions: [holding], procedureTrails: [] };
+  const authored = {
+    draft: 'Answering.',
+    notes: '',
+    needsDependentPhase: false,
+    deferredActions: [],
+    actions: [holding],
+    procedureTrails: [],
+  };
 
   it('reaches the gate without it, in real mode, and records the correction', async (): Promise<void> => {
     recorded.outputs.push(authored);
     const corrections: string[] = [];
     const output = await runSkill({
-      skill: { name: 'chat-thread-reply', description: 'Reply.', body: '# Skill' }, plan, candidate: ask, charter, mockEnv,
-      mode: 'real', surfaces: surfaces as never,
+      skill: { name: 'chat-thread-reply', description: 'Reply.', body: '# Skill' },
+      plan,
+      candidate: ask,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: surfaces as never,
       onAuditCorrection: async (_indices, reason): Promise<void> => void corrections.push(reason),
     });
     expect(output.actions).toHaveLength(1);
-    expect(textOf(output.actions[0]!)).toBe('On it; I will answer here once the tile is refreshed.');
+    expect(textOf(output.actions[0]!)).toBe(
+      'On it; I will answer here once the tile is refreshed.',
+    );
     expect(corrections).toEqual([`${OWN_THREAD_REFERENCE_REMOVED} (action 0)`]);
   });
 
   it('tells the executor, in real mode only, that the text carries neither id', async (): Promise<void> => {
     recorded.outputs.push(authored);
-    await runSkill({ skill: { name: 'chat-thread-reply', description: 'Reply.', body: '# Skill' }, plan, candidate: ask, charter, mockEnv, mode: 'real', surfaces: surfaces as never });
-    const rule = 'The text of a reply, a DM or a comment never carries a raw channel id or thread timestamp';
+    await runSkill({
+      skill: { name: 'chat-thread-reply', description: 'Reply.', body: '# Skill' },
+      plan,
+      candidate: ask,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: surfaces as never,
+    });
+    const rule =
+      'The text of a reply, a DM or a comment never carries a raw channel id or thread timestamp';
     expect(executorPreamble('real')).toContain(rule);
     expect(executorPreamble('mock')).not.toContain('raw channel id');
   });
 
   it('leaves a mock run as authored', async (): Promise<void> => {
-    const mockReply: MockAction = { tool: 'slack.postMessage', args: { channelSlug: 'ops-requests', body: `Done. Ref: ${RAW}.` } };
-    recorded.outputs.push({ ...authored, actions: [mockReply] }, { ...authored, actions: [mockReply] });
+    const mockReply: MockAction = {
+      tool: 'slack.postMessage',
+      args: { channelSlug: 'ops-requests', body: `Done. Ref: ${RAW}.` },
+    };
+    recorded.outputs.push(
+      { ...authored, actions: [mockReply] },
+      { ...authored, actions: [mockReply] },
+    );
     const output = await runSkill({
-      skill: { name: 'chat-thread-reply', description: 'Reply.', body: '# Skill' }, plan, candidate: ask, charter, mockEnv, mode: 'mock',
+      skill: { name: 'chat-thread-reply', description: 'Reply.', body: '# Skill' },
+      plan,
+      candidate: ask,
+      charter,
+      mockEnv,
+      mode: 'mock',
     }).catch((): undefined => undefined);
     if (output) expect(output.actions).toEqual([mockReply]);
     expect(withoutOwnThreadReferences([mockReply], surfaces, target).changed).toEqual([]);

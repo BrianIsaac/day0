@@ -41,9 +41,9 @@ const SYSTEM_PROMPT = [
   '',
   'Rules:',
   '  - Lead with a short welcome on turn one, then ask topic 1.',
-  '  - Wait for the boss\'s reply before moving on.',
+  "  - Wait for the boss's reply before moving on.",
   '  - One question per turn. Brief follow-ups are fine.',
-  '  - Do not summarise the boss\'s answers back in full.',
+  "  - Do not summarise the boss's answers back in full.",
   '  - Once topic 7 has a real answer, call the dayOneComplete tool with a friendly closing line and stop.',
 ].join('\n');
 
@@ -102,7 +102,8 @@ export async function POST(req: Request): Promise<Response> {
         }),
         tools: {
           dayOneComplete: tool({
-            description: 'Call this when all seven topics have been covered and the 1:1 is finished.',
+            description:
+              'Call this when all seven topics have been covered and the 1:1 is finished.',
             inputSchema: z.object({
               closingLine: z.string().describe('A friendly closing sentence the agent says.'),
             }),
@@ -120,9 +121,6 @@ export async function POST(req: Request): Promise<Response> {
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return Response.json(
-      { error: 'agent unavailable', detail: msg },
-      { status: 503 },
-    );
+    return Response.json({ error: 'agent unavailable', detail: msg }, { status: 503 });
   }
 }

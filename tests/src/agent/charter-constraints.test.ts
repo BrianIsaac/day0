@@ -40,7 +40,9 @@ function runThrough(constraints: CharterConstraint[] = []): Charter {
       escalationTriggers: ['A ticket with priority P0.'],
     },
     namedCollaborators: [],
-    namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'Formal work is in Linear.' }],
+    namedSystems: [
+      { name: 'Linear', class: 'kanban', whereMentioned: 'Formal work is in Linear.' },
+    ],
     priorityReading: [],
     adjacentRoles: [],
     approvalChain: { boss: 'manager', confidence: 'high' },
@@ -88,23 +90,33 @@ describe('removeWording', (): void => {
   });
 
   it('returns an empty string when the phrase was the whole clause', (): void => {
-    expect(removeWording('Post to public Slack channels.', 'Post to public Slack channels.')).toBe('');
+    expect(removeWording('Post to public Slack channels.', 'Post to public Slack channels.')).toBe(
+      '',
+    );
   });
 });
 
 describe('stripProvenanceSuffix', (): void => {
   it('removes a trailing provenance suffix in its bracketed and dashed forms, keeping the full stop', (): void => {
-    expect(stripProvenanceSuffix('Handle owned, prioritized Linear tickets in the Q3 close project (from manager 1:1 day-1).')).toBe(
-      'Handle owned, prioritized Linear tickets in the Q3 close project.',
+    expect(
+      stripProvenanceSuffix(
+        'Handle owned, prioritized Linear tickets in the Q3 close project (from manager 1:1 day-1).',
+      ),
+    ).toBe('Handle owned, prioritized Linear tickets in the Q3 close project.');
+    expect(stripProvenanceSuffix('Post to public Slack channels [from manager 1:1]')).toBe(
+      'Post to public Slack channels',
     );
-    expect(stripProvenanceSuffix('Post to public Slack channels [from manager 1:1]')).toBe('Post to public Slack channels');
-    expect(stripProvenanceSuffix('Escalate a P0 ticket - from manager 1:1 day-1')).toBe('Escalate a P0 ticket');
-    expect(stripProvenanceSuffix('Draft replies to asks in #revops-asks (source: manager 1:1, day 1).')).toBe(
-      'Draft replies to asks in #revops-asks.',
+    expect(stripProvenanceSuffix('Escalate a P0 ticket - from manager 1:1 day-1')).toBe(
+      'Escalate a P0 ticket',
     );
-    expect(stripProvenanceSuffix('Own routine tickets (from manager 1:1 day-1) (from manager 1:1 day-1).')).toBe(
-      'Own routine tickets.',
-    );
+    expect(
+      stripProvenanceSuffix('Draft replies to asks in #revops-asks (source: manager 1:1, day 1).'),
+    ).toBe('Draft replies to asks in #revops-asks.');
+    expect(
+      stripProvenanceSuffix(
+        'Own routine tickets (from manager 1:1 day-1) (from manager 1:1 day-1).',
+      ),
+    ).toBe('Own routine tickets.');
   });
 
   it('leaves brackets that are part of the clause alone', (): void => {
@@ -136,7 +148,9 @@ describe('withoutProvenanceSuffixes', (): void => {
     const cleaned = withoutProvenanceSuffixes(charter);
     expect(cleaned.whyThisHire).toBe(CLEAN_CLAUSES_2026_09_16.whyThisHire);
     expect(cleaned.proposedFunction).toBe(CLEAN_CLAUSES_2026_09_16.proposedFunction);
-    expect(cleaned.evidence).toEqual([{ text: CLEAN_CLAUSES_2026_09_16.evidenceText, source: 'from manager 1:1 day-1' }]);
+    expect(cleaned.evidence).toEqual([
+      { text: CLEAN_CLAUSES_2026_09_16.evidenceText, source: 'from manager 1:1 day-1' },
+    ]);
     expect(cleaned.shortTermGoals).toEqual(CLEAN_CLAUSES_2026_09_16.shortTermGoals);
     expect(cleaned.proposedBoundaries).toEqual({
       willDo: CLEAN_CLAUSES_2026_09_16.willDo,
@@ -282,13 +296,21 @@ describe('effectiveCharter', (): void => {
 });
 
 it('refuses a partial strike of listed wording that would broaden a will-not-do clause', () => {
-  const body = runThrough([{ kind: 'candidate-property', quote: 'Tickets have an owner.',
-    wording: ['owned'], origin: 'synthesis', struck: true }]);
+  const body = runThrough([
+    {
+      kind: 'candidate-property',
+      quote: 'Tickets have an owner.',
+      wording: ['owned'],
+      origin: 'synthesis',
+      struck: true,
+    },
+  ]);
   body.proposedBoundaries.willNotDo = ['Change owned tickets outside Q3 close.'];
   expect(() => effectiveCharter(body)).toThrow('whole will-not-do clause');
   expect(strikeOutcome(body)).toEqual({
     ok: false,
-    reason: 'strike or edit the whole will-not-do clause; removing only part could change its boundary',
+    reason:
+      'strike or edit the whole will-not-do clause; removing only part could change its boundary',
   });
 });
 
@@ -342,7 +364,9 @@ describe('striking a derived constraint', (): void => {
 
   it('approves the 15 September fixture with the will-not-do reduced to the sibling clause', (): void => {
     const result = effectiveCharter(strikeRefusalBody());
-    expect(result.proposedBoundaries.willNotDo).toEqual(['Access or execute work in Northstar CRM.']);
+    expect(result.proposedBoundaries.willNotDo).toEqual([
+      'Access or execute work in Northstar CRM.',
+    ]);
     expect(clauseTexts(result).join('\n')).not.toMatch(/ownership/i);
     expect(result.proposedBoundaries.willDo).toEqual(strikeRefusalBody().proposedBoundaries.willDo);
     expect(result.proposedBoundaries.escalationTriggers).toEqual(
@@ -370,9 +394,13 @@ describe('striking a derived constraint', (): void => {
     expect(strikePreview(strikeRefusalBody(false), 1)).toEqual({
       removedClauses: [],
       rewrittenClauses: [],
-      refusal: 'strike or edit the whole will-not-do clause; removing only part could change its boundary',
+      refusal:
+        'strike or edit the whole will-not-do clause; removing only part could change its boundary',
     });
-    expect(strikePreview(strikeRefusalBody(false), 7)).toEqual({ removedClauses: [], rewrittenClauses: [] });
+    expect(strikePreview(strikeRefusalBody(false), 7)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+    });
   });
 
   it('refuses to drop the only clause bounding a named system, with the reason', (): void => {
@@ -393,7 +421,11 @@ describe('striking a derived constraint', (): void => {
       ],
     });
     const draft = { ...charter, constraints: [ownership] };
-    expect(strikePreview(draft, 0)).toEqual({ removedClauses: [], rewrittenClauses: [], refusal: reason });
+    expect(strikePreview(draft, 0)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+      refusal: reason,
+    });
   });
 
   it('refuses to drop the only clause enforcing an unstruck system boundary', (): void => {
@@ -411,7 +443,10 @@ describe('striking a derived constraint', (): void => {
     expect(() => effectiveCharter(charter)).toThrow(
       'strike refused: \u201cPost owned drafts to public channels.\u201d is the only clause that enforces \u201cStay out of the public channels.\u201d',
     );
-    const lifted = runThrough([{ ...boundary, struck: true }, { ...ownership, struck: true }]);
+    const lifted = runThrough([
+      { ...boundary, struck: true },
+      { ...ownership, struck: true },
+    ]);
     lifted.proposedBoundaries.willNotDo = charter.proposedBoundaries.willNotDo;
     expect(effectiveCharter(lifted).proposedBoundaries.willNotDo).toEqual([
       'Change Northstar CRM records.',

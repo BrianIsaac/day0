@@ -20,7 +20,9 @@ describe('the autonomous-actions switch', (): void => {
     expect(autonomousActionsOn({ autonomousActions: false })).toBe(false);
     expect(autonomousActionsOn({ autonomousActions: true })).toBe(true);
     // A row the posture ladder wrote carries fields the switch ignores.
-    expect(autonomousActionsOn({ posture: 'trusted' } as { autonomousActions?: boolean })).toBe(false);
+    expect(autonomousActionsOn({ posture: 'trusted' } as { autonomousActions?: boolean })).toBe(
+      false,
+    );
   });
 
   it('names the two states and the reason a change records', (): void => {
@@ -31,7 +33,7 @@ describe('the autonomous-actions switch', (): void => {
     expect(AUTONOMY_CHANGE_REASON).toBe('set by the manager');
   });
 
-  it('warns in the operator\'s sense before the switch goes on', (): void => {
+  it("warns in the operator's sense before the switch goes on", (): void => {
     expect(AUTONOMY_WARNING).toBe(
       'The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved. Turn this on only after its behaviour has been what you want. Skills and connections still need your approval either way.',
     );
@@ -46,7 +48,7 @@ describe('a switch turned on after the plan was drafted', (): void => {
     .filter((event) => event.agentId === priya.agentId)
     .map((event) => ({ at: event.createdAt, on: event.payload.to }));
 
-  it('finds the rehearsal\'s flip: drafted 03:26:19 UTC, turned on 03:27:38, applied autonomously', (): void => {
+  it("finds the rehearsal's flip: drafted 03:26:19 UTC, turned on 03:27:38, applied autonomously", (): void => {
     expect(flips).toHaveLength(1);
     expect(autonomyTurnedOnAfterDraft(priya.planPendingAt, true, flips)).toBe(flips[0]!.at);
   });

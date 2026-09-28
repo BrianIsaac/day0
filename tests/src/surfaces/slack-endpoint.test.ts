@@ -24,10 +24,7 @@ describe('the local Slack proof endpoint', (): void => {
     // The endpoint is evidence, copied out of the enterprise's page. Requiring
     // one exact spelling turned a system Day0 does probe into one it claimed
     // not to support, and then descended the ladder past it.
-    for (const endpoint of [
-      'https://slack.com/api/',
-      'https://slack.com/api',
-    ]) {
+    for (const endpoint of ['https://slack.com/api/', 'https://slack.com/api']) {
       expect(isSlackApiEndpoint(endpoint), endpoint).toBe(true);
     }
     for (const endpoint of [
@@ -49,17 +46,12 @@ describe('the local Slack proof endpoint', (): void => {
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('VERCEL', '');
     vi.stubEnv('DAY0_TEST_SLACK_API_URL', 'http://fake-slack:8090/api/');
-    vi.stubEnv(
-      'DAY0_TEST_SLACK_AUTHORIZE_URL',
-      'http://127.0.0.1:10092/oauth/v2/authorize',
-    );
+    vi.stubEnv('DAY0_TEST_SLACK_AUTHORIZE_URL', 'http://127.0.0.1:10092/oauth/v2/authorize');
     const { slackApiUrl, slackAuthorizeUrl } = await endpointModule();
     expect(slackApiUrl('apps.manifest.create').href).toBe(
       'http://fake-slack:8090/api/apps.manifest.create',
     );
-    expect(slackAuthorizeUrl().href).toBe(
-      'http://127.0.0.1:10092/oauth/v2/authorize',
-    );
+    expect(slackAuthorizeUrl().href).toBe('http://127.0.0.1:10092/oauth/v2/authorize');
   });
 
   it('keeps a fake-installed bot on the isolated provider during later HTTP actions', async (): Promise<void> => {

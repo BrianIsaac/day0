@@ -40,7 +40,7 @@ const DECLARED_NAME = /^`?<?([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>?`?(?=$|[\s:,|`])/;
  * the gate quotes the first one when it refuses an undeclared placeholder.
  */
 export const EXECUTION_INPUT_LINES: readonly string[] = [
-  '  - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+  "  - `<record-id>`: the candidate's identifier on the surface the work came from (the `Refs:` line or the candidate id).",
   '  - `<requested-value>`: the figure or text the candidate or the runbook names for this run; never a constant in the skill.',
   '  - `<reply-channel>` and `<reply-thread>`: the `Reply target:` line when the work came from a chat channel or thread.',
   '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket, a reply in the thread on chat).',
@@ -62,7 +62,7 @@ export const REPLY_SURFACE_INPUT = 'reply-surface';
 const REAL_EXECUTION_INPUT_LINES: readonly string[] = [
   EXECUTION_INPUT_LINES[0]!,
   EXECUTION_INPUT_LINES[1]!,
-  '  - `<reply-channel>` and `<reply-thread>`: the channel and thread of the `Reply target:` line when the work came from a chat channel or thread. The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface\'s own path (`http.request` on an API surface); never on `<originating-surface>` unless that is the chat surface.',
+  "  - `<reply-channel>` and `<reply-thread>`: the channel and thread of the `Reply target:` line when the work came from a chat channel or thread. The reply is an action on `<reply-surface>`, the connected chat surface the `Reply target:` line names, by that surface's own path (`http.request` on an API surface); never on `<originating-surface>` unless that is the chat surface.",
   `  - \`<${REPLY_SURFACE_INPUT}>\`: the slug of the connected chat surface the \`Reply target:\` line's channel is on; the executor binds it whenever there is a \`Reply target:\` line. Every reply action's \`surface\` is \`<${REPLY_SURFACE_INPUT}>\`: a ticket surface never carries a reply.`,
   '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket). It is a ticket surface for a ticket and the chat surface for a chat ask, so a reply is never routed through it: a reply goes to `<reply-surface>`.',
   EXECUTION_INPUT_LINES[4]!,
@@ -94,7 +94,11 @@ export function executionInputLines(mode: SurfaceMode): readonly string[] {
  * action that carries the reply channel, not against every case, because a
  * case may give it and owe no reply.
  */
-export const CANDIDATE_BOUND_TARGET_INPUTS: readonly string[] = ['record-id', 'reply-channel', 'reply-thread'];
+export const CANDIDATE_BOUND_TARGET_INPUTS: readonly string[] = [
+  'record-id',
+  'reply-channel',
+  'reply-thread',
+];
 
 /** One declared input and where this run's value comes from. */
 export interface SkillInputBinding {
@@ -170,7 +174,8 @@ const READ_BY_THE_EXECUTOR =
   'read it from the candidate body, its Refs line or the runbook for this run; the skill body carries no value for it';
 
 /** Where a declaration added for the author says its value comes from. */
-const ADDED_DECLARATION_SOURCE = 'read it from the candidate body, its Refs line or the runbook for this run';
+const ADDED_DECLARATION_SOURCE =
+  'read it from the candidate body, its Refs line or the runbook for this run';
 
 /**
  * What every declaration the system added ends with. The manager approves a
@@ -185,10 +190,21 @@ const ADDED_DECLARATION = new RegExp(
 );
 
 /** Words that make a placeholder name a credential whatever surrounds them. */
-const CREDENTIAL_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'passphrase', 'credential', 'credentials', 'bearer', 'authorization']);
+const CREDENTIAL_WORDS = new Set([
+  'secret',
+  'secrets',
+  'password',
+  'passwd',
+  'passphrase',
+  'credential',
+  'credentials',
+  'bearer',
+  'authorization',
+]);
 
 /** A key or token qualified as one that authenticates; `<team-key>` and `<page-token>` are neither. */
-const CREDENTIAL_KEY_OR_TOKEN = /(?:^|-)(?:api|access|secret|private|signing|bot|user|app|auth|oauth|refresh|session|service)-(?:key|token)(?:-|$)/;
+const CREDENTIAL_KEY_OR_TOKEN =
+  /(?:^|-)(?:api|access|secret|private|signing|bot|user|app|auth|oauth|refresh|session|service)-(?:key|token)(?:-|$)/;
 
 /**
  * Whether a placeholder's name says its value is a credential.
@@ -200,7 +216,10 @@ const CREDENTIAL_KEY_OR_TOKEN = /(?:^|-)(?:api|access|secret|private|signing|bot
  *   True for a name such as `slack-bot-token`, `api-key` or `admin-password`.
  */
 export function isCredentialInputName(name: string): boolean {
-  return name.split('-').some((word: string): boolean => CREDENTIAL_WORDS.has(word)) || CREDENTIAL_KEY_OR_TOKEN.test(name);
+  return (
+    name.split('-').some((word: string): boolean => CREDENTIAL_WORDS.has(word)) ||
+    CREDENTIAL_KEY_OR_TOKEN.test(name)
+  );
 }
 
 /**
@@ -244,19 +263,31 @@ export function credentialInputIssues(names: readonly string[]): string[] {
  *   in order of first use, and the credential names it left undeclared; the
  *   body unchanged when nothing was added.
  */
-export function declareUndeclaredInputs(body: string): { body: string; declared: string[]; credentials: string[] } {
+export function declareUndeclaredInputs(body: string): {
+  body: string;
+  declared: string[];
+  credentials: string[];
+} {
   const undeclared = undeclaredSkillInputs(body);
   const credentials = undeclared.filter(isCredentialInputName);
   const missing = undeclared.filter((name: string): boolean => !isCredentialInputName(name));
   if (missing.length === 0) return { body, declared: [], credentials };
   const lines = missing
-    .map((name: string): string => `- \`<${name}>\`: ${ADDED_DECLARATION_SOURCE}. ${ADDED_DECLARATION_MARK}`)
+    .map(
+      (name: string): string =>
+        `- \`<${name}>\`: ${ADDED_DECLARATION_SOURCE}. ${ADDED_DECLARATION_MARK}`,
+    )
     .join('\n');
   const section = INPUTS_SECTION.exec(body);
-  if (!section) return { body: `${body.trimEnd()}\n\n## Inputs\n\n${lines}\n`, declared: missing, credentials };
+  if (!section)
+    return { body: `${body.trimEnd()}\n\n## Inputs\n\n${lines}\n`, declared: missing, credentials };
   const contentStart = section.index + section[0].length - section[1]!.length;
   const at = contentStart + section[1]!.trimEnd().length;
-  return { body: `${body.slice(0, at)}\n${lines}${body.slice(at)}`, declared: missing, credentials };
+  return {
+    body: `${body.slice(0, at)}\n${lines}${body.slice(at)}`,
+    declared: missing,
+    credentials,
+  };
 }
 
 /**
@@ -289,7 +320,10 @@ export function systemDeclaredInputs(body: string): string[] {
  */
 export function declaredInputsNote(names: readonly string[]): string {
   const quoted = names.map((name: string): string => `\`<${name}>\``);
-  const list = quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}` : quoted[0]!;
+  const list =
+    quoted.length > 1
+      ? `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`
+      : quoted[0]!;
   return quoted.length > 1
     ? `SKILL.md used ${list} without declaring them; each was declared under \`## Inputs\` as read from the candidate or its runbook at execution`
     : `SKILL.md used ${list} without declaring it; it was declared under \`## Inputs\` as read from the candidate or its runbook at execution`;
@@ -372,7 +406,11 @@ export function bindSkillInputs(
         };
       case REPLY_SURFACE_INPUT:
         return replySurface !== undefined
-          ? { name, value: replySurface, source: 'the chat surface the Reply target line is on; every reply action goes to it' }
+          ? {
+              name,
+              value: replySurface,
+              source: 'the chat surface the Reply target line is on; every reply action goes to it',
+            }
           : { name, source: NO_REPLY_TARGET };
       case 'reply-channel':
         return candidate.replyTarget
@@ -382,7 +420,10 @@ export function bindSkillInputs(
         return candidate.replyTarget?.threadTs
           ? { name, value: candidate.replyTarget.threadTs, source: 'the Reply target line' }
           : candidate.replyTarget
-            ? { name, source: 'the Reply target line names a top-level post, so there is no thread' }
+            ? {
+                name,
+                source: 'the Reply target line names a top-level post, so there is no thread',
+              }
             : { name, source: NO_REPLY_TARGET };
       default:
         return { name, source: READ_BY_THE_EXECUTOR };

@@ -637,12 +637,10 @@ describe('amending an approved charter', (): void => {
   it('strikes a constraint after approval, removing its wording from the clauses', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApproved(harness);
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.charters.amend, {
-        agentId,
-        changes: [{ kind: 'strike-constraint', index: 0 }],
-      });
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+      agentId,
+      changes: [{ kind: 'strike-constraint', index: 0 }],
+    });
     const body = (await latestCharter(harness, agentId)).body as Charter;
     expect(body.proposedFunction).toBe(
       'Own routine revenue operations work from Linear tickets for the RevOps team.',

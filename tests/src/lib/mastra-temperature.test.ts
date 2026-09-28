@@ -109,7 +109,8 @@ describe('shared model sampling', (): void => {
         }> =>
           await new Promise((resolve) =>
             setTimeout(
-              () => resolve({ finishReason: 'tripwire', tripwire: { reason: 'aborted' }, text: '' }),
+              () =>
+                resolve({ finishReason: 'tripwire', tripwire: { reason: 'aborted' }, text: '' }),
               MODEL_CALL_TIMEOUT_MS,
             ),
           ),
@@ -139,7 +140,11 @@ describe('shared model sampling', (): void => {
   it('does not read a fast tripwire with no object as a schema refusal', async (): Promise<void> => {
     const generate = vi
       .fn()
-      .mockResolvedValueOnce({ finishReason: 'tripwire', tripwire: { reason: 'processor stop' }, text: '' })
+      .mockResolvedValueOnce({
+        finishReason: 'tripwire',
+        tripwire: { reason: 'processor stop' },
+        text: '',
+      })
       .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
     const agent = { name: 'tripwire-regression', generate } as unknown as Agent;
 
@@ -157,7 +162,11 @@ describe('shared model sampling', (): void => {
       .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
     const agent = { name: 'refusal-regression', generate } as unknown as Agent;
 
-    const result = await agentJsonWithMode<{ ok: boolean }>({ agent, user: 'structured', schema: {} });
+    const result = await agentJsonWithMode<{ ok: boolean }>({
+      agent,
+      user: 'structured',
+      schema: {},
+    });
 
     expect(result).toMatchObject({ mode: 'prompt', fellBack: true, value: { ok: true } });
     expect(generate).toHaveBeenCalledTimes(2);

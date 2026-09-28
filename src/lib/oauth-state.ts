@@ -75,7 +75,9 @@ function payloadOf(claim: OauthStateClaim): string {
  */
 export function signOauthState(claim: OauthStateClaim, credentialKey: string | undefined): string {
   const payload = payloadOf(claim);
-  const signature = createHmac('sha256', signingKey(credentialKey)).update(payload).digest('base64url');
+  const signature = createHmac('sha256', signingKey(credentialKey))
+    .update(payload)
+    .digest('base64url');
   return `${payload}.${signature}`;
 }
 

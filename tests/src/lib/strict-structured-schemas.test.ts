@@ -54,7 +54,15 @@ const ALLOWED_KEYWORDS = new Set([
   'minLength',
   'maxLength',
 ]);
-const ALLOWED_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']);
+const ALLOWED_TYPES = new Set([
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'object',
+  'array',
+  'null',
+]);
 const MAX_NESTING = 10;
 const MAX_PROPERTIES = 5000;
 const MAX_ENUM_VALUES = 1000;
@@ -238,7 +246,9 @@ async function captureNativeRequest(agentName: string, schema: unknown): Promise
       const url = input instanceof Request ? input.url : String(input);
       requests.push({ url, body: JSON.parse(String(init?.body)) as CapturedRequest['body'] });
       return new Response(
-        JSON.stringify({ error: { message: 'captured by the test', type: 'invalid_request_error' } }),
+        JSON.stringify({
+          error: { message: 'captured by the test', type: 'invalid_request_error' },
+        }),
         { status: 400, headers: { 'content-type': 'application/json' } },
       );
     }),

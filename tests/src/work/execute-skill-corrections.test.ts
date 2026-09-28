@@ -35,7 +35,11 @@ const charter: Charter = {
   proposedFunction: 'Logistics desk: handle shipment exception tickets.',
   evidence: [],
   shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
-  proposedBoundaries: { willDo: ['Handle shipment exception tickets.'], willNotDo: [], escalationTriggers: [] },
+  proposedBoundaries: {
+    willDo: ['Handle shipment exception tickets.'],
+    willNotDo: [],
+    escalationTriggers: [],
+  },
   namedCollaborators: [],
   namedSystems: [],
   priorityReading: [],
@@ -113,7 +117,9 @@ describe('the corrections the approved plan applied, in the executor prompts', (
     const user = recorded.users[0];
     expect(user).toContain('--- Corrections the approved plan applies ---');
     expect(user).toContain(JSON.stringify(applied));
-    expect(user).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
+    expect(user).toContain(
+      'none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate',
+    );
   });
 
   it('puts them in the closing phase too', async (): Promise<void> => {
@@ -122,7 +128,9 @@ describe('the corrections the approved plan applied, in the executor prompts', (
       notes: '',
       actions: [],
       procedureTrails: [],
-      planStepOutcomes: [{ step: 1, status: 'blocked', basis: 'ledger', evidence: 'nothing landed yet' }],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', basis: 'ledger', evidence: 'nothing landed yet' },
+      ],
     });
     await runDependentSkill({
       skill: { name: 'kanban-comment', description: 'Comment.', body: '# Skill' },
@@ -133,11 +141,19 @@ describe('the corrections the approved plan applied, in the executor prompts', (
       mode: 'real',
       surfaces: [],
       appliedCorrections: applied,
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
     expect(recorded.users[0]).toContain('--- Corrections the approved plan applies ---');
-    expect(recorded.users[0]).toContain('Use the Delay notice B template and follow up in 48 hours.');
+    expect(recorded.users[0]).toContain(
+      'Use the Delay notice B template and follow up in 48 hours.',
+    );
   });
 
   it('leaves the mock executor prompt as it was', async (): Promise<void> => {
@@ -145,7 +161,11 @@ describe('the corrections the approved plan applied, in the executor prompts', (
     recorded.outputs.push(mockOutput, mockOutput);
     const args = {
       skill: { name: 'kanban-comment', description: 'Comment.', body: '# Skill' },
-      plan: { ...plan, expectedOutputType: 'draft-document' as const, appliedCorrections: undefined },
+      plan: {
+        ...plan,
+        expectedOutputType: 'draft-document' as const,
+        appliedCorrections: undefined,
+      },
       candidate,
       charter,
       mockEnv,

@@ -15,13 +15,26 @@ import {
 } from '../../fixtures/work/full-run-4-2026-09-19-log-1';
 
 const slack = {
-  slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected', credentialLanded: true,
-  lastVerifiedAt: 1, path: 'documented-api', endpoint: 'https://slack.com/api/',
-  toolAllowlist: ['chat.postMessage'], managerDmChannelId: 'D0MANAGER',
+  slug: 'slack',
+  displayName: 'Slack',
+  class: 'chat',
+  verdict: 'connected',
+  credentialLanded: true,
+  lastVerifiedAt: 1,
+  path: 'documented-api',
+  endpoint: 'https://slack.com/api/',
+  toolAllowlist: ['chat.postMessage'],
+  managerDmChannelId: 'D0MANAGER',
 } as unknown as SurfaceRecord;
 const linear = {
-  slug: 'linear', displayName: 'Linear', class: 'kanban', verdict: 'connected', credentialLanded: true,
-  lastVerifiedAt: 1, path: 'mcp', endpoint: 'https://mcp.linear.app/mcp',
+  slug: 'linear',
+  displayName: 'Linear',
+  class: 'kanban',
+  verdict: 'connected',
+  credentialLanded: true,
+  lastVerifiedAt: 1,
+  path: 'mcp',
+  endpoint: 'https://mcp.linear.app/mcp',
   toolAllowlist: ['get_issue', 'save_comment', 'save_issue'],
 } as unknown as SurfaceRecord;
 const surfaces = [slack, linear];
@@ -29,7 +42,9 @@ const surfaces = [slack, linear];
 const dm = (text: string, channel = 'D0MANAGER'): MockAction => ({
   tool: 'http.request',
   args: {
-    surface: 'slack', method: 'POST', path: '/chat.postMessage',
+    surface: 'slack',
+    method: 'POST',
+    path: '/chat.postMessage',
     headersJson: '{"Authorization":"Bearer {{secret}}"}',
     body: JSON.stringify({ channel, text }),
   },
@@ -41,11 +56,19 @@ const planWith = (
   transition: PlanObligations['transition'],
   transitionStep: number | null,
   plannerTransition?: PlanObligations['transition'],
-): ExecutionPlan => ({
-  ...log1Plan,
-  steps: steps.map((_, index) => `step ${index + 1}`),
-  obligations: { basis: 'judgement', reason: '', steps, transition, transitionStep, ...(plannerTransition ? { plannerTransition } : {}) },
-} as ExecutionPlan);
+): ExecutionPlan =>
+  ({
+    ...log1Plan,
+    steps: steps.map((_, index) => `step ${index + 1}`),
+    obligations: {
+      basis: 'judgement',
+      reason: '',
+      steps,
+      transition,
+      transitionStep,
+      ...(plannerTransition ? { plannerTransition } : {}),
+    },
+  }) as ExecutionPlan;
 
 describe('managerConditionalSteps', () => {
   it("reads LOG-1's comment and Done as left to the manager, in the second and the fourth sitting alike", (): void => {
@@ -53,10 +76,14 @@ describe('managerConditionalSteps', () => {
     expect(managerConditionalSteps(log1SecondSittingPlan)).toEqual([2, 3]);
   });
 
-  it('reads nothing from a plan whose transition is not the manager\'s, whatever its steps condition on', (): void => {
+  it("reads nothing from a plan whose transition is not the manager's, whatever its steps condition on", (): void => {
     const evidence = planWith(
-      [{ kind: 'read', reads: ['linear'], writes: [] }, { kind: 'conditional-write', reads: [], writes: ['linear'] }],
-      'conditional-on-evidence', 2,
+      [
+        { kind: 'read', reads: ['linear'], writes: [] },
+        { kind: 'conditional-write', reads: [], writes: ['linear'] },
+      ],
+      'conditional-on-evidence',
+      2,
     );
     expect(managerConditionalSteps(evidence)).toEqual([]);
     expect(managerConditionalSteps({ ...log1Plan, obligations: undefined })).toEqual([]);
@@ -64,8 +91,13 @@ describe('managerConditionalSteps', () => {
 
   it('takes either reading when the planner and the judgement disagreed, as the hold does', (): void => {
     const disagreed = planWith(
-      [{ kind: 'write', reads: [], writes: ['slack'] }, { kind: 'conditional-write', reads: [], writes: ['linear'] }],
-      'conditional-on-evidence', 2, 'conditional-on-manager',
+      [
+        { kind: 'write', reads: [], writes: ['slack'] },
+        { kind: 'conditional-write', reads: [], writes: ['linear'] },
+      ],
+      'conditional-on-evidence',
+      2,
+      'conditional-on-manager',
     );
     expect(managerConditionalSteps(disagreed)).toEqual([2]);
   });
@@ -83,7 +115,10 @@ describe('openManagerQuestion', () => {
       question: LOG1_QUESTION,
       answered: false,
     });
-    expect(open?.withheld).toEqual([{ index: 2, step: 2 }, { index: 3, step: 3 }]);
+    expect(open?.withheld).toEqual([
+      { index: 2, step: 2 },
+      { index: 3, step: 3 },
+    ]);
     expect(open?.steps).toEqual([2, 3]);
     expect(open?.question).toBe(LOG1_QUESTION);
     expect([read, question].map((action) => log1PhaseOne.actions.indexOf(action!))).toEqual([0, 1]);
@@ -131,8 +166,13 @@ describe('openManagerQuestion', () => {
 
   it('leaves a plan with no manager-conditional step untouched, question or not', (): void => {
     const plain = planWith(
-      [{ kind: 'write', reads: [], writes: ['slack'] }, { kind: 'write', reads: [], writes: ['linear'] }, { kind: 'write', reads: [], writes: ['linear'] }],
-      'promised', 3,
+      [
+        { kind: 'write', reads: [], writes: ['slack'] },
+        { kind: 'write', reads: [], writes: ['linear'] },
+        { kind: 'write', reads: [], writes: ['linear'] },
+      ],
+      'promised',
+      3,
     );
     expect(
       openManagerQuestion({
@@ -144,8 +184,12 @@ describe('openManagerQuestion', () => {
       }),
     ).toBeUndefined();
     const evidence = planWith(
-      [{ kind: 'write', reads: [], writes: ['slack'] }, { kind: 'conditional-write', reads: [], writes: ['linear'] }],
-      'none', null,
+      [
+        { kind: 'write', reads: [], writes: ['slack'] },
+        { kind: 'conditional-write', reads: [], writes: ['linear'] },
+      ],
+      'none',
+      null,
     );
     expect(
       openManagerQuestion({
@@ -160,8 +204,13 @@ describe('openManagerQuestion', () => {
 
   it('withholds only what the plan made conditional: a surface an unconditional step writes keeps its write', (): void => {
     const mixed = planWith(
-      [{ kind: 'write', reads: [], writes: ['slack'] }, { kind: 'write', reads: [], writes: ['linear'] }, { kind: 'conditional-write', reads: [], writes: ['linear'] }],
-      'conditional-on-manager', 3,
+      [
+        { kind: 'write', reads: [], writes: ['slack'] },
+        { kind: 'write', reads: [], writes: ['linear'] },
+        { kind: 'conditional-write', reads: [], writes: ['linear'] },
+      ],
+      'conditional-on-manager',
+      3,
     );
     const open = openManagerQuestion({
       plan: mixed,
