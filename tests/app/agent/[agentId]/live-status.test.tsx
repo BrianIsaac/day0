@@ -48,6 +48,15 @@ describe('the words of a refusal', (): void => {
     );
     expect(refusalText(wrapped, 'The access was not changed.')).toBe('Surface not found.');
   });
+
+  it('says the fallback for a production error, whose text the backend stripped to the envelope alone', (): void => {
+    const redacted = new Error(
+      '[CONVEX M(work:retryFailed)] [Request ID: 7c1e] Server Error\n  Called by client',
+    );
+    expect(refusalText(redacted, 'The item was not sent back.')).toBe(
+      'The item was not sent back.',
+    );
+  });
 });
 
 describe('where focus goes once a change settles', (): void => {

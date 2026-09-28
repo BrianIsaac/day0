@@ -30,8 +30,16 @@ export interface ChangeOutcome {
 export function refusalText(error: unknown, fallback: string): string {
   if (error instanceof ConvexError) return String(error.data);
   if (!(error instanceof Error) || error.message.trim() === '') return fallback;
-  return plainErrorMessage(errorMessage(error, fallback)) || fallback;
+  const raw = errorMessage(error, fallback);
+  const plain = plainErrorMessage(raw);
+  // `plainErrorMessage` hands back the whole text when stripping leaves
+  // nothing, which is what a production deployment's redacted error is: the
+  // envelope alone. That is said as the fallback, never as the envelope.
+  return plain === raw.trim() && TRANSPORT_ENVELOPE.test(raw) ? fallback : plain;
 }
+
+/** The start of the envelope a Convex error reaches the browser in. */
+const TRANSPORT_ENVELOPE = /^\s*\[(?:CONVEX |Request ID:)/;
 
 /** What a change says once it settles: a sentence for each outcome. */
 export interface ChangeWords<Result> {
