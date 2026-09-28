@@ -72,7 +72,7 @@ component verifies them, and never stored in this repository.
   Generalist Model for Named Entity Recognition using Bidirectional
   Transformer", Proceedings of NAACL-HLT 2024, pages 5364-5376.
 - microsoft/mdeberta-v3-base, the span model's backbone, whose configuration
-  and tokenizer the redactor loads: MIT, Copyright (c) Microsoft Corporation.
+  and tokeniser the redactor loads: MIT, Copyright (c) Microsoft Corporation.
 - Qwen3 (qwen3:8b through Ollama, the local model route's default): Apache-2.0,
   Copyright 2024 Alibaba Cloud.
 

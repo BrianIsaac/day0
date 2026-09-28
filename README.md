@@ -41,7 +41,7 @@ Three things to know before the rest of this file. Each is repeated where it app
 
 The container images for the backend, the model service, the sandbox, the redactor and the components are pinned by digest in `docker-compose.yml`; the package versions are in `package.json` and the [Stack](#stack) table. Provider-side processing and retention of anything sent to a hosted model or workspace follow your own account terms with that provider.
 
-Who receives what. On the hosted demo, the sign-in email goes to Clerk, the pages are served by Vercel, every row is stored in Convex's cloud, the chat and the mock office's content go to the model provider the deployment names, and a voice 1:1, when used, goes to ElevenLabs with the manager's email address. In real mode on your machine, the documentation you link and the text the agent reads from your systems go to the model provider you configure (to nobody on the local model route), and orientation looks a documented system up by name in the public MCP Registry (`registry.modelcontextprotocol.io`) when its documentation mentions an MCP server; a skill's smoke test runs on Daytona instead of the bundled sandbox only when a `DAYTONA_API_KEY` is set. Every third-party work Day0 adapts, runs, downloads or depends on is credited, with its licence and holder, in [`NOTICE`](NOTICE).
+Who receives what. On the hosted demo, the sign-in email goes to Clerk, the pages are served by Vercel, every row is stored in Convex's cloud, the chat and the mock office's content go to the model provider the deployment names, a skill the agent writes is smoke-tested on Daytona, and a voice 1:1, when used, goes to ElevenLabs with the manager's email address. In real mode on your machine, the documentation you link and the text the agent reads from your systems go to the model provider you configure (to nobody on the local model route), and orientation looks a documented system up by name in the public MCP Registry (`registry.modelcontextprotocol.io`) when its documentation mentions an MCP server; a skill's smoke test runs on Daytona instead of the bundled sandbox only when a `DAYTONA_API_KEY` is set, and a voice 1:1, when used with ElevenLabs keys set, goes to ElevenLabs with the manager's email address, as on the hosted demo. Every third-party work Day0 adapts, runs or downloads is credited, with its licence and holder, in [`NOTICE`](NOTICE), and so is every direct dependency and each transitive one whose licence asks something of a redistributor.
 
 **AI-assisted development.** The code, tests and documentation in this repository were written with AI coding agents, under human direction and review, and the commit history is the record of that work. The design, the evaluation method and every claim in this file were decided and checked by the maintainers.
 
@@ -415,7 +415,7 @@ Every service in `docker-compose.yml` sits behind a profile, and the profiles ar
 
 ## Real mode
 
-Both local ways are real mode: link your documentation and connect the systems it names through approval cards; those systems still need authorised access. Real mode is local-only. Day0 reads the documentation you point it at, proposes a connection to each system that documentation records, and - once you approve a card - acts on those systems for real: a comment on your ticket, a message in your channel, a form filled in on a web UI it drives through a browser. The **seeded mock office** the hosted demo works in - fixtures for the systems, the tickets and the messages, with nothing the agent does leaving your machine - is the other setting of the same variable, kept for the evaluation harness and documented under [Evaluation and the mock office](#evaluation-and-the-mock-office).
+Both local ways are real mode: link your documentation and connect the systems it names through approval cards; those systems still need authorised access. Real mode is local-only. Day0 reads the documentation you point it at, proposes a connection to each system that documentation records, and - once you approve a card - acts on those systems for real: a comment on your ticket, a message in your channel, a form filled in on a web UI it drives through a browser. The **seeded mock office** the hosted demo works in - fixtures for the systems, the tickets and the messages, where nothing the agent does reaches a real system, though its model calls still go to the provider configured - is the other setting of the same variable, kept for the evaluation harness and documented under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
 It is deliberately restricted to local no-auth development. `DAY0_SURFACE_MODE=real` throws unless `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NODE_ENV=development` and nothing names Vercel, so the mode that can touch live systems cannot be reached on a hosted deployment at all (`src/lib/surface-mode.ts`).
 
@@ -434,7 +434,7 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 What each is for, and what it never sees, is in [`docs/running/components.md`](docs/running/components.md).
 
 On Linux x86-64 with Python 3.12, the redactor's first CPU start downloads about
-251 MB of pinned wheels and 1.16 GB of weights and tokenizer files, plus the
+251 MB of pinned wheels and 1.16 GB of weights and tokeniser files, plus the
 container image if it is not cached. These downloads need network access; inference
 runs locally without an account. CUDA wheels require additional space; their download
 size has not been verified here. Detection can miss secrets, and structural-only
@@ -1041,7 +1041,7 @@ The frozen evidence directories this README quotes, and their numbers, are liste
 
 ## Evaluation and the mock office
 
-Mock mode is the seeded office: team docs, a spreadsheet, chat channels, a ticket queue and a social feed, fixtures shipped in this repository and seeded per agent, so a run is reproducible on a stranger's laptop and nothing the agent does leaves your machine. It is what the [controlled comparison](evaluation/README.md) and its frozen beds ran on, and the workspace the [hosted demo](#live-demo) deploys agents into. It is not one of the ways to run Day0 on your own systems - both local ways are [real mode](#real-mode) - and it is documented here as what it is for: a bed for the harness, and the office the hosted demo shows. In it the model calls, the sandbox, the state machine and the approval gates are still real.
+Mock mode is the seeded office: team docs, a spreadsheet, chat channels, a ticket queue and a social feed, fixtures shipped in this repository and seeded per agent, so a run is reproducible on a stranger's laptop and nothing the agent does reaches a real system; the model calls still go to the provider you configure. It is what the [controlled comparison](evaluation/README.md) and its frozen beds ran on, and the workspace the [hosted demo](#live-demo) deploys agents into. It is not one of the ways to run Day0 on your own systems - both local ways are [real mode](#real-mode) - and it is documented here as what it is for: a bed for the harness, and the office the hosted demo shows. In it the model calls, the sandbox, the state machine and the approval gates are still real.
 
 Its command is the same setup in mock mode, with the same choice of where the model runs:
 
@@ -1147,7 +1147,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 后端、模型服务、沙箱、redactor 与各组件的容器镜像在 `docker-compose.yml` 中按 digest 固定；软件包版本见 `package.json` 与[技术栈](#stack)表。发送给托管模型或 workspace 的内容，其服务商侧处理与保留遵循你与该服务商的账户条款。
 
-谁会收到什么。在托管演示中，登录邮箱发送给 Clerk，页面由 Vercel 提供，所有数据行存储在 Convex 云端，聊天内容与 mock office 的内容发送给该 deployment 指定的模型服务商；使用语音一对一时，通话连同经理的邮箱地址发送给 ElevenLabs。在你本机运行的 real mode 中，你链接的文档以及 Agent 从你的系统读取的文本发送给你配置的模型服务商（本地模型路线则不发送给任何人）；当某个已记录系统的文档提到 MCP server 时，orientation 会按系统名在公开的 MCP Registry（`registry.modelcontextprotocol.io`）中查询；只有设置了 `DAYTONA_API_KEY` 时，技能的冒烟测试才会在 Daytona 而不是随附沙箱上运行。Day0 改编、运行、下载或依赖的每一项第三方作品，连同其许可与权利人，都列在 [`NOTICE`](NOTICE) 中。
+谁会收到什么。在托管演示中，登录邮箱发送给 Clerk，页面由 Vercel 提供，所有数据行存储在 Convex 云端，聊天内容与 mock office 的内容发送给该 deployment 指定的模型服务商，Agent 编写的技能在 Daytona 上做冒烟测试；使用语音一对一时，通话连同经理的邮箱地址发送给 ElevenLabs。在你本机运行的 real mode 中，你链接的文档以及 Agent 从你的系统读取的文本发送给你配置的模型服务商（本地模型路线则不发送给任何人）；当某个已记录系统的文档提到 MCP server 时，orientation 会按系统名在公开的 MCP Registry（`registry.modelcontextprotocol.io`）中查询；只有设置了 `DAYTONA_API_KEY` 时，技能的冒烟测试才会在 Daytona 而不是随附沙箱上运行；设置了 ElevenLabs key 并使用语音一对一时，与托管演示一样，通话连同经理的邮箱地址发送给 ElevenLabs。Day0 改编、运行或下载的每一项第三方作品，连同其许可与权利人，都列在 [`NOTICE`](NOTICE) 中；每个直接依赖，以及许可对再分发者有要求的每个传递依赖，也都列在其中。
 
 **AI 辅助开发。** 本仓库中的代码、测试和文档是在人工指导与审查下、借助 AI 编码代理编写的，提交历史即为这项工作的记录。设计、评测方法以及本文件中的每一项主张均由维护者决定并核对。
 
@@ -1476,7 +1476,7 @@ pnpm convex:down                 # the backend; the data volume stays
 
 ### 真实模式
 
-两种本地方式都是 real mode：链接你的文档，并通过审批卡片连接文档中记录的系统；这些系统仍然需要经过授权的访问。real mode 只限本机。此时 day0 会读取你指定的文档，为文档记录的每个系统提出连接申请；在你批准卡片之后，它会真正操作这些系统：在你的工单上留言、在你的频道里发消息、通过浏览器在 Web UI 上填写表单。托管演示所使用的 **seeded mock office**（系统、工单和消息都是 fixture，Agent 的任何操作都不会离开本机）是同一个变量的另一个取值，为评测 harness 保留，见[评测与 mock office](#评测与-mock-office)。
+两种本地方式都是 real mode：链接你的文档，并通过审批卡片连接文档中记录的系统；这些系统仍然需要经过授权的访问。real mode 只限本机。此时 day0 会读取你指定的文档，为文档记录的每个系统提出连接申请；在你批准卡片之后，它会真正操作这些系统：在你的工单上留言、在你的频道里发消息、通过浏览器在 Web UI 上填写表单。托管演示所使用的 **seeded mock office**（系统、工单和消息都是 fixture，Agent 的任何操作都不会触及真实系统，但模型调用仍会发送给所配置的服务商）是同一个变量的另一个取值，为评测 harness 保留，见[评测与 mock office](#评测与-mock-office)。
 
 该模式被刻意限制在本机无认证开发环境中。除非同一进程中 `NEXT_PUBLIC_DEV_NO_AUTH=true`、`NODE_ENV=development` 且不存在任何 Vercel 变量，否则 `DAY0_SURFACE_MODE=real` 会直接抛错（`src/lib/surface-mode.ts`），因此可以操作真实系统的模式无法在托管部署上启用。
 
@@ -1742,7 +1742,7 @@ pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01              
 
 ### 评测与 mock office
 
-mock mode 是预置的 office：团队文档、表格、聊天频道、工单队列和社交信息流，都是随本仓库提供、按 Agent 单独写入的 fixture，因此一次运行可以在陌生人的笔记本上复现，Agent 的任何操作都不会离开你的机器。[受控比较](evaluation/README.md)及其冻结的评测环境运行于其上，[托管演示](#在线演示)也把 Agent 部署到其中。它不是在你自己的系统上运行 Day0 的方式之一（两种本地方式都是 [real mode](#真实模式)），这里按其用途说明：评测 harness 的评测环境，以及托管演示展示的 office。在其中，模型调用、沙箱、状态机和审批门仍然是真实运行的。
+mock mode 是预置的 office：团队文档、表格、聊天频道、工单队列和社交信息流，都是随本仓库提供、按 Agent 单独写入的 fixture，因此一次运行可以在陌生人的笔记本上复现，Agent 的任何操作都不会触及真实系统；模型调用仍会发送给你配置的服务商。[受控比较](evaluation/README.md)及其冻结的评测环境运行于其上，[托管演示](#在线演示)也把 Agent 部署到其中。它不是在你自己的系统上运行 Day0 的方式之一（两种本地方式都是 [real mode](#真实模式)），这里按其用途说明：评测 harness 的评测环境，以及托管演示展示的 office。在其中，模型调用、沙箱、状态机和审批门仍然是真实运行的。
 
 它的命令是同一个 setup 的 mock mode，模型在哪里运行的选择也相同：
 
@@ -1811,7 +1811,7 @@ pnpm dev
 
 The pixel-art agent faces are not original to this project. They are from the public [**Singapore Codex Pets**](https://singapore-pet-share.vercel.app/) community gallery, which is built on the MIT-licensed [`portons/codex-pet-share`](https://github.com/portons/codex-pet-share) template. The gallery states no licence for its images. They are used here as demo art with this credit; the product knows each one only by its number (`Face 1` to `Face 29`) and names no person it depicts. Anyone reusing them beyond linking to the source should credit it.
 
-The redaction model is GLiNER (`urchade/gliner_multi_pii-v1`, Apache-2.0; Urchade Zaratiana, Nadi Tomeh, Pierre Holat and Thierry Charnois, "GLiNER: Generalist Model for Named Entity Recognition using Bidirectional Transformer", NAACL 2024) on Microsoft's `mdeberta-v3-base` (MIT). The local model route runs Qwen3 (Apache-2.0, Alibaba Cloud) through Ollama (MIT). The components run Notion's MCP server (MIT, Notion Labs) and Microsoft's Playwright MCP (Apache-2.0). The backend is Convex's self-hosted backend (FSL-1.1-ALv2, Convex, Inc.). [`NOTICE`](NOTICE) lists every one of these and every package dependency with its licence and holder, and carries the notices and licence texts their licences require; `scripts/notice.ts` generates it and the gate fails when it is stale.
+The redaction model is GLiNER (`urchade/gliner_multi_pii-v1`, Apache-2.0; Urchade Zaratiana, Nadi Tomeh, Pierre Holat and Thierry Charnois, "GLiNER: Generalist Model for Named Entity Recognition using Bidirectional Transformer", NAACL 2024) on Microsoft's `mdeberta-v3-base` (MIT). The local model route runs Qwen3 (Apache-2.0, Alibaba Cloud) through Ollama (MIT). The components run Notion's MCP server (MIT, Notion Labs) and Microsoft's Playwright MCP (Apache-2.0). The backend is Convex's self-hosted backend (FSL-1.1-ALv2, Convex, Inc.). [`NOTICE`](NOTICE) lists every one of these, every direct package dependency and each transitive one whose licence asks something of a redistributor, with its licence and holder, and carries the notices and licence texts their licences require; `scripts/notice.ts` generates it and the gate fails when it is stale.
 
 ## Licence
 

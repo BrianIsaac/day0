@@ -158,4 +158,4 @@ A suspected vulnerability goes through [`SECURITY.md`](SECURITY.md), not a publi
 
 ## Licence
 
-Day0 is licensed under Apache-2.0. By contributing you agree that your contribution is licensed under the same terms, as set out in [LICENSE](LICENSE). Third-party works keep their own licences, listed in [NOTICE](NOTICE); code adapted from elsewhere says so in its header, and `scripts/notice.ts` picks the credit up from there.
+Day0 is licensed under Apache-2.0. By contributing you agree that your contribution is licensed under the same terms, as set out in [LICENSE](LICENSE). Third-party works keep their own licences, listed in [NOTICE](NOTICE); code adapted from elsewhere says so in its header. `scripts/notice.ts` picks up only a header naming Protean (the maintainer's own earlier work, under the same holder and licence); code adapted from anyone else is credited by adding its work, licence and holder to the script's tables, and a licence that needs its text carried adds the text under `licenses/`.

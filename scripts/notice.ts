@@ -148,7 +148,7 @@ const REDACTOR_MODEL_CREDITS: Readonly<Record<string, string>> = {
   Generalist Model for Named Entity Recognition using Bidirectional
   Transformer", Proceedings of NAACL-HLT 2024, pages 5364-5376.
 - microsoft/mdeberta-v3-base, the span model's backbone, whose configuration
-  and tokenizer the redactor loads: MIT, Copyright (c) Microsoft Corporation.`,
+  and tokeniser the redactor loads: MIT, Copyright (c) Microsoft Corporation.`,
 };
 
 /** The local model families this script can credit, by the prefix of the id `ollama pull` takes. */
