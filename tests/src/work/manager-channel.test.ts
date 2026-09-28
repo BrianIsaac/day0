@@ -483,4 +483,29 @@ describe('what a decision request says about its item (P8-6, U9 step 24)', (): v
     );
     expect(text.indexOf('Held actions:')).toBeLessThan(text.indexOf('Refused by'));
   });
+
+  it('keeps the gate’s reason on a refused row whose body fills the quote', (): void => {
+    const long: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close figures. '.repeat(40) }),
+      },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [close, long],
+      heldIndexes: [0],
+      refused: [{ index: 1, reason: 'reply outside the source channel' }],
+      surfaces: [slack],
+    });
+    const line = text.split('\n').find((entry) => entry.startsWith('- Post to Slack'))!;
+    expect(line.endsWith('… (reply outside the source channel)')).toBe(true);
+    expect(line.length).toBeLessThanOrEqual(300);
+  });
 });

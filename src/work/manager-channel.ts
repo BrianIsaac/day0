@@ -469,6 +469,9 @@ function itemLines(item: DecisionRequestItem): string[] {
 /** The most refused rows a request lists by name. */
 const REFUSED_LINES_SHOWN = 5;
 
+/** The most of a refusal's reason a request quotes; the gate's own reasons are far shorter. */
+const REFUSED_REASON_MAX_CHARS = 120;
+
 /**
  * The rows of a held set the gate refused, each with its reason: no decision
  * sends them, and a manager approving the set should know what it leaves out.
@@ -480,12 +483,15 @@ function refusedLines(
   context: SummaryContext,
 ): string[] {
   if (refused.length === 0) return [];
-  const clip = (line: string): string =>
-    line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
+  const clip = (text: string, limit: number): string =>
+    text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+  // The reason is what the manager needs from the line, so the action gives
+  // way to it within the line's length, never the other way round.
   const shown = refused.slice(0, REFUSED_LINES_SHOWN).map(({ index, reason }) => {
     const action = actions[index];
     const what = action ? summariseAction(action, surfaces, context) : `action ${index + 1}`;
-    return clip(`- ${what} (${oneLine(reason, 'refused')})`);
+    const why = ` (${clip(oneLine(reason, 'refused'), REFUSED_REASON_MAX_CHARS)})`;
+    return `- ${clip(what, PLAN_LINE_MAX_CHARS - '- '.length - why.length)}${why}`;
   });
   const more = refused.length - shown.length;
   return [
