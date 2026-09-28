@@ -33,6 +33,7 @@ const roster = [
     stoppedCount: 0,
     needsYou: 1,
     docSourceCount: 1,
+    landedThisMonth: { month: '2026-09', days: [], atLeast: false },
   },
   {
     agentId: 'synthetic-finance-agent',
@@ -45,6 +46,7 @@ const roster = [
     stoppedCount: 0,
     needsYou: 2,
     docSourceCount: 1,
+    landedThisMonth: { month: '2026-09', days: [], atLeast: false },
   },
   {
     agentId: 'synthetic-new-agent',
@@ -57,6 +59,7 @@ const roster = [
     stoppedCount: 0,
     needsYou: 0,
     docSourceCount: 0,
+    landedThisMonth: { month: '2026-09', days: [], atLeast: false },
   },
 ];
 let shownRoster = roster;
@@ -158,6 +161,8 @@ vi.mock('convex/react', () => ({
       };
     }
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
+    if (name === 'work:needsYou') return { entries: [], total: 0, waitingByEmployee: [] };
+    if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
     return 0;
   },
   useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
@@ -303,41 +308,7 @@ describe('landing footer', (): void => {
 });
 
 describe('signed-in landing', () => {
-  it('keeps the owner dashboard agent and documentation links', () => {
-    authState.signedIn = true;
-    try {
-      const html = renderToStaticMarkup(<LandingPage />);
-      expect(html).toContain('href="/agent/synthetic-owner-agent"');
-      expect(html).toContain('href="/documentation"');
-    } finally {
-      authState.signedIn = false;
-    }
-  });
-});
-
-describe('the avatar picker', (): void => {
-  it('names each face by its number and no title carries a person', (): void => {
-    authState.signedIn = true;
-    try {
-      const html = renderToStaticMarkup(<LandingPage />);
-      const faces = [...html.matchAll(/<button[^>]*aria-label="(Face \d+)"/g)].map(
-        (match) => match[1],
-      );
-      expect(faces).toHaveLength(29);
-      expect(faces[0]).toBe('Face 1');
-      const titles = [...html.matchAll(/title="([^"]*)"/g)].map((match) => match[1]);
-      expect(titles.filter((title) => title.includes('@'))).toEqual([]);
-      expect(html).not.toContain('singapore-ai-builders');
-    } finally {
-      authState.signedIn = false;
-    }
-  });
-});
-
-describe('the employee list', (): void => {
-  /** The list as the manager reads it: the queue line is several unbreakable parts in the markup. */
-  const readAs = (markup: string): string => markup.replace(/<[^>]+>/g, '');
-
+  /** The page for the signed-in owner; the home's own pins are in tests/app/home/SignedInDashboard.test.tsx. */
   const signedIn = (): string => {
     authState.signedIn = true;
     try {
@@ -347,86 +318,22 @@ describe('the employee list', (): void => {
     }
   };
 
-  it('shows every employee above the office: role, queue, what needs the manager, autonomy', (): void => {
+  it('renders the owner’s company home, with the employee and documentation links', () => {
     const html = signedIn();
-    const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-    expect(html.indexOf('Your employees')).toBeGreaterThan(-1);
-    expect(html.indexOf('Your employees')).toBeLessThan(html.indexOf('Mini office world'));
-    for (const row of roster) {
-      expect(list).toContain(`href="/agent/${row.agentId}"`);
-      expect(list).toContain(row.name);
-      expect(list).toContain(row.roleLine);
-    }
-    expect(readAs(list)).toContain('3 open \u00b7 1 needs you');
-    expect(readAs(list)).toContain('2 open \u00b7 2 need you');
-    expect(readAs(list)).toContain('0 open \u00b7 0 need you');
-    expect(list.match(/acts on its own/g)).toHaveLength(1);
-    expect(list.match(/asks first/g)).toHaveLength(2);
+    expect(html).toContain('Your employees');
+    expect(html).toContain('href="/agent/synthetic-owner-agent"');
+    expect(html).toContain('href="/documentation"');
+    expect(html).not.toContain('Try the demo');
   });
 
-  it('puts the role line on each office name plate', (): void => {
-    const html = signedIn();
-    const office = html.slice(html.indexOf('Mini office world'), html.indexOf('Reset demo'));
-    for (const row of roster) expect(office).toContain(row.roleLine);
-  });
-
-  it('shows parked work beside open work, as the 19 Sep run left the company', (): void => {
-    shownRoster = [
-      { ...roster[0], name: 'Priya', openCount: 0, parkedCount: 3, needsYou: 2 },
-      { ...roster[1], name: 'Aiko', openCount: 0, parkedCount: 1, needsYou: 0 },
-      { ...roster[2], name: 'Mateo', openCount: 0, parkedCount: 0, needsYou: 0 },
-    ];
+  it('opens on the deploy form when the owner has nobody deployed', (): void => {
+    shownRoster = [];
     try {
       const html = signedIn();
-      const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-      expect(readAs(list)).toContain('0 open \u00b7 3 parked \u00b7 2 need you');
-      expect(readAs(list)).toContain('0 open \u00b7 1 parked \u00b7 0 need you');
-      expect(readAs(list)).toContain('0 open \u00b7 0 need you');
-      expect(list).toContain(
-        'Parked: waiting on a connection, a permission, a skill or a free slot',
-      );
+      expect(html).toContain('Deploy a new Day0 employee');
+      expect(html.match(/<button[^>]*aria-label="Face \d+"/g)).toHaveLength(29);
     } finally {
       shownRoster = roster;
-    }
-  });
-
-  it('shows stopped work that still waits on the manager, as the 19 Sep second run left the company', (): void => {
-    shownRoster = [
-      { ...roster[0], name: 'Priya', openCount: 0, parkedCount: 0, stoppedCount: 2, needsYou: 2 },
-      { ...roster[1], name: 'Aiko', openCount: 1, parkedCount: 1, stoppedCount: 1, needsYou: 1 },
-      { ...roster[2], name: 'Mateo', openCount: 0, parkedCount: 0, stoppedCount: 0, needsYou: 0 },
-    ];
-    try {
-      const html = signedIn();
-      const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-      expect(readAs(list)).toContain('0 open \u00b7 2 stopped \u00b7 2 need you');
-      expect(readAs(list)).toContain('1 open \u00b7 1 parked \u00b7 1 stopped \u00b7 1 needs you');
-      expect(readAs(list)).toContain('0 open \u00b7 0 need you');
-      expect(list).toContain(
-        'title="Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
-      );
-      expect(list).toContain(
-        'title="Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release count under need you. Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
-      );
-      expect(list.match(/title="[^"]*Stopped/g)).toHaveLength(2);
-      expect(list).toContain(
-        '<span class="whitespace-nowrap">1 stopped \u00b7</span> <span class="whitespace-nowrap">1 needs you</span>',
-      );
-    } finally {
-      shownRoster = roster;
-    }
-  });
-
-  it('keeps the hosted one-employee landing under a snapshot', (): void => {
-    shownRoster = [roster[0]];
-    authState.signedIn = true;
-    try {
-      const html = renderToStaticMarkup(<LandingPage />);
-      expect(html).toContain('Company supervision');
-      expect(html).toMatchSnapshot();
-    } finally {
-      shownRoster = roster;
-      authState.signedIn = false;
     }
   });
 

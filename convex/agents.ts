@@ -18,11 +18,12 @@ import {
   PARKED_WORK_STATES,
   wakeQueuedWork,
 } from './workLoop';
-import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import {
-  providerReconciliationEntries,
-  retryRequiresProviderReconciliation,
-} from '../src/work/reconciliation';
+  NEEDS_MANAGER_STATES,
+  parkedRowNeedsManager,
+  stoppedRowNeedsManager,
+  stoppedRowOffersMove,
+} from '../src/work/needs-manager';
 import { agentReadsSource } from './docSources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
@@ -31,8 +32,9 @@ import {
   NOTIFICATIONS_CHANGE_REASON,
   type ManagerNotificationMode,
 } from '../src/work/manager-notes';
-import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
-import { appendEvent } from './eventLog';
+import { agentZone, canonicalZone, dayKey, dayStart, deploymentZone } from '../src/lib/zone';
+import { appendEvent, eventsOfType } from './eventLog';
+import { isEventOf } from '../src/events/contract';
 
 /** Where a permission grant came from: deployment, the manager, a skill or a surface. */
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
@@ -103,32 +105,75 @@ const OPEN_STATE_READ_LIMIT = 100;
 /**
  * Bound on the stopped-row read. Nothing caps how many rows an employee has
  * in `failed`, and each carries its run's output, so the bound is lower than
- * the open one and is the most the list can show.
+ * the open one and is the most the list can show, the newest first.
  */
 const STOPPED_READ_LIMIT = 25;
-
-/** How the reason on a row the manager's own rejection failed begins. */
-const MANAGER_REJECTION_PREFIX = 'rejected by the manager';
 
 /** Bound on the owner's documentation sources read for the count. */
 const DOC_SOURCE_READ_LIMIT = 100;
 
-/** The open states that wait on the manager: a plan to approve, a held action set. */
-const NEEDS_MANAGER_STATES: ReadonlySet<string> = new Set(['plan-pending', 'actions-pending']);
+/**
+ * Bound on an employee's completions read for the month, the newest first.
+ * Each carries its run's output, so the bound is kept low; beyond it the
+ * month's earliest days are left out and the count says it is a floor.
+ */
+const MONTH_LANDED_READ_LIMIT = 100;
+
+const landedThisMonthValidator = v.object({
+  /** The month, `YYYY-MM`, in the employee's zone. */
+  month: v.string(),
+  /** Each day of the month an item first landed on, `YYYY-MM-DD`, with how many, oldest first. */
+  days: v.array(v.object({ day: v.string(), landed: v.number() })),
+  /** True when the read reached its bound, so the month holds at least this many. */
+  atLeast: v.boolean(),
+});
+
+/** The work an employee landed this month, by day. */
+type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
 
 /**
- * The skill states in which the next move on a skill is the manager's: a
- * proposal to approve, and an authoring run to start or start again, which
- * only the dashboard does. `registered` is absent: a row still parked behind
- * a registered skill is released by no manager action.
+ * The items an employee completed this month in its own zone (N12), each
+ * counted once, on the day it first completed within the month. Reads the
+ * month's `work.completed` events by the type index, from the month's first
+ * midnight on, and dates each by the instant it was logged.
+ *
+ * @param ctx - Query context.
+ * @param agent - The employee.
+ * @param now - The instant whose month is read.
  */
-const SKILL_WAITS_ON_MANAGER_STATES: ReadonlySet<string> = new Set([
-  'proposed',
-  'approved',
-  'authoring',
-  'verified',
-  'failed',
-]);
+async function landedThisMonth(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<LandedThisMonth> {
+  const zone = agentZone(agent);
+  const month = dayKey(now, zone).slice(0, 7);
+  const monthStart = dayStart(`${month}-01`, zone);
+  // Newest first, so a month past the bound still shows its latest days, today among them;
+  // one more than the bound is read to tell a full month from a longer one.
+  const read = await eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
+    .order('desc')
+    .take(MONTH_LANDED_READ_LIMIT + 1);
+  const firstLanded = new Map<string, number>();
+  for (const event of read.slice(0, MONTH_LANDED_READ_LIMIT)) {
+    if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
+    const workItemId: unknown = event.payload.workItemId;
+    // Read newest first, so the last completion kept per item is its first in the month.
+    if (typeof workItemId === 'string') firstLanded.set(workItemId, event.createdAt);
+  }
+  const byDay = new Map<string, number>();
+  for (const at of firstLanded.values()) {
+    const day = dayKey(at, zone);
+    byDay.set(day, (byDay.get(day) ?? 0) + 1);
+  }
+  return {
+    month,
+    days: [...byDay]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([day, landed]) => ({ day, landed })),
+    atLeast: read.length > MONTH_LANDED_READ_LIMIT,
+  };
+}
 
 const rosterRowValidator = v.object({
   agentId: v.id('agents'),
@@ -142,6 +187,7 @@ const rosterRowValidator = v.object({
   stoppedCount: v.number(),
   needsYou: v.number(),
   docSourceCount: v.number(),
+  landedThisMonth: landedThisMonthValidator,
 });
 
 /** One employee as the landing page lists it. */
@@ -219,76 +265,6 @@ async function charterStanding(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Ch
 }
 
 /**
- * Whether only the manager can release a parked row.
- *
- * A deferral waits on a connection or a read grant, both the manager's to
- * give. A row waiting on a skill is the manager's while the skill waits on a
- * manager's click and no authoring run holds it; before a proposal exists,
- * while a run is in flight, or once the skill is registered, it is not. A
- * row queued at the cap is released by a slot freeing, and the rows holding
- * the slots that wait on the manager are already counted.
- *
- * Args:
- *   row: The parked row.
- *   skills: The skills the parked rows wait on, by id.
- *   now: The instant an authoring claim is judged against.
- *
- * Returns:
- *   True when the row counts under needs-you.
- */
-function parkedRowNeedsManager(
-  row: Doc<'workItems'>,
-  skills: ReadonlyMap<Id<'skills'>, Doc<'skills'> | null>,
-  now: number,
-): boolean {
-  if (row.state === 'deferred') return true;
-  if (row.state !== 'needs-skill' || !row.proposedSkillId) return false;
-  const skill = skills.get(row.proposedSkillId);
-  if (!skill || !SKILL_WAITS_ON_MANAGER_STATES.has(skill.state)) return false;
-  return !holdsLiveAuthoringClaim(skill, now);
-}
-
-/**
- * Whether a failed row's card still offers the manager a move.
- *
- * The card offers Retry on every failed row, and where a write may have
- * landed it asks for the provider reconciliation first, which is also the
- * manager's. The one row with neither is an interrupted apply whose ledger
- * names nothing to verify: the confirmation and Retry are both disabled and
- * `work.reconcileFailed` refuses, so nothing the manager does moves it. A
- * recorded reconciliation needs no reading: it is only ever recorded against
- * a ledger that names entries.
- *
- * Args:
- *   row: The failed row.
- *
- * Returns:
- *   True when Retry is open, or the reconciliation that opens it is.
- */
-function stoppedRowOffersMove(row: Doc<'workItems'>): boolean {
-  if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) return true;
-  return providerReconciliationEntries(row.output).length > 0;
-}
-
-/**
- * Whether a stopped row waits on the manager.
- *
- * A run that stopped or failed leaves the next move to the manager: answer
- * what it asked, direct it, or send it again. A row the manager's own
- * rejection failed waits on nobody: Retry is there, but the last decision
- * was theirs.
- *
- * Args:
- *   row: A failed row whose card offers a move.
- *
- * Returns:
- *   True when the row counts under needs-you.
- */
-function stoppedRowNeedsManager(row: Doc<'workItems'>): boolean {
-  return row.skipReason?.startsWith(MANAGER_REJECTION_PREFIX) !== true;
-}
-
-/**
  * Count the employee's open work, its parked work, its stopped work, and the
  * part of the three waiting on the manager.
  *
@@ -319,6 +295,8 @@ async function workCounts(
     await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+      // Newest first: past a bound, what the manager has not seen yet is what is kept.
+      .order('desc')
       .take(limit);
   const [open, parked, discovered, failed] = await Promise.all([
     Promise.all(OPEN_WORK_STATES.map((state) => rowsIn(state))),
@@ -355,8 +333,8 @@ async function workCounts(
 /**
  * The owner's employees, one row each, for the landing page: who they are,
  * the role the manager approved, the open, parked and stopped work, what
- * waits on the manager, whether they act on their own, and how much
- * documentation they read.
+ * waits on the manager, whether they act on their own, how much
+ * documentation they read, and what they landed this month.
  *
  * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
  * are left out. An anonymous caller gets an empty list.
@@ -383,11 +361,13 @@ export const rosterForUser = query({
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', identity.ownerKey))
       .take(DOC_SOURCE_READ_LIMIT);
+    const now = Date.now();
     return await Promise.all(
       agents.map(async (agent): Promise<RosterRow> => {
-        const [charter, counts] = await Promise.all([
+        const [charter, counts, landed] = await Promise.all([
           charterStanding(ctx, agent._id),
           workCounts(ctx, agent._id),
+          landedThisMonth(ctx, agent, now),
         ]);
         return {
           agentId: agent._id,
@@ -400,6 +380,7 @@ export const rosterForUser = query({
           // A drafted charter is the one thing the manager must approve before any work.
           needsYou: counts.needsYou + (charter.draftAwaitsManager ? 1 : 0),
           docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
+          landedThisMonth: landed,
         };
       }),
     );

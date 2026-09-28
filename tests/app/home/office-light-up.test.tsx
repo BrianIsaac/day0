@@ -1,0 +1,99 @@
+/** @vitest-environment jsdom */
+
+import { act, useRef } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useLightUpOnce } from '../../../app/home/office-light-up';
+
+/** The observer the browser would run, driven by the test. */
+class FakeObserver {
+  static last: FakeObserver | undefined;
+  readonly observed: Element[] = [];
+  disconnected = false;
+  constructor(
+    readonly callback: IntersectionObserverCallback,
+    readonly options: IntersectionObserverInit | undefined,
+  ) {
+    FakeObserver.last = this;
+  }
+  observe(element: Element): void {
+    this.observed.push(element);
+  }
+  disconnect(): void {
+    this.disconnected = true;
+  }
+  fire(isIntersecting: boolean): void {
+    this.callback(
+      this.observed.map((target) => ({ target, isIntersecting }) as IntersectionObserverEntry),
+      this as unknown as IntersectionObserver,
+    );
+  }
+}
+
+function Office({ top }: { top: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLightUpOnce(ref);
+  return <div ref={ref} data-top={top} />;
+}
+
+let host: HTMLDivElement;
+let root: Root;
+let reduced = false;
+
+function mount(top: number): HTMLElement {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    top,
+  } as DOMRect);
+  act(() => root.render(<Office top={top} />));
+  return host.firstElementChild as HTMLElement;
+}
+
+beforeEach((): void => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  FakeObserver.last = undefined;
+  reduced = false;
+  vi.stubGlobal('IntersectionObserver', FakeObserver);
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: reduced, media: query }));
+  host = document.createElement('div');
+  root = createRoot(host);
+});
+
+afterEach((): void => {
+  act(() => root.unmount());
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('useLightUpOnce', (): void => {
+  it('holds an office below the fold until a third of it is in view, then lights it once', (): void => {
+    const office = mount(window.innerHeight + 400);
+    expect(office.dataset.seen).toBe('waiting');
+    expect(FakeObserver.last?.options?.threshold).toBeCloseTo(1 / 3);
+    act(() => FakeObserver.last?.fire(false));
+    expect(office.dataset.seen).toBe('waiting');
+    act(() => FakeObserver.last?.fire(true));
+    expect(office.dataset.seen).toBe('seen');
+    expect(FakeObserver.last?.disconnected).toBe(true);
+  });
+
+  it('leaves an office already on screen as it is, so nothing blinks out and back', (): void => {
+    const office = mount(120);
+    expect(office.dataset.seen).toBeUndefined();
+    expect(FakeObserver.last).toBeUndefined();
+  });
+
+  it('leaves the office still when the reader asks for reduced motion', (): void => {
+    reduced = true;
+    const office = mount(window.innerHeight + 400);
+    expect(office.dataset.seen).toBeUndefined();
+    expect(FakeObserver.last).toBeUndefined();
+  });
+
+  it('shows the office at once when it unmounts before it was seen', (): void => {
+    const office = mount(window.innerHeight + 400);
+    act(() => root.unmount());
+    expect(office.dataset.seen).toBeUndefined();
+    expect(FakeObserver.last?.disconnected).toBe(true);
+    root = createRoot(host);
+  });
+});
