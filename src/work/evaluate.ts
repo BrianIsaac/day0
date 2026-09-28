@@ -371,7 +371,7 @@ export function missingConnectionSurface(
   })?.slug;
 }
 
-/** A candidate's value score from its priority and its wording. */
+/** A candidate's value score from its priority, its age, its wording and how much its title says. */
 export function scoreValue(candidate: WorkCandidate): number {
   let score = 50;
   const lower = (candidate.priority ?? '').toLowerCase();
@@ -388,7 +388,7 @@ export function scoreValue(candidate: WorkCandidate): number {
   return Math.max(0, Math.min(100, score));
 }
 
-/** A candidate's risk score from the destructive and external words its body carries. */
+/** A candidate's risk score from the destructive and external words its body carries, and its source (an event stream scores higher). */
 export function scoreRisk(candidate: WorkCandidate): number {
   let score = 30;
   const body = candidate.contentSummary.toLowerCase();

@@ -16,7 +16,7 @@ The latest `v*` release tag and the tip of `main`. Earlier releases are history 
 
 ## Key and data boundaries
 
-What the code checks, in the order a reader meets them. Each module named below has a test under `tests/` at the mirrored path, with three exceptions stated where they apply: `convex/voice.ts`, the ElevenLabs webhook route and `sandbox/skill_sandbox.py` have no test of their own yet.
+What the code checks, in the order a reader meets them. Each module named below has a test under `tests/` at the mirrored path, with two exceptions stated where they apply: `convex/voice.ts` and `sandbox/skill_sandbox.py` have no test of their own yet.
 
 **Who may call what.** Every public Convex function that reads or writes an agent's rows checks that the caller owns the agent (`convex/ownership.ts`); the two entry points a provider calls back, the Slack install callback and the voice webhook, are authorised by a signed state or a token the deployment issued instead, because no owner is signed in when they arrive. Local no-auth mode replaces Clerk with one fixed synthetic user and a locally signed token: the private signing key stays in `.env.local` and only the public verification key is pushed to the backend (`convex/devAuth.ts`, `src/lib/dev-auth-server.ts`). The unlock secret travels once in the URL `pnpm dev` prints and then lives in an httpOnly cookie; in no-auth mode the Next.js proxy refuses a request whose `Host` header is not a loopback name (`proxy.ts`), which is a check on the header, not on the network path. `NEXT_PUBLIC_DEV_NO_AUTH=true` is refused outside `next dev` and fails a production build.
 

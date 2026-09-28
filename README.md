@@ -47,7 +47,7 @@ Who receives what. On the hosted demo, the sign-in email goes to Clerk, the page
 
 ## Contents
 
-**Start here** · [Live demo](#live-demo) · [Disclosures](#disclosures) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
+**Start here** · [Live demo](#live-demo) · [Disclosures](#disclosures) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev - three ways to run it](#local-dev)
 
 **Run it** · [Hosted demo](#hosted-demo) · [Local, cloud model](#local-cloud-model) · [Local, local model](#local-local-model) · [Real mode, what both local ways are](#real-mode) · [Backup, restore and upgrade](#backup-restore-and-upgrade) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
@@ -611,8 +611,8 @@ pnpm dev                         # http://localhost:3000
 
 Both accounts are free to create and neither step can be done for you:
 
-- **Convex** — `pnpm convex:dev` offers a choice on first run: log in, which opens a browser to sign up at [convex.dev](https://convex.dev) and then asks you to name a project, or carry on without an account, which gives you a local [anonymous deployment](#without-docker-for-convex) instead. This route is the cloud one, so log in - it is the account. Either way the command writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. With no terminal to prompt at, it takes the anonymous option silently, which is worth knowing before you wonder why nothing appeared on the dashboard.
-- **Clerk** — create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
+- **Convex** - `pnpm convex:dev` offers a choice on first run: log in, which opens a browser to sign up at [convex.dev](https://convex.dev) and then asks you to name a project, or carry on without an account, which gives you a local [anonymous deployment](#without-docker-for-convex) instead. This route is the cloud one, so log in - it is the account. Either way the command writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. With no terminal to prompt at, it takes the anonymous option silently, which is worth knowing before you wonder why nothing appeared on the dashboard.
+- **Clerk** - create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
 
 `pnpm dev` binds `localhost`, which is also the host Clerk's proxy rewrites to; a `127.0.0.1` bind reads as a foreign origin to Next 16 and breaks the sign-in handshake.
 
@@ -782,21 +782,21 @@ It resolves values the way the running app does, which matters more than it soun
 ## Runtime flow
 
 1. **Sign in** (Clerk modal, or nothing at all in no-auth dev mode) and **deploy** on `/`. `api.agents.deploy` inserts the agent and seeds six permission grants - `boss:message` and the five office reads; in real mode it seeds only `boss:message` and `docs:read`, and a surface's read scope is granted when that surface connects. `POST /api/seed` (non-blocking) installs the builtin `see-internal-docs` skill and, in mock mode only, the mock environment. Work items are not seeded here - mock work is generated from the approved charter, while real work arrives from connected surfaces.
-2. **Mode picker** on `/agent/[agentId]` — voice or chat.
+2. **Mode picker** on `/agent/[agentId]` - voice or chat.
    - Voice: `GET /api/voice/elevenlabs/start` returns a signed URL; ElevenLabs's post-call webhook hits `POST /api/voice/elevenlabs/webhook`.
    - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
-3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
-4. **Approval** — the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (real mode declares the named systems and runs orientation, mock mode seeds the generated work items; no web-research call and no search key). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
-5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, connection cards the manager approves and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Real mode](#real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
+3. **Charter synthesis** - `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
+4. **Approval** - the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (real mode declares the named systems and runs orientation, mock mode seeds the generated work items; no web-research call and no search key). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
+5. **Work loop** - `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, connection cards the manager approves and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Real mode](#real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
 6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** one distinct stdout line per representative input set (two), whichever ran. In real mode the author writes only `run()` and `CASES`, its two input sets, and the sandbox runs a harness around them (`src/work/smoke-harness.ts`) that calls `run()` once per case and prints the lines itself. It holds what `run()` returned against the skill it stands for: every action is `mcp.call` or `http.request` on a surface the author was shown as connected, with a tool that surface allows and `SKILL.md` names; at least two cases emit actions and one acts on the skill's target surface; each case's action arguments carry a value that case supplied, including the record and the reply target when the case gives them; and the action arguments, not only the outputs, differ between cases. It is still a check of the author's mimic and not of a provider's answer; the author's `assert` statements are never compiled, so no assertion it writes about its own output can fail the check. Before any sandbox runs, a static gate refuses a body or smoke test that repeats the identifiers, figures or quoted phrases of the work item that proposed the skill; the reason lands on the row for the retry. An input the body uses without declaring it is refused as well in mock mode; real mode declares it for the author, as read from the candidate or its runbook, and the verification log says so. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not registered · not callable" with a retry.
-7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 23 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
+7. **Reset** - `api.reset.deleteMyData` deletes each agent and its rows from 23 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
 
 ## Stack
 
 | Layer | Choice |
 |---|---|
 | Frontend | Next.js 16 App Router, React 19, Tailwind v4, TypeScript 6 |
-| Realtime backend | Convex 1.37 — DB, queries, mutations, Node actions, scheduler |
+| Realtime backend | Convex 1.37 - DB, queries, mutations, Node actions, scheduler |
 | Auth | Clerk (`@clerk/nextjs` 7) with `ConvexProviderWithClerk` |
 | LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.6-terra`. Hosted OpenAI uses Responses; custom base URLs use chat completions. Streaming chat via AI SDK 6; raw OpenAI SDK 6 available. |
 | Voice | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5) |
@@ -811,7 +811,7 @@ It resolves values the way the running app does, which matters more than it soun
 |---|---|---|
 | `/` | `app/page.tsx` | Landing (signed-out) + deploy/list/reset dashboard (signed-in) |
 | `/documentation` | `app/documentation/page.tsx` | Owner-level documentation locations: link, sync, rotate credentials, revoke and unlink; linking is local real mode only |
-| `/agent/[agentId]` | `app/agent/[agentId]/page.tsx` | Agent dashboard — charter, mode picker, work queue, skills, supervision and mock/real work surfaces |
+| `/agent/[agentId]` | `app/agent/[agentId]/page.tsx` | Agent dashboard - charter, mode picker, work queue, skills, supervision and mock/real work surfaces |
 | `/sign-in/[[...sign-in]]`, `/sign-up/[[...sign-up]]` | Clerk catch-all routes | Sign-in / sign-up |
 
 ### API
@@ -820,7 +820,7 @@ It resolves values the way the running app does, which matters more than it soun
 |---|---|
 | `POST /api/dev-auth/token` | Exchanges the local unlock cookie for a short-lived Convex JWT in no-auth development mode |
 | `GET /api/oauth/slack` | Validates the signed, expiring, single-use Slack install state, exchanges the code and returns to the Surfaces tab |
-| `POST /api/seed` | Calls `api.seed.seedDemo` — installs the builtin skill and, in mock mode only, the mock environment; it never seeds work items |
+| `POST /api/seed` | Calls `api.seed.seedDemo` - installs the builtin skill and, in mock mode only, the mock environment; it never seeds work items |
 | `GET /api/voice/elevenlabs/start` | Returns ElevenLabs signed URL for the Day-1 1:1 |
 | `POST /api/voice/elevenlabs/webhook` | ElevenLabs post-call webhook → `api.onboarding.synthesiseFromTranscript` |
 | `POST /api/onboarding/synthesise` | Browser-side charter-synthesis trigger (chat mode) |
@@ -857,7 +857,7 @@ It resolves values the way the running app does, which matters more than it soun
 | `workLoop.ts` | Real mode's server-driven work loop: the next step each transition schedules, one claim per evaluation or draft, the stalled-step sweep and the on-demand check for new work |
 | `corrections.ts` | The manager's corrections kept per employee: the writer the retry, rejection and cancel transitions call, the dashboard's list and Retire, the planner's read of the active ones and the executor's read of those its plan applied |
 | `skills.ts` | Seven-state skill registry keyed by surface class and operation, including rejected/failed states, fenced authoring claims and `retireUnshaped` for rows that predate shapes |
-| `skillActions.ts` (Node) | `authorAndRegisterSkill` — configured-model authoring of a parameterised procedure, the static gate on the body, sandbox verification and registration |
+| `skillActions.ts` (Node) | `authorAndRegisterSkill` - configured-model authoring of a parameterised procedure, the static gate on the body, sandbox verification and registration |
 | `onboarding.ts` (Node) | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (surfaces and orientation in real mode, generated work items in mock mode) |
 | `mock.ts` | Mock environment CRUD (docs, spreadsheets, slack, twitter, tickets) |
 | `mockSeed.ts` | Idempotent demo seed (4 team docs, 4 how-to guides, Q4 spreadsheet, 5 channels, 1 tweet, 3 tickets) |
@@ -870,7 +870,7 @@ It resolves values the way the running app does, which matters more than it soun
 | `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger, per employee (`forAgent`) and for the owner's company (`forOwner`) |
 | `ownership.ts` | Shared caller and per-agent ownership guards for queries, mutations and actions |
 | `crons.ts` | Recovery, documentation sync, surface re-probe, work intake and stalled work-step recovery, manager-decision and hourly manager-digest schedules |
-| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 23 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
+| `reset.ts` | `deleteMyData` - deletes an agent plus its rows in 23 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
 | `auth.config.ts` | Chooses the Clerk JWT bridge or the guarded local no-auth JWT provider from deployment env |
 
 ## Schema (`convex/schema.ts`)
@@ -898,7 +898,7 @@ The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, 
 | `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
 | `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
 | `corrections` | The manager's retry notes, rejection reasons and plan-cancel reasons kept per employee, real mode only, with the item they came from, the surfaces its plan touched and the later items whose plans applied them |
-| `skills` | Skill registry — `builtin` or `agent-authored`, shaped by surface class and operation |
+| `skills` | Skill registry - `builtin` or `agent-authored`, shaped by surface class and operation |
 | `permissionGrants` | Scoped capability grants (revocable) |
 | `sandboxLeases` | The one lease on the verification sandbox: which authoring run may call it now, so employees authoring at once wait visibly instead of timing out on each other |
 | `events` | Event ticker |
@@ -915,9 +915,9 @@ The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, 
 | `src/lib/mastra.ts` | Shared configured-model agents, structured-output ladder, 300-second call abort and five-attempt transient retry |
 | `src/lib/openai.ts` | Shared model resolver: hosted OpenAI through Responses, custom base URLs through chat completions, plus raw JSON/text helpers |
 | `src/lib/structured-fallback.ts` | Classifies a structured-output failure and decides whether the native `response_format` rung may be demoted to the prompt rung |
-| `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** one distinct stdout line per representative input set |
+| `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` - picks a sandbox backend, and owns the rule that verification means exit 0 **and** one distinct stdout line per representative input set |
 | `src/lib/local-sandbox.ts` | Client for the bundled sandbox service, over a unix socket because that container has no network |
-| `src/lib/daytona.ts` | The Daytona backend — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
+| `src/lib/daytona.ts` | The Daytona backend - `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
 | `src/lib/credential-crypto.ts` | AES-256-GCM credential encryption/decryption with strict key and payload validation |
 | `src/lib/dev-auth*.ts` | Local unlock-cookie, JWT minting and Convex auth-provider integration for the one no-auth development identity |
 | `src/lib/model-name.ts`, `src/lib/oauth-state.ts`, `src/lib/surface-mode.ts` | Model default resolution, signed single-use OAuth state and the local-only real-mode guard |
@@ -934,12 +934,12 @@ The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, 
 | `src/evaluation/` | Ordinary-agent control loop, arm-parity checks, shared mock-office scopes and terminal-state definitions |
 | `src/surfaces/` | Real/mock adapter registry, exact-action policy, MCP/HTTP/browser transports, secret injection/redaction, Slack identity and connection presentation |
 | `src/work/types.ts` | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30`, the closing cap (`CLOSING_SET_CAP` plus `DEFERRED_SEQUENCE_ALLOWANCE`) and the skip-reason prefixes |
-| `src/work/evaluate.ts` | `evaluateCandidate` — 7-criterion sequential evaluator |
-| `src/work/quality-fit.ts` | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section |
+| `src/work/evaluate.ts` | `evaluateCandidate` - 7-criterion sequential evaluator |
+| `src/work/quality-fit.ts` | `qualityFit` - short-circuits if `AGENTS.md` has no good-habits section |
 | `src/work/plan.ts`, `src/work/plan-obligations.ts` | `draftExecutionPlan`, grounded in the candidate's ticket record or chat thread when a surface can read it; the step predicates the gate and the executor share |
 | `src/work/candidate-properties.ts` | The ownership, priority and age vocabulary the planner audit and the charter constraints both read |
 | `src/work/skill-shape.ts`, `src/work/skill-inputs.ts`, `src/work/authored-skill.ts` | A candidate's surface class and operation, the `<record-id>` input grammar the executor binds, and the static gate that refuses a body carrying the first item's values |
-| `src/work/scope.ts` | `judgeScope` — the one scope judgement; lexical rule and quality fit as inputs, the charter judgement model call in real mode |
+| `src/work/scope.ts` | `judgeScope` - the one scope judgement; lexical rule and quality fit as inputs, the charter judgement model call in real mode |
 | `src/work/stop.ts`, `src/work/manager-feedback.ts`, `src/work/manager-notes.ts` | The stopped outcome (nothing landed, nothing to decide), the feedback a run may still read, and the landed and stopped notes the manager receives |
 | `src/work/corrections.ts` | Which kept corrections reach a later item's plan (this employee's, active, of the same kind, newest five within 3,000 characters), their scrub at prompt assembly, and the planner's and executor's sections with the rule that a correction revises and never overrides |
 | `src/work/execute-skill.ts` | Per-invocation skill agents, procedure contracts and mock/real action schemas, the deferral audit, the one-shot argument repair, the manager's answers and feedback as evidence, and dependent closing actions |
@@ -1152,7 +1152,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ### 目录
 
-**从这里开始** · [在线演示](#在线演示) · [披露](#披露) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
+**从这里开始** · [在线演示](#在线演示) · [披露](#披露) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发：三种运行方式](#local-dev)
 
 **运行** · [托管演示](#托管演示) · [本地运行，云端模型](#本地运行云端模型) · [本地运行，本地模型](#本地运行本地模型) · [真实模式：两种本地方式的共同基础](#真实模式) · [备份、恢复与升级](#备份恢复与升级) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
@@ -1541,7 +1541,7 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
 4. **对工作做决策。** 服务端会自行推动每个事项完成评估、计划和执行，所以不打开 dashboard 工作也会继续；工作队列上的 "Check for new work" 会立即轮询已连接的系统，而不必等下一次五分钟一轮的 intake，每分钟最多一次。Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。当有两个或更多事项在等待时，队列顶部的面板会列出每一条被暂缓的行及其精确 payload，可以在一处批准它们，每个事项仍受各自运行的约束；在其他请求仍未决定时到达的 DM 请求会带上同一份清单和一个批次码，它只决定那些仍与发送时完全一致的成员。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。计划若触及工作章程中某个悬而未决的问题，批准卡片会把它问出来，每个问题只问一次；作答即批准计划，答案作为新版本写入工作章程，并作为已批准证据送达该次运行。工作章程卡片以同样方式修订已批准的工作章程：编辑条款、划掉规则、添加系统、回答问题，被搁置的工作会按新版本重新评估。被 Agent 判定为不值得投入、或超出其范围而跳过的事项会显示原因和一个 Retry；重试即你的决定（值得做，或可以交给它），它会跳过那一条规则重新评估（计划仍需你批准）。失败运行的 Retry 可附一条可选备注：你在其中陈述的事实会被当作该次重试的已批准证据，由它解决的计划步骤会按你的话记录为已满足，你要求的改动会被执行；备注留在卡片上，运行读取后会标记为已处理。已完成的运行也可以同样方式退回：其 Retry 必须附备注，备注会作为你的指示送达 Agent。一次运行若什么都没落地、也没有留下需要决定的事项，会记录为 stopped，原因显示在卡片上，收尾 action 被扣留而不是暂缓，且不会给你发任何消息；已落地工作的运行会用一条 DM 告诉你，或者在 "Manager DMs" 控件设为每小时时汇总为每小时一份摘要，而决策请求始终即时送达。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
 
-   第一天的决策按队列给出的顺序出现（冷启动上限一次只跑一项）：一条聊天请求的首次运行有两种结局——一条发往原帖线程的公开回复与发给你的 DM 一起被暂缓，你批准后即落地；或者只有一条带着问题的 DM，此时你用备注把已完成的事项退回，回复就会以暂缓状态返回。只有网页界面的系统，其 runbook 序列（登录、填值、保存、回读）会作为一个浏览器批次整体暂缓；整体批准后，收尾的工单评论和状态变更会在回读之后另行暂缓。被暂缓的工单评论若过于单薄，就带书面理由拒绝：确认已落地的 DM，点 Retry，修订版会带着你的理由以暂缓状态返回——引用文档的评论与状态变更一并出现。若重试反过来向你要一个事实而不是起草，就再 Retry 一次，把该事实写进备注。
+   第一天的决策按队列给出的顺序出现（冷启动上限一次只跑一项）：一条聊天请求的首次运行有两种结局：一条发往原帖线程的公开回复与发给你的 DM 一起被暂缓，你批准后即落地；或者只有一条带着问题的 DM，此时你用备注把已完成的事项退回，回复就会以暂缓状态返回。只有网页界面的系统，其 runbook 序列（登录、填值、保存、回读）会作为一个浏览器批次整体暂缓；整体批准后，收尾的工单评论和状态变更会在回读之后另行暂缓。被暂缓的工单评论若过于单薄，就带书面理由拒绝：确认已落地的 DM，点 Retry，修订版会带着你的理由以暂缓状态返回：引用文档的评论与状态变更一并出现。若重试反过来向你要一个事实而不是起草，就再 Retry 一次，把该事实写进备注。
 
    你对某个事项说过的话会留给该员工以后的工作。随 Retry 附上的备注、驳回一次运行的理由，以及取消计划的理由（计划卡片上的 Cancel 可以附一条），都会作为该员工的一条纠正保留下来，列在其 dashboard 的 Kept corrections 中，注明来自哪个事项、之后应用到了哪些事项。之后规划同类事项时，最新的几条（最多五条，合计不超过 3,000 字符）会放到规划器面前；应用了某条纠正的计划会在卡片上注明并引用原话，执行时也会带上它。纠正可以改变工作的做法，也可以回答文档留给你决定的问题；它不会凌驾于工作章程、审批、授权、撤销授权或精确 action 关卡之上，不会扩大该员工的范围（那需要修订工作章程），也不会传给其他员工。点 Retire 即停止把它反馈给后续工作。对已取消的计划点 Retry 会带着你的理由起草一份新计划；即使打开了自主执行，它也会先回到你这里，批准之前不会执行任何动作；你否决的那份计划永远不会执行。
 

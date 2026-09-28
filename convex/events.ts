@@ -24,8 +24,9 @@ import { EVENT_TYPES } from '../src/events/contract';
 import { eventsOfType } from './eventLog';
 
 /**
- * Events feed - written once by the browser's side and patched in place by the
- * server when a later phase completes a row (`work.ts`); drives the live UI ticker. The reading side
+ * Events feed - inserted by the internal log mutation only, and patched in place
+ * by the server when a later phase completes a row (`work.ts`); drives the live
+ * UI ticker. The reading side
  * enforces per-account ownership; the writing side is internal-only.
  */
 
@@ -156,7 +157,7 @@ function withoutOwner(row: Doc<'retirements'>): Omit<Doc<'retirements'>, 'userId
  * The owner's retired employees, newest first, each its `retirements` row
  * redacted for export: what the retire deleted and revoked, and the claims
  * and rejections its colleagues still meet (N1's owner-keyed tombstone). The
- * row's owner key is the owner's identity subject and never leaves; the
+ * row's owner key is `ownerKeyOf` the owner's identity and never leaves; the
  * trace's agent names the owner once, as the recompute needs it.
  */
 async function retiredEmployees(

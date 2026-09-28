@@ -44,7 +44,7 @@ export default defineSchema({
     /** Sources the owner unticked at deploy. Everything else the owner links,
      * before or after the deploy, is inherited. */
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
-    /** Clerk user id (`identity.subject`). Optional for legacy rows; new
+    /** The owner key (`ownerKeyOf` the caller's identity). Optional for legacy rows; new
      * deploys must populate it. Queries scope by this so each owner's
      * agents are isolated. */
     userId: v.optional(v.string()),

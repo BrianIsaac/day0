@@ -14,6 +14,7 @@ export const DEV_NO_AUTH_ISSUER = 'https://dev-no-auth.day0.local';
 /** Checked against the token's `aud` claim by the deployment. */
 export const DEV_NO_AUTH_AUDIENCE = 'day0-dev-no-auth';
 
+/** The `kid` the local key is published and looked up under. */
 export const DEV_NO_AUTH_KEY_ID = 'day0-dev-no-auth';
 
 /**
@@ -24,4 +25,5 @@ export const DEV_NO_AUTH_KEY_ID = 'day0-dev-no-auth';
  */
 export const DEV_NO_AUTH_SESSION_CLAIM = 'sid';
 
+/** The signing algorithm: ECDSA on P-256, the curve the generated keypair uses. */
 export const DEV_NO_AUTH_ALGORITHM = 'ES256';

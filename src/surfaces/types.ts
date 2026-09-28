@@ -6,7 +6,7 @@ import type { PersistedSurfaceVerdict } from './verdict';
 /** The deployment's surface mode: the seeded mock office, or the reader's real systems. */
 export type SurfaceMode = 'mock' | 'real';
 
-/** The ways a real system can be reached, in the order the ladder tries them. */
+/** The three rungs a real system is reached by, in ladder order, then the escalation that ends the ladder. */
 export const SURFACE_PATHS = ['mcp', 'documented-api', 'browser-driven', 'escalate'] as const;
 
 /** One way of reaching a real system. */

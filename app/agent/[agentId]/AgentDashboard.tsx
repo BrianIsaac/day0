@@ -132,14 +132,24 @@ interface AuthoringAttempt {
   reason: string;
 }
 
-/** What a panel shows while its chunk is on the way. */
-function PanelLoading({ label }: { label: string }): React.JSX.Element {
+/**
+ * What a panel shows while its chunk is on the way: the panel's own frame,
+ * so the page does not jump by a card when the chunk lands.
+ */
+function PanelLoading({ label, frame }: { label: string; frame: string }): React.JSX.Element {
   return (
-    <p className="text-xs text-[var(--color-muted)]" role="status">
+    <p
+      className={`${frame} flex items-center justify-center text-xs text-[var(--color-muted)]`}
+      role="status"
+    >
       Loading {label}
     </p>
   );
 }
+
+/** The frames the three panels occupy, as their own markup sizes them. */
+const ROOM_FRAME = 'min-h-[28rem] rounded-xl border border-[var(--color-border)]';
+const ENVIRONMENT_FRAME = 'min-h-[30rem] rounded-xl border border-[var(--color-border)]';
 
 /*
  * The three panels below are the page's own chunks, loaded when they mount:
@@ -149,15 +159,15 @@ function PanelLoading({ label }: { label: string }): React.JSX.Element {
  * the server.
  */
 const ChatRoom = dynamic(() => import('./ChatRoom').then((module) => module.ChatRoom), {
-  loading: () => <PanelLoading label="the 1:1" />,
+  loading: () => <PanelLoading label="the 1:1" frame={ROOM_FRAME} />,
 });
 const VoiceRoom = dynamic(() => import('./VoiceRoom').then((module) => module.VoiceRoom), {
   ssr: false,
-  loading: () => <PanelLoading label="the 1:1" />,
+  loading: () => <PanelLoading label="the 1:1" frame={ROOM_FRAME} />,
 });
 const MockEnvironment = dynamic(
   () => import('./MockEnvironment').then((module) => module.MockEnvironment),
-  { loading: () => <PanelLoading label="the work environment" /> },
+  { loading: () => <PanelLoading label="the work environment" frame={ENVIRONMENT_FRAME} /> },
 );
 
 /** The employee's page: the 1:1, the charter, the queue, the skills, the permissions and the office. */

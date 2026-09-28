@@ -130,7 +130,7 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
                     </td>
                   ))}
                   <td className="px-3 py-1.5 text-[10px] text-[var(--color-muted)]">
-                    {r.addedBy ?? ' - '}
+                    {r.addedBy ?? '-'}
                   </td>
                 </tr>
               ))

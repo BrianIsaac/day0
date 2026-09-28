@@ -4323,7 +4323,7 @@ export const resendDecisionRequest = mutation({
   },
 });
 
-/** Public, owner-guarded: retries a failed or stopped item with the manager's optional note as approved evidence. */
+/** Public, owner-guarded: retries a failed or stopped item, keeping the manager's optional note as feedback for the next run. */
 export const retryFailed = mutation({
   args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -4473,6 +4473,7 @@ export const reconcileFailed = mutation({
     }
     const identity = await getCallerOrThrow(ctx);
     const confirmedAt = Date.now();
+    // `actor` is the owner key, one per owner, not the person; U13 D2 adds the session.
     const providerReconciliation = { actor: identity.ownerKey, confirmedAt, entries };
     await ctx.db.patch(args.workItemId, { providerReconciliation });
     await appendEvent(ctx, {

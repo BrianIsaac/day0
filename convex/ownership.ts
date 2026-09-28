@@ -80,7 +80,7 @@ export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx):
   return identity;
 }
 
-/** The employee, if the caller owns it; throws otherwise. Every public function on an employee's rows calls this. */
+/** The employee, if the caller owns it; throws otherwise. The guard for a row keyed by agent id; the four below cover rows keyed otherwise. */
 export async function assertOwnsAgent(
   ctx: QueryCtx | MutationCtx,
   agentId: Id<'agents'>,

@@ -557,7 +557,7 @@ function classesCompatible(left: string, right: string): boolean {
   return left === right || left === 'other' || right === 'other';
 }
 
-/** Whether two documented identities name one system: same class and a shared slug or name key. */
+/** Whether two documented identities name one system: never with conflicting hosts; then a shared slug, whatever the class; then, in one class, a shared endpoint, a shared host with a compatible name, or a compatible name key. */
 export function sameDocumentedSystem(
   leftClass: string,
   left: DocumentedSystemIdentity,

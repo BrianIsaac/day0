@@ -23,8 +23,9 @@ Two things are replaced in every recording, by `pnpm fixtures:substitute`
 
 - the manager's Slack DM channel id, which becomes `D0MANAGER`;
 - the operator's name as manager or requester, which becomes `Sam`
-  (`Sam Ortiz`, `sam.ortiz` where a recording carried the full name or a
-  handle), under decision N6: the product carries no real person's name.
+  (`Sam Ortiz`, `sam.ortiz`, and `sam/` as a git branch prefix, where a
+  recording carried the full name, a handle or a branch), under decision
+  N6: the product carries no real person's name.
 
 `pnpm fixtures:substitute --check` fails naming any file the rule would still
 change, and `tests/scripts/fixture-substitution.test.ts` runs that check over

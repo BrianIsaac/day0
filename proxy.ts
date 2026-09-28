@@ -28,7 +28,7 @@ import {
  * must therefore establish the caller in their own handler as well, and
  * never treat this file as their only boundary.
  *
- * In no-auth dev mode Clerk's middleware never runs at all — invoking it
+ * In no-auth dev mode Clerk's middleware never runs at all - invoking it
  * without a `ClerkProvider` anywhere in the app would only manufacture a
  * dependency the rest of that mode has deliberately dropped. What runs
  * in its place is the boundary that mode actually claims: the caller must
