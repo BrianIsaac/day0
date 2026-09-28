@@ -113,9 +113,9 @@ const STOPPED_READ_LIMIT = 25;
 const DOC_SOURCE_READ_LIMIT = 100;
 
 /**
- * Bound on an employee's completions read for the month. Each carries its
- * run's output, so the bound is kept low; beyond it the month's count is a
- * floor and says so.
+ * Bound on an employee's completions read for the month, the newest first.
+ * Each carries its run's output, so the bound is kept low; beyond it the
+ * month's earliest days are left out and the count says it is a floor.
  */
 const MONTH_LANDED_READ_LIMIT = 100;
 
@@ -149,17 +149,17 @@ async function landedThisMonth(
   const zone = agentZone(agent);
   const month = dayKey(now, zone).slice(0, 7);
   const monthStart = dayStart(`${month}-01`, zone);
-  const completions = await eventsOfType(ctx, agent._id, 'work.completed', {
-    from: monthStart,
-  }).take(MONTH_LANDED_READ_LIMIT);
-  // The index yields oldest first, so the first completion of an item is the one kept.
+  // Newest first, so a month past the bound still shows its latest days, today among them;
+  // one more than the bound is read to tell a full month from a longer one.
+  const read = await eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
+    .order('desc')
+    .take(MONTH_LANDED_READ_LIMIT + 1);
   const firstLanded = new Map<string, number>();
-  for (const event of completions) {
+  for (const event of read.slice(0, MONTH_LANDED_READ_LIMIT)) {
     if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
     const workItemId: unknown = event.payload.workItemId;
-    if (typeof workItemId === 'string' && !firstLanded.has(workItemId)) {
-      firstLanded.set(workItemId, event.createdAt);
-    }
+    // Read newest first, so the last completion kept per item is its first in the month.
+    if (typeof workItemId === 'string') firstLanded.set(workItemId, event.createdAt);
   }
   const byDay = new Map<string, number>();
   for (const at of firstLanded.values()) {
@@ -171,7 +171,7 @@ async function landedThisMonth(
     days: [...byDay]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([day, landed]) => ({ day, landed })),
-    atLeast: completions.length === MONTH_LANDED_READ_LIMIT,
+    atLeast: read.length > MONTH_LANDED_READ_LIMIT,
   };
 }
 

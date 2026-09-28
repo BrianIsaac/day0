@@ -1500,6 +1500,57 @@ describe('the employee roster', (): void => {
     const glyph = '\u{1F600}';
     expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
   });
+  it('keeps today’s landings when a busy month passes the bound, and says the count is a floor', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    const landOn = async (at: string, count: number, prefix: string): Promise<void> => {
+      vi.setSystemTime(new Date(at));
+      await harness.run(async (ctx) => {
+        for (let index = 0; index < count; index += 1) {
+          await ctx.db.insert('events', {
+            agentId: mira,
+            type: 'work.completed',
+            payload: { workItemId: `${prefix}-${index}`, output: {} },
+            createdAt: Date.now(),
+          });
+        }
+      });
+    };
+    await landOn('2026-09-02T02:00:00Z', 100, 'early');
+    await landOn('2026-09-26T02:00:00Z', 1, 'today');
+    vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    const [busy] = await owner.query(api.agents.rosterForUser, {});
+
+    expect(busy?.landedThisMonth.days.at(-1)).toEqual({ day: '2026-09-26', landed: 1 });
+    expect(busy?.landedThisMonth.atLeast).toBe(true);
+  });
+
+  it('reads a month of exactly the bound’s landings as complete', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 100; index += 1) {
+        await ctx.db.insert('events', {
+          agentId: mira,
+          type: 'work.completed',
+          payload: { workItemId: `item-${index}`, output: {} },
+          createdAt: Date.now(),
+        });
+      }
+    });
+
+    const [row] = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.agents.rosterForUser, {});
+
+    expect(row?.landedThisMonth).toMatchObject({ days: [{ landed: 100 }], atLeast: false });
+  });
+
   it('counts each item landed this month once, on the day it first landed in the employee’s zone', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const harness = convexTest(schema, allConvexModules());
