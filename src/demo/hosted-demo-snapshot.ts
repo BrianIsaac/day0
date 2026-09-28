@@ -26,15 +26,17 @@ export interface RecordingMeta {
   clock: string;
   /** Offset of the last recorded event, as `+MM:SS`. */
   spanLabel: string;
-  /** The day the export this page is built from was taken, as `YYYY-MM-DD`. */
+  /** The day the export this page is built from was taken, as `YYYY-MM-DD`; the run it shows came before. */
   recordedOn: string;
-  /** The short commit of the frontend build the hosted deployment was serving that day. */
+  /** The short commit of the build the hosted deployment was serving that day. */
   revision: string;
+  /** The day that build went live on the hosted deployment, as `YYYY-MM-DD`. */
+  liveSince: string;
 }
 
-/** The recording's date as the page prints it, in British English: `12 September 2026`. */
-export function recordedOnLabel(recording: Pick<RecordingMeta, 'recordedOn'>): string {
-  return new Date(`${recording.recordedOn}T00:00:00Z`).toLocaleDateString('en-GB', {
+/** A `YYYY-MM-DD` day as the pages print it, in British English: `12 September 2026`. */
+function dayLabel(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -43,16 +45,18 @@ export function recordedOnLabel(recording: Pick<RecordingMeta, 'recordedOn'>): s
 }
 
 /**
- * The one sentence that dates the recording and names its build, and says
- * the product has moved on since (decision Q3: date and caveat now,
- * regenerate later).
+ * The sentences that date the export, name its build and the day that build
+ * went live, say the run shown took place before the export, and say the
+ * product has moved on since (decision Q3). The export is what carries a date;
+ * the run is told in offsets only.
  */
 export function recordingProvenanceLine(
-  recording: Pick<RecordingMeta, 'recordedOn' | 'revision'>,
+  recording: Pick<RecordingMeta, 'recordedOn' | 'revision' | 'liveSince'>,
 ): string {
   return (
-    `Recorded from the hosted deployment on ${recordedOnLabel(recording)}, frontend build ` +
-    `${recording.revision}. The product has moved on since, and this page is not regenerated with it.`
+    `Exported from the hosted deployment on ${dayLabel(recording.recordedOn)} (build ` +
+    `${recording.revision}, live since ${dayLabel(recording.liveSince)}); the run it shows took ` +
+    'place before that and is told in offsets. The product has moved on since.'
   );
 }
 

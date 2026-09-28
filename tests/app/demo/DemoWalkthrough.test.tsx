@@ -37,11 +37,10 @@ describe('what the walkthrough tells a visitor it is', (): void => {
     expect(text).toContain(HOSTED_DEMO_SNAPSHOT.recording.clock);
   });
 
-  it('dates the recording, names the build it came from and says the product has moved on (Q3)', (): void => {
+  it('dates the export, names the build and when it went live, and says the run came before it (Q3)', (): void => {
     expect(text).toContain(
-      'Recorded from the hosted deployment on 12 September 2026, frontend build 3ed8779.',
+      'Exported from the hosted deployment on 12 September 2026 (build 3ed8779, live since 13 August 2026); the run it shows took place before that and is told in offsets. The product has moved on since.',
     );
-    expect(text).toContain('The product has moved on since');
   });
 });
 

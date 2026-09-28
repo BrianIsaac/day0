@@ -7,7 +7,8 @@
     "clock": "Times are minutes and seconds from the moment the agent was deployed.",
     "spanLabel": "+12:01",
     "recordedOn": "2026-09-12",
-    "revision": "3ed8779"
+    "revision": "3ed8779",
+    "liveSince": "2026-08-13"
   },
   "agent": {
     "id": "agent-1",
