@@ -146,14 +146,20 @@ export function redactForExport(value: unknown): unknown {
 /**
  * The owner's retired employees, newest first, each its `retirements` row
  * redacted for export: what the retire deleted and revoked, and the claims
- * and rejections its colleagues still meet (N1's owner-keyed tombstone).
+ * and rejections its colleagues still meet (N1's owner-keyed tombstone). The
+ * row's owner key is the owner's identity subject and never leaves; the
+ * trace's agent names the owner once, as the recompute needs it.
  */
 async function retiredEmployees(
   ctx: QueryCtx,
   owner: string | undefined,
 ): Promise<TraceRetirement[]> {
   if (owner === undefined) return [];
-  return (await ownerRetirements(ctx, owner)).map((row) => redactForExport(row) as TraceRetirement);
+  return (await ownerRetirements(ctx, owner)).map((row): TraceRetirement => {
+    const { userId: subject, ...rest } = row;
+    void subject;
+    return redactForExport(rest) as TraceRetirement;
+  });
 }
 
 /**

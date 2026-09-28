@@ -100,10 +100,11 @@ export interface TombstoneRetirement {
 }
 
 /**
- * One retired employee of the owner: its `retirements` row, redacted as the
- * export redacts, or in a version 2 trace its tombstone event.
+ * One retired employee of the owner: its `retirements` row without the
+ * owner's subject, redacted as the export redacts, or in a version 2 trace
+ * its tombstone event.
  */
-export type TraceRetirement = Doc<'retirements'> | TombstoneRetirement;
+export type TraceRetirement = Omit<Doc<'retirements'>, 'userId'> | TombstoneRetirement;
 
 /**
  * Who and what the trace is of, and where it came from: the release and

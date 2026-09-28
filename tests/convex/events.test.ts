@@ -348,6 +348,8 @@ describe('the paged trace export', (): void => {
         rejections: [],
       }),
     ]);
+    // The owner's identity subject never leaves with the row (wave 3.5 review m18).
+    expect(trace.owner.retired[0]).not.toHaveProperty('userId');
   });
 
   it('flags an evaluation agent instead of carrying its reserved address', async (): Promise<void> => {
