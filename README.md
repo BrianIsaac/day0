@@ -486,7 +486,7 @@ Then, in the browser:
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
 
 2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
-3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each needs *both* the manager and IT approval buttons - in a single-user run that is you twice. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the second approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
+3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each takes one approval, the manager's Approve button. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
 
    ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 
@@ -1534,7 +1534,7 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
 
 2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；章程记录的是你的回答。
-3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片都需要 manager 和 IT *两个*批准按钮，在单用户运行中就是你点两次。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为第二次批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
+3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片只需一次批准，即 manager 的 Approve 按钮。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
 
    ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 

@@ -313,6 +313,9 @@ describe('what first success looks like', (): void => {
     expect(FIRST_SUCCESS[2].action).toContain('approve the charter');
     expect(FIRST_SUCCESS[2].detail).toContain('work queue');
     expect(FIRST_SUCCESS[3].action).toContain('connection cards');
+    // One approval by the manager (Q10); nothing names a second approver.
+    expect(FIRST_SUCCESS[3].detail).toContain('one approval, the manager');
+    expect(FIRST_SUCCESS[3].detail).not.toMatch(/\bIT\b/);
   });
 
   it('is what the terminal prints in real mode, so the page and the command agree', (): void => {
