@@ -13,7 +13,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
-import { credentialPageRef, credentialRefRange } from '../src/docs/redaction';
+import { credentialPageRef, credentialRefRange, isValueKeyedRef } from '../src/docs/redaction';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
@@ -84,6 +84,13 @@ async function fenceSyncWrite(
  * switch that ends the unbound open of a row without a key id.
  */
 export const CREDENTIAL_RESEAL_MIGRATION = 'credentials-reseal';
+
+/**
+ * The migration that rewrites each page-derived row's ref to the value-keyed
+ * form (`credentialSourceRef`), which it must open the value to fingerprint.
+ * It runs after the re-seal, so every row it opens is bound to its owner.
+ */
+export const CREDENTIAL_VALUE_REF_MIGRATION = 'credentials-value-refs';
 
 /**
  * Whether a row without a key id may still open unbound: true until the
@@ -840,6 +847,98 @@ export const applyReseal = internalMutation({
   },
 });
 
+/** A page-derived row as the ref rewrite reads it; only the Node action it goes to sees the ciphertext. */
+export interface ValueRefRow extends ResealRow {
+  readonly sourceId: Id<'docSources'>;
+  readonly ref: string;
+}
+
+/**
+ * One page of every credential row, in table order, for the ref rewrite.
+ * Internal; read by `credentialCryptoActions.valueRefPage`, which never
+ * returns a value. Only page-derived rows holding a value on a ref from
+ * before value-keyed refs are returned; the rest are read past.
+ */
+export const valueRefBatch = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    rows: ValueRefRow[];
+    read: number;
+    cursor: string;
+    isDone: boolean;
+    allowUnbound: boolean;
+  }> => {
+    const page = await ctx.db
+      .query('credentials')
+      .paginate({ cursor: args.cursor, numItems: RESEAL_PAGE });
+    return {
+      rows: page.page.filter(holdsLegacyRef).map(
+        (row): ValueRefRow => ({
+          _id: row._id,
+          userId: row.userId,
+          ciphertext: row.ciphertext,
+          iv: row.iv,
+          ...(row.keyId !== undefined ? { keyId: row.keyId } : {}),
+          sourceId: row.source.sourceId,
+          ref: row.source.ref,
+        }),
+      ),
+      read: page.page.length,
+      cursor: page.continueCursor,
+      isDone: page.isDone,
+      allowUnbound: await unboundOpenAllowed(ctx),
+    };
+  },
+});
+
+/**
+ * Move each row of one page of the ref rewrite to its value-keyed ref.
+ * Internal; written by `credentialCryptoActions.valueRefPage`.
+ *
+ * A row is moved only while it is still at the ref the action read it at, so
+ * a row a sync moved in between (`moveToRef`) is left where the sync put it.
+ * A row whose value-keyed ref another row of the page already holds (one
+ * value stored twice by an earlier release) is left as it was and returned,
+ * so the action logs it and the status counts it as remaining.
+ *
+ * @returns How many rows moved, and the ids of those another row blocked.
+ */
+export const applyValueRefs = internalMutation({
+  args: {
+    rows: v.array(
+      v.object({ credentialId: v.id('credentials'), fromRef: v.string(), ref: v.string() }),
+    ),
+  },
+  handler: async (ctx, args): Promise<{ changed: number; blocked: Id<'credentials'>[] }> => {
+    let changed = 0;
+    const blocked: Id<'credentials'>[] = [];
+    for (const moved of args.rows) {
+      const row = await ctx.db.get(moved.credentialId);
+      if (!row || typeof row.source === 'string' || row.source.ref !== moved.fromRef) continue;
+      const { sourceId } = row.source;
+      const taken = await ctx.db
+        .query('credentials')
+        .withIndex('by_user_source_ref', (index) =>
+          index
+            .eq('userId', row.userId)
+            .eq('source.sourceId', sourceId)
+            .eq('source.ref', moved.ref),
+        )
+        .first();
+      if (taken) {
+        blocked.push(row._id);
+        continue;
+      }
+      await ctx.db.patch(row._id, { source: { sourceId, ref: moved.ref } });
+      changed += 1;
+    }
+    return { changed, blocked };
+  },
+});
+
 /** The most rows a count of the credential table reads before it answers "at least". */
 const KEY_COUNT_SCAN_LIMIT = 4_000;
 
@@ -849,12 +948,35 @@ export interface CredentialKeyCounts {
   readonly byKeyId: Readonly<Record<string, number>>;
   /** Rows holding a value with no key id: sealed before the re-seal reached them. */
   readonly unkeyed: number;
+  /**
+   * Page-derived rows holding a value whose ref is not keyed by it yet: the
+   * rows `credentials-value-refs` has still to rewrite.
+   */
+  readonly legacyRefs: number;
   /** True when the table held more rows than the count read, so every figure is a floor. */
   readonly atLeast: boolean;
 }
 
+/** A page-derived row holding a value. */
+type PageValueRow = Doc<'credentials'> & {
+  ciphertext: string;
+  iv: string;
+  source: { sourceId: Id<'docSources'>; ref: string };
+};
+
+/** Whether a row holds a value on a page ref from before value-keyed refs. */
+function holdsLegacyRef(row: Doc<'credentials'>): row is PageValueRow {
+  return (
+    row.ciphertext !== undefined &&
+    row.iv !== undefined &&
+    typeof row.source !== 'string' &&
+    !isValueKeyedRef(row.source.ref)
+  );
+}
+
 /**
- * Count the rows holding a value by the key that sealed them.
+ * Count the rows holding a value by the key that sealed them, and those whose
+ * page ref is not yet keyed by their value.
  *
  * @param ctx - A query or mutation context.
  */
@@ -862,12 +984,14 @@ export async function credentialKeyCounts(ctx: QueryCtx): Promise<CredentialKeyC
   const rows = await ctx.db.query('credentials').take(KEY_COUNT_SCAN_LIMIT + 1);
   const byKeyId: Record<string, number> = {};
   let unkeyed = 0;
+  let legacyRefs = 0;
   for (const row of rows.slice(0, KEY_COUNT_SCAN_LIMIT)) {
     if (row.ciphertext === undefined) continue;
     if (row.keyId === undefined) unkeyed += 1;
     else byKeyId[row.keyId] = (byKeyId[row.keyId] ?? 0) + 1;
+    if (holdsLegacyRef(row)) legacyRefs += 1;
   }
-  return { byKeyId, unkeyed, atLeast: rows.length > KEY_COUNT_SCAN_LIMIT };
+  return { byKeyId, unkeyed, legacyRefs, atLeast: rows.length > KEY_COUNT_SCAN_LIMIT };
 }
 
 /** Rows one page of `keyCounts` reads. */

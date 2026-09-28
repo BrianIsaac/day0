@@ -29,7 +29,11 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
-import { CREDENTIAL_RESEAL_MIGRATION, credentialKeyCounts } from './credentials';
+import {
+  CREDENTIAL_RESEAL_MIGRATION,
+  CREDENTIAL_VALUE_REF_MIGRATION,
+  credentialKeyCounts,
+} from './credentials';
 import { backfillAccessSetByPage, restartAccessClocksPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
@@ -57,21 +61,29 @@ export const MIGRATION_NAMES = [
   'agents-avatar-digest',
   'mirrors-rekey',
   CREDENTIAL_RESEAL_MIGRATION,
+  CREDENTIAL_VALUE_REF_MIGRATION,
 ] as const;
 
 /** One migration's name. */
 export type MigrationName = (typeof MIGRATION_NAMES)[number];
 
 /**
- * A migration whose page runs in an action: the re-seal opens and seals
- * values, which only the Node runtime can do. Its pages are recorded by
- * `recordActionPage`; every other migration's page is one mutation.
+ * The migrations whose page runs in an action: the re-seal opens and seals
+ * values, and the ref rewrite opens and fingerprints them, which only the
+ * Node runtime can do. Their pages are recorded by `recordActionPage`; every
+ * other migration's page is one mutation.
  */
-type ActionMigrationName = typeof CREDENTIAL_RESEAL_MIGRATION;
+const ACTION_MIGRATION_NAMES = [
+  CREDENTIAL_RESEAL_MIGRATION,
+  CREDENTIAL_VALUE_REF_MIGRATION,
+] as const;
+
+/** A migration whose page runs in an action. */
+type ActionMigrationName = (typeof ACTION_MIGRATION_NAMES)[number];
 
 /** Whether a migration's page runs in an action rather than a mutation. */
 function isActionMigration(name: MigrationName): name is ActionMigrationName {
-  return name === CREDENTIAL_RESEAL_MIGRATION;
+  return (ACTION_MIGRATION_NAMES as readonly MigrationName[]).includes(name);
 }
 
 /** What a migration does, the release that ships it and what the next release may then remove. */
@@ -143,6 +155,12 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 're-seals every stored credential value bound to its owner under the current key and writes the key id; once it has finished, a row without a key id no longer opens unbound (Q15). A row the key cannot open is logged by id and left as it was, and counted as remaining',
     thenRemoves: 'the unbound open of a row without a key id in openOwnedCredential',
   },
+  [CREDENTIAL_VALUE_REF_MIGRATION]: {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'rewrites each documentation credential’s ref from its place and label on the page to the page and a fingerprint of its value, so a relabelled or moved value keeps its credential and a swapped one is new; the row keeps its id and every surface bound to it. A row the key cannot open, or whose value another row of its page already holds, is logged by id, left as it was and counted as remaining',
+    thenRemoves:
+      'nothing: a sync moves a row still on an old ref by its value, as it does after a key rotation',
+  },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
@@ -153,7 +171,7 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
 const migrationName = v.union(...MIGRATION_NAMES.map((name) => v.literal(name)));
 
 /** The validator of an action migration's name. */
-const actionMigrationName = v.literal(CREDENTIAL_RESEAL_MIGRATION);
+const actionMigrationName = v.union(...ACTION_MIGRATION_NAMES.map((name) => v.literal(name)));
 
 /** Rows one page of a migration reads. */
 const MIGRATION_PAGE = 100;
@@ -462,11 +480,27 @@ async function resealCredentials(ctx: ActionCtx, cursor: string | null): Promise
   };
 }
 
+/**
+ * Rewrite one page of documentation credentials to value-keyed refs in the
+ * Node runtime. The action writes each page's rows itself; this reports the
+ * page.
+ */
+async function rewriteValueRefs(ctx: ActionCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.runAction(internal.credentialCryptoActions.valueRefPage, { cursor });
+  return {
+    read: page.read,
+    changed: page.changed,
+    cursor: page.cursor,
+    isDone: page.isDone,
+  };
+}
+
 /** Each action migration's page, keyed by name. */
 const ACTION_MIGRATION_PAGES: Readonly<
   Record<ActionMigrationName, (ctx: ActionCtx, cursor: string | null) => Promise<MigrationPage>>
 > = {
   [CREDENTIAL_RESEAL_MIGRATION]: resealCredentials,
+  [CREDENTIAL_VALUE_REF_MIGRATION]: rewriteValueRefs,
 };
 
 /** Each mutation migration's page, keyed by name, so a name with no page fails the typecheck. */
@@ -696,16 +730,21 @@ export const status = internalQuery({
     ]);
     return {
       release: await latestRelease(ctx),
-      migrations: migrations.map(
-        (progress): MigrationProgress =>
+      migrations: migrations.map((progress): MigrationProgress => {
+        const remaining =
           progress.name === CREDENTIAL_RESEAL_MIGRATION
-            ? {
-                ...progress,
-                remaining: counts.unkeyed,
-                ...(counts.atLeast ? { remainingAtLeast: true as const } : {}),
-              }
-            : progress,
-      ),
+            ? counts.unkeyed
+            : progress.name === CREDENTIAL_VALUE_REF_MIGRATION
+              ? counts.legacyRefs
+              : undefined;
+        return remaining === undefined
+          ? progress
+          : {
+              ...progress,
+              remaining,
+              ...(counts.atLeast ? { remainingAtLeast: true as const } : {}),
+            };
+      }),
       pending: migrations.flatMap((row) => (row.completedAt === undefined ? [row.name] : [])),
     };
   },

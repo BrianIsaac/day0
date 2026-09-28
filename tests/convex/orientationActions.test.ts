@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { encrypt } from '../../src/lib/credential-crypto';
+import { credentialValueFingerprint, encrypt, sealForOwner } from '../../src/lib/credential-crypto';
 import { credentialSourceRef } from '../../src/docs/redaction';
 import { presentSurfaceCredential } from '../../src/surfaces/credential-presentation';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -1658,6 +1658,64 @@ describe('orientation run', (): void => {
     const linear = (await surfacesBySlug(harness, agentId)).linear;
     expect(linear).toMatchObject({ credentialId, credentialKind: 'value' });
     expect(JSON.stringify(linear)).not.toContain(value);
+  });
+
+  it('binds the same credential after the migration rewrites its ref as it bound before', async (): Promise<void> => {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      { 'linear-automation.md': notionFixture('linear-automation') },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    const value = ['lin', 'api', 'switch-contract-0123456789abcdef'].join('_');
+    // Stored by a sync before value-keyed refs: the second of two values on the page.
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'linear service token',
+          source: {
+            sourceId,
+            ref: 'linear-automation.md#credential=2-linear%20service%20token',
+          },
+          createdAt: 1,
+          ...sealForOwner(value, { current: key }, 'owner'),
+        }),
+    );
+    await orientDeclared(harness, agentId);
+    const before = (await surfacesBySlug(harness, agentId)).linear;
+    expect(before.credentialId).toBe(credentialId);
+
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toMatchObject({
+      pending: [],
+    });
+    const migrated = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+    expect(migrated?.source).toEqual({
+      sourceId,
+      ref: credentialSourceRef(
+        'linear-automation.md',
+        credentialValueFingerprint(value, key, 'owner'),
+      ),
+    });
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(before._id, {
+          verdict: 'declared',
+          credentialId: undefined,
+          credentialKind: undefined,
+          request: undefined,
+        }),
+    );
+    await orientDeclared(harness, agentId);
+    expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({
+      credentialId,
+      credentialKind: 'value',
+    });
   });
 
   it('leaves the credential unresolved, and says so, when no stored row matches the marker', async (): Promise<void> => {

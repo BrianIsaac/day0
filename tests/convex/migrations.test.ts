@@ -13,9 +13,11 @@ import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
   credentialKeyId,
   credentialOwnerBinding,
+  credentialValueFingerprint,
   encrypt,
   sealForOwner,
 } from '../../src/lib/credential-crypto';
+import { credentialSourceRef } from '../../src/docs/redaction';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -799,5 +801,331 @@ describe('the credential re-seal (Q15, step 14)', (): void => {
     await expect(harness.action(internal.credentials.decrypt, { credentialId: id })).resolves.toBe(
       'new-value',
     );
+  });
+});
+
+/** The ref rewrite's row in `migrations:status`. */
+async function valueRefStatus(harness: Harness): Promise<Record<string, unknown> | undefined> {
+  return (await harness.query(internal.migrations.status, {})).migrations.find(
+    (row) => row.name === 'credentials-value-refs',
+  ) as Record<string, unknown> | undefined;
+}
+
+/** Run one page of the ref rewrite the way `runPending` does: start, page, record. */
+async function valueRefOnePage(harness: Harness): Promise<void> {
+  const start = await harness.query(internal.migrations.migrationStart, {
+    name: 'credentials-value-refs',
+  });
+  const page = await harness.action(internal.credentialCryptoActions.valueRefPage, {
+    cursor: start.cursor,
+  });
+  await harness.mutation(internal.migrations.recordActionPage, {
+    name: 'credentials-value-refs',
+    fromCursor: start.cursor,
+    page: { read: page.read, changed: page.changed, cursor: page.cursor, isDone: page.isDone },
+  });
+}
+
+describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void => {
+  const KEY = randomBytes(32).toString('base64');
+  const LOST_KEY = randomBytes(32).toString('base64');
+
+  /** The ref a sync gives a value on a page under `KEY`. */
+  function valueRef(pageRef: string, plaintext: string, userId: string): string {
+    return credentialSourceRef(pageRef, credentialValueFingerprint(plaintext, KEY, userId));
+  }
+
+  /** One stored row as the store wrote it, on a page ref or entered by a person. */
+  async function storedRow(
+    harness: Harness,
+    row: {
+      userId: string;
+      sourceId: Id<'docSources'>;
+      ref?: string;
+      plaintext: string;
+      key?: string;
+      label?: string;
+      status?: 'superseded';
+      purged?: boolean;
+    },
+  ): Promise<Id<'credentials'>> {
+    const sealed = row.purged
+      ? {}
+      : sealForOwner(row.plaintext, { current: row.key ?? KEY }, row.userId);
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: row.userId,
+          kind: 'value',
+          label: row.label ?? 'linear service token',
+          source: row.ref === undefined ? 'entered' : { sourceId: row.sourceId, ref: row.ref },
+          createdAt: 1,
+          quoted: true,
+          ...sealed,
+          ...(row.status !== undefined ? { status: row.status } : {}),
+          ...(row.purged ? { revokedAt: 2 } : {}),
+        }),
+    );
+  }
+
+  /**
+   * A bed-shaped table: three owners' rows in every shape an upgraded volume
+   * holds, 120 in all, so the rewrite takes three pages.
+   */
+  async function bed(harness: Harness): Promise<{
+    legacy: Array<{ id: Id<'credentials'>; pageRef: string; plaintext: string; userId: string }>;
+    untouched: Id<'credentials'>[];
+    unreadable: Id<'credentials'>[];
+  }> {
+    const owners = ['owner-0', 'owner-1', 'owner-2'];
+    const sources = await Promise.all(owners.map(async (userId) => await source(harness, userId)));
+    const legacy: Array<{
+      id: Id<'credentials'>;
+      pageRef: string;
+      plaintext: string;
+      userId: string;
+    }> = [];
+    const untouched: Id<'credentials'>[] = [];
+    const unreadable: Id<'credentials'>[] = [];
+    const place = (index: number) => ({
+      userId: owners[index % 3],
+      sourceId: sources[index % 3],
+      pageRef: `runbooks/page-${index}.md`,
+    });
+    // Rows needing no change first, so the legacy ones spread over the later pages.
+    for (let index = 0; index < 20; index += 1) {
+      const { userId, sourceId, pageRef } = place(index);
+      const plaintext = `keyed-value-${index}`;
+      untouched.push(
+        await storedRow(harness, {
+          userId,
+          sourceId,
+          plaintext,
+          ref: valueRef(pageRef, plaintext, userId),
+        }),
+      );
+    }
+    for (let index = 0; index < 5; index += 1) {
+      const { userId, sourceId, pageRef } = place(index);
+      untouched.push(await storedRow(harness, { userId, sourceId, plaintext: `entered-${index}` }));
+      untouched.push(
+        await storedRow(harness, {
+          userId,
+          sourceId,
+          ref: `${pageRef}#credential=9-purged`,
+          plaintext: '',
+          purged: true,
+        }),
+      );
+      unreadable.push(
+        await storedRow(harness, {
+          userId,
+          sourceId,
+          ref: `${pageRef}#credential=8-lost`,
+          plaintext: `lost-value-${index}`,
+          key: LOST_KEY,
+        }),
+      );
+    }
+    for (let index = 0; index < 85; index += 1) {
+      const { userId, sourceId, pageRef } = place(100 + index);
+      const plaintext = `legacy-value-${index}`;
+      const ref =
+        index % 2 === 0
+          ? pageRef
+          : `${pageRef}#credential=${(index % 3) + 1}-${encodeURIComponent('linear service token')}`;
+      legacy.push({
+        id: await storedRow(harness, {
+          userId,
+          sourceId,
+          ref,
+          plaintext,
+          ...(index % 17 === 0 ? { status: 'superseded' as const } : {}),
+        }),
+        pageRef,
+        plaintext,
+        userId,
+      });
+    }
+    return { legacy, untouched, unreadable };
+  }
+
+  it('rewrites a bed-shaped table in pages on the runner, keeping each row and its page, and says how many remain', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const harness = limitedHarness();
+    const rows = await bed(harness);
+    const before = await harness.run(
+      async (ctx) =>
+        await Promise.all(rows.untouched.map(async (id) => (await ctx.db.get(id))?.source)),
+    );
+
+    expect(await valueRefStatus(harness)).toMatchObject({ release: '0.6.0', remaining: 90 });
+    await valueRefOnePage(harness);
+    const partway = await valueRefStatus(harness);
+    expect(partway).toMatchObject({ read: 50 });
+    expect(partway?.completedAt).toBeUndefined();
+    expect(partway?.remaining).toBeLessThan(90);
+    expect(partway?.remaining).toBeGreaterThan(5);
+
+    await runAll(harness);
+
+    expect(await valueRefStatus(harness)).toMatchObject({
+      read: 120,
+      changed: 85,
+      remaining: 5,
+      completedAt: expect.any(Number),
+    });
+    for (const { id, pageRef, plaintext, userId } of rows.legacy) {
+      const row = await harness.run(async (ctx) => await ctx.db.get(id));
+      expect(row?.source).toEqual({
+        sourceId: expect.any(String),
+        ref: valueRef(pageRef, plaintext, userId),
+      });
+      expect(row).toMatchObject({ label: 'linear service token', quoted: true });
+      await expect(
+        harness.query(internal.credentials.pageRowsForStore, {
+          userId,
+          sourceId: (row?.source as { sourceId: Id<'docSources'> }).sourceId,
+          pageRef,
+        }),
+      ).resolves.toEqual([expect.objectContaining({ _id: id })]);
+    }
+    const statuses = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          rows.legacy.map(async ({ id }) => (await ctx.db.get(id))?.status ?? 'live'),
+        ),
+    );
+    expect(statuses.filter((status) => status === 'superseded')).toHaveLength(5);
+    expect(
+      await harness.run(
+        async (ctx) =>
+          await Promise.all(rows.untouched.map(async (id) => (await ctx.db.get(id))?.source)),
+      ),
+    ).toEqual(before);
+    const lines = log.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    const leftOnOldRef = lines
+      .filter((line) => String(line.msg ?? line.message ?? '').includes('valueRefs'))
+      .flatMap((line) => line.credentialIds as string[]);
+    expect(leftOnOldRef.sort()).toEqual([...rows.unreadable].sort());
+    expect(JSON.stringify(lines)).not.toMatch(/-value-/);
+  });
+
+  it('gives the sync the ref it would have given, so the next sync finds the row and stores nothing new', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const plaintext = ['lin', 'api', 'migrated-contract-0123456789abcdef'].join('_');
+    const id = await storedRow(harness, {
+      userId: 'owner',
+      sourceId,
+      ref: 'runbook.md#credential=2-linear%20service%20token',
+      plaintext,
+    });
+
+    await runAll(harness);
+
+    const fingerprint = await harness.action(internal.credentialCryptoActions.fingerprint, {
+      plaintext,
+      userId: 'owner',
+    });
+    await expect(
+      harness.action(internal.credentials.store, {
+        userId: 'owner',
+        kind: 'value',
+        label: 'linear service token',
+        plaintext,
+        source: { sourceId, ref: credentialSourceRef('runbook.md', fingerprint) },
+      }),
+    ).resolves.toBe(id);
+    expect(
+      await harness.run(async (ctx) => (await ctx.db.query('credentials').collect()).length),
+    ).toBe(1);
+  });
+
+  it('leaves a row whose value another row of its page already holds, logs it and still finishes', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const plaintext = 'twice-stored-value';
+    const keyed = await storedRow(harness, {
+      userId: 'owner',
+      sourceId,
+      ref: valueRef('runbook.md', plaintext, 'owner'),
+      plaintext,
+    });
+    const twin = await storedRow(harness, {
+      userId: 'owner',
+      sourceId,
+      ref: 'runbook.md',
+      plaintext,
+    });
+
+    await runAll(harness);
+
+    const [keyedRow, twinRow] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(keyed), ctx.db.get(twin)]),
+    );
+    expect(keyedRow?.source).toEqual({ sourceId, ref: valueRef('runbook.md', plaintext, 'owner') });
+    expect(twinRow?.source).toEqual({ sourceId, ref: 'runbook.md' });
+    expect(await valueRefStatus(harness)).toMatchObject({
+      changed: 0,
+      remaining: 1,
+      completedAt: expect.any(Number),
+    });
+    const logged = log.mock.calls
+      .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .filter((line) => line.reason === 'another row of the page already holds the same value');
+    expect(logged.flatMap((line) => line.credentialIds as string[])).toEqual([twin]);
+  });
+
+  it('leaves a row a sync moved while the page was fingerprinting it', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const id = await storedRow(harness, {
+      userId: 'owner',
+      sourceId,
+      ref: 'runbook.md#credential=1-linear%20service%20token',
+      plaintext: 'moving-value',
+    });
+    const movedTo = valueRef('runbook.md', 'moving-value', 'owner');
+    await harness.run(
+      async (ctx) => await ctx.db.patch(id, { source: { sourceId, ref: movedTo } }),
+    );
+
+    await expect(
+      harness.mutation(internal.credentials.applyValueRefs, {
+        rows: [
+          {
+            credentialId: id,
+            fromRef: 'runbook.md#credential=1-linear%20service%20token',
+            ref: valueRef('runbook.md', 'other-value', 'owner'),
+          },
+        ],
+      }),
+    ).resolves.toEqual({ changed: 0, blocked: [] });
+    expect((await harness.run(async (ctx) => await ctx.db.get(id)))?.source).toEqual({
+      sourceId,
+      ref: movedTo,
+    });
+  });
+
+  it('finishes with no key on a deployment that stores no value', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    await storedRow(harness, {
+      userId: 'owner',
+      sourceId,
+      ref: 'runbook.md',
+      plaintext: '',
+      purged: true,
+    });
+    await runAll(harness);
+    expect(await valueRefStatus(harness)).toMatchObject({ read: 1, changed: 0, remaining: 0 });
   });
 });
