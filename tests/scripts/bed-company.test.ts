@@ -549,11 +549,15 @@ describe('the command line', (): void => {
       scripts: Record<string, string>;
     };
     expect(Object.keys(manifest.scripts).filter((name) => name.startsWith('bed:'))).toEqual([]);
-    const help = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), ['scripts/bed/company.ts', '--help'], {
-      encoding: 'utf8',
-      env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
-      timeout: 60_000,
-    });
+    const help = spawnSync(
+      join(ROOT, 'node_modules/.bin/tsx'),
+      ['scripts/bed/company.ts', '--help'],
+      {
+        encoding: 'utf8',
+        env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
+        timeout: 60_000,
+      },
+    );
     expect(help.status).toBe(0);
     expect(help.stdout).toContain('Usage: pnpm exec tsx scripts/bed/company.ts <verb>');
     expect(help.stdout).not.toContain('bed:company');
