@@ -29,14 +29,13 @@ function tracked(...paths: string[]): string[] {
 // stay on disk for whoever uses them and out of the public tree.
 describe('.gitignore', (): void => {
   it.skipIf(!IN_WORK_TREE)(
-    'keeps the agent skills, their lock and the CLI state file out of the tree (needs git)',
+    'keeps the agent skills, their lock, the CLI state file and its guidelines out of the tree (needs git)',
     (): void => {
       expect(ignored('skills/convex/SKILL.md')).toBe(true);
       expect(ignored('skills-lock.json')).toBe(true);
       expect(ignored('convex/_generated/ai/ai-files.state.json')).toBe(true);
-      expect(
-        tracked('skills', 'skills-lock.json', 'convex/_generated/ai/ai-files.state.json'),
-      ).toEqual([]);
+      expect(ignored('convex/_generated/ai/guidelines.md')).toBe(true);
+      expect(tracked('skills', 'skills-lock.json', 'convex/_generated/ai')).toEqual([]);
     },
   );
 

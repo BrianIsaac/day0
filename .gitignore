@@ -56,7 +56,10 @@ phase*.txt
 # Q8: the vendored Convex agent skills and their lock stay on disk for whoever
 # uses them and out of the public tree. The CLI's state file is what made an
 # interactive `npx convex dev` reinstall them unprompted; `convex.json` turns
-# that installer off (N17).
+# that installer off (N17). The guidelines beside the state file are the
+# same CLI's copy of a third-party prompt, and with the installer off they
+# are a stale snapshot (U6 D3).
 /skills/
 /skills-lock.json
 /convex/_generated/ai/ai-files.state.json
+/convex/_generated/ai/guidelines.md
