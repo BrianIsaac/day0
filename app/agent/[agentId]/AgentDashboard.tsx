@@ -315,6 +315,9 @@ export function AgentDashboard({ agentId }: Props) {
               (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
             )?.reason
           }
+          managerChannel={surfaces.some(
+            (surface) => surface.class === 'chat' && !!surface.managerDmChannelId,
+          )}
         />
 
         <LiveStatus outcome={pageOutcome} />
@@ -457,7 +460,7 @@ export function AutonomyConfirm({
         event.stopPropagation();
         onCancel();
       }}
-      className="absolute right-0 top-full mt-2 w-80 p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
+      className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-80 max-w-[calc(100vw-3rem)] p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
     >
       <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
       <p className="mb-3 leading-relaxed">{AUTONOMY_WARNING}</p>
@@ -888,12 +891,15 @@ export function DashboardHeader({
   agent,
   charter,
   managerLookupFailure,
+  managerChannel = false,
 }: {
   agent: Doc<'agents'>;
   /** What the page is showing, which outranks the row when the two disagree. */
   charter: Doc<'charters'> | null;
   /** A chat surface's failure reason when its probe could not find the manager. */
   managerLookupFailure?: string;
+  /** Whether a chat surface has found the manager's DM; the DM setting waits for one (N7). */
+  managerChannel?: boolean;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setBossEmail = useMutation(api.agents.setBossEmail);
@@ -948,7 +954,7 @@ export function DashboardHeader({
           {/* In real mode the chip is the manager's autonomous-actions
               switch; the hosted mock has no gate for the switch to change, so
               it keeps the static label. */}
-          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
+          {displayState === 'active' && surfaceConfig?.mode === 'real' && managerChannel ? (
             <NotificationModeControl
               mode={managerNotificationMode(agent)}
               onChange={(mode) => setManagerNotifications({ agentId: agent._id, mode })}
@@ -3362,6 +3368,31 @@ export function retryRequest(
 /** The skipped row's control: the manager gives the agent an item it set aside. */
 export const TAKE_IT_ANYWAY = 'Take it anyway';
 
+/** The failed card's control when its run stopped on a question to the manager. */
+export const ANSWER_AND_RETRY = 'Answer and retry';
+
+/**
+ * The question a failed run stopped on, when the stop is the question stop and
+ * the question is still on the row; the card then asks for the answer.
+ *
+ * Args:
+ *   item: The work item row.
+ *
+ * Returns:
+ *   The question's text, or undefined for any other state or stop.
+ */
+export function heldQuestionOf(
+  item: Pick<Doc<'workItems'>, 'state' | 'skipReason' | 'output'>,
+): string | undefined {
+  if (item.state !== 'failed' || !item.skipReason || !isStopped(item.skipReason)) return undefined;
+  if (!isOpenQuestionStop(stopDetail(item.skipReason))) return undefined;
+  const output = item.output as
+    | { openQuestion?: { question?: unknown }; initial?: { openQuestion?: { question?: unknown } } }
+    | undefined;
+  const question = output?.openQuestion?.question ?? output?.initial?.openQuestion?.question;
+  return typeof question === 'string' && question.trim() !== '' ? question : undefined;
+}
+
 /** What Retry does on a skip no rule waives: the item is evaluated again from the start. */
 export const SKIP_RETRY_NOTE =
   'Retry evaluates this item again from the start; the employee may set it aside again for the same reason.';
@@ -4322,6 +4353,10 @@ export function WorkItemCard({
   // own claim elsewhere, a low value) is re-evaluated by Retry: the manager
   // who disagrees always has a control (P3-1).
   const skipRetryable = item.state === 'skipped' && !skipWaivable && !heldByColleague;
+  // A run that stopped on its own question is answered here: the note is the
+  // answer, and only a note on this stop answers it (review D2), so the
+  // control says so and waits for one (U2 decision 5).
+  const heldQuestion = heldQuestionOf(item);
   const noteToken = retryNoteToken(item);
   const [typedRetryNote, setTypedRetryNote] = useState<TypedRetryNote>({
     text: '',
@@ -4810,11 +4845,13 @@ export function WorkItemCard({
                 htmlFor={`retry-note-${item._id}`}
                 className="block text-[10px] text-[var(--color-muted)]"
               >
-                {item.state === 'completed'
-                  ? 'Note for the retry: say what to change or answer what the employee asked'
-                  : cancelledPlan
-                    ? 'Note for the new plan (optional)'
-                    : 'Note for the retry (optional): answer what the employee asked, or say what to change'}
+                {heldQuestion
+                  ? `Your answer to: “${heldQuestion}”`
+                  : item.state === 'completed'
+                    ? 'Note for the retry: say what to change or answer what the employee asked'
+                    : cancelledPlan
+                      ? 'Note for the new plan (optional)'
+                      : 'Note for the retry (optional): answer what the employee asked, or say what to change'}
               </label>
               <input
                 id={`retry-note-${item._id}`}
@@ -4836,15 +4873,22 @@ export function WorkItemCard({
                 () => onRetryFailed(retryNote),
                 takeAnywayNote
                   ? `Taken: ${item.title} goes back to be evaluated.`
-                  : `Sent back: ${item.title}.`,
+                  : heldQuestion
+                    ? `Answer sent: ${item.title} runs again with it.`
+                    : `Sent back: ${item.title}.`,
                 'The item was not sent back.',
               )
             }
-            disabled={deciding || retryBlocked || (item.state === 'completed' && !sendingBack)}
+            disabled={
+              deciding ||
+              retryBlocked ||
+              (item.state === 'completed' && !sendingBack) ||
+              (heldQuestion !== undefined && retryNote.trim() === '')
+            }
             title={takeAnywayNote}
             className="min-h-11 px-3 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {takeAnywayNote ? TAKE_IT_ANYWAY : 'Retry'}
+            {takeAnywayNote ? TAKE_IT_ANYWAY : heldQuestion ? ANSWER_AND_RETRY : 'Retry'}
           </button>
           {retryBlocked && (item.state !== 'completed' || sendingBack) ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">

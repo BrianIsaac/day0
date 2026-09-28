@@ -80,6 +80,7 @@ import {
   PermissionsCard,
   eventItemTitle,
   planApprovalRequest,
+  ANSWER_AND_RETRY,
   SKIP_RETRY_NOTE,
   TAKE_IT_ANYWAY,
   TICKET_REREAD_STOP,
@@ -3558,5 +3559,88 @@ describe('loading is not the same as empty (P3-13)', (): void => {
     const markup = renderToStaticMarkup(<MetricsCard metrics={dashboardMetrics()} />);
     for (const figure of PILOT_FIGURES) expect(markup).toContain(figure.definition);
     expect(markup).toContain('What each pilot figure counts');
+  });
+});
+
+describe('answering the question a run stopped on (U2 decision 5, N7)', (): void => {
+  const question = 'Which template should the notice use?';
+  const stopped = {
+    _id: 'w-q',
+    _creationTime: 1,
+    agentId: 'a1',
+    state: 'failed',
+    title: 'Customs hold notice',
+    contentSummary: 'Send the notice.',
+    sourceSystem: 'linear',
+    sourceCategory: 'ticket-queue',
+    externalId: 'LOG-1',
+    observedAt: 1,
+    contentRefs: [],
+    skipReason: `stopped: ${openQuestionStopReason({ question, steps: [2] })}`,
+    output: {
+      draft: '',
+      notes: '',
+      actions: [],
+      applied: [],
+      openQuestion: { question, steps: [2] },
+    },
+  } as unknown as Doc<'workItems'>;
+
+  it('asks for the answer by name, waits for one, and sends it as the retry note', async (): Promise<void> => {
+    const sent: unknown[] = [];
+    const view = mount(
+      <WorkItemCard
+        item={stopped}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={async () => undefined}
+        onCancelPlan={async () => undefined}
+        onRetryFailed={async (note) => {
+          sent.push(note);
+        }}
+        onReconcileFailed={async () => undefined}
+        onApproveActions={async () => undefined}
+        onRejectActions={async () => undefined}
+        onResendDecision={async () => undefined}
+      />,
+    );
+    const field = [...view.container.querySelectorAll('label')].find(
+      (label) => label.textContent === `Your answer to: “${question}”`,
+    )?.control as HTMLInputElement | null;
+    if (!field) throw new Error('the answer field is not labelled with the question');
+    expect(() => button(view.container, ANSWER_AND_RETRY)).toThrow();
+    typeInto(field, 'Delay notice B.');
+    await press(view.container, ANSWER_AND_RETRY);
+
+    expect(sent).toEqual(['Delay notice B.']);
+    expect(said(view.container)).toEqual(['Answer sent: Customs hold notice runs again with it.']);
+    view.unmount();
+  });
+});
+
+describe('the manager DM setting waits for a manager channel (N7)', (): void => {
+  afterEach((): void => {
+    backend.queries = {};
+  });
+
+  const agent = {
+    _id: 'a1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Priya',
+    userId: 'owner',
+    state: 'active',
+    createdAt: 1,
+  } as unknown as Doc<'agents'>;
+  const approved = { approved: true } as unknown as Doc<'charters'>;
+
+  it('is hidden until a chat surface has found the manager, then offered', (): void => {
+    backend.queries = { 'config:surfaceMode': { mode: 'real', label: 'real' } };
+    const without = renderToStaticMarkup(<DashboardHeader agent={agent} charter={approved} />);
+    expect(without).not.toContain('Manager DMs');
+    const withChannel = renderToStaticMarkup(
+      <DashboardHeader agent={agent} charter={approved} managerChannel={true} />,
+    );
+    expect(withChannel).toContain('Manager DMs');
   });
 });
