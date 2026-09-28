@@ -160,7 +160,7 @@ describe('plan drafter grounding', (): void => {
     planRecorded.instructions.length = 0;
   });
 
-  it('refuses a plan with no step or more than eight, rather than cutting it silently', (): void => {
+  it('refuses a plan with no step or more than eight with its reason, rather than cutting it silently', (): void => {
     const base = {
       summary: 's',
       expectedOutputType: 'message',
@@ -168,8 +168,14 @@ describe('plan drafter grounding', (): void => {
       reversibility: '',
       estimatedMinutes: 5,
     };
-    expect(planSchema.safeParse({ ...base, steps: [] }).success).toBe(false);
-    expect(planSchema.safeParse({ ...base, steps: Array(9).fill('step') }).success).toBe(false);
+    const none = planSchema.safeParse({ ...base, steps: [] });
+    expect(none.error?.issues.map(({ message }) => message)).toEqual([
+      'the plan had no steps; the least is one',
+    ]);
+    const nine = planSchema.safeParse({ ...base, steps: Array(9).fill('step') });
+    expect(nine.error?.issues.map(({ message }) => message)).toEqual([
+      'the plan had 9 steps; the most is 8',
+    ]);
     const eight = planSchema.safeParse({ ...base, steps: Array(8).fill('step') });
     expect(eight.success && eight.data.steps).toHaveLength(8);
   });

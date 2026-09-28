@@ -159,6 +159,15 @@ describe('itemBoundModelFailure', (): void => {
     ).toBe("the model's reply held no valid structured object: Sorry.");
     expect(
       itemBoundModelFailure(
+        Object.assign(new StructuredContractError('did not satisfy the schema'), {
+          issues: ['the plan had 9 steps; the most is 8'],
+        }),
+      ),
+    ).toBe(
+      "the model's reply held no valid structured object: the plan had 9 steps; the most is 8",
+    );
+    expect(
+      itemBoundModelFailure(
         apiError({ statusCode: 400, responseBody: '{"error":{"message":"模型名称不存在"}}' }),
       ),
     ).toBe('the model provider rejected the request (status 400): 模型名称不存在');
