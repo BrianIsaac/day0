@@ -694,6 +694,19 @@ describe('URL attribution', (): void => {
     expect(namesSystem("Linear's MCP endpoint", 'Linear')).toBe(true);
     expect(namesSystem('A nonlinear pipeline', 'Linear')).toBe(false);
     expect(namesSystem('Records live in Northstar-CRM.', 'Northstar CRM')).toBe(true);
+  });
+
+  it('names a system written in CJK characters, which no separator bounds (wave 3.5 review X1)', (): void => {
+    const runbook = '账务系统的 API 基址是 https://ledger.kestrel-demo.example/api/v1/ 。';
+    expect(namesSystem(runbook, '账务系统')).toBe(true);
+    expect(namesSystem('账务系统', '账务系统')).toBe(true);
+    expect(namesSystem('ledger API (账务系统)', '账务系统')).toBe(true);
+    expect(namesSystem('使用Linear工具跟踪', 'Linear')).toBe(true);
+    expect(namesSystem('账务系统2 is another system', '账务系统2')).toBe(true);
+    expect(namesSystem('Slackbot answers', 'Slack')).toBe(false);
+    expect(namesSystem('账务系统2', '账务系统')).toBe(false);
+    expect(namesSystem('Le système Comptabilité', 'Comptabilité')).toBe(true);
+    expect(namesSystem('Comptabilités', 'Comptabilité')).toBe(false);
     expect(namesSystem('Records live in Northstar.', 'Northstar CRM')).toBe(false);
     const slackbot =
       '# Slackbot\n\nSlackbot is reached over MCP at https://mcp.slackbot.example/mcp. No approved API for Slackbot.';
