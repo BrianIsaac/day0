@@ -32,8 +32,9 @@ import {
   NOTIFICATIONS_CHANGE_REASON,
   type ManagerNotificationMode,
 } from '../src/work/manager-notes';
-import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
-import { appendEvent } from './eventLog';
+import { agentZone, canonicalZone, dayKey, dayStart, deploymentZone } from '../src/lib/zone';
+import { appendEvent, eventsOfType } from './eventLog';
+import { isEventOf } from '../src/events/contract';
 
 /** Where a permission grant came from: deployment, the manager, a skill or a surface. */
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
@@ -111,6 +112,69 @@ const STOPPED_READ_LIMIT = 25;
 /** Bound on the owner's documentation sources read for the count. */
 const DOC_SOURCE_READ_LIMIT = 100;
 
+/**
+ * Bound on an employee's completions read for the month. Each carries its
+ * run's output, so the bound is kept low; beyond it the month's count is a
+ * floor and says so.
+ */
+const MONTH_LANDED_READ_LIMIT = 100;
+
+const landedThisMonthValidator = v.object({
+  /** The month, `YYYY-MM`, in the employee's zone. */
+  month: v.string(),
+  /** Each day of the month an item first landed on, `YYYY-MM-DD`, with how many, oldest first. */
+  days: v.array(v.object({ day: v.string(), landed: v.number() })),
+  /** True when the read reached its bound, so the month holds at least this many. */
+  atLeast: v.boolean(),
+});
+
+/** The work an employee landed this month, by day. */
+type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
+
+/**
+ * The items an employee completed this month in its own zone (N12), each
+ * counted once, on the day it first completed within the month. Reads the
+ * month's `work.completed` events by the type index, from the month's first
+ * midnight on, and dates each by the instant it was logged.
+ *
+ * @param ctx - Query context.
+ * @param agent - The employee.
+ * @param now - The instant whose month is read.
+ */
+async function landedThisMonth(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<LandedThisMonth> {
+  const zone = agentZone(agent);
+  const month = dayKey(now, zone).slice(0, 7);
+  const monthStart = dayStart(`${month}-01`, zone);
+  const completions = await eventsOfType(ctx, agent._id, 'work.completed', {
+    from: monthStart,
+  }).take(MONTH_LANDED_READ_LIMIT);
+  // The index yields oldest first, so the first completion of an item is the one kept.
+  const firstLanded = new Map<string, number>();
+  for (const event of completions) {
+    if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
+    const workItemId: unknown = event.payload.workItemId;
+    if (typeof workItemId === 'string' && !firstLanded.has(workItemId)) {
+      firstLanded.set(workItemId, event.createdAt);
+    }
+  }
+  const byDay = new Map<string, number>();
+  for (const at of firstLanded.values()) {
+    const day = dayKey(at, zone);
+    byDay.set(day, (byDay.get(day) ?? 0) + 1);
+  }
+  return {
+    month,
+    days: [...byDay]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([day, landed]) => ({ day, landed })),
+    atLeast: completions.length === MONTH_LANDED_READ_LIMIT,
+  };
+}
+
 const rosterRowValidator = v.object({
   agentId: v.id('agents'),
   name: v.string(),
@@ -123,6 +187,7 @@ const rosterRowValidator = v.object({
   stoppedCount: v.number(),
   needsYou: v.number(),
   docSourceCount: v.number(),
+  landedThisMonth: landedThisMonthValidator,
 });
 
 /** One employee as the landing page lists it. */
@@ -266,8 +331,8 @@ async function workCounts(
 /**
  * The owner's employees, one row each, for the landing page: who they are,
  * the role the manager approved, the open, parked and stopped work, what
- * waits on the manager, whether they act on their own, and how much
- * documentation they read.
+ * waits on the manager, whether they act on their own, how much
+ * documentation they read, and what they landed this month.
  *
  * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
  * are left out. An anonymous caller gets an empty list.
@@ -294,11 +359,13 @@ export const rosterForUser = query({
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', identity.ownerKey))
       .take(DOC_SOURCE_READ_LIMIT);
+    const now = Date.now();
     return await Promise.all(
       agents.map(async (agent): Promise<RosterRow> => {
-        const [charter, counts] = await Promise.all([
+        const [charter, counts, landed] = await Promise.all([
           charterStanding(ctx, agent._id),
           workCounts(ctx, agent._id),
+          landedThisMonth(ctx, agent, now),
         ]);
         return {
           agentId: agent._id,
@@ -311,6 +378,7 @@ export const rosterForUser = query({
           // A drafted charter is the one thing the manager must approve before any work.
           needsYou: counts.needsYou + (charter.draftAwaitsManager ? 1 : 0),
           docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
+          landedThisMonth: landed,
         };
       }),
     );

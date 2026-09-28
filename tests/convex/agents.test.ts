@@ -727,6 +727,9 @@ describe('the agent’s zone and mode (N12)', (): void => {
 
 type Harness = TestConvex<typeof schema>;
 
+/** An employee's month with nothing landed yet, as the roster returns it. */
+const NOTHING_LANDED = { month: expect.stringMatching(/^\d{4}-\d{2}$/), days: [], atLeast: false };
+
 /**
  * Deploy one employee through the public mutation, as the landing page does.
  *
@@ -1027,6 +1030,7 @@ describe('the employee roster', (): void => {
         // The drafted charter waits on the manager's approval.
         needsYou: 1,
         docSourceCount: 1,
+        landedThisMonth: NOTHING_LANDED,
       },
       {
         agentId: mateo,
@@ -1040,6 +1044,7 @@ describe('the employee roster', (): void => {
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 2,
+        landedThisMonth: NOTHING_LANDED,
       },
       {
         agentId: priya,
@@ -1055,6 +1060,7 @@ describe('the employee roster', (): void => {
         stoppedCount: 1,
         needsYou: 3,
         docSourceCount: 2,
+        landedThisMonth: NOTHING_LANDED,
       },
     ]);
     await expect(
@@ -1072,6 +1078,7 @@ describe('the employee roster', (): void => {
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 1,
+        landedThisMonth: NOTHING_LANDED,
       },
     ]);
     await expect(harness.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
@@ -1492,6 +1499,62 @@ describe('the employee roster', (): void => {
   it('does not split a surrogate pair when one long role word must be clipped', (): void => {
     const glyph = '\u{1F600}';
     expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
+  });
+  it('counts each item landed this month once, on the day it first landed in the employee’s zone', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    await harness.run(async (ctx) => await ctx.db.patch(mira, { zone: 'Asia/Singapore' }));
+    const [first, second, earlier] = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          ['REVOPS-1', 'REVOPS-2', 'REVOPS-3'].map(
+            async (externalId) =>
+              await ctx.db.insert('workItems', {
+                agentId: mira,
+                sourceCategory: 'ticket-queue',
+                sourceSystem: 'linear',
+                externalId,
+                title: externalId,
+                contentSummary: 'Synthetic.',
+                contentRefs: [],
+                state: 'completed',
+                observedAt: 1,
+                createdAt: 1,
+              }),
+          ),
+        ),
+    );
+    const land = async (workItemId: Id<'workItems'>, at: string): Promise<void> => {
+      vi.setSystemTime(new Date(at));
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('events', {
+          agentId: mira,
+          type: 'work.completed',
+          payload: { workItemId, output: {} },
+          createdAt: Date.now(),
+        });
+      });
+    };
+    // 31 Aug 17:00 UTC is 1 Sep 01:00 in Singapore: September there.
+    await land(earlier, '2026-08-31T15:00:00Z');
+    await land(first, '2026-08-31T17:00:00Z');
+    await land(second, '2026-09-03T02:00:00Z');
+    await land(second, '2026-09-17T02:00:00Z');
+    vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
+
+    const [row] = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.agents.rosterForUser, {});
+
+    expect(row.landedThisMonth).toEqual({
+      month: '2026-09',
+      days: [
+        { day: '2026-09-01', landed: 1 },
+        { day: '2026-09-03', landed: 1 },
+      ],
+      atLeast: false,
+    });
   });
 });
 
