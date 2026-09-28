@@ -537,9 +537,18 @@ describe('documentation sync batching', (): void => {
       ref: valueRef('tile.md', value, 'owner'),
     });
     expect(after.runs[0]).toMatchObject({ state: 'completed' });
-    expect(after.runs[0].reason).toMatch(
-      /^1 page could not be read this sync and keeps its last stored version\n- tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
-    );
+    expect(after.runs[0].reason).toBeUndefined();
+    expect(after.runs[0].unread).toEqual({
+      count: 1,
+      pages: [
+        {
+          ref: 'tile.md',
+          reason: expect.stringMatching(
+            /^The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
+          ),
+        },
+      ],
+    });
     expect(after.source).toMatchObject({ status: 'synced' });
     expect(after.source?.lastError).toMatch(
       /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads them again\.$/,
@@ -902,7 +911,7 @@ describe('documentation sync batching', (): void => {
     }));
     expect(stored.source).toMatchObject({ status: 'synced' });
     expect(stored.source?.lastError).toContain('https://wiki.example/two: refused by the wiki');
-    expect(stored.runs[0].reason).toContain('<redacted>');
+    expect(stored.runs[0].unread?.pages[0].reason).toContain('<redacted>');
     expect(JSON.stringify(stored)).not.toContain(secret);
     expect(JSON.stringify(stored)).not.toContain(secret.slice(0, 12));
   });

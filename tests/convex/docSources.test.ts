@@ -128,6 +128,7 @@ async function finishGeneration(
     credentialRefs: string[];
     pageCount: number;
     redactionCount: number;
+    unread?: Array<{ ref: string; reason: string }>;
   },
 ): Promise<unknown> {
   await harness.mutation(internal.docSources.recordSyncBatch, {
@@ -822,6 +823,70 @@ describe('documentation sources in real mode', (): void => {
       credentialsSuperseded: 0,
       surfacesToReapprove: 0,
     });
+  });
+
+  it('keeps the unread record on its own field through every rewrite of the reason, and carries it into the run that resumes (D D1 (a))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const first = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: first,
+      nextCursor: 'after-page-1',
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+      unread: [{ ref: 'page.md', reason: 'HTTP 404' }],
+    });
+    await harness.mutation(internal.docSources.failSync, {
+      sourceId,
+      runId: first,
+      status: 'error',
+      reason: 'The documentation read was interrupted (timeout).\nat read (urls.ts:1)',
+    });
+    const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: resumed,
+      ref: 'fresh.md',
+      title: 'Fresh',
+      markdown: '# Fresh',
+      updatedAt: 2,
+    });
+    await finishGeneration(harness, sourceId, resumed, {
+      currentCursor: 'after-page-1',
+      refs: ['fresh.md', 'gone.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+      unread: [{ ref: 'gone.md', reason: 'truncated' }],
+    });
+
+    const [failed, completed, source] = await harness.run(
+      async (ctx) =>
+        await Promise.all([ctx.db.get(first), ctx.db.get(resumed), ctx.db.get(sourceId)]),
+    );
+    expect(failed?.reason).toBe(
+      'The documentation read was interrupted (timeout). at read (urls.ts:1) A newer sync of the source took over from its cursor after 0 pages.',
+    );
+    expect(failed?.unread).toEqual({ count: 1, pages: [{ ref: 'page.md', reason: 'HTTP 404' }] });
+    expect(completed).toMatchObject({
+      state: 'completed',
+      unread: {
+        count: 2,
+        pages: [
+          { ref: 'page.md', reason: 'HTTP 404' },
+          { ref: 'gone.md', reason: 'truncated' },
+        ],
+      },
+    });
+    expect(completed?.reason).toBeUndefined();
+    expect(source?.lastError).toBe(
+      '2 pages could not be read this sync and keep their last stored version: page.md: HTTP 404; gone.md: truncated. The next sync reads them again.',
+    );
   });
 
   it('deletes a mirror an earlier slug rule keyed, once the sync has mirrored the page under its own (review M20)', async (): Promise<void> => {

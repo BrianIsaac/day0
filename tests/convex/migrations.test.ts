@@ -561,6 +561,72 @@ describe('the unavailable cause backfill (K D2 (b))', (): void => {
   });
 });
 
+describe('the unread record move (D D1 (a))', (): void => {
+  it('moves the record each run kept below its reason onto its field, leaving the line it ended short on', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const record = [
+      '3 pages could not be read this sync and keep their last stored version',
+      '- https://wiki.example/a: HTTP 404',
+      '- b.md: truncated',
+      '- and 1 more',
+    ].join('\n');
+    const [failed, completed, clean, moved] = await harness.run(async (ctx) => {
+      const run = async (
+        state: Doc<'docSyncRuns'>['state'],
+        fields: Partial<Doc<'docSyncRuns'>>,
+      ): Promise<Id<'docSyncRuns'>> =>
+        await ctx.db.insert('docSyncRuns', {
+          sourceId,
+          refs: [],
+          credentialRefs: [],
+          pageCount: 0,
+          redactionCount: 0,
+          state,
+          createdAt: 1,
+          ...fields,
+        });
+      return await Promise.all([
+        run('error', { reason: `The documentation read was interrupted (timeout).\n${record}` }),
+        run('completed', { reason: record }),
+        run('superseded', {
+          reason: 'a newer sync of the source started before this one finished',
+        }),
+        run('completed', { unread: { count: 1, pages: [{ ref: 'c.md', reason: 'gone' }] } }),
+      ]);
+    });
+
+    await runAll(harness);
+
+    const runs = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [failed, completed, clean, moved].map(async (id) => await ctx.db.get(id)),
+        ),
+    );
+    const listed = {
+      count: 3,
+      pages: [
+        { ref: 'https://wiki.example/a', reason: 'HTTP 404' },
+        { ref: 'b.md', reason: 'truncated' },
+      ],
+    };
+    expect(runs.map((run) => [run?.reason ?? null, run?.unread ?? null])).toEqual([
+      ['The documentation read was interrupted (timeout).', listed],
+      [null, listed],
+      ['a newer sync of the source started before this one finished', null],
+      [null, { count: 1, pages: [{ ref: 'c.md', reason: 'gone' }] }],
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'sync-runs-unread')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
 describe('the single approval (Q10)', (): void => {
   const UPGRADED_AT = Date.UTC(2026, 8, 28, 9);
   const DAY = 24 * 60 * 60 * 1_000;

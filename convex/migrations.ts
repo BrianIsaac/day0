@@ -46,6 +46,7 @@ import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
+import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
 
 /**
@@ -72,6 +73,7 @@ export const MIGRATION_NAMES = [
   CREDENTIAL_VALUE_REF_MIGRATION,
   'surfaces-withheld-tools',
   'work-evaluation-unavailable-cause',
+  'sync-runs-unread',
 ] as const;
 
 /** One migration's name. */
@@ -190,6 +192,12 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'copies onto each row an evaluation found the scope judgement unreachable for the cause its newest work.scope-judgement-unavailable event gave, so the waiting line reads it off the row',
     thenRemoves: 'nothing: the cause is written with evaluationUnavailableAt from here on',
   },
+  'sync-runs-unread': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'moves the record of unread pages each sync run kept as text below its reason onto the run’s unread field, leaving the reason the line it ended short on',
+    thenRemoves:
+      'the reading of a record in the reason text (legacyUnreadRecord in unreadRecordIn)',
+  },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
@@ -213,6 +221,13 @@ const MIGRATION_PAGE = 100;
  * unread, and a migration must not skip one.
  */
 const EVENT_PAGE = 10;
+
+/**
+ * Sync runs one page of the unread-record move reads. A run of a release
+ * before 0.6.0 lists up to 8,192 page refs, so ten stay well inside the
+ * transaction's read limit.
+ */
+const RUN_PAGE = 10;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
@@ -491,6 +506,23 @@ async function rekeyMirrors(ctx: MutationCtx, cursor: string | null): Promise<Mi
 }
 
 /**
+ * Move each sync run's record of its unread pages from the reason text a
+ * release before 0.6.0 wrote it in onto the run's `unread` field (D D1 (a)),
+ * so a rewrite of the reason can never lose it.
+ */
+async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docSyncRuns').paginate({ cursor, numItems: RUN_PAGE });
+  let changed = 0;
+  for (const run of page.page) {
+    const record = run.unread === undefined ? legacyUnreadRecord(run.reason) : undefined;
+    if (record === undefined) continue;
+    await ctx.db.patch(run._id, { unread: record, reason: reasonWithoutLegacyRecord(run.reason) });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
  * Re-seal one page of credentials in the Node runtime (decision Q15, step
  * 14). The action writes each page's rows itself; this reports the page.
  */
@@ -555,6 +587,7 @@ const MIGRATION_PAGES: Readonly<
   'surfaces-withheld-tools': async (ctx, cursor) => await backfillWithheldToolsPage(ctx, cursor),
   'work-evaluation-unavailable-cause': async (ctx, cursor) =>
     await backfillUnavailableCausePage(ctx, cursor),
+  'sync-runs-unread': moveUnreadRecords,
 };
 
 /** A migration's row, if it has started. */

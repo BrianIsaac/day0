@@ -180,8 +180,20 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
-    /** Why the run ended without completing: the failure it recorded, or the newer run that superseded it. */
+    /** Why the run ended without completing, on one line: the failure it recorded, or the newer run that superseded it. */
     reason: v.optional(v.string()),
+    /**
+     * The pages the run listed and could not read, each keeping its last
+     * stored version (P5-11): how many, and the first ten by name with why.
+     * A resumed run carries it on. Written from 0.6.0; the `sync-runs-unread`
+     * migration moves the record earlier releases kept below `reason`.
+     */
+    unread: v.optional(
+      v.object({
+        count: v.number(),
+        pages: v.array(v.object({ ref: v.string(), reason: v.string() })),
+      }),
+    ),
     /** What a completed run changed, as the final batch counted it. */
     summary: v.optional(
       v.object({

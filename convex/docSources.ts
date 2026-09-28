@@ -26,9 +26,11 @@ import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import {
   endedShort,
+  reasonWithoutLegacyRecord,
   unreadPagesLine,
   unreadRecordIn,
   withUnreadPages,
+  type UnreadRecord,
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { cardPageRefs } from '../src/docs/card-pages';
@@ -99,6 +101,18 @@ const CARD_SURFACE_LIMIT = 1_000;
 
 /** Why a run that a newer one replaced before it finished ended. */
 const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
+
+/**
+ * The patch that says why a run ended short: the reason on one line, and the
+ * run's record of its unread pages on its own field, where an earlier
+ * release's record kept in the reason text moves as the reason is rewritten.
+ */
+function endedShortPatch(
+  ending: string,
+  run: Doc<'docSyncRuns'>,
+): { reason: string; unread: UnreadRecord | undefined } {
+  return { reason: endedShort(ending), unread: unreadRecordIn(run) };
+}
 
 /** Why a run that a newer one took over from its cursor ended. */
 function resumedRunReason(pageCount: number): string {
@@ -827,20 +841,21 @@ export const beginSync = internalMutation({
       await ctx.db.patch(active._id, {
         state: 'superseded',
         completedAt: now,
-        reason: endedShort(
+        ...endedShortPatch(
           active._id === resumed?._id ? resumedRunReason(active.pageCount) : SUPERSEDED_RUN_REASON,
-          active.reason,
+          active,
         ),
       });
     } else if (resumed !== undefined) {
       const ending = (resumed.reason ?? '').split('\n')[0] || 'The run ended short.';
       const tookOver = resumedRunReason(resumed.pageCount);
-      await ctx.db.patch(resumed._id, {
-        reason: endedShort(
+      await ctx.db.patch(
+        resumed._id,
+        endedShortPatch(
           `${ending} ${tookOver.charAt(0).toUpperCase()}${tookOver.slice(1)}.`,
-          resumed.reason,
+          resumed,
         ),
-      });
+      );
     }
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId: source._id,
@@ -849,7 +864,7 @@ export const beginSync = internalMutation({
       credentialRefs: resumed?.credentialRefs ?? [],
       pageCount: resumed?.pageCount ?? 0,
       redactionCount: resumed?.redactionCount ?? 0,
-      reason: unreadRecordIn(resumed?.reason),
+      unread: unreadRecordIn(resumed),
       state: 'running',
       createdAt: now,
     });
@@ -886,7 +901,7 @@ export const restartSync = internalMutation({
     await ctx.db.patch(run._id, {
       state: 'superseded',
       completedAt: now,
-      reason: endedShort(LISTING_CHANGED_REASON, run.reason),
+      ...endedShortPatch(LISTING_CHANGED_REASON, run),
     });
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId: source._id,
@@ -1020,7 +1035,8 @@ export const recordSyncBatch = internalMutation({
       credentialRefs: [...run.credentialRefs, ...args.credentialRefs],
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
-      reason: withUnreadPages(run.reason, args.unread ?? []),
+      unread: withUnreadPages(unreadRecordIn(run), args.unread ?? []),
+      reason: reasonWithoutLegacyRecord(run.reason),
     });
     await ctx.db.patch(source._id, { updatedAt: Date.now() });
     return true;
@@ -1370,7 +1386,7 @@ export const finishSync = internalMutation({
     }
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
-    const unreadRecord = withUnreadPages(run.reason, args.unread ?? []);
+    const unreadRecord = withUnreadPages(unreadRecordIn(run), args.unread ?? []);
     const pruned = args.pruned ?? { pagesRemoved: 0, mirrorsRemoved: 0, surfacesToReapprove: 0 };
     const now = Date.now();
     await ctx.db.patch(run._id, {
@@ -1381,7 +1397,8 @@ export const finishSync = internalMutation({
       redactionCount,
       state: 'completed',
       completedAt: now,
-      reason: unreadRecord,
+      reason: undefined,
+      unread: unreadRecord,
       summary: { pagesKept: refs.length, ...pruned, credentialsSuperseded },
     });
     await ctx.db.patch(source._id, {
@@ -1476,7 +1493,7 @@ export const failSync = internalMutation({
     await ctx.db.patch(run._id, {
       state: 'error',
       completedAt: now,
-      reason: endedShort(args.reason, run.reason),
+      ...endedShortPatch(args.reason, run),
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
