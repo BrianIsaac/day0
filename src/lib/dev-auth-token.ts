@@ -16,9 +16,14 @@ const TOKEN_LIFETIME_SECONDS = 3600;
  *
  * @param sessionId - The browser session the token is for, carried as `sid` so the
  *   backend can tell two browsers of the one local owner apart.
+ * @param encodedSigningKey - The base64 PKCS#8 private key; the Next.js server
+ *   reads it from `DEV_NO_AUTH_SIGNING_KEY`, a script passes the value it read.
  */
-export async function mintDevNoAuthToken(sessionId?: string): Promise<string> {
-  const key = await signingKey();
+export async function mintDevNoAuthToken(
+  sessionId?: string,
+  encodedSigningKey: string | undefined = process.env.DEV_NO_AUTH_SIGNING_KEY,
+): Promise<string> {
+  const key = await signingKey(encodedSigningKey);
   const issuedAt = Math.floor(Date.now() / 1000);
 
   const header = { alg: DEV_NO_AUTH_ALGORITHM, typ: 'JWT', kid: DEV_NO_AUTH_KEY_ID };
@@ -40,15 +45,20 @@ export async function mintDevNoAuthToken(sessionId?: string): Promise<string> {
   return `${signingInput}.${base64UrlBytes(new Uint8Array(signature))}`;
 }
 
-let cachedSigningKey: Promise<CryptoKey> | null = null;
+/** Imported keys by their encoded form: one import per key, however many tokens it signs. */
+const importedKeys = new Map<string, Promise<CryptoKey>>();
 
-function signingKey(): Promise<CryptoKey> {
-  if (!cachedSigningKey) cachedSigningKey = importSigningKey();
-  return cachedSigningKey;
+function signingKey(encoded: string | undefined): Promise<CryptoKey> {
+  if (!encoded) return importSigningKey(encoded);
+  let imported = importedKeys.get(encoded);
+  if (!imported) {
+    imported = importSigningKey(encoded);
+    importedKeys.set(encoded, imported);
+  }
+  return imported;
 }
 
-async function importSigningKey(): Promise<CryptoKey> {
-  const encoded = process.env.DEV_NO_AUTH_SIGNING_KEY;
+async function importSigningKey(encoded: string | undefined): Promise<CryptoKey> {
   if (!encoded) {
     throw new Error(
       'DEV_NO_AUTH_SIGNING_KEY is not set, so no-auth dev mode cannot produce a ' +

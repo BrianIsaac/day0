@@ -1743,11 +1743,10 @@ async function bossClient(
   const url = values.CONVEX_SELF_HOSTED_URL;
   if (!url) return { reason: 'CONVEX_SELF_HOSTED_URL is empty' };
   if (!values.DEV_NO_AUTH_SIGNING_KEY) return { reason: 'DEV_NO_AUTH_SIGNING_KEY is empty' };
-  process.env.DEV_NO_AUTH_SIGNING_KEY = values.DEV_NO_AUTH_SIGNING_KEY;
   const { ConvexHttpClient } = await import('convex/browser');
   const { mintDevNoAuthToken } = await import('../src/lib/dev-auth-token');
   const client = new ConvexHttpClient(url, { skipConvexDeploymentUrlCheck: true, logger: false });
-  client.setAuth(await mintDevNoAuthToken());
+  client.setAuth(await mintDevNoAuthToken(undefined, values.DEV_NO_AUTH_SIGNING_KEY));
   return { client };
 }
 

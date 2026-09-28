@@ -91,13 +91,12 @@ export async function connectBackend(
   url: string,
   signingKey: string,
 ): Promise<{ reader: BackendReader; exportForAgent: (agentId: string) => Promise<unknown> }> {
-  process.env.DEV_NO_AUTH_SIGNING_KEY = signingKey;
   const { ConvexHttpClient } = await import('convex/browser');
   const { mintDevNoAuthToken } = await import('../../../src/lib/dev-auth-token');
   const { api } = await import('../../../convex/_generated/api');
   type Id<T extends string> = string & { __tableName: T };
   const client = new ConvexHttpClient(url, { skipConvexDeploymentUrlCheck: true, logger: false });
-  client.setAuth(await mintDevNoAuthToken());
+  client.setAuth(await mintDevNoAuthToken(undefined, signingKey));
   const agentId = (id: string): Id<'agents'> => id as Id<'agents'>;
   const reader: BackendReader = {
     agents: async () => (await client.query(api.agents.listForUser, {})) as AgentRow[],
