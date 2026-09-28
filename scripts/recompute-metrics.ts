@@ -264,8 +264,8 @@ export function recomputeFromTraces(
 /**
  * Read the command line's inputs: one or more trace files, or one snapshot export.
  *
- * Raises:
- *   Error: A JSON file is not a trace of this version, or traces and a snapshot are mixed.
+ * @throws Error when a JSON file is not a trace of a version this reads, or
+ *   traces and a snapshot are mixed.
  */
 export function recompute(
   paths: readonly string[],
