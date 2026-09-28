@@ -33,6 +33,16 @@ describe('environment contract', (): void => {
     await expect(loadEnv()).rejects.toThrow();
   });
 
+  it('parses no key nothing in the tree reads: the image model and the Gemini pair are gone', async (): Promise<void> => {
+    vi.stubEnv('OPENAI_IMAGE_MODEL', 'gpt-image-2');
+    vi.stubEnv('GOOGLE_API_KEY', 'g');
+    vi.stubEnv('GEMINI_LIVE_MODEL', 'gemini');
+    const env = await loadEnv();
+    expect(env).not.toHaveProperty('OPENAI_IMAGE_MODEL');
+    expect(env).not.toHaveProperty('GOOGLE_API_KEY');
+    expect(env).not.toHaveProperty('GEMINI_LIVE_MODEL');
+  });
+
   it('applies defaults so module loading never needs deployment values', async (): Promise<void> => {
     vi.stubEnv('OPENAI_MAX_OUTPUT_TOKENS', '');
     vi.stubEnv('OPENAI_REASONING_EFFORT', '');
