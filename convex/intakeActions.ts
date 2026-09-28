@@ -7,6 +7,7 @@ import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
+import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
@@ -28,7 +29,12 @@ import {
   emptyScopeReason,
   isEmptyScope,
 } from '../src/surfaces/intake-scope';
-import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
+import {
+  extractDocumentedSystemOrder,
+  orderSurfaceWaterfall,
+  waterfallEntry,
+  type WaterfallPage,
+} from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 import {
   DO_NOT_AUTOMATE_LABEL,
@@ -130,12 +136,29 @@ interface IntakeDecisionReply {
   reply: DecisionReply;
 }
 
+/** What intake reads of an employee's documentation. */
+export interface IntakeDocumentation {
+  /** The systems the documentation orders, from its systems table. */
+  readonly order: string[];
+  /** The pages that name one of the systems intake polls, whole. */
+  readonly pages: Doc<'docPages'>[];
+}
+
 export interface IntakeRuntime {
   listSurfaces(): Promise<Doc<'surfaces'>[]>;
   /** The chat rows alone, for the poll that runs once a minute. */
   listChatSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
-  listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
+  /**
+   * The employee's documentation as intake reads it, a bounded page at a time
+   * (D D3): the systems order its systems table gives, and whole only the
+   * pages that name one of `systems`, which a card with no approved scope
+   * reads its queue from; every other page counts only for the order.
+   */
+  intakeDocumentation(
+    agentId: Id<'agents'>,
+    systems: readonly string[],
+  ): Promise<IntakeDocumentation>;
   /** The scopes the employee holds now: granted and not revoked. */
   grantedScopes(agentId: Id<'agents'>): Promise<string[]>;
   /** The rows waiting to be evaluated for the employee, and the bound intake keeps (N7). */
@@ -1980,12 +2003,15 @@ export async function runIntakeSweep(
     if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
-    let pages: Doc<'docPages'>[];
+    let documentation: IntakeDocumentation;
     let scopes: string[];
     let queue: { waiting: number; limit: number };
     try {
-      [pages, scopes, queue] = await Promise.all([
-        runtime.listPages(agentId),
+      [documentation, scopes, queue] = await Promise.all([
+        runtime.intakeDocumentation(
+          agentId,
+          agentSurfaces.filter(inScope).map((surface) => surface.displayName),
+        ),
         runtime.grantedScopes(agentId),
         runtime.waitingWork(agentId),
       ]);
@@ -2004,12 +2030,7 @@ export async function runIntakeSweep(
     }
     const granted = new Set(scopes);
     let waiting = queue.waiting;
-    const documentedNames = extractDocumentedSystemOrder(
-      pages.map((page: Doc<'docPages'>): { title: string; content: string } => ({
-        title: page.title,
-        content: page.markdown,
-      })),
-    );
+    const { order: documentedNames, pages } = documentation;
     const ordered = orderSurfaceWaterfall(agentSurfaces, documentedNames);
     for (const [index, surface] of ordered.entries()) {
       if (!inScope(surface)) continue;
@@ -2301,6 +2322,34 @@ export async function runDecisionSweep(
   return { mode, polled, idle, skipped, surfaces: surfaces.length };
 }
 
+/**
+ * Read an employee's documentation as intake needs it, one bounded page read
+ * at a time (D D3): every page for the systems order, which keeps of a page
+ * only its title and its systems table, and whole only the pages that name
+ * one of the systems intake polls.
+ *
+ * @param agentId - The employee.
+ * @param systems - The display names of the systems this poll reads.
+ */
+export async function readIntakeDocumentation(
+  ctx: Pick<ActionCtx, 'runQuery'>,
+  agentId: Id<'agents'>,
+  systems: readonly string[],
+): Promise<IntakeDocumentation> {
+  const sources: Doc<'docSources'>[] = await ctx.runQuery(
+    internal.docSources.sourcesForAgentInternal,
+    { agentId },
+  );
+  const entries: WaterfallPage[] = [];
+  const pages: Doc<'docPages'>[] = [];
+  await forEachStoredPage(ctx, sources, (page): void => {
+    entries.push(waterfallEntry({ title: page.title, content: page.markdown }));
+    const text = `${page.title}\n${page.markdown}`;
+    if (systems.some((system): boolean => namesSystem(text, system))) pages.push(page);
+  });
+  return { order: extractDocumentedSystemOrder(entries), pages };
+}
+
 /** Create the Convex runtime boundary used by the scheduled action. */
 function convexRuntime(ctx: ActionCtx): IntakeRuntime {
   return {
@@ -2310,8 +2359,10 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       await ctx.runQuery(internal.orientationData.chatSurfacesForIntake, {}),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       await ctx.runQuery(internal.agents.getInternal, { agentId }),
-    listPages: async (agentId: Id<'agents'>): Promise<Doc<'docPages'>[]> =>
-      await ctx.runQuery(internal.orientationData.pagesForAgent, { agentId }),
+    intakeDocumentation: async (
+      agentId: Id<'agents'>,
+      systems: readonly string[],
+    ): Promise<IntakeDocumentation> => await readIntakeDocumentation(ctx, agentId, systems),
     waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> =>
       await ctx.runQuery(internal.workLoop.waitingWork, { agentId }),
     seededItems: async (

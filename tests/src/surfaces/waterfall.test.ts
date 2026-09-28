@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractDocumentedSystemOrder,
   orderSurfaceWaterfall,
+  waterfallEntry,
 } from '../../../src/surfaces/waterfall';
 
 describe('surface intake waterfall', (): void => {
@@ -34,6 +35,26 @@ describe('surface intake waterfall', (): void => {
         },
       ]),
     ).toEqual(['Linear', 'Slack', 'Northstar CRM', 'Team documentation']);
+  });
+
+  it('keeps of a page only what the order reads, so a paged walk holds no body without a systems table', (): void => {
+    const table = '## Systems and access owners\n\n| System |\n|---|\n| Linear |';
+    expect(waterfallEntry({ title: 'Onboarding', content: '# Welcome\n\nRead on.' })).toEqual({
+      title: 'Onboarding',
+      content: '',
+    });
+    expect(waterfallEntry({ title: 'Systems', content: table })).toEqual({
+      title: 'Systems',
+      content: table,
+    });
+    const pages = [
+      { title: 'Onboarding', content: '# Welcome\n\nRead on.' },
+      { title: 'Systems', content: table },
+    ];
+    // An onboarding page with no table still makes the other pages non-authoritative.
+    expect(extractDocumentedSystemOrder(pages.map(waterfallEntry))).toEqual(
+      extractDocumentedSystemOrder(pages),
+    );
   });
 
   it('puts documented systems first and class fallbacks after them', (): void => {

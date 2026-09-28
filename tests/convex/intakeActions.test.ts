@@ -2,6 +2,7 @@
 
 import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
+import type { FunctionReference } from 'convex/server';
 import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -40,11 +41,13 @@ import {
   linearCandidate,
   linearListArguments,
   mcpIssuePage,
+  readIntakeDocumentation,
   runDecisionSweep,
   runIntakeSweep,
   safeIntakeError,
   slackChannelsFromPages,
   type IntakeDependencies,
+  type IntakeDocumentation,
   type IntakeRuntime,
   type LinearListRequest,
 } from '../../convex/intakeActions';
@@ -55,6 +58,7 @@ import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { WAITING_WORK_LIMIT } from '../../convex/workLoop';
 import { NOTHING_OPEN, type OpenDecisions } from '../../src/work/manager-channel';
+import { extractDocumentedSystemOrder, waterfallEntry } from '../../src/surfaces/waterfall';
 
 type CredentialId = GenericId<'credentials'>;
 
@@ -241,7 +245,12 @@ function runtimeHarness(
       surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.class === 'chat'),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       agents.find((agent: Doc<'agents'>): boolean => agent._id === agentId) ?? null,
-    listPages: async (): Promise<Doc<'docPages'>[]> => pages,
+    intakeDocumentation: async (): Promise<IntakeDocumentation> => ({
+      order: extractDocumentedSystemOrder(
+        pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
+      ),
+      pages,
+    }),
     seededItems: async (
       _agentId: Id<'agents'>,
       sourceSystem: string,
@@ -1229,7 +1238,7 @@ describe('real surface intake', (): void => {
       listSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       listChatSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       getAgent: vi.fn(),
-      listPages: vi.fn(),
+      intakeDocumentation: vi.fn(),
       grantedScopes: vi.fn(),
       waitingWork: vi.fn(),
       seededItems: vi.fn(),
@@ -4170,10 +4179,10 @@ describe("one agent's failed read in the intake sweep (step 49)", (): void => {
       new Map([[String(slackCredential), 'slack-test-value']]),
       [agentRow(), other],
     );
-    const listPages = harness.runtime.listPages;
-    harness.runtime.listPages = async (agentId) => {
+    const intakeDocumentation = harness.runtime.intakeDocumentation;
+    harness.runtime.intakeDocumentation = async (agentId, systems) => {
       if (agentId === id<'agents'>('agent-intake')) throw new Error('pages read failed');
-      return await listPages(agentId);
+      return await intakeDocumentation(agentId, systems);
     };
     await expect(
       runIntakeSweep(harness.runtime, {
@@ -4404,4 +4413,73 @@ describe('decision replies one message at a time, and the DM read only when some
     await runDecisionSweep(quiet.runtime, { mode: 'real', now: (): number => pollAt, fetcher });
     expect(quiet.unreadableReplies).toEqual([]);
   });
+});
+
+describe("an employee's documentation as intake reads it (D D3)", (): void => {
+  it('reads a corpus larger than one read a page at a time, keeping whole only the pages that name a polled system', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { agentId, sourceId } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { agentId, sourceId };
+    });
+    const body = `# Runbook\n\n${'Follow the documented steps in order.\n'.repeat(14_000)}`;
+    for (let start = 0; start < 40; start += 4) {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let index = start; index < start + 4; index += 1) {
+          await ctx.db.insert('docPages', {
+            sourceId,
+            ref: `runbooks/page-${index}.md`,
+            title: `Page ${index}`,
+            markdown: body,
+            updatedAt: 1,
+          });
+        }
+      });
+    }
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'onboarding.md',
+        title: 'Onboarding',
+        markdown:
+          '## Systems and access owners\n\n| System | Owner |\n|---|---|\n| Slack | IT |\n| Linear | IT |',
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'linear.md',
+        title: 'Linear',
+        markdown: '# Linear\n\n- Project: `September close`',
+        updatedAt: 1,
+      });
+    });
+    // Each read the function makes goes to the harness as its own query, under the limits.
+    const read = await readIntakeDocumentation(
+      {
+        runQuery: async (
+          reference: FunctionReference<'query', 'internal'>,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => await harness.query(reference, args),
+      } as Parameters<typeof readIntakeDocumentation>[0],
+      agentId,
+      ['Linear'],
+    );
+    expect(read.order).toEqual(['Slack', 'Linear']);
+    expect(read.pages.map((page) => page.ref).sort()).toEqual(['linear.md', 'onboarding.md']);
+  }, 60_000);
 });

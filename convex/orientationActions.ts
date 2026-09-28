@@ -1791,8 +1791,8 @@ async function pagesForSystem(
 }
 
 /** Visit every stored page of some sources, one bounded read at a time. */
-async function forEachStoredPage(
-  ctx: OrientationCtx,
+export async function forEachStoredPage(
+  ctx: Pick<ActionCtx, 'runQuery'>,
   sources: readonly Doc<'docSources'>[],
   visit: (page: Doc<'docPages'>) => void,
 ): Promise<void> {
