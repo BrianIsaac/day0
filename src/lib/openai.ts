@@ -63,7 +63,11 @@ function resolveApiKey(): string {
 
 export function openai(): OpenAI {
   if (!client) {
-    client = new OpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL, fetch: countingFetch });
+    client = new OpenAI({
+      apiKey: resolveApiKey(),
+      baseURL: env.OPENAI_BASE_URL,
+      fetch: countingFetch,
+    });
   }
   return client;
 }
@@ -394,7 +398,9 @@ function rawModelSettings(args: Pick<TextCompleteArgs, 'maxTokens' | 'reasoningE
   return {
     ...(maxTokens === undefined
       ? {}
-      : hosted ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
+      : hosted
+        ? { max_completion_tokens: maxTokens }
+        : { max_tokens: maxTokens }),
     ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
   };
 }
