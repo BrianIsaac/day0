@@ -1,3 +1,5 @@
+import { credentialPageRef } from '../docs/credential-ref';
+
 export type CredentialMethod = 'api-key' | 'bot-token' | 'oauth' | 'unknown';
 
 export interface SurfaceCredentialFinding {
@@ -267,7 +269,7 @@ export function presentSurfaceCredential(
       governanceFinding,
       kind: 'masked',
       label: input.summary.label,
-      text: `located in ${input.sourceLabel ?? 'documentation'} / ${input.summary.source.ref} (masked)`,
+      text: `located in ${input.sourceLabel ?? 'documentation'} / ${credentialPageRef(input.summary.source.ref)} (masked)`,
     };
   }
 

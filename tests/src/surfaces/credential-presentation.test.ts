@@ -35,6 +35,23 @@ describe('surface credential presentation', (): void => {
     });
   });
 
+  it('names the page a value-keyed credential was found on, never the value fingerprint', (): void => {
+    const presented = presentSurfaceCredential({
+      credential: { found: 'value', method: 'api-key' },
+      credentialId: 'credential-1',
+      sourceLabel: 'Revenue operations',
+      summary: {
+        _id: 'credential-1',
+        label: 'linear service token',
+        source: {
+          sourceId: 'source-1',
+          ref: 'runbooks/linear.md#credential=0123456789abcdef0123456789abcdef',
+        },
+      },
+    });
+    expect(presented.text).toBe('located in Revenue operations / runbooks/linear.md (masked)');
+  });
+
   it('offers landing only when documentation names a credential location', (): void => {
     expect(
       presentSurfaceCredential({
