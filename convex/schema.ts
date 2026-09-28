@@ -543,8 +543,8 @@ export default defineSchema({
   voiceSessions: defineTable({
     agentId: v.id('agents'),
     mode: v.union(v.literal('elevenlabs'), v.literal('gemini-live'), v.literal('chat')),
-    /** The finalisation state machine. A call has two independent finishers  -
-     * the browser's `onDisconnect` post and the ElevenLabs post-call webhook  -
+    /** The finalisation state machine. A call has two independent finishers -
+     * the browser's `onDisconnect` post and the ElevenLabs post-call webhook -
      * so `synthesising` is the reservation exactly one of them wins before any
      * model call is spent. See `convex/voice.ts`. */
     state: v.union(

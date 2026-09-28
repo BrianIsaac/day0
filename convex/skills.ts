@@ -65,7 +65,7 @@ import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
  * registered, so re-authoring cannot pull the ground out from under an executor
  * already calling it.
  *
- * `registered` and `rejected` are absent on purpose. Both are decisions  -
+ * `registered` and `rejected` are absent on purpose. Both are decisions -
  * one the sandbox made, one the boss made - and a run that could reopen either
  * is the race this claim exists to close.
  */
@@ -957,7 +957,7 @@ export const retireUnshaped = internalMutation({
  * This is the whole of the concurrency control for authoring, and it is the
  * same shape as `work.claimForExecution`: a mutation is a transaction, so the
  * state check and the move to `authoring` cannot be split by a second caller,
- * where an action that reads the state and writes it back as two calls can be  -
+ * where an action that reads the state and writes it back as two calls can be -
  * and both callers then author, verify and write a result for the same skill.
  *
  * The winner gets a `runId`: the id of the claim event, durable, unique per

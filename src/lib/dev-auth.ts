@@ -5,7 +5,7 @@
  *
  * When it is on, Clerk is skipped end to end: no `ClerkProvider`, no Clerk JWT
  * minting in the API routes. Convex resolves every caller to one fixed synthetic
- * user instead, so ownership checks and the per-user data model are unchanged  -
+ * user instead, so ownership checks and the per-user data model are unchanged -
  * there is simply only ever one user. It exists so the project can be run from a
  * fresh clone with no third-party accounts.
  *

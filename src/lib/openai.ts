@@ -114,7 +114,7 @@ export type JsonMode = 'native' | 'prompt';
  */
 export const JSON_ONLY_INSTRUCTION = [
   '',
-  'OUTPUT CONTRACT - non-negotiable:',
+  'OUTPUT CONTRACT — non-negotiable:',
   '  - Reply with ONE JSON object and nothing else.',
   '  - No markdown fences, no commentary before or after the object.',
   '  - The first character of your reply is "{" and the last is "}".',

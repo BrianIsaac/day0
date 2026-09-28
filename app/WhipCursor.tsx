@@ -78,7 +78,7 @@ export function WhipCursor() {
 
     // Inject a global rule that hides the cursor on every element. The
     // browser user-agent stylesheet sets `cursor: pointer` on <button>
-    // and <a[href]>, so inline `cursor: none` on <body> isn't enough  -
+    // and <a[href]>, so inline `cursor: none` on <body> isn't enough -
     // children inherit `none` but UA defaults override that for
     // interactive elements. A stylesheet rule at higher specificity
     // covers everything, and unmount removes the tag so the no-JS /

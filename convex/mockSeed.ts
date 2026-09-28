@@ -12,16 +12,16 @@ import { internalMutation } from './_generated/server';
 const TEAM_DOCS: Array<{ slug: string; title: string; body: string }> = [
   {
     slug: 'team-overview',
-    title: 'Team overview - RevOps',
-    body: `# Team overview - RevOps
+    title: 'Team overview — RevOps',
+    body: `# Team overview — RevOps
 
 We are the Revenue Operations team at Acme Co. We sit between Sales and Finance, owning the data, tooling, and reporting that turn deal activity into a credible revenue forecast.
 
 ## What we do
 
-- Maintain the four Q-trackers (Q1–Q4 in Google Sheets) - these are the source of truth for the revenue committee.
+- Maintain the four Q-trackers (Q1–Q4 in Google Sheets) — these are the source of truth for the revenue committee.
 - Wire Salesforce → BigQuery → Looker dashboards used by Sales leadership in their weekly cadence.
-- Run the close-week process (last 5 business days of each quarter) - collecting closed-won deals, reconciling them with the CRM, signing off the revenue total.
+- Run the close-week process (last 5 business days of each quarter) — collecting closed-won deals, reconciling them with the CRM, signing off the revenue total.
 - Field ad-hoc analytical asks ("What's our pipeline coverage on enterprise?", "How's the SMB segment trending?").
 
 ## Who we are
@@ -40,10 +40,10 @@ We are the Revenue Operations team at Acme Co. We sit between Sales and Finance,
 
 ## Working surfaces
 
-- Google Sheets - Q1, Q2, Q3, Q4 revenue trackers, plus the deal-stage tracker. Slug for the Q4 tracker is \`q4-revenue-tracker\`.
-- Slack - \`#revops-asks\` (inbound), \`#revops\` (team), \`#standups\` (committee prep).
-- Linear - internal team tickets (project: REVOPS).
-- Looker - published dashboards.
+- Google Sheets — Q1, Q2, Q3, Q4 revenue trackers, plus the deal-stage tracker. Slug for the Q4 tracker is \`q4-revenue-tracker\`.
+- Slack — \`#revops-asks\` (inbound), \`#revops\` (team), \`#standups\` (committee prep).
+- Linear — internal team tickets (project: REVOPS).
+- Looker — published dashboards.
 `,
   },
   {
@@ -108,8 +108,8 @@ Day0 is not on the rotation until at least week 4 and only after explicit manage
   },
   {
     slug: 'onboarding',
-    title: 'Onboarding - first week',
-    body: `# Onboarding - first week
+    title: 'Onboarding — first week',
+    body: `# Onboarding — first week
 
 Welcome to RevOps. The first week is light by design.
 
@@ -174,7 +174,7 @@ When you need to add rows to a tracker spreadsheet, emit a structured action in 
 
 ## Closing the loop
 
-If the work item that triggered this update came from the ticket queue (the candidate \`Source\` line will contain \`ticket-queue\`, e.g. \`spreadsheet / ticket-queue\`), you MUST end your \`actions[]\` with a \`ticket.update\` against the originating ticket so the audit trail is complete. The ticket slug is usually named in the candidate body (e.g. "Tracking ticket: REVOPS-203") or surfaced via the \`Refs:\` line (e.g. \`ticket://REVOPS-203\`) - otherwise pick the most-recently created \`open\` ticket from the env snapshot Tickets section that matches the work.
+If the work item that triggered this update came from the ticket queue (the candidate \`Source\` line will contain \`ticket-queue\`, e.g. \`spreadsheet / ticket-queue\`), you MUST end your \`actions[]\` with a \`ticket.update\` against the originating ticket so the audit trail is complete. The ticket slug is usually named in the candidate body (e.g. "Tracking ticket: REVOPS-203") or surfaced via the \`Refs:\` line (e.g. \`ticket://REVOPS-203\`) — otherwise pick the most-recently created \`open\` ticket from the env snapshot Tickets section that matches the work.
 
 \`\`\`json
 {
@@ -182,7 +182,7 @@ If the work item that triggered this update came from the ticket queue (the cand
   "args": {
     "slug": "REVOPS-203",
     "status": "done",
-    "comment": "Appended 3 rows to closed-won: Acme $45k, Beta Corp $72k, Gamma LLC $28k. Close date and owner left blank - pending manager confirmation before committee."
+    "comment": "Appended 3 rows to closed-won: Acme $45k, Beta Corp $72k, Gamma LLC $28k. Close date and owner left blank — pending manager confirmation before committee."
   }
 }
 \`\`\`
@@ -211,7 +211,7 @@ When you have a draft that should go to a Slack channel or DM thread, emit a \`s
 \`\`\`
 
 - \`channelSlug\` is one of \`revops-asks\`, \`revops\`, \`dm-manager\`, \`dm-priya\`, \`dm-aman\`.
-- \`threadKey\` is optional - supply it to keep the message threaded under an existing ask.
+- \`threadKey\` is optional — supply it to keep the message threaded under an existing ask.
 - Cold-start posture: \`senderKind\` is set automatically to \`agent-draft\` so the manager can see + edit before forwarding.
 
 ## Discipline
@@ -230,7 +230,7 @@ If the work item came from a public channel (e.g. the candidate body says "asked
   "args": {
     "channelSlug": "revops-asks",
     "threadKey": "thread-pipeline-coverage",
-    "body": "Drafting a tier-2 response for Manager review - will post here once approved."
+    "body": "Drafting a tier-2 response for Manager review — will post here once approved."
   }
 }
 \`\`\`
@@ -248,7 +248,7 @@ That is two messages total: one to the manager (the full draft) and one threaded
 Two main triggers:
 
 1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire \`ticket.update\` against the originating ticket once you've done the work. \`status: "done"\` for full closure, \`"in-progress"\` for partial; one-line \`comment\` summarising what you did.
-2. **Cross-linking cited tickets.** If your draft body mentions another ticket slug (e.g. "REVOPS-202 already covers the Looker refresh"), fire a second \`ticket.update\` against that ticket - \`status: "in-progress"\`, one-line cross-link comment - so the cited ticket's audit trail shows the connection.
+2. **Cross-linking cited tickets.** If your draft body mentions another ticket slug (e.g. "REVOPS-202 already covers the Looker refresh"), fire a second \`ticket.update\` against that ticket — \`status: "in-progress"\`, one-line cross-link comment — so the cited ticket's audit trail shows the connection.
 
 ## Action shape
 
@@ -258,7 +258,7 @@ Two main triggers:
   "args": {
     "slug": "REVOPS-123",
     "status": "in-progress",
-    "comment": "Picking this up - drafting the response now."
+    "comment": "Picking this up — drafting the response now."
   }
 }
 \`\`\`
@@ -282,7 +282,7 @@ For social asks (which are typically out-of-scope for the RevOps role), if you d
   "tool": "twitter.reply",
   "args": {
     "tweetSlug": "tweet-1234",
-    "body": "Thanks for the feedback - appreciate you trying us out."
+    "body": "Thanks for the feedback — appreciate you trying us out."
   }
 }
 \`\`\`
@@ -431,7 +431,7 @@ export const seedMockEnvironment = internalMutation({
       undefined,
       'Manager',
       'manager',
-      "Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker - Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab.",
+      "Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker — Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab.",
     );
 
     // Tweet

@@ -306,7 +306,7 @@ export function ChatRoom({
 
   // The opening turn is sent from an effect, so for a moment after mount the
   // composer is live with nothing yet asked. A reply typed into that gap arrives
-  // ahead of the agent's own first turn and answers a question it has not put  -
+  // ahead of the agent's own first turn and answers a question it has not put -
   // an error surfaces instead, because then there is nothing else to wait for.
   const opened = messages.some((m) => m.role === 'assistant') || !!streamError;
   const composerDisabled = composerLocked({ status, done, opened });

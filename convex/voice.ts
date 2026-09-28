@@ -266,7 +266,7 @@ export type FinalisationClaim =
 
 /**
  * Decide and write in one transaction. Convex runs a mutation serialisably, so
- * a second caller reading this row necessarily sees the first caller's patch  -
+ * a second caller reading this row necessarily sees the first caller's patch -
  * which is the property a separate check-then-act pair cannot have.
  */
 async function claimSession(

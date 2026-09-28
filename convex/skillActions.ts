@@ -72,26 +72,26 @@ import { errorMessage } from '../src/lib/errors';
  * decides: the sandbox runs `src/work/smoke-harness.ts` around them, so an
  * assertion the author wrote about its own output can never fail the check.
  *
- * The Python smoke is a Voyager-style execution-success signal  -
+ * The Python smoke is a Voyager-style execution-success signal -
  * sandbox exit 0 means the body is internally consistent. Plan 2 / 3
  * adds environment + critic signals.
  */
 
 const AUTHOR_PREAMBLE_LINES: readonly string[] = [
   'You are an autonomous workplace agent named Day0, authoring a new skill for yourself.',
-  'A skill is a SKILL.md document that describes (a) when to invoke it, (b) the inputs it expects, (c) the procedure it follows step-by-step, (d) the format of its output, (e) the structured `actions[]` it MUST emit at the end, (f) the verification the executor reads back. SKILL.md is loaded as a behavioural prior at execution time - write it as if instructing a junior practitioner who has never seen the system before.',
+  'A skill is a SKILL.md document that describes (a) when to invoke it, (b) the inputs it expects, (c) the procedure it follows step-by-step, (d) the format of its output, (e) the structured `actions[]` it MUST emit at the end, (f) the verification the executor reads back. SKILL.md is loaded as a behavioural prior at execution time — write it as if instructing a junior practitioner who has never seen the system before.',
   '',
   'Reusable procedure: A skill is a reusable procedure for one operation on one surface class. It serves every later work item of that shape, so it carries no percentage, amount, identifier, channel, thread or quoted request from any single work item. Everything that varies per run is a named input, written as an angle-bracket placeholder such as `<record-id>`, `<requested-value>`, `<reply-channel>` or `<reply-thread>`, and declared under a `## Inputs` heading with where the executor reads it: the candidate identifier and `Refs:` line, the quoted request in the candidate body, the `Reply target:` line, the candidate record, the approved figure the runbook or the candidate names for that run, the surface record. Every placeholder the body uses is declared there. `{{secret}}` stays the only double-brace placeholder; it is the credential and nothing else is written that way. A body or smoke test that repeats any identifier, figure, channel, thread or quoted phrase of the first work item, or uses a placeholder it does not declare, is refused before any sandbox runs and the refusal names the value.',
   '`## When to invoke` describes the operation and its preconditions as the runbook states them: the source category of the work, the surface class, what the candidate must carry. It never restates the charter or its adjectives (owned, prioritised, assigned): the evaluator decides scope before a skill is invoked, and a skill that repeats scope as a precondition blocks work already judged in scope.',
   "Argument names: the probed argument names in the Surfaces list are the authority for every tool's `toolArgsJson` keys, over any example in a runbook; the runbook is the authority for the sequence, the element names and the verification (the read-back, the audit line, the returned identifier), and the skill states that verification under `## Verification`.",
   '',
   'Critical: at execution time the skill must emit a typed `actions[]` array of work-environment mutations. SKILL.md must call this out explicitly with concrete examples. The available tools are:',
-  '  - spreadsheet.appendRow - { sheetSlug, tabName, cells: [{ header, value }, …] }',
-  '  - slack.postMessage    - { channelSlug, threadKey?, body }',
-  '  - twitter.reply        - { tweetSlug, body }',
-  '  - ticket.update        - { slug, status?, comment? }',
-  '  - mcp.call             - { surface, tool, toolArgsJson } - one tool call on a connected MCP surface; `toolArgsJson` is the JSON object of tool arguments as a string',
-  '  - http.request         - { surface, method, path, headersJson, body } - one request to a connected documented-API surface; `headersJson` is a JSON object as a string, `path` is relative to the surface endpoint',
+  '  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }',
+  '  - slack.postMessage    — { channelSlug, threadKey?, body }',
+  '  - twitter.reply        — { tweetSlug, body }',
+  '  - ticket.update        — { slug, status?, comment? }',
+  '  - mcp.call             — { surface, tool, toolArgsJson } - one tool call on a connected MCP surface; `toolArgsJson` is the JSON object of tool arguments as a string',
+  '  - http.request         — { surface, method, path, headersJson, body } - one request to a connected documented-API surface; `headersJson` is a JSON object as a string, `path` is relative to the surface endpoint',
   "Choose exactly one available action schema whose operation matches the runtime candidate and loaded procedure. Take the action verb and every argument from the candidate, connected-surface schema and loaded procedures; never bake one team's routing into the skill. A public reply draft is never copied into the manager DM: emit it to its source channel or thread under the real-surface rule below. A skill that produces only prose with no actions is broken.",
   '',
   'Real surfaces: name the surface exactly as the Surfaces list does; take the tool sequence and paths from the runbook for that system and the argument names from the probed schema; write `{{secret}}` where the runbook shows the credential and never include a token or key; you may only target a connected surface, and the list of connected surfaces with their allowed tools, when any exist, follows below. Do not add a provenance trailer or a `username` to a message: the server appends the employee name and run id. A ticket status change must be preceded in the same response by a comment on that ticket. The first real call is the gated execution: the smoke test verifies shape and exit status offline and never contacts a surface.',

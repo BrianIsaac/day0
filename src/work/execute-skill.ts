@@ -110,8 +110,8 @@ const PREAMBLE_HEAD = [
   'You are an autonomous workplace agent named Day0.',
   'A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.',
   'Apply the skill to the candidate. Produce three things:',
-  '  1. A draft (human-readable) - the deliverable the manager reads and decides whether to ratify.',
-  '  2. Notes - short assumptions or open questions (single sentence).',
+  '  1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.',
+  '  2. Notes — short assumptions or open questions (single sentence).',
 ];
 
 const DRAFT_DISCIPLINE = [
@@ -123,10 +123,10 @@ const DRAFT_DISCIPLINE = [
 ];
 
 const PROCEDURE_TRAIL_OUTPUT =
-  '  4. Procedure trails - one `procedureTrails` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.';
+  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.';
 
 const REAL_PROCEDURE_TRAIL_OUTPUT =
-  '  4. Procedure trails - one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read, snapshot, or prior write that the plan or runbook orders before this action) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
+  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read, snapshot, or prior write that the plan or runbook orders before this action) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 /**
@@ -164,16 +164,16 @@ const DEPENDENT_PHASE_MOCK =
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
-  '  3. Actions - typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
+  '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   PROCEDURE_TRAIL_OUTPUT,
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
   'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:',
-  '  - spreadsheet.appendRow - { sheetSlug, tabName, cells: [{ header, value }, …] }',
-  '  - slack.postMessage    - { channelSlug, threadKey: string or null, body }',
-  '  - twitter.reply        - { tweetSlug, body }',
-  '  - ticket.update        - { slug, status: value or null, comment: string or null }',
+  '  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }',
+  '  - slack.postMessage    — { channelSlug, threadKey: string or null, body }',
+  '  - twitter.reply        — { tweetSlug, body }',
+  '  - ticket.update        — { slug, status: value or null, comment: string or null }',
   '',
   'Discipline:',
   `  - ${actionModeInstruction(false, 'mock')}`,

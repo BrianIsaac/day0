@@ -38,10 +38,10 @@ export function identityFromCharter(c: Charter, manager?: string): string {
     `- 60-day: ${c.shortTermGoals.day60}`,
     `- 90-day: ${c.shortTermGoals.day90}`,
     '',
-    '## Boundaries - what I will do',
+    '## Boundaries — what I will do',
     ...renderBullets(c.proposedBoundaries.willDo, ''),
     '',
-    '## Boundaries - what I will NOT do',
+    '## Boundaries — what I will NOT do',
     ...renderBullets(c.proposedBoundaries.willNotDo, ''),
     '',
     '## Escalation triggers',
@@ -49,7 +49,7 @@ export function identityFromCharter(c: Charter, manager?: string): string {
     '',
     ...(manager === undefined ? [] : ['## Manager (who approves)', `- ${manager}`, '']),
     '## Key relationships',
-    ...c.namedCollaborators.map((n) => `- ${n.name} - ${n.topic} (intro path: ${n.introPath})`),
+    ...c.namedCollaborators.map((n) => `- ${n.name} — ${n.topic} (intro path: ${n.introPath})`),
     '',
   ];
   return lines.join('\n');

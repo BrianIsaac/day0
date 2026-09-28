@@ -52,9 +52,9 @@ const skill = {
 
 describe('skill author prompts', (): void => {
   it('teaches the two surface verbs, their arguments and the connected-surface rule', (): void => {
-    expect(AUTHOR_SYSTEM).toContain('mcp.call             - { surface, tool, toolArgsJson }');
+    expect(AUTHOR_SYSTEM).toContain('mcp.call             — { surface, tool, toolArgsJson }');
     expect(AUTHOR_SYSTEM).toContain(
-      'http.request         - { surface, method, path, headersJson, body }',
+      'http.request         — { surface, method, path, headersJson, body }',
     );
     expect(AUTHOR_SYSTEM).toContain('name the surface exactly as the Surfaces list does');
     expect(AUTHOR_SYSTEM).toContain(

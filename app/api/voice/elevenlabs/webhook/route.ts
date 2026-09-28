@@ -36,7 +36,7 @@ const MISSING_SECRET =
  * ElevenLabs post-call transcription webhook. The agent's dashboard
  * webhook config carries this URL. Custom data (our internal agentId,
  * the boss label, the session's webhook token) lands at
- * `data.conversation_initiation_client_data.dynamic_variables`  -
+ * `data.conversation_initiation_client_data.dynamic_variables` -
  * sent in the original `startSession({ dynamicVariables })` call from
  * the browser.
  *

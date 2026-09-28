@@ -2518,7 +2518,7 @@ export async function applyVerdict(
 
   // Late-arriving verdict guard: a verdict is the entry transition from
   // `discovered` (initial evaluation) or `needs-skill` (pending-reevaluation
-  // after a skill registers). If the row has already advanced past these  -
+  // after a skill registers). If the row has already advanced past these -
   // claimed, plan-pending, plan-approved, executing, completed, etc. - a stale
   // verdict must NOT stomp the row's state, which would wipe a drafted plan or
   // running execution. Ignore silently.

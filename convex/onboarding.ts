@@ -123,7 +123,7 @@ const QUESTION_LABELLING_SYSTEM = [
   'Each numbered item is one thing the agent said. Say which of the seven topics it was asking about.',
   '',
   'The seven topics, and how each is normally asked:',
-  ...DAY_ONE_TOPIC_SPECS.map((s) => `  ${s.topic} - ${s.question.split('\n')[1] ?? s.question}`),
+  ...DAY_ONE_TOPIC_SPECS.map((s) => `  ${s.topic} — ${s.question.split('\n')[1] ?? s.question}`),
   '',
   'Rules:',
   '  - One label per numbered item, in the same order, using the item numbers given.',
@@ -263,7 +263,7 @@ async function draftCharter(args: {
       { fileName: 'TOOLS.md', content: toolsFromCharter(charter) },
       { fileName: 'BOOTSTRAP.md', content: day1Script() },
       { fileName: 'USER.md', content: `# USER\n\nBoss: ${args.bossLabel}\n` },
-      { fileName: 'MEMORY.md', content: '# MEMORY\n\n(empty - populated by post-turn review)\n' },
+      { fileName: 'MEMORY.md', content: '# MEMORY\n\n(empty — populated by post-turn review)\n' },
       {
         fileName: 'HEARTBEAT.md',
         content: `# HEARTBEAT\n\nDeployed: ${new Date().toISOString()}\n`,
@@ -419,7 +419,7 @@ export const synthesiseFromAnswers = action({
 
 /**
  * Browser entry. Two things are proved before a single model call is spent:
- * that the caller owns `agentId`, and - in one transaction, against the row  -
+ * that the caller owns `agentId`, and - in one transaction, against the row -
  * that `voiceSessionId` is that agent's session and is finalisable. Ownership
  * of the session follows from the pair, and only from the pair: a session id
  * the caller merely knows proves nothing about who may end that call.

@@ -43,7 +43,7 @@ describe('frozen quality-fit text', (): void => {
       .toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
       You are deciding whether to claim a piece of incoming work.
-      You have a \`Good-habits memory\` block that captures the role norms a competent practitioner follows - habits, anti-patterns, and discipline.
+      You have a \`Good-habits memory\` block that captures the role norms a competent practitioner follows — habits, anti-patterns, and discipline.
       A user has posted, mentioned you, or filed a ticket. Decide: does this candidate look like work the role would invest time in, vs low-value-but-discoverable busywork that violates the role norms?
 
       Discipline:
@@ -82,7 +82,7 @@ describe('frozen quality-fit text', (): void => {
       qualityFit({ candidate, agentsMd: '', role: 'Operations coordination' }),
     ).resolves.toEqual({
       pass: true,
-      reason: 'no good-habits memory yet - defer slop filtering to Layer 3',
+      reason: 'no good-habits memory yet — defer slop filtering to Layer 3',
     });
     expect(model.users).toEqual([]);
   });
