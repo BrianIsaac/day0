@@ -13,16 +13,11 @@
 /** The cursor a run holds once every page is read: the start of the finish. No reader emits a NUL. */
 export const FINISHING_CURSOR = '\u0000finishing';
 
-/** The finish's phases, in order. */
-export type FinishingPhase = 'pages' | 'credentials' | 'mirrors' | 'scopes';
-
 /** The finish's phases, in the order it walks them. */
-export const FINISHING_PHASES: readonly FinishingPhase[] = [
-  'pages',
-  'credentials',
-  'mirrors',
-  'scopes',
-];
+export const FINISHING_PHASES = ['pages', 'credentials', 'mirrors', 'scopes'] as const;
+
+/** One phase of the finish. */
+export type FinishingPhase = (typeof FINISHING_PHASES)[number];
 
 /**
  * Whether a finish that stands at one phase has yet to walk another: the
@@ -41,7 +36,7 @@ export interface FinishingStep {
   readonly cursor: string | null;
 }
 
-const STEP = /^\u0000finishing:(pages|credentials|mirrors|scopes):([\s\S]*)$/;
+const STEP = new RegExp(`^\u0000finishing:(${FINISHING_PHASES.join('|')}):([\\s\\S]*)$`);
 
 /**
  * Read a run's cursor as a point in the finish.
