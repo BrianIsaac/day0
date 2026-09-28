@@ -1796,8 +1796,8 @@ export function ProposedSkillsPanel({
                     const file = (reason: string): void =>
                       onAuthoringAttempt({ skillId: s._id, name: s.name, reason });
                     // Discarded because each step's rejection is handled here and
-                    // filed as the attempt on the row: a refused approval says so,
-                    // an authoring failure reads as one.
+                    // filed as the attempt on the row. The approval's refusals name
+                    // the approve themselves (`cannot approve "<skill>": ...`).
                     void approve({ skillId: s._id }).then(
                       () =>
                         author({ skillId: s._id }).then(
@@ -1806,8 +1806,7 @@ export function ProposedSkillsPanel({
                           },
                           (err: unknown) => file(plainErrorMessage(errorMessage(err))),
                         ),
-                      (err: unknown) =>
-                        file(`not approved: ${plainErrorMessage(errorMessage(err))}`),
+                      (err: unknown) => file(plainErrorMessage(errorMessage(err))),
                     );
                   }}
                   className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"

@@ -719,7 +719,7 @@ export const approve = mutation({
   handler: async (ctx, args) => {
     const row = await assertOwnsSkill(ctx, args.skillId);
     if (row.state !== 'proposed') {
-      throw new Error(`skill state is ${row.state}; expected proposed`);
+      throw new Error(`cannot approve "${row.name}": it is ${row.state}, not proposed`);
     }
     // A skill may only target a connected surface. The sandbox stays offline,
     // so approval is the first point at which the target is checked, and the

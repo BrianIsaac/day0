@@ -1849,12 +1849,12 @@ describe('what Retry does to an unregistered skill', (): void => {
     ]);
   });
 
-  it('files a refused Approve as not approved, in the words written for a person', async (): Promise<void> => {
+  it('files a refused Approve in the words written for a person, the transport envelope stripped', async (): Promise<void> => {
     const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
     const attempts = await clickAndRecord(
       'Approve · author and verify',
       'skills:approve',
-      'skill state is approved; expected proposed',
+      'cannot approve "refresh-the-tile": it is approved, not proposed',
       (record) => (
         <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={record} />
       ),
@@ -1864,7 +1864,7 @@ describe('what Retry does to an unregistered skill', (): void => {
       {
         skillId: 'skill-1',
         name: 'refresh-the-tile',
-        reason: 'not approved: skill state is approved; expected proposed',
+        reason: 'cannot approve "refresh-the-tile": it is approved, not proposed',
       },
     ]);
   });
