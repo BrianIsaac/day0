@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { AUTHORING_LEASE_MS } from '../../../src/lib/skill-authoring';
 import {
+  oneToOneWaitsOnManager,
   parkedRowNeedsManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
@@ -65,5 +66,14 @@ describe('needs-manager rules', (): void => {
 
   it('offers Retry on a stopped row whose ledger names nothing to reconcile', (): void => {
     expect(stoppedRowOffersMove(row({ skipReason: 'the run stopped' }))).toBe(true);
+  });
+});
+
+describe('oneToOneWaitsOnManager (D4 (b))', (): void => {
+  it('waits on the manager only while the employee is deployed and its one-to-one not begun', (): void => {
+    expect(oneToOneWaitsOnManager({ state: 'deployed' })).toBe(true);
+    expect(oneToOneWaitsOnManager({ state: 'day-one-in-progress' })).toBe(false);
+    expect(oneToOneWaitsOnManager({ state: 'charter-pending' })).toBe(false);
+    expect(oneToOneWaitsOnManager({ state: 'active' })).toBe(false);
   });
 });

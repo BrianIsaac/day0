@@ -37,6 +37,11 @@ export const NEEDS_YOU_UNREADABLE =
 /** What the manager is asked for and what it is about, in the manager's words. */
 function described(entry: NeedsYouEntry): { readonly ask: string; readonly about: string } {
   switch (entry.kind) {
+    case 'one-to-one':
+      return {
+        ask: 'a one-to-one to hold',
+        about: 'Its Day-1 one-to-one. Nothing it does starts before it.',
+      };
     case 'charter':
       return { ask: 'a charter to review', about: 'Drafted from your one-to-one.' };
     case 'plan':

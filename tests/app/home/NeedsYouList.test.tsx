@@ -13,7 +13,7 @@ const base = {
   waitingAtLeast: false,
 };
 
-/** The prototype's three entries and the four other kinds, as `work.needsYou` returns them. */
+/** The prototype's three entries and the five other kinds, as `work.needsYou` returns them. */
 const inbox = {
   entries: [
     {
@@ -78,8 +78,17 @@ const inbox = {
       waitingSince: minutes(45),
       surfaceId: 'surface-7',
     },
+    {
+      ...base,
+      kind: 'one-to-one',
+      key: 'one-to-one:8',
+      employeeName: 'Ren',
+      agentId: 'synthetic-ren',
+      subject: 'one-to-one',
+      waitingSince: minutes(120),
+    },
   ],
-  total: 9,
+  total: 10,
   waitingByEmployee: [],
 } as unknown as NeedsYouInbox;
 
@@ -114,6 +123,8 @@ describe('NeedsYouList', (): void => {
     expect(text).toContain('Mira · an item waiting on a connection');
     expect(text).toContain('Mira · an item stopped short of done');
     expect(text).toContain('Mira · a system to approve');
+    expect(text).toContain('Ren · a one-to-one to hold');
+    expect(text).toContain('Its Day-1 one-to-one. Nothing it does starts before it.');
   });
 
   it('keeps the server’s order, longest wait first, and dates the held write', (): void => {
@@ -128,8 +139,9 @@ describe('NeedsYouList', (): void => {
   it('links every entry to its employee’s page, with Decide on a held write and Open elsewhere', (): void => {
     expect(html.match(/href="\/agent\/synthetic-mira"/g)).toHaveLength(6);
     expect(html.match(/href="\/agent\/synthetic-aiko"/g)).toHaveLength(1);
+    expect(html.match(/href="\/agent\/synthetic-ren"/g)).toHaveLength(1);
     expect(text.match(/ Decide /g)).toHaveLength(1);
-    expect(text.match(/ Open /g)).toHaveLength(6);
+    expect(text.match(/ Open /g)).toHaveLength(7);
   });
 
   it('says how many more wait beyond the ones shown', (): void => {

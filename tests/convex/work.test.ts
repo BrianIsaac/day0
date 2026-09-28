@@ -6731,6 +6731,33 @@ describe('work.needsYou', (): void => {
     expect(entry).toMatchObject({ kind: 'held', waitingAtLeast: true, waitingSince: others[0] });
   });
 
+  it('lists a deployed employee’s Day-1 one-to-one as the manager’s to hold, dated from its deploy (D4 (b))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const waiting = await employee(harness, 'Aiko', { state: 'deployed' });
+    const deployedAt = await entered(harness, waiting, 'agent.deployed', {});
+    await employee(harness, 'Mira', { state: 'day-one-in-progress' });
+    await employee(harness, 'Ren', { state: 'active' });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries).toEqual([
+      expect.objectContaining({
+        kind: 'one-to-one',
+        key: `one-to-one:${waiting}`,
+        agentId: waiting,
+        employeeName: 'Aiko',
+        subject: 'one-to-one',
+        waitingSince: deployedAt,
+        waitingAtLeast: false,
+      }),
+    ]);
+    expect(inbox.total).toBe(1);
+    expect(inbox.waitingByEmployee.find((row) => row.agentId === waiting)?.waiting).toBe(1);
+
+    await harness.run(async (ctx) => await ctx.db.patch(waiting, { state: 'day-one-in-progress' }));
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+  });
+
   it('keeps the newest proposed system when an employee holds more systems than the read takes (m7)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await employee(harness, 'Mira');

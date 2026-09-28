@@ -13,6 +13,16 @@ import {
 /** How the reason on a row the manager's own rejection failed begins. */
 export const MANAGER_REJECTION_PREFIX = 'rejected by the manager';
 
+/**
+ * Whether the employee's Day-1 one-to-one is the manager's to hold: deployed and not yet begun.
+ * Nothing it does starts before it (the wave 5 review's D4 (b)).
+ *
+ * @param agent - The employee.
+ */
+export function oneToOneWaitsOnManager(agent: Pick<Doc<'agents'>, 'state'>): boolean {
+  return agent.state === 'deployed';
+}
+
 /** The open states that wait on the manager: a plan to approve, a held action set. */
 export const NEEDS_MANAGER_STATES: ReadonlySet<string> = new Set([
   'plan-pending',

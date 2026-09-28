@@ -15,6 +15,7 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
 import {
+  oneToOneWaitsOnManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
   stoppedRowOffersMove,
@@ -6782,6 +6783,8 @@ const needsYouBaseFields = {
 
 const needsYouEntryValidator = v.union(
   v.object({ kind: v.literal('charter'), ...needsYouBaseFields }),
+  /** A deployed employee whose Day-1 one-to-one the manager has not begun. */
+  v.object({ kind: v.literal('one-to-one'), ...needsYouBaseFields }),
   v.object({
     kind: v.literal('plan'),
     ...needsYouBaseFields,
@@ -6950,7 +6953,8 @@ interface WaitingRows {
  * held action set the manager already decided is not listed, a skill several
  * items wait on is one entry, and a row parked until the charter is approved
  * is covered by the charter's entry. A system the employee proposed is listed
- * too, since only the manager approves it.
+ * too, since only the manager approves it, and so is a one-to-one not yet
+ * begun (`needsYouOfEmployee`), which is not a row.
  *
  * @param ctx - Query context.
  * @param agentId - The employee.
@@ -7027,35 +7031,46 @@ async function needsYouOfEmployee(
   now: number,
 ): Promise<NeedsYouEntry[]> {
   const waiting = await waitingRowsOf(ctx, agent._id, now);
-  const [questions, planEntered, heldEntered, parkedEntered, stoppedEntered, surfaceEntered] =
-    await Promise.all([
-      Promise.all(
-        waiting.plans.map(
-          async (row) =>
-            (
-              await ctx.db
-                .query('managerQuestions')
-                .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-                .take(NEEDS_YOU_QUESTION_READ_LIMIT)
-            ).filter((question) => question.answer === undefined).length,
-        ),
+  const [
+    deployed,
+    questions,
+    planEntered,
+    heldEntered,
+    parkedEntered,
+    stoppedEntered,
+    surfaceEntered,
+  ] = await Promise.all([
+    // The one-to-one has waited since the deploy; a row with no event is dated by its insert.
+    oneToOneWaitsOnManager(agent)
+      ? eventsOfType(ctx, agent._id, 'agent.deployed').order('desc').first()
+      : null,
+    Promise.all(
+      waiting.plans.map(
+        async (row) =>
+          (
+            await ctx.db
+              .query('managerQuestions')
+              .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+              .take(NEEDS_YOU_QUESTION_READ_LIMIT)
+          ).filter((question) => question.answer === undefined).length,
       ),
-      enteredAtByRow(
-        ctx,
-        agent._id,
-        ['work.plan-drafted'],
-        waiting.plans.filter((row) => row.planPendingAt === undefined),
-      ),
-      enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held),
-      enteredAtByRow(
-        ctx,
-        agent._id,
-        ['work.evaluated', 'work.evaluation-parked'],
-        waiting.parked.map(({ row }) => row),
-      ),
-      enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], waiting.stopped),
-      enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
-    ]);
+    ),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.plan-drafted'],
+      waiting.plans.filter((row) => row.planPendingAt === undefined),
+    ),
+    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.evaluated', 'work.evaluation-parked'],
+      waiting.parked.map(({ row }) => row),
+    ),
+    enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], waiting.stopped),
+    enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
+  ]);
 
   const zone = agentZone(agent);
   const base = (key: string, subject: string, entered: EnteredAt): NeedsYouBase => ({
@@ -7072,6 +7087,18 @@ async function needsYouOfEmployee(
     dates.get(row._id) ?? exact(row._creationTime);
 
   return [
+    ...(oneToOneWaitsOnManager(agent)
+      ? [
+          {
+            kind: 'one-to-one' as const,
+            ...base(
+              `one-to-one:${agent._id}`,
+              'one-to-one',
+              exact(deployed?._creationTime ?? agent._creationTime),
+            ),
+          },
+        ]
+      : []),
     ...(waiting.charter
       ? [
           {
