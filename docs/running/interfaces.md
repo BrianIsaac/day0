@@ -33,11 +33,11 @@ The entry points a reader is most likely to want:
 | `work:approvePlan`, `work:approveActions`, `work:approveActionsBatch`, `work:rejectActions` | mutation | The manager's decisions on a plan and on held actions, one run at a time or as one batch across runs |
 | `work:retryFailed`, `work:cancelPlan`, `work:reconcileFailed` | mutation | Send a finished or failed run back with a note, cancel a plan with a reason, reconcile what a failed run left behind |
 | `skills:approve`, `skills:reject` | mutation | The manager's decision on a proposed skill |
-| `surfaces:approve` | mutation | One of the two approvals a connection card needs, by `role`: `manager` or `it` |
+| `surfaces:approve` | mutation | The manager's one approval a connection card needs before its probe runs, by `surfaceId` |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |
 | `metrics:forAgent` | query | The Supervision card's numbers, derived from the event ledger |
 | `metrics:forOwner` | query | Every employee's Supervision numbers and the company row: decisions and their waits pooled for the one manager, each employee's time to an approved charter quoted and never summed, evaluation agents and baseline arms left out |
-| `exportActions:exportForAgent` | action | The whole event trail and ledger as JSON, credential values removed |
+| `exportActions:exportForAgent`, `exportActions:exportPage` | action | The head of an agent's redacted trace and where its pages start, then one page at a time; `pnpm export:trace` calls both and writes the whole trace to one file |
 | `reset:deleteMyData` | mutation | Deletes the caller's agents and their rows in the enumerated tables |
 
 Names are `module:function`; confirm the current argument shape with `function-spec` rather than from this table, which is a guide to where to look.
@@ -91,7 +91,7 @@ absent                                        (no approved path in the documenta
 
 **Path.** The connection ladder is `SURFACE_PATHS` in `src/surfaces/types.ts`: `mcp`, `documented-api`, `browser-driven`, `escalate`. Orientation writes the chosen `path`, a `fallbackPath` and the `pathCandidates` it considered, each with the endpoint the documentation records; the probe records each attempt's outcome in `probeAttempts`.
 
-**Approvals and credential.** `managerApprovedAt` and `itApprovedAt` are the two approvals a card needs before its probe runs. The credential is a reference, `credentialId`, into the owner-level `credentials` table, with `credentialKind` (`value`, `location` or `oauth`) and `credentialLanded`; the row never holds a credential value.
+**Approvals and credential.** `managerApprovedAt` is the one approval a card needs before its probe runs (Q10); `itApprovedAt` is no longer written or read, and its declaration leaves in the release after 0.6.0. The credential is a reference, `credentialId`, into the owner-level `credentials` table, with `credentialKind` (`value`, `location` or `oauth`) and `credentialLanded`; the row never holds a credential value.
 
 **Tool catalogue.** `toolAllowlist` is the list of tools the probe discovered and admitted, and `toolArguments` the argument names it probed per tool. The policy refuses any action naming a tool outside the allowlist, and the executor is shown the probed argument names so a held write is repaired once against them before it is held.
 
