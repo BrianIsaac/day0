@@ -509,6 +509,111 @@ body {
   }
 }
 
+/* The office lights up once, the first time it is seen (v3 section 5, v4 section 1.3): rooms 260 ms, 50 ms apart,
+   with a 6 px rise and a wash; then the corridors, desks and decor; the plate or the figures last; about a second.
+   `data-seen` is written by app/home/office-light-up.ts. The keyframes move `transform`, which composes with the
+   `translate` Tailwind centres the pieces with. The server and console keep their loops beside the arrival. */
+.day0-pixel-room-light {
+  position: absolute;
+  inset: 0;
+  background: rgba(34, 211, 238, 0.12);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes day0-office-piece-on {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes day0-office-room-wash {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes day0-office-figure-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .day0-pixel-office[data-seen='waiting']
+    :is(
+      .day0-pixel-room,
+      .day0-pixel-corridor,
+      .day0-pixel-decor,
+      .day0-pixel-desk,
+      .day0-pixel-chair,
+      .day0-pixel-office-empty,
+      .day0-office-agent
+    ) {
+    opacity: 0;
+  }
+
+  .day0-pixel-office[data-seen='seen'] .day0-pixel-room {
+    animation: day0-office-piece-on 260ms var(--ease-arrive, cubic-bezier(0.23, 1, 0.32, 1)) both;
+    animation-delay: calc(var(--i, 0) * 50ms);
+  }
+
+  .day0-pixel-office[data-seen='seen'] .day0-pixel-room-light {
+    animation: day0-office-room-wash 900ms ease-out both;
+    animation-delay: calc(var(--i, 0) * 50ms + 80ms);
+  }
+
+  .day0-pixel-office[data-seen='seen'] .day0-pixel-corridor {
+    animation: day0-office-piece-on 260ms var(--ease-arrive, cubic-bezier(0.23, 1, 0.32, 1)) 320ms
+      both;
+  }
+
+  .day0-pixel-office[data-seen='seen'] :is(.day0-pixel-decor, .day0-pixel-desk, .day0-pixel-chair) {
+    animation: day0-office-piece-on 260ms var(--ease-arrive, cubic-bezier(0.23, 1, 0.32, 1)) both;
+    animation-delay: calc(var(--i, 0) * 30ms + 420ms);
+  }
+
+  .day0-pixel-office[data-seen='seen'] .day0-pixel-server {
+    animation:
+      day0-office-piece-on 260ms var(--ease-arrive, cubic-bezier(0.23, 1, 0.32, 1)) both,
+      day0-server-blink 2.4s steps(3, end) infinite;
+    animation-delay: calc(var(--i, 0) * 30ms + 420ms), 0s;
+  }
+
+  .day0-pixel-office[data-seen='seen'] .day0-pixel-console {
+    animation:
+      day0-office-piece-on 260ms var(--ease-arrive, cubic-bezier(0.23, 1, 0.32, 1)) both,
+      day0-console-glow 3.2s steps(3, end) infinite;
+    animation-delay: calc(var(--i, 0) * 30ms + 420ms), 0s;
+  }
+
+  .day0-pixel-office[data-seen='seen'] .day0-pixel-office-empty {
+    animation: day0-office-piece-on 260ms var(--ease-arrive, cubic-bezier(0.23, 1, 0.32, 1)) 800ms
+      both;
+  }
+
+  .day0-pixel-office[data-seen='seen'] .day0-office-agent {
+    animation: day0-office-figure-in 260ms var(--ease-arrive, cubic-bezier(0.23, 1, 0.32, 1)) 900ms
+      both;
+  }
+}
+
 @keyframes day0-arrive {
   from {
     opacity: 0;

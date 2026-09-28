@@ -116,3 +116,55 @@ describe('the public-page motion', () => {
     expect(CSS).not.toMatch(/WhipCursor|cursor: none/);
   });
 });
+
+describe('the office light-up (v3 section 5, v4 section 1.3)', () => {
+  const noPreference = blocks('@media (prefers-reduced-motion: no-preference)').join('\n');
+  const officeRules = CSS.slice(CSS.indexOf('The office lights up once'));
+
+  it('hides the pieces only while the office waits below the fold, and only when motion is welcome', () => {
+    expect(noPreference).toMatch(
+      /\.day0-pixel-office\[data-seen='waiting'\]\s*:is\([^)]*\.day0-pixel-room,[^)]*\.day0-office-agent\s*\)\s*\{\s*opacity: 0;/,
+    );
+    expect(CSS.match(/\[data-seen='waiting'\]/g)).toHaveLength(1);
+  });
+
+  it('lifts the rooms in 260 ms, 50 ms apart, then the rest, the figures last, in about a second', () => {
+    const [rooms] = rulesFor(noPreference, ".day0-pixel-office[data-seen='seen'] .day0-pixel-room");
+    expect(rooms).toContain('day0-office-piece-on 260ms');
+    expect(rooms).toContain('var(--i, 0) * 50ms');
+    const [figures] = rulesFor(
+      noPreference,
+      ".day0-pixel-office[data-seen='seen'] .day0-office-agent",
+    );
+    expect(figures).toMatch(/day0-office-figure-in 260ms[^;]*900ms/);
+    expect(CSS).toMatch(
+      /@keyframes day0-office-piece-on \{\s*from \{\s*opacity: 0;\s*transform: translateY\(6px\);/,
+    );
+  });
+
+  it('keeps the server and console blinking beside their arrival, after the decor rule they override', () => {
+    const [server] = rulesFor(
+      noPreference,
+      ".day0-pixel-office[data-seen='seen'] .day0-pixel-server",
+    );
+    const [console] = rulesFor(
+      noPreference,
+      ".day0-pixel-office[data-seen='seen'] .day0-pixel-console",
+    );
+    expect(server).toContain('day0-server-blink 2.4s steps(3, end) infinite');
+    expect(console).toContain('day0-console-glow 3.2s steps(3, end) infinite');
+    const decor = officeRules.indexOf('.day0-pixel-decor, .day0-pixel-desk, .day0-pixel-chair');
+    expect(decor).toBeGreaterThan(0);
+    expect(officeRules.indexOf("[data-seen='seen'] .day0-pixel-server")).toBeGreaterThan(decor);
+    expect(officeRules.indexOf("[data-seen='seen'] .day0-pixel-console")).toBeGreaterThan(decor);
+  });
+
+  it('follows the office keyframes and their reduced-motion block', () => {
+    expect(CSS.indexOf('The office lights up once')).toBeGreaterThan(
+      CSS.indexOf('@keyframes day0-agent-step'),
+    );
+    expect(CSS.indexOf('The office lights up once')).toBeGreaterThan(
+      CSS.indexOf('.day0-office-agent-roaming {\n    animation: none;'),
+    );
+  });
+});
