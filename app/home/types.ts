@@ -9,3 +9,9 @@ export interface Boss {
 
 /** One employee as `agents.rosterForUser` returns it. */
 export type RosterRow = FunctionReturnType<typeof api.agents.rosterForUser>[number];
+
+/** The needs-you inbox as `work.needsYou` returns it. */
+export type NeedsYouInbox = FunctionReturnType<typeof api.work.needsYou>;
+
+/** One entry of the needs-you inbox. */
+export type NeedsYouEntry = NeedsYouInbox['entries'][number];
