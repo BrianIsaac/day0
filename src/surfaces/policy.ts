@@ -1680,7 +1680,7 @@ function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean 
   return (
     parsed.method === 'POST' &&
     surface.class === 'chat' &&
-    /^\/*chat\.postMessage$/.test(parsed.path) &&
+    requestOperation(parsed, surface) === 'chat.postMessage' &&
     typeof parsed.bodyJson?.text === 'string'
   );
 }
@@ -1690,7 +1690,7 @@ function isChatUpdate(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolea
   return (
     parsed.method === 'POST' &&
     surface.class === 'chat' &&
-    /^\/*chat\.update$/.test(parsed.path) &&
+    requestOperation(parsed, surface) === 'chat.update' &&
     typeof parsed.bodyJson?.text === 'string' &&
     typeof parsed.bodyJson.ts === 'string' &&
     parsed.bodyJson.ts.trim() !== ''

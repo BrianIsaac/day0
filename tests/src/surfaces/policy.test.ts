@@ -1221,6 +1221,23 @@ describe('provenance', (): void => {
     ).toEqual({ ok: false, reason: USERNAME_REFUSED });
   });
 
+  it('reads a chat post by the operation it is sent to, however its path is spelled', (): void => {
+    // The URL parser drops a tab or a newline, so each of these is sent as chat.postMessage.
+    for (const path of ['chat.post\tMessage', 'chat.postMes\nsage', 'chat.postMessage?pretty=1']) {
+      const post = (extra: Record<string, unknown>): MockAction => ({
+        ...chatPost('D0MANAGER', extra),
+        args: { ...chatPost('D0MANAGER', extra).args, path },
+      });
+      expect(applyProvenance(parsed(post({ username: 'Bob' })), slack, run, 'oauth'), path).toEqual(
+        {
+          ok: false,
+          reason: USERNAME_REFUSED,
+        },
+      );
+      expect(isManagerDm(parsed(post({})), slack), path).toBe(true);
+    }
+  });
+
   it('omits identity fields and the trailer for a dedicated oauth app', (): void => {
     const result = applyProvenance(parsed(chatPost('D0MANAGER')), slack, run, 'oauth');
     expect(result.ok).toBe(true);
