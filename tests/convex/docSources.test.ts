@@ -1597,8 +1597,12 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         .query('docSyncRuns')
         .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
         .first(),
+      listing: await ctx.db
+        .query('docPageListings')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .first(),
     }));
-    expect(left).toEqual({ page: null, mirror: null, run: null });
+    expect(left).toEqual({ page: null, mirror: null, run: null, listing: null });
   });
 
   it('lists the syncable sources a page at a time', async (): Promise<void> => {
