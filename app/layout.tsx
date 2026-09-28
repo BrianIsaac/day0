@@ -59,9 +59,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </header>
-          <div id="main" tabIndex={-1} className="outline-none">
+          <main id="main" tabIndex={-1} className="outline-none">
             {children}
-          </div>
+          </main>
         </Providers>
       </body>
     </html>

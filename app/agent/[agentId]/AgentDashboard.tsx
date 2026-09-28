@@ -304,9 +304,9 @@ export function AgentDashboard({ agentId }: Props) {
 
   if (!agent) {
     return (
-      <main className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
-        loading agent…
-      </main>
+      <div className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
+        loading employee…
+      </div>
     );
   }
 
@@ -318,7 +318,7 @@ export function AgentDashboard({ agentId }: Props) {
 
   return (
     <AgentZoneContext value={agentZone(agent)}>
-      <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
+      <div className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
         <DashboardHeader
           agent={agent}
           charter={charter ?? null}
@@ -418,7 +418,7 @@ export function AgentDashboard({ agentId }: Props) {
           surfaces, a channel list and a conversation do not fit in 400px, and
           this panel is the whole of what the agent's work is done against. */}
         <MockEnvironment agentId={agentId} />
-      </main>
+      </div>
     </AgentZoneContext>
   );
 }

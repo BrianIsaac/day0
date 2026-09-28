@@ -3732,3 +3732,32 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
     view.unmount();
   });
 });
+
+describe('the page in the layout (N29, UX 11)', (): void => {
+  afterEach((): void => {
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  it('leaves the one main landmark to the layout, loading and loaded', async (): Promise<void> => {
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    expect(view.container.textContent).toContain('loading employee…');
+    expect(view.container.querySelector('main')).toBeNull();
+    backend.queries = {
+      'agents:get': {
+        _id: 'agent-1',
+        _creationTime: 1,
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      },
+    };
+    act((): void => view.root.render(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />));
+    await settle();
+    expect(view.container.textContent).toContain('Work queue');
+    expect(view.container.querySelector('main')).toBeNull();
+    view.unmount();
+  });
+});

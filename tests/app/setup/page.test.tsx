@@ -45,6 +45,10 @@ const text = html
   .replace(/\s+/g, ' ');
 
 describe('the /setup guide', (): void => {
+  it('leaves the one main landmark to the layout', (): void => {
+    expect(html).not.toMatch(/<main[\s>]/);
+  });
+
   it('starts by saying what runs, and that it runs here', (): void => {
     expect(text).toContain('your own machine');
     expect(text).toMatch(/mock office/i);

@@ -262,7 +262,7 @@ export function DocumentationPage(): React.ReactNode {
 
   const isReal = config?.mode === 'real';
   return (
-    <main className="max-w-5xl mx-auto w-full px-6 py-10">
+    <div className="max-w-5xl mx-auto w-full px-6 py-10">
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Documentation</h1>
@@ -540,6 +540,6 @@ export function DocumentationPage(): React.ReactNode {
           </section>
         </>
       )}
-    </main>
+    </div>
   );
 }

@@ -47,6 +47,10 @@ beforeEach((): void => {
   state.refusals = {};
 });
 
+it('leaves the one main landmark to the layout', (): void => {
+  expect(renderToStaticMarkup(<DocumentationPage />)).not.toMatch(/<main[\s>]/);
+});
+
 it('keeps the hosted mock documentation page unchanged', (): void => {
   state.mode = 'mock';
   expect(renderToStaticMarkup(<DocumentationPage />)).toMatchSnapshot();
