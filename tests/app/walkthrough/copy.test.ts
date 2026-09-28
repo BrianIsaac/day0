@@ -11,7 +11,7 @@ describe('the walkthrough copy', () => {
 
   it('says the clock starts at the first step the README times, and never before', () => {
     expect(WALKTHROUGH.clock(RECORDED_RUN)).toBe(
-      'Times are minutes and seconds from the moment the employee was deployed, as the README states them; it states none before step 4, so the clock starts there.',
+      'Times are minutes and seconds from the moment the employee was deployed. The README gives each step an elapsed time from step 4 on, so the clock starts there; the steps before it state any time in their own words.',
     );
     expect(WALKTHROUGH.untimed(RECORDED_RUN)).toBe('timed from step 4');
   });

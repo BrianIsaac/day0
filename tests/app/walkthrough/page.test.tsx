@@ -31,7 +31,8 @@ describe('what the walkthrough tells a visitor it is', () => {
       expect(text.indexOf(notice)).toBeGreaterThan(-1);
       expect(text.indexOf(notice)).toBeLessThan(firstStep);
     }
-    expect(WALKTHROUGH.clock(RECORDED_RUN)).toContain('it states none before step 4');
+    expect(WALKTHROUGH.clock(RECORDED_RUN)).toContain('from step 4 on');
+    expect(text).toContain(WALKTHROUGH.bed);
   });
 
   it('offers no control that could be mistaken for an approval', () => {
@@ -49,6 +50,10 @@ describe('what the walkthrough tells a visitor it is', () => {
     const intro = readme.slice(readme.indexOf('## One full run'), readme.indexOf('1. **'));
     for (const claim of [
       'It ran on 3 September 2026',
+      // "a hosted model": re-recorded on a local one, this fails and the lede must change.
+      'OPENAI_MODEL=gpt-5.6-terra',
+      'handbook with one team',
+      'the counts of cards, candidates and skills below are that run',
       'fresh clone',
       "author's own Linear",
       "author's own Slack",

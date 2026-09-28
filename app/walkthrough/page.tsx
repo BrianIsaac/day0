@@ -10,6 +10,7 @@ import { WALKTHROUGH } from './copy';
 import { RunParagraph } from './RunParagraph';
 import { RunStory } from './RunStory';
 
+/** The tab's title and the description a link preview shows. */
 export const metadata: Metadata = {
   title: 'Day0 walkthrough',
   description:
@@ -73,6 +74,7 @@ export default function WalkthroughPage() {
               className="mt-5 grid max-w-[62ch] gap-1.5 text-sm leading-relaxed text-[var(--color-muted)]"
             >
               <p>{WALKTHROUGH.readOnly}</p>
+              <p>{WALKTHROUGH.bed}</p>
               <p>{WALKTHROUGH.clock(run)}</p>
               <p>{walkthroughProvenanceLine(run)}</p>
             </div>

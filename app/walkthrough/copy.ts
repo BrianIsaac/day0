@@ -11,9 +11,12 @@ export const WALKTHROUGH = {
   heading: 'One Day0 employee, from the first page to a refused write',
   lede: (run: Pick<RecordedRun, 'runOn'>): string =>
     `A single run of real mode, start to finish, on ${dayLabel(run.runOn)}: a fresh clone, a ` +
-    "hosted model, the author's own Linear and Slack workspaces, and the synthetic Looker-style " +
+    'hosted model, the author’s own Linear and Slack workspaces, and the synthetic Looker-style ' +
     'tile the repository ships. One person acted as both the manager and the IT approver. Every ' +
     'capture is the Day0 dashboard as it was.',
+  bed:
+    'It ran on a revenue-operations handbook with one team, so its counts of cards, candidates ' +
+    'and skills are that run’s, not what a fresh clone shows.',
   readOnly:
     'This page replays a recording. Nothing here is live: no employee is created, no work is ' +
     'claimed, and no approval on this page can be given or taken back.',
@@ -22,8 +25,9 @@ export const WALKTHROUGH = {
     const first = firstTimedStep(run);
     return first === undefined
       ? 'The README states no elapsed times for this run, so the page shows none.'
-      : 'Times are minutes and seconds from the moment the employee was deployed, as the README ' +
-          `states them; it states none before step ${first.number}, so the clock starts there.`;
+      : 'Times are minutes and seconds from the moment the employee was deployed. The README ' +
+          `gives each step an elapsed time from step ${first.number} on, so the clock starts ` +
+          'there; the steps before it state any time in their own words.';
   },
   untimed: (run: RecordedRun): string => {
     const first = firstTimedStep(run);
