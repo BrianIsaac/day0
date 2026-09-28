@@ -1409,6 +1409,61 @@ describe('manager channel request claims', (): void => {
     });
   });
 
+  it('finds an open batch behind two hundred newer undecided batches of another channel (adversarial pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { agentId, workItemId, runId } = await seed(harness, 'actions-pending', undefined, {
+      withSlack: true,
+    });
+    const other = await pendAnother(harness, agentId);
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const asked = (id: string) => ({
+      id,
+      kind: 'actions' as const,
+      requestedAt: 1,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { pendingRunId: runId, decision: asked('ab3xyz') });
+      await ctx.db.patch(other.workItemId, { decision: asked('cd4uvw') });
+    });
+    await harness.mutation(internal.work.prepareDecisionBatch, {
+      agentId,
+      batchId: 'ef5rst',
+      surfaceSlug: 'slack',
+      channel: 'D0MANAGER',
+      members: [
+        { workItemId, decisionId: 'ab3xyz', pendingRunId: runId },
+        { workItemId: other.workItemId, decisionId: 'cd4uvw', pendingRunId: other.runId },
+      ],
+    });
+    // Newer batches a previous manager's DM was sent, decided one by one there.
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 201; index += 1) {
+        await ctx.db.insert('decisionBatches', {
+          agentId,
+          id: `p${String(index).padStart(5, '2')}`,
+          surfaceSlug: 'slack',
+          channel: 'D0PREVIOUS',
+          members: [
+            { workItemId, decisionId: `old-${index}`, pendingRunId: runId },
+            {
+              workItemId: other.workItemId,
+              decisionId: `old-${index}-b`,
+              pendingRunId: other.runId,
+            },
+          ],
+          requestedAt: 1,
+        });
+      }
+    });
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      batches: [{ batchId: 'ef5rst', decisionIds: ['ab3xyz', 'cd4uvw'] }],
+    });
+  });
+
   it('owes the notice for a row decided within the hour behind fifty newer rows asked on the DM (M D3 (b))', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });

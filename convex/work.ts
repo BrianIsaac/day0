@@ -3232,10 +3232,10 @@ async function openRequestsOn(ctx: QueryCtx, surface: Doc<'surfaces'>): Promise<
 }
 
 /**
- * Undecided batches of one agent read, newest first, for the ones with open
- * members. A batch whose members were decided one by one is never marked
- * decided, so the read is bounded; an open batch is among the newest, since
- * it is no older than the open requests it names.
+ * Undecided batches of one manager channel read, newest first, for the ones
+ * with open members. A batch whose members were decided one by one is never
+ * marked decided, so the read is bounded; an open batch is among the newest,
+ * since it is no older than the open requests it names.
  */
 const OPEN_BATCH_SCAN = 200;
 
@@ -3266,13 +3266,16 @@ export const openDecisions = internalQuery({
     const batches = (
       await ctx.db
         .query('decisionBatches')
-        .withIndex('by_agent_decided', (q) =>
-          q.eq('agentId', surface.agentId).eq('decidedAt', undefined),
+        .withIndex('by_agent_channel_decided', (q) =>
+          q
+            .eq('agentId', surface.agentId)
+            .eq('surfaceSlug', surface.slug)
+            .eq('channel', channel)
+            .eq('decidedAt', undefined),
         )
         .order('desc')
         .take(OPEN_BATCH_SCAN)
     ).flatMap((batch): OpenDecisionBatch[] => {
-      if (batch.surfaceSlug !== surface.slug || batch.channel !== channel) return [];
       const decisionIds = batch.members
         .map((member) => member.decisionId)
         .filter((id) => openIds.has(id));

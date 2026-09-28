@@ -978,8 +978,12 @@ export default defineSchema({
     decidedTs: v.optional(v.string()),
   })
     .index('by_agent_id', ['agentId', 'id'])
-    /** An agent's batches by decision time: the undecided ones, newest first, for the decision poll (M D3 (b)). */
-    .index('by_agent_decided', ['agentId', 'decidedAt']),
+    /**
+     * One manager channel's batches by decision time: the undecided ones,
+     * newest first, for the decision poll (M D3 (b)). Per channel, so batches
+     * another DM was sent never crowd an open one out of the read.
+     */
+    .index('by_agent_channel_decided', ['agentId', 'surfaceSlug', 'channel', 'decidedAt']),
 
   /**
    * What the gate tells the manager about a finished run: that work landed,
