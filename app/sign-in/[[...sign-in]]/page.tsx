@@ -30,8 +30,9 @@ export default function SignInPage() {
           Sign in to deploy an employee
         </h1>
         <p className="max-w-[60ch] leading-relaxed text-[var(--color-muted)]">
+          {/* That none of it reaches a real system is the notice's first sentence, below. */}
           The hosted office is a seeded, synthetic workplace: a Slack, a tracker, a wiki, a ticket
-          queue and one social mention. Nothing your employee does reaches a real system.
+          queue and one social mention.
         </p>
         <ol className="grid gap-1.5 text-[15px]">
           {FIRST_STEPS.map((step, index) => (
