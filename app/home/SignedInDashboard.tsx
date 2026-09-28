@@ -39,7 +39,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   const showDeployForm = roster !== undefined && (!staffed || deploying);
 
   return (
-    <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
+    <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-10 sm:px-6">
       <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="mb-2 text-3xl font-semibold tracking-tight">

@@ -66,4 +66,16 @@ describe('OfficeWorld', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[mira]} />);
     expect(html).toContain('left:clamp(4.5rem, 14%, calc(100% - 4.5rem))');
   });
+
+  it('seats working employees far apart first, so two name plates never overlap', (): void => {
+    const second = { ...mira, agentId: 'synthetic-second', name: 'Aiko' } as RosterRow;
+    const html = renderToStaticMarkup(<OfficeWorld agents={[mira, second]} />);
+    const seats = [...html.matchAll(/left:clamp\(4\.5rem, (\d+)%[^;]*;top:(\d+)%/g)].map(
+      (match) => [Number(match[1]), Number(match[2])],
+    );
+    expect(seats).toEqual([
+      [14, 25],
+      [67, 25],
+    ]);
+  });
 });

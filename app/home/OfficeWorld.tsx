@@ -84,6 +84,19 @@ const OFFICE_DESKS = [
   { x: 93, y: 83, seatX: 89, seatY: 88, variant: 'console' },
 ] as const;
 
+/**
+ * The order employees take the eight desks always drawn: far apart first, so
+ * two name plates never sit on each other while the office has room (the
+ * first two desks are 15 percent apart, less than a plate is wide). Past the
+ * eighth, each employee takes the desk its arrival adds.
+ */
+const SEAT_ORDER = [0, 2, 6, 3, 7, 1, 4, 5] as const;
+
+/** The desk the employee at this place on the roster sits at when working. */
+function deskFor(index: number): number {
+  return (SEAT_ORDER[index] ?? index) % OFFICE_DESKS.length;
+}
+
 type OfficeStyle = CSSProperties & {
   '--walk-duration'?: string;
   /** The element's place in the light-up stagger. */
@@ -271,7 +284,7 @@ function OfficeAgent({
   index: number;
 }) {
   const working = agentIsWorking(agent.state, agent.openCount);
-  const desk = OFFICE_DESKS[index % OFFICE_DESKS.length];
+  const desk = OFFICE_DESKS[deskFor(index)];
   const seed = hashString(`${agent.agentId}:${agent.name}`);
   const idleSpot = OFFICE_IDLE_SPOTS[seed % OFFICE_IDLE_SPOTS.length];
   const idleX = destination?.x ?? clamp(idleSpot.x + ((seed >> 5) % 13) - 6, 8, 92);

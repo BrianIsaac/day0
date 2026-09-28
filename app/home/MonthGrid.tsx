@@ -25,7 +25,7 @@ function dayTone(landed: number, isToday: boolean, waiting: number, future: bool
   if (isToday && waiting > 0) return 'border-[var(--color-warn)]/60 bg-[var(--color-warn)]/10';
   if (landed >= BUSY_DAY) return 'border-[var(--color-ok)]/40 bg-[var(--color-ok)]/25';
   if (landed > 0) return 'border-[var(--color-ok)]/25 bg-[var(--color-ok)]/10';
-  if (future) return 'border-transparent text-[var(--color-muted)]';
+  if (future) return 'border-[var(--color-border)]/50 text-[var(--color-muted)]';
   return 'border-[var(--color-border)] bg-[var(--color-bg)]';
 }
 
