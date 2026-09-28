@@ -38,7 +38,7 @@ describe('URL documentation reader', (): void => {
       kind: 'urls',
       locator: 'https://example.com/runbook',
     };
-    const [page] = await new UrlsReader().listPages(source);
+    const [page] = (await new UrlsReader().listPageBatch(source, undefined, undefined, 25)).pages;
     expect(page.title).toBe('Runbook & guide');
     expect(page.markdown).toContain('# Runbook');
     expect(page.markdown).toContain('Do the work.');
@@ -86,7 +86,7 @@ describe('URL documentation reader', (): void => {
       ...PROVIDER_BACKOFF,
       sleep: async (ms: number): Promise<void> => void waits.push(ms),
     });
-    const [page] = await reader.listPages(source);
+    const [page] = (await reader.listPageBatch(source, undefined, undefined, 25)).pages;
     expect(page?.title).toBe('Rate limited once');
     expect(waits).toEqual([4_000]);
   });

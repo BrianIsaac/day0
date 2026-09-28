@@ -23,7 +23,6 @@ export interface DocPage {
 }
 
 export interface DocSourceReader {
-  listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]>;
   listPageBatch(
     source: DocSourceRecord,
     secret: string | undefined,

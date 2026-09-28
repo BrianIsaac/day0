@@ -596,33 +596,6 @@ export class McpReader implements DocumentationReader {
   ) {}
 
   /**
-   * Read every page, following provider cursors with isolated sessions.
-   *
-   * Args:
-   *   source: Linked MCP source.
-   *   secret: Decrypted connection credential.
-   *
-   * Returns:
-   *   All normalised provider pages.
-   */
-  async listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]> {
-    const pages: DocPage[] = [];
-    let cursor: string | undefined;
-    const seen = new Set<string>();
-    do {
-      const batch = await this.listPageBatch(source, secret, cursor, 25);
-      if (batch.unread.length > 0) {
-        throw new Error(`${batch.unread[0].ref}: ${batch.unread[0].reason}`);
-      }
-      pages.push(...batch.pages);
-      cursor = batch.nextCursor;
-      if (cursor && seen.has(cursor)) throw new Error('Documentation MCP repeated its cursor.');
-      if (cursor) seen.add(cursor);
-    } while (cursor);
-    return pages;
-  }
-
-  /**
    * Read at most one sync action's worth of MCP pages.
    *
    * Args:

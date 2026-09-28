@@ -335,24 +335,6 @@ export class GitReader implements DocumentationReader {
   }
 
   /**
-   * Read Markdown from a shallow checkout or bounded provider archive.
-   *
-   * Args:
-   *   source: Linked git source.
-   *   secret: The source's own reader secret, if any.
-   *
-   * Returns:
-   *   Normalised Markdown pages.
-   */
-  async listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]> {
-    return await this.withCheckout(
-      source,
-      secret,
-      async (checkout: string): Promise<DocPage[]> => await readMarkdownDirectory(source, checkout),
-    );
-  }
-
-  /**
    * Prepare one temporary checkout and remove it after the read completes.
    *
    * A repository read with a secret is cloned only: the public archive
