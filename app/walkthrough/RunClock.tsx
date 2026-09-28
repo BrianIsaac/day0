@@ -51,7 +51,7 @@ function Ticking({ seconds }: { seconds: number }) {
  */
 export function RunClock({ seconds, untimed }: { seconds: number | null; untimed: string }) {
   return (
-    <span aria-hidden="true" className="shrink-0">
+    <span data-clock="" aria-hidden="true" className="shrink-0">
       {seconds === null ? (
         <span className="text-xs text-[var(--color-muted)]">{untimed}</span>
       ) : (
