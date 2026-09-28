@@ -25,9 +25,11 @@ import {
   decisionIdFromBytes,
   decisionRequestText,
   managerMessageAction,
+  managerMessageUpdateAction,
   type DecisionKind,
 } from '../src/work/manager-channel';
 import type { MockAction } from '../src/work/types';
+import { log } from '../src/lib/logger';
 
 function sameAuthority(left: SurfaceRecord, right: SurfaceRecord): boolean {
   return (
@@ -84,6 +86,28 @@ async function deliverManagerMessage(
   options: { readonly decisionId?: string; readonly threadTs?: string } = {},
 ) {
   const { decisionId, threadTs } = options;
+  return await applyManagerAction(
+    ctx,
+    workItemId,
+    delivery,
+    managerMessageAction(delivery.surface, text, threadTs ? { threadTs } : {}),
+    decisionId,
+  );
+}
+
+/**
+ * Apply one manager-DM action through the gate, as Day0's own message on the
+ * delivery's run.
+ *
+ * @throws Error with the gate's or the provider's reason when it did not land.
+ */
+async function applyManagerAction(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  delivery: ManagerDelivery,
+  action: MockAction,
+  decisionId?: string,
+) {
   const applied = await applySurfaceActions(
     ctx,
     'real',
@@ -94,7 +118,7 @@ async function deliverManagerMessage(
       workItemId,
       runId: delivery.requestRunId,
     },
-    [managerMessageAction(delivery.surface, text, threadTs ? { threadTs } : {})],
+    [action],
     {
       deps: {
         decrypt: decryptCredential,
@@ -229,6 +253,7 @@ export const requestDecision = internalAction({
         workItemId: args.workItemId,
         decisionId: prepared.decisionId,
         ts: result.providerId,
+        text,
       });
       return { sent: true };
     } catch (error) {
@@ -239,6 +264,34 @@ export const requestDecision = internalAction({
         failure: reason,
       });
       return { sent: false, reason };
+    }
+  },
+});
+
+/**
+ * Mark a decided request so in its own message in the manager DM, once, by
+ * editing it to end with how it was decided (M finding 3). Internal; the
+ * decide paths schedule it. A card that does not allow `chat.update` leaves
+ * the request as it was sent; a failed edit is logged and not tried again,
+ * since the decision itself already stands.
+ */
+export const closeDecisionRequest = internalAction({
+  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  handler: async (ctx, args): Promise<{ closed: boolean }> => {
+    const prepared = await ctx.runMutation(internal.work.prepareRequestClose, args);
+    if (!prepared.prepared) return { closed: false };
+    const action = managerMessageUpdateAction(prepared.surface, prepared.ts, prepared.text);
+    if (!action) return { closed: false };
+    try {
+      await applyManagerAction(ctx, args.workItemId, prepared, action);
+      return { closed: true };
+    } catch (error) {
+      log.warn('the decided request could not be marked in the manager DM; the decision stands', {
+        workItemId: args.workItemId,
+        decisionId: args.decisionId,
+        reason: safeFailureMessage(error, '', 'the edit did not land'),
+      });
+      return { closed: false };
     }
   },
 });

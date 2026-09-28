@@ -322,6 +322,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.decision-request-asked': (payload) =>
     `${decisionNoun(payload.kind)} request asked on the chat surface`,
   'work.decision-notifying': 'telling the manager what was decided',
+  'work.decision-request-closing': 'marking the decided request in the manager DM',
   'work.decision-acknowledging': (payload) =>
     payload.kind === 'unknown'
       ? 'a reply with no open request answered'

@@ -799,6 +799,10 @@ export default defineSchema({
         duplicateNoticeClaimedAt: v.optional(v.number()),
         duplicateNoticeTs: v.optional(v.string()),
         duplicateNoticeFailure: v.optional(v.string()),
+        /** The request's text as the manager's DM received it, for the edit that marks it decided. */
+        requestText: v.optional(v.string()),
+        /** When the one edit marking the decided request was claimed; never made twice. */
+        closeClaimedAt: v.optional(v.number()),
       }),
     ),
     // ---- Lane C (executors and the gate) ----

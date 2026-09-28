@@ -813,6 +813,9 @@ export interface WorkDecisionRequestAskedPayload extends WorkItemNamed {
   readonly kind: DecisionKind;
 }
 
+/** The payload of `work.decision-request-closing`: the edit that marks a decided request so in the DM. */
+export type WorkDecisionRequestClosingPayload = DecisionNamed;
+
 /** The payload of `work.decision-notifying`. */
 export type WorkDecisionNotifyingPayload = DecisionNamed;
 
@@ -1115,6 +1118,7 @@ export interface EventPayloads {
   'work.decision-request-failed': WorkDecisionRequestFailedPayload;
   'work.decision-request-asked': WorkDecisionRequestAskedPayload;
   'work.decision-notifying': WorkDecisionNotifyingPayload;
+  'work.decision-request-closing': WorkDecisionRequestClosingPayload;
   'work.decision-acknowledging': WorkDecisionAcknowledgingPayload;
   'work.decision-ignored': WorkDecisionIgnoredPayload;
   'work.decision-duplicate': WorkDecisionDuplicatePayload;
@@ -1259,6 +1263,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.decision-request-failed',
   'work.decision-request-asked',
   'work.decision-notifying',
+  'work.decision-request-closing',
   'work.decision-acknowledging',
   'work.decision-ignored',
   'work.decision-duplicate',

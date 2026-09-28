@@ -109,6 +109,7 @@ import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
+import { redactTokenShapes } from '../src/surfaces/redact';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
@@ -3464,6 +3465,8 @@ export const recordDecisionRequest = internalMutation({
     workItemId: v.id('workItems'),
     decisionId: v.string(),
     ts: v.optional(v.string()),
+    /** The text the request carried, kept for the edit that marks it decided. */
+    text: v.optional(v.string()),
     failure: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -3474,6 +3477,9 @@ export const recordDecisionRequest = internalMutation({
       decision: {
         ...row.decision,
         ...(args.ts ? { ts: args.ts } : {}),
+        ...(args.ts && args.text
+          ? { requestText: redactTokenShapes(args.text).slice(0, REQUEST_TEXT_KEPT) }
+          : {}),
         ...(failure ? { requestFailedAt: Date.now(), requestFailure: failure } : {}),
       },
     });
@@ -3493,6 +3499,95 @@ export const recordDecisionRequest = internalMutation({
       });
     }
     return true;
+  },
+});
+
+/**
+ * The most of a request's text a decision keeps for the edit that marks it
+ * decided; Slack takes 40,000 characters, and a request is a few thousand.
+ */
+const REQUEST_TEXT_KEPT = 12_000;
+
+/**
+ * Schedule the one edit that marks a decided request in the manager DM
+ * (M finding 3), in the transaction that decided it. Only a request that
+ * reached the DM, and kept its text, has a message to edit; whether the card
+ * allows the edit is the action's to check.
+ *
+ * @param workItemId - The item just decided.
+ */
+async function scheduleRequestClose(ctx: MutationCtx, workItemId: Id<'workItems'>): Promise<void> {
+  const decision = (await ctx.db.get(workItemId))?.decision;
+  if (!decision?.decidedAt || !decision.ts || !decision.requestText) return;
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.closeDecisionRequest, {
+    workItemId,
+    decisionId: decision.id,
+  });
+}
+
+/**
+ * Claim the one edit that marks a decided request in the manager DM, and say
+ * what it writes: the request as it was sent, then how it was decided.
+ * Internal; the close action's. Refused when the request was never
+ * delivered, is not decided, was claimed already, or its chat card cannot
+ * edit a message (no `chat.update` on its allowlist).
+ */
+export const prepareRequestClose = internalMutation({
+  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.workItemId);
+    const decision = row?.decision;
+    if (
+      !row ||
+      !decision ||
+      decision.id !== args.decisionId ||
+      !decision.decidedAt ||
+      !decision.ts ||
+      !decision.requestText ||
+      decision.closeClaimedAt
+    ) {
+      return { prepared: false as const };
+    }
+    const [agent, surfaceRows, grants] = await Promise.all([
+      ctx.db.get(row.agentId),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect(),
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId))
+        .collect(),
+    ]);
+    const surface = surfaceRows.find(
+      (candidate) =>
+        candidate.slug === decision.surfaceSlug &&
+        candidate.class === 'chat' &&
+        candidate.verdict === 'connected' &&
+        candidate.managerDmChannelId === decision.channel &&
+        candidate.path === 'documented-api' &&
+        (candidate.toolAllowlist ?? []).includes('chat.update'),
+    );
+    if (!agent || !surface) return { prepared: false as const };
+    const requestRunId = await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.decision-request-closing',
+      payload: { workItemId: row._id, decisionId: decision.id },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: Date.now() } });
+    const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in day0';
+    return {
+      prepared: true as const,
+      agentId: row.agentId,
+      agentName: agent.name,
+      requestRunId,
+      surface: toSurfaceRecord(surface),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      ts: decision.ts,
+      text: `${decision.requestText}\n\nDecided: ${decision.outcome ?? 'decided'} ${where} (${decision.id}).`,
+    };
   },
 });
 
@@ -3935,6 +4030,7 @@ async function approvePlanInTransaction(
     ...(answers.length > 0 ? { managerAnswers: answers } : {}),
     ...decidedPatch(row, 'plan', via, 'approved', messageTs),
   });
+  await scheduleRequestClose(ctx, row._id);
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.plan-approved',
@@ -4257,6 +4353,7 @@ async function cancelPlanInTransaction(
       : {}),
     ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
+  await scheduleRequestClose(ctx, row._id);
   await releaseExternalClaim(ctx, row._id, Date.now());
   await appendEvent(ctx, {
     agentId: row.agentId,
@@ -5768,6 +5865,7 @@ async function approveActionsInTransaction(
   });
   const approved = await ctx.db.get(args.workItemId);
   if (approved) await settleBatchesHolding(ctx, approved);
+  await scheduleRequestClose(ctx, args.workItemId);
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.actions-approved',
@@ -5888,6 +5986,7 @@ async function rejectActionsInTransaction(
   });
   const rejected = await ctx.db.get(args.workItemId);
   if (rejected) await settleBatchesHolding(ctx, rejected);
+  await scheduleRequestClose(ctx, args.workItemId);
   if (feedback)
     await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
   await releaseItemClaim(ctx, args.workItemId, now);
