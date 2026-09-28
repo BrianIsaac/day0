@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactElement } from 'react';
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
 import { SignedInDashboard } from './home/SignedInDashboard';
@@ -22,7 +23,7 @@ export default function LandingPage() {
   );
 }
 
-function ClerkLanding() {
+function ClerkLanding(): ReactElement | null {
   const account = useAccount();
   switch (account.kind) {
     case 'resolving':

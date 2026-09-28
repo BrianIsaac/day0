@@ -42,7 +42,9 @@ function noSubscription(): () => void {
 }
 
 function sameBoss(a: Boss | null, b: Boss | null): boolean {
-  return a?.email === b?.email && a?.firstName === b?.firstName;
+  // A manager with neither an email nor a first name is still somebody, never the same as nobody.
+  if (a === null || b === null) return a === b;
+  return a.email === b.email && a.firstName === b.firstName;
 }
 
 /**

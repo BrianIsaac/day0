@@ -113,4 +113,13 @@ describe('useAccount', (): void => {
     clerk.user = undefined;
     expect(render()).toBe('resolving');
   });
+
+  it('holds a manager with neither an email nor a first name, who is still somebody', (): void => {
+    document.cookie = '__client_uat=1759100000; path=/';
+    clerk.user = { primaryEmailAddress: undefined, firstName: null } as unknown as typeof MANAGER;
+    clerk.status = 'ready';
+    expect(render()).toBe('signed-in undefined');
+    clerk.user = undefined;
+    expect(render()).toBe('signed-in undefined');
+  });
 });
