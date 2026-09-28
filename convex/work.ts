@@ -299,6 +299,42 @@ export const get = query({
   },
 });
 
+/**
+ * The newest listing intake kept of an item's ticket, refused or not, for the
+ * card's line on where the ticket stands now (K D3). Public, to the item's
+ * owner only; writes nothing. The assignee's address is left out, as the
+ * export leaves it out: the card names the assignee by id.
+ *
+ * @returns The listing, or null when intake kept none (a chat ask).
+ */
+export const latestListing = query({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    tracker: Omit<TicketSnapshot, 'assigneeEmail'>;
+    listedAt: number;
+    refused?: string;
+  } | null> => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    const kept = await keptListingAt(ctx, row, Number.MAX_SAFE_INTEGER, false);
+    if (kept === undefined) return null;
+    const { assigned, assigneeId, state, stateType, doNotAutomate } = kept.tracker;
+    return {
+      tracker: {
+        assigned,
+        doNotAutomate,
+        ...(assigneeId !== undefined ? { assigneeId } : {}),
+        ...(state !== undefined ? { state } : {}),
+        ...(stateType !== undefined ? { stateType } : {}),
+      },
+      listedAt: kept.listedAt,
+      ...(kept.refused !== undefined ? { refused: kept.refused } : {}),
+    };
+  },
+});
+
 /** Internal owner-free read for scheduler continuations already fenced by the work state. */
 export const getInternal = internalQuery({
   args: { workItemId: v.id('workItems') },

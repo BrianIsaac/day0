@@ -4968,6 +4968,52 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     expect(await harness.run(async (ctx) => await ctx.db.query('workItems').collect())).toEqual([]);
   });
 
+  it('shows the owner the newest listing of the ticket, without the assignee address, and no one else', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await emptyAgent(harness);
+    const todo = { assigned: false, state: 'Todo', stateType: 'unstarted', doNotAutomate: false };
+    const workItemId = await harness.mutation(internal.work.seedItem, {
+      ...listed(agentId),
+      tracker: todo,
+    });
+    const owner = harness.withIdentity(OWNER);
+    // Only the discovery's listing so far: that is the newest.
+    expect(await owner.query(api.work.latestListing, { workItemId })).toMatchObject({
+      tracker: todo,
+    });
+    const taken = {
+      ...todo,
+      assigned: true,
+      assigneeId: 'user-ana',
+      assigneeEmail: 'ana@example.test',
+      state: 'In Progress',
+    };
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('ticketListings', {
+        agentId,
+        workItemId,
+        tracker: taken,
+        refused: 'assigned to someone else',
+        listedAt: Date.now() + 60_000,
+      });
+    });
+    const latest = await owner.query(api.work.latestListing, { workItemId });
+    expect(latest).toEqual({
+      tracker: {
+        assigned: true,
+        assigneeId: 'user-ana',
+        state: 'In Progress',
+        stateType: 'unstarted',
+        doNotAutomate: false,
+      },
+      refused: 'assigned to someone else',
+      listedAt: expect.any(Number),
+    });
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).query(api.work.latestListing, { workItemId }),
+    ).rejects.toThrow();
+  });
+
   it('keeps each changed listing of the ticket and gives the apply the one the plan was made under', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await emptyAgent(harness);
