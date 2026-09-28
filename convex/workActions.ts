@@ -177,7 +177,6 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
 } from '../src/surfaces/policy';
-import { errorMessage } from '../src/lib/errors';
 
 /**
  * Node actions for the work loop - Layer-2 evaluation, Layer-3 plan
@@ -3392,7 +3391,7 @@ export const applyApprovedActions = internalAction({
       }
       return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues, surfaces);
     } catch (err) {
-      const reason = errorMessage(err);
+      const reason = safeFailureMessage(err, '', 'the apply failed');
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.pendingRunId,
