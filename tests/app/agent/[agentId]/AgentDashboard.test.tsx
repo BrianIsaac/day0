@@ -2578,3 +2578,46 @@ describe('the live feed names the item an event is about', (): void => {
     expect(eventItemTitle({ payload: null }, titles)).toBeUndefined();
   });
 });
+
+describe('a plan drafted without its ticket (P7-18)', (): void => {
+  it('says so on the card, as the manager DM does', (): void => {
+    const row = {
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'plan-pending',
+      title: 'Close REVOPS-5',
+      contentSummary: 'Close the month.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'REVOPS-5',
+      observedAt: 1,
+      contentRefs: [],
+      plan: {
+        summary: 'Close the month.',
+        steps: ['Comment the figures.'],
+        estimatedMinutes: 5,
+        reversibility: 'reversible',
+        riskNotes: '',
+      },
+      planDraftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'not-connected' },
+    } as unknown as Doc<'workItems'>;
+    const markup = renderToStaticMarkup(
+      <WorkItemCard
+        item={row}
+        surfaces={[{ slug: 'linear', displayName: 'Linear' } as SurfaceRecord]}
+        autonomousActions={false}
+        onApprovePlan={(): void => undefined}
+        onCancelPlan={(): void => undefined}
+        onRetryFailed={(): void => undefined}
+        onReconcileFailed={async (): Promise<void> => undefined}
+        onApproveActions={async (): Promise<void> => undefined}
+        onRejectActions={async (): Promise<void> => undefined}
+        onResendDecision={async (): Promise<void> => undefined}
+      />,
+    );
+    expect(markup).toContain(
+      'Drafted without reading the ticket: Linear was not connected. Day0 drafts the plan again when Linear is back; approving now runs it as drafted.',
+    );
+  });
+});

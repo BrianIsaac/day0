@@ -101,7 +101,7 @@ import {
 } from '../../../src/work/queue-order';
 import { LiveStatus, refusalText, type ChangeOutcome } from './live-status';
 import { agentZone, isTimeZone } from '../../../src/lib/zone';
-import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
+import { draftedWithoutLine, undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
 import {
   GATE_REFUSAL_STOP,
@@ -4158,6 +4158,17 @@ export function WorkItemCard({
                   landedActions.length,
                 )}
               </time>
+            </p>
+          ) : null}
+          {item.state === 'plan-pending' && item.planDraftedWithout !== undefined ? (
+            <p className="mt-2 text-[var(--color-warn)]">
+              {draftedWithoutLine({
+                system:
+                  surfaces.find((surface) => surface.slug === item.planDraftedWithout?.surfaceSlug)
+                    ?.displayName ?? item.planDraftedWithout.surfaceSlug,
+                subject: item.planDraftedWithout.subject,
+                cause: item.planDraftedWithout.cause,
+              })}
             </p>
           ) : null}
           {item.state === 'plan-pending' && item.planRejectedAt !== undefined ? (

@@ -519,9 +519,9 @@ export interface DraftedWithoutLine {
 
 /**
  * The line that tells the manager a plan was drafted without what it acts
- * on, and what approving it now means.
+ * on, and what approving it now means: in the request and on the card.
  */
-function draftedWithoutLine(without: DraftedWithoutLine): string {
+export function draftedWithoutLine(without: DraftedWithoutLine): string {
   const noun = without.subject === 'record' ? 'ticket' : 'thread';
   const system = oneLine(without.system, 'its system');
   return without.cause === 'not-connected'
