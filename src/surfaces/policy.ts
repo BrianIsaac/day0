@@ -359,7 +359,10 @@ export function isSurfaceTool(tool: string): tool is 'mcp.call' | 'http.request'
   return tool === 'mcp.call' || tool === 'http.request';
 }
 
-type Malformed = { ok: false; reason: string };
+interface Malformed {
+  ok: false;
+  reason: string;
+}
 
 function malformed(detail: string): Malformed {
   return { ok: false, reason: `${MALFORMED_ACTION} (${detail})` };
@@ -991,7 +994,8 @@ export function replayAuthorityRefusal(
     case 'autonomous':
       if (!live.autonomousActions) return NOT_AUTOMATIC;
       return grantRefusal(parsed, surface, live.grants, true, revoked);
-    default:
+    case 'standing':
+    case undefined:
       return grantRefusal(parsed, surface, live.grants, false, revoked);
   }
 }
@@ -1436,7 +1440,7 @@ export function reviewAction(
       return { disposition: 'held', reason: HELD_PUBLIC_POST };
     case 'mutation':
       return { disposition: 'held', reason: HELD_MUTATION };
-    default:
+    case 'write':
       return { disposition: 'held', reason: HELD_WRITE };
   }
 }

@@ -343,7 +343,7 @@ export function messageTexts(action: MockAction): string[] {
       return typeof args.body === 'string' && args.body.trim() ? [args.body] : [];
     case 'ticket.update':
       return typeof args.comment === 'string' && args.comment.trim() ? [args.comment] : [];
-    default:
+    case 'spreadsheet.appendRow':
       return [];
   }
 }

@@ -240,8 +240,15 @@ class MockSurfaceAdapter implements SurfaceAdapter {
           );
           break;
         }
-        default:
-          return { tool: action.tool, ok: false, reason: 'unknown tool', idempotencyKey };
+        case 'mcp.call':
+        case 'http.request':
+          // The registry routes surface tools to their own adapters; one
+          // reaching the mock adapter is a routing defect, not a work outcome.
+          return { tool: action.tool, ok: false, reason: 'not a mock tool', idempotencyKey };
+        default: {
+          const unhandled: never = action.tool;
+          throw new Error(`unhandled mock tool ${String(unhandled)}`);
+        }
       }
       return result.changed
         ? { tool: action.tool, ok: true, effect, idempotencyKey }
