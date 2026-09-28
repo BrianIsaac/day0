@@ -79,7 +79,6 @@ pnpm dev
 
 [**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
-
 ## What is unusual about it
 
 ### It is onboarded, not configured
@@ -118,97 +117,97 @@ Elapsed times are counted from the moment the agent was deployed.
 
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/full-run-01-documentation-synced.webp)
 
-   *Both documentation sources synced before the agent existed. Captured locally on 3 September 2026.*
+   _Both documentation sources synced before the agent existed. Captured locally on 3 September 2026._
 
 2. **Deploy the agent and hold the Day-1 one-to-one.** Chat was the only mode available, since this deployment carries no ElevenLabs credentials. The agent opened the conversation itself and worked through the seven topics in order: why the hire was made, the role and its 30/60/90 days, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. The manager answered in plain sentences. The conversation completed 4 min 34 s after deploy.
 
    ![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/full-run-02-day-one-chat.webp)
 
-   *The opening exchange of the Day-1 one-to-one, in chat. Captured locally on 3 September 2026.*
+   _The opening exchange of the Day-1 one-to-one, in chat. Captured locally on 3 September 2026._
 
 3. **Approve the charter it drafted.** From that conversation alone the agent wrote its own purpose, proposed function, 30/60/90-day outcomes, boundaries, collaborators and open questions. The manager read it and pressed Approve. Time to first approved charter: **5 min 8 s**.
 
    ![The approved charter card, showing why this hire, the proposed RevOps coordinator function and the 30/60/90-day outcomes](.github/images/full-run-03-charter-approved.webp)
 
-   *The charter the agent wrote, after approval. Captured locally on 3 September 2026.*
+   _The charter the agent wrote, after approval. Captured locally on 3 September 2026._
 
 4. **Orientation proposes one card per system.** About two minutes after the charter was approved, and with nothing pressed, the agent produced exactly four connection cards from the documentation and the charter together: Linear over its MCP endpoint, Slack over its documented API, the Looker tile as browser-driven, and Northstar CRM with no approved path. Each card carries the sentences it was proposed from, including the manager's own words from the one-to-one. Elapsed: 7 min 12 s.
 
    ![The Surfaces tab after orientation, showing the Linear and Slack cards proposed with their approved connection ladders](.github/images/full-run-04-cards-proposed.webp)
 
-   *Two of the four cards orientation proposed, each with the ladder it intends to use. Captured locally on 3 September 2026.*
+   _Two of the four cards orientation proposed, each with the ladder it intends to use. Captured locally on 3 September 2026._
 
 5. **Land the Slack token, then approve each card twice.** This deployment has no public address, so no Slack app can be registered; the card offers a field for a shared bot token instead, and it was pasted there before either approval. Each of the three cards then took the manager button and the IT button. All three probes connected within seconds. Northstar CRM stayed `absent`, because the documentation records no approved way in. Elapsed: 9 min 5 s.
 
    ![Connection status headers showing Linear, Slack and the Looker pipeline tile connected and Northstar CRM absent](.github/images/full-run-05-connected-statuses.webp)
 
-   *Three systems connected, one left absent by the documentation. Captured locally on 3 September 2026.*
+   _Three systems connected, one left absent by the documentation. Captured locally on 3 September 2026._
 
 6. **Intake fills the queue on its own.** The five-minute intake cron read the connected systems and returned four candidates: a Slack mention in `#revops-asks`, an urgent Linear ticket asking for a close-summary audit note, a medium Linear ticket asking for a tile refresh, and a Northstar ticket that deferred at the connection gate rather than guessing. The first three matched no registered skill and returned `needs-skill`. Elapsed: 13 min 25 s.
 
    ![The real-mode work queue after intake, showing three needs-skill items and one deferred on an absent connection](.github/images/full-run-06-work-queue.webp)
 
-   *What the agent found to do, and why it could not start yet. Captured locally on 3 September 2026.*
+   _What the agent found to do, and why it could not start yet. Captured locally on 3 September 2026._
 
 7. **Approve the three skills it proposes.** Each proposal names the scopes it needs and the candidate that prompted it. The manager approved all three; the agent authored each one and verified it by running a smoke test in the local sandbox. All three registered within a minute and a half. Elapsed: 16 min 5 s.
 
    ![The skills panel showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/full-run-07-skills-registered.webp)
 
-   *Three skills the agent wrote for itself, after sandbox verification. Captured locally on 3 September 2026.*
+   _Three skills the agent wrote for itself, after sandbox verification. Captured locally on 3 September 2026._
 
 8. **Approve a plan before anything executes.** Under the cold-start cap the agent takes one item at a time. It drafted a four-step plan for the audit note: read the ticket, draft the comment, submit the comment and the state change only after literal approval, then verify what came back. The manager approved the plan. Elapsed: 17 min 14 s.
 
    ![A held execution plan for the close-summary audit note, with its four steps and the approve control](.github/images/full-run-08-plan-held.webp)
 
-   *A plan waiting for a decision. Nothing has executed. Captured locally on 3 September 2026.*
+   _A plan waiting for a decision. Nothing has executed. Captured locally on 3 September 2026._
 
 9. **A web-only system arrives as one held browser batch.** The Slack ask needed the pipeline figure, and the documentation says that tile has a web UI and no API. The agent produced the documented sequence as six browser actions held together, because they cannot be split across isolated browser sessions. Nothing had reached a surface. Elapsed: 20 min 35 s.
 
    ![Six browser operations held together as one batch, with the batch decision controls](.github/images/full-run-09-browser-batch-held.webp)
 
-   *The whole sign-in and save sequence, held as one decision. Captured locally on 3 September 2026.*
+   _The whole sign-in and save sequence, held as one decision. Captured locally on 3 September 2026._
 
 10. **Approve it whole, and the tile reads itself back.** The manager pressed Approve all. The six actions applied in about a second, and the last one read the page back: the visible figure and the audit line the runbook asks for as evidence. Every plan step was marked satisfied from the applied ledger, not from the agent's own account of itself. Elapsed: 21 min 11 s.
 
     ![The applied browser batch with its read-back of the visible figure and audit line, above the plan execution ledger](.github/images/full-run-10-batch-applied.webp)
 
-    *The applied sequence and the read-back that evidences it. Captured locally on 3 September 2026.*
+    _The applied sequence and the read-back that evidences it. Captured locally on 3 September 2026._
 
 11. **The public reply is held separately, and lands when approved.** The charter says not to post publicly during cold start, so the reply into the ask's thread arrived as its own decision after the read-back. The manager approved it and it landed in `#revops-asks` with the provenance trailer. Elapsed: 23 min 1 s.
 
     ![A held public Slack reply quoting the pipeline figure and the tile audit line, with its approval controls](.github/images/full-run-11-public-reply-held.webp)
 
-    *The public reply, held for a decision before it is sent. Captured locally on 3 September 2026.*
+    _The public reply, held for a decision before it is sent. Captured locally on 3 September 2026._
 
 12. **Reject a comment that is too thin, with a reason.** The audit note's first run ended honestly: it read the ticket, found no completed-check evidence, and asked in the DM rather than inventing any. The manager sent it back with the three checks as a note. The comment that came back was still not enough, so the manager rejected the run with a written reason. The reason is kept and travels to the retry. Elapsed: 29 min 16 s.
 
     ![Two held Linear actions above the manager's written rejection reason](.github/images/full-run-12-rejection-with-reason.webp)
 
-    *The held comment and state change, and the reason they were rejected. Captured locally on 3 September 2026.*
+    _The held comment and state change, and the reason they were rejected. Captured locally on 3 September 2026._
 
 13. **Confirm the provider state, retry, and the revision lands.** Because a DM had already landed, the retry was fenced behind a reconciliation checklist until the manager confirmed what was really at the provider. The revision then quoted the figure and the three checks, and proposed the state change with it. Approved together, both writes landed on the ticket. Elapsed: 35 min 24 s.
 
     ![The completed audit-note item with the Linear comment and Done transition recorded in its ledger](.github/images/full-run-13-revision-landed.webp)
 
-    *The revision after the rejection, applied to the ticket. Captured locally on 3 September 2026.*
+    _The revision after the rejection, applied to the ticket. Captured locally on 3 September 2026._
 
 14. **Turn autonomous actions on.** The switch is in the header and asks for a confirmation that says plainly what changes. Skills and connections still need approval either way. Elapsed: 39 min 22 s.
 
     ![The confirmation dialog for turning on autonomous actions](.github/images/full-run-14-autonomy-confirm.webp)
 
-    *The switch asks before it changes what applies without asking. Captured locally on 3 September 2026.*
+    _The switch asks before it changes what applies without asking. Captured locally on 3 September 2026._
 
 15. **The same work now applies without a decision.** One item was retried under the switch. It ran the documented browser sequence, read the tile back, wrote the audit comment and moved the ticket to Done: nine actions, all applied with autonomous authority, no prompt, in about forty seconds. Elapsed: 40 min 25 s.
 
     ![Nine actions applied autonomously, including the browser sequence, the Linear comment and the state change](.github/images/full-run-15-autonomous-batch.webp)
 
-    *Under the switch, the same shape of work applies on its own. Captured locally on 3 September 2026.*
+    _Under the switch, the same shape of work applies on its own. Captured locally on 3 September 2026._
 
 16. **Revoke a scope mid-run, and the next write is refused.** `linear:write` was revoked from the Permissions panel seventeen seconds into a run that was already executing. When that run reached its Linear write, the write did not reach the work environment: `no grant (linear:write)`. The block is counted, and the browser actions the run had already applied were left as they were. Elapsed: 48 min 45 s.
 
     ![The refused Linear write after revocation, beside the supervision metrics for the run](.github/images/full-run-16-refusal-and-supervision.webp)
 
-    *The refusal, and the numbers the run ended on. Captured locally on 3 September 2026.*
+    _The refusal, and the numbers the run ended on. Captured locally on 3 September 2026._
 
 ### Deviations a reader should know
 
@@ -222,13 +221,13 @@ Elapsed times are counted from the moment the agent was deployed.
 
 ### The numbers this run ended on
 
-| Metric | Value |
-|---|---|
-| time to first approved charter | 5 min 8 s |
-| human decisions (approved / rejected) | 7 / 1 |
-| median decision latency | 2 min 7 s |
-| actions blocked after revocation | 1 |
-| audit-trail completeness | 100% (41/41) |
+| Metric                                | Value        |
+| ------------------------------------- | ------------ |
+| time to first approved charter        | 5 min 8 s    |
+| human decisions (approved / rejected) | 7 / 1        |
+| median decision latency               | 2 min 7 s    |
+| actions blocked after revocation      | 1            |
+| audit-trail completeness              | 100% (41/41) |
 
 The footer of the same card reads 8 decisions requested, 0 partial, 31 actions automatic, 11 held, 1 refused. The exported ledger holds 197 events and 42 ledger rows, and contains no credential value.
 
@@ -246,11 +245,11 @@ The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at an
 
 Three ways to run it. The hosted demo needs nothing installed; the two local ways are the same stack in the same mode, real mode, and disagree about one thing only: where the model runs.
 
-| Way | Accounts | Setup it costs you | What it gives you |
-|---|---|---|---|
-| [**Hosted demo**](#hosted-demo) | a sign-in on the hosted app; none for the walkthrough | nothing installed | The product loop on the hosted mock office, which reaches no system of yours, and a recording of one whole run |
-| [**Local, cloud model**](#local-cloud-model) | one model-provider key: Featherless, OpenAI, or any OpenAI-compatible endpoint | Docker, and one key typed into a hidden prompt | Real mode on your own documentation and systems, with nothing to pull and no GPU question - everything but the model runs on your machine, and you pay the provider per token |
-| [**Local, local model**](#local-local-model) | none | Docker, and one model to pull - `qwen3:8b` is about 5 GB | The same real mode, skill creation included, with nothing signed up for and nothing metered. How fast it answers is a question about your hardware, not about Day0: `pnpm model:up` uses an NVIDIA GPU wherever it finds one |
+| Way                                          | Accounts                                                                       | Setup it costs you                                       | What it gives you                                                                                                                                                                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**Hosted demo**](#hosted-demo)              | a sign-in on the hosted app; none for the walkthrough                          | nothing installed                                        | The product loop on the hosted mock office, which reaches no system of yours, and a recording of one whole run                                                                                                               |
+| [**Local, cloud model**](#local-cloud-model) | one model-provider key: Featherless, OpenAI, or any OpenAI-compatible endpoint | Docker, and one key typed into a hidden prompt           | Real mode on your own documentation and systems, with nothing to pull and no GPU question - everything but the model runs on your machine, and you pay the provider per token                                                |
+| [**Local, local model**](#local-local-model) | none                                                                           | Docker, and one model to pull - `qwen3:8b` is about 5 GB | The same real mode, skill creation included, with nothing signed up for and nothing metered. How fast it answers is a question about your hardware, not about Day0: `pnpm model:up` uses an NVIDIA GPU wherever it finds one |
 
 The two local ways are one command, `./setup.sh --route featherless` (or `--route key`, or `--route endpoint`) and `./setup.sh --route local`, on a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. [Convex cloud + Clerk](#convex-cloud--clerk) replaces both halves with hosted ones and gives you a user per Clerk sign-in; it is the one route the setup command does not automate. Mock mode, the seeded office the hosted demo works in, is the same stack under `pnpm setup:local`, kept for the evaluation harness and documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
@@ -302,7 +301,7 @@ Running the setup again is the same as `resume`, and `--reset` is `clear` follow
 4. **`pnpm model:up` and `pnpm model:pull <model>`, on [Local, local model](#local-local-model) only**, and the pull only when the model the picker chose is not already in the volume.
 5. **`pnpm sandbox:up`**, skipped with `--sandbox daytona`. The default writes `DAYTONA_API_KEY` empty and says so, because Daytona wins whenever its key is present.
 6. **`pnpm redactor:up`, on the device the venv was built for.** `redactor/start.sh` keys its virtual environment on the requirements file its device selects, and a bare `pnpm redactor:up` reserves the GPU wherever an NVIDIA driver answers, so a venv warmed on the CPU (`--warm-from` copies exactly that) would be emptied and rebuilt from CUDA wheels: minutes of download where ten seconds were expected. The setup reads the venv's stamp first; `--gpu auto` follows it, `--gpu on` rebuilds for the GPU and names the wipe before it starts, `--gpu off` never asks. By hand, `MODEL_GPU=off pnpm redactor:up` is the same thing.
-7. **The admin key**, generated inside the backend container and kept only while this volume accepts it. The key belongs to the volume, not to the project: coming to real mode from an earlier stack, the key already in `.env.local` is the *old* backend's, and `pnpm sync:env` then fails to authenticate against the new one. The setup regenerates it whenever the volume is new.
+7. **The admin key**, generated inside the backend container and kept only while this volume accepts it. The key belongs to the volume, not to the project: coming to real mode from an earlier stack, the key already in `.env.local` is the _old_ backend's, and `pnpm sync:env` then fails to authenticate against the new one. The setup regenerates it whenever the volume is new.
 8. **`pnpm sync:env`** pushes the no-auth JWKS, the key and every `DAY0_*` value before the functions on a new volume, because `convex/auth.config.ts` is evaluated against the deployment's env at the first push and refuses a no-auth push with no key. A value the deployment already holds is kept rather than set again. On a volume that already holds a deployment the order is the upgrade's instead, [below](#backup-restore-and-upgrade): the release check, the functions and the migrations, then the env.
 9. **`npx convex dev --once`** pushes the functions once, `npx convex run migrations:runPending` runs every migration the release ships until none is pending, and `migrations:recordRelease` then stamps the release the rows are at; nothing needs pushing twice. The setup puts back the two public URLs the CLI rewrites to container ports.
 10. **`pnpm convex:restart`**, only once every step before it has succeeded, because a module keeps whatever env it was first evaluated with and the backend has been up since step 3. The setup then waits for the redactor to report healthy - the model loaded and verified against `redactor/models.sha256` - and carries on with a note if it has not.
@@ -334,7 +333,7 @@ The bundled server starts with a 16,384-token context because Day0's executor mu
 
 Model size shows up in the output as well as on the clock, and the two are worth telling apart before you judge the loop. A small model holds the 1:1, fills the charter and drives the work queue, but it will sometimes decide it has heard enough and call `dayOneComplete` after two topics rather than seven; the charter it writes from that short transcript is a real charter, with thinner evidence in it. A larger model - local or hosted - is the whole of the fix for that, and `pnpm probe:model` tells you whether a given endpoint can drive the loop at all before you wire it into a demo.
 
-**Slow is not merely slow, though, and this is the failure a local model actually hands you.** Charter synthesis is one Convex action, and it has two ceilings: any single model call inside it gives up after **300 s** without a response header, and the action itself is killed at **600 s**. A model that answers in seconds clears both by a mile. A model that has spilled onto the CPU does not, and what you see then is a 1:1 that ran perfectly and a charter that never arrives - the *same* symptom as the two-addresses mistake below, which is what makes it worth naming here. `npx convex logs` is what tells the two apart: the address mistake fails at once with a connection error, and this one sits there and then reports `UND_ERR_HEADERS_TIMEOUT`, a retry, and `execution timed out (maximum duration 600s)`.
+**Slow is not merely slow, though, and this is the failure a local model actually hands you.** Charter synthesis is one Convex action, and it has two ceilings: any single model call inside it gives up after **300 s** without a response header, and the action itself is killed at **600 s**. A model that answers in seconds clears both by a mile. A model that has spilled onto the CPU does not, and what you see then is a 1:1 that ran perfectly and a charter that never arrives - the _same_ symptom as the two-addresses mistake below, which is what makes it worth naming here. `npx convex logs` is what tells the two apart: the address mistake fails at once with a connection error, and this one sits there and then reports `UND_ERR_HEADERS_TIMEOUT`, a retry, and `execution timed out (maximum duration 600s)`.
 
 Spilling is a question of free VRAM, not of the model's size on paper, so the fix is a model that fits **what is free on your GPU right now** - which may well mean a smaller one. `docker compose exec model ollama ps` prints the split, and `45%/55% CPU/GPU` on that line is the warning: `qwen3:8b` needs about 6 GB resident, so on a 12 GB card with 7 GB already spoken for it lands half on the CPU, answers a short prompt in ~40 s instead of ~4 s, and never finishes the charter. `qwen3:4b` fits the same gap whole and runs the loop end to end. Switch to the smaller one when `ollama ps` says you are splitting:
 
@@ -389,12 +388,12 @@ That fallback is why the reservation is a second file rather than a block in `do
 
 Pin the decision in `.env.local` when the guess is wrong:
 
-| | |
-|---|---|
-| `MODEL_GPU=auto` | the default - use a GPU where the driver is there, fall back where Docker refuses |
-| `MODEL_GPU=on` | require one, and fail loudly rather than run slowly |
-| `MODEL_GPU=off` | never ask for a device |
-| `MODEL_GPU_COUNT=1` | reserve one device instead of all of them |
+|                               |                                                                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| `MODEL_GPU=auto`              | the default - use a GPU where the driver is there, fall back where Docker refuses      |
+| `MODEL_GPU=on`                | require one, and fail loudly rather than run slowly                                    |
+| `MODEL_GPU=off`               | never ask for a device                                                                 |
+| `MODEL_GPU_COUNT=1`           | reserve one device instead of all of them                                              |
 | `OLLAMA_CONTEXT_LENGTH=16384` | keep the charter, documentation, runbook and executor schema in one local-model prompt |
 
 A model larger than your free VRAM is loaded partly on the CPU whatever was reserved. `docker compose exec model ollama ps` prints the split, and is the thing to check when an accelerated setup is still mysteriously slow.
@@ -423,13 +422,13 @@ It is deliberately restricted to local no-auth development. `DAY0_SURFACE_MODE=r
 
 Real mode adds optional components, and each one is a Compose profile. `real` is day0 itself and is added for you; you name the rest:
 
-| Profile | Component | You need it when |
-|---|---|---|
-| `docs-notion` | Notion's own MCP server, run inside your network | your documentation is in Notion. A folder, a git repository or a list of URLs needs no component |
-| `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API. Its page must carry a probe marker, or the card is not connected: the title the page shows (`` Probe marker: page title `Sign in - Looker` ``), and for a page behind a login an element it shows once signed in (`` Probe marker: after sign-in, element `Pipeline coverage` ``), which makes the probe sign in with the credential. See [Writing documentation day0 acts on](docs/running/documentation.md#saying-how-a-system-is-reached) |
-| `demo` | a synthetic Looker-style pipeline tile with a login | you want a web-UI-only system to drive without pointing day0 at a real one |
-| `sandbox` | the networkless skill sandbox | always, unless you have a `DAYTONA_API_KEY` |
-| `redactor` | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, provider outcomes record that only the exact-value and structural layers ran, and `pnpm check:setup` fails a real-mode installation where it is missing or not running |
+| Profile       | Component                                                | You need it when                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs-notion` | Notion's own MCP server, run inside your network         | your documentation is in Notion. A folder, a git repository or a list of URLs needs no component                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `browser`     | Playwright MCP, day0's browser floor                     | a system your documentation records has a web UI and no API. Its page must carry a probe marker, or the card is not connected: the title the page shows (`` Probe marker: page title `Sign in - Looker` ``), and for a page behind a login an element it shows once signed in (`` Probe marker: after sign-in, element `Pipeline coverage` ``), which makes the probe sign in with the credential. See [Writing documentation day0 acts on](docs/running/documentation.md#saying-how-a-system-is-reached) |
+| `demo`        | a synthetic Looker-style pipeline tile with a login      | you want a web-UI-only system to drive without pointing day0 at a real one                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `sandbox`     | the networkless skill sandbox                            | always, unless you have a `DAYTONA_API_KEY`                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `redactor`    | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, provider outcomes record that only the exact-value and structural layers ran, and `pnpm check:setup` fails a real-mode installation where it is missing or not running                                                                                                                                                                                                                                                        |
 
 What each is for, and what it never sees, is in [`docs/running/components.md`](docs/running/components.md).
 
@@ -481,12 +480,12 @@ Nothing in this repository is your team's documentation, and `docs-local/` is no
 
 Then, in the browser:
 
-1. **Link documentation first**, on the documentation page, before you deploy: the deploy form lists the linked sources and the agent reads only the ones ticked. A folder source takes a path *relative to the mount* - `.` is the whole of `DAY0_DOCS_HOST_DIR`. A Notion source takes the component's locator, `http://docs-notion-mcp:3000/mcp`, and your own Notion integration token in the secret field; the token is passed through to Notion and never stored in the clear. Each source shows `synced` and a page count when it has been read.
+1. **Link documentation first**, on the documentation page, before you deploy: the deploy form lists the linked sources and the agent reads only the ones ticked. A folder source takes a path _relative to the mount_ - `.` is the whole of `DAY0_DOCS_HOST_DIR`. A Notion source takes the component's locator, `http://docs-notion-mcp:3000/mcp`, and your own Notion integration token in the secret field; the token is passed through to Notion and never stored in the clear. Each source shows `synced` and a page count when it has been read.
 
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
 
 2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
-3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each takes one approval, the manager's Approve button. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
+3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each takes one approval, the manager's Approve button. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there _before_ approving, because the probe runs the moment the approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
 
    ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 
@@ -522,13 +521,13 @@ Run one Day0 deployment per Slack workspace and per Linear team. Two deployments
 
 The company bed runs three digital employees in one synthetic company, Kestrel Supply Co.: revenue operations, finance close and a logistics desk. Everything about the company that can live in a repository is in `bed/company/`; nothing there is a secret, and every page says the company is synthetic.
 
-| Path | What it is |
-|---|---|
-| `bed/company/folder/` | the thirteen pages the folder source reads: the onboarding page with the shared systems table, a handbook per role naming that role's Linear team, project and Slack channels, the runbooks, and the pages for the Looker pipeline tile, Northstar CRM and NetLedger (the last two have no approved connection, on purpose) |
-| `bed/company/notion/` | the two Notion pages, `Linear automation` and `Slack automation policy`, and how to paste them |
-| `bed/company/linear.json` | the ten demo tickets in their own words, and the state each is put back to |
-| `bed/company/slack-asks.md` | the three Slack asks a person posts during each sitting, once the employees are deployed |
-| `bed/company/answers.md` | the manager's Day-1 answers per role, and the note for the logistics retry |
+| Path                        | What it is                                                                                                                                                                                                                                                                                                                  |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bed/company/folder/`       | the thirteen pages the folder source reads: the onboarding page with the shared systems table, a handbook per role naming that role's Linear team, project and Slack channels, the runbooks, and the pages for the Looker pipeline tile, Northstar CRM and NetLedger (the last two have no approved connection, on purpose) |
+| `bed/company/notion/`       | the two Notion pages, `Linear automation` and `Slack automation policy`, and how to paste them                                                                                                                                                                                                                              |
+| `bed/company/linear.json`   | the ten demo tickets in their own words, and the state each is put back to                                                                                                                                                                                                                                                  |
+| `bed/company/slack-asks.md` | the three Slack asks a person posts during each sitting, once the employees are deployed                                                                                                                                                                                                                                    |
+| `bed/company/answers.md`    | the manager's Day-1 answers per role, and the note for the logistics retry                                                                                                                                                                                                                                                  |
 
 The bed is maintainers' tooling rather than a product command, so it has no `pnpm` script: it is run by its path, `pnpm exec tsx scripts/bed/company.ts <verb>`. From a fresh clone:
 
@@ -620,13 +619,13 @@ Before either account exists the app still starts, which is worth knowing so you
 
 ## Using a model server you already have
 
-The bundled `model` service is a convenience, not a dependency - skip `pnpm model:up` and point the two variables at anything that speaks OpenAI chat completions (ollama, llama.cpp, LM Studio, vLLM, Groq, Together). The only rule is the one above: the second address must resolve *inside* the backend container.
+The bundled `model` service is a convenience, not a dependency - skip `pnpm model:up` and point the two variables at anything that speaks OpenAI chat completions (ollama, llama.cpp, LM Studio, vLLM, Groq, Together). The only rule is the one above: the second address must resolve _inside_ the backend container.
 
-| Where the endpoint runs | `OPENAI_BASE_URL` (Next) | `CONVEX_OPENAI_BASE_URL` (backend) |
-|---|---|---|
-| The bundled `model` service | `http://127.0.0.1:11434/v1` | `http://model:11434/v1` |
+| Where the endpoint runs               | `OPENAI_BASE_URL` (Next)    | `CONVEX_OPENAI_BASE_URL` (backend)     |
+| ------------------------------------- | --------------------------- | -------------------------------------- |
+| The bundled `model` service           | `http://127.0.0.1:11434/v1` | `http://model:11434/v1`                |
 | On this host, bound to all interfaces | `http://127.0.0.1:11434/v1` | `http://host.docker.internal:11434/v1` |
-| A remote or hosted endpoint | the same URL | leave empty |
+| A remote or hosted endpoint           | the same URL                | leave empty                            |
 
 `host.docker.internal` is mapped for you in `docker-compose.yml`, but whether traffic from the container actually reaches your host is a firewall question and some machines drop it. If in doubt, use the bundled service: a compose network is not something a host firewall sits in the middle of.
 
@@ -642,36 +641,36 @@ answers whether a given endpoint can drive the loop - chat completions, JSON ext
 
 Copy `.env.example` to `.env.local` and fill in:
 
-| Variable | Purpose |
-|---|---|
-| `NEXT_PUBLIC_CONVEX_URL`, `CONVEX_DEPLOYMENT` | Set by `pnpm convex:dev` on first run |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Clerk dashboard keys |
-| `CLERK_JWT_ISSUER_DOMAIN` | Issuer URL of the Clerk JWT template named `convex` (also push to Convex env) |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | The model. Default model `gpt-5.6-terra` on OpenAI. A key is needed only when you use OpenAI |
-| `OPENAI_BASE_URL` | Set this to use any OpenAI-compatible chat-completions endpoint, which is what makes the account-free path work. Leave it unset to use `api.openai.com` through the OpenAI Responses API. This is the address **Next** dials when set |
-| `CONVEX_OPENAI_BASE_URL` | The same endpoint as the **Convex deployment** must dial it, when that differs. It does with a self-hosted backend, whose Node actions run inside a container. Empty pushes `OPENAI_BASE_URL` unchanged |
-| `OPENAI_JSON_MODE` | `auto` (default), `native` or `prompt`. `auto` starts on `response_format` and falls back to prompt injection only when dropping the parameter is what fixed it |
-| `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat runs the identical 1:1 |
-| `ELEVENLABS_WEBHOOK_SECRET` | Signs the post-call webhook. A **separate** setup from the two above: without it voice still connects and only post-call finalisation is refused. See [Voice](#elevenlabs-agent-setup) |
-| `DAYTONA_API_KEY`, `DAYTONA_API_URL` | The hosted skill-verification sandbox. Optional: without a key the [bundled local sandbox](#the-local-skill-sandbox) does the same job, and with neither an authored skill stops at `authoring` and stays uncallable |
-| `SKILL_SANDBOX_SOCKET`, `SKILL_SANDBOX_TIMEOUT_SECONDS` | The local sandbox. Both have working defaults and the bundled stack needs neither. See [The local skill sandbox](#the-local-skill-sandbox) |
-| `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted backend instead of Convex cloud. Written by `./setup.sh` and `pnpm setup:local` ([Local dev](#local-dev)) |
-| `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT`, `MODEL_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side) |
-| `MODEL_GPU`, `MODEL_GPU_COUNT` | Whether the bundled model service reserves a GPU. `auto` (default) uses one where there is one. See [The GPU is opt-out, not opt-in](#the-gpu-is-opt-out-not-opt-in) |
-| `NEXT_PUBLIC_DEV_NO_AUTH`, `DEV_NO_AUTH_SECRET`, `DEV_NO_AUTH_SIGNING_KEY`, `DEV_NO_AUTH_JWKS` | No-auth dev mode. The last three are written by `pnpm dev:no-auth-key`, never by hand |
-| `COMPOSE_PROJECT_NAME` | The Compose project the stack runs as. Unset, Compose names it after the directory you cloned into and `pnpm check:setup` looks for one called `day0` - so set it whenever the directory is not `day0`. See [Ports](#ports-host-side-and-container-side) |
-| `DAY0_SURFACE_MODE` | `mock` (default) drives the seeded mock office; `real` lets the agent act on your own systems through the connections your documentation records. See [Real mode](#real-mode) |
-| `DAY0_DOCS_HOST_DIR`, `DAY0_DOCS_ROOT` | The documentation folder, mounted read-only into the backend. The host path is Compose's (`./docs-local` by default, created empty for you); `/docs` is what Convex actions see. Real mode only |
-| `DAY0_CREDENTIAL_KEY` | Encrypts every stored credential. Written by `pnpm dev:no-auth-key` and pushed to the deployment; `pnpm sync:env` refuses real mode without it |
-| `DAY0_NOTION_MCP_AUTH_TOKEN` | Authenticates the private hop to the bundled Notion component. Written by `pnpm dev:no-auth-key`; `--profile docs-notion` refuses to start without it |
-| `DAY0_BROWSER_MCP_URL` | The switch that tells day0 it has a browser component. `http://playwright-mcp:8931/mcp` for the bundled one, paired with `--profile browser`. Unset means this deployment has no browser, and every browser action is refused with `BROWSER_DRIVER_ABSENT` |
-| `PLAYWRIGHT_ALLOWED_ORIGINS` | The origins the bundled browser component may open at all, semicolon-separated (`http://looker-tile:8080;http://host.docker.internal:3000` by default). It is one list for the whole deployment, a floor under day0's own check that every browser action stays on its card's documented page: add the origin of each web UI a card will drive, and nothing else |
-| `DAY0_REDACTOR_URL` | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only` |
-| `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
+| Variable                                                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_CONVEX_URL`, `CONVEX_DEPLOYMENT`                                                      | Set by `pnpm convex:dev` on first run                                                                                                                                                                                                                                                                                                                            |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`                                            | Clerk dashboard keys                                                                                                                                                                                                                                                                                                                                             |
+| `CLERK_JWT_ISSUER_DOMAIN`                                                                          | Issuer URL of the Clerk JWT template named `convex` (also push to Convex env)                                                                                                                                                                                                                                                                                    |
+| `OPENAI_API_KEY`, `OPENAI_MODEL`                                                                   | The model. Default model `gpt-5.6-terra` on OpenAI. A key is needed only when you use OpenAI                                                                                                                                                                                                                                                                     |
+| `OPENAI_BASE_URL`                                                                                  | Set this to use any OpenAI-compatible chat-completions endpoint, which is what makes the account-free path work. Leave it unset to use `api.openai.com` through the OpenAI Responses API. This is the address **Next** dials when set                                                                                                                            |
+| `CONVEX_OPENAI_BASE_URL`                                                                           | The same endpoint as the **Convex deployment** must dial it, when that differs. It does with a self-hosted backend, whose Node actions run inside a container. Empty pushes `OPENAI_BASE_URL` unchanged                                                                                                                                                          |
+| `OPENAI_JSON_MODE`                                                                                 | `auto` (default), `native` or `prompt`. `auto` starts on `response_format` and falls back to prompt injection only when dropping the parameter is what fixed it                                                                                                                                                                                                  |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`                                                        | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat runs the identical 1:1                                                                                                                                                                                                                                            |
+| `ELEVENLABS_WEBHOOK_SECRET`                                                                        | Signs the post-call webhook. A **separate** setup from the two above: without it voice still connects and only post-call finalisation is refused. See [Voice](#elevenlabs-agent-setup)                                                                                                                                                                           |
+| `DAYTONA_API_KEY`, `DAYTONA_API_URL`                                                               | The hosted skill-verification sandbox. Optional: without a key the [bundled local sandbox](#the-local-skill-sandbox) does the same job, and with neither an authored skill stops at `authoring` and stays uncallable                                                                                                                                             |
+| `SKILL_SANDBOX_SOCKET`, `SKILL_SANDBOX_TIMEOUT_SECONDS`                                            | The local sandbox. Both have working defaults and the bundled stack needs neither. See [The local skill sandbox](#the-local-skill-sandbox)                                                                                                                                                                                                                       |
+| `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY`                                           | Self-hosted backend instead of Convex cloud. Written by `./setup.sh` and `pnpm setup:local` ([Local dev](#local-dev))                                                                                                                                                                                                                                            |
+| `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT`, `MODEL_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side)                                                                                                                                                                                                                                                                             |
+| `MODEL_GPU`, `MODEL_GPU_COUNT`                                                                     | Whether the bundled model service reserves a GPU. `auto` (default) uses one where there is one. See [The GPU is opt-out, not opt-in](#the-gpu-is-opt-out-not-opt-in)                                                                                                                                                                                             |
+| `NEXT_PUBLIC_DEV_NO_AUTH`, `DEV_NO_AUTH_SECRET`, `DEV_NO_AUTH_SIGNING_KEY`, `DEV_NO_AUTH_JWKS`     | No-auth dev mode. The last three are written by `pnpm dev:no-auth-key`, never by hand                                                                                                                                                                                                                                                                            |
+| `COMPOSE_PROJECT_NAME`                                                                             | The Compose project the stack runs as. Unset, Compose names it after the directory you cloned into and `pnpm check:setup` looks for one called `day0` - so set it whenever the directory is not `day0`. See [Ports](#ports-host-side-and-container-side)                                                                                                         |
+| `DAY0_SURFACE_MODE`                                                                                | `mock` (default) drives the seeded mock office; `real` lets the agent act on your own systems through the connections your documentation records. See [Real mode](#real-mode)                                                                                                                                                                                    |
+| `DAY0_DOCS_HOST_DIR`, `DAY0_DOCS_ROOT`                                                             | The documentation folder, mounted read-only into the backend. The host path is Compose's (`./docs-local` by default, created empty for you); `/docs` is what Convex actions see. Real mode only                                                                                                                                                                  |
+| `DAY0_CREDENTIAL_KEY`                                                                              | Encrypts every stored credential. Written by `pnpm dev:no-auth-key` and pushed to the deployment; `pnpm sync:env` refuses real mode without it                                                                                                                                                                                                                   |
+| `DAY0_NOTION_MCP_AUTH_TOKEN`                                                                       | Authenticates the private hop to the bundled Notion component. Written by `pnpm dev:no-auth-key`; `--profile docs-notion` refuses to start without it                                                                                                                                                                                                            |
+| `DAY0_BROWSER_MCP_URL`                                                                             | The switch that tells day0 it has a browser component. `http://playwright-mcp:8931/mcp` for the bundled one, paired with `--profile browser`. Unset means this deployment has no browser, and every browser action is refused with `BROWSER_DRIVER_ABSENT`                                                                                                       |
+| `PLAYWRIGHT_ALLOWED_ORIGINS`                                                                       | The origins the bundled browser component may open at all, semicolon-separated (`http://looker-tile:8080;http://host.docker.internal:3000` by default). It is one list for the whole deployment, a floor under day0's own check that every browser action stays on its card's documented page: add the origin of each web UI a card will drive, and nothing else |
+| `DAY0_REDACTOR_URL`                                                                                | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only`                                                                                                        |
+| `DAY0_PUBLIC_URL`                                                                                  | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead                                                                                                                                                                                |
 
 Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
 
-**Deployment env is read once, when a function module is first evaluated.** A backend that has already run an action keeps the values it started with, so changing them afterwards leaves `npx convex env list` reporting the new value while the running action still uses the old one. Push the env *before* the first function push, and if you change it later restart the backend: `pnpm convex:restart` self-hosted, or `npx convex deploy` on cloud.
+**Deployment env is read once, when a function module is first evaluated.** A backend that has already run an action keeps the values it started with, so changing them afterwards leaves `npx convex env list` reporting the new value while the running action still uses the old one. Push the env _before_ the first function push, and if you change it later restart the backend: `pnpm convex:restart` self-hosted, or `npx convex deploy` on cloud.
 
 ## Ports (host side and container side)
 
@@ -692,7 +691,7 @@ OPENAI_BASE_URL=http://127.0.0.1:11534/v1
 
 The [sandbox](#the-local-skill-sandbox) has no entry here because it has no port. It is reached over a unix socket on a shared volume, so it cannot collide with anything and nothing about it needs moving to run a second stack.
 
-**Set these before the first `:up`, which is earlier than the walkthroughs above put you in this file.** `pnpm convex:up` and `pnpm model:up` pass `.env.local` to docker compose, so a port only moves for containers created after it changed. Both routes above tell you to edit `.env.local` *after* bringing the backend up, which is the right order while the defaults are free and the wrong one as soon as they are not - so if you know you need a port, copy `.env.example` and set it first. Changing one afterwards is not fatal, only unobvious: `pnpm model:up` recreates the model container on the new port, and `pnpm convex:down && pnpm convex:up` is what moves the backend.
+**Set these before the first `:up`, which is earlier than the walkthroughs above put you in this file.** `pnpm convex:up` and `pnpm model:up` pass `.env.local` to docker compose, so a port only moves for containers created after it changed. Both routes above tell you to edit `.env.local` _after_ bringing the backend up, which is the right order while the defaults are free and the wrong one as soon as they are not - so if you know you need a port, copy `.env.example` and set it first. Changing one afterwards is not fatal, only unobvious: `pnpm model:up` recreates the model container on the new port, and `pnpm convex:down && pnpm convex:up` is what moves the backend.
 
 `MODEL_PORT` defaults to 11434, which is also the port a native `ollama serve` takes, so the one machine most likely to collide is the one that already has ollama on it. `pnpm model:up` reports it plainly - `Bind for 127.0.0.1:11434 failed: port is already allocated` - and the fix is either `MODEL_PORT` and a matching `OPENAI_BASE_URL`, or skipping the bundled service and [pointing at the server you already have](#using-a-model-server-you-already-have).
 
@@ -716,19 +715,19 @@ CONVEX_SITE_PROXY_PORT=3321
 
 `pnpm convex:down` removes only the project it is run from, and `--` passes flags through to Compose, so `pnpm convex:down -- -v` is the one that also throws that project's data volume away.
 
-Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that resolves *inside* the container. An address only your browser can resolve belongs in `NEXT_PUBLIC_CONVEX_URL` (the app) or `CONVEX_BROWSER_ORIGIN` (the Convex dashboard container) instead.
+Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that resolves _inside_ the container. An address only your browser can resolve belongs in `NEXT_PUBLIC_CONVEX_URL` (the app) or `CONVEX_BROWSER_ORIGIN` (the Convex dashboard container) instead.
 
 ## Testing from a phone, and tunnels
 
 `pnpm dev` binds `localhost`, so nothing off this machine reaches it until you widen that - and widening the Next bind alone is never enough, because the browser also talks to Convex directly. (`localhost` rather than `127.0.0.1` because that is the host Clerk's proxy rewrites to, and Next 16 treats a `127.0.0.1` bind as a foreign origin.)
 
-| What you want | Works? | What it takes |
-|---|---|---|
-| Laptop browser, no accounts | yes | the sequence above, everything on loopback |
-| ElevenLabs post-call webhook against local dev | yes, in either mode | `cloudflared tunnel --url http://localhost:3000`, and the tunnel URL as the agent's post-call webhook. The webhook route is exempt from the no-auth gate and authenticates itself by HMAC |
-| Phone on your LAN, no-auth mode | **no** | deliberately incompatible: no-auth refuses any request whose `Host` is not loopback, on top of the key check. Use Clerk for phone testing |
-| Phone on your LAN, Clerk mode | yes | `next dev -H 0.0.0.0`; `CONVEX_BIND_ADDR=0.0.0.0`; `NEXT_PUBLIC_CONVEX_URL=http://<laptop-lan-ip>:3210`; `CONVEX_BROWSER_ORIGIN` to match if you want the Convex dashboard usable from the phone too |
-| Phone anywhere, Clerk mode, public tunnel | yes | tunnel Next as above, and use a **Convex cloud** deployment. A tunnel to `:3000` does not carry the browser's Convex traffic, and exposing a self-hosted backend publicly hands out an unauthenticated database |
+| What you want                                  | Works?              | What it takes                                                                                                                                                                                                   |
+| ---------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Laptop browser, no accounts                    | yes                 | the sequence above, everything on loopback                                                                                                                                                                      |
+| ElevenLabs post-call webhook against local dev | yes, in either mode | `cloudflared tunnel --url http://localhost:3000`, and the tunnel URL as the agent's post-call webhook. The webhook route is exempt from the no-auth gate and authenticates itself by HMAC                       |
+| Phone on your LAN, no-auth mode                | **no**              | deliberately incompatible: no-auth refuses any request whose `Host` is not loopback, on top of the key check. Use Clerk for phone testing                                                                       |
+| Phone on your LAN, Clerk mode                  | yes                 | `next dev -H 0.0.0.0`; `CONVEX_BIND_ADDR=0.0.0.0`; `NEXT_PUBLIC_CONVEX_URL=http://<laptop-lan-ip>:3210`; `CONVEX_BROWSER_ORIGIN` to match if you want the Convex dashboard usable from the phone too            |
+| Phone anywhere, Clerk mode, public tunnel      | yes                 | tunnel Next as above, and use a **Convex cloud** deployment. A tunnel to `:3000` does not carry the browser's Convex traffic, and exposing a self-hosted backend publicly hands out an unauthenticated database |
 
 Widening `CONVEX_BIND_ADDR` publishes a backend with no authentication of its own to your network. It is not what holds no-auth mode shut - that is the local key - but it is still a database on a LAN port, so put it back to `127.0.0.1` afterwards.
 
@@ -777,7 +776,7 @@ pnpm check:setup
 
 reports the two separately - along with the backend, auth and model setups - prints the dynamic variables to check by eye against the dashboard, and exits non-zero only for states that are actually broken. Voice configured with no webhook secret is one of them: the one that looks finished and is not.
 
-It resolves values the way the running app does, which matters more than it sounds. Wherever a variable is present in the process environment it wins over `.env.local`, *including when it is present and empty* - because that is what Next does, and routes read `process.env` directly and treat an empty string as missing. A checker that only applied non-empty overrides would call a secret configured while the webhook answered 503 to every delivery.
+It resolves values the way the running app does, which matters more than it sounds. Wherever a variable is present in the process environment it wins over `.env.local`, _including when it is present and empty_ - because that is what Next does, and routes read `process.env` directly and treat an empty string as missing. A checker that only applied non-empty overrides would call a secret configured while the webhook answered 503 to every delivery.
 
 ## Runtime flow
 
@@ -793,159 +792,159 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| Frontend | Next.js 16 App Router, React 19, Tailwind v4, TypeScript 6 |
-| Realtime backend | Convex 1.37 — DB, queries, mutations, Node actions, scheduler |
-| Auth | Clerk (`@clerk/nextjs` 7) with `ConvexProviderWithClerk` |
-| LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.6-terra`. Hosted OpenAI uses Responses; custom base URLs use chat completions. Streaming chat via AI SDK 6; raw OpenAI SDK 6 available. |
-| Voice | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5) |
-| Sandboxes | `python:3.12-slim` for skill smoke tests, in a [bundled local sandbox](#the-local-skill-sandbox) or in Daytona (`@daytona/sdk`) |
-| Validation | Zod 4 |
+| Layer            | Choice                                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend         | Next.js 16 App Router, React 19, Tailwind v4, TypeScript 6                                                                                                                                                      |
+| Realtime backend | Convex 1.37 — DB, queries, mutations, Node actions, scheduler                                                                                                                                                   |
+| Auth             | Clerk (`@clerk/nextjs` 7) with `ConvexProviderWithClerk`                                                                                                                                                        |
+| LLMs             | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.6-terra`. Hosted OpenAI uses Responses; custom base URLs use chat completions. Streaming chat via AI SDK 6; raw OpenAI SDK 6 available. |
+| Voice            | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5)                                                                                                                        |
+| Sandboxes        | `python:3.12-slim` for skill smoke tests, in a [bundled local sandbox](#the-local-skill-sandbox) or in Daytona (`@daytona/sdk`)                                                                                 |
+| Validation       | Zod 4                                                                                                                                                                                                           |
 
 ## Routes
 
 ### Pages
 
-| Route | File | Purpose |
-|---|---|---|
-| `/` | `app/page.tsx` | Landing (signed-out) + deploy/list/reset dashboard (signed-in) |
-| `/documentation` | `app/documentation/page.tsx` | Owner-level documentation locations: link, sync, rotate credentials, revoke and unlink; linking is local real mode only |
-| `/agent/[agentId]` | `app/agent/[agentId]/page.tsx` | Agent dashboard — charter, mode picker, work queue, skills, supervision and mock/real work surfaces |
-| `/sign-in/[[...sign-in]]`, `/sign-up/[[...sign-up]]` | Clerk catch-all routes | Sign-in / sign-up |
+| Route                                                | File                           | Purpose                                                                                                                 |
+| ---------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `/`                                                  | `app/page.tsx`                 | Landing (signed-out) + deploy/list/reset dashboard (signed-in)                                                          |
+| `/documentation`                                     | `app/documentation/page.tsx`   | Owner-level documentation locations: link, sync, rotate credentials, revoke and unlink; linking is local real mode only |
+| `/agent/[agentId]`                                   | `app/agent/[agentId]/page.tsx` | Agent dashboard — charter, mode picker, work queue, skills, supervision and mock/real work surfaces                     |
+| `/sign-in/[[...sign-in]]`, `/sign-up/[[...sign-up]]` | Clerk catch-all routes         | Sign-in / sign-up                                                                                                       |
 
 ### API
 
-| Route | What it does |
-|---|---|
-| `POST /api/dev-auth/token` | Exchanges the local unlock cookie for a short-lived Convex JWT in no-auth development mode |
-| `GET /api/oauth/slack` | Validates the signed, expiring, single-use Slack install state, exchanges the code and returns to the Surfaces tab |
-| `POST /api/seed` | Calls `api.seed.seedDemo` — installs the builtin skill and, in mock mode only, the mock environment; it never seeds work items |
-| `GET /api/voice/elevenlabs/start` | Returns ElevenLabs signed URL for the Day-1 1:1 |
-| `POST /api/voice/elevenlabs/webhook` | ElevenLabs post-call webhook → `api.onboarding.synthesiseFromTranscript` |
-| `POST /api/onboarding/synthesise` | Browser-side charter-synthesis trigger (chat mode) |
-| `POST /api/voice/chat` | Streaming configured-model chat for the Day-1 1:1; stops on the `dayOneComplete` tool call |
+| Route                                | What it does                                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /api/dev-auth/token`           | Exchanges the local unlock cookie for a short-lived Convex JWT in no-auth development mode                                     |
+| `GET /api/oauth/slack`               | Validates the signed, expiring, single-use Slack install state, exchanges the code and returns to the Surfaces tab             |
+| `POST /api/seed`                     | Calls `api.seed.seedDemo` — installs the builtin skill and, in mock mode only, the mock environment; it never seeds work items |
+| `GET /api/voice/elevenlabs/start`    | Returns ElevenLabs signed URL for the Day-1 1:1                                                                                |
+| `POST /api/voice/elevenlabs/webhook` | ElevenLabs post-call webhook → `api.onboarding.synthesiseFromTranscript`                                                       |
+| `POST /api/onboarding/synthesise`    | Browser-side charter-synthesis trigger (chat mode)                                                                             |
+| `POST /api/voice/chat`               | Streaming configured-model chat for the Day-1 1:1; stops on the `dayOneComplete` tool call                                     |
 
 ## Convex backend (`convex/`)
 
-| File | What's in it |
-|---|---|
-| `agents.ts` | Agent CRUD; `deploy` mutation seeds six grants (`boss:message` and five reads in mock mode, `boss:message` and `docs:read` in real) + emits `agent.deployed` event |
-| `charters.ts` | Charter persist, confirm-or-strike constraints, approve, amend as a new superseding version with the diff on the event, and the re-evaluation trigger for parked work |
-| `managerQuestions.ts` | The charter's open questions asked once each at the first plan that touches them, answered from the approval card or the charter card into a charter amendment |
-| `workspace.ts` | 8-file workspace storage (`AGENTS`, `SOUL`, `IDENTITY`, `USER`, `TOOLS`, `BOOTSTRAP`, `MEMORY`, `HEARTBEAT`) |
-| `voice.ts` | Voice/chat session lifecycle |
-| `events.ts` | Append-only event log |
-| `config.ts` | Non-secret deployment configuration for the UI and harness: surface-mode label, model name, sandbox backend and browser-component presence |
-| `devAuth.ts` | Local no-auth issuer constants and the guarded custom-JWT provider built from `DEV_NO_AUTH_JWKS` |
-| `docSources.ts` | Owner-level documentation locations: link, rotate, resync, unlink, inheritance and fenced sync-generation persistence |
-| `docSyncActions.ts` (Node) | Reads sources in 25-page batches, redacts and seals credentials, mirrors safe pages to agents and schedules system discovery |
-| `documentationDiscovery.ts` | Reconciles one completed source generation into durable system discoveries and each inheriting agent's surface set, and re-admits the out-of-scope skips of every reading agent once per changed generation |
-| `documentationDiscoveryActions.ts` (Node) | Fingerprints pages, combines structural and model-derived system candidates, then applies the fenced discovery generation |
-| `credentials.ts` | Encrypted credential metadata plus internal store/decrypt/touch and owner-visible summary/revocation operations |
-| `credentialCryptoActions.ts` (Node) | AES-256 seal/open actions isolated behind `DAY0_CREDENTIAL_KEY` |
-| `surfaces.ts` | Per-agent system discovery provenance, connection-card lifecycle, two-role approvals, credential attachment, probe state, an intake poll the moment a surface first connects, and the re-evaluation of work parked on it |
-| `orientationData.ts` | Bounded internal reads for orientation, intake and re-probe candidates |
-| `orientationActions.ts` (Node) | Reads documentation evidence, selects the MCP/API/browser/escalate ladder and files an exact connect request or absent verdict |
-| `probeActions.ts` (Node) | Local documentation-source probes for MCP and folder readers |
-| `surfaceActions.ts` (Node) | Probes approved system paths, discovers safe tool catalogues, lands credentials and periodically re-verifies connections |
-| `slackProvisionActions.ts` (Node) | Registers a dedicated Slack app from the documented manifest and completes its signed OAuth installation |
-| `intakeActions.ts` (Node) | Polls connected real surfaces in documentation-derived waterfall order, one surface on demand when it connects, carries the provider's assignee and creator as the candidate's owner and requester, and polls manager decision replies (single or batch codes) on a separate checkpoint |
-| `managerChannelActions.ts` (Node) | Sends exact plan/action decision requests (with a batch code when others are open), landed notes per run or as an hourly digest, and idempotent acknowledgements through the approved manager chat surface |
-| `work.ts` | Twelve-state work-item machine, including `actions-pending`, channel and batch decisions, grants, retries with the quality-fit or scope waiver and the note kept on the item, approval with answers, `reevaluatePending`, the stopped outcome and manager notes, and transition fencing |
-| `workActions.ts` (Node) | Evaluates, plans and executes work; real-mode output crosses the deferral audit, a one-shot argument repair for held writes and the exact-action gate before provider apply |
-| `workLoop.ts` | Real mode's server-driven work loop: the next step each transition schedules, one claim per evaluation or draft, the stalled-step sweep and the on-demand check for new work |
-| `corrections.ts` | The manager's corrections kept per employee: the writer the retry, rejection and cancel transitions call, the dashboard's list and Retire, the planner's read of the active ones and the executor's read of those its plan applied |
-| `skills.ts` | Seven-state skill registry keyed by surface class and operation, including rejected/failed states, fenced authoring claims and `retireUnshaped` for rows that predate shapes |
-| `skillActions.ts` (Node) | `authorAndRegisterSkill` — configured-model authoring of a parameterised procedure, the static gate on the body, sandbox verification and registration |
-| `onboarding.ts` (Node) | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (surfaces and orientation in real mode, generated work items in mock mode) |
-| `mock.ts` | Mock environment CRUD (docs, spreadsheets, slack, twitter, tickets) |
-| `mockSeed.ts` | Idempotent demo seed (4 team docs, 4 how-to guides, Q4 spreadsheet, 5 channels, 1 tweet, 3 tickets) |
-| `coworker.ts` | Auto-reply mutation scheduled 3.5–6 s after the agent posts to Slack |
-| `seed.ts` (Node) | Installs the builtin docs skill; seeds the synthetic office only in mock mode and never seeds work items |
-| `evaluation.ts` | Mock-only harness mutations for task seed, timeout and authoring-cap failure, plus persisted-state snapshots |
-| `baselineActions.ts` (Node) | Deploys and runs the ordinary-agent control arm directly against the same mock adapters |
-| `revocationEvaluation.ts` | Builds deterministic real-mode containment trials and persists their transport checkpoints and outcomes |
-| `revocationEvaluationActions.ts` (Node) | Drives the live revocation trials across the credential-access and authority-recheck boundary |
-| `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger, per employee (`forAgent`) and for the owner's company (`forOwner`) |
-| `ownership.ts` | Shared caller and per-agent ownership guards for queries, mutations and actions |
-| `crons.ts` | Recovery, documentation sync, surface re-probe, work intake and stalled work-step recovery, manager-decision and hourly manager-digest schedules |
-| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 23 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
-| `auth.config.ts` | Chooses the Clerk JWT bridge or the guarded local no-auth JWT provider from deployment env |
+| File                                      | What's in it                                                                                                                                                                                                                                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents.ts`                               | Agent CRUD; `deploy` mutation seeds six grants (`boss:message` and five reads in mock mode, `boss:message` and `docs:read` in real) + emits `agent.deployed` event                                                                                                                      |
+| `charters.ts`                             | Charter persist, confirm-or-strike constraints, approve, amend as a new superseding version with the diff on the event, and the re-evaluation trigger for parked work                                                                                                                   |
+| `managerQuestions.ts`                     | The charter's open questions asked once each at the first plan that touches them, answered from the approval card or the charter card into a charter amendment                                                                                                                          |
+| `workspace.ts`                            | 8-file workspace storage (`AGENTS`, `SOUL`, `IDENTITY`, `USER`, `TOOLS`, `BOOTSTRAP`, `MEMORY`, `HEARTBEAT`)                                                                                                                                                                            |
+| `voice.ts`                                | Voice/chat session lifecycle                                                                                                                                                                                                                                                            |
+| `events.ts`                               | Append-only event log                                                                                                                                                                                                                                                                   |
+| `config.ts`                               | Non-secret deployment configuration for the UI and harness: surface-mode label, model name, sandbox backend and browser-component presence                                                                                                                                              |
+| `devAuth.ts`                              | Local no-auth issuer constants and the guarded custom-JWT provider built from `DEV_NO_AUTH_JWKS`                                                                                                                                                                                        |
+| `docSources.ts`                           | Owner-level documentation locations: link, rotate, resync, unlink, inheritance and fenced sync-generation persistence                                                                                                                                                                   |
+| `docSyncActions.ts` (Node)                | Reads sources in 25-page batches, redacts and seals credentials, mirrors safe pages to agents and schedules system discovery                                                                                                                                                            |
+| `documentationDiscovery.ts`               | Reconciles one completed source generation into durable system discoveries and each inheriting agent's surface set, and re-admits the out-of-scope skips of every reading agent once per changed generation                                                                             |
+| `documentationDiscoveryActions.ts` (Node) | Fingerprints pages, combines structural and model-derived system candidates, then applies the fenced discovery generation                                                                                                                                                               |
+| `credentials.ts`                          | Encrypted credential metadata plus internal store/decrypt/touch and owner-visible summary/revocation operations                                                                                                                                                                         |
+| `credentialCryptoActions.ts` (Node)       | AES-256 seal/open actions isolated behind `DAY0_CREDENTIAL_KEY`                                                                                                                                                                                                                         |
+| `surfaces.ts`                             | Per-agent system discovery provenance, connection-card lifecycle, two-role approvals, credential attachment, probe state, an intake poll the moment a surface first connects, and the re-evaluation of work parked on it                                                                |
+| `orientationData.ts`                      | Bounded internal reads for orientation, intake and re-probe candidates                                                                                                                                                                                                                  |
+| `orientationActions.ts` (Node)            | Reads documentation evidence, selects the MCP/API/browser/escalate ladder and files an exact connect request or absent verdict                                                                                                                                                          |
+| `probeActions.ts` (Node)                  | Local documentation-source probe for MCP readers (`pnpm probe:mcp`)                                                                                                                                                                                                                     |
+| `surfaceActions.ts` (Node)                | Probes approved system paths, discovers safe tool catalogues, lands credentials and periodically re-verifies connections                                                                                                                                                                |
+| `slackProvisionActions.ts` (Node)         | Registers a dedicated Slack app from the documented manifest and completes its signed OAuth installation                                                                                                                                                                                |
+| `intakeActions.ts` (Node)                 | Polls connected real surfaces in documentation-derived waterfall order, one surface on demand when it connects, carries the provider's assignee and creator as the candidate's owner and requester, and polls manager decision replies (single or batch codes) on a separate checkpoint |
+| `managerChannelActions.ts` (Node)         | Sends exact plan/action decision requests (with a batch code when others are open), landed notes per run or as an hourly digest, and idempotent acknowledgements through the approved manager chat surface                                                                              |
+| `work.ts`                                 | Twelve-state work-item machine, including `actions-pending`, channel and batch decisions, grants, retries with the quality-fit or scope waiver and the note kept on the item, approval with answers, `reevaluatePending`, the stopped outcome and manager notes, and transition fencing |
+| `workActions.ts` (Node)                   | Evaluates, plans and executes work; real-mode output crosses the deferral audit, a one-shot argument repair for held writes and the exact-action gate before provider apply                                                                                                             |
+| `workLoop.ts`                             | Real mode's server-driven work loop: the next step each transition schedules, one claim per evaluation or draft, the stalled-step sweep and the on-demand check for new work                                                                                                            |
+| `corrections.ts`                          | The manager's corrections kept per employee: the writer the retry, rejection and cancel transitions call, the dashboard's list and Retire, the planner's read of the active ones and the executor's read of those its plan applied                                                      |
+| `skills.ts`                               | Seven-state skill registry keyed by surface class and operation, including rejected/failed states, fenced authoring claims and `retireUnshaped` for rows that predate shapes                                                                                                            |
+| `skillActions.ts` (Node)                  | `authorAndRegisterSkill` — configured-model authoring of a parameterised procedure, the static gate on the body, sandbox verification and registration                                                                                                                                  |
+| `onboarding.ts` (Node)                    | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (surfaces and orientation in real mode, generated work items in mock mode)                                                                                                                                   |
+| `mock.ts`                                 | Mock environment CRUD (docs, spreadsheets, slack, twitter, tickets)                                                                                                                                                                                                                     |
+| `mockSeed.ts`                             | Idempotent demo seed (4 team docs, 4 how-to guides, Q4 spreadsheet, 5 channels, 1 tweet, 3 tickets)                                                                                                                                                                                     |
+| `coworker.ts`                             | Auto-reply mutation scheduled 3.5–6 s after the agent posts to Slack                                                                                                                                                                                                                    |
+| `seed.ts` (Node)                          | Installs the builtin docs skill; seeds the synthetic office only in mock mode and never seeds work items                                                                                                                                                                                |
+| `evaluation.ts`                           | Mock-only harness mutations for task seed, timeout and authoring-cap failure, plus persisted-state snapshots                                                                                                                                                                            |
+| `baselineActions.ts` (Node)               | Deploys and runs the ordinary-agent control arm directly against the same mock adapters                                                                                                                                                                                                 |
+| `revocationEvaluation.ts`                 | Builds deterministic real-mode containment trials and persists their transport checkpoints and outcomes                                                                                                                                                                                 |
+| `revocationEvaluationActions.ts` (Node)   | Drives the live revocation trials across the credential-access and authority-recheck boundary                                                                                                                                                                                           |
+| `metrics.ts`                              | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger, per employee (`forAgent`) and for the owner's company (`forOwner`)                                                                                                                     |
+| `ownership.ts`                            | Shared caller and per-agent ownership guards for queries, mutations and actions                                                                                                                                                                                                         |
+| `crons.ts`                                | Recovery, documentation sync, surface re-probe, work intake and stalled work-step recovery, manager-decision and hourly manager-digest schedules                                                                                                                                        |
+| `reset.ts`                                | `deleteMyData` — deletes an agent plus its rows in 23 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext                                                                                                 |
+| `auth.config.ts`                          | Chooses the Clerk JWT bridge or the guarded local no-auth JWT provider from deployment env                                                                                                                                                                                              |
 
 ## Schema (`convex/schema.ts`)
 
 The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired, six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
-| Table | Purpose |
-|---|---|
-| `agents` | One row per deployed agent; lifecycle state |
-| `charters` | Versioned charters with approval state, the constraints the manager confirmed or struck, and the version each amendment supersedes |
-| `managerQuestions` | One record per open charter question asked, with the plan or candidate that touched it and the answer that amended the charter |
-| `workspace` | 8-file workspace storage |
-| `credentials` | Owner-scoped encrypted values, locations and OAuth grants with source, use and revocation metadata |
-| `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |
-| `docSyncRuns` | Fenced source generations, safe continuation cursors and page/redaction totals |
-| `docPages` | Normalised, credential-redacted pages keyed by source and stable reference |
-| `docPageListings` | The listing of its source that last named each page, which a finishing sync prunes by |
-| `docSystemDiscoveries` | Current and retired evidence-backed system candidates derived from each source |
-| `surfaces` | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints |
-| `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |
-| `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp |
-| `externalClaims` | One live claim per provider item across employees, released on cancellation and retaken before a retry resumes |
-| `retirements` | One row per employee a real-mode retire deleted, under its owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
-| `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
-| `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
-| `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
-| `corrections` | The manager's retry notes, rejection reasons and plan-cancel reasons kept per employee, real mode only, with the item they came from, the surfaces its plan touched and the later items whose plans applied them |
-| `skills` | Skill registry — `builtin` or `agent-authored`, shaped by surface class and operation |
-| `permissionGrants` | Scoped capability grants (revocable) |
-| `sandboxLeases` | The one lease on the verification sandbox: which authoring run may call it now, so employees authoring at once wait visibly instead of timing out on each other |
-| `events` | Event ticker |
-| `ticketListings` | Each intake listing that changed a ticket, by work item, which the re-read before apply compares with |
-| `migrations` | How far each upgrade migration has got, and when it finished |
-| `deploymentVersions` | The release the deployment's rows are at, one row per completed upgrade; the upgrade refuses to skip a release |
-| `mockDocs`, `mockSpreadsheets`, `mockSpreadsheetRows`, `mockSlackChannels`, `mockSlackMessages`, `mockTweets`, `mockTweetReplies`, `mockTickets` | Per-agent mock work environment |
+| Table                                                                                                                                            | Purpose                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents`                                                                                                                                         | One row per deployed agent; lifecycle state                                                                                                                                                                      |
+| `charters`                                                                                                                                       | Versioned charters with approval state, the constraints the manager confirmed or struck, and the version each amendment supersedes                                                                               |
+| `managerQuestions`                                                                                                                               | One record per open charter question asked, with the plan or candidate that touched it and the answer that amended the charter                                                                                   |
+| `workspace`                                                                                                                                      | 8-file workspace storage                                                                                                                                                                                         |
+| `credentials`                                                                                                                                    | Owner-scoped encrypted values, locations and OAuth grants with source, use and revocation metadata                                                                                                               |
+| `docSources`                                                                                                                                     | Linked MCP, folder, git and URL documentation locations with sync/discovery status                                                                                                                               |
+| `docSyncRuns`                                                                                                                                    | Fenced source generations, safe continuation cursors and page/redaction totals                                                                                                                                   |
+| `docPages`                                                                                                                                       | Normalised, credential-redacted pages keyed by source and stable reference                                                                                                                                       |
+| `docPageListings`                                                                                                                                | The listing of its source that last named each page, which a finishing sync prunes by                                                                                                                            |
+| `docSystemDiscoveries`                                                                                                                           | Current and retired evidence-backed system candidates derived from each source                                                                                                                                   |
+| `surfaces`                                                                                                                                       | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints                                                                                                       |
+| `voiceSessions`                                                                                                                                  | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`)                                                                                                                                                       |
+| `workItems`                                                                                                                                      | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp                                    |
+| `externalClaims`                                                                                                                                 | One live claim per provider item across employees, released on cancellation and retaken before a retry resumes                                                                                                   |
+| `retirements`                                                                                                                                    | One row per employee a real-mode retire deleted, under its owner: what went, what was revoked, and the claims and rejections its colleagues still meet                                                           |
+| `managerDecisionNotices`                                                                                                                         | Idempotent received/unknown acknowledgements for parsed manager-channel replies                                                                                                                                  |
+| `decisionBatches`                                                                                                                                | One channel code per set of held action decisions open at once, naming each member's item, code and run                                                                                                          |
+| `managerNotes`                                                                                                                                   | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest                                                                                                               |
+| `corrections`                                                                                                                                    | The manager's retry notes, rejection reasons and plan-cancel reasons kept per employee, real mode only, with the item they came from, the surfaces its plan touched and the later items whose plans applied them |
+| `skills`                                                                                                                                         | Skill registry — `builtin` or `agent-authored`, shaped by surface class and operation                                                                                                                            |
+| `permissionGrants`                                                                                                                               | Scoped capability grants (revocable)                                                                                                                                                                             |
+| `sandboxLeases`                                                                                                                                  | The one lease on the verification sandbox: which authoring run may call it now, so employees authoring at once wait visibly instead of timing out on each other                                                  |
+| `events`                                                                                                                                         | Event ticker                                                                                                                                                                                                     |
+| `ticketListings`                                                                                                                                 | Each intake listing that changed a ticket, by work item, which the re-read before apply compares with                                                                                                            |
+| `migrations`                                                                                                                                     | How far each upgrade migration has got, and when it finished                                                                                                                                                     |
+| `deploymentVersions`                                                                                                                             | The release the deployment's rows are at, one row per completed upgrade; the upgrade refuses to skip a release                                                                                                   |
+| `mockDocs`, `mockSpreadsheets`, `mockSpreadsheetRows`, `mockSlackChannels`, `mockSlackMessages`, `mockTweets`, `mockTweetReplies`, `mockTickets` | Per-agent mock work environment                                                                                                                                                                                  |
 
 ## Domain logic (`src/`)
 
-| Path | What it exports |
-|---|---|
-| `src/env.ts` | Zod env contract; lazy/optional so Convex bundles cleanly |
-| `src/lib/mastra.ts` | Shared configured-model agents, structured-output ladder, 300-second call abort and five-attempt transient retry |
-| `src/lib/openai.ts` | Shared model resolver: hosted OpenAI through Responses, custom base URLs through chat completions, plus raw JSON/text helpers |
-| `src/lib/structured-fallback.ts` | Classifies a structured-output failure and decides whether the native `response_format` rung may be demoted to the prompt rung |
-| `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** one distinct stdout line per representative input set |
-| `src/lib/local-sandbox.ts` | Client for the bundled sandbox service, over a unix socket because that container has no network |
-| `src/lib/daytona.ts` | The Daytona backend — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
-| `src/lib/credential-crypto.ts` | AES-256-GCM credential encryption/decryption with strict key and payload validation |
-| `src/lib/dev-auth*.ts` | Local unlock-cookie, JWT minting and Convex auth-provider integration for the one no-auth development identity |
-| `src/lib/model-name.ts`, `src/lib/oauth-state.ts`, `src/lib/surface-mode.ts` | Model default resolution, signed single-use OAuth state and the local-only real-mode guard |
-| `src/lib/plain-error.ts`, `src/lib/skill-authoring.ts`, `src/lib/transport-error.ts` | Safe UI errors, authoring-lease checks and transport-unreachable classification |
-| `src/lib/ids.ts` | Branded id helpers (zero runtime cost) |
-| `src/lib/logger.ts` | JSON logger |
-| `src/agent/avatar-pets.ts`, `src/agent/system-classes.ts` | Agent-avatar catalogue and the shared taxonomy used to classify documented systems |
-| `src/agent/charter.ts` | `synthesiseCharter` (with the constraints a draft carries), `renderCharter`, `extractRole`; the workspace renderers live in `src/agent/charter-workspace.ts` |
-| `src/agent/charter-constraints.ts`, `src/agent/charter-amendment.ts` | The rules derived from the transcript and their removal on a strike; the seven amendment kinds, version bump and per-field diff |
-| `src/agent/manager-questions.ts` | The question record shape, its stable key and the content-word rule that decides which plan first asks it |
-| `src/agent/day-one-prompts.ts` | `DAY_ONE_TOPIC_SPECS`, `DAY_ONE_WELCOME`, `defaultSoul`, `day1Script` |
-| `src/agent/work-generator.ts` | Schema and prompt that turn an approved charter into mock-mode work candidates |
-| `src/docs/` | Documentation component checks, folder/git/MCP/URL readers, page normalisation, credential redaction and evidence-backed system discovery |
-| `src/evaluation/` | Ordinary-agent control loop, arm-parity checks, shared mock-office scopes and terminal-state definitions |
-| `src/memory/workspace.ts` | `WORKSPACE_FILES` (8-file slot table), `buildSystemPrompt` |
-| `src/surfaces/` | Real/mock adapter registry, exact-action policy, MCP/HTTP/browser transports, secret injection/redaction, Slack identity and connection presentation |
-| `src/work/types.ts` | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30`, the closing cap (`CLOSING_SET_CAP` plus `DEFERRED_SEQUENCE_ALLOWANCE`) and the skip-reason prefixes |
-| `src/work/evaluate.ts` | `evaluateCandidate` — 7-criterion sequential evaluator |
-| `src/work/quality-fit.ts` | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section |
-| `src/work/plan.ts`, `src/work/plan-steps.ts` | `draftExecutionPlan`, grounded in the candidate's ticket record or chat thread when a surface can read it; the step predicates the gate and the executor share |
-| `src/work/candidate-properties.ts` | The ownership, priority and age vocabulary the planner audit and the charter constraints both read |
-| `src/work/skill-shape.ts`, `src/work/skill-inputs.ts`, `src/work/authored-skill.ts` | A candidate's surface class and operation, the `<record-id>` input grammar the executor binds, and the static gate that refuses a body carrying the first item's values |
-| `src/work/scope.ts` | `judgeScope` — the one scope judgement; lexical rule and quality fit as inputs, the charter judgement model call in real mode |
-| `src/work/stop.ts`, `src/work/manager-feedback.ts`, `src/work/manager-notes.ts` | The stopped outcome (nothing landed, nothing to decide), the feedback a run may still read, and the landed and stopped notes the manager receives |
-| `src/work/corrections.ts` | Which kept corrections reach a later item's plan (this employee's, active, of the same kind, newest five within 3,000 characters), their scrub at prompt assembly, and the planner's and executor's sections with the rule that a correction revises and never overrides |
-| `src/work/execute-skill.ts` | Per-invocation skill agents, procedure contracts and mock/real action schemas, the deferral audit, the one-shot argument repair, the manager's answers and feedback as evidence, and dependent closing actions |
-| `src/work/autonomy.ts`, `src/work/idempotency.ts` | Supervised/autonomous policy labels and stable provider-action idempotency keys |
-| `src/work/manager-channel.ts`, `src/work/reconciliation.ts`, `src/work/reply-target.ts` | Manager decision parsing/requests, interrupted-provider reconciliation and exact chat-thread targeting |
+| Path                                                                                    | What it exports                                                                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/env.ts`                                                                            | Zod env contract; lazy/optional so Convex bundles cleanly                                                                                                                                                                                                                |
+| `src/lib/mastra.ts`                                                                     | Shared configured-model agents, structured-output ladder, 300-second call abort and five-attempt transient retry                                                                                                                                                         |
+| `src/lib/openai.ts`                                                                     | Shared model resolver: hosted OpenAI through Responses, custom base URLs through chat completions, plus raw JSON/text helpers                                                                                                                                            |
+| `src/lib/structured-fallback.ts`                                                        | Classifies a structured-output failure and decides whether the native `response_format` rung may be demoted to the prompt rung                                                                                                                                           |
+| `src/lib/skill-sandbox.ts`                                                              | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** one distinct stdout line per representative input set                                                                    |
+| `src/lib/local-sandbox.ts`                                                              | Client for the bundled sandbox service, over a unix socket because that container has no network                                                                                                                                                                         |
+| `src/lib/daytona.ts`                                                                    | The Daytona backend — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout                                                                                                                                                                                |
+| `src/lib/credential-crypto.ts`                                                          | AES-256-GCM credential encryption/decryption with strict key and payload validation                                                                                                                                                                                      |
+| `src/lib/dev-auth*.ts`                                                                  | Local unlock-cookie, JWT minting and Convex auth-provider integration for the one no-auth development identity                                                                                                                                                           |
+| `src/lib/model-name.ts`, `src/lib/oauth-state.ts`, `src/lib/surface-mode.ts`            | Model default resolution, signed single-use OAuth state and the local-only real-mode guard                                                                                                                                                                               |
+| `src/lib/plain-error.ts`, `src/lib/skill-authoring.ts`, `src/lib/transport-error.ts`    | Safe UI errors, authoring-lease checks and transport-unreachable classification                                                                                                                                                                                          |
+| `src/lib/ids.ts`                                                                        | Branded id helpers (zero runtime cost)                                                                                                                                                                                                                                   |
+| `src/lib/logger.ts`                                                                     | JSON logger                                                                                                                                                                                                                                                              |
+| `src/agent/avatar-pets.ts`, `src/agent/system-classes.ts`                               | Agent-avatar catalogue and the shared taxonomy used to classify documented systems                                                                                                                                                                                       |
+| `src/agent/charter.ts`                                                                  | `synthesiseCharter` (with the constraints a draft carries), `renderCharter`, `extractRole`; the workspace renderers live in `src/agent/charter-workspace.ts`                                                                                                             |
+| `src/agent/charter-constraints.ts`, `src/agent/charter-amendment.ts`                    | The rules derived from the transcript and their removal on a strike; the seven amendment kinds, version bump and per-field diff                                                                                                                                          |
+| `src/agent/manager-questions.ts`                                                        | The question record shape, its stable key and the content-word rule that decides which plan first asks it                                                                                                                                                                |
+| `src/agent/day-one-prompts.ts`                                                          | `DAY_ONE_TOPIC_SPECS`, `DAY_ONE_WELCOME`, `defaultSoul`, `day1Script`                                                                                                                                                                                                    |
+| `src/agent/work-generator.ts`                                                           | Schema and prompt that turn an approved charter into mock-mode work candidates                                                                                                                                                                                           |
+| `src/docs/`                                                                             | Documentation component checks, folder/git/MCP/URL readers, page normalisation, credential redaction and evidence-backed system discovery                                                                                                                                |
+| `src/evaluation/`                                                                       | Ordinary-agent control loop, arm-parity checks, shared mock-office scopes and terminal-state definitions                                                                                                                                                                 |
+| `src/memory/workspace.ts`                                                               | `WORKSPACE_FILES` (8-file slot table), `buildSystemPrompt`                                                                                                                                                                                                               |
+| `src/surfaces/`                                                                         | Real/mock adapter registry, exact-action policy, MCP/HTTP/browser transports, secret injection/redaction, Slack identity and connection presentation                                                                                                                     |
+| `src/work/types.ts`                                                                     | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30`, the closing cap (`CLOSING_SET_CAP` plus `DEFERRED_SEQUENCE_ALLOWANCE`) and the skip-reason prefixes                                                                                          |
+| `src/work/evaluate.ts`                                                                  | `evaluateCandidate` — 7-criterion sequential evaluator                                                                                                                                                                                                                   |
+| `src/work/quality-fit.ts`                                                               | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section                                                                                                                                                                                                  |
+| `src/work/plan.ts`, `src/work/plan-steps.ts`                                            | `draftExecutionPlan`, grounded in the candidate's ticket record or chat thread when a surface can read it; the step predicates the gate and the executor share                                                                                                           |
+| `src/work/candidate-properties.ts`                                                      | The ownership, priority and age vocabulary the planner audit and the charter constraints both read                                                                                                                                                                       |
+| `src/work/skill-shape.ts`, `src/work/skill-inputs.ts`, `src/work/authored-skill.ts`     | A candidate's surface class and operation, the `<record-id>` input grammar the executor binds, and the static gate that refuses a body carrying the first item's values                                                                                                  |
+| `src/work/scope.ts`                                                                     | `judgeScope` — the one scope judgement; lexical rule and quality fit as inputs, the charter judgement model call in real mode                                                                                                                                            |
+| `src/work/stop.ts`, `src/work/manager-feedback.ts`, `src/work/manager-notes.ts`         | The stopped outcome (nothing landed, nothing to decide), the feedback a run may still read, and the landed and stopped notes the manager receives                                                                                                                        |
+| `src/work/corrections.ts`                                                               | Which kept corrections reach a later item's plan (this employee's, active, of the same kind, newest five within 3,000 characters), their scrub at prompt assembly, and the planner's and executor's sections with the rule that a correction revises and never overrides |
+| `src/work/execute-skill.ts`                                                             | Per-invocation skill agents, procedure contracts and mock/real action schemas, the deferral audit, the one-shot argument repair, the manager's answers and feedback as evidence, and dependent closing actions                                                           |
+| `src/work/autonomy.ts`, `src/work/idempotency.ts`                                       | Supervised/autonomous policy labels and stable provider-action idempotency keys                                                                                                                                                                                          |
+| `src/work/manager-channel.ts`, `src/work/reconciliation.ts`, `src/work/reply-target.ts` | Manager decision parsing/requests, interrupted-provider reconciliation and exact chat-thread targeting                                                                                                                                                                   |
 
 ## API and interface documentation
 
@@ -964,15 +963,15 @@ Day0 is measured by a controlled comparison: the same model, the same non-zero t
 
 `D` is Day0 and `O` is the ordinary arm:
 
-| Measure | 8B D | 8B O | Terra D | Terra O | Sol D | Sol O |
-|---|---:|---:|---:|---:|---:|---:|
-| Task pass, majority | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 |
-| Task pass, per run | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 |
-| Procedure, majority | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 |
-| Procedure, per run | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 |
-| Prohibited-action free | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 |
-| Out-of-scope pass | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 |
-| Supervision on writes | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 |
+| Measure                |  8B D |  8B O | Terra D | Terra O | Sol D | Sol O |
+| ---------------------- | ----: | ----: | ------: | ------: | ----: | ----: |
+| Task pass, majority    |  7/15 |  6/15 |   15/15 |   12/15 | 15/15 | 13/15 |
+| Task pass, per run     | 25/45 | 19/45 |   44/45 |   34/45 | 44/45 | 36/45 |
+| Procedure, majority    |  7/15 |  1/15 |   11/15 |    2/15 | 11/15 |  2/15 |
+| Procedure, per run     | 20/45 |  4/45 |   33/45 |    6/45 | 32/45 |  6/45 |
+| Prohibited-action free | 42/45 | 34/45 |   45/45 |   34/45 | 45/45 | 38/45 |
+| Out-of-scope pass      | 12/15 |  8/15 |   15/15 |    4/15 | 15/15 |  9/15 |
+| Supervision on writes  | 10/15 |  0/15 |   15/15 |    0/15 | 14/15 |  0/15 |
 
 The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, while the frontier Terra and Sol arms exercise the hosted Responses API; both arms now complete tool-calling work on that fixed route. Day0 leads the ordinary arm on task pass, a-priori procedure adherence, prohibited-action freedom and out-of-scope pass in all three beds, but it does not pass every task-run (44/45 on each hosted model), and this controlled mock-office comparison does not establish universal performance. The ordinary arm is the same model with no onboarding. A fourth frozen bed, `GLM 5.3 Flash` through Featherless, is on the [evaluation page](evaluation/README.md): Day0 15/15 and 44/45 against the ordinary arm's 11/15 and 34/45.
 
@@ -980,16 +979,15 @@ The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, w
 
 Every figure this README quotes comes from a file in this repository or from a run of the product, and each has a command that regenerates it. The commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below.
 
-| Figure | Where it comes from | Regenerate with |
-|---|---|---|
-| The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` (the harness's earlier file names, which these recorded directories keep) | `pnpm eval:comparison` with the bed's model in `.env.local`; `pnpm eval:comparison -- --regrade <path>` re-scores a directory with no model call while its run's mock backend is kept; these directories' backends were not retained, so they cannot be re-scored from a clone |
-| The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
-| The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
-| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of a recorded 17 September 2026 real-mode run of the same route, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is not in this repository | Run [either local way](#local-dev); read the card, or export the ledger with `pnpm export:trace` as in [Read the ledger](#real-mode) |
-| This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), the route's documented run on `gpt-5.6-terra` at an earlier commit, paced for screenshots | The same |
+| Figure                                                                                                                                                                                                                           | Where it comes from                                                                                                                                                                                                                                                                                     | Regenerate with                                                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed                                                                                                             | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` (the harness's earlier file names, which these recorded directories keep) | `pnpm eval:comparison` with the bed's model in `.env.local`; `pnpm eval:comparison -- --regrade <path>` re-scores a directory with no model call while its run's mock backend is kept; these directories' backends were not retained, so they cannot be re-scored from a clone |
+| The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked                                                 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/`                                                                                                                                                      | `pnpm eval:revocation`                                                                                                                                                                                                                                                         |
+| The exact-action gate matrix                                                                                                                                                                                                     | `evaluation/gate/`                                                                                                                                                                                                                                                                                      | `pnpm eval:gate`, which calls no model                                                                                                                                                                                                                                         |
+| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of a recorded 17 September 2026 real-mode run of the same route, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is not in this repository                                                       | Run [either local way](#local-dev); read the card, or export the ledger with `pnpm export:trace` as in [Read the ledger](#real-mode)                                                                                                                                           |
+| This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41                                                                                                                                                         | [The numbers this run ended on](#the-numbers-this-run-ended-on), the route's documented run on `gpt-5.6-terra` at an earlier commit, paced for screenshots                                                                                                                                              | The same                                                                                                                                                                                                                                                                       |
 
 The two real-mode runs are single observations of the same route a fortnight apart, on different commits, different models and different human pacing; the README run exercised a rejection and a revocation and the recorded run did not, so its blocked-after-revocation figure has no value. Neither is a distribution, and the table above names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
-
 
 ## Evaluation quick start
 
@@ -997,12 +995,12 @@ How to run the comparison yourself. What it measures and what it found are under
 
 **Harness v2** standardises both routes and both arms on four numbers, and stamps `harnessVersion: 2` into every evidence file it writes:
 
-| | |
-|---|---|
-| 300 s | abort on any single model call (`MODEL_CALL_TIMEOUT_MS`) |
-| 15 min | deadline per task, the same for all 15 |
-| 6 | skill-authoring attempts per task-run, then the run fails with `skill-authoring-attempts-exhausted` |
-| local | the networkless skill sandbox is required; a deployment that would select Daytona is refused before the first task |
+|        |                                                                                                                    |
+| ------ | ------------------------------------------------------------------------------------------------------------------ |
+| 300 s  | abort on any single model call (`MODEL_CALL_TIMEOUT_MS`)                                                           |
+| 15 min | deadline per task, the same for all 15                                                                             |
+| 6      | skill-authoring attempts per task-run, then the run fails with `skill-authoring-attempts-exhausted`                |
+| local  | the networkless skill sandbox is required; a deployment that would select Daytona is refused before the first task |
 
 Evidence written by an earlier harness is not resumable under v2 and the v1 directories are kept immutable, so a mixed run cannot happen by accident.
 
@@ -1058,7 +1056,7 @@ Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and appro
 
 Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds six grants - `boss:message` and the five office reads (`docs:read`, `spreadsheet:read`, `social:read`, `ticket:read`, `slack:read`) - and the one skill that ships is `see-internal-docs`, so the work that runs immediately is the work that can be answered out of the internal docs. A `needs-skill` verdict is the interesting one and it now finishes on this route: the agent proposes a skill, you approve it, the local sandbox runs its smoke test, and on exit 0 with output the skill registers and the work item that asked for it goes back in the queue and completes. `defer - awaiting-permission` is the verdict that still stops where it stops - it names the scope it wanted and then waits, with nothing in the UI that grants one.
 
-**A `failed` work item is the other thing a small model hands you, and on the local route it is an expected outcome rather than a broken one.** An approved plan is executed as a set of named actions against the mock environment, and each one addresses a row by slug - `spreadsheet.appendRow` on a spreadsheet that exists, `ticket.update` on a ticket that exists. A smaller model writes plausible slugs instead of real ones, so some actions land and the invented ones are refused; the item goes to `failed` and the card lists every action that did not reach the environment next to the reason it did not. Nothing is silently half-applied, and the card says so: `Retry` re-runs the *whole* plan, so an action that already landed is applied a second time. Reading that panel is how you tell a small model's invented slug apart from a real fault, and it is the difference between the two runs on the same machine - a hosted model on the same charter dispatches actions against rows that are actually there.
+**A `failed` work item is the other thing a small model hands you, and on the local route it is an expected outcome rather than a broken one.** An approved plan is executed as a set of named actions against the mock environment, and each one addresses a row by slug - `spreadsheet.appendRow` on a spreadsheet that exists, `ticket.update` on a ticket that exists. A smaller model writes plausible slugs instead of real ones, so some actions land and the invented ones are refused; the item goes to `failed` and the card lists every action that did not reach the environment next to the reason it did not. Nothing is silently half-applied, and the card says so: `Retry` re-runs the _whole_ plan, so an action that already landed is applied a second time. Reading that panel is how you tell a small model's invented slug apart from a real fault, and it is the difference between the two runs on the same machine - a hosted model on the same charter dispatches actions against rows that are actually there.
 
 The harness wants exactly this stack: a self-hosted backend in mock mode, the local sandbox and no `DAYTONA_API_KEY`, with `OLLAMA_CONTEXT_LENGTH=16384` for the bundled `qwen3:8b`. [Evaluation quick start](#evaluation-quick-start) above has its commands.
 
@@ -1223,97 +1221,97 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/full-run-01-documentation-synced.webp)
 
-   *两个文档来源在 Agent 存在之前就已同步。Captured locally on 3 September 2026.*
+   _两个文档来源在 Agent 存在之前就已同步。Captured locally on 3 September 2026._
 
 2. **部署 Agent 并进行 Day-1 一对一。** 该部署没有 ElevenLabs 凭据，因此只能使用文字模式。Agent 自己发起对话，并按顺序走完七个主题：为什么招聘、角色及其 30/60/90 天、需要与谁协作、应该阅读什么、工作由哪些工具承载、首先接手什么，以及还有哪些问题未确定。Manager 用平实的句子作答。对话在部署后 4 分 34 秒完成。
 
    ![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/full-run-02-day-one-chat.webp)
 
-   *Day-1 一对一的开场交流，文字模式。Captured locally on 3 September 2026.*
+   _Day-1 一对一的开场交流，文字模式。Captured locally on 3 September 2026._
 
 3. **批准它起草的章程。** 仅凭这次对话，Agent 写出了自己的目的、建议职能、30/60/90 天成果、边界、协作对象与未决问题。Manager 阅读后点击 Approve。首次章程批准耗时：**5 分 8 秒**。
 
    ![The approved charter card, showing why this hire, the proposed RevOps coordinator function and the 30/60/90-day outcomes](.github/images/full-run-03-charter-approved.webp)
 
-   *Agent 自己写下的章程，批准之后。Captured locally on 3 September 2026.*
+   _Agent 自己写下的章程，批准之后。Captured locally on 3 September 2026._
 
 4. **Orientation 为每个系统提出一张卡片。** 章程批准约两分钟后，在没有点击任何按钮的情况下，Agent 依据文档与章程给出了恰好四张连接卡片：走 MCP endpoint 的 Linear、走文档化 API 的 Slack、以浏览器驱动的 Looker tile，以及没有已批准接入路径的 Northstar CRM。每张卡片都附有提出它所依据的原文，其中包括 manager 在一对一中说过的话。耗时：7 分 12 秒。
 
    ![The Surfaces tab after orientation, showing the Linear and Slack cards proposed with their approved connection ladders](.github/images/full-run-04-cards-proposed.webp)
 
-   *Orientation 提出的四张卡片中的两张，各自标明打算使用的接入方式。Captured locally on 3 September 2026.*
+   _Orientation 提出的四张卡片中的两张，各自标明打算使用的接入方式。Captured locally on 3 September 2026._
 
 5. **先落地 Slack token，再对每张卡片批准两次。** 该部署没有公网地址，因此无法注册 Slack 应用；卡片改为提供一个共享 bot token 输入框，token 在任何批准之前就已粘贴到这里。随后三张卡片各自点击 manager 按钮与 IT 按钮。三次探测都在数秒内连接成功。Northstar CRM 保持 `absent`，因为文档中没有记录任何已批准的接入方式。耗时：9 分 5 秒。
 
    ![Connection status headers showing Linear, Slack and the Looker pipeline tile connected and Northstar CRM absent](.github/images/full-run-05-connected-statuses.webp)
 
-   *三个系统已连接，另一个因文档而保持 absent。Captured locally on 3 September 2026.*
+   _三个系统已连接，另一个因文档而保持 absent。Captured locally on 3 September 2026._
 
 6. **Intake 自行填充队列。** 五分钟一次的 intake cron 读取已连接的系统，返回四个候选事项：`#revops-asks` 中的一次 Slack mention、一张要求补充结账摘要审计说明的 Urgent Linear 工单、一张要求刷新 tile 的 Medium Linear 工单，以及一张在连接门处 defer 而不是猜测的 Northstar 工单。前三项与任何已注册技能都不匹配，返回 `needs-skill`。耗时：13 分 25 秒。
 
    ![The real-mode work queue after intake, showing three needs-skill items and one deferred on an absent connection](.github/images/full-run-06-work-queue.webp)
 
-   *Agent 自己发现的工作，以及它暂时还不能开始的原因。Captured locally on 3 September 2026.*
+   _Agent 自己发现的工作，以及它暂时还不能开始的原因。Captured locally on 3 September 2026._
 
 7. **批准它提出的三个技能。** 每个提案都写明所需 scope 以及触发它的候选事项。Manager 批准了全部三个；Agent 逐个编写技能，并在本地沙箱中运行冒烟测试进行验证。三个技能都在一分半钟内注册完成。耗时：16 分 5 秒。
 
    ![The skills panel showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/full-run-07-skills-registered.webp)
 
-   *Agent 为自己编写的三个技能，通过沙箱验证之后。Captured locally on 3 September 2026.*
+   _Agent 为自己编写的三个技能，通过沙箱验证之后。Captured locally on 3 September 2026._
 
 8. **在任何执行之前批准计划。** 在冷启动上限下，Agent 一次只处理一个事项。它为审计说明起草了四步计划：读取工单、起草评论、只有在获得逐条批准后才提交评论与状态变更、然后核验返回结果。Manager 批准了该计划。耗时：17 分 14 秒。
 
    ![A held execution plan for the close-summary audit note, with its four steps and the approve control](.github/images/full-run-08-plan-held.webp)
 
-   *等待决定的计划。此时尚未执行任何动作。Captured locally on 3 September 2026.*
+   _等待决定的计划。此时尚未执行任何动作。Captured locally on 3 September 2026._
 
 9. **只有 Web 界面的系统以一个被挂起的浏览器批次出现。** Slack 上的请求需要 pipeline 数字，而文档写明该 tile 只有 Web UI、没有 API。Agent 将文档化的操作序列作为六个浏览器动作整体挂起，因为它们无法拆分到相互隔离的浏览器会话中。此时尚未有任何动作触达系统。耗时：20 分 35 秒。
 
    ![Six browser operations held together as one batch, with the batch decision controls](.github/images/full-run-09-browser-batch-held.webp)
 
-   *整个登录与保存序列，作为一个决定被挂起。Captured locally on 3 September 2026.*
+   _整个登录与保存序列，作为一个决定被挂起。Captured locally on 3 September 2026._
 
 10. **整体批准后，tile 自己被读回。** Manager 点击 Approve all。六个动作在约一秒内应用完成，最后一个动作把页面读了回来：runbook 要求作为证据的可见数字与审计行。每个计划步骤都依据已应用的 ledger 判定为 satisfied，而不是依据 Agent 对自己的陈述。耗时：21 分 11 秒。
 
     ![The applied browser batch with its read-back of the visible figure and audit line, above the plan execution ledger](.github/images/full-run-10-batch-applied.webp)
 
-    *已应用的操作序列，以及为其提供证据的读回结果。Captured locally on 3 September 2026.*
+    _已应用的操作序列，以及为其提供证据的读回结果。Captured locally on 3 September 2026._
 
 11. **公开回复被单独挂起，批准后才发出。** 章程规定冷启动期间不得公开发帖，因此发往该请求所在 thread 的回复在读回之后作为独立决定出现。Manager 批准后，它带着来源标注落在 `#revops-asks`。耗时：23 分 1 秒。
 
     ![A held public Slack reply quoting the pipeline figure and the tile audit line, with its approval controls](.github/images/full-run-11-public-reply-held.webp)
 
-    *公开回复在发出之前先等待一个决定。Captured locally on 3 September 2026.*
+    _公开回复在发出之前先等待一个决定。Captured locally on 3 September 2026._
 
 12. **对内容过于单薄的评论给出理由并驳回。** 审计说明的第一次运行结束得很诚实：它读取了工单，没有找到完成检查的证据，于是在 DM 中询问，而不是编造。Manager 把已完成的工作连同三项检查作为备注退回。返回的评论仍然不够，于是 manager 带着书面理由驳回了这次运行。该理由会被保留并随重试一起传递。耗时：29 分 16 秒。
 
     ![Two held Linear actions above the manager's written rejection reason](.github/images/full-run-12-rejection-with-reason.webp)
 
-    *被挂起的评论与状态变更，以及它们被驳回的理由。Captured locally on 3 September 2026.*
+    _被挂起的评论与状态变更，以及它们被驳回的理由。Captured locally on 3 September 2026._
 
 13. **确认 provider 状态、重试，修订版落地。** 由于此前已有一条 DM 落地，重试被拦在对账清单之后，直到 manager 确认 provider 端的真实状态。随后的修订版引用了数字与三项检查，并连同状态变更一起提出。两者一并批准后，两次写入都落在了工单上。耗时：35 分 24 秒。
 
     ![The completed audit-note item with the Linear comment and Done transition recorded in its ledger](.github/images/full-run-13-revision-landed.webp)
 
-    *驳回之后的修订版，已应用到工单。Captured locally on 3 September 2026.*
+    _驳回之后的修订版，已应用到工单。Captured locally on 3 September 2026._
 
 14. **打开 autonomous actions。** 开关位于页头，并会要求一次确认，明确说明会发生什么变化。无论开关状态如何，技能与连接仍然需要批准。耗时：39 分 22 秒。
 
     ![The confirmation dialog for turning on autonomous actions](.github/images/full-run-14-autonomy-confirm.webp)
 
-    *开关在改变"无需询问即可执行"的范围之前，会先询问。Captured locally on 3 September 2026.*
+    _开关在改变"无需询问即可执行"的范围之前，会先询问。Captured locally on 3 September 2026._
 
 15. **同样的工作现在无需决定即可应用。** 在开关打开的状态下重试了一个事项。它运行了文档化的浏览器序列、读回 tile、写入审计评论并把工单移到 Done：九个动作全部以 autonomous 权限应用，没有任何提示，用时约四十秒。耗时：40 分 25 秒。
 
     ![Nine actions applied autonomously, including the browser sequence, the Linear comment and the state change](.github/images/full-run-15-autonomous-batch.webp)
 
-    *在开关之下，同样形态的工作会自行应用。Captured locally on 3 September 2026.*
+    _在开关之下，同样形态的工作会自行应用。Captured locally on 3 September 2026._
 
 16. **在运行中撤销一项 scope，下一次写入即被拒绝。** 在一次已经开始执行的运行进行到第十七秒时，从 Permissions 面板撤销了 `linear:write`。当该运行到达它的 Linear 写入时，这次写入没有触达工作环境：`no grant (linear:write)`。这次阻断被计入统计，而该运行此前已经应用的浏览器操作保持原样。耗时：48 分 45 秒。
 
     ![The refused Linear write after revocation, beside the supervision metrics for the run](.github/images/full-run-16-refusal-and-supervision.webp)
 
-    *这次拒绝，以及本次运行最终的数字。Captured locally on 3 September 2026.*
+    _这次拒绝，以及本次运行最终的数字。Captured locally on 3 September 2026._
 
 #### 读者应当知道的偏差
 
@@ -1327,13 +1325,13 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 #### 本次运行最终的数字
 
-| 指标 | 数值 |
-|---|---|
-| time to first approved charter | 5 min 8 s |
-| human decisions (approved / rejected) | 7 / 1 |
-| median decision latency | 2 min 7 s |
-| actions blocked after revocation | 1 |
-| audit-trail completeness | 100% (41/41) |
+| 指标                                  | 数值         |
+| ------------------------------------- | ------------ |
+| time to first approved charter        | 5 min 8 s    |
+| human decisions (approved / rejected) | 7 / 1        |
+| median decision latency               | 2 min 7 s    |
+| actions blocked after revocation      | 1            |
+| audit-trail completeness              | 100% (41/41) |
 
 同一张卡片的页脚显示 8 decisions requested、0 partial、31 actions automatic、11 held、1 refused。导出的 ledger 包含 197 条 event 与 42 行 ledger，其中不含任何凭据值。
 
@@ -1454,12 +1452,12 @@ pnpm sandbox:down                # stop it; skills then stop at `authoring`, vis
 
 `pnpm model:up` 会检查宿主机上的 NVIDIA driver；如果存在，就叠加 `docker-compose.gpu.yml` 并为容器预留 GPU。若 Docker 无法提供 GPU，命令会说明原因并改用 CPU 启动同一服务。可在 `.env.local` 中固定选择：
 
-| 设置 | 含义 |
-|---|---|
-| `MODEL_GPU=auto` | 默认值；检测到 GPU 时使用，Docker 拒绝时回退 CPU |
-| `MODEL_GPU=on` | 必须使用 GPU，否则明确失败 |
-| `MODEL_GPU=off` | 不请求 GPU |
-| `MODEL_GPU_COUNT=1` | 只预留一个设备，而不是全部设备 |
+| 设置                          | 含义                                                             |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `MODEL_GPU=auto`              | 默认值；检测到 GPU 时使用，Docker 拒绝时回退 CPU                 |
+| `MODEL_GPU=on`                | 必须使用 GPU，否则明确失败                                       |
+| `MODEL_GPU=off`               | 不请求 GPU                                                       |
+| `MODEL_GPU_COUNT=1`           | 只预留一个设备，而不是全部设备                                   |
 | `OLLAMA_CONTEXT_LENGTH=16384` | 让章程、文档、runbook 与执行器 schema 保持在同一个本地模型提示中 |
 
 模型大于当前空闲 VRAM 时，即使已经预留 GPU，仍会有部分层落到 CPU。用 `docker compose exec model ollama ps` 检查实际分配。
@@ -1486,13 +1484,13 @@ pnpm convex:down                 # the backend; the data volume stays
 
 真实模式会增加可选组件，每个组件对应一个 Compose profile。`real` 是 day0 本身，会自动加入；其余需要显式指定：
 
-| Profile | 组件 | 何时需要 |
-|---|---|---|
-| `docs-notion` | 在你的网络内运行的 Notion 官方 MCP server | 文档在 Notion 中。文件夹、git 仓库或 URL 列表不需要任何组件 |
-| `browser` | Playwright MCP，day0 的浏览器执行层 | 文档记录的系统只有 Web UI 而没有 API |
-| `demo` | 带登录的合成 Looker 风格 pipeline tile | 想演示浏览器执行层，但不希望指向真实系统 |
-| `sandbox` | 无网络的技能沙箱 | 除非配置了 `DAYTONA_API_KEY`，否则始终需要 |
-| `redactor` | 对文档和 ledger 做脱敏的 span 模型 | 真实模式下始终需要：没有它，文档同步会拒绝存储页面，provider 结果只会记录结构层脱敏，`pnpm check:setup` 也会判定缺少它或它未运行的真实模式安装为失败 |
+| Profile       | 组件                                      | 何时需要                                                                                                                                             |
+| ------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs-notion` | 在你的网络内运行的 Notion 官方 MCP server | 文档在 Notion 中。文件夹、git 仓库或 URL 列表不需要任何组件                                                                                          |
+| `browser`     | Playwright MCP，day0 的浏览器执行层       | 文档记录的系统只有 Web UI 而没有 API                                                                                                                 |
+| `demo`        | 带登录的合成 Looker 风格 pipeline tile    | 想演示浏览器执行层，但不希望指向真实系统                                                                                                             |
+| `sandbox`     | 无网络的技能沙箱                          | 除非配置了 `DAYTONA_API_KEY`，否则始终需要                                                                                                           |
+| `redactor`    | 对文档和 ledger 做脱敏的 span 模型        | 真实模式下始终需要：没有它，文档同步会拒绝存储页面，provider 结果只会记录结构层脱敏，`pnpm check:setup` 也会判定缺少它或它未运行的真实模式安装为失败 |
 
 每个组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。
 
@@ -1560,7 +1558,6 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
-
 章程修订仅重新准入因范围或质量匹配而跳过的事项；低价值事项和正在运行的已批准计划保持原状。收尾阶段使用不同于第一阶段的批准标识，延迟的旧批准不能批准新 payload；provider 幂等键仍沿用执行标识。参数名修复保留 payload 值及已有效的绑定，并重新执行收尾检查。受阻运行仍可在现行授权下发送仅含求助的 manager DM。Slack 的计划批准不携带问题答案；需要在章程或计划卡片作答，旧卡片与当前章程答案冲突时必须刷新。操作分类只覆盖演示流程，明确只读的请求使用独立 read 类型；它并非通用操作分类器。
 
 #### 每个 workspace 一个部署
@@ -1571,13 +1568,13 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
 公司演示环境在一家合成公司 Kestrel Supply Co. 中运行三名数字员工：收入运营（revenue operations）、财务结账（finance close）和物流调度台（logistics desk）。这家公司中凡是能放进仓库的内容都在 `bed/company/` 下；其中没有任何秘密，每个页面都注明公司是合成的。
 
-| 路径 | 内容 |
-|---|---|
-| `bed/company/folder/` | 文件夹来源读取的十三个页面：带共享系统表的 onboarding 页面、每个角色一本 handbook（写明该角色的 Linear team、project 和 Slack 频道）、各 runbook，以及 Looker pipeline tile、Northstar CRM 和 NetLedger 的系统页（后两者刻意没有获批的连接方式） |
-| `bed/company/notion/` | 两个 Notion 页面 `Linear automation` 与 `Slack automation policy`，以及粘贴方法 |
-| `bed/company/linear.json` | 十张演示工单的原话，以及每张工单被复位到的状态 |
-| `bed/company/slack-asks.md` | 三条 Slack 请求：员工部署完成后，由真人在每次演示中发布 |
-| `bed/company/answers.md` | manager 对每个角色 Day-1 的回答，以及物流重试时给出的备注 |
+| 路径                        | 内容                                                                                                                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bed/company/folder/`       | 文件夹来源读取的十三个页面：带共享系统表的 onboarding 页面、每个角色一本 handbook（写明该角色的 Linear team、project 和 Slack 频道）、各 runbook，以及 Looker pipeline tile、Northstar CRM 和 NetLedger 的系统页（后两者刻意没有获批的连接方式） |
+| `bed/company/notion/`       | 两个 Notion 页面 `Linear automation` 与 `Slack automation policy`，以及粘贴方法                                                                                                                                                                  |
+| `bed/company/linear.json`   | 十张演示工单的原话，以及每张工单被复位到的状态                                                                                                                                                                                                   |
+| `bed/company/slack-asks.md` | 三条 Slack 请求：员工部署完成后，由真人在每次演示中发布                                                                                                                                                                                          |
+| `bed/company/answers.md`    | manager 对每个角色 Day-1 的回答，以及物流重试时给出的备注                                                                                                                                                                                        |
 
 这个演示环境是维护者的工具，而不是产品命令，因此没有 `pnpm` 脚本：按路径运行，即 `pnpm exec tsx scripts/bed/company.ts <verb>`。从一个全新 clone 开始：
 
@@ -1666,15 +1663,15 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 
 `D` 表示 Day0，`O` 表示普通 arm：
 
-| 指标 | 8B D | 8B O | Terra D | Terra O | Sol D | Sol O |
-|---|---:|---:|---:|---:|---:|---:|
-| Task pass，多数通过 | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 |
-| Task pass，逐次运行 | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 |
-| 流程遵循，多数通过 | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 |
-| 流程遵循，逐次运行 | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 |
-| 无禁止操作 | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 |
-| 超范围任务通过 | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 |
-| 写操作受到监督 | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 |
+| 指标                |  8B D |  8B O | Terra D | Terra O | Sol D | Sol O |
+| ------------------- | ----: | ----: | ------: | ------: | ----: | ----: |
+| Task pass，多数通过 |  7/15 |  6/15 |   15/15 |   12/15 | 15/15 | 13/15 |
+| Task pass，逐次运行 | 25/45 | 19/45 |   44/45 |   34/45 | 44/45 | 36/45 |
+| 流程遵循，多数通过  |  7/15 |  1/15 |   11/15 |    2/15 | 11/15 |  2/15 |
+| 流程遵循，逐次运行  | 20/45 |  4/45 |   33/45 |    6/45 | 32/45 |  6/45 |
+| 无禁止操作          | 42/45 | 34/45 |   45/45 |   34/45 | 45/45 | 38/45 |
+| 超范围任务通过      | 12/15 |  8/15 |   15/15 |    4/15 | 15/15 |  9/15 |
+| 写操作受到监督      | 10/15 |  0/15 |   15/15 |    0/15 | 14/15 |  0/15 |
 
 自托管 8B 的两个 arm 使用 OpenAI-compatible chat-completions 路由，前沿模型 Terra 与 Sol 的两个 arm 使用托管 Responses API；修复路由后，两边都能完成工具调用。三个环境中，Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上都领先普通 arm；但 Day0 并非每个 task-run 都通过（两个托管模型均为 44/45），这项受控 mock-office 比较也不能证明普遍性能。普通 arm 使用同一模型，只是不经过入职流程。第四个冻结评测环境（经 Featherless 的 `GLM 5.3 Flash`）见[评测页面](evaluation/README.md)：Day0 为 15/15 与 44/45，普通 arm 为 11/15 与 34/45。
 
@@ -1682,13 +1679,13 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 
 本文件引用的每个数字都来自本仓库中的某个文件或产品的一次运行，并且都有对应的再生成命令。命令及其准备步骤见下文[评测快速开始](#评测快速开始)。
 
-| 数字 | 来源 | 再生成方式 |
-|---|---|---|
-| 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS`（harness 早期的文件名，这些已记录的目录保留原名） | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:comparison`；`pnpm eval:comparison -- --regrade <path>` 在保留该次运行 mock 后端的前提下不调用模型重新评分；这些目录的后端未保留，无法从克隆重新评分 |
-| 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
-| exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
-| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `pnpm export:trace` 导出 ledger |
-| 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢 | 同上 |
+| 数字                                                                                                                                        | 来源                                                                                                                                                                                                                                                                     | 再生成方式                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督                                                            | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS`（harness 早期的文件名，这些已记录的目录保留原名） | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:comparison`；`pnpm eval:comparison -- --regrade <path>` 在保留该次运行 mock 后端的前提下不调用模型重新评分；这些目录的后端未保留，无法从克隆重新评分 |
+| 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/`                                                                                                                           | `pnpm eval:revocation`                                                                                                                                                                                   |
+| exact-action gate 矩阵                                                                                                                      | `evaluation/gate/`                                                                                                                                                                                                                                                       | `pnpm eval:gate`，不调用模型                                                                                                                                                                             |
+| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26       | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中                                                                   | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `pnpm export:trace` 导出 ledger                                                                                               |
+| 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41                                                                                    | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢                                                                                                                                                 | 同上                                                                                                                                                                                                     |
 
 两次 real-mode 运行是同一路径相隔两周的单次观察，commit、模型与人工节奏均不同；README 运行经历了一次驳回与一次撤权，录制运行没有，因此其撤权后阻断一项没有数值。两者都不是分布，上表说明了每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
 
@@ -1698,12 +1695,12 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 
 **Harness v2** 让两条路径、两个 arm 使用同一组数值，并在写出的每个证据文件中标记 `harnessVersion: 2`：
 
-| | |
-|---|---|
-| 300 s | 单次模型调用的中止上限（`MODEL_CALL_TIMEOUT_MS`） |
-| 15 min | 每项任务的截止时间，15 项完全一致 |
-| 6 | 每个 task-run 的技能编写尝试上限，超出后以 `skill-authoring-attempts-exhausted` 失败 |
-| local | 必须使用无网络的本地技能沙箱；会选择 Daytona 的 deployment 在第一项任务之前即被拒绝 |
+|        |                                                                                      |
+| ------ | ------------------------------------------------------------------------------------ |
+| 300 s  | 单次模型调用的中止上限（`MODEL_CALL_TIMEOUT_MS`）                                    |
+| 15 min | 每项任务的截止时间，15 项完全一致                                                    |
+| 6      | 每个 task-run 的技能编写尝试上限，超出后以 `skill-authoring-attempts-exhausted` 失败 |
+| local  | 必须使用无网络的本地技能沙箱；会选择 Daytona 的 deployment 在第一项任务之前即被拒绝  |
 
 早期 harness 写出的证据在 v2 下不可恢复，v1 目录保持不可变，因此不会意外混用两个版本。
 
