@@ -112,7 +112,7 @@ The skill it writes is a procedure for one operation on one surface class, named
 
 Everything below is a single run of [real mode](#real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [demo video](https://youtu.be/bxKB9FjeI3o) is the recorded run of the same route, on a later commit and GLM 5.3 Flash, and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
 
-Elapsed times are counted from the moment the agent was deployed.
+Elapsed times are counted from the moment the agent was deployed. The bed it ran on was the September 2026 revenue-operations handbook with one team; the company bed the tree ships today (`bed/company/`) has three teams and more pages, so the counts of cards, candidates and skills below are that run's, not what a fresh clone shows.
 
 1. **Link the documentation, before deploying anything.** The folder source read the seven runbook, systems and onboarding pages mounted read-only at `DAY0_DOCS_HOST_DIR`. The Notion source read six pages through the bundled Notion component. Both reported `synced` within half a minute. No role, no scope and no tool list existed yet.
 
@@ -485,7 +485,7 @@ Then, in the browser:
 
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
 
-2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
+2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and asks the same seven topics in text. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
 3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each takes one approval, the manager's Approve button. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
 
    ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
@@ -502,7 +502,7 @@ Then, in the browser:
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
-5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one command, which writes the agent's whole trace to one file a page at a time (one call cannot return it whole: the export action answers with the head and where the pages start), with every credential value stored for the owner and the personal data the export's redaction policy names removed:
+5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked, and the changes that landed without a decision under standing or autonomous authority. The same trail as JSON is one command, which writes the agent's whole trace to one file a page at a time (one call cannot return it whole: the export action answers with the head and where the pages start), with every credential value stored for the owner and the personal data the export's redaction policy names removed:
 
    ```bash
    pnpm export:trace <id> --out trace.json
@@ -651,7 +651,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `OPENAI_BASE_URL` | Set this to use any OpenAI-compatible chat-completions endpoint, which is what makes the account-free path work. Leave it unset to use `api.openai.com` through the OpenAI Responses API. This is the address **Next** dials when set |
 | `CONVEX_OPENAI_BASE_URL` | The same endpoint as the **Convex deployment** must dial it, when that differs. It does with a self-hosted backend, whose Node actions run inside a container. Empty pushes `OPENAI_BASE_URL` unchanged |
 | `OPENAI_JSON_MODE` | `auto` (default), `native` or `prompt`. `auto` starts on `response_format` and falls back to prompt injection only when dropping the parameter is what fixed it |
-| `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat runs the identical 1:1 |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat asks the same seven topics in text |
 | `ELEVENLABS_WEBHOOK_SECRET` | Signs the post-call webhook. A **separate** setup from the two above: without it voice still connects and only post-call finalisation is refused. See [Voice](#elevenlabs-agent-setup) |
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL` | The hosted skill-verification sandbox. Optional: without a key the [bundled local sandbox](#the-local-skill-sandbox) does the same job, and with neither an authored skill stops at `authoring` and stays uncallable |
 | `SKILL_SANDBOX_SOCKET`, `SKILL_SANDBOX_TIMEOUT_SECONDS` | The local sandbox. Both have working defaults and the bundled stack needs neither. See [The local skill sandbox](#the-local-skill-sandbox) |
@@ -932,12 +932,11 @@ The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, 
 | `src/agent/work-generator.ts` | Schema and prompt that turn an approved charter into mock-mode work candidates |
 | `src/docs/` | Documentation component checks, folder/git/MCP/URL readers, page normalisation, credential redaction and evidence-backed system discovery |
 | `src/evaluation/` | Ordinary-agent control loop, arm-parity checks, shared mock-office scopes and terminal-state definitions |
-| `src/memory/workspace.ts` | `WORKSPACE_FILES` (8-file slot table), `buildSystemPrompt` |
 | `src/surfaces/` | Real/mock adapter registry, exact-action policy, MCP/HTTP/browser transports, secret injection/redaction, Slack identity and connection presentation |
 | `src/work/types.ts` | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30`, the closing cap (`CLOSING_SET_CAP` plus `DEFERRED_SEQUENCE_ALLOWANCE`) and the skip-reason prefixes |
 | `src/work/evaluate.ts` | `evaluateCandidate` — 7-criterion sequential evaluator |
 | `src/work/quality-fit.ts` | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section |
-| `src/work/plan.ts`, `src/work/plan-steps.ts` | `draftExecutionPlan`, grounded in the candidate's ticket record or chat thread when a surface can read it; the step predicates the gate and the executor share |
+| `src/work/plan.ts`, `src/work/plan-obligations.ts` | `draftExecutionPlan`, grounded in the candidate's ticket record or chat thread when a surface can read it; the step predicates the gate and the executor share |
 | `src/work/candidate-properties.ts` | The ownership, priority and age vocabulary the planner audit and the charter constraints both read |
 | `src/work/skill-shape.ts`, `src/work/skill-inputs.ts`, `src/work/authored-skill.ts` | A candidate's surface class and operation, the `<record-id>` input grammar the executor binds, and the static gate that refuses a body carrying the first item's values |
 | `src/work/scope.ts` | `judgeScope` — the one scope judgement; lexical rule and quality fit as inputs, the charter judgement model call in real mode |
@@ -978,7 +977,7 @@ The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, w
 
 **Caveat (27 September 2026, decision N16).** These figures were graded before five task-set mechanisms were fixed and are not re-graded, so some passes may have been met by fixed text rather than the agent's own reasoning: a requester label shown only to Day0 was one of its own task's reason words; the fixed Day-1 transcript, given only to Day0, carried out-of-scope reason words and the citation titles; three product strings meet reason words on Day0's skips and deferrals; five tasks left `slack.postMessage` off their prohibited tools, so an extra post passed on them; and two documentation tasks carried their own citation or required words in text both arms see. No published number changes; the fixes land for the next bed, and the [evaluation page](evaluation/README.md#evidence-status) states each one.
 
-Every figure this README quotes comes from a file in this repository or from a run of the product, and each has a command that regenerates it. The commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below.
+Every figure this README quotes comes from a file in this repository or from a run of the product, and each has a command behind it: a re-grade of the retained state for the frozen beds, which calls no model and changes no published number, or a fresh run for the rest. The commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below.
 
 | Figure | Where it comes from | Regenerate with |
 |---|---|---|
@@ -1108,7 +1107,7 @@ You still need a model - a native `ollama serve` on 11434, or `pnpm model:up` an
 
 ## 中文说明
 
-本节提供与上述英文说明并行的简体中文版本，涵盖项目定位、目录、三条运行路径、真实模式和受控评测入口。命令、环境变量、路径与技术标识均保持原样。
+本节是英文说明的翻译子集，供评估本产品的中文团队参考，涵盖项目定位、目录、三条运行路径、真实模式和受控评测入口；产品本身以英文运行，如与英文说明有出入，以英文为准。命令、环境变量、路径与技术标识均保持原样。
 
 ### 项目简介
 
@@ -1125,7 +1124,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 [`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它运行 deployment 的 `OPENAI_MODEL` 指定的模型，未设置时使用代码默认值 `gpt-5.6-terra`；特定时间窗内演示所用的提供方是部署设置，不代表产品身份。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
 
 - 使用 Clerk 登录并部署一个 Agent。
-- 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
+- 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的工作章程。
 - 查看工作队列推进，并在 Skills 面板中看到 Agent 提出、验证和注册能力。
 
 两段录像：[mock office 演示视频](https://youtu.be/UqPnFyQ9Fuo)在托管的 mock office 上展示上述流程；[演示视频](https://youtu.be/bxKB9FjeI3o)是连接作者本人 Linear 与 Slack workspace 的录制 real-mode 运行，即下文[一次完整运行](#一次完整运行从第一个页面开始)记录的路径。
@@ -1136,7 +1135,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **哪些是模拟的，哪些是真实的。** 除 real mode 之外，本文件中的每条路径都运行在预置的 mock office 上：文档、表格、频道、工单和社交信息流都是随本仓库提供、按 Agent 单独写入的 fixture，Agent 的任何操作都不会触及真实系统。在这一设定下，模型调用、沙箱、状态机和审批门仍然是真实运行的。real mode 从构造上就只限本机，它读取你链接的文档并操作你自己的系统。本文件记录的那次运行，以及演示视频展示的那次运行，都在 real mode 下进行，连接的是操作者本人的 Linear 与 Slack 演示 workspace、操作者拥有的 Notion workspace，以及本仓库自带的合成 Looker 式 tile，其中全部为合成内容；过程中不涉及任何生产、客户、员工或个人数据，复现本文件的任何部分也不需要这些数据。[受控比较](evaluation/README.md)在 mock mode 下、于预置 office 上运行。Day0 目前没有用户，也没有生产部署；本文件中的监督数字是单次运行的计数，不是比率。凭据如何处理、保存哪些内容以及重置会删除什么，见 [`SECURITY.md`](SECURITY.md)。
 
-**第三方依赖。** Day0 自己的代码包括入职流程、章程与工作循环、技能生命周期及其静态门、surface 层与 exact-action gate、脱敏层、评测 harness 和 dashboard。它依赖：
+**第三方依赖。** Day0 自己的代码包括入职流程、工作章程与工作循环、技能生命周期及其静态门、surface 层与 exact-action gate、脱敏层、评测 harness 和 dashboard。它依赖：
 
 - **一个模型**，通过任意 OpenAI-compatible endpoint 接入。本文件记录的运行和四个冻结评测环境中的两个使用 OpenAI 托管的闭源模型 `gpt-5.6-terra` 与 `gpt-5.6-sol`；本地评测环境使用随附 Ollama 服务运行的 `qwen3:8b`，不需要任何账户；录制运行和第四个评测环境通过 Featherless 使用 `GLM 5.3 Flash`。托管演示运行其 deployment 的 `OPENAI_MODEL` 所指定的模型。
 - **Convex** 作为后端：本地路径使用自托管后端，其许可为 Functional Source License（FSL-1.1-ALv2：允许任何不与 Convex 竞争的使用，每个版本发布两年后转为 Apache-2.0）；托管路径使用云服务。
@@ -1181,7 +1180,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-未指定 `--route` 时，`./setup.sh` 会先问模型在哪里运行：通过 Featherless 使用托管模型、使用你已有的 key、你已经在运行的 endpoint，或在本机运行内置模型；需要 key 时通过隐藏输入读取，并询问用于解析 Slack DM 的邮箱地址。其余步骤由它完成：启动容器和各组件、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，链接你的文档，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的章程；第一次批准会填充工作队列，Surfaces 标签页上的连接卡片则决定它能操作什么。
+未指定 `--route` 时，`./setup.sh` 会先问模型在哪里运行：通过 Featherless 使用托管模型、使用你已有的 key、你已经在运行的 endpoint，或在本机运行内置模型；需要 key 时通过隐藏输入读取，并询问用于解析 Slack DM 的邮箱地址。其余步骤由它完成：启动容器和各组件、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，链接你的文档，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的工作章程；第一次批准会填充工作队列，Surfaces 标签页上的连接卡片则决定它能操作什么。
 
 [**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
 
@@ -1193,21 +1192,21 @@ Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘�
 
 ![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/day-one-chat.webp)
 
-#### 它起草自己的章程，并等待人工确认
+#### 它起草自己的工作章程，并等待人工确认
 
-Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准前，manager 会看到草稿从你的话里推导出的每条规则，旁边附有它来自的那句话，可以划掉其中任何一条；被划掉的规则不会再作为门槛存在。批准后，章程成为它的运行范围，并生成八个工作区文件、部署时授予的六项权限（`boss:message` 与五项办公读取范围；real mode 下只生成 `boss:message` 与 `docs:read`，各系统的读取范围在该系统连接时才到达）和一组范围受限且可撤销的能力授权。批准之后章程只能修订，不会被重写：每次修改都是一个取代上一版的新版本，操作者、理由和逐字段 diff 记录在同一条事件里，而每次修订都会把在旧版本下被搁置的工作送回重新评估。章程中悬而未决的问题会在第一个涉及它的计划上被问一次，答案随该计划的批准一起写入章程。
+Agent 根据这次对话起草工作章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，工作章程不会生效。批准前，manager 会看到草稿从你的话里推导出的每条规则，旁边附有它来自的那句话，可以划掉其中任何一条；被划掉的规则不会再作为门槛存在。批准后，工作章程成为它的运行范围，并生成八个工作区文件、部署时授予的六项权限（`boss:message` 与五项办公读取范围；real mode 下只生成 `boss:message` 与 `docs:read`，各系统的读取范围在该系统连接时才到达）和一组范围受限且可撤销的能力授权。批准之后工作章程只能修订，不会被重写：每次修改都是一个取代上一版的新版本，操作者、理由和逐字段 diff 记录在同一条事件里，而每次修订都会把在旧版本下被搁置的工作送回重新评估。工作章程中悬而未决的问题会在第一个涉及它的计划上被问一次，答案随该计划的批准一起写入工作章程。
 
 ![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 #### 它自行发现工作
 
-系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项依次通过七项标准：范围、连接、权限、归属、价值、风险和容量；随后进入一个十二状态的生命周期，任何执行都要先由人工批准计划。范围判断对每个事项只做一次：词法章程规则和质量匹配过滤器是它的输入，在真实模式下模型会把整份章程（含边界）读一遍。被判定为超出范围而跳过的事项保留一个 Retry；重试即 manager 决定这项工作可以交给它。一次运行若什么都没落地、也没有留下任何需要决定的事项，就会停止：原因显示在卡片上，不给任何人发消息。
+系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项依次通过七项标准：范围、连接、权限、归属、价值、风险和容量；随后进入一个十二状态的生命周期，任何执行都要先由人工批准计划。范围判断对每个事项只做一次：词法工作章程规则和质量匹配过滤器是它的输入，在真实模式下模型会把整份工作章程（含边界）读一遍。被判定为超出范围而跳过的事项保留一个 Retry；重试即 manager 决定这项工作可以交给它。一次运行若什么都没落地、也没有留下任何需要决定的事项，就会停止：原因显示在卡片上，不给任何人发消息。
 
 ![The real-mode work queue after intake, showing seven discovered items and the completed plan for a close-week reminder](.github/images/work-queue.webp)
 
 #### 缺少技能时，它会编写并验证技能
 
-如果工作项进入技能匹配步骤，但与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。判定理由说明缺少匹配技能及拟议技能名称，并不表示该工作已被确认符合章程边界。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
+如果工作项进入技能匹配步骤，但与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。判定理由说明缺少匹配技能及拟议技能名称，并不表示该工作已被确认符合工作章程边界。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
 
 它编写的技能是针对某一类 surface 上某一种操作的流程，按这个形状命名（`analytics-refresh-value`、`kanban-comment-and-close`、`chat-thread-reply`），而不是按最初需要它的那张工单或那条线程命名。技能正文把每次运行会变化的值声明为输入（`<record-id>`、`<requested-value>`、`<reply-thread>`），执行器在执行时从每个工作项、其 runbook 和 surface 记录中绑定这些值；正文若带有第一个事项的数字或标识，会在沙箱运行之前被拒绝。后续同一形状的事项会复用已注册的技能，不再提出新技能；只有没有任何已注册技能覆盖的形状才会触发 `needs-skill`。
 
@@ -1231,13 +1230,13 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
    *Day-1 一对一的开场交流，文字模式。Captured locally on 3 September 2026.*
 
-3. **批准它起草的章程。** 仅凭这次对话，Agent 写出了自己的目的、建议职能、30/60/90 天成果、边界、协作对象与未决问题。Manager 阅读后点击 Approve。首次章程批准耗时：**5 分 8 秒**。
+3. **批准它起草的工作章程。** 仅凭这次对话，Agent 写出了自己的目的、建议职能、30/60/90 天成果、边界、协作对象与未决问题。Manager 阅读后点击 Approve。首次工作章程批准耗时：**5 分 8 秒**。
 
    ![The approved charter card, showing why this hire, the proposed RevOps coordinator function and the 30/60/90-day outcomes](.github/images/full-run-03-charter-approved.webp)
 
-   *Agent 自己写下的章程，批准之后。Captured locally on 3 September 2026.*
+   *Agent 自己写下的工作章程，批准之后。Captured locally on 3 September 2026.*
 
-4. **Orientation 为每个系统提出一张卡片。** 章程批准约两分钟后，在没有点击任何按钮的情况下，Agent 依据文档与章程给出了恰好四张连接卡片：走 MCP endpoint 的 Linear、走文档化 API 的 Slack、以浏览器驱动的 Looker tile，以及没有已批准接入路径的 Northstar CRM。每张卡片都附有提出它所依据的原文，其中包括 manager 在一对一中说过的话。耗时：7 分 12 秒。
+4. **Orientation 为每个系统提出一张卡片。** 工作章程批准约两分钟后，在没有点击任何按钮的情况下，Agent 依据文档与工作章程给出了恰好四张连接卡片：走 MCP endpoint 的 Linear、走文档化 API 的 Slack、以浏览器驱动的 Looker tile，以及没有已批准接入路径的 Northstar CRM。每张卡片都附有提出它所依据的原文，其中包括 manager 在一对一中说过的话。耗时：7 分 12 秒。
 
    ![The Surfaces tab after orientation, showing the Linear and Slack cards proposed with their approved connection ladders](.github/images/full-run-04-cards-proposed.webp)
 
@@ -1267,11 +1266,11 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
    *等待决定的计划。此时尚未执行任何动作。Captured locally on 3 September 2026.*
 
-9. **只有 Web 界面的系统以一个被挂起的浏览器批次出现。** Slack 上的请求需要 pipeline 数字，而文档写明该 tile 只有 Web UI、没有 API。Agent 将文档化的操作序列作为六个浏览器动作整体挂起，因为它们无法拆分到相互隔离的浏览器会话中。此时尚未有任何动作触达系统。耗时：20 分 35 秒。
+9. **只有 Web 界面的系统以一个被暂缓的浏览器批次出现。** Slack 上的请求需要 pipeline 数字，而文档写明该 tile 只有 Web UI、没有 API。Agent 将文档化的操作序列作为六个浏览器动作整体暂缓，因为它们无法拆分到相互隔离的浏览器会话中。此时尚未有任何动作触达系统。耗时：20 分 35 秒。
 
    ![Six browser operations held together as one batch, with the batch decision controls](.github/images/full-run-09-browser-batch-held.webp)
 
-   *整个登录与保存序列，作为一个决定被挂起。Captured locally on 3 September 2026.*
+   *整个登录与保存序列，作为一个决定被暂缓。Captured locally on 3 September 2026.*
 
 10. **整体批准后，tile 自己被读回。** Manager 点击 Approve all。六个动作在约一秒内应用完成，最后一个动作把页面读了回来：runbook 要求作为证据的可见数字与审计行。每个计划步骤都依据已应用的 ledger 判定为 satisfied，而不是依据 Agent 对自己的陈述。耗时：21 分 11 秒。
 
@@ -1279,7 +1278,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
     *已应用的操作序列，以及为其提供证据的读回结果。Captured locally on 3 September 2026.*
 
-11. **公开回复被单独挂起，批准后才发出。** 章程规定冷启动期间不得公开发帖，因此发往该请求所在 thread 的回复在读回之后作为独立决定出现。Manager 批准后，它带着来源标注落在 `#revops-asks`。耗时：23 分 1 秒。
+11. **公开回复被单独暂缓，批准后才发出。** 工作章程规定冷启动期间不得公开发帖，因此发往该请求所在 thread 的回复在读回之后作为独立决定出现。Manager 批准后，它带着来源标注落在 `#revops-asks`。耗时：23 分 1 秒。
 
     ![A held public Slack reply quoting the pipeline figure and the tile audit line, with its approval controls](.github/images/full-run-11-public-reply-held.webp)
 
@@ -1289,9 +1288,9 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
     ![Two held Linear actions above the manager's written rejection reason](.github/images/full-run-12-rejection-with-reason.webp)
 
-    *被挂起的评论与状态变更，以及它们被驳回的理由。Captured locally on 3 September 2026.*
+    *被暂缓的评论与状态变更，以及它们被驳回的理由。Captured locally on 3 September 2026.*
 
-13. **确认 provider 状态、重试，修订版落地。** 由于此前已有一条 DM 落地，重试被拦在对账清单之后，直到 manager 确认 provider 端的真实状态。随后的修订版引用了数字与三项检查，并连同状态变更一起提出。两者一并批准后，两次写入都落在了工单上。耗时：35 分 24 秒。
+13. **确认 provider 状态、重试，修订版落地。** 由于此前已有一条 DM 落地，重试被拦在核对清单之后，直到 manager 确认 provider 端的真实状态。随后的修订版引用了数字与三项检查，并连同状态变更一起提出。两者一并批准后，两次写入都落在了工单上。耗时：35 分 24 秒。
 
     ![The completed audit-note item with the Linear comment and Done transition recorded in its ledger](.github/images/full-run-13-revision-landed.webp)
 
@@ -1320,9 +1319,9 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 - **manager 邮箱不在配置清单里，而 Slack 需要它。** 第一次尝试时 Slack 探测失败，报错为 `the manager email boss@day0.local is not a member of this Slack workspace`。真实模式通过 `NEXT_PUBLIC_DEMO_BOSS_EMAIL` 解析 manager 的 DM，而上文的配置段没有提到它，`.env.example` 中它也是空的。此处记录的运行是在设置该值之后重新开始的。如果你的 Slack workspace 是真实的，请把它设为你在那里使用的邮箱地址。
 - **一对一多问了一个答案未覆盖的问题。** 在协作对象这一主题之后，它追问了三个角色背后的具体人名。Manager 重申介绍一律由自己安排；随后对话照常走完其余主题。
 - **队列自行决定了顺序。** 冷启动上限一次只跑一个事项，Agent 先取了审计说明与 Slack 请求，然后才是 tile 刷新。流程中没有任何环节依赖这个顺序。
-- **tile 刷新是由 Slack 请求带着完成的。** Slack 请求需要那个数字，因此它的计划包含了文档化的刷新流程；等到 tile 工单运行时，tile 已经是最新的。那次运行诚实地报告自己的 ledger 中没有浏览器证据，挂起了一条说明此事的评论，并且没有提出状态变更。它是在第 15 步、开关打开之后才到达 Done 的。
-- **以提问结束的运行没有可驳回的内容。** 审计说明的第一次运行没有挂起任何动作，因此当时没有东西可以驳回。把已完成的运行连同备注退回，才是回应它的控制项。
-- **对账被要求的频率高于流程说明所暗示的。** 只要此前有内容在 provider 端落地，任何重试都会先要求对账清单，而不只是驳回之后的那一次。
+- **tile 刷新是由 Slack 请求带着完成的。** Slack 请求需要那个数字，因此它的计划包含了文档化的刷新流程；等到 tile 工单运行时，tile 已经是最新的。那次运行诚实地报告自己的 ledger 中没有浏览器证据，暂缓了一条说明此事的评论，并且没有提出状态变更。它是在第 15 步、开关打开之后才到达 Done 的。
+- **以提问结束的运行没有可驳回的内容。** 审计说明的第一次运行没有暂缓任何动作，因此当时没有东西可以驳回。把已完成的运行连同备注退回，才是回应它的控制项。
+- **核对被要求的频率高于流程说明所暗示的。** 只要此前有内容在 provider 端落地，任何重试都会先要求核对清单，而不只是驳回之后的那一次。
 - **开关在打开时确认，关闭时不确认。**
 
 #### 本次运行最终的数字
@@ -1341,7 +1340,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 Day0 目前处于试点阶段，尚无生产用户。它的量化结论刻意限定在很窄的范围内：仓库提供一项[受控且由程序评分的比较](evaluation/README.md)，让完成入职的 Day0 与普通 Agent 在相同的 15 项陌生 mock-office 任务上运行。该基准不用于预测所有真实团队的工作表现。
 
-Day0 在已批准的章程内执行有边界的运营工作。它不做财务、雇佣、法律、医疗、安全攸关或客户信用方面的决定，也不取代合格的专业人员、经理或机构。超出已批准角色、其权限或已连接系统的请求应当被拒绝、延后或上报，[评测](#评测)衡量了它做到这一点的频率；最终决定与每一项外部影响仍由人负责。
+Day0 在已批准的工作章程内执行有边界的运营工作。它不做财务、雇佣、法律、医疗、安全攸关或客户信用方面的决定，也不取代合格的专业人员、经理或机构。超出已批准角色、其权限或已连接系统的请求应当被拒绝、延后或上报，[评测](#评测)衡量了它做到这一点的频率；最终决定与每一项外部影响仍由人负责。
 
 可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，任何人都可以在自己的机器上复现结果，而不必依赖无法核验的截图；模型调用、沙箱、状态机和审批门仍按真实路径运行。另有一条仅限本机的 real mode：它读取链接的团队文档、发现其中记录的系统，并只在可见审批门之后建立连接。两种本地方式都运行在这一模式下，详见[真实模式](#真实模式)。
 
@@ -1399,7 +1398,7 @@ key 路线上两个模型地址归并为同一个默认值。变量留空表示 
 
 - **key 通过询问获得，而不是粘贴。** 它通过隐藏输入读取，以仅本人可读的权限写入 `.env.local`，从不打印，也从不作为参数传给其他程序；`pnpm sync:env` 把它推送到 deployment，再次运行时保留文件中已有的 key。
 - **从本地模型方式切换过来时，key 路线上两个地址会自动清空。** setup 把 `OPENAI_BASE_URL` 和 `CONVEX_OPENAI_BASE_URL` 写为空，两者都为空时 `pnpm sync:env` 会清除 deployment 中此前保存的地址；这是"未设置"作为一个值而非遗漏的唯一情形：仍保存着 `http://model:11434/v1` 的 deployment 会去调用一个你早已停掉的模型服务，而且只有 action 会失败。随后的重启才让 backend 读到新值，因为 module 会保留首次求值时的 env。
-- **这种方式会产生模型费用。** 完整流程包括一对一的七个主题、章程生成、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
+- **这种方式会产生模型费用。** 完整流程包括一对一的七个主题、工作章程生成、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
 
 ### 本地运行，本地模型
 
@@ -1415,11 +1414,11 @@ pnpm dev                           # prints an unlock URL - open that, not local
 
 响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。本路径设置了自定义 `OPENAI_BASE_URL`，因此 Agent 核心执行普通的 OpenAI-compatible chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟。云端模型方式的 key 路线则通过 Responses API 调用 OpenAI，延迟取决于 OpenAI。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
 
-内置模型服务以 16,384-token context 启动，因为执行器需要在同一提示中看到已批准章程、发现的文档、runbook 指引、action schema 和工作请求。Ollama 较小的服务端默认值会从提示开头静默截断，而不会让请求失败；这可能使本地模型仍知道正确的工具名，却丢失决定精确参数的指令和证据。只有在模型支持更大 context、且额外 KV cache 能装入机器时，才应把 `OLLAMA_CONTEXT_LENGTH` 调高；把它降到 16,384 以下是明确的质量取舍，不只是内存优化。
+内置模型服务以 16,384-token context 启动，因为执行器需要在同一提示中看到已批准工作章程、发现的文档、runbook 指引、action schema 和工作请求。Ollama 较小的服务端默认值会从提示开头静默截断，而不会让请求失败；这可能使本地模型仍知道正确的工具名，却丢失决定精确参数的指令和证据。只有在模型支持更大 context、且额外 KV cache 能装入机器时，才应把 `OLLAMA_CONTEXT_LENGTH` 调高；把它降到 16,384 以下是明确的质量取舍，不只是内存优化。
 
-模型大小同时影响延迟和输出质量。小模型可以完成一对一、生成章程并驱动工作队列，但有时会在七个主题尚未完成时提前调用 `dayOneComplete`；由较短对话生成的章程仍然有效，但证据更少。更大的本地或托管模型可以改善这一点，`pnpm probe:model` 可在接入演示前确认 endpoint 是否能驱动完整流程。
+模型大小同时影响延迟和输出质量。小模型可以完成一对一、生成工作章程并驱动工作队列，但有时会在七个主题尚未完成时提前调用 `dayOneComplete`；由较短对话生成的工作章程仍然有效，但证据更少。更大的本地或托管模型可以改善这一点，`pnpm probe:model` 可在接入演示前确认 endpoint 是否能驱动完整流程。
 
-本地模型过慢则可能触发明确超时。章程生成中的单次模型调用在 **300 s** 内未收到响应 header 会停止，整个 Convex action 在 **600 s** 被终止。用 `npx convex logs` 区分两类相似症状：地址错误会立即产生连接错误；模型落到 CPU 时，日志会在等待后报告 `UND_ERR_HEADERS_TIMEOUT`、重试以及 `execution timed out (maximum duration 600s)`。
+本地模型过慢则可能触发明确超时。工作章程生成中的单次模型调用在 **300 s** 内未收到响应 header 会停止，整个 Convex action 在 **600 s** 被终止。用 `npx convex logs` 区分两类相似症状：地址错误会立即产生连接错误；模型落到 CPU 时，日志会在等待后报告 `UND_ERR_HEADERS_TIMEOUT`、重试以及 `execution timed out (maximum duration 600s)`。
 
 是否落到 CPU 取决于当前可用 VRAM，而不是模型文件标称大小。`docker compose exec model ollama ps` 会显示 CPU/GPU 分配；例如 `45%/55% CPU/GPU` 表明模型已拆分加载。`qwen3:8b` 常驻大约需要 6 GB；如果当前空闲显存不足，可改用能够完整装入 GPU 的模型：
 
@@ -1431,7 +1430,7 @@ setup 会写入 `OPENAI_MODEL`、拉取模型、重新同步 deployment 并重�
 
 #### 安装过程做了什么
 
-[上文的十一步](#安装过程做了什么)，其中第 4 步生效：**`pnpm model:up`** 在 11434 上启动 OpenAI-compatible 模型服务，有 GPU 时使用 GPU（见 [GPU 默认启用，而非默认停用](#gpu-默认启用而非默认停用)）；**`pnpm model:pull <model>`** 把权重拉取到 `<project>_model_data` 卷中，且只在选择器选中的模型尚不在卷中时才拉取。随后 `pnpm sync:env` 成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但章程始终不出现。
+[上文的十一步](#安装过程做了什么)，其中第 4 步生效：**`pnpm model:up`** 在 11434 上启动 OpenAI-compatible 模型服务，有 GPU 时使用 GPU（见 [GPU 默认启用，而非默认停用](#gpu-默认启用而非默认停用)）；**`pnpm model:pull <model>`** 把权重拉取到 `<project>_model_data` 卷中，且只在选择器选中的模型尚不在卷中时才拉取。随后 `pnpm sync:env` 成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；工作章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但工作章程始终不出现。
 
 除每条路线都写入的值外，这种方式还会把上述两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL` 写入 `.env.local`；`OPENAI_API_KEY` 保持为空，因为没有账户；`OLLAMA_CONTEXT_LENGTH=16384` 来自 `.env.example`，原因见上文。
 
@@ -1460,7 +1459,7 @@ pnpm sandbox:down                # stop it; skills then stop at `authoring`, vis
 | `MODEL_GPU=on` | 必须使用 GPU，否则明确失败 |
 | `MODEL_GPU=off` | 不请求 GPU |
 | `MODEL_GPU_COUNT=1` | 只预留一个设备，而不是全部设备 |
-| `OLLAMA_CONTEXT_LENGTH=16384` | 让章程、文档、runbook 与执行器 schema 保持在同一个本地模型提示中 |
+| `OLLAMA_CONTEXT_LENGTH=16384` | 让工作章程、文档、runbook 与执行器 schema 保持在同一个本地模型提示中 |
 
 模型大于当前空闲 VRAM 时，即使已经预留 GPU，仍会有部分层落到 CPU。用 `docker compose exec model ollama ps` 检查实际分配。
 
@@ -1533,18 +1532,18 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
 
-2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；章程记录的是你的回答。
-3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片只需一次批准，即 manager 的 Approve 按钮。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
+2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的工作章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；工作章程记录的是你的回答。
+3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与工作章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片只需一次批准，即 manager 的 Approve 按钮。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
 
    ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 
    ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
 
-4. **对工作做决策。** 服务端会自行推动每个事项完成评估、计划和执行，所以不打开 dashboard 工作也会继续；工作队列上的 "Check for new work" 会立即轮询已连接的系统，而不必等下一次五分钟一轮的 intake，每分钟最多一次。Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。当有两个或更多事项在等待时，队列顶部的面板会列出每一条被暂缓的行及其精确 payload，可以在一处批准它们，每个事项仍受各自运行的约束；在其他请求仍未决定时到达的 DM 请求会带上同一份清单和一个批次码，它只决定那些仍与发送时完全一致的成员。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。计划若触及章程中某个悬而未决的问题，批准卡片会把它问出来，每个问题只问一次；作答即批准计划，答案作为新版本写入章程，并作为已批准证据送达该次运行。章程卡片以同样方式修订已批准的章程：编辑条款、划掉规则、添加系统、回答问题，被搁置的工作会按新版本重新评估。被 Agent 判定为不值得投入、或超出其范围而跳过的事项会显示原因和一个 Retry；重试即你的决定（值得做，或可以交给它），它会跳过那一条规则重新评估（计划仍需你批准）。失败运行的 Retry 可附一条可选备注：你在其中陈述的事实会被当作该次重试的已批准证据，由它解决的计划步骤会按你的话记录为已满足，你要求的改动会被执行；备注留在卡片上，运行读取后会标记为已处理。已完成的运行也可以同样方式退回：其 Retry 必须附备注，备注会作为你的指示送达 Agent。一次运行若什么都没落地、也没有留下需要决定的事项，会记录为 stopped，原因显示在卡片上，收尾 action 被扣留而不是暂缓，且不会给你发任何消息；已落地工作的运行会用一条 DM 告诉你，或者在 "Manager DMs" 控件设为每小时时汇总为每小时一份摘要，而决策请求始终即时送达。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
+4. **对工作做决策。** 服务端会自行推动每个事项完成评估、计划和执行，所以不打开 dashboard 工作也会继续；工作队列上的 "Check for new work" 会立即轮询已连接的系统，而不必等下一次五分钟一轮的 intake，每分钟最多一次。Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。当有两个或更多事项在等待时，队列顶部的面板会列出每一条被暂缓的行及其精确 payload，可以在一处批准它们，每个事项仍受各自运行的约束；在其他请求仍未决定时到达的 DM 请求会带上同一份清单和一个批次码，它只决定那些仍与发送时完全一致的成员。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。计划若触及工作章程中某个悬而未决的问题，批准卡片会把它问出来，每个问题只问一次；作答即批准计划，答案作为新版本写入工作章程，并作为已批准证据送达该次运行。工作章程卡片以同样方式修订已批准的工作章程：编辑条款、划掉规则、添加系统、回答问题，被搁置的工作会按新版本重新评估。被 Agent 判定为不值得投入、或超出其范围而跳过的事项会显示原因和一个 Retry；重试即你的决定（值得做，或可以交给它），它会跳过那一条规则重新评估（计划仍需你批准）。失败运行的 Retry 可附一条可选备注：你在其中陈述的事实会被当作该次重试的已批准证据，由它解决的计划步骤会按你的话记录为已满足，你要求的改动会被执行；备注留在卡片上，运行读取后会标记为已处理。已完成的运行也可以同样方式退回：其 Retry 必须附备注，备注会作为你的指示送达 Agent。一次运行若什么都没落地、也没有留下需要决定的事项，会记录为 stopped，原因显示在卡片上，收尾 action 被扣留而不是暂缓，且不会给你发任何消息；已落地工作的运行会用一条 DM 告诉你，或者在 "Manager DMs" 控件设为每小时时汇总为每小时一份摘要，而决策请求始终即时送达。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
 
    第一天的决策按队列给出的顺序出现（冷启动上限一次只跑一项）：一条聊天请求的首次运行有两种结局——一条发往原帖线程的公开回复与发给你的 DM 一起被暂缓，你批准后即落地；或者只有一条带着问题的 DM，此时你用备注把已完成的事项退回，回复就会以暂缓状态返回。只有网页界面的系统，其 runbook 序列（登录、填值、保存、回读）会作为一个浏览器批次整体暂缓；整体批准后，收尾的工单评论和状态变更会在回读之后另行暂缓。被暂缓的工单评论若过于单薄，就带书面理由拒绝：确认已落地的 DM，点 Retry，修订版会带着你的理由以暂缓状态返回——引用文档的评论与状态变更一并出现。若重试反过来向你要一个事实而不是起草，就再 Retry 一次，把该事实写进备注。
 
-   你对某个事项说过的话会留给该员工以后的工作。随 Retry 附上的备注、驳回一次运行的理由，以及取消计划的理由（计划卡片上的 Cancel 可以附一条），都会作为该员工的一条纠正保留下来，列在其 dashboard 的 Kept corrections 中，注明来自哪个事项、之后应用到了哪些事项。之后规划同类事项时，最新的几条（最多五条，合计不超过 3,000 字符）会放到规划器面前；应用了某条纠正的计划会在卡片上注明并引用原话，执行时也会带上它。纠正可以改变工作的做法，也可以回答文档留给你决定的问题；它不会凌驾于章程、审批、授权、撤销授权或精确 action 关卡之上，不会扩大该员工的范围（那需要修订章程），也不会传给其他员工。点 Retire 即停止把它反馈给后续工作。对已取消的计划点 Retry 会带着你的理由起草一份新计划；即使打开了自主执行，它也会先回到你这里，批准之前不会执行任何动作；你否决的那份计划永远不会执行。
+   你对某个事项说过的话会留给该员工以后的工作。随 Retry 附上的备注、驳回一次运行的理由，以及取消计划的理由（计划卡片上的 Cancel 可以附一条），都会作为该员工的一条纠正保留下来，列在其 dashboard 的 Kept corrections 中，注明来自哪个事项、之后应用到了哪些事项。之后规划同类事项时，最新的几条（最多五条，合计不超过 3,000 字符）会放到规划器面前；应用了某条纠正的计划会在卡片上注明并引用原话，执行时也会带上它。纠正可以改变工作的做法，也可以回答文档留给你决定的问题；它不会凌驾于工作章程、审批、授权、撤销授权或精确 action 关卡之上，不会扩大该员工的范围（那需要修订工作章程），也不会传给其他员工。点 Retire 即停止把它反馈给后续工作。对已取消的计划点 Retry 会带着你的理由起草一份新计划；即使打开了自主执行，它也会先回到你这里，批准之前不会执行任何动作；你否决的那份计划永远不会执行。
 
    ![Five visible browser-operation rows from the seven-action held batch, beginning with the first browser_fill_form row and ending at browser_snapshot, with the batch decision controls](.github/images/browser-batch-held.webp)
 
@@ -1561,7 +1560,7 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
 
-章程修订仅重新准入因范围或质量匹配而跳过的事项；低价值事项和正在运行的已批准计划保持原状。收尾阶段使用不同于第一阶段的批准标识，延迟的旧批准不能批准新 payload；provider 幂等键仍沿用执行标识。参数名修复保留 payload 值及已有效的绑定，并重新执行收尾检查。受阻运行仍可在现行授权下发送仅含求助的 manager DM。Slack 的计划批准不携带问题答案；需要在章程或计划卡片作答，旧卡片与当前章程答案冲突时必须刷新。操作分类只覆盖演示流程，明确只读的请求使用独立 read 类型；它并非通用操作分类器。
+工作章程修订仅重新准入因范围或质量匹配而跳过的事项；低价值事项和正在运行的已批准计划保持原状。收尾阶段使用不同于第一阶段的批准标识，延迟的旧批准不能批准新 payload；provider 幂等键仍沿用执行标识。参数名修复保留 payload 值及已有效的绑定，并重新执行收尾检查。受阻运行仍可在现行授权下发送仅含求助的 manager DM。Slack 的计划批准不携带问题答案；需要在工作章程或计划卡片作答，旧卡片与当前工作章程答案冲突时必须刷新。操作分类只覆盖演示流程，明确只读的请求使用独立 read 类型；它并非通用操作分类器。
 
 #### 每个 workspace 一个部署
 
@@ -1621,7 +1620,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 
 #### 备份、恢复与升级
 
-真实模式的安装是持久的：数据卷保存凭据、章程、技能、纠正、认领和账本，这些都不在克隆的代码里。你的文档文件夹是数据卷之外的 bind mount，由你自己保管，不在备份中。
+真实模式的安装是持久的：数据卷保存凭据、工作章程、技能、纠正、认领和账本，这些都不在克隆的代码里。你的文档文件夹是数据卷之外的 bind mount，由你自己保管，不在备份中。
 
 ```bash
 ./setup.sh backup                  # 把数据卷备份到 ~/day0-backups/<project>/，附带校验和与清单
@@ -1687,7 +1686,7 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 | 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS`（harness 早期的文件名，这些已记录的目录保留原名） | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:comparison`；`pnpm eval:comparison -- --regrade <path>` 在保留该次运行 mock 后端的前提下不调用模型重新评分；这些目录的后端未保留，无法从克隆重新评分 |
 | 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
-| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `pnpm export:trace` 导出 ledger |
+| 录制运行的监督数字：部署后 1 分 07 秒工作章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `pnpm export:trace` 导出 ledger |
 | 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢 | 同上 |
 
 两次 real-mode 运行是同一路径相隔两周的单次观察，commit、模型与人工节奏均不同；README 运行经历了一次驳回与一次撤权，录制运行没有，因此其撤权后阻断一项没有数值。两者都不是分布，上表说明了每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
@@ -1755,9 +1754,9 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 `pnpm setup:local` 会在启动任何服务之前检查 Node、pnpm、Docker Compose v2 以及它将要占用的端口；读取 GPU 的空闲显存，说明它将拉取哪个模型及其大小（显存充足时为 `qwen3:8b`，约 5 GB；否则为 `qwen3:4b`，约 2.5 GB），并在拉取前询问；然后按[安装过程做了什么](#安装过程做了什么-2)中的顺序执行，最后打印 unlock URL。可以随时再次运行：它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。`--model <id>` 直接指定模型而不采用它的选择；`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口；`--project`、`--port`、`--site-port` 和 `--dashboard-port` 用于在第一套之外再起一套；`--app-port <n>` 把应用从 3000 移开；`--dry-run` 打印将要执行的每条命令而不写入任何内容。不带 `--route` 时它会询问走四条路线中的哪一条。
 
-打开命令输出的 unlock URL，部署一个 Agent，以文字模式完成 Day-1 一对一，然后批准它起草的章程。本地路线不会调用托管模型，也不需要任何服务账户；key 路线上，[云端模型方式](#本地运行云端模型)指出的三点在这里同样适用。
+打开命令输出的 unlock URL，部署一个 Agent，以文字模式完成 Day-1 一对一，然后批准它起草的工作章程。本地路线不会调用托管模型，也不需要任何服务账户；key 路线上，[云端模型方式](#本地运行云端模型)指出的三点在这里同样适用。
 
-批准章程后，系统才会填充工作队列。队列能推进到哪一步取决于刚刚批准的章程，而不是本说明中的固定答案。每个工作项都会依据 Agent 已有技能和部署时授予的权限进行评估，只有 `claim` 判定才会进入计划与执行阶段。部署时会生成六项权限：`boss:message` 与五项办公读取范围（`docs:read`、`spreadsheet:read`、`social:read`、`ticket:read`、`slack:read`）；随项目提供的唯一技能是 `see-internal-docs`，因此可以立即执行的是能够从内部文档回答的工作。`needs-skill` 是这条路径最值得检查的判定：Agent 提出技能，人工批准后由本地沙箱运行冒烟测试；测试以退出码 0 结束且有输出时，技能才注册，请求该技能的工作项随后返回队列并完成。`defer - awaiting-permission` 会按设计停下，明确显示所需权限范围并继续等待；界面不会自行授予权限。
+批准工作章程后，系统才会填充工作队列。队列能推进到哪一步取决于刚刚批准的工作章程，而不是本说明中的固定答案。每个工作项都会依据 Agent 已有技能和部署时授予的权限进行评估，只有 `claim` 判定才会进入计划与执行阶段。部署时会生成六项权限：`boss:message` 与五项办公读取范围（`docs:read`、`spreadsheet:read`、`social:read`、`ticket:read`、`slack:read`）；随项目提供的唯一技能是 `see-internal-docs`，因此可以立即执行的是能够从内部文档回答的工作。`needs-skill` 是这条路径最值得检查的判定：Agent 提出技能，人工批准后由本地沙箱运行冒烟测试；测试以退出码 0 结束且有输出时，技能才注册，请求该技能的工作项随后返回队列并完成。`defer - awaiting-permission` 会按设计停下，明确显示所需权限范围并继续等待；界面不会自行授予权限。
 
 `failed` 工作项也可能是小模型能力限制，而不是系统故障。批准后的计划会以命名 action 的形式在 mock environment 上执行，每个 action 都用 slug 指向既有记录。小模型可能生成看似合理但并不存在的 slug；有效 action 会落地，虚构目标会被拒绝，工作项进入 `failed`，卡片会列出所有未到达环境的 action 及原因。系统不会静默接受部分成功。`Retry` 会重新执行整个计划，因此已经落地的 action 会再次执行。
 
@@ -1772,7 +1771,7 @@ harness 需要的正是这套 stack：处于 mock 模式的自托管 backend、�
 3. **`pnpm model:up`** 在 11434 上启动 OpenAI-compatible 模型服务，有 GPU 时使用 GPU（见 [GPU 默认启用，而非默认停用](#gpu-默认启用而非默认停用)）；**`pnpm model:pull <model>`** 把权重拉取到 `<project>_model_data` 卷中。
 4. **`pnpm sandbox:up`** 启动验证自写技能的沙箱。它不需要任何配置，也不影响其他组件：两者通过共享 volume 上的 socket 通信，backend 容器无论沙箱是否运行都挂载该 volume，因此之后启动的沙箱不需要重启也不需要设置；`pnpm check:setup` 会说明当前处于哪种状态。
 5. **admin key** 在 backend 容器内生成（手动执行时为 `pnpm convex:admin-key`），写入 `CONVEX_SELF_HOSTED_ADMIN_KEY`。key 属于数据卷而不属于 project，且 backend 为某个卷签发过的每个 key 都持续有效，因此 setup 在当前 backend 接受文件中已有 key 时保留它，只在文件没有 key 或该卷拒绝时才生成新的。
-6. **`pnpm sync:env`** 把各值推送到 deployment，JWKS 先于依赖它的开关：`convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。它成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但章程始终不出现。
+6. **`pnpm sync:env`** 把各值推送到 deployment，JWKS 先于依赖它的开关：`convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。它成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；工作章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但工作章程始终不出现。
 7. **`npx convex dev --once`** 推送 functions，随后 `npx convex run migrations:runPending` 运行本版本的迁移并记录版本。CLI 在此过程中会把 `NEXT_PUBLIC_CONVEX_URL` 和 `NEXT_PUBLIC_CONVEX_SITE_URL` 改写成 backend 自己的容器端口；setup 会把宿主机地址写回并说明。已有 deployment 的数据卷上，第 6、7 步对调，并先检查版本，与[升级](#备份恢复与升级)相同。
 8. **`pnpm convex:restart`**：在此前各步都成功后执行，因为 module 会保留首次求值时的 env，而 backend 从第 2 步起就一直在运行。
 9. **`pnpm check:setup`** 读取 `.env.local`，分别报告 backend、auth、model、sandbox 和 voice，只在真正损坏而非仅仅未完成的状态上失败。

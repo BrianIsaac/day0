@@ -425,7 +425,7 @@
     },
     {
       "fileName": "MEMORY.md",
-      "purpose": "Written back after each turn.",
+      "purpose": "A placeholder written at deployment; nothing wrote to it in this recording.",
       "bytes": 52,
       "excerpt": "# MEMORY\n\n(empty — populated by post-turn review)\n",
       "excerpted": false

@@ -1,4 +1,5 @@
-# Self-hosted Convex backend - the same open-source binary the cloud service runs.
+# Self-hosted Convex backend - the same binary the cloud service runs, under the
+# Functional Source License (FSL-1.1-Apache-2.0); see NOTICE.
 # Lets the whole of Day0 run locally with no Convex account.
 #
 # Adapted from the upstream reference compose file:
