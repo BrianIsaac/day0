@@ -4,12 +4,12 @@ import { randomBytes } from 'node:crypto';
 import { getFunctionName } from 'convex/server';
 import { convexTest } from 'convex-test';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../../../convex/_generated/api';
+import { api, internal } from '../../../convex/_generated/api';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import schema from '../../../convex/schema';
 import { persistPageBatch } from '../../../convex/docSyncActions';
-import { encrypt } from '../../../src/lib/credential-crypto';
+import { credentialValueFingerprint, encrypt } from '../../../src/lib/credential-crypto';
 import { RedactorUnavailableError, type SpanModel } from '../../../src/redaction/client';
 import { ownerValuesRef, scrubKnownValues } from '../../../src/redaction/known-values';
 import { redactText } from '../../../src/redaction/redact';
@@ -106,8 +106,13 @@ function docSyncCtx(known: string[]): { ctx: ActionCtx; actions: unknown[]; muta
   const actions: unknown[] = [];
   const mutations: unknown[] = [];
   const fake = {
-    runAction: async (reference: unknown, args: unknown): Promise<unknown> => {
-      if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return known;
+    runAction: async (reference: unknown, args: { plaintext: string; userId: string }): Promise<unknown> => {
+      const name = getFunctionName(reference as never);
+      if (name === getFunctionName(ownerValuesRef)) return known;
+      // The sync keys each credential's ref by the value's fingerprint before it stores it.
+      if (name === getFunctionName(internal.credentialCryptoActions.fingerprint)) {
+        return credentialValueFingerprint(args.plaintext, KEY, args.userId);
+      }
       actions.push(args);
       return `credential-${actions.length}` as Id<'credentials'>;
     },
