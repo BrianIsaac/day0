@@ -86,9 +86,17 @@ const MAX_DROP_NOTES = 8;
 const MAX_DESCRIPTIONS = 6;
 const MAX_DESCRIPTION_LENGTH = 400;
 
-/** A channel named with its hash, whole: `#营收运营` is not found inside `#营收运营组`. */
+/**
+ * A channel named with its hash, whole. The hash may touch any text but a
+ * Latin word (`请求在#revops提出` names `#revops`; `page#revops` does not), and
+ * the name may not run on in its own script: a Latin name ends at the next
+ * character that is not Latin, so `#revops提出` names `#revops`, while a name
+ * in another script ends only at a space or punctuation, so `#营收运营` is not
+ * found inside `#营收运营组`.
+ */
 function channelMention(name: string): RegExp {
-  return new RegExp(`(?<![\\p{L}\\p{N}_-])#${escapeRegExp(name)}(?![\\p{L}\\p{N}_-])`, 'iu');
+  const continues = /[A-Za-z0-9_-]$/.test(name) ? '[A-Za-z0-9_-]' : '[\\p{L}\\p{N}_-]';
+  return new RegExp(`(?<![A-Za-z0-9_-])#${escapeRegExp(name)}(?!${continues})`, 'iu');
 }
 
 /**

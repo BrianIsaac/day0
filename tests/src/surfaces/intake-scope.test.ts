@@ -928,3 +928,31 @@ describe('a channel whose name has no Latin letter (N8)', (): void => {
     expect(picked('Slack: #营收运营组 is only where we talk.')).toEqual([]);
   });
 });
+
+describe('a channel named in prose written with no spaces (N8)', (): void => {
+  const policy: ScopePage = {
+    sourceId: 'source-folder',
+    ref: 'slack-automation-policy.md',
+    markdown: ['- Channels: `#revops`, `#营收运营`', '', '请求在#revops提出。'].join('\n'),
+  };
+
+  it('describes a Latin channel whose hash touches a Chinese character', (): void => {
+    const candidates = scopeCandidates([policy], ['channel']).filter(
+      (candidate): boolean => candidate.value === 'revops',
+    );
+    expect(channelDescriptions([policy], candidates)).toEqual([
+      { ref: 'slack-automation-policy.md', text: '请求在#revops提出。' },
+    ]);
+  });
+
+  it("picks a Latin channel the manager's Chinese sentence names, and still not a longer Latin name", (): void => {
+    const candidates = scopeCandidates([policy], ['channel']);
+    const picked = (sentence: string): string[] =>
+      approvedChannelNames(
+        groundScopePicks(sentenceScopePicks([sentence], candidates), candidates),
+      );
+    expect(picked('Slack：在#revops接收请求')).toEqual(['revops']);
+    expect(picked('Slack：在#营收运营接收请求')).toEqual([]);
+    expect(picked('Slack: #revops-asks only')).toEqual([]);
+  });
+});
