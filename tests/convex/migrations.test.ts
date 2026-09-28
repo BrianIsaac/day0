@@ -799,6 +799,8 @@ describe('the single approval (Q10)', (): void => {
     vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
     const harness = limitedHarness();
     const agentId = await agent(harness, { userId: 'owner' });
+    // A source with no page for the quoted ref: the queue it documented is gone.
+    const sourceId = await source(harness, 'owner');
     const ids = await harness.run(async (ctx) => {
       const card = async (
         slug: string,
@@ -836,6 +838,12 @@ describe('the single approval (Q10)', (): void => {
         itOnly: await card('jira', { itApprovedAt: 60 }),
         connected,
         refused: await card('looker', { path: 'browser-driven', managerApprovedAt: 70 }),
+        queueChanged: await card('slack', {
+          managerApprovedAt: 75,
+          intakeScope: {
+            team: { value: 'REVOPS', sourceId, ref: 'handbook.md', quote: 'Team: REVOPS' },
+          },
+        }),
         untouched: await card('notion', {}),
       };
     });
@@ -847,6 +855,7 @@ describe('the single approval (Q10)', (): void => {
       itOnly: await ctx.db.get(ids.itOnly),
       connected: await ctx.db.get(ids.connected),
       refused: await ctx.db.get(ids.refused),
+      queueChanged: await ctx.db.get(ids.queueChanged),
       untouched: await ctx.db.get(ids.untouched),
       events: await ctx.db.query('events').collect(),
       scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
@@ -865,11 +874,17 @@ describe('the single approval (Q10)', (): void => {
       expiresAt: UPGRADED_AT + DAY,
       accessSetBy: 'approval',
     });
-    expect(rows.refused).toMatchObject({
-      verdict: 'proposed',
-      reason: expect.stringContaining('BROWSER_DRIVER_ABSENT'),
-    });
+    // The absent driver is read live by the card, never stored: once the
+    // driver runs, the card offers Approve again (wave 3.5 review M12).
+    expect(rows.refused).toMatchObject({ verdict: 'proposed', path: 'browser-driven' });
+    expect(rows.refused?.reason).toBeUndefined();
     expect(rows.refused?.managerApprovedAt).toBeUndefined();
+    expect(rows.queueChanged).toMatchObject({
+      verdict: 'proposed',
+      reason:
+        'A documented intake queue changed; reject this card and re-run orientation before approval.',
+    });
+    expect(rows.queueChanged?.managerApprovedAt).toBeUndefined();
     expect(rows.untouched).toMatchObject({ verdict: 'proposed' });
     expect(rows.untouched?.reason).toBeUndefined();
     for (const row of [rows.managerOnly, rows.itOnly, rows.connected, rows.refused]) {
@@ -897,8 +912,8 @@ describe('the single approval (Q10)', (): void => {
     const status = await harness.query(internal.migrations.status, {});
     expect(status.migrations.find((row) => row.name === 'surfaces-single-approval')).toMatchObject({
       release: '0.6.0',
-      read: 5,
-      changed: 4,
+      read: 6,
+      changed: 5,
       completedAt: expect.any(Number),
     });
   });

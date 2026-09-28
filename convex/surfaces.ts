@@ -2020,11 +2020,17 @@ export async function singleApprovalPage(
       await ctx.db.patch(surface._id, { itApprovedAt: undefined });
     }
     if (approvedAt !== undefined) {
-      const refusal = await approvalRefusal(ctx, surface);
-      if (refusal === undefined) {
+      const queue = await intakeQueueRefusal(ctx, surface);
+      if (queue === undefined && browserRefusal(surface) === undefined) {
         await approveInTransaction(ctx, surface, { approvedAt, now, by: 'upgrade' });
       } else {
-        await ctx.db.patch(surface._id, { managerApprovedAt: undefined, reason: refusal });
+        // A browser card refused for its absent driver stores nothing: the card
+        // reads the component live, so it offers Approve again once the driver
+        // runs. A stored absence would block it for good (wave 3.5 review M12).
+        await ctx.db.patch(surface._id, {
+          managerApprovedAt: undefined,
+          ...(queue === undefined ? {} : { reason: queue }),
+        });
       }
     }
     changed += 1;
@@ -2085,6 +2091,24 @@ async function approvalRefusal(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
 ): Promise<string | undefined> {
+  return (await intakeQueueRefusal(ctx, surface)) ?? browserRefusal(surface);
+}
+
+/** Why a browser-driven card cannot be approved on this deployment now: its driver is not configured or not listening. */
+function browserRefusal(surface: Doc<'surfaces'>): string | undefined {
+  return surface.path === 'browser-driven'
+    ? browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL)
+    : undefined;
+}
+
+/**
+ * Why a proposed card's documented intake queues no longer support its
+ * approval, or undefined when every queue still reads as quoted.
+ */
+async function intakeQueueRefusal(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<string | undefined> {
   for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
     if (!value.sourceId) continue;
     const page = await ctx.db
@@ -2097,9 +2121,7 @@ async function approvalRefusal(
       return 'A documented intake queue changed; reject this card and re-run orientation before approval.';
     }
   }
-  return surface.path === 'browser-driven'
-    ? browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL)
-    : undefined;
+  return undefined;
 }
 
 /** One approval to apply: when the manager gave it, when access starts, and who set the end date. */
