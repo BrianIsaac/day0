@@ -79,11 +79,18 @@ export const KNOWN_VALUE_LABEL = 'known credential';
  * Returns:
  *   Spans in the original text, unmerged.
  */
-export function knownValueSpans(text: string, known: readonly string[]): Array<Omit<Finding, 'redacted'>> {
+export function knownValueSpans(
+  text: string,
+  known: readonly string[],
+): Array<Omit<Finding, 'redacted'>> {
   const spans: Array<Omit<Finding, 'redacted'>> = [];
   for (const value of known) {
     if (!value) continue;
-    const representations = new Set([value, JSON.stringify(value).slice(1, -1), encodeURIComponent(value)]);
+    const representations = new Set([
+      value,
+      JSON.stringify(value).slice(1, -1),
+      encodeURIComponent(value),
+    ]);
     for (const representation of representations) {
       let from = 0;
       for (;;) {
@@ -135,7 +142,12 @@ function classify(text: string, spans: ModelSpan[]): Array<Omit<Finding, 'redact
     if (kind === 'secret') {
       const guarded = guardSecretSpan(text, span, span.label);
       if (!guarded) continue;
-      findings.push({ kind, label: span.label, ...guarded, value: text.slice(guarded.start, guarded.end) });
+      findings.push({
+        kind,
+        label: span.label,
+        ...guarded,
+        value: text.slice(guarded.start, guarded.end),
+      });
       continue;
     }
     const value = text.slice(span.start, span.end).trim();
@@ -144,8 +156,20 @@ function classify(text: string, spans: ModelSpan[]): Array<Omit<Finding, 'redact
     const pair = kind === 'username' ? splitUserPasswordPair(value) : undefined;
     if (pair) {
       const passwordStart = start + value.lastIndexOf(pair.password);
-      findings.push({ kind, label: span.label, start, end: start + pair.username.length, value: pair.username });
-      findings.push({ kind: 'secret', label: 'password', start: passwordStart, end: passwordStart + pair.password.length, value: pair.password });
+      findings.push({
+        kind,
+        label: span.label,
+        start,
+        end: start + pair.username.length,
+        value: pair.username,
+      });
+      findings.push({
+        kind: 'secret',
+        label: 'password',
+        start: passwordStart,
+        end: passwordStart + pair.password.length,
+        value: pair.password,
+      });
       continue;
     }
     if (personalDataGuardReason(kind, value)) continue;
@@ -190,32 +214,48 @@ export async function redactText(
   let degraded: RedactionDegradation | undefined;
   if (!options.model) {
     if (options.onUnavailable === 'throw') {
-      throw new RedactorUnavailableError('no redaction component is configured (DAY0_REDACTOR_URL)');
+      throw new RedactorUnavailableError(
+        'no redaction component is configured (DAY0_REDACTOR_URL)',
+      );
     }
     degraded = 'structural-only';
   } else {
     try {
       const masked = maskSpans(base, known);
-      modelFindings = classify(masked, await options.model.spans(masked, REQUESTED_LABELS, MODEL_THRESHOLD));
+      modelFindings = classify(
+        masked,
+        await options.model.spans(masked, REQUESTED_LABELS, MODEL_THRESHOLD),
+      );
     } catch (error) {
-      if (!(error instanceof RedactorUnavailableError) || options.onUnavailable === 'throw') throw error;
+      if (!(error instanceof RedactorUnavailableError) || options.onUnavailable === 'throw')
+        throw error;
       degraded = 'structural-only';
     }
   }
   // Known spans come last so a structural or model finding that covers the
   // same characters keeps its more specific label after the merge.
   const candidates = [...structural, ...modelFindings, ...known];
-  const removed = mergeSpans(candidates.filter((finding) => dispositionFor(context, finding.kind) === 'redact'));
+  const removed = mergeSpans(
+    candidates.filter((finding) => dispositionFor(context, finding.kind) === 'redact'),
+  );
   const findings: Finding[] = [
-    ...removed.map((finding): Finding => ({ ...finding, value: base.slice(finding.start, finding.end), redacted: true })),
-    ...candidates.filter((finding) => dispositionFor(context, finding.kind) === 'keep')
+    ...removed.map(
+      (finding): Finding => ({
+        ...finding,
+        value: base.slice(finding.start, finding.end),
+        redacted: true,
+      }),
+    ),
+    ...candidates
+      .filter((finding) => dispositionFor(context, finding.kind) === 'keep')
       .map((finding): Finding => ({ ...finding, redacted: false })),
   ].sort((left, right) => left.start - right.start);
   const marker = options.secretMarker ?? ((): string => REDACTED);
   const redacted = replaceSpans(
     base,
     findings.filter((finding: Finding): boolean => finding.redacted),
-    (finding: Finding): string => (finding.kind === 'secret' ? marker(finding) : personalDataMarker(finding.kind)),
+    (finding: Finding): string =>
+      finding.kind === 'secret' ? marker(finding) : personalDataMarker(finding.kind),
   );
   return degraded ? { text: redacted, findings, degraded } : { text: redacted, findings };
 }

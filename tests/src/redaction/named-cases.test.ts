@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { redactText, type RedactedText } from '../../../src/redaction/redact';
-import { knownValues, loadRedactionCorpus, occurrences, type CorpusCase } from '../../fixtures/redaction-corpus';
+import {
+  knownValues,
+  loadRedactionCorpus,
+  occurrences,
+  type CorpusCase,
+} from '../../fixtures/redaction-corpus';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
 
 /**
@@ -14,7 +19,11 @@ const model = new RecordedSpanModel();
 async function redactCase(id: string): Promise<{ entry: CorpusCase; out: RedactedText }> {
   const entry = cases.find((candidate: CorpusCase): boolean => candidate.id === id);
   if (!entry) throw new Error(`no corpus case ${id}`);
-  const out = await redactText(entry.text, entry.context, { model, known: knownValues(entry), onUnavailable: 'throw' });
+  const out = await redactText(entry.text, entry.context, {
+    model,
+    known: knownValues(entry),
+    onUnavailable: 'throw',
+  });
   return { entry, out };
 }
 
@@ -27,7 +36,12 @@ describe('the secret misses the review named', (): void => {
     const { entry, out } = await redactCase('docs-local-refresh-runbook');
     expect(out.text).not.toContain('pipeline-tile-local');
     expect(out.text).toContain('(username `revops`)');
-    for (const value of ['<credential: looker pipeline tile dashboard login, stored>', '{{secret}}', 'REVOPS-7', '74%']) {
+    for (const value of [
+      '<credential: looker pipeline tile dashboard login, stored>',
+      '{{secret}}',
+      'REVOPS-7',
+      '74%',
+    ]) {
       expect(survives(entry, out, value), value).toBe(true);
     }
   });
@@ -103,7 +117,13 @@ describe('the identifiers the phase 10 review found stored as credentials', (): 
 
   it('bed-slack-policy-original: the backticked Web API method names stay, nothing is a secret', async (): Promise<void> => {
     const { entry, out } = await redactCase('bed-slack-policy-original');
-    for (const value of ['users.lookupByEmail', 'auth.test', 'chat.postMessage', 'https://slack.com/api/', 'chat:write.customize']) {
+    for (const value of [
+      'users.lookupByEmail',
+      'auth.test',
+      'chat.postMessage',
+      'https://slack.com/api/',
+      'chat:write.customize',
+    ]) {
       expect(survives(entry, out, value), value).toBe(true);
     }
     expect(out.text).toBe(entry.text);
