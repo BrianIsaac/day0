@@ -4,14 +4,15 @@ import { SignIn } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { HostedDemoNotice } from '../../HostedDemoNotice';
 
+/** The tab's title: the hosted demo's way in. */
 export const metadata: Metadata = { title: 'Sign in to Day0' };
 
 /** What a new manager does after signing in, in order. */
 const FIRST_STEPS = [
   'Give your first employee a name.',
   'Hold its Day-1 one-to-one, in chat or voice.',
-  'Approve or strike the charter it drafts.',
-  'Decide on each write before it lands, until you turn autonomous actions on.',
+  'Strike a rule you disagree with, then approve the charter it drafts.',
+  'Decide on the writes it holds for you, until you turn autonomous actions on.',
 ] as const;
 
 /**

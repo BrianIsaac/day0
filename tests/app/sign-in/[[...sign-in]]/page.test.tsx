@@ -40,6 +40,15 @@ describe('the sign-in page', () => {
     );
   });
 
+  it('promises a decision only on the writes the employee holds, and a strike before approval', async () => {
+    const html = await render();
+    expect(html).toContain(
+      'Decide on the writes it holds for you, until you turn autonomous actions on.',
+    );
+    expect(html).toContain('Strike a rule you disagree with, then approve the charter it drafts.');
+    expect(html).not.toMatch(/each write before it lands/);
+  });
+
   it("offers Clerk's sign-in beside the notice", async () => {
     expect(await render()).toContain('data-clerk-sign-in');
   });
