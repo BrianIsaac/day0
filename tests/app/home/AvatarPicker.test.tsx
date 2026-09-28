@@ -7,7 +7,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { AvatarPicker } from '../../../app/home/AvatarPicker';
 
 describe('AvatarPicker', (): void => {
-  const html = renderToStaticMarkup(<AvatarPicker selectedId="face-03" onSelect={vi.fn()} />);
+  const html = renderToStaticMarkup(
+    <AvatarPicker selectedId="face-03" onSelect={vi.fn()} defaultOpen />,
+  );
 
   it('labels the set with the gallery credit and names no group of people (N6)', (): void => {
     expect(html).toContain('Singapore Codex Pets · 29');
@@ -32,12 +34,21 @@ describe('AvatarPicker', (): void => {
     expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
   });
 
+  it('keeps the faces behind a disclosure, open only when asked to be', (): void => {
+    expect(html).toMatch(/^<details\b[^>]*\bopen=""/);
+    expect(html).toMatch(/<summary\b[^>]*>[\s\S]*Choose avatar[\s\S]*<\/summary>/);
+    const closed = renderToStaticMarkup(<AvatarPicker selectedId="face-03" onSelect={vi.fn()} />);
+    expect(closed).toMatch(/^<details\b/);
+    expect(closed).not.toMatch(/^<details\b[^>]*\bopen/);
+    expect(closed.match(/aria-label="Face \d+"/g)).toHaveLength(29);
+  });
+
   it('hands the pressed face to the caller', (): void => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const onSelect = vi.fn();
     const host = document.createElement('div');
     const root = createRoot(host);
-    act(() => root.render(<AvatarPicker selectedId="face-01" onSelect={onSelect} />));
+    act(() => root.render(<AvatarPicker selectedId="face-01" onSelect={onSelect} defaultOpen />));
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="Face 7"]')?.click());
     expect(onSelect).toHaveBeenCalledWith('face-07');
     act(() => root.unmount());

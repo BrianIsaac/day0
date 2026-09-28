@@ -3,31 +3,44 @@ import { SINGAPORE_AI_BUILDER_AVATARS } from '@/agent/avatar-pets';
 import { PixelAvatarSprite } from './PixelAvatar';
 
 /**
- * The 29-face grid a new employee's face is chosen from, labelled with the
- * gallery's own name as the README credits it. Each face is `Face n` and
- * nothing more: no title, no handle, no person (N6).
+ * The 29-face grid a new employee's face is chosen from, behind a
+ * disclosure headed with the gallery's own name as the README credits it.
+ * Each face is `Face n` and nothing more: no title, no handle, no person
+ * (N6). A native `details`, so it opens and closes without the script.
+ *
+ * @param selectedId - The chosen face.
+ * @param onSelect - Called with a pressed face's id.
+ * @param defaultOpen - Whether the faces show when the form first renders.
  */
 export function AvatarPicker({
   selectedId,
   onSelect,
+  defaultOpen = false,
 }: {
   selectedId: string;
   onSelect: (avatarId: string) => void;
+  defaultOpen?: boolean;
 }) {
   const labelId = useId();
   return (
-    <div className="mb-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
+    <details open={defaultOpen} className="group mb-4">
+      <summary className="mb-2 flex cursor-pointer list-none items-center justify-between gap-3 rounded-md py-1 [&::-webkit-details-marker]:hidden">
         <span
           id={labelId}
-          className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--color-muted)]"
+          className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-[var(--color-muted)]"
         >
+          <span
+            aria-hidden="true"
+            className="inline-block transition-transform group-open:rotate-90 motion-reduce:transition-none"
+          >
+            ›
+          </span>
           Choose avatar
         </span>
         <span className="text-xs text-[var(--color-muted)]">
           Singapore Codex Pets · {SINGAPORE_AI_BUILDER_AVATARS.length}
         </span>
-      </div>
+      </summary>
       <div
         role="group"
         aria-labelledby={labelId}
@@ -53,6 +66,6 @@ export function AvatarPicker({
           );
         })}
       </div>
-    </div>
+    </details>
   );
 }
