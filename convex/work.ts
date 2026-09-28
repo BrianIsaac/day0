@@ -3231,10 +3231,12 @@ async function openRequestsOn(ctx: QueryCtx, surface: Doc<'surfaces'>): Promise<
   });
 }
 
-/** Newest rows asked on one channel read for a recent decision there. */
-const NOTICE_WINDOW_SCAN = 50;
-
-/** Undecided batches of one agent read for the ones with open members. */
+/**
+ * Undecided batches of one agent read, newest first, for the ones with open
+ * members. A batch whose members were decided one by one is never marked
+ * decided, so the read is bounded; an open batch is among the newest, since
+ * it is no older than the open requests it names.
+ */
 const OPEN_BATCH_SCAN = 200;
 
 /**
@@ -3264,36 +3266,29 @@ export const openDecisions = internalQuery({
     const batches = (
       await ctx.db
         .query('decisionBatches')
-        .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId))
-        .filter((q) =>
-          q.and(
-            q.eq(q.field('decidedAt'), undefined),
-            q.eq(q.field('surfaceSlug'), surface.slug),
-            q.eq(q.field('channel'), channel),
-          ),
+        .withIndex('by_agent_decided', (q) =>
+          q.eq('agentId', surface.agentId).eq('decidedAt', undefined),
         )
+        .order('desc')
         .take(OPEN_BATCH_SCAN)
     ).flatMap((batch): OpenDecisionBatch[] => {
+      if (batch.surfaceSlug !== surface.slug || batch.channel !== channel) return [];
       const decisionIds = batch.members
         .map((member) => member.decisionId)
         .filter((id) => openIds.has(id));
       return decisionIds.length > 0 ? [{ batchId: batch.id, decisionIds }] : [];
     });
-    const since = Date.now() - DECISION_NOTICE_WINDOW_MS;
-    const recent = await ctx.db
+    const decidedLately = await ctx.db
       .query('workItems')
-      .withIndex('by_agent_decision_surface_channel', (q) =>
+      .withIndex('by_agent_decision_channel_decided', (q) =>
         q
           .eq('agentId', surface.agentId)
           .eq('decision.surfaceSlug', surface.slug)
-          .eq('decision.channel', channel),
+          .eq('decision.channel', channel)
+          .gte('decision.decidedAt', Date.now() - DECISION_NOTICE_WINDOW_MS),
       )
-      .order('desc')
-      .take(NOTICE_WINDOW_SCAN);
-    const noticeOwed = recent.some(
-      (row) => row.decision?.decidedAt !== undefined && row.decision.decidedAt >= since,
-    );
-    return { requests, batches, noticeOwed };
+      .first();
+    return { requests, batches, noticeOwed: decidedLately !== null };
   },
 });
 

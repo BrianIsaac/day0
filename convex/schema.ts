@@ -862,6 +862,13 @@ export default defineSchema({
       'decision.surfaceSlug',
       'decision.channel',
     ])
+    /** The rows asked on one manager channel by when they were decided: the notice window's read (M D3 (b)). */
+    .index('by_agent_decision_channel_decided', [
+      'agentId',
+      'decision.surfaceSlug',
+      'decision.channel',
+      'decision.decidedAt',
+    ])
     .index('by_skill', ['skillId'])
     /** One employee's row for a provider item: intake's idempotency key. */
     .index('by_agent_extId', ['agentId', 'sourceSystem', 'externalId'])
@@ -969,7 +976,10 @@ export default defineSchema({
     decidedAt: v.optional(v.number()),
     outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
     decidedTs: v.optional(v.string()),
-  }).index('by_agent_id', ['agentId', 'id']),
+  })
+    .index('by_agent_id', ['agentId', 'id'])
+    /** An agent's batches by decision time: the undecided ones, newest first, for the decision poll (M D3 (b)). */
+    .index('by_agent_decided', ['agentId', 'decidedAt']),
 
   /**
    * What the gate tells the manager about a finished run: that work landed,
