@@ -239,6 +239,8 @@ describe('the Day-1 chat route', (): void => {
 
     expect(POST).toBeDefined();
     expect(response.status).toBe(503);
+    // The chat room says the route's `error` to the manager as it stands (N29).
+    expect(((await response.json()) as { error: string }).error).toBe('employee unavailable');
     expect(sent).toHaveLength(0);
   });
 

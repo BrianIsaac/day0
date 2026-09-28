@@ -159,14 +159,17 @@ describe('a turn that ends with nothing to answer', (): void => {
 
 describe('a stream error', (): void => {
   it("shows the route's own sentence, not the JSON it arrived in", (): void => {
-    const body = JSON.stringify({ error: 'agent unavailable', detail: 'OPENAI_API_KEY not set' });
+    const body = JSON.stringify({
+      error: 'employee unavailable',
+      detail: 'OPENAI_API_KEY not set',
+    });
 
-    expect(errorLine(new Error(body))).toBe('agent unavailable');
+    expect(errorLine(new Error(body))).toBe('employee unavailable');
   });
 
   it('shows any other error as it reads, and never an empty line', (): void => {
     expect(errorLine(new Error('Failed to fetch'))).toBe('Failed to fetch');
-    expect(errorLine(new Error(''))).toBe('agent unavailable');
+    expect(errorLine(new Error(''))).toBe('employee unavailable');
   });
 });
 

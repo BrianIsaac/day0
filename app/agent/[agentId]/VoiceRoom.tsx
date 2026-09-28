@@ -292,7 +292,7 @@ function VoiceRoomInner({
                   t.source === 'ai' ? 'text-[var(--color-accent)]' : 'text-[var(--color-fg)]'
                 }
               >
-                {t.source === 'ai' ? 'agent' : 'you'}:
+                {t.source === 'ai' ? 'employee' : 'you'}:
               </span>{' '}
               <span className="text-[var(--color-fg)]">{t.message}</span>
             </div>
@@ -343,7 +343,7 @@ function StatusPill({
       label = 'mic muted';
       tone = 'text-[var(--color-danger)]';
     } else if (isSpeaking) {
-      label = 'agent speaking…';
+      label = 'employee speaking…';
       tone = 'text-[var(--color-accent)]';
     } else if (isListening) {
       label = 'listening';
