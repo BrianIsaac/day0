@@ -315,7 +315,9 @@ export interface ApprovalRowProps {
   readonly blocked: boolean;
   /** Why the last decision was refused, in the backend's words. */
   readonly error?: string;
+  /** Approve the card. */
   readonly onApprove: () => void;
+  /** Reject the card, returning it to declared. */
   readonly onReject: () => void;
 }
 

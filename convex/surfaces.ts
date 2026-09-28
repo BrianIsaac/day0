@@ -1910,7 +1910,7 @@ async function approvalRefusal(
     : undefined;
 }
 
-/** Who approved a card, as its access end date records it. */
+/** One approval to apply: when the manager gave it, when access starts, and who set the end date. */
 interface Approval {
   /** When the manager approved: now at the card, the older release's stamp at the upgrade. */
   readonly approvedAt: number;
