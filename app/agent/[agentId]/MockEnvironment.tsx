@@ -10,6 +10,7 @@ import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
 import { SurfacesTab } from './mock/SurfacesTab';
+import { usePreviousValue } from './previous-value';
 
 export type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
 
@@ -92,16 +93,12 @@ export function activeTabForEnvironment(active: TabKey, hash: string, isReal: bo
  * simply there, and under reduced motion only the new one shows.
  */
 export function RollingCount({ value }: { value: number }) {
-  const [counts, setCounts] = useState<{ readonly now: number; readonly previous?: number }>({
-    now: value,
-  });
-  // The figure the page last showed, kept as the render's own state so the roll starts from it.
-  if (counts.now !== value) setCounts({ now: value, previous: counts.now });
-  if (counts.previous === undefined) return <>{value}</>;
+  const previous = usePreviousValue(value);
+  if (previous === undefined) return <>{value}</>;
   return (
     <span key={value} className="roll">
       <span aria-hidden="true" className="from">
-        {counts.previous}
+        {previous}
       </span>
       <span className="to">{value}</span>
     </span>
