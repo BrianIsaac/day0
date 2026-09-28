@@ -114,7 +114,7 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     });
     await expect(owner.mutation(api.work.approvePlan, planApprovalRequest(workItemId, {
       answers: [{ questionId: question._id, text: 'Aman owns it.' }],
-    }))).rejects.toThrow('no longer open');
+    }))).rejects.toThrow('already been answered');
     const item = await owner.query(api.work.get, { workItemId });
     expect(item?.state).toBe('plan-pending');
     expect(item?.managerAnswers).toBeUndefined();

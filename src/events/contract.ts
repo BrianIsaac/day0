@@ -263,9 +263,13 @@ export interface CharterQuestionAskedPayload {
   readonly touchedBy: 'plan' | 'candidate';
 }
 
-/** The payload of `charter.question-answered`. */
+/**
+ * The payload of `charter.question-answered`. The question row is named when
+ * a plan asked the question; an answer given on the charter card to a
+ * question no plan asked has none.
+ */
 export interface CharterQuestionAnsweredPayload {
-  readonly questionId: Id<'managerQuestions'>;
+  readonly questionId?: Id<'managerQuestions'>;
   readonly via: AmendmentVia;
   readonly amended: boolean;
   readonly charterId?: CharterId;

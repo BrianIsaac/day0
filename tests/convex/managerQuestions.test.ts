@@ -327,14 +327,14 @@ describe('answering a question', (): void => {
     ).rejects.toThrow(/already been answered/);
   });
 
-  it('takes the answer without a second amendment when the card already answered the charter', async (): Promise<void> => {
+  it('settles the question a plan asked when the card answers it, so it is answered and counted once (U12)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApprovedAgent(harness);
     const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
     await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
     const [asked] = await questions(harness, agentId);
     const owner = harness.withIdentity(OWNER);
-    await owner.mutation(api.charters.amend, {
+    const amended = await owner.mutation(api.charters.amend, {
       agentId,
       changes: [
         {
@@ -344,18 +344,38 @@ describe('answering a question', (): void => {
         },
       ],
     });
-    const result = await owner.mutation(api.managerQuestions.answer, {
-      questionId: asked!._id,
-      text: 'Priya.',
-    });
-    expect(result.amendedCharterId).toBeNull();
-    expect(await owner.query(api.charters.listForAgent, { agentId })).toHaveLength(2);
     const [answered] = await questions(harness, agentId);
-    expect(answered?.answer).toMatchObject({ text: 'Priya.', via: 'dashboard' });
-    expect(answered?.answer?.amendedCharterId).toBeUndefined();
-    // An answer that changed nothing is still a reorientation the manager answered (A9).
+    expect(answered?.answer).toMatchObject({
+      text: 'Priya.',
+      via: 'dashboard',
+      amendedCharterId: amended.charterId,
+    });
+    // The card's answer is one reorientation the manager settled, with the charter amended (A9).
     expect(await answeredEvents(harness, agentId)).toEqual([
-      { questionId: asked!._id, via: 'dashboard', amended: false },
+      { questionId: asked!._id, via: 'dashboard', amended: true, charterId: amended.charterId },
+    ]);
+    await expect(
+      owner.mutation(api.managerQuestions.answer, { questionId: asked!._id, text: 'Priya.' }),
+    ).rejects.toThrow(/already been answered/);
+  });
+
+  it('counts a card answer to a question no plan asked, with no question row to name', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApprovedAgent(harness);
+    const owner = harness.withIdentity(OWNER);
+    const amended = await owner.mutation(api.charters.amend, {
+      agentId,
+      changes: [
+        {
+          kind: 'answer-question',
+          question: 'Who owns the Looker pipeline tile.',
+          answer: 'Priya.',
+        },
+      ],
+    });
+    expect(await questions(harness, agentId)).toEqual([]);
+    expect(await answeredEvents(harness, agentId)).toEqual([
+      { via: 'dashboard', amended: true, charterId: amended.charterId },
     ]);
   });
 });
