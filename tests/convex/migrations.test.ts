@@ -1046,6 +1046,66 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
     ).toBe(1);
   });
 
+  it("carries a moved row's ref into a sync that ended short, so the sync that takes it over keeps the row", async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const plaintext = 'resumed-run-value';
+    const id = await storedRow(harness, {
+      userId: 'owner',
+      sourceId,
+      ref: 'runbook.md',
+      plaintext,
+    });
+    const { completed, endedShort } = await harness.run(async (ctx) => {
+      const run = {
+        sourceId,
+        refs: ['runbook.md'],
+        credentialRefs: ['runbook.md'],
+        pageCount: 1,
+        redactionCount: 1,
+        createdAt: Date.now(),
+      };
+      return {
+        completed: await ctx.db.insert('docSyncRuns', {
+          ...run,
+          state: 'completed',
+          completedAt: Date.now(),
+        }),
+        // Read the page before the upgrade, then stopped short of the listing's end.
+        endedShort: await ctx.db.insert('docSyncRuns', {
+          ...run,
+          state: 'error',
+          cursor: 'page-2',
+          completedAt: Date.now(),
+        }),
+      };
+    });
+
+    await runAll(harness);
+
+    const [completedRun, endedShortRun] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(completed), ctx.db.get(endedShort)]),
+    );
+    expect(completedRun?.credentialRefs).toEqual(['runbook.md']);
+    expect(endedShortRun?.credentialRefs).toEqual([valueRef('runbook.md', plaintext, 'owner')]);
+
+    // The next sync takes the run over from its cursor and finishes without re-reading the page.
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await expect(
+      harness.mutation(internal.docSources.finishSync, {
+        sourceId,
+        runId,
+        currentCursor: 'page-2',
+        refs: [],
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+      }),
+    ).resolves.toMatchObject({ completed: true });
+    expect((await harness.run(async (ctx) => await ctx.db.get(id)))?.status).toBeUndefined();
+  });
+
   it('leaves a row whose value another row of its page already holds, logs it and still finishes', async (): Promise<void> => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
     const log = vi.spyOn(console, 'log').mockImplementation((): void => undefined);

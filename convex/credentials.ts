@@ -907,6 +907,38 @@ export const valueRefBatch = internalQuery({
 });
 
 /**
+ * Carry a rewritten ref into its source's newest run while that run can still
+ * finish a generation. A running run unions the credential refs it holds at
+ * its finish, and one that ended short hands them to the sync that takes it
+ * over (`beginSync`); a ref it recorded before the rewrite would otherwise
+ * leave the moved row out of the generation's set, and the finish would
+ * supersede it for a page that was never re-read.
+ *
+ * @param ctx - A mutation context.
+ * @param sourceId - The row's source.
+ * @param fromRef - The ref the row carried before the rewrite.
+ * @param ref - Its value-keyed ref.
+ */
+async function carryRefIntoOpenRun(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'>,
+  fromRef: string,
+  ref: string,
+): Promise<void> {
+  const latest = await ctx.db
+    .query('docSyncRuns')
+    .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+    .order('desc')
+    .first();
+  if (!latest || latest.state === 'completed' || !latest.credentialRefs.includes(fromRef)) return;
+  await ctx.db.patch(latest._id, {
+    credentialRefs: [
+      ...new Set(latest.credentialRefs.map((carried) => (carried === fromRef ? ref : carried))),
+    ],
+  });
+}
+
+/**
  * Move each row of one page of the ref rewrite to its value-keyed ref.
  * Internal; written by `credentialCryptoActions.valueRefPage`.
  *
@@ -914,7 +946,8 @@ export const valueRefBatch = internalQuery({
  * a row a sync moved in between (`moveToRef`) is left where the sync put it.
  * A row whose value-keyed ref another row of the page already holds (one
  * value stored twice by an earlier release) is left as it was and returned,
- * so the action logs it and the status counts it as remaining.
+ * so the action logs it and the status counts it as remaining. A moved row's
+ * ref is carried into its source's unfinished run (`carryRefIntoOpenRun`).
  *
  * @returns How many rows moved, and the ids of those another row blocked.
  */
@@ -945,6 +978,7 @@ export const applyValueRefs = internalMutation({
         continue;
       }
       await ctx.db.patch(row._id, { source: { sourceId, ref: moved.ref } });
+      await carryRefIntoOpenRun(ctx, sourceId, moved.fromRef, moved.ref);
       changed += 1;
     }
     return { changed, blocked };
