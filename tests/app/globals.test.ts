@@ -211,6 +211,15 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     },
   );
 
+  it('stops the stagger at 150 ms on a product page and leaves the landing groups their full stagger', () => {
+    expect(rulesFor(noPreference, '[data-cards]:not([data-seen]) > :nth-child(n + 5)')[0]).toMatch(
+      /--i:\s*3;/,
+    );
+    expect(
+      noPreference.indexOf('[data-cards]:not([data-seen]) > :nth-child(n + 5)'),
+    ).toBeGreaterThan(noPreference.indexOf('[data-cards] > :nth-child(12)'));
+  });
+
   it('starts the rows inside a card 200 ms after the page, as the Work tab draws them', () => {
     expect(rulesFor(noPreference, "[data-cards='rows']")[0]).toMatch(/--arrive-after:\s*200ms/);
   });

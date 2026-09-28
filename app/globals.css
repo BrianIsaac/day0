@@ -1125,7 +1125,8 @@ body {
    Attributes and classes the markup sets:
    [data-cards]          as above, on a product page's columns for its first second only
                          (`useArrival`), so a later reorder never replays an arrival.
-   [data-cards='rows']   a second tier inside a card: its rows start 200 ms after the page.
+   [data-cards='rows']   a second tier inside a card: its rows start 200 ms after the page. On a
+                         product page the stagger stops at the fourth card (150 ms).
    [data-arrive]         a chat turn among the two newest: it rises in as it arrives.
    [data-just]           a charter rule struck while the page was open: its [data-strike] line
                          draws through, then its [data-struck-mark] (an inline block, so it can
@@ -1224,6 +1225,12 @@ body {
 @media (prefers-reduced-motion: no-preference) {
   [data-cards='rows'] {
     --arrive-after: 200ms;
+  }
+
+  /* A product page's stagger stops at 150 ms (v4 section 2): a queue of twelve items is not
+     waited for card by card. The landing's groups carry [data-seen] and keep the full stagger. */
+  [data-cards]:not([data-seen]) > :nth-child(n + 5) {
+    --i: 3;
   }
 
   [data-arrive] {

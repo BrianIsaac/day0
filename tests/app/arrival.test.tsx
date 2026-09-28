@@ -72,7 +72,7 @@ describe('useArrival', (): void => {
     expect(marked()).toBe(false);
   });
 
-  it('outlasts the slowest card: a second tier plus eleven steps plus the rise', (): void => {
-    expect(ARRIVAL_MS).toBe(200 + 11 * 50 + 260);
+  it('outlasts the slowest card: a second tier plus the capped stagger plus the rise', (): void => {
+    expect(ARRIVAL_MS).toBe(200 + 3 * 50 + 260);
   });
 });

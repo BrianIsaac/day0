@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 
 /**
- * How long a product page's cards take to arrive: a second tier's 200 ms, eleven 50 ms steps and
- * the 260 ms rise (`[data-cards]` in `app/globals.css`).
+ * How long a product page's cards take to arrive: a second tier's 200 ms, the stagger's 150 ms cap
+ * and the 260 ms rise (`[data-cards]` in `app/globals.css`).
  */
-export const ARRIVAL_MS = 1_010;
+export const ARRIVAL_MS = 610;
 
 type Arrival = 'waiting' | 'arriving' | 'arrived';
 
