@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -14,6 +14,9 @@ import { SurfacesTab } from './mock/SurfacesTab';
 export type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
 
 export type EnvironmentMode = 'mock' | 'real';
+
+/** The id the card links and the Slack OAuth redirect name in their hash. */
+const PANEL_ID = 'surfaces';
 
 const CAPTIONS: Record<EnvironmentMode, string> = {
   mock: 'Mock surfaces - when the agent runs a skill, edits land here in real time',
@@ -85,6 +88,7 @@ export function activeTabForEnvironment(active: TabKey, hash: string, isReal: bo
 
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const [active, setActive] = useState<TabKey>('slack');
+  const scrolledToHash = useRef(false);
 
   // Pre-fetch counts for tab badges
   const docs = useQuery(api.mock.listDocs, { agentId });
@@ -108,6 +112,15 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
       );
     };
     follow();
+    // A cold load (the Slack OAuth redirect's `#surfaces`) performs its one
+    // fragment scroll while the dashboard still reads "loading agent", before
+    // this panel exists, and the Surfaces tab is named only once the mode has
+    // resolved. So the first time the hash names a tab, scroll here once; a
+    // later hash change finds the panel present and the browser scrolls.
+    if (!scrolledToHash.current && tabFromHash(window.location.hash, isReal)) {
+      scrolledToHash.current = true;
+      document.getElementById(PANEL_ID)?.scrollIntoView();
+    }
     window.addEventListener('hashchange', follow);
     return (): void => window.removeEventListener('hashchange', follow);
   }, [isReal]);
@@ -178,7 +191,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
 
       {/* The panel carries the id the card links name, so `#surfaces` scrolls
           here as well as selecting the tab above. */}
-      <div id="surfaces" className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
+      <div id={PANEL_ID} className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
         {displayedActive === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
         {/* The four below are mock-only, so they are never reached with a real
             deployment mode and take none. */}
