@@ -137,6 +137,8 @@ describe('provider-format samples on a rotation runbook', (): void => {
     for (const text of [
       'Rotate the token: lin_api_XXXXXXXXXXXX',
       'A bot token looks like xoxb-0123abcd0123abcd.',
+      'Rotate the token: lin_api_0123456789abcdef',
+      'The key reads sk-ant-ABCDEFGHIJKLMNOP.',
       `ghp_${'x'.repeat(36)}`,
     ]) {
       expect(structuralSpans(text), text).toEqual([]);

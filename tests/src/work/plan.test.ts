@@ -917,18 +917,18 @@ describe('the candidate record read before the plan', (): void => {
   it('redacts the record with the span model when it is read, applies the floor when rendered, and bounds it', async (): Promise<void> => {
     const text = [
       'get_issue on linear · {"identifier":"REVOPS-7",',
-      '"description":"api token: lin_api_0123456789abcdefghijklmnopqrstuvwxyz\nservice password: Zq9!vT2#kL8mNp4rXs7wYb3e"}',
+      '"description":"api token: lin_api_Vd8Kq2Rt7Lm4Xw9Np3Hs6Bz1Fc5Jg0Ye2Ua\nservice password: Zq9!vT2#kL8mNp4rXs7wYb3e"}',
     ].join('');
     const read = await redactCandidateRecordText(text, new RecordedSpanModel());
     expect(read.redaction).toBeUndefined();
-    expect(read.text).not.toContain('lin_api_0123456789');
+    expect(read.text).not.toContain('lin_api_Vd8Kq2Rt7');
     expect(read.text).not.toContain('Zq9!vT2#kL8mNp4rXs7wYb3e');
     expect(read.text).toContain('"identifier":"REVOPS-7"');
     // Without a model the read still loses the provider token to the structural
     // floor and says only that floor ran.
     const floor = await redactCandidateRecordText(text);
     expect(floor.redaction).toBe('structural-only');
-    expect(floor.text).not.toContain('lin_api_0123456789');
+    expect(floor.text).not.toContain('lin_api_Vd8Kq2Rt7');
     const rendered = renderCandidateRecord({
       surface: 'linear',
       tool: 'get_issue',
@@ -950,9 +950,9 @@ describe('the candidate record read before the plan', (): void => {
         surface: 'linear',
         tool: 'get_issue',
         subject: 'record',
-        unavailable: 'refused: Bearer lin_api_0123456789abcdefghijklmnop was rejected',
+        unavailable: 'refused: Bearer lin_api_Pk4Wz8Nr2Ty6Qm1Lv5Hx9Bd3Gs7Cf0Ja was rejected',
       }).join('\n'),
-    ).not.toContain('lin_api_0123456789');
+    ).not.toContain('lin_api_Pk4Wz8Nr2');
   });
 });
 
