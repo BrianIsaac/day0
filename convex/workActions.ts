@@ -157,7 +157,7 @@ import {
 } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import { ledgerPhases, providerReconciliationEntries } from '../src/work/reconciliation';
-import { redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
+import { redactSecret, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import {
   grantRefusal,
   actionIntent,
@@ -2743,11 +2743,15 @@ export const authorDependentActions = internalAction({
             : "dependent actions pending the manager's approval",
       };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const gateRefusal = error instanceof ClosingGateRefusal;
+      // The gate's reason is Day0's own sentences, whole; any other failure is
+      // a model or provider message and is scrubbed to one line like the rest.
+      const reason = gateRefusal
+        ? redactSecret(error.message, '', knownValues)
+        : safeFailureMessage(error, '', 'the closing phase failed', 300, knownValues);
       // A set the obligation gate refused after its one repair stops the run:
       // the prerequisites landed and stay on the row, the refused set beside
       // its reason, and Retry resumes at the closing phase from that ledger.
-      const gateRefusal = error instanceof ClosingGateRefusal;
       const refused = gateRefusal ? error.output : authored;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId: args.workItemId,

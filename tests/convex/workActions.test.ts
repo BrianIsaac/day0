@@ -147,6 +147,8 @@ const recorded = vi.hoisted(() => ({
   planFailure: undefined as unknown,
   /** Thrown by every skill run while set, instead of returning an output. */
   skillFailure: undefined as unknown,
+  /** Thrown by every closing-phase authoring while set, instead of returning an output. */
+  dependentFailure: undefined as unknown,
   /** Every message the manager-question judgement was asked about, as its prompt. */
   questionJudgements: [] as string[],
   /** Set to make the manager-question judgement unavailable. */
@@ -588,6 +590,7 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
       recorded.dependentLedgers.push([...(args.initialLedger ?? [])]);
+      if (recorded.dependentFailure !== undefined) throw recorded.dependentFailure;
       const queued = recorded.dependentOutputs.shift();
       if (queued) return queued;
       recorded.dependentGroundingReads.push(args.groundingReads);
@@ -795,6 +798,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 afterEach((): void => {
   recorded.planFailure = undefined;
   recorded.skillFailure = undefined;
+  recorded.dependentFailure = undefined;
   recorded.questionJudgements.length = 0;
   recorded.questionJudgementFails = false;
   recorded.scopeJudgementFails = false;
@@ -8696,5 +8700,48 @@ describe('an execution failure on its way to the card (step 42, C-10)', (): void
     expect(returned.reason).toContain('execution will be tried again: 401 Unauthorized');
     expect(returned.reason).not.toContain('sk-live-7f3a9c2e1b4d6f8a0c2e4b6d');
     expect(returned.reason).not.toContain('node_modules');
+  });
+
+  it('scrubs a closing phase that fails the same way, on the card and on the kept ledger', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Asking the desk lead.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: log1SecondSittingPhaseOne,
+    };
+    recorded.dependentFailure = ECHOED;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        externalId: sitting4Log1Candidate.externalId,
+        title: sitting4Log1Candidate.title,
+        contentSummary: sitting4Log1Candidate.contentSummary,
+        contentRefs: sitting4Log1Candidate.contentRefs,
+        plan: log1SecondSittingPlan,
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+
+    const returned = await harness.action(internal.workActions.authorDependentActions, {
+      workItemId,
+      runId,
+    });
+    const failed = await readItem(harness, workItemId);
+
+    expect(failed.state).toBe('failed');
+    for (const said of [
+      failed.skipReason ?? '',
+      returned.reason ?? '',
+      JSON.stringify(failed.output),
+    ]) {
+      expect(said).not.toContain('sk-live-7f3a9c2e1b4d6f8a0c2e4b6d');
+      expect(said).not.toContain('node_modules');
+    }
+    expect(failed.skipReason).toContain('401 Unauthorized');
   });
 });
