@@ -13,10 +13,30 @@ import { ViewTransition, type ReactNode } from 'react';
 export function MainTransition({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   return (
-    <ViewTransition key={pathname} enter="day0-main-enter" exit="day0-main-exit" default="none">
+    <ViewTransition
+      key={pageKey(pathname)}
+      enter="day0-main-enter"
+      exit="day0-main-exit"
+      default="none"
+    >
       <main id="main" tabIndex={-1} className="outline-none">
         {children}
       </main>
     </ViewTransition>
   );
+}
+
+/** Routes whose own widget walks through sub-paths: Clerk's catch-all sign-in and sign-up. */
+const STEPPED_ROUTES: ReadonlySet<string> = new Set(['sign-in', 'sign-up']);
+
+/**
+ * Which page a pathname is, for the transition: the pathname itself, except that a step inside
+ * Clerk's sign-in or sign-up (`/sign-in/factor-one`) is the same page, so the widget is not torn
+ * down and the page does not play out and in at each step.
+ *
+ * @param pathname - The current pathname; null outside the app router.
+ */
+export function pageKey(pathname: string | null): string {
+  const first = pathname?.split('/')[1] ?? '';
+  return STEPPED_ROUTES.has(first) ? `/${first}` : (pathname ?? '');
 }

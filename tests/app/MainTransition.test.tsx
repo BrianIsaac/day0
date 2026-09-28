@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const route = vi.hoisted(() => ({ pathname: '/' }));
 vi.mock('next/navigation', () => ({ usePathname: (): string => route.pathname }));
 
-import { MainTransition } from '../../app/MainTransition';
+import { MainTransition, pageKey } from '../../app/MainTransition';
 
 let host: HTMLDivElement;
 
@@ -54,5 +54,27 @@ describe('MainTransition', (): void => {
     act((): void => root.render(<MainTransition>second</MainTransition>));
     expect(host.querySelector('main')).toBe(before);
     act((): void => root.unmount());
+  });
+
+  it('keeps the main through the steps of Clerk’s sign-in, which walks its own sub-paths', (): void => {
+    const root = createRoot(host);
+    route.pathname = '/sign-in';
+    act((): void => root.render(<MainTransition>sign in</MainTransition>));
+    const before = host.querySelector('main');
+    route.pathname = '/sign-in/factor-one';
+    act((): void => root.render(<MainTransition>factor one</MainTransition>));
+    expect(host.querySelector('main')).toBe(before);
+    act((): void => root.unmount());
+  });
+});
+
+describe('pageKey', (): void => {
+  it('is the pathname, with a sign-in or sign-up step folded into its page', (): void => {
+    expect(pageKey('/walkthrough')).toBe('/walkthrough');
+    expect(pageKey('/agent/a1')).toBe('/agent/a1');
+    expect(pageKey('/sign-in')).toBe('/sign-in');
+    expect(pageKey('/sign-in/sso-callback')).toBe('/sign-in');
+    expect(pageKey('/sign-up/verify-email-address')).toBe('/sign-up');
+    expect(pageKey(null)).toBe('');
   });
 });
