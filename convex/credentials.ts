@@ -708,7 +708,7 @@ export const revoke = mutation({
   handler: async (ctx, args): Promise<void> => {
     const identity = await getCallerOrThrow(ctx);
     const credential = await ctx.db.get(args.credentialId);
-    if (!credential || credential.userId !== identity.subject) {
+    if (!credential || credential.userId !== identity.ownerKey) {
       throw new Error('Credential not found.');
     }
     if (!credential.revokedAt) await ctx.db.patch(credential._id, { revokedAt: Date.now() });
@@ -722,7 +722,7 @@ export const summaryForOwner = query({
     const identity = await getCallerOrThrow(ctx);
     const credentials = await ctx.db
       .query('credentials')
-      .withIndex('by_userId', (index) => index.eq('userId', identity.subject))
+      .withIndex('by_userId', (index) => index.eq('userId', identity.ownerKey))
       .collect();
     return credentials.map((credential) => ({
       _id: credential._id,

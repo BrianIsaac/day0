@@ -74,15 +74,25 @@ describe('the caller session', (): void => {
     expect(callerSessionId(identity(CUSTOMER_ISSUER, 'alice', { sid: '' }))).toBeUndefined();
   });
 
-  it('survives the owner key: getCaller keeps every claim but the subject', async (): Promise<void> => {
+  it('survives the owner key: getCaller keeps every claim, the subject as the token gave it, and adds the owner key', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
     const harness = convexTest(schema, allConvexModules());
     const alice = harness.withIdentity({ issuer: CUSTOMER_ISSUER, subject: 'alice', sid: 'tab-2' });
     const seen = await alice.run(async (ctx) => {
       const { getCaller } = await import('../../convex/ownership');
       const caller = await getCaller(ctx);
-      return caller && { subject: caller.subject, session: callerSessionId(caller) };
+      return (
+        caller && {
+          subject: caller.subject,
+          ownerKey: caller.ownerKey,
+          session: callerSessionId(caller),
+        }
+      );
     });
-    expect(seen).toEqual({ subject: `${CUSTOMER_ISSUER}|alice`, session: 'tab-2' });
+    expect(seen).toEqual({
+      subject: 'alice',
+      ownerKey: `${CUSTOMER_ISSUER}|alice`,
+      session: 'tab-2',
+    });
   });
 });

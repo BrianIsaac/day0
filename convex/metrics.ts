@@ -1045,9 +1045,9 @@ export const forOwner = query({
     if (!identity) return null;
     const agents = await ctx.db
       .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+      .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
       .collect();
-    const selection = selectCompanyEmployees(agents, identity.subject, isEvaluationAgent);
+    const selection = selectCompanyEmployees(agents, identity.ownerKey, isEvaluationAgent);
     const records = await Promise.all(
       selection.employees.map((agent) => readEmployeeRecords(ctx, agent)),
     );

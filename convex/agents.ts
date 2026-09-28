@@ -59,7 +59,7 @@ export const listForUser = query({
     if (!identity) return [];
     return await ctx.db
       .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+      .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
       .order('desc')
       .take(20);
   },
@@ -367,11 +367,11 @@ export const rosterForUser = query({
   returns: v.array(rosterRowValidator),
   handler: async (ctx): Promise<RosterRow[]> => {
     const identity = await getCaller(ctx);
-    if (!identity?.subject) return [];
+    if (!identity?.ownerKey) return [];
     const agents = (
       await ctx.db
         .query('agents')
-        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
         .order('desc')
         .take(ROSTER_SCAN_LIMIT)
     )
@@ -379,7 +379,7 @@ export const rosterForUser = query({
       .slice(0, ROSTER_LIMIT);
     const sources = await ctx.db
       .query('docSources')
-      .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+      .withIndex('by_user', (q) => q.eq('userId', identity.ownerKey))
       .take(DOC_SOURCE_READ_LIMIT);
     return await Promise.all(
       agents.map(async (agent): Promise<RosterRow> => {
@@ -443,7 +443,7 @@ export const deploy = mutation({
     }
     for (const sourceId of args.excludedDocSourceIds ?? []) {
       const source = await ctx.db.get(sourceId);
-      if (!source || source.userId !== identity.subject) {
+      if (!source || source.userId !== identity.ownerKey) {
         throw new Error('Documentation source not found or owned by another user.');
       }
     }
@@ -455,7 +455,7 @@ export const deploy = mutation({
       excludedDocSourceIds: args.excludedDocSourceIds?.length
         ? args.excludedDocSourceIds
         : undefined,
-      userId: identity.subject,
+      userId: identity.ownerKey,
       state: 'deployed',
       arm: args.arm ?? 'day0',
       zone,

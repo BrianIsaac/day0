@@ -4463,14 +4463,14 @@ export const reconcileFailed = mutation({
     }
     const identity = await getCallerOrThrow(ctx);
     const confirmedAt = Date.now();
-    const providerReconciliation = { actor: identity.subject, confirmedAt, entries };
+    const providerReconciliation = { actor: identity.ownerKey, confirmedAt, entries };
     await ctx.db.patch(args.workItemId, { providerReconciliation });
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.provider-reconciled',
       payload: {
         workItemId: args.workItemId,
-        actor: identity.subject,
+        actor: identity.ownerKey,
         confirmedAt,
         entries,
       },

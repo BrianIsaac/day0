@@ -60,24 +60,21 @@ export function callerSessionId(identity: UserIdentity): string | undefined {
 }
 
 /**
- * The verified caller, or null for an anonymous one.
- *
- * `subject` on the identity returned here is the owner key
- * ({@link ownerKeyOf}), not necessarily the token's `sub`, so every guard and
- * every row written from it agree on one key per owner. Every other claim is
- * the token's own.
+ * A verified caller: the token's own claims, `subject` included, plus the
+ * owner key every guard compares and every row is keyed on ({@link ownerKeyOf}).
  */
-export async function getCaller(
-  ctx: QueryCtx | MutationCtx | ActionCtx,
-): Promise<UserIdentity | null> {
+export interface Caller extends UserIdentity {
+  readonly ownerKey: string;
+}
+
+/** The verified caller, or null for an anonymous one. */
+export async function getCaller(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller | null> {
   const identity = await ctx.auth.getUserIdentity();
-  return identity && { ...identity, subject: ownerKeyOf(identity) };
+  return identity && { ...identity, ownerKey: ownerKeyOf(identity) };
 }
 
 /** The verified caller; throws the mode's not-authenticated message for an anonymous one. */
-export async function getCallerOrThrow(
-  ctx: QueryCtx | MutationCtx | ActionCtx,
-): Promise<UserIdentity> {
+export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller> {
   const identity = await getCaller(ctx);
   if (!identity) throw new Error(notAuthenticatedMessage());
   return identity;
@@ -91,7 +88,7 @@ export async function assertOwnsAgent(
   const agent = await ctx.db.get(agentId);
   if (!agent) throw new Error('agent not found');
   if (!agent.userId) throw new Error('forbidden: agent has no owner');
-  if (agent.userId !== identity.subject) throw new Error('forbidden');
+  if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
   return agent;
 }
 
@@ -103,7 +100,7 @@ export async function assertOwnsAgentAction(
   const agent = await ctx.runQuery(internal.agents.getInternal, { agentId });
   if (!agent) throw new Error('agent not found');
   if (!agent.userId) throw new Error('forbidden: agent has no owner');
-  if (agent.userId !== identity.subject) throw new Error('forbidden');
+  if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
   return agent;
 }
 
