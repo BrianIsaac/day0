@@ -10,8 +10,11 @@ import { getFunctionName, type FunctionReference } from 'convex/server';
 vi.mock('@clerk/nextjs', () => ({
   Show: (): null => null,
   useUser: () => ({
+    isLoaded: true,
+    isSignedIn: true,
     user: { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' },
   }),
+  useClerk: () => ({ status: 'ready' }),
 }));
 
 const EMPLOYEE_METRICS = {

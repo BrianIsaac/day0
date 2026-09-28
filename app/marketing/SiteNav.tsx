@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useUser } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
+import { useAccount } from '../account';
 import { GitHubMark } from './GitHubMark';
 
 const TONE =
@@ -13,7 +13,7 @@ const LINK = `${TONE} inline-flex min-h-11 items-center px-2.5 text-[13px]`;
 
 /**
  * The public site navigation in the header, shown exactly when `/` shows the marketing page:
- * to a visitor with no signed-in user. No-auth dev mode always has its local manager signed
+ * to a visitor the browser knows is signed out, never while that is still being resolved. No-auth dev mode always has its local manager signed
  * in, so it never shows. Hidden below the `md` width, where the page itself links onwards.
  */
 export function SiteNav() {
@@ -22,9 +22,9 @@ export function SiteNav() {
 }
 
 function SignedOutNav() {
-  const { user } = useUser();
+  const account = useAccount();
   const pathname = usePathname();
-  if (user) return null;
+  if (account.kind !== 'signed-out') return null;
   return (
     <nav aria-label="Site" className="hidden items-center gap-1.5 md:flex">
       <Link href="/#how" className={LINK}>

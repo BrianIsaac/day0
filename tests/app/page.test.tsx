@@ -1,5 +1,8 @@
+/** @vitest-environment jsdom */
+
+import { act, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { getFunctionName, type FunctionReference } from 'convex/server';
 
@@ -13,11 +16,21 @@ const authState = vi.hoisted(() => ({ loaded: true, signedIn: false, rosterAvail
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
     authState.loaded && when === 'signed-out' ? children : null,
-  useUser: () => ({
-    user: authState.signedIn
-      ? { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' }
-      : undefined,
-  }),
+  // Clerk's own shape: no user and `isLoaded: false` until its script has answered.
+  useUser: () =>
+    !authState.loaded
+      ? { isLoaded: false, isSignedIn: undefined, user: undefined }
+      : authState.signedIn
+        ? {
+            isLoaded: true,
+            isSignedIn: true,
+            user: {
+              primaryEmailAddress: { emailAddress: 'boss@example.invalid' },
+              firstName: 'Boss',
+            },
+          }
+        : { isLoaded: true, isSignedIn: false, user: null },
+  useClerk: () => ({ status: authState.loaded ? 'ready' : 'loading' }),
 }));
 
 /** The signed-in owner's company as `agents.rosterForUser` returns it, newest first. */
@@ -175,12 +188,13 @@ vi.mock('next/navigation', () => ({
 import LandingPage from '../../app/page';
 
 describe('signed-out landing page', (): void => {
-  it('renders public entry links before the authentication script loads', () => {
+  it('serves a neutral shell before the authentication script loads, neither page nor dashboard', () => {
     authState.loaded = false;
     try {
       const pending = renderToStaticMarkup(<LandingPage />);
-      expect(pending).toContain('Try the demo');
-      expect(pending).toContain('Set up Day0');
+      expect(pending).not.toContain('Try the demo');
+      expect(pending).not.toContain('Your employees');
+      expect(pending).toMatch(/^<div class="[^"]*"><\/div>$/);
     } finally {
       authState.loaded = true;
     }
@@ -357,5 +371,27 @@ describe('signed-in landing', () => {
       authState.rosterAvailable = true;
     }
     expect(renderToStaticMarkup(<LandingPage />)).toContain('Try the demo');
+  });
+
+  it('keeps the dashboard when the session re-resolves mid-visit, never swapping in the hero', () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    document.cookie = '__client_uat=1759100000; path=/';
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    authState.signedIn = true;
+    try {
+      act(() => root.render(<LandingPage />));
+      expect(host.textContent).toContain('Your employees');
+      // Clerk refreshing an expiring session answers "not loaded" again for a moment.
+      authState.loaded = false;
+      act(() => root.render(<LandingPage />));
+      expect(host.textContent).toContain('Your employees');
+      expect(host.textContent).not.toContain('Try the demo');
+    } finally {
+      act(() => root.unmount());
+      authState.loaded = true;
+      authState.signedIn = false;
+      document.cookie = '__client_uat=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+    }
   });
 });

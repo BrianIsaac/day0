@@ -6,7 +6,10 @@ vi.mock('../../app/Providers', () => ({
   Providers: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock('../../app/HeaderAccount', () => ({ HeaderAccount: () => null }));
-vi.mock('@clerk/nextjs', () => ({ useUser: () => ({ user: null }) }));
+vi.mock('@clerk/nextjs', () => ({
+  useUser: () => ({ isLoaded: true, isSignedIn: false, user: null }),
+  useClerk: () => ({ status: 'ready' }),
+}));
 
 /** What the backend's `config.surfaceMode` query answers; undefined while it has not. */
 const backend = vi.hoisted((): { mode: 'mock' | 'real' | undefined } => ({ mode: undefined }));

@@ -1,13 +1,18 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const auth = vi.hoisted(() => ({ signedIn: false, pathname: '/' }));
+const auth = vi.hoisted(() => ({ loaded: true, signedIn: false, pathname: '/' }));
 vi.mock('@clerk/nextjs', () => ({
-  useUser: () => ({ user: auth.signedIn ? { id: 'user-1' } : null }),
+  useUser: () =>
+    auth.loaded
+      ? { isLoaded: true, isSignedIn: auth.signedIn, user: auth.signedIn ? { id: 'user-1' } : null }
+      : { isLoaded: false, isSignedIn: undefined, user: undefined },
+  useClerk: () => ({ status: auth.loaded ? 'ready' : 'loading' }),
 }));
 vi.mock('next/navigation', () => ({ usePathname: (): string => auth.pathname }));
 
 afterEach(() => {
+  auth.loaded = true;
   auth.signedIn = false;
   auth.pathname = '/';
   vi.unstubAllEnvs();
@@ -48,6 +53,11 @@ describe('the public site navigation', () => {
     expect(await render()).toMatch(
       /<a [^>]*href="\/walkthrough"[^>]*aria-current="page"|<a [^>]*aria-current="page"[^>]*href="\/walkthrough"/,
     );
+  });
+
+  it('is absent until the browser knows the visitor is signed out, as the account controls are', async () => {
+    auth.loaded = false;
+    expect(await render()).toBe('');
   });
 
   it('is absent for a signed-in manager, whose / is the company dashboard', async () => {
