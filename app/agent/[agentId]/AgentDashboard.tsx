@@ -216,6 +216,11 @@ export function AgentDashboard({ agentId }: Props) {
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
   const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
+  // What a change said once the control that made it left the page with its
+  // card (a charter sent back), and where focus goes after it.
+  const [pageOutcome, setPageOutcome] = useState<ChangeOutcome | null>(null);
+  const [focusOnboarding, setFocusOnboarding] = useState(false);
+  const onboarding = useRef<HTMLDivElement>(null);
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
   const now = useNow();
@@ -270,6 +275,15 @@ export function AgentDashboard({ agentId }: Props) {
     }
   }, [agent, voiceSession, mode]);
 
+  const onboardingShown =
+    !!agent && !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
+  useEffect(() => {
+    if (!focusOnboarding || !onboardingShown) return;
+    onboarding.current?.focus();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus move happens once, when the 1:1 is back on the page after a charter is sent back
+    setFocusOnboarding(false);
+  }, [focusOnboarding, onboardingShown]);
+
   if (!agent) {
     return (
       <main className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
@@ -282,8 +296,7 @@ export function AgentDashboard({ agentId }: Props) {
   // room stayed open under the charter it had just produced (badge reading
   // "streaming", footer reading "drafting your charter…") because both were
   // keyed to a state the chat route never moved on.
-  const showOnboarding =
-    !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
+  const showOnboarding = onboardingShown;
 
   return (
     <AgentZoneContext value={agentZone(agent)}>
@@ -298,27 +311,45 @@ export function AgentDashboard({ agentId }: Props) {
           }
         />
 
+        <LiveStatus outcome={pageOutcome} />
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
           <div className="lg:col-span-2 space-y-4">
             {showOnboarding ? (
-              mode === 'pick' ? (
-                <ModePicker onPick={(m) => setMode(m)} />
-              ) : mode === 'voice' ? (
-                <VoiceRoom
-                  agentId={agentId}
-                  bossLabel={agent.bossEmail}
-                  onSwitchMode={() => setMode('chat')}
-                />
-              ) : (
-                <ChatRoom
-                  agentId={agentId}
-                  bossLabel={agent.bossEmail}
-                  onSwitchMode={() => setMode('voice')}
-                />
-              )
+              <div
+                ref={onboarding}
+                tabIndex={-1}
+                role="region"
+                aria-label="The 1:1 that drafts the charter"
+              >
+                {mode === 'pick' ? (
+                  <ModePicker onPick={(m) => setMode(m)} />
+                ) : mode === 'voice' ? (
+                  <VoiceRoom
+                    agentId={agentId}
+                    bossLabel={agent.bossEmail}
+                    onSwitchMode={() => setMode('chat')}
+                  />
+                ) : (
+                  <ChatRoom
+                    agentId={agentId}
+                    bossLabel={agent.bossEmail}
+                    onSwitchMode={() => setMode('voice')}
+                  />
+                )}
+              </div>
             ) : null}
 
-            {charter ? <CharterCard charter={charter} manager={agent.bossEmail} /> : null}
+            {charter ? (
+              <CharterCard
+                charter={charter}
+                manager={agent.bossEmail}
+                onSentBack={(text) => {
+                  setPageOutcome({ tone: 'done', text });
+                  setFocusOnboarding(true);
+                }}
+              />
+            ) : null}
 
             <ProposedSkillsPanel
               skills={proposedSkills ?? []}
@@ -931,11 +962,15 @@ function Card({
   title,
   children,
   tone,
+  focusRef,
 }: {
   title: string;
   children: React.ReactNode;
   tone?: 'default' | 'accent' | 'warn' | 'ok';
+  /** Makes the card the place focus returns to when a change removes the control that made it. */
+  focusRef?: React.Ref<HTMLElement>;
 }) {
+  const headingId = useId();
   const border = {
     default: 'border-[var(--color-border)]',
     accent: 'border-[var(--color-accent)]/40',
@@ -943,8 +978,17 @@ function Card({
     ok: 'border-[var(--color-ok)]/40',
   }[tone ?? 'default'];
   return (
-    <section className={`bg-[var(--color-card)] border ${border} rounded-xl p-4`}>
-      <h2 className="text-sm font-semibold tracking-tight text-[var(--color-fg)] mb-3">{title}</h2>
+    <section
+      ref={focusRef}
+      {...(focusRef ? { tabIndex: -1, 'aria-labelledby': headingId } : {})}
+      className={`bg-[var(--color-card)] border ${border} rounded-xl p-4`}
+    >
+      <h2
+        id={focusRef ? headingId : undefined}
+        className="text-sm font-semibold tracking-tight text-[var(--color-fg)] mb-3"
+      >
+        {title}
+      </h2>
       {children}
     </section>
   );
@@ -1056,9 +1100,12 @@ export function ConstraintList({
   onStrike,
   onRestore,
   previewStrike,
+  busy = false,
 }: {
   constraints: CharterConstraint[];
   approved: boolean;
+  /** A change to the charter is in flight; the controls wait for it. */
+  busy?: boolean;
   /** Strike a confirmed rule; before approval a draft flag, after it an amendment. */
   onStrike?: (index: number) => void;
   /** Restore a struck rule; only a draft can, because a strike after approval has already left the clauses. */
@@ -1143,17 +1190,22 @@ export function ConstraintList({
               </div>
               {!constraint.struck && onStrike ? (
                 <button
+                  type="button"
                   onClick={() => onStrike(index)}
-                  disabled={preview?.refusal !== undefined}
+                  disabled={busy || preview?.refusal !== undefined}
                   title={preview?.refusal}
-                  className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
+                  aria-label={`Strike: ${constraint.quote}`}
+                  className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
                 >
                   Strike
                 </button>
               ) : constraint.struck && onRestore ? (
                 <button
+                  type="button"
                   onClick={() => onRestore(index)}
-                  className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)]"
+                  disabled={busy}
+                  aria-label={`Restore: ${constraint.quote}`}
+                  className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)] disabled:opacity-50"
                 >
                   Restore
                 </button>
@@ -1176,73 +1228,83 @@ export function ConstraintList({
 export function CharterCard({
   charter,
   manager,
+  onSentBack,
 }: {
   charter: Doc<'charters'>;
   /** The agent row's manager, who approves this employee's work. */
   manager?: string;
+  /** Said on the page once the draft is sent back and this card goes. */
+  onSentBack?: (text: string) => void;
 }) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
   const amend = useMutation(api.charters.amend);
-  const [posting, setPosting] = useState(false);
-  const [amendError, setAmendError] = useState<string | null>(null);
-  const [strikeError, setStrikeError] = useState<string | null>(null);
+  const card = useRef<HTMLElement>(null);
+  const change = useChange(card);
   const body = charter.body as CharterCardBody;
   const constraints = body.constraints ?? [];
   const struckCount = constraints.filter((constraint) => constraint.struck).length;
 
-  async function toggleStrike(index: number, struck: boolean): Promise<void> {
-    setStrikeError(null);
-    try {
-      const result = await setConstraintStruck({ charterId: charter._id, index, struck });
-      if (!result.ok) setStrikeError(result.reason);
-    } catch (failure: unknown) {
-      setStrikeError(plainErrorMessage(errorMessage(failure)));
-    }
+  function toggleStrike(index: number, struck: boolean): void {
+    const quote = constraints[index]?.quote ?? 'the rule';
+    change.run(
+      async (): Promise<void> => {
+        const result = await setConstraintStruck({ charterId: charter._id, index, struck });
+        if (!result.ok) throw new Error(result.reason);
+      },
+      {
+        done: struck
+          ? `Struck “${quote}”: approval leaves its clauses out.`
+          : `Restored “${quote}”.`,
+        refused: 'The rule was not changed.',
+      },
+    );
   }
 
-  async function sendAmendment(change: CharterChange): Promise<boolean> {
-    setAmendError(null);
-    try {
-      await amend({ agentId: charter.agentId, changes: [change] });
-      return true;
-    } catch (error: unknown) {
-      // The refusal's own words travel as the ConvexError's data; any other
-      // failure's text is stripped by the backend in production.
-      setAmendError(
-        error instanceof ConvexError
-          ? String(error.data)
-          : error instanceof Error
-            ? error.message
-            : 'The amendment was refused.',
-      );
-      return false;
-    }
+  function sendAmendment(
+    amendment: CharterChange,
+    after?: () => void,
+    focus?: () => HTMLElement | null,
+  ): void {
+    change.run(() => amend({ agentId: charter.agentId, changes: [amendment] }), {
+      done: `Charter amended: version ${nextCharterVersion(charter.version)} is the one in force.`,
+      refused: 'The amendment was refused.',
+      after,
+      focus,
+    });
   }
 
   // The approval seeds the work the charter implies on the server, in the
   // same transaction, so nothing here waits on or retries it.
   function onApprove(): void {
-    setPosting(true);
-    setStrikeError(null);
-    approve({ charterId: charter._id })
-      .then((result) => {
-        if (!result.ok) {
-          setStrikeError(result.reason);
-          setPosting(false);
-        }
-      })
-      .catch((err: unknown) => {
-        setStrikeError(err instanceof Error ? err.message : 'The approval was not recorded.');
-        setPosting(false);
-      });
+    change.run(
+      async (): Promise<void> => {
+        const result = await approve({ charterId: charter._id });
+        if (!result.ok) throw new Error(result.reason);
+      },
+      {
+        done: 'Charter approved: the employee starts on the work it implies.',
+        refused: 'The approval was not recorded.',
+      },
+    );
+  }
+
+  // Sending the draft back deletes it, and this card with it, so the outcome
+  // is said on the page, which also takes focus.
+  function onRequestChanges(): void {
+    change.run(() => requestChanges({ charterId: charter._id }), {
+      done: SENT_BACK,
+      refused: 'The charter was not sent back.',
+      after: () => onSentBack?.(SENT_BACK),
+    });
   }
 
   return (
     <Card
       title={`Charter v${charter.version}${charter.approved ? ' · approved' : ' · awaiting approval'}`}
       tone={charter.approved ? 'ok' : 'warn'}
+      focusRef={card}
     >
       <div className="space-y-3 text-sm">
         <div>
@@ -1257,15 +1319,13 @@ export function CharterCard({
           </span>
           <p className="text-[var(--color-fg)]">{body.proposedFunction}</p>
         </div>
-        <div className="grid grid-cols-3 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <Goal label="30-day" text={body.shortTermGoals.day30} />
           <Goal label="60-day" text={body.shortTermGoals.day60} />
           <Goal label="90-day" text={body.shortTermGoals.day90} />
         </div>
         <details className="text-xs">
-          <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
-            Boundaries · collaborators · open questions
-          </summary>
+          <summary className={SUMMARY}>Boundaries · collaborators · open questions</summary>
           <div className="mt-2 space-y-2 pl-3 border-l border-[var(--color-border)]">
             <BoundaryList
               label="Reports to"
@@ -1302,43 +1362,47 @@ export function CharterCard({
         <ConstraintList
           constraints={constraints}
           approved={charter.approved}
+          busy={change.busy}
           onStrike={(index) =>
             charter.approved
-              ? void sendAmendment({ kind: 'strike-constraint', index })
-              : void toggleStrike(index, true)
+              ? sendAmendment({ kind: 'strike-constraint', index })
+              : toggleStrike(index, true)
           }
-          onRestore={charter.approved ? undefined : (index) => void toggleStrike(index, false)}
+          onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
           previewStrike={(index) => strikePreview(body, index)}
         />
-        {strikeError ? <p className="text-xs text-[var(--color-danger)]">{strikeError}</p> : null}
         <SynthesisNotes notes={synthesisNotes(body)} />
         {charter.approved ? (
           <AmendCharterPanel
             charter={charter}
             body={body}
-            error={amendError}
+            busy={change.busy}
             onAmend={sendAmendment}
           />
         ) : null}
         {!charter.approved ? (
-          <div className="flex gap-2 pt-1">
+          <div className="flex flex-wrap gap-2 pt-1">
             <button
+              type="button"
               onClick={onApprove}
-              disabled={posting}
-              className="px-4 py-2 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
+              disabled={change.busy}
+              className="min-h-11 px-4 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
             >
               {struckCount > 0
                 ? `Approve, ${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`
                 : 'Approve'}
             </button>
             <button
-              onClick={() => requestChanges({ charterId: charter._id })}
-              className="px-4 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-warn)] text-sm"
+              type="button"
+              onClick={onRequestChanges}
+              disabled={change.busy}
+              className="min-h-11 px-4 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-warn)] text-sm disabled:opacity-50"
             >
               Request changes
             </button>
           </div>
         ) : null}
+        <LiveStatus outcome={change.outcome} />
       </div>
     </Card>
   );
@@ -1351,9 +1415,17 @@ const CLAUSE_LIST_LABEL: Record<ListClauseField, string> = {
 };
 
 const AMEND_INPUT =
-  'flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs text-[var(--color-fg)]';
+  'min-h-11 flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 text-xs text-[var(--color-fg)]';
 const AMEND_BUTTON =
-  'shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
+  'shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
+
+/** A disclosure's summary with a 44 px target (N14). */
+const SUMMARY =
+  'min-h-11 py-3 cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]';
+
+/** What the page says once the manager sends a draft charter back. */
+const SENT_BACK =
+  'Charter sent back: the 1:1 opens again so the employee can redraft it from what you tell it.';
 
 /**
  * One line of text the manager can rewrite or remove; Save sends the
@@ -1362,27 +1434,50 @@ const AMEND_BUTTON =
  */
 function EditableLine({
   text,
+  label,
+  busy,
   onSave,
   onRemove,
 }: {
   text: string;
+  /** What the line is, as the field's visible label. */
+  label: string;
+  busy: boolean;
   onSave: (text: string) => void;
   onRemove?: () => void;
 }) {
   const [draft, setDraft] = useState(text);
+  const id = useId();
   const changed = draft.trim() !== text.trim();
   return (
-    <div className="flex items-center gap-1">
-      <input className={AMEND_INPUT} value={draft} onChange={(e) => setDraft(e.target.value)} />
+    <div className="flex flex-wrap items-center gap-1">
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+      <input
+        id={id}
+        className={AMEND_INPUT}
+        value={draft}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+      />
       <button
+        type="button"
         className={AMEND_BUTTON}
-        disabled={!changed || !draft.trim()}
+        disabled={busy || !changed || !draft.trim()}
+        aria-label={`Save: ${label}`}
         onClick={() => onSave(draft)}
       >
         Save
       </button>
       {onRemove ? (
-        <button className={AMEND_BUTTON} onClick={onRemove}>
+        <button
+          type="button"
+          className={AMEND_BUTTON}
+          disabled={busy}
+          aria-label={`Remove: ${label}`}
+          onClick={onRemove}
+        >
           Remove
         </button>
       ) : null}
@@ -1390,36 +1485,53 @@ function EditableLine({
   );
 }
 
-/** A single input with a button, cleared when the submission is accepted. */
+/** A labelled input with a button, cleared when the change it sends lands. */
 function AddLine({
-  placeholder,
   label,
+  button,
+  busy,
   onAdd,
 }: {
-  placeholder: string;
+  /** The field's visible label. */
   label: string;
-  onAdd: (text: string) => Promise<boolean>;
+  /** The button's text. */
+  button: string;
+  busy: boolean;
+  /**
+   * Send the text; `clear` empties the field once the change lands, and the
+   * field, where the next entry goes, takes focus from the emptied button.
+   */
+  onAdd: (text: string, clear: () => void, field: () => HTMLElement | null) => void;
 }) {
   const [draft, setDraft] = useState('');
+  const id = useId();
+  const field = useRef<HTMLInputElement>(null);
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
+      <label htmlFor={id} className="basis-full text-[10px] text-[var(--color-muted)]">
+        {label}
+      </label>
       <input
+        ref={field}
+        id={id}
         className={AMEND_INPUT}
-        placeholder={placeholder}
         value={draft}
+        disabled={busy}
         onChange={(e) => setDraft(e.target.value)}
       />
       <button
+        type="button"
         className={AMEND_BUTTON}
-        disabled={!draft.trim()}
-        onClick={() => {
-          // onAdd never rejects: a refusal is shown on the panel.
-          void onAdd(draft).then((added) => {
-            if (added) setDraft('');
-          });
-        }}
+        disabled={busy || !draft.trim()}
+        onClick={() =>
+          onAdd(
+            draft,
+            () => setDraft(''),
+            () => field.current,
+          )
+        }
       >
-        {label}
+        {button}
       </button>
     </div>
   );
@@ -1448,14 +1560,17 @@ export function defaultRuleClause(quote: string): ListClauseField {
 export function AmendCharterPanel({
   charter,
   body,
-  error,
+  busy,
   onAmend,
 }: {
   charter: Doc<'charters'>;
   body: CharterCardBody;
-  error: string | null;
-  onAmend: (change: CharterChange) => Promise<boolean>;
+  /** An amendment is in flight; the editors wait for it. */
+  busy: boolean;
+  /** Send one typed change; `after` runs and `focus` takes focus once it lands. Its outcome is said on the card. */
+  onAmend: (change: CharterChange, after?: () => void, focus?: () => HTMLElement | null) => void;
 }) {
+  const ruleId = useId();
   const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
   const now = useNow();
   const zone = useAgentZone();
@@ -1479,11 +1594,10 @@ export function AmendCharterPanel({
   const openQuestions = managerOpenQuestions(body);
   return (
     <details className="text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         Amend this charter · next version v{nextCharterVersion(charter.version)}
       </summary>
       <div className="mt-2 space-y-3 pl-3 border-l border-[var(--color-border)]">
-        {error ? <p className="text-[var(--color-warn)]">{error}</p> : null}
         <div>
           <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
             Proposed function
@@ -1491,7 +1605,9 @@ export function AmendCharterPanel({
           <EditableLine
             key={body.proposedFunction}
             text={body.proposedFunction}
-            onSave={(text) => void onAmend({ kind: 'edit-function', text })}
+            label="Proposed function"
+            busy={busy}
+            onSave={(text) => onAmend({ kind: 'edit-function', text })}
           />
         </div>
         {LIST_CLAUSE_FIELDS.map((field) => (
@@ -1504,20 +1620,27 @@ export function AmendCharterPanel({
                 <EditableLine
                   key={`${index}:${item}`}
                   text={item}
-                  onSave={(text) => void onAmend({ kind: 'edit-clause', field, index, text })}
-                  onRemove={() => void onAmend({ kind: 'edit-clause', field, index, text: '' })}
+                  label={`${CLAUSE_LIST_LABEL[field]}, clause ${index + 1}`}
+                  busy={busy}
+                  onSave={(text) => onAmend({ kind: 'edit-clause', field, index, text })}
+                  onRemove={() => onAmend({ kind: 'edit-clause', field, index, text: '' })}
                 />
               ))}
               <AddLine
-                placeholder={`Add to ${CLAUSE_LIST_LABEL[field].toLowerCase()}`}
-                label="Add"
-                onAdd={(text) =>
-                  onAmend({
-                    kind: 'edit-clause',
-                    field,
-                    index: body.proposedBoundaries[field].length,
-                    text,
-                  })
+                label={`Add to ${CLAUSE_LIST_LABEL[field].toLowerCase()}`}
+                button="Add"
+                busy={busy}
+                onAdd={(text, clear, input) =>
+                  onAmend(
+                    {
+                      kind: 'edit-clause',
+                      field,
+                      index: body.proposedBoundaries[field].length,
+                      text,
+                    },
+                    clear,
+                    input,
+                  )
                 }
               />
             </div>
@@ -1531,11 +1654,13 @@ export function AmendCharterPanel({
             <div className="space-y-1.5">
               {openQuestions.map((question) => (
                 <div key={question}>
-                  <p className="text-[var(--color-fg)] mb-0.5">{question}</p>
                   <AddLine
-                    placeholder="Your answer"
-                    label="Answer"
-                    onAdd={(answer) => onAmend({ kind: 'answer-question', question, answer })}
+                    label={question}
+                    button="Answer"
+                    busy={busy}
+                    onAdd={(answer, clear, input) =>
+                      onAmend({ kind: 'answer-question', question, answer }, clear, input)
+                    }
                   />
                 </div>
               ))}
@@ -1552,14 +1677,26 @@ export function AmendCharterPanel({
             Add a rule
           </div>
           <div className="flex flex-wrap items-center gap-1">
+            <label
+              htmlFor={`${ruleId}-quote`}
+              className="basis-full text-[10px] text-[var(--color-muted)]"
+            >
+              The rule, in your own words
+            </label>
             <input
+              id={`${ruleId}-quote`}
               className={AMEND_INPUT}
-              placeholder="In your own words"
               value={rule.quote}
+              disabled={busy}
               onChange={(e) => setRule({ ...rule, quote: e.target.value })}
             />
+            <label htmlFor={`${ruleId}-kind`} className="sr-only">
+              What the rule limits
+            </label>
             <select
+              id={`${ruleId}-kind`}
               className={AMEND_INPUT}
+              disabled={busy}
               value={rule.kind}
               onChange={(e) =>
                 setRule({ ...rule, kind: e.target.value as CharterConstraint['kind'] })
@@ -1569,8 +1706,13 @@ export function AmendCharterPanel({
               <option value="system-boundary">where I may act</option>
               <option value="reporting-line">who I report to</option>
             </select>
+            <label htmlFor={`${ruleId}-clause`} className="sr-only">
+              The clause list it goes under
+            </label>
             <select
+              id={`${ruleId}-clause`}
               className={AMEND_INPUT}
+              disabled={busy}
               value={ruleClause}
               onChange={(e) => setRule({ ...rule, clause: e.target.value as ListClauseField })}
             >
@@ -1581,17 +1723,18 @@ export function AmendCharterPanel({
               ))}
             </select>
             <button
+              type="button"
               className={AMEND_BUTTON}
-              disabled={!rule.quote.trim()}
-              onClick={() => {
-                // onAmend never rejects: a refusal is shown on the panel.
-                void onAmend({
-                  kind: 'add-constraint',
-                  constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
-                }).then((amended) => {
-                  if (amended) setRule({ quote: '', kind: rule.kind });
-                });
-              }}
+              disabled={busy || !rule.quote.trim()}
+              onClick={() =>
+                onAmend(
+                  {
+                    kind: 'add-constraint',
+                    constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
+                  },
+                  () => setRule({ quote: '', kind: rule.kind }),
+                )
+              }
             >
               Add rule
             </button>
@@ -1608,10 +1751,12 @@ export function AmendCharterPanel({
                   {role.who} - {role.staysOutOfTheirLaneBy}
                 </span>
                 <button
+                  type="button"
                   className={AMEND_BUTTON}
+                  disabled={busy}
+                  aria-label={`Remove: ${role.who}`}
                   onClick={() =>
-                    // onAmend never rejects: a refusal is shown on the panel.
-                    void onAmend({
+                    onAmend({
                       kind: 'edit-adjacent-role',
                       index,
                       role: { who: '', staysOutOfTheirLaneBy: '' },
@@ -1623,15 +1768,20 @@ export function AmendCharterPanel({
               </div>
             ))}
             <AddLine
-              placeholder="Role - how I stay out of their lane"
-              label="Add"
-              onAdd={(text) => {
+              label="Add a role, as: role - how I stay out of their lane"
+              button="Add"
+              busy={busy}
+              onAdd={(text, clear, input) => {
                 const [who, ...rest] = text.split(' - ');
-                return onAmend({
-                  kind: 'edit-adjacent-role',
-                  index: (body.adjacentRoles ?? []).length,
-                  role: { who: who ?? '', staysOutOfTheirLaneBy: rest.join(' - ') },
-                });
+                onAmend(
+                  {
+                    kind: 'edit-adjacent-role',
+                    index: (body.adjacentRoles ?? []).length,
+                    role: { who: who ?? '', staysOutOfTheirLaneBy: rest.join(' - ') },
+                  },
+                  clear,
+                  input,
+                );
               }}
             />
           </div>
@@ -1647,22 +1797,35 @@ export function AmendCharterPanel({
                   {named.name} ({named.class})
                 </span>
                 <button
+                  type="button"
                   className={AMEND_BUTTON}
-                  onClick={() => void onAmend({ kind: 'remove-system', name: named.name })}
+                  disabled={busy}
+                  aria-label={`Remove: ${named.name}`}
+                  onClick={() => onAmend({ kind: 'remove-system', name: named.name })}
                 >
                   Remove
                 </button>
               </div>
             ))}
             <div className="flex flex-wrap items-center gap-1">
+              <label
+                htmlFor={`${ruleId}-system`}
+                className="basis-full text-[10px] text-[var(--color-muted)]"
+              >
+                Add a system: its name, its kind and where it is used
+              </label>
               <input
+                id={`${ruleId}-system`}
                 className={AMEND_INPUT}
-                placeholder="System name"
+                aria-label="System name"
                 value={system.name}
+                disabled={busy}
                 onChange={(e) => setSystem({ ...system, name: e.target.value })}
               />
               <select
                 className={AMEND_INPUT}
+                aria-label="System kind"
+                disabled={busy}
                 value={system.class}
                 onChange={(e) => setSystem({ ...system, class: e.target.value as SystemClass })}
               >
@@ -1674,19 +1837,20 @@ export function AmendCharterPanel({
               </select>
               <input
                 className={AMEND_INPUT}
-                placeholder="Where it is used, in your words"
+                aria-label="Where it is used, in your words"
                 value={system.whereMentioned}
+                disabled={busy}
                 onChange={(e) => setSystem({ ...system, whereMentioned: e.target.value })}
               />
               <button
+                type="button"
                 className={AMEND_BUTTON}
-                disabled={!system.name.trim() || !system.whereMentioned.trim()}
-                onClick={() => {
-                  // onAmend never rejects: a refusal is shown on the panel.
-                  void onAmend({ kind: 'add-system', system }).then((amended) => {
-                    if (amended) setSystem({ name: '', class: 'other', whereMentioned: '' });
-                  });
-                }}
+                disabled={busy || !system.name.trim() || !system.whereMentioned.trim()}
+                onClick={() =>
+                  onAmend({ kind: 'add-system', system }, () =>
+                    setSystem({ name: '', class: 'other', whereMentioned: '' }),
+                  )
+                }
               >
                 Add system
               </button>

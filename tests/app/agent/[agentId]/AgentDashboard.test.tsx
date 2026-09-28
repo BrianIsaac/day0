@@ -7,28 +7,29 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
   refusals: {} as Record<string, string>,
+  /** What a mutation or action resolves with, by function name; undefined otherwise. */
+  results: {} as Record<string, unknown>,
+  /** Every call made, by function name, with its arguments. */
+  calls: [] as Array<{ name: string; args: unknown }>,
 }));
 
-vi.mock('convex/react', () => ({
-  useQuery: (): undefined => undefined,
-  useMutation:
-    (reference: unknown): (() => Promise<void>) =>
-    async (): Promise<void> => {
-      const refusal = backend.refusals[getFunctionName(reference as never)];
+vi.mock('convex/react', () => {
+  const call =
+    (reference: unknown): ((args?: unknown) => Promise<unknown>) =>
+    async (args?: unknown): Promise<unknown> => {
+      const name = getFunctionName(reference as never);
+      backend.calls.push({ name, args });
+      const refusal = backend.refusals[name];
       if (refusal !== undefined) throw new Error(refusal);
-    },
-  useAction:
-    (reference: unknown): (() => Promise<void>) =>
-    async (): Promise<void> => {
-      const refusal = backend.refusals[getFunctionName(reference as never)];
-      if (refusal !== undefined) throw new Error(refusal);
-    },
-}));
+      return backend.results[name];
+    };
+  return { useQuery: (): undefined => undefined, useMutation: call, useAction: call };
+});
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
@@ -78,6 +79,7 @@ import {
   mount,
   press,
   said,
+  settle,
   typeInto,
 } from '../../../fixtures/dom/press';
 import {
@@ -1683,7 +1685,7 @@ describe('amending an approved charter from the card', (): void => {
 
   it('offers every typed change: the function, each clause list, the open questions, a rule and the systems', (): void => {
     const markup = renderToStaticMarkup(
-      <AmendCharterPanel charter={charter} body={body} error={null} onAmend={async () => true} />,
+      <AmendCharterPanel charter={charter} body={body} busy={false} onAmend={() => undefined} />,
     );
     expect(markup).toContain('next version v0.2');
     expect(markup).toContain('value="Own routine revenue operations work from Linear tickets."');
@@ -1701,7 +1703,7 @@ describe('amending an approved charter from the card', (): void => {
 
   it("offers no approval chain of its own: the manager is the agent row's, changed from the header (U9 D3 (b))", (): void => {
     const panel = renderToStaticMarkup(
-      <AmendCharterPanel charter={charter} body={body} error={null} onAmend={async () => true} />,
+      <AmendCharterPanel charter={charter} body={body} busy={false} onAmend={() => undefined} />,
     );
     expect(panel.toLowerCase()).not.toMatch(/approval chain|approver|who approves/);
     const card = renderToStaticMarkup(
@@ -1710,16 +1712,40 @@ describe('amending an approved charter from the card', (): void => {
     expect(card).toContain('ana@kestrel.example, the manager named in the header; change it there');
   });
 
-  it('shows the refusal the backend returned', (): void => {
-    const markup = renderToStaticMarkup(
-      <AmendCharterPanel
-        charter={charter}
-        body={body}
-        error="the amendment changes nothing"
-        onAmend={async () => false}
-      />,
+  it("says the backend's refusal in the card's live region, with the panel closed or open, and keeps focus on the control", async (): Promise<void> => {
+    backend.refusals = {
+      'charters:amend': `[CONVEX M(charters:amend)] [Request ID: 1] Server Error\nUncaught Error: the amendment changes nothing\n    at handler (../convex/charters.ts:1:1)`,
+    };
+    const view = mount(<CharterCard charter={{ ...charter, body }} />);
+    await press(view.container, 'Remove: Linear');
+
+    expect(said(view.container)).toEqual(['the amendment changes nothing']);
+    expect(focusedName()).toBe('Remove: Linear');
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it('says the new version once an amendment lands, and empties the field it came from', async (): Promise<void> => {
+    const view = mount(<CharterCard charter={{ ...charter, body }} />);
+    const field = [...view.container.querySelectorAll<HTMLLabelElement>('label')].find(
+      (label) => label.textContent === 'Add to escalation triggers',
+    )?.control as HTMLInputElement | null;
+    if (!field) throw new Error('no field labelled for the escalation triggers');
+    typeInto(field, 'A close figure moves by more than 5 points.');
+    const add = [...view.container.querySelectorAll('button')].find(
+      (candidate) =>
+        candidate.textContent === 'Add' && candidate.parentElement?.contains(field) === true,
     );
-    expect(markup).toContain('the amendment changes nothing');
+    add?.focus();
+    await act(async (): Promise<void> => {
+      add?.click();
+    });
+    await settle();
+
+    expect(said(view.container)).toEqual(['Charter amended: version 0.2 is the one in force.']);
+    expect(field.value).toBe('');
+    expect(document.activeElement).toBe(field);
+    view.unmount();
   });
 
   it('is absent from a charter awaiting approval', (): void => {
@@ -2930,5 +2956,101 @@ describe('the header controls say what each change came to and give focus back (
     expect(said(view.container)).toEqual(['That is not an e-mail address.']);
     expect(focusedName()).toBe('Save');
     view.unmount();
+  });
+});
+
+describe('the charter card says what each change came to (step 45, K D6)', (): void => {
+  const draft = {
+    _id: 'charter-1',
+    _creationTime: 1,
+    agentId: 'agent-1',
+    version: '0.1',
+    approved: false,
+    createdAt: 1,
+    body: {
+      whyThisHire: 'Close week.',
+      proposedFunction: 'Own routine revenue operations work from Linear tickets.',
+      shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+      namedCollaborators: [],
+      priorityReading: [],
+      openQuestions: [],
+      constraints: [
+        {
+          kind: 'candidate-property',
+          quote: 'only the close tickets',
+          wording: ['close tickets'],
+          origin: 'manager-said',
+        },
+      ],
+    },
+  } as unknown as Doc<'charters'>;
+
+  beforeEach((): void => {
+    backend.calls = [];
+  });
+
+  afterEach((): void => {
+    backend.refusals = {};
+    backend.results = {};
+    backend.calls = [];
+  });
+
+  it('strikes a rule, says what approval will leave out, and keeps focus on the control', async (): Promise<void> => {
+    backend.results = { 'charters:setConstraintStruck': { ok: true } };
+    const view = mount(<CharterCard charter={draft} />);
+    await press(view.container, 'Strike: only the close tickets');
+
+    expect(backend.calls).toEqual([
+      {
+        name: 'charters:setConstraintStruck',
+        args: { charterId: 'charter-1', index: 0, struck: true },
+      },
+    ]);
+    expect(said(view.container)).toEqual([
+      'Struck “only the close tickets”: approval leaves its clauses out.',
+    ]);
+    expect(focusedName()).toBe('Strike: only the close tickets');
+    view.unmount();
+  });
+
+  it("says the strike the backend refused in the server's own words", async (): Promise<void> => {
+    backend.results = {
+      'charters:setConstraintStruck': { ok: false, reason: 'the rule is the only one on Linear' },
+    };
+    const view = mount(<CharterCard charter={draft} />);
+    await press(view.container, 'Strike: only the close tickets');
+    expect(said(view.container)).toEqual(['the rule is the only one on Linear']);
+    view.unmount();
+  });
+
+  it('approves the charter and says the employee starts, with 44 px decision buttons', async (): Promise<void> => {
+    backend.results = { 'charters:approve': { ok: true } };
+    const view = mount(<CharterCard charter={draft} />);
+    for (const name of ['Approve', 'Request changes']) {
+      expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
+    }
+    await press(view.container, 'Approve');
+    expect(said(view.container)).toEqual([
+      'Charter approved: the employee starts on the work it implies.',
+    ]);
+    view.unmount();
+  });
+
+  it('hands the sent-back sentence to the page, since the card goes with the draft', async (): Promise<void> => {
+    const page: string[] = [];
+    const view = mount(<CharterCard charter={draft} onSentBack={(text) => page.push(text)} />);
+    await press(view.container, 'Request changes');
+    expect(backend.calls.map((entry) => entry.name)).toEqual(['charters:requestChanges']);
+    expect(page).toEqual([
+      'Charter sent back: the 1:1 opens again so the employee can redraft it from what you tell it.',
+    ]);
+    view.unmount();
+  });
+
+  it('lays the 30, 60 and 90-day goals out in one column on a phone', (): void => {
+    expect(renderToStaticMarkup(<CharterCard charter={draft} />)).toContain(
+      'grid grid-cols-1 sm:grid-cols-3',
+    );
   });
 });
