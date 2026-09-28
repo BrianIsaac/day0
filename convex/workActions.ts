@@ -2991,6 +2991,8 @@ async function ticketRereadRefusal(
     /** What this run landed before this invocation; its status changes are Day0's own. */
     earlier: readonly LandedWrite[];
     surfaces: readonly SurfaceRecord[];
+    /** The owner's stored values, removed before a failure is cut to length. */
+    knownValues: readonly string[];
   },
 ): Promise<string | undefined> {
   const { item, surface } = args;
@@ -3064,7 +3066,7 @@ async function ticketRereadRefusal(
   } catch (error) {
     return withheldBeforeFirstWrite(
       ticket,
-      safeFailureMessage(error, bearer, 'the read failed'),
+      safeFailureMessage(error, bearer, 'the read failed', 300, args.knownValues),
       true,
     );
   } finally {
@@ -3102,6 +3104,7 @@ async function ticketReread(
     /** The rows this auto phase parks for the manager: asked about, never sent here. */
     deferredIndexes: readonly number[];
     surfaces: readonly SurfaceRecord[];
+    knownValues: readonly string[];
   },
 ): Promise<TicketReread | undefined> {
   if (SURFACE_MODE !== 'real') return undefined;
@@ -3136,6 +3139,7 @@ async function ticketReread(
         output: args.output,
         earlier,
         surfaces: args.surfaces,
+        knownValues: args.knownValues,
       }).then((reason) => (refusal = reason));
       return await found;
     },
@@ -3271,6 +3275,7 @@ export const applyApprovedActions = internalAction({
         phase: claim.phase,
         deferredIndexes: claim.heldIndexes,
         surfaces,
+        knownValues,
       });
       const run = {
         agentId: claim.agentId,
