@@ -174,7 +174,7 @@ describe('the plain-language action line', (): void => {
         surfaces,
         { replyTarget },
       ),
-    ).toBe('Post to Slack channel C0BSF04TZ19 (in thread): "Covered."');
+    ).toBe('Post in #revops-asks, in another thread: "Covered."');
     expect(
       summariseAction(
         http('POST', '/chat.postMessage', {
@@ -199,6 +199,30 @@ describe('the plain-language action line', (): void => {
     ).toBe('Post to Slack channel C0BSF04TZ19 (in thread): "Covered."');
     expect(summariseAction(http('GET', 'conversations.history'), surfaces)).toBe(
       'GET conversations.history on Slack',
+    );
+  });
+
+  it('quotes a body without JSON escapes, its own quotation marks turned so they cannot close it (U9 step 24)', (): void => {
+    expect(
+      summariseAction(
+        mcp('save_comment', {
+          issueId: 'REVOPS-5',
+          body: 'Filed under "Q3 close" in C:\\reports',
+        }),
+        surfaces,
+      ),
+    ).toBe('Comment on REVOPS-5: "Filed under “Q3 close” in C:\\reports"');
+  });
+
+  it('quotes as much of a body as the caller allows, 120 characters by default', (): void => {
+    const body = 'word '.repeat(60).trim();
+    expect(
+      summariseAction(mcp('save_comment', { issueId: 'REVOPS-5', body }), surfaces, {
+        textLimit: 300,
+      }),
+    ).toBe(`Comment on REVOPS-5: "${body}"`);
+    expect(summariseAction(mcp('save_comment', { issueId: 'REVOPS-5', body }), surfaces)).toBe(
+      `Comment on REVOPS-5: "${excerpt(body)}"`,
     );
   });
 

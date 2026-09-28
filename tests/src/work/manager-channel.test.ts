@@ -116,6 +116,40 @@ describe('manager channel decision requests', (): void => {
     );
   });
 
+  it('names the ask’s channel and thread for a held reply, and quotes a body up to the plan line’s length (U9 step 24)', (): void => {
+    const body = `Pipeline coverage is ${'three point one times, '.repeat(6).trim()}.`;
+    const reply: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0ASKS', thread_ts: '1787746453.202809', text: body }),
+      },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Coverage for standup',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [reply],
+      heldIndexes: [0],
+      surfaces: [slack],
+      item: {
+        sourceCategory: 'inbox',
+        externalId: 'C0ASKS:1787746453.202809',
+        replyTarget: {
+          channel: 'C0ASKS',
+          channelName: 'revops-asks',
+          threadTs: '1787746453.202809',
+        },
+      },
+    });
+    expect(body.length).toBeGreaterThan(120);
+    expect(text).toContain(`1. Reply in #revops-asks thread: "${body}"`);
+    expect(text).not.toContain('C0ASKS (in thread)');
+  });
+
   it('says an approval covers every held action listed, and where to approve some (P5-8)', (): void => {
     const held: MockAction = {
       tool: 'mcp.call',

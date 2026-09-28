@@ -23,6 +23,12 @@ export type { ReplyTarget };
 export interface SummaryContext {
   /** Where a reply to the work item's source belongs, when it came from a chat thread. */
   replyTarget?: ReplyTarget;
+  /**
+   * How much of a comment or message body the line quotes; `SUMMARY_TEXT_LIMIT`
+   * by default. A request that is read on its own, such as the manager's
+   * Slack request, quotes more (U9 step 24).
+   */
+  textLimit?: number;
 }
 
 /** How much of a comment or message body the line quotes. */
@@ -94,8 +100,23 @@ function label(text: string, limit = 80): string {
 }
 
 /** Quote body text so it cannot visually continue the action grammar. */
-function quote(text: string): string {
-  return JSON.stringify(excerpt(text));
+function quote(text: string, limit = SUMMARY_TEXT_LIMIT): string {
+  return inQuotes(excerpt(text, limit));
+}
+
+/**
+ * Wrap text already on one line in quotation marks, turning its own `"` into
+ * typographic ones in pairs so none can close the quote early. Not JSON: a
+ * reader sees the text as written, with no backslash escapes (P8-6).
+ */
+function inQuotes(text: string): string {
+  let opening = true;
+  const inner = text.replace(/"/g, (): string => {
+    const mark = opening ? '“' : '”';
+    opening = !opening;
+    return mark;
+  });
+  return `"${inner}"`;
 }
 
 function fieldList(keys: readonly string[]): string {
@@ -169,7 +190,7 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
         const shownValue = CREDENTIAL_FIELD.test(fieldName)
           ? '[credential]'
           : excerpt(String(value), 60);
-        return [`${label(fieldName, 40)} to ${JSON.stringify(shownValue)}`];
+        return [`${label(fieldName, 40)} to ${inQuotes(shownValue)}`];
       });
       if (set.length === 0) return undefined;
       const shown = set.slice(0, BROWSER_FIELD_LIMIT);
@@ -186,7 +207,7 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
       const text = firstString(args, ['text']);
       if (!element || text === undefined) return undefined;
       const shownValue = CREDENTIAL_FIELD.test(element) ? '[credential]' : excerpt(text, 60);
-      return `Set ${label(element, 40)} to ${JSON.stringify(shownValue)} on ${name}`;
+      return `Set ${label(element, 40)} to ${inQuotes(shownValue)} on ${name}`;
     }
     case 'browser_select_option': {
       const values = Array.isArray(args.values)
@@ -206,6 +227,7 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
 function describeMcpCall(
   parsed: Extract<ParsedSurfaceAction, { kind: 'mcp.call' }>,
   surfaces: readonly SurfaceRecord[],
+  limit: number,
 ): string {
   const name = surfaceName(parsed.surface, surfaces);
   const args = parsed.toolArgs;
@@ -219,7 +241,7 @@ function describeMcpCall(
   if (/^save_comment$/i.test(parsed.tool) || (/comment/i.test(noun) && text !== undefined)) {
     const commentId = firstString(args, ['id']);
     const target = firstString(args, ['issueId', 'issue_id', 'issue', 'ticketId', 'ticket']);
-    const quoted = text === undefined ? '' : `: ${quote(text)}`;
+    const quoted = text === undefined ? '' : `: ${quote(text, limit)}`;
     if (commentId) {
       return `Edit comment ${label(commentId)} on ${name}${target ? ` for ${label(target)}` : ''}${quoted}`;
     }
@@ -247,7 +269,7 @@ function describeMcpCall(
     const title = firstString(args, ['title', 'name']);
     const createFields = Object.keys(args).filter((key) => key !== 'title' && key !== 'name');
     const extras = createFields.length ? `; also set ${fieldList(createFields)}` : '';
-    return `Create ${label(noun)} on ${name}${title ? `: ${quote(title)}` : ''}${extras}`;
+    return `Create ${label(noun)} on ${name}${title ? `: ${quote(title, limit)}` : ''}${extras}`;
   }
   if (READ_VERB.test(verb) && noun) {
     return `Read ${label(noun)}${ref ? ` ${label(ref)}` : ''} on ${name}`;
@@ -258,7 +280,7 @@ function describeMcpCall(
     return `List ${label(noun)} on ${name}${scope ? ` (${label(scope)})` : ''}`;
   }
   if (/^(?:create|add|post)$/i.test(verb) && noun) {
-    return `Create ${label(noun)} on ${name}${text ? `: ${quote(text)}` : ''}`;
+    return `Create ${label(noun)} on ${name}${text ? `: ${quote(text, limit)}` : ''}`;
   }
   if (/^(?:delete|remove|archive)$/i.test(verb) && noun) {
     return `${verb[0].toUpperCase()}${verb.slice(1)} ${label(noun)}${ref ? ` ${label(ref)}` : ''} on ${name}`;
@@ -282,7 +304,7 @@ function describeHttpRequest(
     text !== undefined;
   if (isChatPost) {
     const channel = targetChannel(parsed);
-    const quoted = `: ${quote(text)}`;
+    const quoted = `: ${quote(text, context.textLimit)}`;
     const extraFields = Object.keys(body ?? {}).filter(
       (key) =>
         key !== 'text' &&
@@ -296,15 +318,15 @@ function describeHttpRequest(
     }
     const threadTs = body ? firstString(body, ['thread_ts']) : undefined;
     const target = context.replyTarget;
-    // The ask's own channel reads as a reply to it; anything else stays the
-    // channel id the payload names, so the line never claims a thread it is
-    // not in.
+    // The ask's own channel reads by its name, and as a reply to the ask only
+    // in the ask's own thread, so the line never claims a thread it is not
+    // in; a channel whose name is not known stays the id the payload names.
     if (target && channel === target.channel && target.channelName) {
       const where = `#${label(target.channelName)}`;
-      if (threadTs !== undefined && threadTs === target.threadTs) {
-        return `Reply in ${where} thread${quoted}${extras}`;
-      }
       if (threadTs === undefined) return `Post in ${where}${quoted}${extras}`;
+      return threadTs === target.threadTs
+        ? `Reply in ${where} thread${quoted}${extras}`
+        : `Post in ${where}, in another thread${quoted}${extras}`;
     }
     const thread = threadTs !== undefined ? ' (in thread)' : '';
     return `Post to ${name} channel ${channel ? label(channel) : '(unknown)'}${thread}${quoted}${extras}`;
@@ -334,7 +356,7 @@ export function summariseAction(
     const parsed = parseSurfaceAction(action);
     if (parsed.ok) {
       return parsed.action.kind === 'mcp.call'
-        ? describeMcpCall(parsed.action, surfaces)
+        ? describeMcpCall(parsed.action, surfaces, context.textLimit ?? SUMMARY_TEXT_LIMIT)
         : describeHttpRequest(parsed.action, surfaces, context);
     }
     const tool =

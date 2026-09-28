@@ -1,4 +1,4 @@
-import { summariseAction } from '../surfaces/summary';
+import { summariseAction, type SummaryContext } from '../surfaces/summary';
 import type { SurfaceRecord } from '../surfaces/types';
 import type { MockAction } from './types';
 
@@ -292,9 +292,15 @@ export function decisionRequestText(args: {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
   const reply = `Reply “approve ${args.id}” or “reject ${args.id} <reason>”.`;
+  // A request is read on its own, so its action lines name the ask's channel
+  // and quote a body as far as a plan line does (U9 step 24).
+  const summary: SummaryContext = {
+    ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
+    textLimit: PLAN_LINE_MAX_CHARS,
+  };
   const refused =
     args.kind === 'actions'
-      ? refusedLines(args.refused ?? [], args.actions ?? [], args.surfaces ?? [])
+      ? refusedLines(args.refused ?? [], args.actions ?? [], args.surfaces ?? [], summary)
       : [];
   let listHeading: string;
   let lines: string[];
@@ -312,7 +318,7 @@ export function decisionRequestText(args: {
       : 'Held actions:';
     lines = held.map(
       (index, position) =>
-        `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
+        `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [], summary)}`,
     );
     if (lines.length === 0) lines = ['1. Review the held actions in day0.'];
     noun = 'held actions';
@@ -352,7 +358,11 @@ export interface DecisionRequestItem {
   /** The provider's link to the item: the ticket, or the ask's message. */
   readonly link?: string;
   /** Where the answer to a chat ask goes: the ask's channel and thread. */
-  readonly replyTarget?: { readonly channel: string; readonly channelName?: string };
+  readonly replyTarget?: {
+    readonly channel: string;
+    readonly channelName?: string;
+    readonly threadTs?: string;
+  };
 }
 
 /**
@@ -387,13 +397,14 @@ function refusedLines(
   refused: ReadonlyArray<{ readonly index: number; readonly reason: string }>,
   actions: readonly MockAction[],
   surfaces: readonly SurfaceRecord[],
+  context: SummaryContext,
 ): string[] {
   if (refused.length === 0) return [];
   const clip = (line: string): string =>
     line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
   const shown = refused.slice(0, REFUSED_LINES_SHOWN).map(({ index, reason }) => {
     const action = actions[index];
-    const what = action ? summariseAction(action, surfaces) : `action ${index + 1}`;
+    const what = action ? summariseAction(action, surfaces, context) : `action ${index + 1}`;
     return clip(`- ${what} (${oneLine(reason, 'refused')})`);
   });
   const more = refused.length - shown.length;
