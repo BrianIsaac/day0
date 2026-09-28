@@ -365,7 +365,8 @@ describe('the protected volumes and projects', (): void => {
   });
 
   it('guards every volume down --volumes would remove: each the compose file declares', (): void => {
-    expect(projectVolumeNames('day0-p11-abc123')).toEqual([
+    const compose = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
+    expect(projectVolumeNames('day0-p11-abc123', compose)).toEqual([
       'day0-p11-abc123_convex_data',
       'day0-p11-abc123_model_data',
       'day0-p11-abc123_notion_npm_cache',
