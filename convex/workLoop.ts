@@ -18,7 +18,8 @@ import {
   MAX_EVALUATION_ATTEMPTS,
 } from '../src/work/queue-order';
 
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
+import type { EventType } from '../src/events/contract';
 
 /**
  * The server-driven work loop, real mode only.
@@ -55,7 +56,7 @@ export const EXECUTION_STALL_MS = STEP_LEASE_MS + 2 * 60 * 1000;
 export const MAX_DRAFT_RESUMES = 3;
 
 /** The event each restart of a dead draft writes; the cap is counted from it. */
-const DRAFT_RESUMED = 'work.draft-resumed';
+const DRAFT_RESUMED = 'work.draft-resumed' satisfies EventType;
 
 /**
  * A connected chat surface the manager can be asked through and answered from.
@@ -570,14 +571,10 @@ const RESUME_HISTORY = 200;
  *   The restarts counted from the row's latest `work.retry`, or all of them.
  */
 async function draftResumesSinceRetry(ctx: MutationCtx, row: Doc<'workItems'>): Promise<number> {
-  const forRow = async (type: string): Promise<Doc<'events'>[]> =>
-    (
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
-        .order('desc')
-        .take(RESUME_HISTORY)
-    ).filter((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
+  const forRow = async (type: EventType): Promise<Doc<'events'>[]> =>
+    (await eventsOfType(ctx, row.agentId, type).order('desc').take(RESUME_HISTORY)).filter(
+      (event) => (event.payload as { workItemId?: unknown }).workItemId === row._id,
+    );
   const [resumes, retries] = await Promise.all([forRow(DRAFT_RESUMED), forRow('work.retry')]);
   const since = retries[0]?.createdAt ?? Number.NEGATIVE_INFINITY;
   return resumes.filter((event) => event.createdAt > since).length;
