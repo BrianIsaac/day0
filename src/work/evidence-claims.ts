@@ -345,6 +345,12 @@ export function messageTexts(action: MockAction): string[] {
       return typeof args.comment === 'string' && args.comment.trim() ? [args.comment] : [];
     case 'spreadsheet.appendRow':
       return [];
+    default: {
+      // A persisted action may carry a tool no release emits; it carries no message.
+      const unhandled: never = action.tool;
+      void unhandled;
+      return [];
+    }
   }
 }
 

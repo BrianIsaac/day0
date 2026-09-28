@@ -90,7 +90,7 @@ export function smokeTestPreflightReason(
     return 'smoke test must define run(inputs: dict) -> dict';
   }
   if (mode === 'mock' && !/\bprint\s*\(|\bsys\.stdout\.write\s*\(/.test(source)) {
-    return 'smoke test is not valid Python 3.12 source: it must print a success line';
+    return 'smoke test must print a success line';
   }
   return undefined;
 }

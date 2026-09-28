@@ -1021,6 +1021,12 @@ export function replayAuthorityRefusal(
     case 'standing':
     case undefined:
       return grantRefusal(parsed, surface, live.grants, false, revoked);
+    default: {
+      // A persisted row may carry an authority no release wrote; it is refused, never sent.
+      const unhandled: never = authority;
+      void unhandled;
+      return grantRefusal(parsed, surface, live.grants, false, revoked);
+    }
   }
 }
 
