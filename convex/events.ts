@@ -21,6 +21,7 @@ import {
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
 import { EVENT_TYPES } from '../src/events/contract';
+import { eventsOfType } from './eventLog';
 
 /**
  * Events feed — append-only, drives the live UI ticker. The reading side
@@ -73,12 +74,7 @@ export const autonomyChanges = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Array<{ at: number; on: boolean }>> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const events = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) =>
-        q.eq('agentId', args.agentId).eq('type', 'agent.autonomy-changed'),
-      )
-      .collect();
+    const events = await eventsOfType(ctx, args.agentId, 'agent.autonomy-changed').collect();
     return events.map((event) => ({
       at: event.createdAt,
       on: (event.payload as { to?: unknown } | undefined)?.to === true,
