@@ -466,17 +466,19 @@ export function AutonomyConfirm({
   busy?: boolean;
 }) {
   return (
+    // It scales in from the corner that meets the switch it drops from (v3 section 5.2).
     <div
       role="alertdialog"
       aria-modal="true"
       aria-label="Turn on autonomous actions"
+      data-dialog=""
       onKeyDown={(event) => {
         if (!cancelsAutonomyConfirm(event.key, busy)) return;
         event.preventDefault();
         event.stopPropagation();
         onCancel();
       }}
-      className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-80 max-w-[calc(100vw-3rem)] p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
+      className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 origin-top-left sm:origin-top-right w-80 max-w-[calc(100vw-3rem)] p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
     >
       <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
       <p className="mb-3 leading-relaxed">{AUTONOMY_WARNING}</p>

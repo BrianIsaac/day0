@@ -239,6 +239,17 @@ describe('dashboard exact-action gate', (): void => {
     expect(on).not.toContain(AUTONOMY_WARNING);
   });
 
+  it('scales the confirmation in from the corner that meets the switch (v3 section 5.2)', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
+    );
+    const dialog = /<div[^>]*role="alertdialog"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(dialog).toContain('data-dialog=""');
+    // Anchored at its left edge on a phone and its right edge beside the switch from `sm` up.
+    expect(dialog).toMatch(/\bleft-0\b[^"]*\borigin-top-left\b/);
+    expect(dialog).toMatch(/\bsm:right-0\b[^"]*\bsm:origin-top-right\b/);
+  });
+
   it("renders the confirmation with the warning in the operator's words and its two buttons", (): void => {
     const html = renderToStaticMarkup(
       createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
