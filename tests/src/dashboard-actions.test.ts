@@ -127,11 +127,16 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
     expect(html).not.toMatch(/<details[^>]*open/);
     expect(html).toContain('{{secret}}');
-    expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 1" checked=""/);
-    expect(html).toMatch(/<input type="checkbox"[^>]*disabled="" aria-label="approve action 2"\/>/);
+    // Each box is named for its row, not its position, so a screen reader hears what it approves.
+    expect(html).toMatch(
+      /<input type="checkbox"[^>]*aria-label="approve: Send Sam a Slack DM: &quot;Draft ready\.&quot;" checked=""/,
+    );
+    expect(html).toMatch(
+      /<input type="checkbox"[^>]*disabled="" aria-label="approve: Post to Slack channel C0PUBLIC[^"]*"\/>/,
+    );
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
-    expect(html).not.toMatch(/approve action 2"[^]*?reject this action/);
+    expect(html).not.toMatch(/approve: Post to Slack channel C0PUBLIC[^]*?reject this action/);
   });
 
   it('lists only the rows that need the manager and says how many applied on their own', (): void => {
@@ -172,8 +177,10 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toContain('Read issue REVOPS-10');
     expect(html).not.toContain('Send Sam a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
-    expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 3" checked=""/);
-    expect(html).not.toMatch(/aria-label="approve action 1"/);
+    expect(html).toMatch(
+      /<input type="checkbox"[^>]*aria-label="approve: Reply in #revops-asks thread: &quot;Covered\.&quot;" checked=""/,
+    );
+    expect(html).not.toMatch(/aria-label="approve: Read issue REVOPS-10/);
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
     expect(pendingHeadline(verdicts)).toBe(
@@ -616,7 +623,10 @@ describe('the cross-item approval panel', (): void => {
         onApproveBatch: vi.fn(async (): Promise<void> => {}),
       }),
     );
-    expect(html).toBe('');
+    // Nothing to see, only the live region that says what the last batch came to.
+    expect(html).toBe(
+      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-[11px] leading-snug text-[var(--color-muted)]"></p>',
+    );
   });
 });
 

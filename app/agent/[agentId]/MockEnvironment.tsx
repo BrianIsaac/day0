@@ -152,7 +152,10 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
           surfaces behind a gesture nothing on the page suggests, and the two
           it hid here - Twitter and Tickets - are two fifths of the environment
           the agent works in. */}
-      <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
+      <nav
+        aria-label="Work environment"
+        className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]"
+      >
         {tabs.map((t) => {
           const isActive = displayedActive === t.key;
           const count = counts[t.key];
@@ -160,8 +163,10 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
           return (
             <button
               key={t.key}
+              type="button"
+              aria-pressed={isActive}
               onClick={() => setActive(t.key)}
-              className={`px-3 py-2 rounded-t-md text-xs flex items-center gap-1.5 transition border-b-2 ${
+              className={`min-h-11 px-3 py-2 rounded-t-md text-xs flex items-center gap-1.5 transition border-b-2 ${
                 isActive
                   ? 'border-[var(--color-accent)] text-[var(--color-fg)] bg-[var(--color-bg)]'
                   : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
@@ -191,7 +196,13 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
 
       {/* The panel carries the id the card links name, so `#surfaces` scrolls
           here as well as selecting the tab above. */}
-      <div id={PANEL_ID} className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
+      <div
+        id={PANEL_ID}
+        tabIndex={0}
+        role="region"
+        aria-label={`${tabs.find((tab) => tab.key === displayedActive)?.label ?? 'Environment'} tab`}
+        className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto"
+      >
         {displayedActive === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
         {/* The four below are mock-only, so they are never reached with a real
             deployment mode and take none. */}

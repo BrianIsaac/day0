@@ -98,7 +98,18 @@ const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [] };
 interface Retired {
   readonly rowCounts: Record<string, number>;
   readonly boundCredentials: ReadonlySet<Id<'credentials'>>;
+  /** The employee's id and every row id deleted with it, for the jobs that name them. */
+  readonly deletedIds: ReadonlySet<string>;
 }
+
+/**
+ * The newest scheduled-function records a reset reads for jobs it cancels.
+ * The backend keeps finished records for a week beside the pending ones, so
+ * this is far past a team deployment's queue. A pending job older than the
+ * window still runs against a missing row: most steps end as a no-op, and a
+ * few (`work.setFailed`, `work.decidePlan`) throw into the backend log.
+ */
+const SCHEDULED_JOB_SCAN_LIMIT = 4_000;
 
 /**
  * The credentials one employee's surfaces bind: the connection credential and
@@ -247,6 +258,7 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
     .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
     .collect();
   const rowCounts: Record<string, number> = {};
+  const deletedIds = new Set<string>([agent._id]);
   const tableDeletions: Array<Promise<unknown>> = [];
   for (const tableName of AGENT_KEYED_TABLES) {
     const rows = await ctx.db
@@ -254,11 +266,55 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
       .filter((q) => q.eq(q.field('agentId'), agent._id))
       .collect();
     if (rows.length > 0) rowCounts[tableName] = rows.length;
-    for (const row of rows) tableDeletions.push(ctx.db.delete(row._id));
+    for (const row of rows) {
+      deletedIds.add(row._id);
+      tableDeletions.push(ctx.db.delete(row._id));
+    }
   }
   await Promise.all(tableDeletions);
   await ctx.db.delete(agent._id);
-  return { rowCounts, boundCredentials: credentialsBoundBy(surfaces) };
+  return { rowCounts, boundCredentials: credentialsBoundBy(surfaces), deletedIds };
+}
+
+/**
+ * Whether a scheduled job's arguments make it a retired employee's: they name
+ * a row the reset deleted, and no surviving employee through `agentId` (a
+ * colleague's wake keyed on a retired claim is still the colleague's).
+ *
+ * @param args - The job's arguments.
+ * @param deletedIds - The ids the reset deleted.
+ */
+function namesDeletedRow(args: readonly unknown[], deletedIds: ReadonlySet<string>): boolean {
+  return args.some((arg: unknown): boolean => {
+    if (typeof arg !== 'object' || arg === null) return false;
+    const fields = arg as Record<string, unknown>;
+    if (typeof fields.agentId === 'string' && !deletedIds.has(fields.agentId)) return false;
+    return Object.values(fields).some(
+      (value: unknown) => typeof value === 'string' && deletedIds.has(value),
+    );
+  });
+}
+
+/**
+ * Cancel every pending job that is a retired employee's: an evaluation, a
+ * draft, an apply's recovery, a probe or a note scheduled ahead of time for
+ * it would otherwise run against nothing (P4-7).
+ *
+ * @param ctx - The reset's mutation context.
+ * @param deletedIds - The ids the reset deleted.
+ * @returns How many jobs were cancelled.
+ */
+async function cancelJobsFor(ctx: MutationCtx, deletedIds: ReadonlySet<string>): Promise<number> {
+  if (deletedIds.size === 0) return 0;
+  const recent = await ctx.db.system
+    .query('_scheduled_functions')
+    .order('desc')
+    .take(SCHEDULED_JOB_SCAN_LIMIT);
+  const doomed = recent.filter(
+    (job) => job.state.kind === 'pending' && namesDeletedRow(job.args, deletedIds),
+  );
+  await Promise.all(doomed.map((job) => ctx.scheduler.cancel(job._id)));
+  return doomed.length;
 }
 
 /**
@@ -347,6 +403,9 @@ async function revokeUnbound(
  * claim, write and plan still meet them, and releases its other claims;
  * retiring every employee lets both go.
  *
+ * Every pending job whose arguments name a deleted row is cancelled, so
+ * nothing scheduled ahead of time for a retired employee runs afterwards.
+ *
  * Owner-level documentation and credentials outlive a plain reset. With
  * `alsoUnlinkDocumentation` every owned source is unlinked and every owned
  * credential is revoked with its ciphertext deleted; the credential rows
@@ -382,6 +441,10 @@ export const deleteMyData = mutation({
     }
     const retired = new Map<Id<'agents'>, Retired>();
     for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
+    await cancelJobsFor(
+      ctx,
+      new Set([...retired.values()].flatMap((entry) => [...entry.deletedIds])),
+    );
     // Unlinked before the retire counts, so a credential the unlink purges is
     // counted revoked rather than kept for a source that is gone.
     const unlinkedSources = args.alsoUnlinkDocumentation

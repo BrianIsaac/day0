@@ -95,6 +95,20 @@ describe('MockEnvironment caption and tabs', (): void => {
   });
 });
 
+describe('the tab strip and the panel for a keyboard and a screen reader (step 45, P10-4)', (): void => {
+  it('marks the selected tab in words, not colour alone, gives each tab a 44 px target and names the panel', (): void => {
+    queries.mode = 'real';
+    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
+    expect(markup).toMatch(/<nav aria-label="Work environment"/);
+    const tabs = [
+      ...markup.matchAll(/<button type="button" aria-pressed="(true|false)" class="([^"]*)"/g),
+    ];
+    expect(tabs.map((tab) => tab[1])).toEqual(['true', 'false']);
+    for (const tab of tabs) expect(tab[2]).toMatch(/\bmin-h-11\b/);
+    expect(markup).toMatch(/<div id="surfaces" tabindex="0" role="region" aria-label="Docs tab"/);
+  });
+});
+
 describe('the hash links the work cards carry', (): void => {
   // Resolved by path: under jsdom, Vite rewrites `new URL(path, import.meta.url)`
   // into a served asset address rather than a file.

@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { focusedName, mount, press, said } from '../../fixtures/dom/press';
 
 const state = vi.hoisted(() => ({
   sources: [] as Array<Record<string, unknown>>,
@@ -186,10 +187,11 @@ describe('a source action the backend refuses', (): void => {
     pageCount: 2,
   };
 
+  // Unlink is destructive, so it asks once more before it sends (P6-7).
   it.each([
-    ['Re-sync', 'docSources:resync'],
-    ['Unlink', 'docSources:unlink'],
-  ])('shows why %s was refused on the page', async (label, name): Promise<void> => {
+    ['Re-sync', 'docSources:resync', []],
+    ['Unlink', 'docSources:unlink', ['Confirm unlink']],
+  ])('shows why %s was refused on the page', async (label, name, confirm): Promise<void> => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     state.sources = [source];
     state.refusals = {
@@ -200,16 +202,78 @@ describe('a source action the backend refuses', (): void => {
     const root = createRoot(container);
     act((): void => root.render(<DocumentationPage />));
 
-    const button = [...container.querySelectorAll('button')].find(
-      (candidate) => candidate.textContent === label,
-    );
-    await act(async (): Promise<void> => {
-      button?.click();
-    });
+    for (const step of [label, ...confirm]) {
+      const button = [...container.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent === step,
+      );
+      expect(button).toBeDefined();
+      await act(async (): Promise<void> => {
+        button?.click();
+      });
+    }
 
-    expect(container.textContent).toContain('Documentation source not found.');
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      'Documentation source not found.',
+    );
     expect(container.textContent).not.toContain('Request ID');
     act((): void => root.unmount());
     container.remove();
+  });
+});
+
+describe('the linked sources for a keyboard and a screen reader (step 45, P6-7)', (): void => {
+  const source = {
+    _id: 'source-1',
+    label: 'RevOps handbook',
+    kind: 'folder',
+    locator: '.',
+    status: 'synced',
+    pageCount: 2,
+  };
+
+  it('asks before Unlink with focus on Keep, returns focus to Unlink on Keep, and says what an unlink did', async (): Promise<void> => {
+    state.sources = [source];
+    const view = mount(<DocumentationPage />);
+    await press(view.container, `Unlink ${source.label}`);
+    expect(focusedName()).toBe('Keep it linked');
+    await press(view.container, 'Keep it linked');
+    expect(focusedName()).toBe(`Unlink ${source.label}`);
+
+    await press(view.container, `Unlink ${source.label}`);
+    await press(view.container, 'Confirm unlink');
+    expect(said(view.container)).toEqual([
+      `Unlinked ${source.label}: its pages leave every employee's reading.`,
+    ]);
+    view.unmount();
+  });
+
+  it("keeps a refused revoke's confirmation open with focus on it, and returns to Revoke once one lands", async (): Promise<void> => {
+    state.sources = [{ ...source, credentialId: 'credential-1' }];
+    state.refusals = {
+      'credentials:revoke': `[CONVEX M(credentials:revoke)] [Request ID: 1] Server Error\nUncaught Error: Credential is already revoked.\n    at handler (../convex/credentials.ts:1:1)`,
+    };
+    const view = mount(<DocumentationPage />);
+    await press(view.container, `Revoke the secret for ${source.label}`);
+    await press(view.container, 'Confirm revoke');
+    expect(said(view.container)).toEqual(['Credential is already revoked.']);
+    expect(focusedName()).toBe('Confirm revoke');
+
+    state.refusals = {};
+    await press(view.container, 'Confirm revoke');
+    expect(view.container.querySelector('[role="group"]')).toBeNull();
+    expect(focusedName()).toBe(`Revoke the secret for ${source.label}`);
+    view.unmount();
+  });
+
+  it('labels every field of the link form in the page, and gives each control a 44 px target', (): void => {
+    state.sources = [source];
+    const view = mount(<DocumentationPage />);
+    for (const id of ['source-kind', 'source-label', 'source-locator']) {
+      expect(view.container.querySelector(`label[for="${id}"]`)?.textContent).not.toBe('');
+    }
+    for (const control of view.container.querySelectorAll('button, input, select')) {
+      expect(control.className).toMatch(/\bmin-h-11\b/);
+    }
+    view.unmount();
   });
 });

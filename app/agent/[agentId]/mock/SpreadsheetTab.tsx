@@ -39,20 +39,22 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
 
   return (
     <div className="space-y-3 h-full flex flex-col">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold">{sheet?.title ?? '…'}</h3>
           <p className="text-[10px] text-[var(--color-muted)]">slug: {activeSlug}</p>
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {sheets.map((s) => (
             <button
               key={s._id}
+              type="button"
+              aria-pressed={s.slug === activeSlug}
               onClick={() => {
                 setPickedSlug(s.slug);
                 setPickedTab(null);
               }}
-              className={`text-[10px] px-2 py-1 rounded ${
+              className={`min-h-11 text-[10px] px-2 py-1 rounded ${
                 s.slug === activeSlug
                   ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
                   : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
@@ -65,12 +67,14 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
       </div>
 
       {sheet ? (
-        <div className="flex border-b border-[var(--color-border)] gap-1">
+        <div className="flex flex-wrap border-b border-[var(--color-border)] gap-1">
           {sheet.tabs.map((t) => (
             <button
               key={t.name}
+              type="button"
+              aria-pressed={t.name === activeTab}
               onClick={() => setPickedTab(t.name)}
-              className={`text-xs px-3 py-1.5 border-b-2 -mb-px ${
+              className={`min-h-11 text-xs px-3 py-1.5 border-b-2 -mb-px ${
                 t.name === activeTab
                   ? 'border-[var(--color-accent)] text-[var(--color-fg)]'
                   : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
@@ -85,7 +89,12 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
         </div>
       ) : null}
 
-      <div className="overflow-auto rounded-md border border-[var(--color-border)] flex-1">
+      <div
+        tabIndex={0}
+        role="region"
+        aria-label={`${sheet?.title ?? 'Sheet'}${activeTab ? `, ${activeTab}` : ''}`}
+        className="overflow-auto rounded-md border border-[var(--color-border)] flex-1"
+      >
         <table className="w-full text-xs">
           <thead className="bg-[var(--color-bg)] sticky top-0">
             <tr>

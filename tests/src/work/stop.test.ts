@@ -304,3 +304,33 @@ describe('a refused read-back sent as GET with a body is dropped, not a stop (19
     );
   });
 });
+
+describe('a gate refusal stop, scrubbed like every failure path (step 42)', (): void => {
+  it('never carries a token the refused row quoted in its path', (): void => {
+    const token = 'xoxb-1234567890-abcdefghij';
+    const post: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: `/chat.postMessage?token=${token}`,
+        headersJson: '{}',
+        body: '{}',
+      },
+    };
+    const reason = gateRefusalStop(
+      [post],
+      [
+        {
+          tool: 'http.request',
+          ok: false,
+          reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
+          idempotencyKey: 'k:0',
+        },
+      ],
+    );
+    expect(reason).toContain("Day0's gate refused 1 of 1 actions");
+    expect(reason).toContain('POST /chat.postMessage?token=');
+    expect(reason).not.toContain(token);
+  });
+});

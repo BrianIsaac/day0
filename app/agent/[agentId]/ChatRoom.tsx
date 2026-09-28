@@ -8,6 +8,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { INIT_PROMPT, managerReplies } from '@/agent/day-one-turn';
 import { postCharterSynthesis } from './charter-synthesis';
+import { refusalText } from './live-status';
 import { ROOM_HEIGHT } from './room-frame';
 
 function textOf(message: UIMessage): string {
@@ -173,7 +174,8 @@ export function ReplyInput({
       disabled={disabled}
       placeholder={placeholder}
       aria-label="Your reply"
-      className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm disabled:opacity-50"
+      enterKeyHint="send"
+      className="min-h-11 min-w-0 flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm disabled:opacity-50"
     />
   );
 }
@@ -186,7 +188,7 @@ export function FinishControl({ disabled, onFinish }: { disabled: boolean; onFin
       onClick={onFinish}
       disabled={disabled}
       title="End the 1:1 and draft the charter from what you have said so far"
-      className="px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+      className="min-h-11 px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
     >
       Finish
     </button>
@@ -204,8 +206,9 @@ export function TurnFailureNotice({
     <div role="alert" className="flex items-center gap-3 text-[var(--color-warn)] text-xs">
       <span className="italic">{failure.replace(/\.$/, '')}.</span>
       <button
+        type="button"
         onClick={onAskAgain}
-        className="px-2 py-1 rounded-md border border-[var(--color-warn)]/60 hover:bg-[var(--color-warn)]/10 font-medium"
+        className="min-h-11 px-3 rounded-md border border-[var(--color-warn)]/60 hover:bg-[var(--color-warn)]/10 font-medium"
       >
         Ask again
       </button>
@@ -239,6 +242,8 @@ export function ChatRoom({
   });
 
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [startFailure, setStartFailure] = useState<string | null>(null);
+  const [startAttempt, setStartAttempt] = useState(0);
   const { messages, sendMessage, regenerate, status } = useChat({
     transport,
     onError: (err) => {
@@ -259,15 +264,23 @@ export function ChatRoom({
   // which is why nothing here has to be latched to keep the count at one.
   useEffect(() => {
     let cancelled = false;
-    startSession({ agentId, mode: 'chat' }).then((started) => {
-      sessionRef.current = started.sessionId;
-      if (!cancelled) sendMessage({ text: INIT_PROMPT });
-    });
+    startSession({ agentId, mode: 'chat' }).then(
+      (started) => {
+        sessionRef.current = started.sessionId;
+        // A turn that fails is reported through useChat's onError, which says it in the room.
+        if (!cancelled) void sendMessage({ text: INIT_PROMPT });
+      },
+      // A 1:1 that could not start says why, with the way to try again,
+      // rather than leaving the composer waiting for an opening that never comes.
+      (err: unknown) => {
+        if (!cancelled) setStartFailure(refusalText(err, 'The 1:1 could not start.'));
+      },
+    );
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the session is asked for once per start attempt; the other values are stable for the room's life
+  }, [startAttempt]);
 
   // Pin transcript to the bottom on every token tick. `useChat` mutates
   // the messages array on every streamed chunk, so the dep covers both
@@ -313,7 +326,8 @@ export function ChatRoom({
     const trimmed = draft.trim().slice(0, REPLY_MAX_CHARS);
     if (!trimmed || composerDisabled) return;
     setStreamError(null);
-    sendMessage({ text: trimmed });
+    // A turn that fails is reported through useChat's onError, which says it in the room.
+    void sendMessage({ text: trimmed });
     setDraft('');
   }
 
@@ -358,14 +372,23 @@ export function ChatRoom({
                 }
                 onSwitchMode();
               }}
-              className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent)] underline underline-offset-2"
+              type="button"
+              className="min-h-11 px-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent)] underline underline-offset-2"
             >
               switch to voice
             </button>
           ) : null}
         </div>
       </header>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 text-sm">
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="log"
+        aria-label="The 1:1 so far"
+        // A turn streams in token by token; the log is read once it is whole.
+        aria-busy={status === 'submitted' || status === 'streaming'}
+        className="flex-1 overflow-y-auto p-4 space-y-3 text-sm"
+      >
         {withoutPrimingTurn(messages).map((m) => (
           <MessageBubble key={m.id} message={m} />
         ))}
@@ -377,11 +400,20 @@ export function ChatRoom({
             conversation complete · drafting your charter…
           </div>
         ) : null}
+        {startFailure ? (
+          <TurnFailureNotice
+            failure={startFailure}
+            onAskAgain={() => {
+              setStartFailure(null);
+              setStartAttempt((attempt) => attempt + 1);
+            }}
+          />
+        ) : null}
         {streamError && !done ? (
           <TurnFailureNotice failure={streamError} onAskAgain={retryTurn} />
         ) : null}
       </div>
-      <div className="border-t border-[var(--color-border)] p-2 flex gap-2">
+      <div className="border-t border-[var(--color-border)] p-2 flex flex-wrap gap-2">
         <ReplyInput
           value={draft}
           onChange={setDraft}
@@ -392,9 +424,10 @@ export function ChatRoom({
           }
         />
         <button
+          type="button"
           onClick={send}
           disabled={composerDisabled || !draft.trim()}
-          className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
+          className="min-h-11 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
         >
           Send
         </button>
@@ -442,6 +475,8 @@ export function emphasisSegments(text: string): { text: string; strong: boolean 
 function MessageBubble({ message }: { message: UIMessage }) {
   return (
     <div className={message.role === 'user' ? 'text-right' : ''}>
+      {/* The side and the colour say who spoke to a sighted reader; this says it to everyone else. */}
+      <span className="sr-only">{message.role === 'user' ? 'You: ' : 'Employee: '}</span>
       {message.parts.map((part, i) => {
         if (part.type === 'text') {
           return (

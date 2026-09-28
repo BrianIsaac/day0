@@ -16,6 +16,7 @@ import {
   dependentTransitionRefusal,
   findMatchingSkillForCandidate,
   prerequisiteOutput,
+  rereadFailure,
   thisRunWrites,
   validatePlanStepOutcomes,
 } from '../../convex/workActions';
@@ -147,6 +148,8 @@ const recorded = vi.hoisted(() => ({
   planFailure: undefined as unknown,
   /** Thrown by every skill run while set, instead of returning an output. */
   skillFailure: undefined as unknown,
+  /** Thrown by every closing-phase authoring while set, instead of returning an output. */
+  dependentFailure: undefined as unknown,
   /** Every message the manager-question judgement was asked about, as its prompt. */
   questionJudgements: [] as string[],
   /** Set to make the manager-question judgement unavailable. */
@@ -588,6 +591,7 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
       recorded.dependentLedgers.push([...(args.initialLedger ?? [])]);
+      if (recorded.dependentFailure !== undefined) throw recorded.dependentFailure;
       const queued = recorded.dependentOutputs.shift();
       if (queued) return queued;
       recorded.dependentGroundingReads.push(args.groundingReads);
@@ -795,6 +799,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 afterEach((): void => {
   recorded.planFailure = undefined;
   recorded.skillFailure = undefined;
+  recorded.dependentFailure = undefined;
   recorded.questionJudgements.length = 0;
   recorded.questionJudgementFails = false;
   recorded.scopeJudgementFails = false;
@@ -8654,5 +8659,129 @@ describe('a write to a ticket no work item was discovered from (P8-2)', (): void
       decision: 'skip',
       reason: expect.stringContaining('Priya holds it (Add the close-summary audit note)'),
     });
+  });
+});
+
+describe('an execution failure on its way to the card (step 42, C-10)', (): void => {
+  /** A provider error that echoes the header it was sent, with the stack a client library appends. */
+  const ECHOED = new Error(
+    '401 Unauthorized: invalid header Authorization: Bearer sk-live-7f3a9c2e1b4d6f8a0c2e4b6d\n    at OpenAIClient.request (node_modules/openai/core.js:412:15)',
+  );
+
+  it('stores and returns one scrubbed line, never the header or the stack', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    recorded.skillFailure = ECHOED;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'mock');
+
+    const returned = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
+    const failed = await readItem(harness, workItemId);
+
+    expect(failed.state).toBe('failed');
+    for (const said of [failed.skipReason ?? '', returned.reason ?? '']) {
+      expect(said).toContain('401 Unauthorized');
+      expect(said).not.toContain('sk-live-7f3a9c2e1b4d6f8a0c2e4b6d');
+      expect(said).not.toContain('node_modules');
+    }
+  });
+
+  it('gives the resume ladder and the caller the same scrubbed line in real mode', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    recorded.skillFailure = ECHOED;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+
+    const returned = await harness.action(internal.workActions.executeApprovedPlanInternal, {
+      workItemId,
+    });
+
+    expect(returned.reason).toContain('execution will be tried again: 401 Unauthorized');
+    expect(returned.reason).not.toContain('sk-live-7f3a9c2e1b4d6f8a0c2e4b6d');
+    expect(returned.reason).not.toContain('node_modules');
+  });
+
+  it('scrubs a closing phase that fails the same way, on the card and on the kept ledger', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Asking the desk lead.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: log1SecondSittingPhaseOne,
+    };
+    recorded.dependentFailure = ECHOED;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        externalId: sitting4Log1Candidate.externalId,
+        title: sitting4Log1Candidate.title,
+        contentSummary: sitting4Log1Candidate.contentSummary,
+        contentRefs: sitting4Log1Candidate.contentRefs,
+        plan: log1SecondSittingPlan,
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+
+    const returned = await harness.action(internal.workActions.authorDependentActions, {
+      workItemId,
+      runId,
+    });
+    const failed = await readItem(harness, workItemId);
+
+    expect(failed.state).toBe('failed');
+    for (const said of [
+      failed.skipReason ?? '',
+      returned.reason ?? '',
+      JSON.stringify(failed.output),
+    ]) {
+      expect(said).not.toContain('sk-live-7f3a9c2e1b4d6f8a0c2e4b6d');
+      expect(said).not.toContain('node_modules');
+    }
+    expect(failed.skipReason).toContain('401 Unauthorized');
+  });
+
+  it('scrubs a re-read that threw before the closing set, against the owner values too', (): void => {
+    const read: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+    };
+    const failed = rereadFailure(
+      [read, read],
+      new Error(
+        'connect to https://ops:hunter2-owner-pass@tile.internal/mcp refused; token acme-owner-value-91\n    at Socket.emit (node:events:519:28)',
+      ),
+      ['acme-owner-value-91'],
+      5,
+    );
+
+    expect(failed.reason).toMatch(/^could not re-read looker before the closing set: connect to /);
+    expect(failed.reason).not.toContain('hunter2-owner-pass');
+    expect(failed.reason).not.toContain('acme-owner-value-91');
+    expect(failed.reason).not.toContain('node:events');
+    expect(failed).toMatchObject({ at: 5, actions: [read, read], applied: [] });
+  });
+});
+
+describe('a scheduled step whose row a reset deleted (step 47, P4-7)', (): void => {
+  it('ends the evaluation as a no-op instead of throwing into the backend log', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(workItemId);
+    });
+
+    await expect(
+      harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }),
+    ).resolves.toEqual({ decision: 'noop-missing' });
+    await expect(
+      harness.action(internal.workActions.draftPlanInternal, { workItemId }),
+    ).resolves.toMatchObject({ ok: false });
   });
 });

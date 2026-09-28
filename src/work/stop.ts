@@ -139,8 +139,12 @@ export function gateRefusalStop(
   if (!everyRefused) return undefined;
   const landed = applied.filter((row) => row?.ok === true && row.held !== true).length;
   const one = unlanded.length === 1;
+  // The operation is the model's path as authored, and the reason is stored
+  // on the card: both pass the structural floor every failure path does.
   const refused = unlanded
-    .map(({ row, index }) => `${refusedOperation(actions[index], row)} (${row.reason})`)
+    .map(({ row, index }) =>
+      redactTokenShapes(`${refusedOperation(actions[index], row)} (${row.reason})`),
+    )
     .join('; ');
   const stands =
     landed === 0
