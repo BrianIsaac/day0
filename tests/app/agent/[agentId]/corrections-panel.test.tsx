@@ -250,7 +250,7 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
     expect(markup).toContain('the plan comes back to you before anything runs');
     expect(markup).not.toContain('even while autonomous actions are on');
     expect(markup).toContain('aria-label="note for the retry"');
-    expect(markup).toContain('Plan rejection reason');
+    expect(markup).toContain('Plan cancel reason');
   });
 
   it('shows that a rejected plan redraft waits for approval with autonomy on', (): void => {
@@ -300,7 +300,7 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
         feedback={{ reason: 'Comment on the ticket instead.', at: 2, kind: 'plan-rejection' }}
       />,
     );
-    expect(markup).toContain('Plan rejection reason');
+    expect(markup).toContain('Plan cancel reason');
   });
 });
 
