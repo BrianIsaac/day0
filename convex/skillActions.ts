@@ -43,7 +43,7 @@ import { verdictFor as surfaceVerdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
 import { logEvent } from './eventLog';
-import { spanModelFromEnv } from '../src/redaction/client';
+import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { errorMessage } from '../src/lib/errors';

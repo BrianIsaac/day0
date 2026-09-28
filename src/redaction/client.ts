@@ -139,25 +139,3 @@ export class HttpSpanModel implements SpanModel {
     });
   }
 }
-
-/**
- * The span model this deployment is configured with, if any.
- *
- * `DAY0_REDACTOR_URL` names the component as the backend container reaches
- * it (`http://redactor:8000` for the bundled one). Unset means no model: a
- * documentation sync then refuses, and outcomes say the structural grammar was
- * all that protected them.
- *
- * Args:
- *   url: The configured address; defaults to the environment.
- *
- * Returns:
- *   A client, or undefined when nothing is configured.
- */
-export function spanModelFromEnv(
-  url: string | undefined = process.env.DAY0_REDACTOR_URL,
-): SpanModel | undefined {
-  const trimmed = url?.trim();
-  if (!trimmed) return undefined;
-  return new HttpSpanModel(trimmed);
-}

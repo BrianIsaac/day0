@@ -10,7 +10,7 @@ import {
   isScopeUnavailable,
   type EvaluateLookups,
 } from '../src/work/evaluate';
-import { spanModelFromEnv } from '../src/redaction/client';
+import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import {
   candidateRecordRead,
   unreadCandidateRecord,
