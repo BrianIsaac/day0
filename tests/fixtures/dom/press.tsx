@@ -20,11 +20,8 @@ export interface Mounted {
 /**
  * Mount a tree into a fresh container on the document.
  *
- * Args:
- *   node: What to render.
- *
- * Returns:
- *   The mounted tree.
+ * @param node - What to render.
+ * @returns The mounted tree.
  */
 export function mount(node: ReactNode): Mounted {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -46,13 +43,9 @@ export function mount(node: ReactNode): Mounted {
  * The enabled button whose accessible name (its `aria-label`, else its text)
  * is the one given.
  *
- * Args:
- *   scope: Where to look.
- *   name: The name, exactly.
- *
- * Returns:
- *   The button.
- *
+ * @param scope - Where to look.
+ * @param name - The name, exactly.
+ * @returns The button.
  * @throws When no enabled button has that name.
  */
 export function button(scope: ParentNode, name: string): HTMLButtonElement {
@@ -68,9 +61,8 @@ export function button(scope: ParentNode, name: string): HTMLButtonElement {
 /**
  * Focus a button and press it, then let every promise the press started settle.
  *
- * Args:
- *   scope: Where to look.
- *   name: The button's accessible name.
+ * @param scope - Where to look.
+ * @param name - The button's accessible name.
  */
 export async function press(scope: ParentNode, name: string): Promise<void> {
   const target = button(scope, name);
@@ -94,9 +86,8 @@ export async function settle(): Promise<void> {
  * Type a value into a field the way a person does, so React's own change
  * handler sees it.
  *
- * Args:
- *   field: An input or text area.
- *   value: The value it ends with.
+ * @param field - An input or text area.
+ * @param value - The value it ends with.
  */
 export function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const prototype = Object.getPrototypeOf(field) as object;
@@ -110,9 +101,8 @@ export function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: s
 /**
  * Pick an option of a select, then let the change it starts settle.
  *
- * Args:
- *   select: The select.
- *   value: The option's value.
+ * @param select - The select.
+ * @param value - The option's value.
  */
 export async function choose(select: HTMLSelectElement, value: string): Promise<void> {
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
@@ -127,11 +117,8 @@ export async function choose(select: HTMLSelectElement, value: string): Promise<
 /**
  * What the live regions in a scope say, in document order, empty ones left out.
  *
- * Args:
- *   scope: Where to look.
- *
- * Returns:
- *   Each region's text.
+ * @param scope - Where to look.
+ * @returns Each region's text.
  */
 export function said(scope: ParentNode): string[] {
   return [...scope.querySelectorAll('[aria-live], [role="status"], [role="alert"]')]
@@ -143,8 +130,7 @@ export function said(scope: ParentNode): string[] {
  * The accessible name of whatever holds focus: its `aria-label`, the text of
  * what `aria-labelledby` names, or its own text.
  *
- * Returns:
- *   The name, or `BODY` when focus fell to the page.
+ * @returns The name, or `BODY` when focus fell to the page.
  */
 export function focusedName(): string {
   const active = document.activeElement;

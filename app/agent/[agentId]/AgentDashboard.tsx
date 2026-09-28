@@ -3405,11 +3405,8 @@ export const ANSWER_AND_RETRY = 'Answer and retry';
  * The question a failed run stopped on, when the stop is the question stop and
  * the question is still on the row; the card then asks for the answer.
  *
- * Args:
- *   item: The work item row.
- *
- * Returns:
- *   The question's text, or undefined for any other state or stop.
+ * @param item - The work item row.
+ * @returns The question's text, or undefined for any other state or stop.
  */
 export function heldQuestionOf(
   item: Pick<Doc<'workItems'>, 'state' | 'skipReason' | 'output'>,

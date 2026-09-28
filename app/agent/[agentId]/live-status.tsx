@@ -20,12 +20,9 @@ export interface ChangeOutcome {
  * stripped so only the sentence written for a person is said; in production
  * the backend strips the text itself, so the fallback is said instead.
  *
- * Args:
- *   error: What the mutation rejected with.
- *   fallback: What to say when the error carries no words.
- *
- * Returns:
- *   One sentence for the live region.
+ * @param error - What the mutation rejected with.
+ * @param fallback - What to say when the error carries no words.
+ * @returns One sentence for the live region.
  */
 export function refusalText(error: unknown, fallback: string): string {
   if (error instanceof ConvexError) return String(error.data);
@@ -71,9 +68,8 @@ export interface Change {
  * fallback (the card or panel it was on) takes focus instead of the page. A
  * manager who moved focus somewhere else while the call ran is left there.
  *
- * Args:
- *   origin: What held focus when the change started.
- *   fallback: The element that stands in for a control that went away.
+ * @param origin - What held focus when the change started.
+ * @param fallback - The element that stands in for a control that went away.
  */
 export function returnFocus(origin: HTMLElement | null, fallback: HTMLElement | null): void {
   const active = document.activeElement;
@@ -92,12 +88,9 @@ export function returnFocus(origin: HTMLElement | null, fallback: HTMLElement | 
  * is busy while the call runs, the outcome is said in a live region, and
  * focus comes back to the control, or to `fallback` when the control is gone.
  *
- * Args:
- *   fallback: The card or panel that takes focus when the control does not
- *     survive the change; it needs `tabIndex={-1}` and a name.
- *
- * Returns:
- *   The busy flag, the outcome for `LiveStatus`, and `run`.
+ * @param fallback - The card or panel that takes focus when the control does not
+ *   survive the change; it needs `tabIndex={-1}` and a name.
+ * @returns The busy flag, the outcome for `LiveStatus`, and `run`.
  */
 export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
   const [pending, setPending] = useState(0);

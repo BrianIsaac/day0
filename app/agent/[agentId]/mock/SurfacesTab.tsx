@@ -332,12 +332,9 @@ export interface ApprovalRowProps {
  * What a manual probe came to, in the manager's words; a probe that did not
  * run says why rather than passing for a check (P6-7).
  *
- * Args:
- *   system: The surface's display name.
- *   outcome: The probe's answer.
- *
- * Returns:
- *   One sentence for the tab's live region.
+ * @param system - The surface's display name.
+ * @param outcome - The probe's answer.
+ * @returns One sentence for the tab's live region.
  */
 export function probeOutcomeText(
   system: string,

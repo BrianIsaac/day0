@@ -1010,14 +1010,11 @@ async function refreshCarriedReads(
  * the surfaces it was for, and the failure scrubbed to one line the way every
  * other failure path is, since it is the reason the card shows.
  *
- * Args:
- *   actions: The carried reads that were to be taken again.
- *   error: What the attempt threw.
- *   knownValues: The owner's stored values, removed exactly.
- *   at: When the attempt stopped.
- *
- * Returns:
- *   The failed re-read, with nothing applied.
+ * @param actions - The carried reads that were to be taken again.
+ * @param error - What the attempt threw.
+ * @param knownValues - The owner's stored values, removed exactly.
+ * @param at - When the attempt stopped.
+ * @returns The failed re-read, with nothing applied.
  */
 export function rereadFailure(
   actions: readonly MockAction[],

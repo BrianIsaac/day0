@@ -112,11 +112,8 @@ export function SourceKindHelp(props: {
  * The second step of a destructive change to a linked source (P6-7): what it
  * does, the change, and Keep, which takes focus so Enter does nothing harmful.
  *
- * Args:
- *   props: What is being confirmed, for which source, and the two choices.
- *
- * Returns:
- *   The confirmation row under the source.
+ * @param props - What is being confirmed, for which source, and the two choices.
+ * @returns The confirmation row under the source.
  */
 export function SourceConfirmation(props: {
   kind: 'unlink' | 'revoke';

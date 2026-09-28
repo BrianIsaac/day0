@@ -23,12 +23,9 @@ export interface Violation {
  * browser job answers them on the public pages, and every dashboard control's
  * 44 px class is asserted beside the test that presses it.
  *
- * Args:
- *   root: The rendered tree.
- *   disabled: Rules that do not apply to a fragment rendered outside the page's layout.
- *
- * Returns:
- *   The violations, empty when the tree passes.
+ * @param root - The rendered tree.
+ * @param disabled - Rules that do not apply to a fragment rendered outside the page's layout.
+ * @returns The violations, empty when the tree passes.
  */
 export async function axeViolations(
   root: Element,
