@@ -74,7 +74,8 @@ const FIELD_GRAMMARS: Record<Exclude<ScopeField, 'channel'>, readonly RegExp[]> 
   project: [/^\s*-?\s*Project\s*:\s*`([^`]+)`/gi, /\bproject\s+`([^`]+)`/gi],
 };
 const CHANNELS_LABEL = /^\s*(?:[-*+]\s+)?Channels?\s*:/i;
-const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
+/** A channel name as the Slack policy page's list reads it: letters and digits in any script (N8). */
+const CHANNEL_NAME = /#([\p{L}\p{N}][\p{L}\p{N}_-]*)/gu;
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const FORBIDDEN_QUEUE_LINE =
   /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
@@ -84,6 +85,11 @@ const MAX_NOTE_VALUE = 80;
 const MAX_DROP_NOTES = 8;
 const MAX_DESCRIPTIONS = 6;
 const MAX_DESCRIPTION_LENGTH = 400;
+
+/** A channel named with its hash, whole: `#营收运营` is not found inside `#营收运营组`. */
+function channelMention(name: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}_-])#${escapeRegExp(name)}(?![\\p{L}\\p{N}_-])`, 'iu');
+}
 
 /**
  * The scope fields a surface of one class is bounded by.
@@ -230,10 +236,7 @@ export function channelDescriptions(
     read.add(page);
     const mentions = channels
       .filter((item): boolean => item.ref === page.ref && item.sourceId === page.sourceId)
-      .map(
-        (item): RegExp =>
-          new RegExp(`(?<![a-z0-9_-])#${escapeRegExp(item.value)}(?![a-z0-9_-])`, 'i'),
-      );
+      .map((item): RegExp => channelMention(item.value));
     for (const passage of passages(page.markdown)) {
       if (CHANNELS_LABEL.test(passage) || containsTokenShape(passage)) continue;
       if (!mentions.some((mention): boolean => mention.test(passage))) continue;
@@ -385,7 +388,7 @@ export function sentenceScopePicks(
     (candidate, index): Array<{ candidate: ScopeCandidate; number: number; at: number }> => {
       const pattern =
         candidate.field === 'channel'
-          ? new RegExp(`(?<![a-z0-9_-])#${escapeRegExp(candidate.value)}(?![a-z0-9_-])`, 'i')
+          ? channelMention(candidate.value)
           : new RegExp(`(?<![A-Za-z0-9_#-])${escapeRegExp(candidate.value)}(?![A-Za-z0-9_-])`);
       const at = pattern.exec(text)?.index;
       return at === undefined ? [] : [{ candidate, number: index + 1, at }];
