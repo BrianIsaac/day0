@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -73,6 +74,22 @@ import {
   RECORDED_QUESTIONS_2026_09_16,
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../../../fixtures/charter-synthesis-notes-2026-09-16';
+
+describe('the panels the dashboard loads on demand', (): void => {
+  const source = readFileSync(
+    new URL('../../../../app/agent/[agentId]/AgentDashboard.tsx', import.meta.url),
+    'utf8',
+  );
+
+  it('loads the chat room, the voice room and the work environment as their own chunks, the voice room never on the server', (): void => {
+    for (const panel of ['ChatRoom', 'VoiceRoom', 'MockEnvironment']) {
+      expect(source).not.toMatch(new RegExp(`import \\{ ${panel} \\} from './${panel}'`));
+      expect(source).toMatch(new RegExp(`const ${panel} = dynamic\\(`));
+    }
+    const voice = /const VoiceRoom = dynamic\([\s\S]*?\}\);/.exec(source)?.[0] ?? '';
+    expect(voice).toContain('ssr: false');
+  });
+});
 
 describe('held action payload', (): void => {
   it('renders the verb with the arguments it reads and none of the empty flat-bag defaults', (): void => {

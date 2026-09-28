@@ -5,15 +5,13 @@ import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '@/work/types';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
-import { ChatRoom } from './ChatRoom';
-import { VoiceRoom } from './VoiceRoom';
-import { MockEnvironment } from './MockEnvironment';
 import {
   AppliedCorrectionsLine,
   KeptCorrectionsPanel,
@@ -132,6 +130,34 @@ interface AuthoringAttempt {
   name: string;
   reason: string;
 }
+
+/** What a panel shows while its chunk is on the way. */
+function PanelLoading({ label }: { label: string }): React.JSX.Element {
+  return (
+    <p className="text-xs text-[var(--color-muted)]" role="status">
+      Loading {label}
+    </p>
+  );
+}
+
+/*
+ * The three panels below are the page's own chunks, loaded when they mount:
+ * the voice room carries the ElevenLabs SDK and the mock environment its
+ * five tabs, and neither is needed to draw the first paint of the page. The
+ * voice room also touches the browser at import, so it is never rendered on
+ * the server.
+ */
+const ChatRoom = dynamic(() => import('./ChatRoom').then((module) => module.ChatRoom), {
+  loading: () => <PanelLoading label="the 1:1" />,
+});
+const VoiceRoom = dynamic(() => import('./VoiceRoom').then((module) => module.VoiceRoom), {
+  ssr: false,
+  loading: () => <PanelLoading label="the 1:1" />,
+});
+const MockEnvironment = dynamic(
+  () => import('./MockEnvironment').then((module) => module.MockEnvironment),
+  { loading: () => <PanelLoading label="the work environment" /> },
+);
 
 export function AgentDashboard({ agentId }: Props) {
   const agent = useQuery(api.agents.get, { agentId });
