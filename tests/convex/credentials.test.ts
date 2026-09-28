@@ -15,9 +15,11 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
 import {
   credentialKeyId,
+  credentialValueFingerprint,
   decrypt as decryptCredential,
   openOwnedCredential,
 } from '../../src/lib/credential-crypto';
+import { credentialSourceRef } from '../../src/docs/redaction';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
@@ -64,6 +66,16 @@ afterEach((): void => {
   vi.unstubAllEnvs();
   restoreSurfaceMode();
 });
+
+/**
+ * The source ref the sync gives a value on a page under the key the test
+ * stubbed for the deployment.
+ */
+function valueRef(pageRef: string, value: string, userId: string): string {
+  const key = process.env.DAY0_CREDENTIAL_KEY;
+  if (key === undefined) throw new Error('The test stubs no DAY0_CREDENTIAL_KEY.');
+  return credentialSourceRef(pageRef, credentialValueFingerprint(value, key, userId));
+}
 
 /** Seed one owner source the page-derived credentials hang off. */
 async function seedSource(
@@ -582,7 +594,12 @@ describe('a page whose count of values changes (P10-1)', (): void => {
         const stored = await rows(harness);
         expect(stored).toHaveLength(2);
         const kept = stored.find((row) => row._id === first?._id);
-        expect(kept).toMatchObject({ source: { sourceId, ref: 'runbook.md' } });
+        expect(kept).toMatchObject({
+          source: {
+            sourceId,
+            ref: valueRef('runbook.md', linear, 'owner'),
+          },
+        });
         expect(kept).not.toHaveProperty('status');
         await expect(
           harness.action(internal.credentials.decrypt, {

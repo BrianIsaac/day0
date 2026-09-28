@@ -251,8 +251,12 @@ async function persistPage(
     redaction,
   );
   const credentialRefs: string[] = [];
-  for (const [index, credential] of result.credentials.entries()) {
-    const ref = credentialSourceRef(page.ref, credential, result.credentials.length, index);
+  for (const credential of result.credentials) {
+    const fingerprint = await ctx.runAction(internal.credentialCryptoActions.fingerprint, {
+      plaintext: credential.plaintext,
+      userId: source.userId,
+    });
+    const ref = credentialSourceRef(page.ref, fingerprint);
     await ctx.runAction(internal.credentials.store, {
       userId: source.userId,
       kind: 'value',

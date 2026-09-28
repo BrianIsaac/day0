@@ -24,7 +24,12 @@ import {
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
 import { FINISHING_CURSOR } from '../../convex/docSources';
-import { encrypt, openOwnedCredential as openSpy } from '../../src/lib/credential-crypto';
+import {
+  credentialValueFingerprint,
+  encrypt,
+  openOwnedCredential as openSpy,
+} from '../../src/lib/credential-crypto';
+import { credentialSourceRef } from '../../src/docs/redaction';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
@@ -67,6 +72,16 @@ function drainScheduled(): void {
 /** Build a token-shaped value at runtime so no fixture stores one verbatim. */
 function token(parts: string[], separator: string, suffix: string): string {
   return `${parts.join(separator)}${separator}${suffix}`;
+}
+
+/**
+ * The source ref the sync gives a value on a page under the key the test
+ * stubbed for the deployment.
+ */
+function valueRef(pageRef: string, value: string, userId: string): string {
+  const key = process.env.DAY0_CREDENTIAL_KEY;
+  if (key === undefined) throw new Error('The test stubs no DAY0_CREDENTIAL_KEY.');
+  return credentialSourceRef(pageRef, credentialValueFingerprint(value, key, userId));
 }
 
 /** Create the source fields used by the persistence boundary. */
@@ -197,14 +212,21 @@ describe('documentation sync action helpers', (): void => {
       }),
     );
     const actionCalls: unknown[] = [];
+    const fingerprintCalls: unknown[] = [];
     const mutationCalls: unknown[] = [];
+    const credentialKey = randomBytes(32).toString('base64');
     const ctx = {
       runAction: async (
         reference: unknown,
-        args: unknown,
-      ): Promise<Id<'credentials'> | string[]> => {
+        args: { plaintext: string; userId: string },
+      ): Promise<Id<'credentials'> | string | string[]> => {
+        const name = getFunctionName(reference as never);
         // The boundary asks for the owner's stored values first; this owner has none.
-        if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return [];
+        if (name === getFunctionName(ownerValuesRef)) return [];
+        if (name === getFunctionName(internal.credentialCryptoActions.fingerprint)) {
+          fingerprintCalls.push(args);
+          return credentialValueFingerprint(args.plaintext, credentialKey, args.userId);
+        }
         actionCalls.push(args);
         return `credential-${actionCalls.length}` as Id<'credentials'>;
       },
@@ -219,14 +241,27 @@ describe('documentation sync action helpers', (): void => {
 
     const result = await persistPageBatch(ctx, source(), pages, [agent()]);
 
+    // Each page holds one value, keyed by the page and the value's fingerprint.
+    const credentialRefs = pages.map((page: DocPage, index: number): string =>
+      credentialSourceRef(
+        page.ref,
+        credentialValueFingerprint(values[index], credentialKey, source().userId),
+      ),
+    );
     expect(result).toEqual({
       refs: pages.map((page: DocPage): string => page.ref),
-      credentialRefs: pages.map((page: DocPage): string => page.ref),
+      credentialRefs,
       pages: pages.length,
       redactions: values.length,
       unread: [],
     });
     expect(actionCalls).toHaveLength(values.length);
+    expect(actionCalls).toEqual(
+      credentialRefs.map((ref: string) =>
+        expect.objectContaining({ source: { sourceId: source()._id, ref } }),
+      ),
+    );
+    expect(fingerprintCalls).toHaveLength(values.length);
     for (const value of values) {
       expect(
         actionCalls.some((call: unknown): boolean => JSON.stringify(call).includes(value)),
@@ -340,7 +375,9 @@ describe('documentation sync batching', (): void => {
       async (ctx) => await ctx.db.query('credentials').collect(),
     );
     expect(credentials).toHaveLength(1);
-    expect(credentials[0]).toMatchObject({ source: { sourceId, ref: 'page-30.md' } });
+    expect(credentials[0]).toMatchObject({
+      source: { sourceId, ref: valueRef('page-30.md', value, 'owner') },
+    });
     await expect(
       harness.action(internal.credentials.decrypt, { credentialId: credentials[0]._id }),
     ).resolves.toBe(value);
@@ -493,6 +530,12 @@ describe('documentation sync batching', (): void => {
     expect(after.pages.find((page) => page.ref === 'handbook.md')?.markdown).toContain('Second.');
     expect(after.credentials).toHaveLength(1);
     expect(after.credentials[0].status).toBeUndefined();
+    // The value-keyed ref keeps its page part, which is how the unread page's
+    // rows were found and kept (D8).
+    expect(after.credentials[0].source).toEqual({
+      sourceId,
+      ref: valueRef('tile.md', value, 'owner'),
+    });
     expect(after.runs[0]).toMatchObject({ state: 'completed' });
     expect(after.runs[0].reason).toMatch(
       /^1 page could not be read this sync and keeps its last stored version\n- tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
@@ -502,6 +545,97 @@ describe('documentation sync batching', (): void => {
       /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads them again\.$/,
     );
     expect(JSON.stringify(after)).not.toContain(value);
+  });
+
+  /**
+   * Sync a one-folder source once per body given for `runbook.md`, and read
+   * back every credential row after each sync.
+   */
+  async function syncEachVersion(
+    prefix: string,
+    bodies: readonly string[],
+  ): Promise<{ sourceId: Id<'docSources'>; after: Doc<'credentials'>[][] }> {
+    const root = temporary(prefix);
+    await mkdir(join(root, 'docs'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Runbooks',
+      kind: 'folder',
+      locator: 'docs',
+    });
+    const after: Doc<'credentials'>[][] = [];
+    for (const body of bodies) {
+      await writeFile(join(root, 'docs', 'runbook.md'), body, 'utf8');
+      await expect(
+        harness.action(internal.docSyncActions.syncSource, { sourceId }),
+      ).resolves.toMatchObject({ ok: true, complete: true });
+      after.push(await harness.run(async (ctx) => await ctx.db.query('credentials').collect()));
+    }
+    return { sourceId, after };
+  }
+
+  it('keeps a relabelled value as the same credential, under the new label (P6-13)', async (): Promise<void> => {
+    const value = 'generic-contract-value-0123456789abcdef';
+    const { sourceId, after } = await syncEachVersion('day0-sync-relabel-', [
+      `# Billing\n\nAPI key: ${value}\n`,
+      `# Billing\n\nAccess key: ${value}\n`,
+    ]);
+    expect(after[0]).toHaveLength(1);
+    expect(after[0][0].label).toBe('billing api key');
+    expect(after[1]).toHaveLength(1);
+    expect(after[1][0]).toMatchObject({
+      _id: after[0][0]._id,
+      label: 'billing access key',
+      source: { sourceId, ref: valueRef('runbook.md', value, 'owner') },
+    });
+    expect(after[1][0].status).toBeUndefined();
+  });
+
+  it('keeps a value that moved down the page when a second one was added above it (P5-12)', async (): Promise<void> => {
+    const kept = token(['lin', 'api'], '_', 'moved-contract-0123456789abcdef');
+    const added = token(['lin', 'api'], '_', 'added-contract-0123456789abcdef');
+    const { sourceId, after } = await syncEachVersion('day0-sync-move-', [
+      `# Tile runbook\n\nService token: ${kept}\n`,
+      `# Tile runbook\n\nService token: ${added}\n\nThe older one:\n\nService token: ${kept}\n`,
+    ]);
+    expect(after[0]).toHaveLength(1);
+    const keptRow = after[1].find((row) => row._id === after[0][0]._id);
+    expect(keptRow).toMatchObject({
+      source: { sourceId, ref: valueRef('runbook.md', kept, 'owner') },
+    });
+    expect(keptRow?.status).toBeUndefined();
+    expect(after[1]).toHaveLength(2);
+    expect(after[1].find((row) => row._id !== after[0][0]._id)).toMatchObject({
+      source: { sourceId, ref: valueRef('runbook.md', added, 'owner') },
+    });
+  });
+
+  it('stores a value swapped in under the same label as a new credential and supersedes the old one, which revives if it returns (P7-15)', async (): Promise<void> => {
+    const original = token(['lin', 'api'], '_', 'original-contract-0123456789abcdef');
+    const swapped = token(['lin', 'api'], '_', 'swapped-contract-0123456789abcdef');
+    const { after } = await syncEachVersion('day0-sync-swap-', [
+      `# Tile runbook\n\nService token: ${original}\n`,
+      `# Tile runbook\n\nService token: ${swapped}\n`,
+      `# Tile runbook\n\nService token: ${original}\n`,
+    ]);
+    const [originalRow] = after[0];
+    expect(after[1]).toHaveLength(2);
+    const swappedRow = after[1].find((row) => row._id !== originalRow._id);
+    expect(swappedRow).toMatchObject({
+      label: originalRow.label,
+      source: { ref: valueRef('runbook.md', swapped, 'owner') },
+    });
+    expect(swappedRow?.status).toBeUndefined();
+    expect(after[1].find((row) => row._id === originalRow._id)).toMatchObject({
+      status: 'superseded',
+      source: originalRow.source,
+    });
+    // The original value back on the page is the original credential again.
+    expect(after[2]).toHaveLength(2);
+    expect(after[2].find((row) => row._id === originalRow._id)?.status).toBeUndefined();
+    expect(after[2].find((row) => row._id === swappedRow?._id)?.status).toBe('superseded');
   });
 
   it('resumes a sync that failed at page 300 of 500 at page 300, not page one (step 17)', async (): Promise<void> => {

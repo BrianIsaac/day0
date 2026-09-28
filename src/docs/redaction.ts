@@ -354,37 +354,52 @@ function quotedByAuthor(text: string, start: number, end: number): boolean {
   );
 }
 
-/** What joins a page's ref to one of several credentials found on it. */
+/** What joins a page's ref to the fingerprint of a credential found on it. */
 const CREDENTIAL_REF_SEPARATOR = '#credential=';
 
 /**
- * Build a deterministic source reference for every credential on a page.
+ * The shape of a value fingerprint (`credentialValueFingerprint`): lower-case
+ * hex, never the `-` an earlier release's `<position>-<label>` suffix carries.
+ */
+const FINGERPRINT_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * The source ref of a credential found on a page: the page ref and the
+ * fingerprint of the value.
  *
- * The ref changes when the page's count of values does, from the page ref to
- * a label-qualified one and back; `credentials.store` carries a value it
- * already holds for the page to its new ref rather than storing it again.
+ * Keyed by the value, not its position or label, so a page edit that moves or
+ * relabels a value keeps its credential, and a different value under the same
+ * label is a new credential (P5-12, P7-15). The page part stays, so every row
+ * of a page is read by `credentialRefRange` and `credentialPageRef`.
  *
  * @param pageRef - Stable provider page reference.
- * @param credential - Extracted credential metadata.
- * @param total - Number of distinct credentials found on the page.
- * @param index - Stable zero-based position when the page contains several values.
- * @returns The page ref for the common single-value case, or a
- *   label-qualified ref when a page contains more than one value.
+ * @param fingerprint - The value's fingerprint for its owner under the
+ *   deployment's key (`credentialCryptoActions.fingerprint`).
+ * @throws Error when `fingerprint` is not a value fingerprint.
  */
-export function credentialSourceRef(
-  pageRef: string,
-  credential: RedactedCredential,
-  total: number,
-  index = 0,
-): string {
-  return total === 1
-    ? pageRef
-    : `${pageRef}${CREDENTIAL_REF_SEPARATOR}${index + 1}-${encodeURIComponent(credential.label)}`;
+export function credentialSourceRef(pageRef: string, fingerprint: string): string {
+  if (!FINGERPRINT_PATTERN.test(fingerprint)) {
+    throw new Error('A credential source ref is keyed by a value fingerprint.');
+  }
+  return `${pageRef}${CREDENTIAL_REF_SEPARATOR}${fingerprint}`;
+}
+
+/**
+ * Whether a credential source ref is keyed by a value fingerprint, rather than
+ * by the page alone or a position and label as before value-keyed refs.
+ *
+ * @param ref - A credential source ref.
+ */
+export function isValueKeyedRef(ref: string): boolean {
+  const at = ref.lastIndexOf(CREDENTIAL_REF_SEPARATOR);
+  return at !== -1 && FINGERPRINT_PATTERN.test(ref.slice(at + CREDENTIAL_REF_SEPARATOR.length));
 }
 
 /**
  * The page a credential's source ref belongs to: the inverse of
- * `credentialSourceRef` on its page part.
+ * `credentialSourceRef` on its page part, and of the page-only and
+ * position-and-label refs rows stored before value-keyed refs still carry
+ * until the `credentials-value-refs` migration rewrites them.
  *
  * @param ref - A credential source ref.
  * @returns The page ref the credential was found on.
