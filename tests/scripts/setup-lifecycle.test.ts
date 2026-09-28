@@ -465,6 +465,45 @@ describe('the upgrade over a deployment with rows (steps 14 and 15)', (): void =
     expect(lines).not.toContain('convex:restart');
   });
 
+  it('refuses a checkout older than the release its migrations name before anything is pushed, and pushes once both files name it', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      releaseStamp: '0.3.0',
+      newestMigrationRelease: '0.4.0',
+    });
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      "nothing was pushed, because this checkout's release (0.3.0, from package.json) is older than 0.4.0",
+    );
+    expect(printed).toContain("set package.json's version to 0.4.0");
+    expect(printed).toContain('"## v0.4.0" heading to CHANGELOG.md');
+    let lines = ran(h);
+    expect(lines).not.toContain('convex data');
+    expect(lines).not.toContain('convex dev --once');
+    expect(lines).not.toContain('migrations:');
+    expect(lines).not.toContain('sync:env');
+    expect(lines).not.toContain('convex:restart');
+
+    // The version alone is not enough: the heading is the second half.
+    writeFileSync(join(h.directory, 'package.json'), '{"name":"day0","version":"0.4.0"}\n', 'utf8');
+    expect(await runCommand(verb('resume'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('has no heading in CHANGELOG.md');
+    expect(ran(h)).not.toContain('convex dev --once');
+
+    writeFileSync(
+      join(h.directory, 'CHANGELOG.md'),
+      `## v0.4.0, a later day\n\n${readFileSync(join(h.directory, 'CHANGELOG.md'), 'utf8')}`,
+      'utf8',
+    );
+    expect(await runCommand(verb('resume'), h.io)).toBe(0);
+    lines = ran(h);
+    expect(lines).toContain('convex dev --once');
+    expect(lines).toContain('migrations:runPending');
+    expect(lines).toContain('{"release":"0.4.0"}');
+    expect(h.output.join('\n')).toContain("the deployment's rows are at 0.4.0");
+  });
+
   it('refuses to push over rows a clearing migration has not finished, since the checkout no longer declares what they may carry (N10)', async (): Promise<void> => {
     const h = configured({
       services: ['backend'],

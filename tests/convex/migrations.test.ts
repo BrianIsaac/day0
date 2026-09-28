@@ -7,6 +7,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
+import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
 import { avatarById } from '../../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../../src/docs/types';
 import {
@@ -1057,6 +1058,8 @@ describe('the release a stamp may name', (): void => {
       .map((migration) => migration.release)
       .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
       .at(-1)!;
+    // The constant the upgrade reads before it pushes is the migrations' own.
+    expect(NEWEST_MIGRATION_RELEASE).toBe(newest);
     // A deployment set up from a tree whose package still says the release
     // before its migrations would otherwise read as a release that lacks them.
     for (const release of ['0.5.0', '0.3.0', 'v0.6.0', '0.6', 'latest']) {

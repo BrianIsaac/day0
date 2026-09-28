@@ -53,6 +53,7 @@ import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
 import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
+import { compareReleases, NEWEST_MIGRATION_RELEASE, releaseParts } from '../src/lib/release';
 
 /**
  * Every migration, in the order the upgrade runs them. The access clocks come
@@ -897,40 +898,22 @@ export const status = internalQuery({
   },
 });
 
-/** A release as a stamp names it: three dot-separated numbers, no prefix. */
-const RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-
-/** A release's three numbers, or undefined when it is not shaped as one. */
-function releaseParts(release: string): readonly [number, number, number] | undefined {
-  const match = RELEASE.exec(release);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
-}
-
-/** Negative when `older` precedes `newer`, zero when they are the same release. */
-function compareReleaseParts(
-  older: readonly [number, number, number],
-  newer: readonly [number, number, number],
-): number {
-  return older[0] - newer[0] || older[1] - newer[1] || older[2] - newer[2];
-}
-
-/** The newest release any shipped migration names: no stamp may be older (S D8). */
-const NEWEST_MIGRATION_RELEASE = Object.values(MIGRATIONS)
-  .map((migration) => migration.release)
-  .reduce((newest, release) =>
-    compareReleaseParts(releaseParts(release)!, releaseParts(newest)!) > 0 ? release : newest,
-  );
-
 /**
  * Why a release may not be stamped, or undefined when it may: a stamp names
  * a release shaped as three numbers and no older than the newest one a
- * shipped migration names, so a deployment set up from a tree whose package
- * still names the release before its migrations never reads as lacking them.
+ * shipped migration names (`NEWEST_MIGRATION_RELEASE`, held equal to the
+ * migrations' releases by the mirror test), so a deployment set up from a
+ * tree whose package still names the release before its migrations never
+ * reads as lacking them. The upgrade refuses such a tree before it pushes
+ * (`scripts/releases.ts`); this is the check that holds when it did not run.
  */
 function releaseRefusal(release: string): string | undefined {
-  const parts = releaseParts(release);
-  const newest = releaseParts(NEWEST_MIGRATION_RELEASE)!;
-  if (parts !== undefined && compareReleaseParts(parts, newest) >= 0) return undefined;
+  if (
+    releaseParts(release) !== undefined &&
+    compareReleases(release, NEWEST_MIGRATION_RELEASE) >= 0
+  ) {
+    return undefined;
+  }
   return (
     `release ${release} cannot be stamped: a stamp names a release as X.Y.Z no older than ` +
     `${NEWEST_MIGRATION_RELEASE}, the newest release a shipped migration names`

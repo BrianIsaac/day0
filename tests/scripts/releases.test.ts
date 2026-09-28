@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   changelogReleases,
+  checkoutRefusal,
   LAST_UNVERSIONED_RELEASE,
   listsReleaseTable,
   migrationLines,
@@ -14,6 +15,7 @@ import {
   unclearedDeclarations,
   upgradeVerdict,
 } from '../../scripts/releases';
+import { compareReleases, NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
 
 const RELEASES = ['0.1.0', '0.2.0', '0.3.0', '0.4.0'];
 
@@ -57,7 +59,13 @@ describe('the release stamp as the Convex CLI prints it', (): void => {
 
 describe('whether the upgrade may push this checkout (decision N10)', (): void => {
   const verdict = (stored: string | undefined, checkout: string, fresh = false) =>
-    upgradeVerdict({ stored, fresh, checkout, releases: RELEASES });
+    upgradeVerdict({
+      stored,
+      fresh,
+      checkout,
+      releases: RELEASES,
+      newestMigrationRelease: '0.3.0',
+    });
 
   it('allows a new volume, the same release again, and the next release', (): void => {
     expect(verdict(undefined, '0.4.0', true)).toMatchObject({ allowed: true });
@@ -88,6 +96,76 @@ describe('whether the upgrade may push this checkout (decision N10)', (): void =
     const unlisted = verdict('0.3.0', '0.5.0');
     expect(unlisted.allowed ? '' : unlisted.reason).toContain('has no heading in CHANGELOG.md');
   });
+
+  it('refuses a checkout older than the newest release its migrations name, new volume or kept, naming both files', (): void => {
+    for (const [stored, fresh] of [
+      [undefined, true],
+      ['0.3.0', false],
+      ['0.2.0', false],
+      [undefined, false],
+    ] as const) {
+      const refused = upgradeVerdict({
+        stored,
+        fresh,
+        checkout: '0.3.0',
+        releases: RELEASES,
+        newestMigrationRelease: '0.4.0',
+      });
+      expect(refused.allowed, `${stored} ${fresh}`).toBe(false);
+      const reason = refused.allowed ? '' : refused.reason;
+      expect(reason).toContain('0.3.0, from package.json) is older than 0.4.0');
+      expect(reason).toContain("set package.json's version to 0.4.0");
+      expect(reason).toContain('"## v0.4.0" heading to CHANGELOG.md');
+    }
+    expect(
+      upgradeVerdict({
+        stored: '0.3.0',
+        fresh: false,
+        checkout: '0.4.0',
+        releases: RELEASES,
+        newestMigrationRelease: '0.4.0',
+      }),
+    ).toMatchObject({ allowed: true, note: '0.3.0 to 0.4.0' });
+  });
+});
+
+describe('what refuses a checkout before the deployment is read', (): void => {
+  it('refuses a release older than the migrations, then one the CHANGELOG lacks, and takes a newer one', (): void => {
+    expect(
+      checkoutRefusal({ release: '0.3.0', releases: RELEASES, newestMigrationRelease: '0.4.0' }),
+    ).toContain('older than 0.4.0');
+    expect(
+      checkoutRefusal({ release: '0.4.0', releases: ['0.3.0'], newestMigrationRelease: '0.4.0' }),
+    ).toContain('no heading in CHANGELOG.md');
+    expect(
+      checkoutRefusal({ release: '0.4.0', releases: RELEASES, newestMigrationRelease: '0.4.0' }),
+    ).toBeUndefined();
+    expect(
+      checkoutRefusal({ release: '0.4.0', releases: RELEASES, newestMigrationRelease: '0.3.0' }),
+    ).toBeUndefined();
+    expect(
+      checkoutRefusal({ release: 'v0.4.0', releases: RELEASES, newestMigrationRelease: '0.3.0' }),
+    ).toContain('not shaped as X.Y.Z');
+  });
+
+  it('is what this repository would meet: its package.json against the release its migrations name', (): void => {
+    const changelog = readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8');
+    const { version } = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { version: string };
+    const refusal = checkoutRefusal({
+      release: version,
+      releases: changelogReleases(changelog),
+      newestMigrationRelease: NEWEST_MIGRATION_RELEASE,
+    });
+    // Between a tag and the release commit that follows it, staging is refused
+    // by name; at a tag, it is not.
+    if (compareReleases(version, NEWEST_MIGRATION_RELEASE) < 0) {
+      expect(refusal).toContain(`older than ${NEWEST_MIGRATION_RELEASE}`);
+    } else {
+      expect(refusal).toBeUndefined();
+    }
+  });
 });
 
 describe('reading the verdict through the Convex CLI', (): void => {
@@ -99,7 +177,7 @@ describe('reading the verdict through the Convex CLI', (): void => {
       stderr: '',
       ...answers[args.join(' ')],
     });
-  const checkout = { release: '0.4.0', releases: RELEASES };
+  const checkout = { release: '0.4.0', releases: RELEASES, newestMigrationRelease: '0.4.0' };
 
   it('takes a deployment that lists no tables as new, and reads the stamp when its table is there', (): void => {
     expect(readReleaseVerdict(cli({}), checkout)).toMatchObject({ allowed: true, from: undefined });
@@ -114,6 +192,20 @@ describe('reading the verdict through the Convex CLI', (): void => {
         checkout,
       ),
     ).toMatchObject({ allowed: false });
+  });
+
+  it('refuses a checkout older than its migrations before any CLI call, so nothing on the deployment is read or changed', (): void => {
+    const calls: string[] = [];
+    const verdict = readReleaseVerdict(
+      (args) => {
+        calls.push(args.join(' '));
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      { ...checkout, release: '0.3.0' },
+    );
+    expect(verdict).toMatchObject({ allowed: false });
+    expect(verdict.allowed ? '' : verdict.reason).toContain('older than 0.4.0');
+    expect(calls).toEqual([]);
   });
 
   it('refuses a deployment whose tables cannot be listed', (): void => {
@@ -146,7 +238,7 @@ describe('the declarations this checkout retired (N10)', (): void => {
   });
 
   it('refuses rows stamped before the clearing release until its migrations have finished, and passes a new one', (): void => {
-    const checkout = { release: '0.4.0', releases: RELEASES };
+    const checkout = { release: '0.4.0', releases: RELEASES, newestMigrationRelease: '0.4.0' };
     const cli = (answers: Record<string, string>) => (args: readonly string[]) => ({
       status: 0,
       stdout: answers[args.join(' ')] ?? '',
@@ -175,7 +267,7 @@ describe('the declarations this checkout retired (N10)', (): void => {
   });
 
   it('passes rows stamped at or after the clearing release, which a volume created then never needed the migrations for', (): void => {
-    const checkout = { release: '0.4.0', releases: RELEASES };
+    const checkout = { release: '0.4.0', releases: RELEASES, newestMigrationRelease: '0.4.0' };
     const cli = (args: readonly string[]) => ({
       status: 0,
       stdout:
@@ -217,7 +309,11 @@ describe('the declarations the next release retires (N10, Q D2)', (): void => {
       stderr: '',
     });
     expect(
-      readReleaseVerdict(cli, { release: '0.6.0', releases: [...RELEASES, '0.5.0', '0.6.0'] }),
+      readReleaseVerdict(cli, {
+        release: '0.6.0',
+        releases: [...RELEASES, '0.5.0', '0.6.0'],
+        newestMigrationRelease: '0.6.0',
+      }),
     ).toMatchObject({ allowed: true, from: '0.5.0' });
   });
 });
