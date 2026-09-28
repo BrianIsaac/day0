@@ -160,6 +160,8 @@ export default defineSchema({
     ),
     lastSyncAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
+    /** How many listings of the source a sync has started from page one; the newest's number. */
+    listings: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
@@ -168,7 +170,21 @@ export default defineSchema({
   docSyncRuns: defineTable({
     sourceId: v.id('docSources'),
     cursor: v.optional(v.string()),
-    refs: v.array(v.string()),
+    /**
+     * The page refs a run of a release before 0.6.0 listed, which bounded a
+     * generation at Convex's 8,192-entry array. Nothing writes it from 0.6.0:
+     * a listed page is stamped on its `docPageListings` row instead. Read only
+     * as a pre-0.6.0 run's listing when that run is resumed or finished.
+     */
+    refs: v.optional(v.array(v.string())),
+    /**
+     * The source's listing this run reads (`docSources.listings`): a sync that
+     * reads from page one starts the next, a resumed one carries it on. Given
+     * lazily to a run begun before 0.6.0.
+     */
+    listing: v.optional(v.number()),
+    /** How many page refs the run's listing has named so far, a resumed run's carried. */
+    pagesListed: v.optional(v.number()),
     credentialRefs: v.array(v.string()),
     pageCount: v.number(),
     redactionCount: v.number(),
@@ -219,6 +235,25 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_source', ['sourceId'])
+    .index('by_source_ref', ['sourceId', 'ref']),
+
+  /**
+   * The listing that last named each page of a source (D D2 (a)). Each batch
+   * stamps the refs it listed; a finishing sync removes the pages whose stamp
+   * is older than its own listing, reading only those. A slim row of its own
+   * rather than a field on `docPages`, so restamping every listed page each
+   * sync never rewrites a page body or wakes the page's readers (P5-18).
+   * Every stored page has one (`upsertPage`, the `doc-page-listings`
+   * migration); a listed page not stored yet may have one without a page.
+   */
+  docPageListings: defineTable({
+    sourceId: v.id('docSources'),
+    ref: v.string(),
+    /** The source's listing (`docSources.listings`) that last named the ref; 0 for the upgrade's copy. */
+    seenBy: v.number(),
+  })
+    /** By source, then listing: the finish's walk of what a listing did not name. */
+    .index('by_source', ['sourceId', 'seenBy'])
     .index('by_source_ref', ['sourceId', 'ref']),
 
   docSystemDiscoveries: defineTable({

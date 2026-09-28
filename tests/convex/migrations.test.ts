@@ -627,6 +627,43 @@ describe('the unread record move (D D1 (a))', (): void => {
   });
 });
 
+describe('the page listing stamp (D D2 (a))', (): void => {
+  it('gives every stored page a listing row stamped 0, and leaves a page a sync already stamped', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    await harness.run(async (ctx): Promise<void> => {
+      for (const ref of ['a.md', 'b.md', 'c.md']) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+      }
+      await ctx.db.insert('docPageListings', { sourceId, ref: 'c.md', seenBy: 4 });
+    });
+
+    await runAll(harness);
+
+    const listings = await harness.run(async (ctx) =>
+      (await ctx.db.query('docPageListings').collect()).map((row) => [row.ref, row.seenBy]).sort(),
+    );
+    expect(listings).toEqual([
+      ['a.md', 0],
+      ['b.md', 0],
+      ['c.md', 4],
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'doc-page-listings')).toMatchObject({
+      release: '0.6.0',
+      read: 3,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
 describe('the single approval (Q10)', (): void => {
   const UPGRADED_AT = Date.UTC(2026, 8, 28, 9);
   const DAY = 24 * 60 * 60 * 1_000;

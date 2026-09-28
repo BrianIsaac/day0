@@ -357,8 +357,13 @@ describe('documentation sync batching', (): void => {
     });
     const runs = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
     expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({ state: 'completed', pageCount: 60, refs: expect.any(Array) });
-    expect(runs[0].refs).toHaveLength(60);
+    expect(runs[0]).toMatchObject({ state: 'completed', pageCount: 60, pagesListed: 60 });
+    expect(runs[0]).not.toHaveProperty('refs');
+    const listings = await harness.run(
+      async (ctx) => await ctx.db.query('docPageListings').collect(),
+    );
+    expect(listings).toHaveLength(60);
+    expect(listings.every((row) => row.seenBy === runs[0].listing)).toBe(true);
     expect(JSON.stringify(runs)).not.toContain(value);
     const pages = (
       await harness.query(internal.docSources.pagesForSourceInternal, {
@@ -704,8 +709,14 @@ describe('documentation sync batching', (): void => {
     const [completed, failed] = await harness.run(
       async (ctx) => await ctx.db.query('docSyncRuns').order('desc').collect(),
     );
-    expect(completed).toMatchObject({ state: 'completed', pageCount: 500 });
-    expect(new Set(completed.refs).size).toBe(500);
+    expect(completed).toMatchObject({ state: 'completed', pageCount: 500, pagesListed: 500 });
+    // The resumed run carries the failed run's listing, so the pages it read before stay.
+    expect(completed.listing).toBe(failed.listing);
+    const listings = await harness.run(
+      async (ctx) => await ctx.db.query('docPageListings').collect(),
+    );
+    expect(new Set(listings.map((row) => row.ref)).size).toBe(500);
+    expect(listings.every((row) => row.seenBy === completed.listing)).toBe(true);
     expect(failed).toMatchObject({
       state: 'error',
       cursor: expect.stringMatching(/^300@[0-9a-z]{7}$/),

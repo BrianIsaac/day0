@@ -74,6 +74,7 @@ export const MIGRATION_NAMES = [
   'surfaces-withheld-tools',
   'work-evaluation-unavailable-cause',
   'sync-runs-unread',
+  'doc-page-listings',
 ] as const;
 
 /** One migration's name. */
@@ -198,6 +199,12 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     thenRemoves:
       'the reading of a record in the reason text (legacyUnreadRecord in unreadRecordIn)',
   },
+  'doc-page-listings': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'gives every stored documentation page a listing row stamped 0, older than any listing a sync starts, so the next finish that does not name the page removes it and one that does restamps it',
+    thenRemoves:
+      'the reading of docSyncRuns.refs as a pre-0.6.0 run’s listing (legacyListedRefs), once no run begun before this release can be resumed; the refs declaration the release after, with a migration clearing it',
+  },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
@@ -228,6 +235,12 @@ const EVENT_PAGE = 10;
  * transaction's read limit.
  */
 const RUN_PAGE = 10;
+
+/**
+ * Documentation pages one page of the listing stamp reads: a page body can be
+ * up to 768 KiB, so the read is bounded by bytes as well as rows.
+ */
+const PAGE_BODIES_READ = { numItems: MIGRATION_PAGE, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
@@ -523,6 +536,33 @@ async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promi
 }
 
 /**
+ * Give each stored documentation page a listing row (D D2 (a)). A page of a
+ * release before 0.6.0 was kept by its run's refs; from this release a finish
+ * removes a page whose row an earlier listing stamped, so every page needs
+ * one. The stamp is 0, below every listing a sync starts: the next sync that
+ * names the page restamps it, and a run begun before this release keeps the
+ * pages its refs name.
+ */
+async function stampPageListings(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docPages').paginate({ ...PAGE_BODIES_READ, cursor });
+  let changed = 0;
+  for (const stored of page.page) {
+    const listed = await ctx.db
+      .query('docPageListings')
+      .withIndex('by_source_ref', (q) => q.eq('sourceId', stored.sourceId).eq('ref', stored.ref))
+      .first();
+    if (listed !== null) continue;
+    await ctx.db.insert('docPageListings', {
+      sourceId: stored.sourceId,
+      ref: stored.ref,
+      seenBy: 0,
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
  * Re-seal one page of credentials in the Node runtime (decision Q15, step
  * 14). The action writes each page's rows itself; this reports the page.
  */
@@ -588,6 +628,7 @@ const MIGRATION_PAGES: Readonly<
   'work-evaluation-unavailable-cause': async (ctx, cursor) =>
     await backfillUnavailableCausePage(ctx, cursor),
   'sync-runs-unread': moveUnreadRecords,
+  'doc-page-listings': stampPageListings,
 };
 
 /** A migration's row, if it has started. */

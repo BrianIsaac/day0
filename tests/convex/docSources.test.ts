@@ -7,6 +7,7 @@ import schema from '../../convex/schema';
 import {
   FINISHING_CURSOR,
   RUN_HISTORY_MS,
+  STALE_LISTING_PAGE,
   STALE_SYNC_MS,
   agentReadsSource,
   validateLinkInput,
@@ -44,6 +45,7 @@ async function seedSyncedSource(
       kind: 'folder',
       locator: '.',
       status: 'synced',
+      listings: 1,
       createdAt: 1,
       updatedAt: 1,
     });
@@ -61,6 +63,8 @@ async function seedSyncedSource(
       markdown: '# Page',
       updatedAt: 1,
     });
+    // The page an earlier sync (listing 1) stored and named.
+    await ctx.db.insert('docPageListings', { sourceId, ref: 'page.md', seenBy: 1 });
     await ctx.db.insert('mockDocs', {
       agentId,
       slug: 'source-page',
@@ -1185,7 +1189,7 @@ describe('documentation sources in real mode', (): void => {
       sourceId,
       fresh: true,
     });
-    expect(await context(rotated)).toMatchObject({ refs: [], pageCount: 0 });
+    expect(await context(rotated)).toMatchObject({ pagesListed: 0, pageCount: 0 });
     expect((await context(rotated))?.cursor).toBeUndefined();
     await failAt(rotated);
 
@@ -1208,7 +1212,7 @@ describe('documentation sources in real mode', (): void => {
 
     // The resume failed where it started: the provider may no longer take the cursor.
     const restarted = await harness.mutation(internal.docSources.beginSync, { sourceId });
-    expect(await context(restarted)).toMatchObject({ refs: [], pageCount: 0 });
+    expect(await context(restarted)).toMatchObject({ pagesListed: 0, pageCount: 0 });
     expect((await context(restarted))?.cursor).toBeUndefined();
   });
 });
@@ -1375,6 +1379,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         kind: 'folder',
         locator: '.',
         status: 'synced',
+        listings: 1,
         createdAt: 1,
         updatedAt: 1,
       });
@@ -1392,6 +1397,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         markdown: '# Handbook\n\n- Channels: #finance-close',
         updatedAt: 1,
       });
+      await ctx.db.insert('docPageListings', { sourceId, ref: 'handbook.md', seenBy: 1 });
       return { sourceId, agentId };
     });
     const refs = ['handbook.md'];
@@ -1406,6 +1412,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
             markdown: LARGE_BODY,
             updatedAt: 1,
           });
+          await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 1 });
           await ctx.db.insert('mockDocs', {
             agentId,
             slug: mirroredDocSlug(sourceId, ref),
@@ -1661,6 +1668,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     const { sourceId } = await seedSyncedSource(harness);
     const listed: string[] = [];
     await harness.run(async (ctx): Promise<void> => {
+      // Each page an earlier sync (listing 1) stored and named.
       const insert = async (ref: string): Promise<void> => {
         await ctx.db.insert('docPages', {
           sourceId,
@@ -1669,13 +1677,13 @@ describe('the documentation store under the transaction limits (step 49)', (): v
           markdown: `# ${ref}`,
           updatedAt: 1,
         });
+        await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 1 });
       };
-      await insert('stale-first.md');
+      for (let index = 0; index < 40; index += 1) await insert(`stale-${index}.md`);
       for (let index = 0; index < 150; index += 1) {
         listed.push(`page-${index}.md`);
         await insert(`page-${index}.md`);
       }
-      await insert('stale-last.md');
     });
     const cutOff = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.recordSyncBatch, {
@@ -1695,7 +1703,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       from: null,
       record: true,
     });
-    expect(first).toMatchObject({ removed: 2, done: false });
+    expect(first).toMatchObject({ removed: STALE_LISTING_PAGE, done: false });
     const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
     const context = await harness.query(internal.docSources.syncContext, {
       sourceId,
@@ -1709,7 +1717,8 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     });
     const run = await harness.run(async (ctx) => await ctx.db.get(resumed));
     expect(run).toMatchObject({ state: 'completed' });
-    expect(run?.summary).toMatchObject({ pagesKept: 150, pagesRemoved: 1 });
+    // The resumed finish counts its own part: the rest of the stale pages and `page.md`.
+    expect(run?.summary).toMatchObject({ pagesKept: 150, pagesRemoved: 41 - STALE_LISTING_PAGE });
     const left = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -1718,6 +1727,167 @@ describe('the documentation store under the transaction limits (step 49)', (): v
           .take(200),
     );
     expect(left.map((page) => page.ref).sort()).toEqual([...listed].sort());
+  });
+
+  it('finishes a listing of more than 8,192 pages, which one run once could not record, and prunes only what it did not name (D D2 (a))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    // Pages an earlier listing stored: the first ten this sync names again, the rest it does not.
+    const stored = Array.from({ length: 40 }, (_value, index) => `stored-${index}.md`);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const ref of stored) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 1 });
+      }
+    });
+    const listed = [
+      ...stored.slice(0, 10),
+      ...Array.from({ length: 8_200 }, (_value, index) => `listed-${index}.md`),
+    ];
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    let cursor: string | undefined;
+    for (let start = 0; start < listed.length; start += 1_000) {
+      const next = start + 1_000 >= listed.length ? FINISHING_CURSOR : `after-${start + 1_000}`;
+      await harness.mutation(internal.docSources.recordSyncBatch, {
+        sourceId,
+        runId,
+        currentCursor: cursor,
+        nextCursor: next,
+        refs: listed.slice(start, start + 1_000),
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+      });
+      cursor = next;
+    }
+    await expect(
+      harness.action(internal.docSyncActions.syncBatch, {
+        sourceId,
+        runId,
+        cursor: FINISHING_CURSOR,
+      }),
+    ).resolves.toMatchObject({ ok: true, complete: true });
+
+    const run = await harness.run(async (ctx) => await ctx.db.get(runId));
+    expect(run).toMatchObject({ state: 'completed', pagesListed: listed.length });
+    // The thirty stored pages it did not name, and the seeded `page.md`.
+    expect(run?.summary).toMatchObject({ pagesKept: listed.length, pagesRemoved: 31 });
+    const left = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      ).map((page) => page.ref),
+    );
+    expect(left.sort()).toEqual(stored.slice(0, 10).sort());
+  }, 120_000);
+
+  it('keeps the pages a run begun before 0.6.0 recorded in its refs when it is resumed after the upgrade', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId, legacyRun } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'error',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      // The upgrade's copy stamps every stored page 0 (`doc-page-listings`).
+      for (const ref of ['read-before.md', 'gone.md']) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 0 });
+      }
+      const legacyRun = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        cursor: '25',
+        refs: ['read-before.md'],
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'error',
+        reason: 'The documentation read was interrupted (timeout).',
+        createdAt: Date.now(),
+        completedAt: Date.now(),
+      });
+      return { sourceId, legacyRun };
+    });
+    const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const run = await harness.run(async (ctx) => await ctx.db.get(resumed));
+    expect(run).toMatchObject({ cursor: '25', refs: ['read-before.md'], pagesListed: 1 });
+    expect(run?.listing).toBe(
+      (await harness.run(async (ctx) => await ctx.db.get(legacyRun)))?.listing,
+    );
+
+    await finishGeneration(harness, sourceId, resumed, {
+      currentCursor: '25',
+      refs: [],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    const left = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      ).map((page) => page.ref),
+    );
+    expect(left).toEqual(['read-before.md']);
+    const completed = await harness.run(async (ctx) => await ctx.db.get(resumed));
+    expect(completed?.summary).toMatchObject({ pagesKept: 1, pagesRemoved: 1 });
+  });
+
+  it('removes a page whose batch never recorded, at the next finish that does not name it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    const cut = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    // The batch stored the page, then the action died before it recorded the batch.
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: cut,
+      ref: 'orphan.md',
+      title: 'Orphan',
+      markdown: '# Orphan',
+      updatedAt: 2,
+    });
+    const fresh = await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
+    await finishGeneration(harness, sourceId, fresh, {
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    const left = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      ).map((page) => page.ref),
+    );
+    expect(left).toEqual(['page.md']);
   });
 
   it('prunes a source’s old runs, keeping what it points at and what a migration still reads', async (): Promise<void> => {
