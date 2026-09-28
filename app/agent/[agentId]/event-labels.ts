@@ -293,6 +293,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.correction-retired': 'kept correction retired',
   'work.draft-resumed': (payload) =>
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
+  'work.execution-resumed': (payload) =>
+    `execution restarted after it failed outside the item${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}${typeof payload.reason === 'string' && payload.reason !== '' ? `: ${payload.reason}` : ''}`,
   'work.plan-held': (payload) =>
     payload.reason === 'plan-rejected-for-this-item'
       ? "plan held for you: a colleague's plan for this ticket was rejected"

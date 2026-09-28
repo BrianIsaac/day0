@@ -144,6 +144,14 @@ describe('the live feed labels', (): void => {
     expect(eventLabel({ type: 'work.draft-resumed', payload: { attempt: 2 } })).toBe(
       'plan draft restarted after it died (restart 2)',
     );
+    expect(
+      eventLabel({
+        type: 'work.execution-resumed',
+        payload: { attempt: 1, reason: 'model endpoint timed out' },
+      }),
+    ).toBe(
+      'execution restarted after it failed outside the item (restart 1): model endpoint timed out',
+    );
   });
 
   it('prints a type only an older release wrote as it was stored', (): void => {
