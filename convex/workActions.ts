@@ -1223,7 +1223,10 @@ async function holdDay0Actions(
           : "actions pending the manager's approval",
     });
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    // One scrubbed line for the card, the resume ladder and the caller alike:
+    // a provider error can echo the header it was sent, and a client library
+    // appends its stack.
+    const reason = safeFailureMessage(err, '', 'the execution failed');
     // A failure that is not about the item (a rate limit, an outage, a
     // timeout) goes through the resume ladder before the run stops, as a
     // draft's does; one about the item stops it now (`draftOrFail`'s rule).
@@ -1231,7 +1234,7 @@ async function holdDay0Actions(
       const resumed = await ctx.runMutation(internal.work.resumeExecution, {
         workItemId: args.workItemId,
         runId: args.runId,
-        reason: safeFailureMessage(err, '', 'the execution failed'),
+        reason,
       });
       if (resumed.outcome === 'resumed') {
         return result({ ok: false, reason: `execution will be tried again: ${reason}` });

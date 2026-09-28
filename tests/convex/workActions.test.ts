@@ -8656,3 +8656,45 @@ describe('a write to a ticket no work item was discovered from (P8-2)', (): void
     });
   });
 });
+
+describe('an execution failure on its way to the card (step 42, C-10)', (): void => {
+  /** A provider error that echoes the header it was sent, with the stack a client library appends. */
+  const ECHOED = new Error(
+    '401 Unauthorized: invalid header Authorization: Bearer sk-live-7f3a9c2e1b4d6f8a0c2e4b6d\n    at OpenAIClient.request (node_modules/openai/core.js:412:15)',
+  );
+
+  it('stores and returns one scrubbed line, never the header or the stack', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    recorded.skillFailure = ECHOED;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'mock');
+
+    const returned = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
+    const failed = await readItem(harness, workItemId);
+
+    expect(failed.state).toBe('failed');
+    for (const said of [failed.skipReason ?? '', returned.reason ?? '']) {
+      expect(said).toContain('401 Unauthorized');
+      expect(said).not.toContain('sk-live-7f3a9c2e1b4d6f8a0c2e4b6d');
+      expect(said).not.toContain('node_modules');
+    }
+  });
+
+  it('gives the resume ladder and the caller the same scrubbed line in real mode', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    recorded.skillFailure = ECHOED;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+
+    const returned = await harness.action(internal.workActions.executeApprovedPlanInternal, {
+      workItemId,
+    });
+
+    expect(returned.reason).toContain('execution will be tried again: 401 Unauthorized');
+    expect(returned.reason).not.toContain('sk-live-7f3a9c2e1b4d6f8a0c2e4b6d');
+    expect(returned.reason).not.toContain('node_modules');
+  });
+});
