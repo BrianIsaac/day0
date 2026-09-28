@@ -1001,13 +1001,3 @@ async function withObligations(
   const failedOpen = settled.events.find((event) => event.type === 'plan.obligations-failed-open');
   return failedOpen ? { ...plan, obligationsFailedOpen: failedOpen.payload.reason } : plan;
 }
-
-/** Render a plan as the one paragraph a decision request carries. */
-export function renderPlanSummary(plan: ExecutionPlan): string {
-  const stepsRendered = plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ');
-  return [
-    `${plan.summary} (~${plan.estimatedMinutes}m)`,
-    `Steps: ${stepsRendered}`,
-    `Reversibility: ${plan.reversibility}.`,
-  ].join(' | ');
-}
