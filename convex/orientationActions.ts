@@ -1587,7 +1587,7 @@ export async function orientSurface(
   }
   if (registrySuggestion) {
     openQuestions.push(
-      `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
+      `Confirm the MCP endpoint before you approve; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
     );
   } else if (!endpoint && openQuestions.length === 0) {
     openQuestions.push('Confirm the approved connection endpoint.');
@@ -1639,7 +1639,7 @@ export async function orientSurface(
     registrySuggestion: registrySuggestion
       ? {
           endpoint: registrySuggestion,
-          note: 'Public MCP Registry match, not linked evidence. IT enters the endpoint after confirming it.',
+          note: 'Public MCP Registry match, not linked evidence. Confirm the endpoint before you approve.',
         }
       : undefined,
     blastRadius: draft.blastRadius,

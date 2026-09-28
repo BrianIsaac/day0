@@ -1245,13 +1245,21 @@ describe('orientation run', (): void => {
     expect(surfaces.slack).toMatchObject({ verdict: 'proposed', path: 'escalate' });
     expect(surfaces.slack.endpoint).toBeUndefined();
     const request = surfaces.slack.request as {
-      registrySuggestion?: { endpoint: string };
+      registrySuggestion?: { endpoint: string; note: string };
       openQuestions: string[];
     };
     expect(request.registrySuggestion?.endpoint).toBe(
       'https://server.smithery.ai/@smithery-ai/slack/mcp',
     );
+    // The manager approves alone (Q10), so nothing may name a second approver.
+    expect(request.registrySuggestion?.note).toBe(
+      'Public MCP Registry match, not linked evidence. Confirm the endpoint before you approve.',
+    );
     expect(request.openQuestions.join(' ')).toContain('not linked evidence');
+    expect(request.openQuestions.join(' ')).toContain(
+      'Confirm the MCP endpoint before you approve',
+    );
+    expect(JSON.stringify(request)).not.toMatch(/\bIT\b/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain('search=Slack');
   });

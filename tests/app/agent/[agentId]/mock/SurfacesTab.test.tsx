@@ -472,6 +472,29 @@ describe('SurfacesTab and the optional browser component', (): void => {
     expect(markup.match(/<button[^>]*disabled=""[^>]*>Approve<\/button>/g)).toHaveLength(1);
   });
 
+  it('asks the manager to confirm a registry suggestion before approving, naming no second approver', (): void => {
+    state.surfaces = [
+      {
+        _id: 'surface-slack',
+        agentId: 'agent-1',
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'proposed',
+        path: 'escalate',
+        whereFound: [],
+        credentialLanded: false,
+        request: {
+          openQuestions: [],
+          registrySuggestion: { endpoint: 'https://server.example/slack/mcp' },
+        },
+      },
+    ];
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain('Not linked evidence; confirm the endpoint before you approve.');
+    expect(markup).not.toMatch(/\bIT\b/);
+  });
+
   it('names a failing manager decision poll on the card that stopped answering', (): void => {
     state.lastDecisionError =
       'decision poll failed: Connected Slack surface does not allow conversations.history.';
