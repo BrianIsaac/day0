@@ -2315,6 +2315,9 @@ function SkillStatusLine({ text }: { text: string }) {
   }
   return (
     <div
+      tabIndex={0}
+      role="region"
+      aria-label="Verification log"
       className="mt-0.5 text-[var(--color-muted)] text-[11px] leading-snug font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2"
       data-skill-log="multiline"
     >
@@ -2395,14 +2398,19 @@ export function RefusedDraftDetails({
   ].filter((file) => file.content);
   return (
     <details className="mt-1 text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         Refused draft · {files.map((file) => file.name).join(' and ')} · not registered
       </summary>
       <div className="mt-1 space-y-1">
         {files.map((file) => (
           <div key={file.name}>
             <div className="font-mono text-[10px] text-[var(--color-muted)]">{file.name}</div>
-            <pre className="text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]">
+            <pre
+              tabIndex={0}
+              role="region"
+              aria-label={`Refused ${file.name}`}
+              className="text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]"
+            >
               {file.content}
             </pre>
           </div>
@@ -2434,34 +2442,30 @@ export function checkForWorkMessage(result: { scheduled: number; retryInMs?: num
 }
 
 /** Poll the employee's connected work surfaces now rather than at the next five-minute sweep. */
-function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
+export function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
   const check = useMutation(api.workLoop.checkForNewWork);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const change = useChange();
   return (
     <div className="mb-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[10px] text-[var(--color-muted)]">
           Connected surfaces are polled every five minutes.
         </p>
         <button
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            setError(null);
-            check({ agentId })
-              .then((result) => setMessage(checkForWorkMessage(result)))
-              .catch((err: unknown) => setError(errorMessage(err)))
-              .finally(() => setBusy(false));
-          }}
-          className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+          type="button"
+          disabled={change.busy}
+          onClick={() =>
+            change.run(() => check({ agentId }), {
+              done: checkForWorkMessage,
+              refused: 'The check did not start.',
+            })
+          }
+          className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {busy ? 'Checking…' : 'Check for new work'}
+          {change.busy ? 'Checking…' : 'Check for new work'}
         </button>
       </div>
-      {message ? <p className="mt-1 text-[10px] text-[var(--color-muted)]">{message}</p> : null}
-      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
@@ -2486,14 +2490,19 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
           return (
             <details key={name}>
               <summary
-                className={`cursor-pointer px-2 py-1 rounded hover:bg-[var(--color-bg)] flex items-center justify-between ${
+                className={`min-h-11 cursor-pointer px-2 rounded hover:bg-[var(--color-bg)] flex items-center justify-between ${
                   empty ? 'text-[var(--color-muted)]' : 'text-[var(--color-fg)]'
                 }`}
               >
                 <span className="font-mono">{name}</span>
                 <span className="text-[10px]">{empty ? '∅' : `${content.length}b`}</span>
               </summary>
-              <pre className="mt-1 ml-2 text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]">
+              <pre
+                tabIndex={0}
+                role="region"
+                aria-label={name}
+                className="mt-1 ml-2 text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]"
+              >
                 {empty ? '(empty)' : content}
               </pre>
             </details>

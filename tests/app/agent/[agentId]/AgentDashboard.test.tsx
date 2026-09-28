@@ -39,6 +39,7 @@ import {
   ActionPayload,
   AmendCharterPanel,
   AutonomyControl,
+  CheckForNewWork,
   NotificationModeControl,
   CharterCard,
   ConstraintList,
@@ -2222,7 +2223,12 @@ describe('what Retry does to an unregistered skill', (): void => {
 
     it('keeps its line breaks, in a box bounded in height that scrolls, still wrapping a line with no spaces', (): void => {
       const markup = panel([{ ...refused, verificationLog: log } as unknown as Doc<'skills'>]);
-      const block = /<div class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(markup);
+      const block =
+        /<div tabindex="0" role="region" aria-label="Verification log" class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(
+          markup,
+        );
+      // A scroll box is reachable from the keyboard and named, as axe's
+      // scrollable-region-focusable asks (X2's siblings).
       expect(block).not.toBeNull();
       const classes = block![1]!.split(' ');
       expect(classes).toEqual(
@@ -3153,5 +3159,30 @@ describe('the charter card says what each change came to (step 45, K D6)', (): v
     expect(renderToStaticMarkup(<CharterCard charter={draft} />)).toContain(
       'grid grid-cols-1 sm:grid-cols-3',
     );
+  });
+});
+
+describe('checking for new work now (step 45)', (): void => {
+  afterEach((): void => {
+    backend.refusals = {};
+    backend.results = {};
+  });
+
+  it('says what the check started, then the refusal of the next one in its place, keeping focus on the button', async (): Promise<void> => {
+    backend.results = { 'workLoop:checkForNewWork': { scheduled: 2 } };
+    const view = mount(<CheckForNewWork agentId={'agent-1' as Id<'agents'>} />);
+    expect(button(view.container, 'Check for new work').className).toMatch(/\bmin-h-11\b/);
+    await press(view.container, 'Check for new work');
+    expect(said(view.container)).toEqual([
+      'Checking 2 connected surfaces now; anything new appears here within a minute.',
+    ]);
+    expect(focusedName()).toBe('Check for new work');
+
+    backend.refusals = {
+      'workLoop:checkForNewWork': `[CONVEX M(workLoop:checkForNewWork)] [Request ID: 1] Server Error\nUncaught Error: The employee is retired.\n    at handler (../convex/workLoop.ts:1:1)`,
+    };
+    await press(view.container, 'Check for new work');
+    expect(said(view.container)).toEqual(['The employee is retired.']);
+    view.unmount();
   });
 });
