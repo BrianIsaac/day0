@@ -31,7 +31,7 @@ const NUMBER_WORDS = [
 ];
 
 /** What each figure means, as its label's tooltip says it. */
-const DEFINITIONS = {
+export const DEFINITIONS = {
   charter:
     'Time from deploy to the employee’s first approved charter. The company row quotes each employee’s time and their median, never a sum.',
   decisions:
@@ -72,11 +72,13 @@ function inWords(n: number): string {
   return NUMBER_WORDS[n] ?? String(n);
 }
 
-function decisionsCell(decisions: AgentMetrics['decisions']): string {
+/** The decisions a row quotes: approved over rejected, or "not yet". */
+export function decisionsCell(decisions: AgentMetrics['decisions']): string {
   return decisions.requested === 0 ? 'not yet' : `${decisions.approved} / ${decisions.rejected}`;
 }
 
-function waitCell(decisions: AgentMetrics['decisions']): string {
+/** The decision wait a row quotes: median over 90th percentile, or "not yet". */
+export function waitCell(decisions: AgentMetrics['decisions']): string {
   return decisions.medianLatencyMs === null
     ? 'not yet'
     : `${formatMetricDuration(decisions.medianLatencyMs)} / ${formatMetricDuration(decisions.p90LatencyMs)}`;
