@@ -33,3 +33,80 @@ describe('the theme tokens', () => {
     }
   });
 });
+
+/** The text of every block opened by `opener`, its braces balanced. */
+function blocks(opener: string): string[] {
+  const found: string[] = [];
+  for (let at = CSS.indexOf(opener); at >= 0; at = CSS.indexOf(opener, at + 1)) {
+    const open = CSS.indexOf('{', at);
+    let depth = 0;
+    for (let index = open; index < CSS.length; index += 1) {
+      if (CSS[index] === '{') depth += 1;
+      if (CSS[index] === '}') depth -= 1;
+      if (depth === 0) {
+        found.push(CSS.slice(open + 1, index));
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+/** The declarations of every top-level-or-nested rule whose selector list is exactly `selector`. */
+function rulesFor(source: string, selector: string): string[] {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [...source.matchAll(new RegExp(`(?:^|[}\\s])${escaped}\\s*\\{([^}]*)\\}`, 'g'))].map(
+    (match) => match[1] ?? '',
+  );
+}
+
+describe('the public-page motion', () => {
+  const noPreference = blocks('@media (prefers-reduced-motion: no-preference)').join('\n');
+  const reduce = blocks('@media (prefers-reduced-motion: reduce)').join('\n');
+
+  it('animates cards, reveals and frame sequences only when motion is welcome', () => {
+    for (const selector of [
+      '[data-cards] > *',
+      '[data-rise]',
+      "[data-frame][data-seen='seen'] [data-seq]",
+      "[data-cards][data-seen='pending'] > *",
+    ]) {
+      const everywhere = rulesFor(CSS, selector).filter((rule) => /animation|opacity/.test(rule));
+      const guarded = rulesFor(noPreference, selector).filter((rule) =>
+        /animation|opacity/.test(rule),
+      );
+      expect(everywhere.length, selector).toBeGreaterThan(0);
+      expect(guarded, selector).toEqual(everywhere);
+    }
+  });
+
+  it('keeps the frame swap under reduced motion as a 200 ms crossfade of opacity alone', () => {
+    const [rule] = rulesFor(reduce, '[data-pin-stack] > [data-frame]');
+    expect(rule).toMatch(/transform:\s*none/);
+    expect(rule).toMatch(/transition:\s*opacity 200ms/);
+    expect(rule).not.toMatch(/transition:[^;]*transform/);
+  });
+
+  it('arrives cards 8 px over 260 ms, 50 ms apart, for up to twelve cards', () => {
+    expect(CSS).toMatch(
+      /@keyframes day0-rise-in \{\s*from \{\s*opacity: 0;\s*transform: translateY\(8px\);/,
+    );
+    const [arrive] = rulesFor(noPreference, '[data-cards] > *');
+    expect(arrive).toContain('day0-rise-in 260ms var(--ease-arrive)');
+    expect(arrive).toContain('var(--i, 0) * 50ms');
+    expect(noPreference).toContain('[data-cards] > :nth-child(12)');
+    expect(noPreference).not.toContain('[data-cards] > :nth-child(13)');
+  });
+
+  it('never animates the translate property, which the positioning utilities own', () => {
+    const keyframes = blocks('@keyframes ').join('\n');
+    expect(keyframes).not.toMatch(/(^|[\s;{])translate:/);
+    expect(CSS).toContain('Transform rule, one way everywhere');
+  });
+
+  it('takes the scroll position from nobody and leaves no trace of the removed cursor', () => {
+    expect(CSS).not.toContain('scroll-behavior');
+    expect(CSS).not.toContain('data-enter');
+    expect(CSS).not.toMatch(/WhipCursor|cursor: none/);
+  });
+});
