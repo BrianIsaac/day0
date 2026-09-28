@@ -1,4 +1,4 @@
-import { dayLabel } from '@/demo/hosted-demo-snapshot';
+import { dayLabel } from '@/demo/day-label';
 import type { RecordedRun } from '@/demo/walkthrough';
 import { firstTimedStep } from '@/demo/walkthrough';
 

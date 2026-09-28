@@ -1,5 +1,5 @@
-import run from './walkthrough-steps.json';
-import { dayLabel } from './hosted-demo-snapshot';
+import run from './walkthrough-steps.json' with { type: 'json' };
+import { dayLabel } from './day-label';
 
 /**
  * The recorded real-mode run `/walkthrough` tells, as the README's "One full run, from the first
