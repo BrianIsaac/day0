@@ -164,6 +164,8 @@ export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
  * The live region beside a dashboard control: rendered before anything is
  * said, so a screen reader announces the outcome of each change (N14), and
  * polite, because a change the manager just made is never an interruption.
+ * Empty, it is visually hidden rather than removed, so it holds no space in a
+ * spaced column and is still in the page when its first outcome arrives.
  */
 export function LiveStatus({ outcome }: { outcome: ChangeOutcome | null }) {
   return (
@@ -171,7 +173,7 @@ export function LiveStatus({ outcome }: { outcome: ChangeOutcome | null }) {
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className={`text-[11px] leading-snug ${
+      className={`empty:sr-only text-[11px] leading-snug ${
         outcome?.tone === 'refused' ? 'text-[var(--color-danger)]' : 'text-[var(--color-muted)]'
       }`}
     >

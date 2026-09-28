@@ -18,6 +18,8 @@ describe('the live region beside a dashboard control', (): void => {
     expect(markup).toContain('role="status"');
     expect(markup).toContain('aria-live="polite"');
     expect(markup).toMatch(/<p [^>]*><\/p>/);
+    // Empty, it holds no space in a spaced column, and it is still in the page.
+    expect(markup).toContain('empty:sr-only');
   });
 
   it('says what a change came to, and marks a refusal as one', (): void => {

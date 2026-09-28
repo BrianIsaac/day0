@@ -625,7 +625,7 @@ describe('the cross-item approval panel', (): void => {
     );
     // Nothing to see, only the live region that says what the last batch came to.
     expect(html).toBe(
-      '<p role="status" aria-live="polite" aria-atomic="true" class="text-[11px] leading-snug text-[var(--color-muted)]"></p>',
+      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-[11px] leading-snug text-[var(--color-muted)]"></p>',
     );
   });
 });
