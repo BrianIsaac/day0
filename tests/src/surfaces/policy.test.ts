@@ -1790,6 +1790,17 @@ describe('a replayed browser call under the authority it first landed with', ():
     }
   });
 
+  it('refuses a row whose persisted authority no release wrote, even with every grant held', (): void => {
+    const live = { grants: new Set(['looker:read', 'looker:write']), autonomousActions: true };
+    const persisted = 'delegated' as unknown as 'standing';
+    expect(replayAuthorityRefusal(fill, tile, persisted, live)).toBe(
+      'no grant (unknown authority delegated)',
+    );
+    expect(replayAuthorityRefusal(navigate, tile, persisted, live)).toBe(
+      'no grant (unknown authority delegated)',
+    );
+  });
+
   it('refuses a replayed click that is not a sign-in or an interstitial control, under every authority', (): void => {
     const live = { grants: new Set(['looker:read', 'looker:write']), autonomousActions: true };
     for (const authority of ['manager', 'autonomous', 'standing', undefined] as const) {
