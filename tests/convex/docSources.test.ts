@@ -2,13 +2,14 @@ import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   FINISHING_CURSOR,
   RUN_HISTORY_MS,
   STALE_LISTING_PAGE,
   STALE_SYNC_MS,
+  SUPERSEDED_CREDENTIAL_KEEP_MS,
   agentReadsSource,
   validateLinkInput,
   validateReaderSecret,
@@ -823,6 +824,7 @@ describe('documentation sources in real mode', (): void => {
     expect(runs[2]?.summary).toEqual({
       pagesKept: 1,
       pagesRemoved: 1,
+      credentialsPruned: 0,
       mirrorsRemoved: 1,
       credentialsSuperseded: 0,
       surfacesToReapprove: 0,
@@ -1321,6 +1323,128 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
   expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(surface);
 });
 
+describe('superseded page credentials that have aged out (C2 D2 (a))', (): void => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = Date.UTC(2026, 9, 28);
+
+  /** One page credential of a source, as a sync stored it. */
+  async function credential(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+    ref: string,
+    fields: Partial<Doc<'credentials'>> = {},
+  ): Promise<Id<'credentials'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: ref,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: { sourceId, ref },
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  it('prunes a row superseded longer than the keep that no surface holds, and keeps every other', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const other = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Other',
+          kind: 'folder',
+          locator: './other',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    const aged = {
+      status: 'superseded' as const,
+      supersededAt: NOW - SUPERSEDED_CREDENTIAL_KEEP_MS,
+    };
+    const ids = {
+      aged: await credential(harness, sourceId, 'page.md#aged', aged),
+      held: await credential(harness, sourceId, 'page.md#held', aged),
+      recent: await credential(harness, sourceId, 'page.md#recent', {
+        status: 'superseded',
+        supersededAt: NOW - DAY,
+      }),
+      live: await credential(harness, sourceId, 'page.md#live'),
+      elsewhere: await credential(harness, other, 'page.md#aged', aged),
+    };
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'ungranted',
+        whereFound: [],
+        credentialId: ids.held,
+        credentialLanded: false,
+        createdAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await finishGeneration(harness, sourceId, runId, {
+      refs: ['page.md'],
+      credentialRefs: ['page.md#live'],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+
+    const left = await harness.run(async (ctx) =>
+      Object.fromEntries(
+        await Promise.all(
+          Object.entries(ids).map(async ([name, id]) => [name, (await ctx.db.get(id)) !== null]),
+        ),
+      ),
+    );
+    expect(left).toEqual({ aged: false, held: true, recent: true, live: true, elsewhere: true });
+    const run = await harness.run(async (ctx) => await ctx.db.get(runId));
+    expect(run?.summary).toMatchObject({ credentialsPruned: 1 });
+  });
+
+  it('ages a row from its first supersede, which a later sync superseding it again does not move', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const rotated = await credential(harness, sourceId, 'page.md#old-token');
+    const sync = async (): Promise<Id<'docSyncRuns'>> => {
+      const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+      await finishGeneration(harness, sourceId, runId, {
+        refs: ['page.md'],
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+      });
+      return runId;
+    };
+    await sync();
+    expect(await harness.run(async (ctx) => await ctx.db.get(rotated))).toMatchObject({
+      status: 'superseded',
+      supersededAt: NOW,
+    });
+    vi.setSystemTime(NOW + SUPERSEDED_CREDENTIAL_KEEP_MS - DAY);
+    await sync();
+    expect((await harness.run(async (ctx) => await ctx.db.get(rotated)))?.supersededAt).toBe(NOW);
+    vi.setSystemTime(NOW + SUPERSEDED_CREDENTIAL_KEEP_MS);
+    await sync();
+    expect(await harness.run(async (ctx) => await ctx.db.get(rotated))).toBeNull();
+  });
+});
+
 describe('the sync generation fence on pages (step 14)', (): void => {
   it('refuses a page from a generation a newer sync superseded and writes the running one’s', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -1524,6 +1648,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(run?.summary).toEqual({
       pagesKept: LARGE_PAGES,
       pagesRemoved: 1,
+      credentialsPruned: 0,
       mirrorsRemoved: 1,
       credentialsSuperseded: 0,
       surfacesToReapprove: 0,

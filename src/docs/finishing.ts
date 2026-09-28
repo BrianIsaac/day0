@@ -1,9 +1,10 @@
 /**
  * Where a documentation sync that has read every page is in finishing it.
  *
- * A generation that has read its last page finishes in three phases, each a
+ * A generation that has read its last page finishes in four phases, each a
  * bounded page at a time: it deletes the stored pages it did not list, then
- * the mirrors, then re-reads the intake scopes and completes. The run's
+ * the superseded page credentials that have aged out, then the mirrors, then
+ * re-reads the intake scopes and completes. The run's
  * cursor records the phase and the phase's own cursor after every page, so
  * a finish the runtime cut off resumes where it stopped, and a resume that
  * finished a page counts as progress (adversarial pass on step 49).
@@ -13,7 +14,26 @@
 export const FINISHING_CURSOR = '\u0000finishing';
 
 /** The finish's phases, in order. */
-export type FinishingPhase = 'pages' | 'mirrors' | 'scopes';
+export type FinishingPhase = 'pages' | 'credentials' | 'mirrors' | 'scopes';
+
+/** The finish's phases, in the order it walks them. */
+export const FINISHING_PHASES: readonly FinishingPhase[] = [
+  'pages',
+  'credentials',
+  'mirrors',
+  'scopes',
+];
+
+/**
+ * Whether a finish that stands at one phase has yet to walk another: the
+ * phase it stands at and every later one.
+ *
+ * @param from - Where the finish stands.
+ * @param phase - The phase asked about.
+ */
+export function finishWalks(from: FinishingPhase, phase: FinishingPhase): boolean {
+  return FINISHING_PHASES.indexOf(from) <= FINISHING_PHASES.indexOf(phase);
+}
 
 /** One point in the finish: its phase, and where in the phase's walk. */
 export interface FinishingStep {
@@ -21,7 +41,7 @@ export interface FinishingStep {
   readonly cursor: string | null;
 }
 
-const STEP = /^\u0000finishing:(pages|mirrors|scopes):([\s\S]*)$/;
+const STEP = /^\u0000finishing:(pages|credentials|mirrors|scopes):([\s\S]*)$/;
 
 /**
  * Read a run's cursor as a point in the finish.

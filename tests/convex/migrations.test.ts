@@ -664,6 +664,47 @@ describe('the page listing stamp (D D2 (a))', (): void => {
   });
 });
 
+describe('the superseded-at stamp (C2 D2 (a))', (): void => {
+  it('stamps each row a sync superseded with the upgrade, and leaves a live, a suspect and a stamped row', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const ids = await harness.run(async (ctx) => {
+      const row = async (
+        ref: string,
+        fields: Partial<Doc<'credentials'>>,
+      ): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: ref,
+          source: { sourceId, ref },
+          createdAt: 1,
+          ...fields,
+        });
+      return await Promise.all([
+        row('a.md', { status: 'superseded' }),
+        row('b.md', { status: 'superseded', supersededAt: 7 }),
+        row('c.md', { status: 'suspect' }),
+        row('d.md', {}),
+      ]);
+    });
+    const before = Date.now();
+
+    await runAll(harness);
+
+    const stamps = await harness.run(
+      async (ctx) =>
+        await Promise.all(ids.map(async (id) => (await ctx.db.get(id))?.supersededAt ?? null)),
+    );
+    expect(stamps[0]).toBeGreaterThanOrEqual(before);
+    expect(stamps.slice(1)).toEqual([7, null, null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'credentials-superseded-at')).toMatchObject(
+      { release: '0.6.0', read: 4, changed: 1, completedAt: expect.any(Number) },
+    );
+  });
+});
+
 describe('the single approval (Q10)', (): void => {
   const UPGRADED_AT = Date.UTC(2026, 8, 28, 9);
   const DAY = 24 * 60 * 60 * 1_000;

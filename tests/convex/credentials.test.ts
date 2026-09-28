@@ -240,6 +240,8 @@ describe('credential contract', (): void => {
     expect(await rows(harness)).toEqual([
       expect.not.objectContaining({ status: expect.anything(), revokedAt: expect.anything() }),
     ]);
+    // Revived, it no longer ages towards the prune of superseded rows (C2 D2 (a)).
+    expect((await rows(harness))[0]).not.toHaveProperty('supersededAt');
 
     // A revoke the owner made survives the same blink.
     await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {

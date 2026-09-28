@@ -122,6 +122,14 @@ export default defineSchema({
     lastUsedAt: v.optional(v.number()),
     status: v.optional(v.union(v.literal('suspect'), v.literal('superseded'))),
     statusReason: v.optional(v.string()),
+    /**
+     * When a sync first superseded the row, kept while it stays superseded and
+     * cleared when its value returns. A page row superseded longer than
+     * `SUPERSEDED_CREDENTIAL_KEEP_MS` that no surface holds is pruned by its
+     * source's next finish (C2 D2 (a)). The `credentials-superseded-at`
+     * migration stamps the rows superseded before it with the upgrade.
+     */
+    supersededAt: v.optional(v.number()),
     revokedAt: v.optional(v.number()),
     /** Which credential key sealed this row. Declared ahead of the re-seal
      * that writes it (step 32); nothing writes or reads it yet. */
@@ -218,6 +226,8 @@ export default defineSchema({
         mirrorsRemoved: v.number(),
         credentialsSuperseded: v.number(),
         surfacesToReapprove: v.number(),
+        /** Superseded page credentials the finish pruned; absent on runs before 0.6.0. */
+        credentialsPruned: v.optional(v.number()),
       }),
     ),
   })

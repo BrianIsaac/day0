@@ -75,6 +75,7 @@ export const MIGRATION_NAMES = [
   'work-evaluation-unavailable-cause',
   'sync-runs-unread',
   'doc-page-listings',
+  'credentials-superseded-at',
 ] as const;
 
 /** One migration's name. */
@@ -204,6 +205,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'gives every stored documentation page a listing row stamped 0, older than any listing a sync starts, so the next finish that does not name the page removes it and one that does restamps it',
     thenRemoves:
       'the reading of docSyncRuns.refs as a pre-0.6.0 run’s listing (legacyListedRefs), once no run begun before this release can be resumed; the refs declaration the release after, with a migration clearing it',
+  },
+  'credentials-superseded-at': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'stamps each credential a sync superseded before this release with the upgrade, so its source’s finish prunes it once it has stayed superseded past the keep and no surface holds it',
+    thenRemoves: 'nothing: a sync stamps supersededAt when it supersedes a row from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -563,6 +569,26 @@ async function stampPageListings(ctx: MutationCtx, cursor: string | null): Promi
 }
 
 /**
+ * Stamp each credential a sync superseded before 0.6.0 with the upgrade's
+ * moment (C2 D2 (a)): when it was superseded is not recorded, so its keep
+ * starts now, and no row is pruned sooner than the keep after the upgrade.
+ */
+async function stampSupersededAt(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const now = Date.now();
+  const page = await ctx.db.query('credentials').paginate({ cursor, numItems: MIGRATION_PAGE });
+  const unstamped = page.page.filter(
+    (credential) => credential.status === 'superseded' && credential.supersededAt === undefined,
+  );
+  for (const credential of unstamped) await ctx.db.patch(credential._id, { supersededAt: now });
+  return {
+    read: page.page.length,
+    changed: unstamped.length,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/**
  * Re-seal one page of credentials in the Node runtime (decision Q15, step
  * 14). The action writes each page's rows itself; this reports the page.
  */
@@ -629,6 +655,7 @@ const MIGRATION_PAGES: Readonly<
     await backfillUnavailableCausePage(ctx, cursor),
   'sync-runs-unread': moveUnreadRecords,
   'doc-page-listings': stampPageListings,
+  'credentials-superseded-at': stampSupersededAt,
 };
 
 /** A migration's row, if it has started. */

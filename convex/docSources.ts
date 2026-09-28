@@ -84,6 +84,16 @@ export const PAGED_READ = { numItems: 100, maximumBytesRead: 4 * 1024 * 1024 } a
  */
 export const STALE_LISTING_PAGE = 16;
 
+/**
+ * How long a superseded page credential is kept before its source's finish
+ * prunes it, when no surface holds it (C2 D2 (a)). A value that returns to
+ * its page within this long revives its own row; past it, a page whose token
+ * rotates monthly keeps about one superseded row per credential rather than
+ * one per rotation, so neither the 512-row page read nor the 1,000-row source
+ * cap is ever reached by history alone.
+ */
+export const SUPERSEDED_CREDENTIAL_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
 /** How long a finished run is kept for the record before the run history is pruned. */
 export const RUN_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -1216,7 +1226,52 @@ export const prunePages = internalMutation({
       }
       await ctx.db.delete(row._id);
     }
-    return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'mirrors', {
+    return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'credentials', {
+      ...page,
+      removed,
+    });
+  },
+});
+
+/**
+ * Delete one bounded page of a finishing source's superseded page credentials
+ * that have aged out (C2 D2 (a)): superseded longer than
+ * `SUPERSEDED_CREDENTIAL_KEEP_MS` ago and bound to no surface. Internal; the
+ * finishing sync walks the source's credential rows with it, after the pages.
+ *
+ * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
+ */
+export const pruneSupersededCredentials = internalMutation({
+  args: finishingPageArgs,
+  handler: async (ctx, args): Promise<FinishingPage | null> => {
+    phaseOf(args.checkpoint, 'credentials');
+    const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
+    if (!finishing) return null;
+    const cutoff = Date.now() - SUPERSEDED_CREDENTIAL_KEEP_MS;
+    const page = await ctx.db
+      .query('credentials')
+      .withIndex('by_user_source_ref', (index) =>
+        index.eq('userId', finishing.source.userId).eq('source.sourceId', args.sourceId),
+      )
+      .paginate({ ...PAGED_READ, cursor: args.from });
+    let removed = 0;
+    for (const credential of page.page) {
+      if (
+        credential.status !== 'superseded' ||
+        credential.supersededAt === undefined ||
+        credential.supersededAt > cutoff
+      ) {
+        continue;
+      }
+      const bound = await ctx.db
+        .query('surfaces')
+        .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
+        .first();
+      if (bound !== null) continue;
+      await ctx.db.delete(credential._id);
+      removed += 1;
+    }
+    return await closeFinishingPage(ctx, finishing.run, args, 'credentials', 'mirrors', {
       ...page,
       removed,
     });
@@ -1433,6 +1488,7 @@ export const finishSync = internalMutation({
     pruned: v.optional(
       v.object({
         pagesRemoved: v.number(),
+        credentialsPruned: v.optional(v.number()),
         mirrorsRemoved: v.number(),
         surfacesToReapprove: v.number(),
       }),
@@ -1472,7 +1528,13 @@ export const finishSync = internalMutation({
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
     const unreadRecord = withUnreadPages(unreadRecordIn(run), args.unread ?? []);
-    const pruned = args.pruned ?? { pagesRemoved: 0, mirrorsRemoved: 0, surfacesToReapprove: 0 };
+    const pruned = {
+      pagesRemoved: 0,
+      credentialsPruned: 0,
+      mirrorsRemoved: 0,
+      surfacesToReapprove: 0,
+      ...args.pruned,
+    };
     const now = Date.now();
     await ctx.db.patch(run._id, {
       cursor: undefined,
@@ -1509,10 +1571,13 @@ async function supersedeCredential(
   // Superseded, not revoked: the status alone keeps the value out of every
   // decrypt and exact-value list, and the same value returning on a later
   // sync revives the row (`credentials.store`). Only a person's revoke
-  // stamps `revokedAt`, so a sync never undoes one and never makes one.
+  // stamps `revokedAt`, so a sync never undoes one and never makes one. The
+  // first supersede's time stands through every later sync's, so the row ages.
   await ctx.db.patch(credential._id, {
     status: 'superseded',
     statusReason: 'No longer detected in synced documentation.',
+    supersededAt:
+      credential.status === 'superseded' ? (credential.supersededAt ?? Date.now()) : Date.now(),
   });
   const surfaces = await ctx.db
     .query('surfaces')

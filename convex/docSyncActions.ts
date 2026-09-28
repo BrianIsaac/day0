@@ -29,6 +29,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { FINISHING_CHECKPOINT_EVERY, PAGED_READ, type FinishingPage } from './docSources';
 import {
   FINISHING_CURSOR,
+  finishWalks,
   finishingCursor,
   finishingStep,
   type FinishingStep,
@@ -492,8 +493,9 @@ export const syncBatch = internalAction({
 /**
  * Finish a generation that has read every page, one bounded transaction at a time.
  *
- * From the point the run's cursor records, the stored pages and then the
- * mirrors it did not list are removed a page at a time, the employees'
+ * From the point the run's cursor records, the stored pages it did not list,
+ * the superseded page credentials that have aged out and then the mirrors it
+ * did not list are removed a page at a time, the employees'
  * intake scopes are re-read against the pages as they now stand (real mode),
  * and `finishSync` supersedes the credentials no page states and publishes
  * the synced state. Each step is fenced on the run's cursor, so a newer sync
@@ -512,6 +514,7 @@ async function finishGeneration(
   let checkpoint =
     from.phase === 'pages' && from.cursor === null ? FINISHING_CURSOR : finishingCursor(from);
   let pagesRemoved = 0;
+  let credentialsPruned = 0;
   let mirrorsRemoved = 0;
   if (from.phase === 'pages') {
     const pages = await walkFinishingPhase(ctx, internal.docSources.prunePages, {
@@ -524,7 +527,22 @@ async function finishGeneration(
     pagesRemoved = pages.removed;
     checkpoint = pages.checkpoint;
   }
-  if (from.phase !== 'scopes') {
+  if (finishWalks(from.phase, 'credentials')) {
+    const credentials = await walkFinishingPhase(
+      ctx,
+      internal.docSources.pruneSupersededCredentials,
+      {
+        sourceId: source._id,
+        runId,
+        checkpoint,
+        from: from.phase === 'credentials' ? from.cursor : null,
+      },
+    );
+    if (credentials === null) return stopped;
+    credentialsPruned = credentials.removed;
+    checkpoint = credentials.checkpoint;
+  }
+  if (finishWalks(from.phase, 'mirrors')) {
     const mirrors = await walkFinishingPhase(ctx, internal.docSources.pruneMirrors, {
       sourceId: source._id,
       runId,
@@ -545,7 +563,7 @@ async function finishGeneration(
     credentialRefs: [],
     pageCount: 0,
     redactionCount: 0,
-    pruned: { pagesRemoved, mirrorsRemoved, surfacesToReapprove },
+    pruned: { pagesRemoved, credentialsPruned, mirrorsRemoved, surfacesToReapprove },
   });
   if (completed.completed) {
     await ctx.scheduler.runAfter(0, internal.documentationDiscoveryActions.discoverSource, {
@@ -573,7 +591,10 @@ async function finishGeneration(
  */
 async function walkFinishingPhase(
   ctx: ActionCtx,
-  step: typeof internal.docSources.prunePages | typeof internal.docSources.pruneMirrors,
+  step:
+    | typeof internal.docSources.prunePages
+    | typeof internal.docSources.pruneSupersededCredentials
+    | typeof internal.docSources.pruneMirrors,
   start: {
     readonly sourceId: Id<'docSources'>;
     readonly runId: Id<'docSyncRuns'>;
