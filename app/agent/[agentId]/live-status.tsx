@@ -15,8 +15,8 @@ export interface ChangeOutcome {
  * The words of a refusal the backend returned.
  *
  * A `ConvexError` carries the refusal the manager is meant to read as its
- * data, when that data is a sentence. Any other error reaches the browser inside the transport's envelope
- * (the function name, a request id, `Uncaught Error:` and the stack), which is
+ * data, when that data is a sentence. Any other error reaches the browser
+ * inside the transport's envelope (the function name, a request id, `Uncaught Error:` and the stack), which is
  * stripped so only the sentence written for a person is said; in production
  * the backend strips the text itself, so the fallback is said instead.
  *

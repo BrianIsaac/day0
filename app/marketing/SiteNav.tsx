@@ -13,8 +13,9 @@ const LINK = `${TONE} inline-flex min-h-11 items-center px-2.5 text-[13px]`;
 
 /**
  * The public site navigation in the header, shown exactly when `/` shows the marketing page:
- * to a visitor the browser knows is signed out, never while that is still being resolved. No-auth dev mode always has its local manager signed
- * in, so it never shows. Hidden below the `md` width, where the page itself links onwards.
+ * to a visitor the browser knows is signed out, never while that is still being resolved.
+ * No-auth dev mode always has its local manager signed in, so it never shows. Hidden below the
+ * `md` width, where the page itself links onwards.
  */
 export function SiteNav() {
   if (DEV_NO_AUTH) return null;
