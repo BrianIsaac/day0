@@ -2739,40 +2739,41 @@ export const finishPlanGroundingRead = internalMutation({
   },
 });
 
-/** The most events `planGroundingReads` walks back through before it gives up. */
+/** The most reads of the item's type `planGroundingReads` walks back through before it gives up. */
 const GROUNDING_READ_SCAN_LIMIT = 2_000;
 
+/** Whether a grounding read's ledger row says the record was read: landed, not held. */
+function groundingReadLanded(applied: unknown): boolean {
+  if (typeof applied !== 'object' || applied === null) return false;
+  const row = applied as { ok?: unknown; held?: unknown };
+  return row.ok === true && row.held !== true;
+}
+
 /**
- * The current plan-grounding read of a work item: the most recent one whose
- * ledger row was attached, as the event stored it (already redacted). The
- * executor's evidence check reads it as what the item says; an earlier
- * reading is superseded, and another item's is never returned.
+ * The current plan-grounding read of a work item: the most recent one that
+ * read the record, as the event stored it (already redacted). The executor's
+ * evidence check reads it as what the item says; an earlier reading is
+ * superseded, a later read that failed or was held says nothing about the
+ * item (P7-18), and another item's is never returned.
  */
 export const planGroundingReads = internalQuery({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<Array<{ action: unknown; applied: unknown }>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return [];
-    // Newest first and stopped at the first match, within a bound: the
-    // events table is indexed by agent alone, and an item with no read in
-    // reach simply has none to cite.
-    const newestFirst = ctx.db
-      .query('events')
-      .withIndex('by_agent', (q) =>
-        q.eq('agentId', row.agentId).gt('_creationTime', row._creationTime),
-      )
-      .order('desc');
+    const newestFirst = eventsOfType(ctx, row.agentId, 'work.plan-grounding-read', {
+      after: row._creationTime,
+    }).order('desc');
     let scanned = 0;
     for await (const event of newestFirst) {
       scanned += 1;
       if (scanned > GROUNDING_READ_SCAN_LIMIT) break;
-      if (event.type !== 'work.plan-grounding-read') continue;
       const { workItemId, action, applied } = event.payload as {
         workItemId?: string;
         action?: unknown;
         applied?: unknown;
       };
-      if (workItemId === args.workItemId && action !== undefined && applied != null)
+      if (workItemId === args.workItemId && action !== undefined && groundingReadLanded(applied))
         return [{ action, applied }];
     }
     return [];

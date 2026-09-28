@@ -5927,6 +5927,33 @@ describe('what an outage leaves for the manager (P7-18)', (): void => {
   });
 });
 
+describe('the plan-grounding read the evidence check cites (P7-18)', (): void => {
+  it('cites the newest read that landed, not a newer one that failed, and never another item’s', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+    const action = { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue' } };
+    await harness.run(async (ctx): Promise<void> => {
+      const read = async (payload: Record<string, unknown>): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.plan-grounding-read',
+          payload: { action, ...payload },
+          createdAt: Date.now(),
+        });
+      };
+      await read({ workItemId, applied: { ok: true, effect: 'REVOPS-5: close August' } });
+      // Linear went down before the next draft: its read failed.
+      await read({ workItemId, applied: { ok: false, reason: 'HTTP 503' } });
+      await read({ workItemId, applied: { ok: true, held: true, reason: 'held' } });
+      await read({ workItemId: 'another-item', applied: { ok: true, effect: 'REVOPS-9' } });
+    });
+    await expect(harness.query(internal.work.planGroundingReads, { workItemId })).resolves.toEqual([
+      { action, applied: { ok: true, effect: 'REVOPS-5: close August' } },
+    ]);
+  });
+});
+
 describe('a recovery for every claim (P5-1, P5-2, P5-3)', (): void => {
   const landedPrerequisite = {
     ...pendingOutput,
