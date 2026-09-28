@@ -42,11 +42,32 @@ describe('documentation system discovery', (): void => {
     ]);
   });
 
+  /**
+   * An onboarding page whose systems table carries a row for the handbook
+   * itself, as the September 2026 Notion handbook did: the row discovery must
+   * refuse under any name the model gives it.
+   */
+  const documentationRowPage: DiscoveryPage = {
+    ref: 'onboarding.md',
+    title: 'Revenue operations onboarding',
+    markdown: [
+      '# Revenue operations onboarding',
+      '',
+      '## Systems and access owners',
+      '',
+      '| System | What it is for | Access owner |',
+      '|---|---|---|',
+      '| Linear | The formal work queue and audit trail. | Work management administrator |',
+      '| Northstar CRM | Internal account and opportunity records used during close. | Business Systems owner |',
+      '| Team documentation | This handbook in Notion (onboarding, system pages) and the runbooks folder (how-to guides, queue). | Revenue operations manager |',
+    ].join('\n'),
+  };
+
   it('extracts the actual onboarding systems and records why team documentation is excluded', (): void => {
     const info = vi.spyOn(console, 'info').mockImplementation((): void => undefined);
     const page: DiscoveryPage = {
       ref: 'onboarding.md',
-      title: 'Revenue operations onboarding',
+      title: 'Kestrel Supply onboarding',
       markdown: readFileSync(resolve('tests', 'fixtures', 'notion-pages', 'onboarding.md'), 'utf8'),
     };
 
@@ -54,9 +75,9 @@ describe('documentation system discovery', (): void => {
       structuralSystemCandidates([page, actualSystemPage('looker-pipeline-tile')]).map(
         ({ name }): string => name,
       ),
-    ).toEqual(['Linear', 'Slack', 'Northstar CRM', 'Looker pipeline tile']);
+    ).toEqual(['Linear', 'Slack', 'Looker pipeline tile', 'Northstar CRM', 'NetLedger']);
     expect(
-      validateModelCandidates([page], {
+      validateModelCandidates([documentationRowPage], {
         systems: [{ name: 'Team documentation', class: 'other', pageRef: 'onboarding.md' }],
       }),
     ).toEqual([]);
@@ -71,14 +92,9 @@ describe('documentation system discovery', (): void => {
 
   it('refuses the documentation row under its platform name and a wiki row, and keeps a platform used as a system', (): void => {
     const info = vi.spyOn(console, 'info').mockImplementation((): void => undefined);
-    const onboarding: DiscoveryPage = {
-      ref: 'onboarding.md',
-      title: 'Revenue operations onboarding',
-      markdown: readFileSync(resolve('tests', 'fixtures', 'notion-pages', 'onboarding.md'), 'utf8'),
-    };
     // The model may name the documentation row after the platform it lives in.
     expect(
-      validateModelCandidates([onboarding], {
+      validateModelCandidates([documentationRowPage], {
         systems: [{ name: 'Notion', class: 'other', pageRef: 'onboarding.md' }],
       }),
     ).toEqual([]);
