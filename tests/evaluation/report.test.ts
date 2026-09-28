@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   COMPARISON_EXPERIMENT,
@@ -541,5 +541,25 @@ describe('per-task and per-run summaries', (): void => {
       '| write-pipeline-row | approval-write | 2/2 | not run | 4.00 s | not run |',
     );
     expect(report).toContain('approves every held action');
+  });
+});
+
+describe('the re-graded source a committed result names', (): void => {
+  it('is a path from the checkout root, never a machine directory', async (): Promise<void> => {
+    const results = new URL('../../evaluation/results/', import.meta.url);
+    const files = (await readdir(results, { recursive: true })).filter((file) =>
+      file.endsWith('.json'),
+    );
+    const regraded = [];
+    for (const file of files) {
+      const evidence = JSON.parse(await readFile(new URL(file, results), 'utf8')) as {
+        regradedFrom?: { path?: unknown };
+      };
+      if (evidence.regradedFrom) regraded.push(evidence.regradedFrom.path);
+    }
+    expect(regraded.length).toBeGreaterThan(0);
+    for (const path of regraded) {
+      expect(path).toMatch(/^evaluation\/results\/[^/]+\/[^/]+\.json$/);
+    }
   });
 });

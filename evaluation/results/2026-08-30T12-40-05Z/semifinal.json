@@ -6450,7 +6450,7 @@
     }
   ],
   "regradedFrom": {
-    "path": "/home/brian-isaac/.local/share/briain/worktrees/day0-the-documented-procedure-20260830T122202-fb1309/evaluation/results/2026-08-30T12-02-26Z/semifinal.json",
+    "path": "evaluation/results/2026-08-30T12-02-26Z/semifinal.json",
     "commit": "abd03289e796b142fe494b029ea389d4279570d7",
     "gradedAtCommit": "8bce077f872674ec57a462973e566b9d8a83ea29",
     "generatedAt": "2026-08-30T12:19:42.238Z",
