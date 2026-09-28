@@ -116,6 +116,7 @@ import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
 import { errorMessage } from '@/lib/errors';
+import { plainErrorMessage } from '@/lib/plain-error';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -1162,8 +1163,12 @@ export function CharterCard({
 
   async function toggleStrike(index: number, struck: boolean): Promise<void> {
     setStrikeError(null);
-    const result = await setConstraintStruck({ charterId: charter._id, index, struck });
-    if (!result.ok) setStrikeError(result.reason);
+    try {
+      const result = await setConstraintStruck({ charterId: charter._id, index, struck });
+      if (!result.ok) setStrikeError(result.reason);
+    } catch (failure: unknown) {
+      setStrikeError(plainErrorMessage(errorMessage(failure)));
+    }
   }
 
   async function sendAmendment(change: CharterChange): Promise<boolean> {
