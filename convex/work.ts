@@ -3090,6 +3090,11 @@ export const prepareDecisionRequest = internalMutation({
       surfaceName: chat.displayName,
     };
     await ctx.db.patch(row._id, { decision });
+    await settleClosedBatchesOn(ctx, {
+      agentId: row.agentId,
+      surfaceSlug: chat.slug,
+      id: chat.managerDmChannelId,
+    });
     // The claim's dead-man's switch, in the same transaction as the claim.
     await ctx.scheduler.runAfter(
       DECISION_REQUEST_RECOVERY_MS,
@@ -3370,6 +3375,36 @@ async function settleBatchesHolding(ctx: MutationCtx, item: Doc<'workItems'>): P
   const now = Date.now();
   for (const batch of batches) {
     if (!batch.members.some((member) => member.decisionId === decision.id)) continue;
+    if (await batchSettled(ctx, batch)) await ctx.db.patch(batch._id, { decidedAt: now });
+  }
+}
+
+/**
+ * Mark decided every undecided batch on a channel that has no member open any
+ * more, whatever closed its members: a decision one at a time, a request sent
+ * again under a new code, or an item that left the parked state (S2 D6). Run
+ * where a new request is claimed on the channel, so the open-batch read never
+ * fills with batches nothing can decide.
+ *
+ * @param channel - The manager DM, as its surface names it.
+ */
+async function settleClosedBatchesOn(
+  ctx: MutationCtx,
+  channel: { readonly agentId: Id<'agents'>; readonly surfaceSlug: string; readonly id: string },
+): Promise<void> {
+  const batches = await ctx.db
+    .query('decisionBatches')
+    .withIndex('by_agent_channel_decided', (q) =>
+      q
+        .eq('agentId', channel.agentId)
+        .eq('surfaceSlug', channel.surfaceSlug)
+        .eq('channel', channel.id)
+        .eq('decidedAt', undefined),
+    )
+    .order('desc')
+    .take(OPEN_BATCH_SCAN);
+  const now = Date.now();
+  for (const batch of batches) {
     if (await batchSettled(ctx, batch)) await ctx.db.patch(batch._id, { decidedAt: now });
   }
 }

@@ -449,6 +449,37 @@ describe('batched decisions', (): void => {
     expect(open.batches).toEqual([]);
   });
 
+  it('settles a batch whose last open member left by a new code, not a decision', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, first, second } = await batchOnChannel(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: second.workItemId,
+      pendingRunId: second.runId,
+      approvedIndexes: [0],
+    });
+    // The first member's thread is gone, so its request is marked failed and
+    // sent again under a new code: the batch's code no longer decides it.
+    await expect(
+      harness.mutation(internal.work.closeDecisionThread, { surfaceId, decisionId: 'gh6npq' }),
+    ).resolves.toBe(true);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: first.workItemId,
+      kind: 'actions',
+      decisionId: 'jm8uvw',
+      supersedes: 'gh6npq',
+    });
+    const batch = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('decisionBatches')
+          .withIndex('by_agent_id', (q) => q.eq('agentId', agentId).eq('id', 'bq2wxy'))
+          .unique(),
+    );
+    expect(batch).toMatchObject({ decidedAt: expect.any(Number) });
+    expect(batch?.outcome).toBeUndefined();
+  });
+
   it('decides every open member of a batch code from one channel reply, and names what it left', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
