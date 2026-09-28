@@ -79,7 +79,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
             aria-expanded={deploying}
             aria-controls="deploy-form"
             onClick={() => setDeploying((open) => !open)}
-            className="self-start whitespace-nowrap rounded-lg bg-[var(--color-accent)] px-4 py-2.5 text-sm font-medium text-[var(--color-bg)]"
+            className="inline-flex min-h-11 items-center self-start whitespace-nowrap rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-bg)]"
           >
             Deploy another
           </button>
@@ -173,9 +173,13 @@ function AfterDeploy() {
 function DocumentationCard({ sources }: { sources: number | undefined }) {
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+      {/* The link's 44 px target (N14) takes the header's height; the padding makes up the rest. */}
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] py-1 pl-5 pr-2">
         <h2 className="text-sm font-semibold">Documentation</h2>
-        <Link href="/documentation" className="text-sm text-[var(--color-accent)]">
+        <Link
+          href="/documentation"
+          className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--color-accent)]"
+        >
           Manage
         </Link>
       </div>

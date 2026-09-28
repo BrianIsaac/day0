@@ -64,7 +64,7 @@ export function MonthCard({
       </div>
       <p className="px-5 pb-4 text-xs text-[var(--color-muted)]">
         Recomputable from the export. Not rates.
-        {partial ? ' A busy month counts its first hundred landings per employee here.' : ''}
+        {partial ? ' A busy month counts its latest hundred landings per employee here.' : ''}
       </p>
     </section>
   );

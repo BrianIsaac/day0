@@ -158,7 +158,7 @@ function RosterRowView({
       >
         <Link
           href={`/agent/${employee.agentId}`}
-          className="inline-flex items-center gap-2.5 whitespace-nowrap hover:text-[var(--color-accent)]"
+          className="inline-flex min-h-11 items-center gap-2.5 whitespace-nowrap hover:text-[var(--color-accent)]"
         >
           <AgentPixelAvatar
             avatar={avatarById(employee.avatarId)}

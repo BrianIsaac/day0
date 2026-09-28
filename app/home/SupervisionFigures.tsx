@@ -50,7 +50,7 @@ export function SupervisionFigures({ company }: { company: OwnerMetrics['company
       ),
     },
     { term: 'Held, then approved', definition: DEFINITIONS.actions, value: actions.approved },
-    { term: 'Held now', definition: DEFINITIONS.actions, value: actions.held },
+    { term: 'Held', definition: DEFINITIONS.actions, value: actions.held },
     { term: 'Refused', definition: DEFINITIONS.actions, value: actions.refused },
     {
       term: 'Audit trail',

@@ -328,6 +328,15 @@ describe('the company home', (): void => {
     expect(text).not.toContain('things need you');
   });
 
+  it('gives Deploy another, each roster name and Manage a 44 px target (N14, m26)', (): void => {
+    const page = render(roster);
+    expect(/<button[^>]*aria-controls="deploy-form"[^>]*>/.exec(page)?.[0]).toMatch(/\bmin-h-11\b/);
+    const names = [...page.matchAll(/<th scope="row"[^>]*><a [^>]*>/g)].map(([tag]) => tag);
+    expect(names.length).toBeGreaterThan(0);
+    for (const tag of names) expect(tag).toMatch(/\bmin-h-11\b/);
+    expect(/<a [^>]*href="\/documentation"[^>]*>/.exec(page)?.[0]).toMatch(/\bmin-h-11\b/);
+  });
+
   it('lists what waits on the manager from the inbox, and the roster counts it per employee', (): void => {
     const text = readAs(render(roster));
     expect(text).toContain('Finance colleague · a plan to approve');

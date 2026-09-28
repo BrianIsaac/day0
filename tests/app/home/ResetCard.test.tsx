@@ -35,6 +35,12 @@ describe('ResetCard', (): void => {
     expect(html).not.toMatch(/\bagents?\b/i);
   });
 
+  it('gives the button and the unlink choice a 44 px target (N14, m26)', (): void => {
+    const html = renderToStaticMarkup(<ResetCard hasEmployees hasDocumentation />);
+    expect(buttonOf(html)).toMatch(/\bmin-h-11\b/);
+    expect(/<label[^>]*>/.exec(html)?.[0]).toMatch(/\bmin-h-11\b/);
+  });
+
   it('is disabled while there is nothing to wipe', (): void => {
     expect(
       buttonOf(renderToStaticMarkup(<ResetCard hasEmployees={false} hasDocumentation />)),
