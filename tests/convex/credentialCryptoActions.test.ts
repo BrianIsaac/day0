@@ -19,6 +19,7 @@ import { ScriptedSpanModel } from '../fixtures/redaction-double';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
   credentialOwnerBinding,
+  credentialValueFingerprint,
   encrypt,
 } from '../../src/lib/credential-crypto';
 import {
@@ -672,5 +673,42 @@ describe('associated data on the owner-bound paths', (): void => {
         label: 'slack credential',
       }),
     ).toBe('permission scope');
+  });
+});
+
+describe('the value fingerprint action', (): void => {
+  it('fingerprints a value for its owner under the current key, the same each time and never the value itself', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const value = 'fingerprint-contract-0123456789abcdef';
+    const first = await harness.action(internal.credentialCryptoActions.fingerprint, {
+      plaintext: value,
+      userId: 'owner',
+    });
+    expect(first).toBe(credentialValueFingerprint(value, KEY, 'owner'));
+    expect(first).not.toContain(value);
+    await expect(
+      harness.action(internal.credentialCryptoActions.fingerprint, {
+        plaintext: value,
+        userId: 'owner',
+      }),
+    ).resolves.toBe(first);
+    await expect(
+      harness.action(internal.credentialCryptoActions.fingerprint, {
+        plaintext: value,
+        userId: 'another owner',
+      }),
+    ).resolves.not.toBe(first);
+  });
+
+  it('is internal, and refuses on a deployment with no key rather than keying a ref by nothing', async (): Promise<void> => {
+    expect(cryptoActions.fingerprint.isInternal).toBe(true);
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.action(internal.credentialCryptoActions.fingerprint, {
+        plaintext: 'value',
+        userId: 'owner',
+      }),
+    ).rejects.toThrow('DAY0_CREDENTIAL_KEY is not configured.');
   });
 });

@@ -7,6 +7,7 @@ import type { Id } from './_generated/dataModel';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
   credentialKeyId,
+  credentialValueFingerprint,
   decrypt as decryptCredential,
   openOwnedCredential,
   sealForOwner,
@@ -61,6 +62,20 @@ export const seal = internalAction({
   args: { plaintext: v.string(), userId: v.string() },
   handler: async (_ctx, args): Promise<SealedCredential> =>
     sealForOwner(args.plaintext, credentialKeyring(), args.userId),
+});
+
+/**
+ * A value's fingerprint for its owner under the current key, which keys a
+ * page-derived credential's source ref (`credentialSourceRef`). Internal;
+ * writes nothing. The documentation sync asks for it per credential it
+ * found, since the key is read only here.
+ *
+ * @throws Error when the deployment has no credential key.
+ */
+export const fingerprint = internalAction({
+  args: { plaintext: v.string(), userId: v.string() },
+  handler: async (_ctx, args): Promise<string> =>
+    credentialValueFingerprint(args.plaintext, requireCredentialKey(), args.userId),
 });
 
 /**
