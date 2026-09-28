@@ -2321,7 +2321,9 @@ export function WorkQueue({
     if (inFlight.current.has(key)) return;
     inFlight.current.add(key);
     call()
-      .catch(() => {})
+      // A failed step is recorded on the row by the backend and read from
+      // there; the promise here only holds the in-flight key.
+      .catch((): void => undefined)
       .finally(() => inFlight.current.delete(key));
   }, []);
 

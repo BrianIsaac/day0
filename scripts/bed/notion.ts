@@ -116,6 +116,7 @@ try {
   console.log(JSON.stringify({ error: String(error && error.message ? error.message : error) }));
 } finally {
   if (session) {
+    // Closing the session is a courtesy to the server; the pages are already read.
     await fetch(url, { method: 'DELETE', headers: { ...headers, 'mcp-session-id': session } }).catch(() => undefined);
   }
 }
