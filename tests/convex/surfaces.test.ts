@@ -3579,6 +3579,35 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
     });
   });
 
+  it('keeps the tools a connection withheld on the row, narrows them by the manager’s approval and clears them with the stored list (K D2 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, surfaceId, probe } = await approvedCard();
+    await probe(['list_issues'], 100);
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('withheldTools');
+    await probe(['list_issues', 'save_comment', 'delete_issue'], 200);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      withheldTools: ['save_comment', 'delete_issue'],
+    });
+
+    // Approved, it is no longer withheld; it waits for the probe to be offered again.
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues', 'save_comment'] });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      withheldTools: ['delete_issue'],
+    });
+
+    const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!failing.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: failing.generation,
+      verdict: 'listed-dead',
+      reason: 'the server did not answer',
+    });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('withheldTools');
+  });
+
   it('clears the approved list on a demotion to another route and on a rejection', async (): Promise<void> => {
     useSurfaceMode('real');
     const { harness, surfaceId, probe } = await approvedCard();

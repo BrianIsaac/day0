@@ -108,7 +108,7 @@ import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent } from './eventLog';
 import { retiredClaimOn, retiredHolderName } from './retirements';
-import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
+import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
@@ -977,10 +977,69 @@ export const recordScopeAdmission = internalMutation({
   },
 });
 
+/** Work items one page of the unavailable-cause backfill reads. */
+const UNAVAILABLE_CAUSE_BATCH = 20;
+
+/**
+ * The newest `work.scope-judgement-unavailable` events of one agent the
+ * backfill walks for a row's own; a row whose event is further back keeps no
+ * cause, and its waiting line names none.
+ */
+const UNAVAILABLE_EVENT_WALK = 200;
+
+/**
+ * One page of the `work-evaluation-unavailable-cause` migration (K D2 (b)).
+ * A row stamped `evaluationUnavailableAt` before the cause was kept beside it
+ * gets the cause its newest `work.scope-judgement-unavailable` event gave, so
+ * the card's waiting line reads the row. Run by `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function backfillUnavailableCausePage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db
+    .query('workItems')
+    .paginate({ cursor, numItems: UNAVAILABLE_CAUSE_BATCH });
+  let changed = 0;
+  for (const row of page.page) {
+    if (row.evaluationUnavailableAt === undefined || row.evaluationUnavailableCause !== undefined) {
+      continue;
+    }
+    const events = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (index) =>
+        index.eq('agentId', row.agentId).eq('type', 'work.scope-judgement-unavailable'),
+      )
+      .order('desc')
+      .take(UNAVAILABLE_EVENT_WALK);
+    for (const event of events) {
+      if (
+        !isEventOf(event, 'work.scope-judgement-unavailable') ||
+        event.payload.workItemId !== row._id
+      ) {
+        continue;
+      }
+      await ctx.db.patch(row._id, { evaluationUnavailableCause: event.payload.cause });
+      changed += 1;
+      break;
+    }
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
 /**
  * Record that an evaluation of a row could not get a scope judgement (E-70):
  * the `work.scope-judgement-unavailable` event and, on a row still waiting
- * under the claim that evaluation took, the moment, so a row parked after its
+ * under the claim that evaluation took, the moment and the cause, so the
+ * card's waiting line reads them off the row and a row parked after its
  * attempts is parked as unavailable and the charter trigger and Check for new
  * work re-admit it. A late answer from an attempt whose claim lapsed marks
  * nothing, so it cannot speak for a later attempt. Internal; the evaluation
@@ -997,7 +1056,10 @@ export const recordScopeJudgementUnavailable = internalMutation({
       args.claimedAt !== undefined &&
       row.evaluationClaimedAt === args.claimedAt
     ) {
-      await ctx.db.patch(row._id, { evaluationUnavailableAt: at });
+      await ctx.db.patch(row._id, {
+        evaluationUnavailableAt: at,
+        evaluationUnavailableCause: args.cause,
+      });
     }
     await appendEvent(ctx, {
       agentId: row.agentId,
@@ -1144,6 +1206,7 @@ export async function reevaluatePendingInTransaction(
         reevaluation: reevaluationStamp(row, args.trigger, args.key, now),
         evaluationAttempts: undefined,
         evaluationUnavailableAt: undefined,
+        evaluationUnavailableCause: undefined,
       });
       await appendEvent(ctx, {
         agentId: args.agentId,
@@ -2309,6 +2372,7 @@ async function readmitSatisfiedInTransaction(
         reevaluation: reevaluationStamp(row, 'check', satisfied.key, now),
         evaluationAttempts: undefined,
         evaluationUnavailableAt: undefined,
+        evaluationUnavailableCause: undefined,
       });
       await logSatisfiedRequeue(ctx, row, 'check', satisfied.key, waited, now);
       await scheduleNextStep(ctx, { ...row, state: 'discovered', verdict: undefined });
@@ -2489,6 +2553,7 @@ export async function applyVerdict(
     ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
     evaluationAttempts: undefined,
     evaluationUnavailableAt: undefined,
+    evaluationUnavailableCause: undefined,
     ...(readmission
       ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
@@ -3940,6 +4005,7 @@ export const retryFailed = mutation({
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
       evaluationAttempts: undefined,
       evaluationUnavailableAt: undefined,
+      evaluationUnavailableCause: undefined,
     });
     // The note is also kept for the employee's later work of the same kind.
     if (feedback) await keepCorrectionInTransaction(ctx, row, 'retry-note', feedback);

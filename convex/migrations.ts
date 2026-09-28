@@ -34,8 +34,13 @@ import {
   CREDENTIAL_VALUE_REF_MIGRATION,
   credentialKeyCounts,
 } from './credentials';
-import { backfillAccessSetByPage, restartAccessClocksPage, singleApprovalPage } from './surfaces';
-import { keepTicketListing, WORK_LISTED_EVENT } from './work';
+import {
+  backfillAccessSetByPage,
+  backfillWithheldToolsPage,
+  restartAccessClocksPage,
+  singleApprovalPage,
+} from './surfaces';
+import { backfillUnavailableCausePage, keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -65,6 +70,8 @@ export const MIGRATION_NAMES = [
   'mirrors-rekey',
   CREDENTIAL_RESEAL_MIGRATION,
   CREDENTIAL_VALUE_REF_MIGRATION,
+  'surfaces-withheld-tools',
+  'work-evaluation-unavailable-cause',
 ] as const;
 
 /** One migration's name. */
@@ -103,7 +110,11 @@ const FIRST_MIGRATIONS_RELEASE = '0.4.0';
 /** The release after it, which gives every agent a zone and a mode (N12, the M2 backfill). */
 const ZONE_RELEASE = '0.5.0';
 
-/** The schema step after that: retirements, the freeze's approved list, the attempt count. */
+/**
+ * The two schema steps after that, one release: retirements, the freeze's
+ * approved list, the attempt count; then the card's own fields, the sync's
+ * record and its listing stamp.
+ */
 const SCHEMA_STEP_RELEASE = '0.6.0';
 
 /** Every migration's description, keyed by name. */
@@ -168,6 +179,16 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'rewrites each documentation credential’s ref from the page alone, or its place and label on the page, to the page and a fingerprint of its value, so a relabelled or moved value keeps its credential and a swapped one is new; the row keeps its id and every surface bound to it. A row the key cannot open, or whose value another row of its page already holds, is logged by id, left as it was and counted as remaining',
     thenRemoves:
       'nothing: a sync moves a row still on an old ref by its value, as it does after a key rotation',
+  },
+  'surfaces-withheld-tools': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies onto each connected card the tools its newest surface.connected event withheld, less any the manager approved since, so the card reads them off the row',
+    thenRemoves: 'nothing: recordConnected writes withheldTools from here on',
+  },
+  'work-evaluation-unavailable-cause': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies onto each row an evaluation found the scope judgement unreachable for the cause its newest work.scope-judgement-unavailable event gave, so the waiting line reads it off the row',
+    thenRemoves: 'nothing: the cause is written with evaluationUnavailableAt from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -531,6 +552,9 @@ const MIGRATION_PAGES: Readonly<
     await restartAccessClocksPage(ctx, cursor, Date.now()),
   'surfaces-single-approval': async (ctx, cursor) =>
     await singleApprovalPage(ctx, cursor, Date.now()),
+  'surfaces-withheld-tools': async (ctx, cursor) => await backfillWithheldToolsPage(ctx, cursor),
+  'work-evaluation-unavailable-cause': async (ctx, cursor) =>
+    await backfillUnavailableCausePage(ctx, cursor),
 };
 
 /** A migration's row, if it has started. */

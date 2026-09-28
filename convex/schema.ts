@@ -332,6 +332,15 @@ export default defineSchema({
     approvedToolAllowlist: v.optional(v.array(v.string())),
     /** When `approvedToolAllowlist` was set, by a connection or by the manager. */
     toolAllowlistApprovedAt: v.optional(v.number()),
+    /**
+     * The tools the last connection's provider offered that the approved list
+     * left out (`frozenTools`), which the card offers the manager to approve.
+     * Written by `recordConnected` beside the stored list, absent when it
+     * withheld nothing; cleared with the stored list, and narrowed when the
+     * manager approves one of them. The `surfaces-withheld-tools` migration
+     * copies it from each connected card's newest `surface.connected` event.
+     */
+    withheldTools: v.optional(v.array(v.string())),
     toolArguments: v.optional(
       v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),
     ),
@@ -670,6 +679,13 @@ export default defineSchema({
     evaluationAttempts: v.optional(v.number()),
     /** When an evaluation of this row last found the scope judgement unreachable (E-70). */
     evaluationUnavailableAt: v.optional(v.number()),
+    /**
+     * Why it was unreachable, as that evaluation's `work.scope-judgement-unavailable`
+     * event gave it: written and cleared with `evaluationUnavailableAt`, so the
+     * card's waiting line reads the row, not the feed. The
+     * `work-evaluation-unavailable-cause` migration copies it onto rows stamped before it.
+     */
+    evaluationUnavailableCause: v.optional(v.string()),
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),

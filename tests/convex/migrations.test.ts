@@ -434,6 +434,133 @@ describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {
   });
 });
 
+describe('the withheld tools backfill (K D2 (b))', (): void => {
+  it('copies the tools each connected card’s newest connection withheld onto the row, less any the manager approved since', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [narrowed, approvedSince, withholdsNothing, notConnected] = await harness.run(
+      async (ctx) => {
+        const card = async (
+          slug: string,
+          verdict: Doc<'surfaces'>['verdict'],
+          approved: string[],
+        ): Promise<Id<'surfaces'>> =>
+          await ctx.db.insert('surfaces', {
+            agentId,
+            slug,
+            displayName: slug,
+            class: 'kanban',
+            verdict,
+            whereFound: [],
+            credentialLanded: verdict === 'connected',
+            approvedToolAllowlist: approved,
+            toolAllowlist: approved,
+            createdAt: 1,
+          });
+        const ids = await Promise.all([
+          card('linear', 'connected', ['list_issues']),
+          card('jira', 'connected', ['list_issues', 'delete_issue']),
+          card('asana', 'connected', ['list_tasks']),
+          card('notion', 'listed-dead', ['search']),
+        ]);
+        const connected = async (
+          surfaceId: Id<'surfaces'>,
+          at: number,
+          withheldTools?: string[],
+        ): Promise<void> => {
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'surface.connected',
+            payload: { surfaceId, ...(withheldTools ? { withheldTools } : {}) },
+            createdAt: at,
+          });
+        };
+        await connected(ids[0], 10, ['old_tool']);
+        await connected(ids[0], 20, ['save_comment', 'delete_issue']);
+        await connected(ids[1], 30, ['delete_issue', 'archive_issue']);
+        await connected(ids[2], 40);
+        await connected(ids[3], 50, ['create_page']);
+        return ids;
+      },
+    );
+
+    await runAll(harness);
+
+    const withheld = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [narrowed, approvedSince, withholdsNothing, notConnected].map(
+            async (id) => (await ctx.db.get(id))?.withheldTools ?? null,
+          ),
+        ),
+    );
+    expect(withheld).toEqual([['save_comment', 'delete_issue'], ['archive_issue'], null, null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-withheld-tools')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the unavailable cause backfill (K D2 (b))', (): void => {
+  it('copies onto each row stamped unavailable the cause its newest unavailable event gave, and leaves every other row', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [stamped, noEvent, unstamped] = await harness.run(async (ctx) => {
+      const row = async (externalId: string, unavailableAt?: number): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: externalId,
+          contentSummary: externalId,
+          contentRefs: [],
+          state: 'discovered',
+          observedAt: 1,
+          createdAt: 1,
+          ...(unavailableAt !== undefined ? { evaluationUnavailableAt: unavailableAt } : {}),
+        });
+      const ids = await Promise.all([row('REVOPS-1', 30), row('REVOPS-2', 40), row('REVOPS-3')]);
+      const unavailable = async (
+        workItemId: Id<'workItems'>,
+        cause: string,
+        at: number,
+      ): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.scope-judgement-unavailable',
+          payload: { workItemId, cause },
+          createdAt: at,
+        });
+      };
+      await unavailable(ids[0], 'timeout after 60 s', 10);
+      await unavailable(ids[0], 'provider answered 503', 30);
+      await unavailable(ids[2], 'provider answered 503', 50);
+      return ids;
+    });
+
+    await runAll(harness);
+
+    const causes = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [stamped, noEvent, unstamped].map(
+            async (id) => (await ctx.db.get(id))?.evaluationUnavailableCause ?? null,
+          ),
+        ),
+    );
+    expect(causes).toEqual(['provider answered 503', null, null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((row) => row.name === 'work-evaluation-unavailable-cause'),
+    ).toMatchObject({ release: '0.6.0', read: 3, changed: 1, completedAt: expect.any(Number) });
+  });
+});
+
 describe('the single approval (Q10)', (): void => {
   const UPGRADED_AT = Date.UTC(2026, 8, 28, 9);
   const DAY = 24 * 60 * 60 * 1_000;

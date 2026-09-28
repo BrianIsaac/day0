@@ -1045,6 +1045,7 @@ export const recordProbeFailure = internalMutation({
       reason: args.reason,
       credentialLanded: false,
       toolAllowlist: undefined,
+      withheldTools: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
       managerName: undefined,
@@ -1185,6 +1186,7 @@ export const demoteAfterProbeFailure = internalMutation({
       // The same probe goes on to the next rung under the new generation.
       probeStartedAt: Date.now(),
       toolAllowlist: undefined,
+      withheldTools: undefined,
       approvedToolAllowlist: undefined,
       toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
@@ -1382,7 +1384,7 @@ function frozenTools(
  * here: a row still being evaluated from a read taken before this write is
  * caught where its verdict lands (`applyVerdict`), under this write's key.
  * No probe widens a stored tool list, a renewal's included (`frozenTools`);
- * the connected event names any tool it withheld. A probe that resolves a
+ * the row and the connected event name any tool it withheld. A probe that resolves a
  * different manager than the row held writes `manager.changed` (Q6), so the
  * ledger shows who the approver became and when, and any open request
  * delivered to another DM is sent again to this one.
@@ -1429,6 +1431,7 @@ export const recordConnected = internalMutation({
       probeStartedAt: undefined,
       toolAllowlist: tools.allowlist,
       toolArguments: tools.toolArguments,
+      withheldTools: tools.withheld.length > 0 ? tools.withheld : undefined,
       ...(surface.approvedToolAllowlist === undefined
         ? { approvedToolAllowlist: tools.approved, toolAllowlistApprovedAt: args.verifiedAt }
         : {}),
@@ -1867,6 +1870,66 @@ export async function backfillAccessSetByPage(
   };
 }
 
+/** Surfaces one page of the withheld-tools backfill reads; each may walk its agent's events. */
+const WITHHELD_BACKFILL_BATCH = 20;
+
+/**
+ * The newest `surface.connected` events of one agent a backfill walks for a
+ * card's own: the hourly re-probe writes one per connected card an hour, so a
+ * connected card's newest is among the agent's last few hundred. A card whose
+ * event is further back is left as withholding nothing.
+ */
+const CONNECTED_EVENT_WALK = 200;
+
+/**
+ * One page of the `surfaces-withheld-tools` migration (K D2 (b)). A connected
+ * card's withheld tools were carried only on its newest `surface.connected`
+ * event; they are copied onto the row, less any tool the manager approved
+ * since, so the card reads the row however busy the feed is. Run by
+ * `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function backfillWithheldToolsPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db
+    .query('surfaces')
+    .paginate({ cursor, numItems: WITHHELD_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.verdict !== 'connected' || surface.withheldTools !== undefined) continue;
+    const events = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (index) =>
+        index.eq('agentId', surface.agentId).eq('type', 'surface.connected'),
+      )
+      .order('desc')
+      .take(CONNECTED_EVENT_WALK);
+    let offered: readonly string[] = [];
+    for (const event of events) {
+      if (!isEventOf(event, 'surface.connected') || event.payload.surfaceId !== surface._id) {
+        continue;
+      }
+      offered = event.payload.withheldTools ?? [];
+      break;
+    }
+    const approved = new Set(surface.approvedToolAllowlist ?? []);
+    const withheld = offered.filter((tool) => !approved.has(tool));
+    if (withheld.length === 0) continue;
+    await ctx.db.patch(surface._id, { withheldTools: withheld });
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
 /**
  * One page of the `surfaces-single-approval` migration (Q10, N10). The IT
  * approval is gone, so a proposed card an older release left with the
@@ -2094,6 +2157,7 @@ export const reject = mutation({
       managerUserId: undefined,
       managerName: undefined,
       toolAllowlist: undefined,
+      withheldTools: undefined,
       approvedToolAllowlist: undefined,
       toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
@@ -2167,12 +2231,15 @@ export const approveTools = mutation({
     const approved = new Set(tools);
     const now = Date.now();
     // A tool the manager took off is uncallable at once; one added waits for
-    // the probe, so only a tool the provider offers is ever stored.
+    // the probe, so only a tool the provider offers is ever stored. A withheld
+    // tool the manager approved is no longer withheld, only not probed yet.
+    const stillWithheld = (surface.withheldTools ?? []).filter((tool) => !approved.has(tool));
     await ctx.db.patch(surface._id, {
       approvedToolAllowlist: tools,
       toolAllowlistApprovedAt: now,
       toolAllowlist: (surface.toolAllowlist ?? []).filter((tool) => approved.has(tool)),
       toolArguments: (surface.toolArguments ?? []).filter((entry) => approved.has(entry.tool)),
+      withheldTools: stillWithheld.length > 0 ? stillWithheld : undefined,
     });
     await appendEvent(ctx, {
       agentId: surface.agentId,
