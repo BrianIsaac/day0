@@ -104,6 +104,12 @@ describe('the public-page motion', () => {
     expect(CSS).toContain('Transform rule, one way everywhere');
   });
 
+  it('selects text in the accent rather than the browser default', () => {
+    expect(rulesFor(CSS, '::selection')[0]).toMatch(
+      /background:\s*color-mix\(in oklab, var\(--color-accent\) 35%, transparent\)/,
+    );
+  });
+
   it('takes the scroll position from nobody and leaves no trace of the removed cursor', () => {
     expect(CSS).not.toContain('scroll-behavior');
     expect(CSS).not.toContain('data-enter');
