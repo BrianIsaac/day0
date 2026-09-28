@@ -10,6 +10,7 @@ import {
   isoDay,
   parseInline,
   parseRecordedRun,
+  typographic,
   readWebpSize,
   recordedRunAt,
   walkthroughDrift,
@@ -120,7 +121,7 @@ describe('the README run as the page reads it', () => {
     expect(third!.body).toContainEqual({ text: '5 min 8 s', strong: true });
     const text = fourth!.body.map((span) => span.text).join('');
     expect(text).toMatch(/^About two minutes after the charter was approved/);
-    expect(text).toMatch(/including the manager's own words from the one-to-one\.$/);
+    expect(text).toMatch(/including the manager\u2019s own words from the one-to-one\.$/);
     expect(text).not.toContain('Elapsed');
   });
 
@@ -253,6 +254,20 @@ describe('parseInline', () => {
       { text: '<record-id>', code: true },
       { text: ' and ' },
       { text: 'a_b', code: true },
+    ]);
+  });
+});
+
+describe('typographic', () => {
+  it('sets an apostrophe inside a word typographically and leaves every other quote alone', () => {
+    expect(typographic("the manager's own words")).toBe('the manager\u2019s own words');
+    expect(typographic("'quoted' and 5'")).toBe("'quoted' and 5'");
+  });
+
+  it('never touches a code span', () => {
+    expect(parseInline("the ask's `a'b`")).toEqual([
+      { text: 'the ask\u2019s ' },
+      { text: "a'b", code: true },
     ]);
   });
 });

@@ -92,7 +92,7 @@ export function plainText(text: string): string {
   if (spans.some((span) => span.code || span.strong)) {
     fail(`markup where the page shows plain text: "${text}"`);
   }
-  return text;
+  return typographic(text);
 }
 
 /** `3 September 2026` as `2026-09-03`. */
@@ -101,6 +101,11 @@ export function isoDay(text: string): string {
   const month = MONTHS.findIndex((name) => name === match?.[2]);
   if (!match || month === -1) fail(`"${text}" is not a day the parser reads`);
   return `${match[3]}-${String(month + 1).padStart(2, '0')}-${match[1]!.padStart(2, '0')}`;
+}
+
+/** An apostrophe between two letters as the typographic one the page's own copy uses. */
+export function typographic(text: string): string {
+  return text.replace(/(\p{L})'(\p{L})/gu, '$1\u2019$2');
 }
 
 /**
@@ -115,13 +120,13 @@ export function parseInline(text: string): RunText {
       spans.push(
         part.startsWith('`')
           ? { text: part.slice(1, -1), code: true }
-          : { text: part.slice(2, -2), strong: true },
+          : { text: typographic(part.slice(2, -2)), strong: true },
       );
       continue;
     }
     const markup = /[`*_[\]<>]/.exec(part);
     if (markup) fail(`unrecognised markup "${markup[0]}" in "${text}"`);
-    spans.push({ text: part });
+    spans.push({ text: typographic(part) });
   }
   return spans;
 }

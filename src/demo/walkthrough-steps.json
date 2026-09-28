@@ -65,7 +65,7 @@
       "title": "Orientation proposes one card per system.",
       "body": [
         {
-          "text": "About two minutes after the charter was approved, and with nothing pressed, the agent produced exactly four connection cards from the documentation and the charter together: Linear over its MCP endpoint, Slack over its documented API, the Looker tile as browser-driven, and Northstar CRM with no approved path. Each card carries the sentences it was proposed from, including the manager's own words from the one-to-one."
+          "text": "About two minutes after the charter was approved, and with nothing pressed, the agent produced exactly four connection cards from the documentation and the charter together: Linear over its MCP endpoint, Slack over its documented API, the Looker tile as browser-driven, and Northstar CRM with no approved path. Each card carries the sentences it was proposed from, including the manager’s own words from the one-to-one."
         }
       ],
       "elapsedSeconds": 432,
@@ -175,7 +175,7 @@
       "title": "Approve it whole, and the tile reads itself back.",
       "body": [
         {
-          "text": "The manager pressed Approve all. The six actions applied in about a second, and the last one read the page back: the visible figure and the audit line the runbook asks for as evidence. Every plan step was marked satisfied from the applied ledger, not from the agent's own account of itself."
+          "text": "The manager pressed Approve all. The six actions applied in about a second, and the last one read the page back: the visible figure and the audit line the runbook asks for as evidence. Every plan step was marked satisfied from the applied ledger, not from the agent’s own account of itself."
         }
       ],
       "elapsedSeconds": 1271,
@@ -192,7 +192,7 @@
       "title": "The public reply is held separately, and lands when approved.",
       "body": [
         {
-          "text": "The charter says not to post publicly during cold start, so the reply into the ask's thread arrived as its own decision after the read-back. The manager approved it and it landed in "
+          "text": "The charter says not to post publicly during cold start, so the reply into the ask’s thread arrived as its own decision after the read-back. The manager approved it and it landed in "
         },
         { "text": "#revops-asks", "code": true },
         { "text": " with the provenance trailer." }
@@ -211,7 +211,7 @@
       "title": "Reject a comment that is too thin, with a reason.",
       "body": [
         {
-          "text": "The audit note's first run ended honestly: it read the ticket, found no completed-check evidence, and asked in the DM rather than inventing any. The manager sent it back with the three checks as a note. The comment that came back was still not enough, so the manager rejected the run with a written reason. The reason is kept and travels to the retry."
+          "text": "The audit note’s first run ended honestly: it read the ticket, found no completed-check evidence, and asked in the DM rather than inventing any. The manager sent it back with the three checks as a note. The comment that came back was still not enough, so the manager rejected the run with a written reason. The reason is kept and travels to the retry."
         }
       ],
       "elapsedSeconds": 1756,
@@ -220,7 +220,7 @@
         "src": "/walkthrough/full-run-12-rejection-with-reason.webp",
         "width": 754,
         "height": 200,
-        "alt": "Two held Linear actions above the manager's written rejection reason"
+        "alt": "Two held Linear actions above the manager’s written rejection reason"
       }
     },
     {
@@ -306,7 +306,7 @@
           "text": "the manager email boss@day0.local is not a member of this Slack workspace",
           "code": true
         },
-        { "text": ". Real mode resolves the manager's DM from " },
+        { "text": ". Real mode resolves the manager’s DM from " },
         { "text": "NEXT_PUBLIC_DEMO_BOSS_EMAIL", "code": true },
         { "text": ", which the setup block above does not mention and " },
         { "text": ".env.example", "code": true },
@@ -343,7 +343,7 @@
       "lead": "A run that ends with a question has no rejection to make.",
       "body": [
         {
-          "text": "The audit note's first run held nothing, so there was nothing to reject at that point. Sending the finished run back with a note is the control that answers it."
+          "text": "The audit note’s first run held nothing, so there was nothing to reject at that point. Sending the finished run back with a note is the control that answers it."
         }
       ]
     },
