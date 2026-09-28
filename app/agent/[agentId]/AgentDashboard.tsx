@@ -7,7 +7,15 @@ import {
 } from '@/work/types';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
+import {
+  useState,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useCallback,
+  type CSSProperties,
+} from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
@@ -93,6 +101,7 @@ import {
 import { eventLabel } from './event-labels';
 import { ROOM_HEIGHT } from './room-frame';
 import { useArrival } from '../../arrival';
+import { usePreviousValue } from './previous-value';
 import {
   compareWaitingRows,
   EVALUATION_ATTEMPTS_SPENT,
@@ -2767,6 +2776,30 @@ export function WorkQueue({
   );
 }
 
+/**
+ * A work item's state chip. When the state changes on the page, the old chip fades out as the
+ * new one fades in, in the same cell (v3 section 5.2); the first state is simply there, and
+ * under reduced motion only the new one shows.
+ */
+export function StateChip({ state }: { state: string }) {
+  const previous = usePreviousValue(state);
+  const chip = (shown: string, place?: 'from' | 'to') => (
+    <span
+      aria-hidden={place === 'from' ? true : undefined}
+      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shown)}${place ? ` ${place}` : ''}`}
+    >
+      {shown}
+    </span>
+  );
+  if (previous === undefined) return chip(state);
+  return (
+    <span key={state} className="chip-swap">
+      {chip(previous, 'from')}
+      {chip(state, 'to')}
+    </span>
+  );
+}
+
 function stateColor(state: string): string {
   if (state === 'completed') return 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]';
   if (state === 'stopped') return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
@@ -4359,6 +4392,9 @@ export function WorkItemCard({
     (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
   );
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  // A ledger first shown while the page is open is a landing the manager is watching (v3 section 5.2).
+  const [landedOnArrival] = useState(landedActions.length > 0);
+  const freshLanding = !landedOnArrival && landedActions.length > 0;
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
@@ -4456,11 +4492,7 @@ export function WorkItemCard({
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span
-              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shownState)}`}
-            >
-              {shownState}
-            </span>
+            <StateChip state={shownState} />
             <span className="text-[10px] text-[var(--color-muted)]">
               {item.sourceSystem}/{item.sourceCategory}
             </span>
@@ -4721,11 +4753,14 @@ export function WorkItemCard({
       ) : null}
 
       {landedActions.length > 0 ? (
-        <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
+        <div
+          data-land={freshLanding ? '' : undefined}
+          className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs"
+        >
           <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
           <ul className="space-y-0.5 text-[var(--color-fg)]">
             {landedActions.map((a, i) => (
-              <li key={i}>
+              <li key={i} style={freshLanding ? ({ '--i': i } as CSSProperties) : undefined}>
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
                 {clipLedgerRow(a.effect) ?? '(applied)'}
                 {a.providerId ? (

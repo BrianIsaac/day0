@@ -3853,3 +3853,78 @@ describe('the cards arriving on first render (v4 section 1.3)', (): void => {
     view.unmount();
   });
 });
+
+describe('a work item that lands while the page is open (v3 section 5.2)', (): void => {
+  const executing = {
+    _id: 'w1',
+    _creationTime: 1,
+    agentId: 'a1',
+    state: 'executing',
+    title: 'Close REVOPS-5',
+    contentSummary: 'Add the audit note and close the ticket.',
+    sourceSystem: 'linear',
+    sourceCategory: 'ticket-queue',
+    externalId: 'REVOPS-5',
+    observedAt: 1,
+    contentRefs: [],
+  } as unknown as Doc<'workItems'>;
+  const landed = {
+    ...executing,
+    state: 'completed',
+    output: {
+      draft: 'Closed with the audit note.',
+      applied: [
+        { tool: 'linear.save_comment', ok: true, effect: 'Commented on REVOPS-5' },
+        { tool: 'linear.save_issue', ok: true, effect: 'Moved REVOPS-5 to Done' },
+      ],
+    },
+  } as unknown as Doc<'workItems'>;
+
+  afterEach((): void => {
+    document.body.replaceChildren();
+  });
+
+  /** The card for one row, as the queue renders it. */
+  const card = (item: Doc<'workItems'>) => (
+    <WorkItemCard
+      item={item}
+      surfaces={[]}
+      autonomousActions={false}
+      onApprovePlan={(): void => undefined}
+      onCancelPlan={(): void => undefined}
+      onRetryFailed={(): void => undefined}
+      onReconcileFailed={async (): Promise<void> => undefined}
+      onApproveActions={async (): Promise<void> => undefined}
+      onRejectActions={async (): Promise<void> => undefined}
+      onResendDecision={async (): Promise<void> => undefined}
+    />
+  );
+
+  it('swaps the state chip in one cell, settles the ledger and lifts its lines 70 ms apart', (): void => {
+    const view = mount(card(executing));
+    expect(view.container.querySelector('.chip-swap')).toBeNull();
+
+    act((): void => view.root.render(card(landed)));
+    const swap = view.container.querySelector('.chip-swap');
+    expect(swap?.querySelector('.from')?.textContent).toBe('executing');
+    expect(swap?.querySelector('.from')?.getAttribute('aria-hidden')).toBe('true');
+    expect(swap?.querySelector('.to')?.textContent).toBe('completed');
+    const ledger = view.container.querySelector('[data-land]');
+    expect(ledger?.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(
+      [...(ledger?.querySelectorAll('li') ?? [])].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1']);
+    view.unmount();
+  });
+
+  it('shows a landing that was already there as it stands, with nothing to play', (): void => {
+    const view = mount(card(landed));
+    expect(view.container.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(view.container.querySelector('.chip-swap')).toBeNull();
+    expect(view.container.querySelector('[data-land]')).toBeNull();
+    expect(view.container.querySelector('li[style]')).toBeNull();
+    view.unmount();
+  });
+});
