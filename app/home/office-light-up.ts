@@ -6,6 +6,12 @@ import { useEffect, type RefObject } from 'react';
 const LIGHT_UP_THRESHOLD = 1 / 3;
 
 /**
+ * How long the light-up plays: the last room's wash (five 50 ms steps, 80 ms and 900 ms) is the
+ * longest piece of the stylesheet's sequence.
+ */
+export const LIGHT_UP_MS = 5 * 50 + 80 + 900;
+
+/**
  * Light the office up once, the first time it is seen (v3 section 5, as v4
  * section 1.3 re-times it).
  *
@@ -28,18 +34,23 @@ export function useLightUpOnce(ref: RefObject<HTMLElement | null>): void {
     if (office.getBoundingClientRect().top < window.innerHeight) return;
 
     office.dataset.seen = 'waiting';
+    let settle: ReturnType<typeof setTimeout> | undefined;
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         office.dataset.seen = 'seen';
         observer.disconnect();
+        // Once lit, the office is handed back: a figure deployed later walks in as it always has,
+        // not 900 ms late behind a sequence that already played.
+        settle = setTimeout(() => delete office.dataset.seen, LIGHT_UP_MS);
       },
       { threshold: LIGHT_UP_THRESHOLD },
     );
     observer.observe(office);
     return () => {
       observer.disconnect();
-      if (office.dataset.seen === 'waiting') delete office.dataset.seen;
+      clearTimeout(settle);
+      delete office.dataset.seen;
     };
   }, [ref]);
 }
