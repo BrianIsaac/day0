@@ -8,6 +8,9 @@
 /** The repository every public "GitHub" link opens. */
 export const REPOSITORY_URL = 'https://github.com/BrianIsaac/day0';
 
+/** The README's disclosures: what is simulated, who receives what, and the third parties. */
+export const DISCLOSURES_URL = `${REPOSITORY_URL}#disclosures`;
+
 /** The hero: the claim, its answer in the accent, the lede and the two routes into the product. */
 export const HERO = {
   claim: 'Every company that hires an agent pays a team to wire it in.',
@@ -90,7 +93,13 @@ export const TRY = {
   heading: 'Try it without connecting anything',
   hosted: {
     title: 'The hosted mock office',
-    body: 'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system. Before you type anything, the sign-in page says what the hosted demo collects and who receives it.',
+    body: 'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system.',
+    /** The disclosure sentence; its middle is a link to what the hosted demo sends and to whom. */
+    notice: {
+      before: 'Before you sign in, read ',
+      link: 'what the hosted demo collects and who receives it',
+      after: '.',
+    },
   },
   local: {
     title: 'Run it on your own machine',
@@ -115,7 +124,7 @@ export const FOOTER = {
     'Day0 is a working demonstration with no users and no production deployment. Figures are counts from single runs.',
   links: [
     { label: 'GitHub', href: REPOSITORY_URL },
-    { label: 'Data and compliance', href: `${REPOSITORY_URL}#disclosures` },
+    { label: 'Data and compliance', href: DISCLOSURES_URL },
     { label: 'Changelog', href: `${REPOSITORY_URL}/blob/main/CHANGELOG.md` },
   ],
 } as const;

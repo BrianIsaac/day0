@@ -4,7 +4,7 @@ import { PageMotion } from '../PageMotion';
 import { CardGroup } from './CardGroup';
 import { EVIDENCE } from './evidence';
 import { EvidenceTable } from './EvidenceTable';
-import { FOOTER, HERO, HOW, PROBLEM, TRY, WHY } from './copy';
+import { DISCLOSURES_URL, FOOTER, HERO, HOW, PROBLEM, TRY, WHY } from './copy';
 import { CharterFrame } from './frames/CharterFrame';
 import { DocumentationFrame } from './frames/DocumentationFrame';
 import { HeldWriteFrame } from './frames/HeldWriteFrame';
@@ -158,7 +158,13 @@ export function MarketingLanding() {
         <CardGroup className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
           <div className={`${CARD} flex flex-col items-start gap-3 border-[var(--color-border)]`}>
             <h3 className="text-base font-semibold">{TRY.hosted.title}</h3>
-            <p className="leading-relaxed text-[var(--color-muted)]">{TRY.hosted.body}</p>
+            <p className="leading-relaxed text-[var(--color-muted)]">
+              {TRY.hosted.body} {TRY.hosted.notice.before}
+              <a href={DISCLOSURES_URL} className={INLINE_LINK}>
+                {TRY.hosted.notice.link}
+              </a>
+              {TRY.hosted.notice.after}
+            </p>
             <Link href="/sign-in" className={PRIMARY}>
               {HERO.tryDemo}
             </Link>
