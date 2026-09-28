@@ -146,7 +146,7 @@ describe('the no-auth unlock session', (): void => {
 
 /**
  * With Clerk configured, the proxy's own public list is the whole of what a
- * stranger can reach. The demo and the setup page are the two routes the
+ * stranger can reach. The walkthrough and the setup page are the two routes the
  * landing page sends a signed-out visitor to, so a missing entry there is a
  * dead button on the hosted site rather than a visible error.
  */
@@ -158,20 +158,24 @@ describe('the Clerk proxy gate', (): void => {
     proxy = (await import('../proxy')).default as typeof proxy;
   });
 
-  it('lets a signed-out visitor reach the recorded demo', async (): Promise<void> => {
-    await expect(proxy(request('/demo'))).resolves.toBeUndefined();
+  it('lets a signed-out visitor reach the recorded walkthrough', async (): Promise<void> => {
+    await expect(proxy(request('/walkthrough'))).resolves.toBeUndefined();
   });
 
   it('lets a signed-out visitor reach the setup page', async (): Promise<void> => {
     await expect(proxy(request('/setup'))).resolves.toBeUndefined();
   });
 
-  it.each(['/demolition', '/setup-admin', '/demo/private', '/setup/private'])(
-    'protects routes that only share the public prefix: %s',
-    async (path) => {
-      await expect(proxy(request(path))).rejects.toThrow('sign-in');
-    },
-  );
+  it.each([
+    '/walkthroughs',
+    '/setup-admin',
+    '/walkthrough/private',
+    '/setup/private',
+    // Redirected to the walkthrough by next.config.mjs before this proxy runs; never public here.
+    '/demo',
+  ])('protects routes that only share the public prefix: %s', async (path) => {
+    await expect(proxy(request(path))).rejects.toThrow('sign-in');
+  });
 
   it('still protects an agent dashboard', async (): Promise<void> => {
     await expect(proxy(request('/agent/j57agent'))).rejects.toThrow('sign-in');

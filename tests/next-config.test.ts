@@ -7,6 +7,14 @@ describe('next.config.mjs', (): void => {
   });
 });
 
+describe('the redirects', (): void => {
+  it('sends the old /demo to the walkthrough permanently, so the README links keep working (N29)', async (): Promise<void> => {
+    expect(await nextConfig.redirects?.()).toEqual([
+      { source: '/demo', destination: '/walkthrough', permanent: true },
+    ]);
+  });
+});
+
 describe('the security headers', (): void => {
   /** The headers every path is served with. */
   async function headersForEveryPath(): Promise<Record<string, string>> {
