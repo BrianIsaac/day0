@@ -37,6 +37,7 @@ import {
 import {
   backfillAccessSetByPage,
   backfillWithheldToolsPage,
+  newestConnectedEvent,
   restartAccessClocksPage,
   singleApprovalPage,
 } from './surfaces';
@@ -53,6 +54,7 @@ import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
 import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
+import { compareReleases, NEWEST_MIGRATION_RELEASE, releaseParts } from '../src/lib/release';
 
 /**
  * Every migration, in the order the upgrade runs them. The access clocks come
@@ -467,29 +469,44 @@ async function copyRetirements(ctx: MutationCtx, cursor: string | null): Promise
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
+/** Cards one page of the approved-list copy reads; a card with no list may walk its agent's events. */
+const APPROVED_TOOLS_PAGE = 20;
+
 /**
  * Give each card that stores a tool list an approved list of the same tools,
  * stamped at its last verification, so the freeze reads the approved list
- * whatever became of the stored one. A card with an approved list already is
- * left alone.
+ * whatever became of the stored one. A card the manager approved that holds
+ * no list because a failed probe cleared it before the upgrade gets an empty
+ * approved list, stamped at its newest connection, so the connection after
+ * the upgrade withholds every tool until the manager approves them: the list
+ * the manager saw is gone, and a re-probe never widens (wave 3.5 review M1).
+ * A card that never connected is left to its first connection, which fixes
+ * the list as it does for a card approved under this release. A card with an
+ * approved list already is left alone.
  */
 async function copyApprovedTools(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
-  const carrying = page.page.filter(
-    (surface) => surface.toolAllowlist !== undefined && surface.approvedToolAllowlist === undefined,
-  );
-  for (const surface of carrying) {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: APPROVED_TOOLS_PAGE });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.approvedToolAllowlist !== undefined) continue;
+    if (surface.toolAllowlist !== undefined) {
+      await ctx.db.patch(surface._id, {
+        approvedToolAllowlist: surface.toolAllowlist,
+        toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+      });
+      changed += 1;
+      continue;
+    }
+    if (surface.managerApprovedAt === undefined) continue;
+    const connected = await newestConnectedEvent(ctx, surface);
+    if (connected === undefined) continue;
     await ctx.db.patch(surface._id, {
-      approvedToolAllowlist: surface.toolAllowlist,
-      toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+      approvedToolAllowlist: [],
+      toolAllowlistApprovedAt: connected.createdAt,
     });
+    changed += 1;
   }
-  return {
-    read: page.page.length,
-    changed: carrying.length,
-    cursor: page.continueCursor,
-    isDone: page.isDone,
-  };
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
 /**
@@ -897,40 +914,22 @@ export const status = internalQuery({
   },
 });
 
-/** A release as a stamp names it: three dot-separated numbers, no prefix. */
-const RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-
-/** A release's three numbers, or undefined when it is not shaped as one. */
-function releaseParts(release: string): readonly [number, number, number] | undefined {
-  const match = RELEASE.exec(release);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
-}
-
-/** Negative when `older` precedes `newer`, zero when they are the same release. */
-function compareReleaseParts(
-  older: readonly [number, number, number],
-  newer: readonly [number, number, number],
-): number {
-  return older[0] - newer[0] || older[1] - newer[1] || older[2] - newer[2];
-}
-
-/** The newest release any shipped migration names: no stamp may be older (S D8). */
-const NEWEST_MIGRATION_RELEASE = Object.values(MIGRATIONS)
-  .map((migration) => migration.release)
-  .reduce((newest, release) =>
-    compareReleaseParts(releaseParts(release)!, releaseParts(newest)!) > 0 ? release : newest,
-  );
-
 /**
  * Why a release may not be stamped, or undefined when it may: a stamp names
  * a release shaped as three numbers and no older than the newest one a
- * shipped migration names, so a deployment set up from a tree whose package
- * still names the release before its migrations never reads as lacking them.
+ * shipped migration names (`NEWEST_MIGRATION_RELEASE`, held equal to the
+ * migrations' releases by the mirror test), so a deployment set up from a
+ * tree whose package still names the release before its migrations never
+ * reads as lacking them. The upgrade refuses such a tree before it pushes
+ * (`scripts/releases.ts`); this is the check that holds when it did not run.
  */
 function releaseRefusal(release: string): string | undefined {
-  const parts = releaseParts(release);
-  const newest = releaseParts(NEWEST_MIGRATION_RELEASE)!;
-  if (parts !== undefined && compareReleaseParts(parts, newest) >= 0) return undefined;
+  if (
+    releaseParts(release) !== undefined &&
+    compareReleases(release, NEWEST_MIGRATION_RELEASE) >= 0
+  ) {
+    return undefined;
+  }
   return (
     `release ${release} cannot be stamped: a stamp names a release as X.Y.Z no older than ` +
     `${NEWEST_MIGRATION_RELEASE}, the newest release a shipped migration names`

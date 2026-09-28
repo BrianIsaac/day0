@@ -41,7 +41,7 @@ import {
   type LoginForm,
   type SnapshotElement,
 } from '../src/surfaces/browser';
-import { interpretToolResult } from '../src/surfaces/mcp';
+import { interpretToolResult, isServerToolError } from '../src/surfaces/mcp';
 import {
   channelsAwaitingInvite,
   documentedChannelNames,
@@ -573,12 +573,19 @@ async function probeCall(
       `Day0 browser component does not expose ${tool}, which signing in needs.`,
     );
   }
-  const result = await client.callTool(tool, args);
-  if (result.isError) {
-    throw new Day0ProbeLimitation(
-      `The browser driver refused ${tool} while Day0 was signing in, so the credential was not checked. This is not evidence that the system is unavailable.`,
-    );
+  const refused = new Day0ProbeLimitation(
+    `The browser driver refused ${tool} while Day0 was signing in, so the credential was not checked. This is not evidence that the system is unavailable.`,
+  );
+  let result: { isError: boolean; text: string };
+  try {
+    result = await client.callTool(tool, args);
+  } catch (error) {
+    // The client throws the driver's own refusal (`onToolError: 'throw'`);
+    // the driver answered, so this is the same refusal as an `isError` result.
+    if (!isServerToolError(error)) throw error;
+    throw refused;
   }
+  if (result.isError) throw refused;
   return result.text;
 }
 
@@ -637,7 +644,18 @@ async function signInForProbe(
   discovery: McpDiscovery,
   endpoint: string,
   login: BrowserProbeLogin,
+  signedIn: string,
 ): Promise<string> {
+  // The documented element must be one the page shows only once signed in;
+  // one the login page shows too would read a rotated password as connected,
+  // so the probe refuses before it types the credential (wave 3.5 review M6).
+  const refuseIfShownBeforeSignIn = (snapshot: string): void => {
+    if (pageShowsElement(snapshot, signedIn)) {
+      throw new BrowserSignInRefused(
+        `The sign-in page already shows the documented element "${signedIn}" before Day0 signs in, so a signed-in page cannot be told from the login page; document an element the page shows only once signed in.`,
+      );
+    }
+  };
   const fill = async (fields: ReadonlyArray<[SnapshotElement, string]>): Promise<void> => {
     await probeCall(
       client,
@@ -660,12 +678,15 @@ async function signInForProbe(
     }
     return [[form.account, login.username]];
   };
-  let form = loginForm(await probeSnapshot(client, discovery, endpoint));
+  let snapshot = await probeSnapshot(client, discovery, endpoint);
+  refuseIfShownBeforeSignIn(snapshot);
+  let form = loginForm(snapshot);
   if (!form.credential && form.account && form.next) {
     await fill(account(form));
     await probeClick(client, discovery, form.next);
-    form = loginForm(await probeSnapshot(client, discovery, endpoint));
-    form = { ...form, account: undefined };
+    snapshot = await probeSnapshot(client, discovery, endpoint);
+    refuseIfShownBeforeSignIn(snapshot);
+    form = { ...loginForm(snapshot), account: undefined };
   }
   if (!form.credential || !form.submit) {
     throw new BrowserSignInRefused(
@@ -755,10 +776,17 @@ export async function probeBrowserSurface(
       );
     }
     if (signedIn && login) {
-      const page = await signInForProbe(client, discovery, endpoint, login);
+      const page = await signInForProbe(client, discovery, endpoint, login, signedIn);
       if (!pageShowsElement(page, signedIn)) {
         throw new BrowserSignInRefused(
           `Day0 signed in with the stored credential, but the page did not show the documented element "${signedIn}": the credential may have been rotated or the sign-in page changed.`,
+        );
+      }
+      // The element shown beside a credential box still asking is the login
+      // page with the element on it, not a signed-in page (wave 3.5 review M6).
+      if (loginForm(page).credential !== undefined) {
+        throw new BrowserSignInRefused(
+          `Day0 signed in with the stored credential, but the page still asks for it beside the documented element "${signedIn}": the credential may have been rotated, or the element is one the login page shows too.`,
         );
       }
     }

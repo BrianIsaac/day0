@@ -8,60 +8,56 @@
  * @module
  */
 
-import type * as agents from "../agents.js";
-import type * as baselineActions from "../baselineActions.js";
-import type * as charters from "../charters.js";
-import type * as config from "../config.js";
-import type * as corrections from "../corrections.js";
-import type * as coworker from "../coworker.js";
-import type * as credentialCryptoActions from "../credentialCryptoActions.js";
-import type * as credentials from "../credentials.js";
-import type * as crons from "../crons.js";
-import type * as devAuth from "../devAuth.js";
-import type * as docSources from "../docSources.js";
-import type * as docSyncActions from "../docSyncActions.js";
-import type * as documentationDiscovery from "../documentationDiscovery.js";
-import type * as documentationDiscoveryActions from "../documentationDiscoveryActions.js";
-import type * as evaluation from "../evaluation.js";
-import type * as eventLog from "../eventLog.js";
-import type * as events from "../events.js";
-import type * as exportActions from "../exportActions.js";
-import type * as intakeActions from "../intakeActions.js";
-import type * as intakeIdentity from "../intakeIdentity.js";
-import type * as managerChannelActions from "../managerChannelActions.js";
-import type * as managerQuestions from "../managerQuestions.js";
-import type * as metrics from "../metrics.js";
-import type * as migrations from "../migrations.js";
-import type * as mock from "../mock.js";
-import type * as mockSeed from "../mockSeed.js";
-import type * as onboarding from "../onboarding.js";
-import type * as orientationActions from "../orientationActions.js";
-import type * as orientationData from "../orientationData.js";
-import type * as ownership from "../ownership.js";
-import type * as probeActions from "../probeActions.js";
-import type * as reset from "../reset.js";
-import type * as retirements from "../retirements.js";
-import type * as revocationEvaluation from "../revocationEvaluation.js";
-import type * as revocationEvaluationActions from "../revocationEvaluationActions.js";
-import type * as sandboxLease from "../sandboxLease.js";
-import type * as seed from "../seed.js";
-import type * as skillActions from "../skillActions.js";
-import type * as skills from "../skills.js";
-import type * as slackProvisionActions from "../slackProvisionActions.js";
-import type * as surfaceActions from "../surfaceActions.js";
-import type * as surfaceReopen from "../surfaceReopen.js";
-import type * as surfaces from "../surfaces.js";
-import type * as voice from "../voice.js";
-import type * as work from "../work.js";
-import type * as workActions from "../workActions.js";
-import type * as workLoop from "../workLoop.js";
-import type * as workspace from "../workspace.js";
+import type * as agents from '../agents.js';
+import type * as baselineActions from '../baselineActions.js';
+import type * as charters from '../charters.js';
+import type * as config from '../config.js';
+import type * as corrections from '../corrections.js';
+import type * as coworker from '../coworker.js';
+import type * as credentialCryptoActions from '../credentialCryptoActions.js';
+import type * as credentials from '../credentials.js';
+import type * as crons from '../crons.js';
+import type * as devAuth from '../devAuth.js';
+import type * as docSources from '../docSources.js';
+import type * as docSyncActions from '../docSyncActions.js';
+import type * as documentationDiscovery from '../documentationDiscovery.js';
+import type * as documentationDiscoveryActions from '../documentationDiscoveryActions.js';
+import type * as evaluation from '../evaluation.js';
+import type * as eventLog from '../eventLog.js';
+import type * as events from '../events.js';
+import type * as exportActions from '../exportActions.js';
+import type * as intakeActions from '../intakeActions.js';
+import type * as intakeIdentity from '../intakeIdentity.js';
+import type * as managerChannelActions from '../managerChannelActions.js';
+import type * as managerQuestions from '../managerQuestions.js';
+import type * as metrics from '../metrics.js';
+import type * as migrations from '../migrations.js';
+import type * as mock from '../mock.js';
+import type * as mockSeed from '../mockSeed.js';
+import type * as onboarding from '../onboarding.js';
+import type * as orientationActions from '../orientationActions.js';
+import type * as orientationData from '../orientationData.js';
+import type * as ownership from '../ownership.js';
+import type * as probeActions from '../probeActions.js';
+import type * as reset from '../reset.js';
+import type * as retirements from '../retirements.js';
+import type * as revocationEvaluation from '../revocationEvaluation.js';
+import type * as revocationEvaluationActions from '../revocationEvaluationActions.js';
+import type * as sandboxLease from '../sandboxLease.js';
+import type * as seed from '../seed.js';
+import type * as skillActions from '../skillActions.js';
+import type * as skills from '../skills.js';
+import type * as slackProvisionActions from '../slackProvisionActions.js';
+import type * as surfaceActions from '../surfaceActions.js';
+import type * as surfaceReopen from '../surfaceReopen.js';
+import type * as surfaces from '../surfaces.js';
+import type * as voice from '../voice.js';
+import type * as work from '../work.js';
+import type * as workActions from '../workActions.js';
+import type * as workLoop from '../workLoop.js';
+import type * as workspace from '../workspace.js';
 
-import type {
-  ApiFromModules,
-  FilterApi,
-  FunctionReference,
-} from "convex/server";
+import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
@@ -122,10 +118,7 @@ declare const fullApi: ApiFromModules<{
  * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-export declare const api: FilterApi<
-  typeof fullApi,
-  FunctionReference<any, "public">
->;
+export declare const api: FilterApi<typeof fullApi, FunctionReference<any, 'public'>>;
 
 /**
  * A utility for referencing Convex functions in your app's internal API.
@@ -135,9 +128,6 @@ export declare const api: FilterApi<
  * const myFunctionReference = internal.myModule.myFunction;
  * ```
  */
-export declare const internal: FilterApi<
-  typeof fullApi,
-  FunctionReference<any, "internal">
->;
+export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, 'internal'>>;
 
 export declare const components: {};

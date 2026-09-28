@@ -73,26 +73,39 @@ describe('the values a skill must not repeat from its first work item', (): void
 
 describe('the static gate on an authored skill', (): void => {
   it('allows a documented fixed control label quoted by the candidate', () => {
-    expect(authoredSkillIssues({
-      body: reusableBody, smokeTest: reusableSmoke,
-      instance: { ...tileTicket, contentSummary: 'Enter 74% and press "Save".' },
-      documentedProcedure: 'Sign in, update the figure, and press Save.',
-    })).toEqual([]);
+    expect(
+      authoredSkillIssues({
+        body: reusableBody,
+        smokeTest: reusableSmoke,
+        instance: { ...tileTicket, contentSummary: 'Enter 74% and press "Save".' },
+        documentedProcedure: 'Sign in, update the figure, and press Save.',
+      }),
+    ).toEqual([]);
   });
 
   it('still refuses a documented control label the candidate quotes as a value rather than as a control', () => {
-    expect(authoredSkillIssues({
-      body: reusableBody + '\nSet the status to "Save".', smokeTest: reusableSmoke,
-      instance: { ...tileTicket, contentSummary: 'Set the status to "Save" once the figure is entered.' },
-      documentedProcedure: 'Sign in, update the figure, and press Save.',
-    }).some(issue => issue.includes('Save'))).toBe(true);
+    expect(
+      authoredSkillIssues({
+        body: reusableBody + '\nSet the status to "Save".',
+        smokeTest: reusableSmoke,
+        instance: {
+          ...tileTicket,
+          contentSummary: 'Set the status to "Save" once the figure is entered.',
+        },
+        documentedProcedure: 'Sign in, update the figure, and press Save.',
+      }).some((issue) => issue.includes('Save')),
+    ).toBe(true);
   });
 
   it('still refuses quoted output values even when a runbook repeats them', () => {
-    expect(authoredSkillIssues({
-      body: reusableBody + '\nPost "coverage refreshed".', smokeTest: reusableSmoke,
-      instance: tileTicket, documentedProcedure: 'Post "coverage refreshed".',
-    }).some(issue => issue.includes('coverage refreshed'))).toBe(true);
+    expect(
+      authoredSkillIssues({
+        body: reusableBody + '\nPost "coverage refreshed".',
+        smokeTest: reusableSmoke,
+        instance: tileTicket,
+        documentedProcedure: 'Post "coverage refreshed".',
+      }).some((issue) => issue.includes('coverage refreshed')),
+    ).toBe(true);
   });
 
   it('passes a parameterised procedure whose smoke test runs two representative inputs', (): void => {
@@ -114,9 +127,7 @@ describe('the static gate on an authored skill', (): void => {
 
   it('refuses a smoke test that runs the first work item as its representative input', (): void => {
     const smokeTest = reusableSmoke.replace('"OPS-3"', '"revops-7"');
-    expect(
-      authoredSkillIssues({ body: reusableBody, smokeTest, instance: tileTicket }),
-    ).toEqual([
+    expect(authoredSkillIssues({ body: reusableBody, smokeTest, instance: tileTicket })).toEqual([
       "smoke.py carries the first work item's value `REVOPS-7`; a skill reads it from the candidate at execution and names the input it stands for",
     ]);
   });
@@ -134,11 +145,16 @@ describe('the static gate on an authored skill', (): void => {
 
   it('does not read a longer identifier or number as the first item', (): void => {
     const body = `${reusableBody}\nExample: REVOPS-70 is a different ticket at 174% or 3.74.`;
-    expect(authoredSkillIssues({ body, smokeTest: reusableSmoke, instance: tileTicket })).toEqual([]);
+    expect(authoredSkillIssues({ body, smokeTest: reusableSmoke, instance: tileTicket })).toEqual(
+      [],
+    );
   });
 
   it('reports a figure once whether the body writes it with or without its unit', (): void => {
-    const body = reusableBody.replace('## Procedure', '## Procedure\nEnter 74 percent, that is 74%.');
+    const body = reusableBody.replace(
+      '## Procedure',
+      '## Procedure\nEnter 74 percent, that is 74%.',
+    );
     expect(authoredSkillIssues({ body, smokeTest: reusableSmoke, instance: tileTicket })).toEqual([
       "SKILL.md carries the first work item's value `74%`; a skill reads it from the candidate at execution and names the input it stands for",
     ]);
@@ -156,7 +172,7 @@ describe('the static gate on an authored skill', (): void => {
         smokeTest: reusableSmoke,
       }),
     ).toEqual([
-      'SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<audit-channel>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+      "SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<audit-channel>`, as in: - `<record-id>`: the candidate's identifier on the surface the work came from (the `Refs:` line or the candidate id).",
     ]);
   });
 
@@ -171,8 +187,13 @@ describe('the static gate on an authored skill', (): void => {
       'Open <analytics-surface>, enter <requested-value>, comment on <record-id>.',
     ].join('\n');
     expect(authoredSkillIssues({ body, smokeTest: reusableSmoke })).toEqual([]);
-    expect(authoredSkillIssues({ body: `${body}\nThen post to <reply-channel>.`, smokeTest: reusableSmoke })).toEqual([
-      'SKILL.md uses `<reply-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<reply-channel>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+    expect(
+      authoredSkillIssues({
+        body: `${body}\nThen post to <reply-channel>.`,
+        smokeTest: reusableSmoke,
+      }),
+    ).toEqual([
+      "SKILL.md uses `<reply-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<reply-channel>`, as in: - `<record-id>`: the candidate's identifier on the surface the work came from (the `Refs:` line or the candidate id).",
     ]);
   });
 
@@ -187,7 +208,7 @@ describe('the static gate on an authored skill', (): void => {
     const issues = authoredSkillIssues({ body, smokeTest: reusableSmoke });
     expect(issues).toHaveLength(3);
     expect(issues[0]).toBe(
-      'SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`; declare it there as a line starting with `<analytics-surface>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+      "SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`; declare it there as a line starting with `<analytics-surface>`, as in: - `<record-id>`: the candidate's identifier on the surface the work came from (the `Refs:` line or the candidate id).",
     );
     expect(issues[1]).toBe(
       'SKILL.md uses `<requested-value>` without declaring it under `## Inputs`; declare it there as a line starting with `<requested-value>`',

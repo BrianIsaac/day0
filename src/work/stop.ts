@@ -15,7 +15,13 @@
  * phase, and the promised-read gate still holds a plan to the reads it declared.
  */
 
-import { actionIntent, isGateRefusal, isManagerDm, isSurfaceTool, parseSurfaceAction } from '../surfaces/policy';
+import {
+  actionIntent,
+  isGateRefusal,
+  isManagerDm,
+  isSurfaceTool,
+  parseSurfaceAction,
+} from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import { redactTokenShapes } from '../surfaces/redact';
 import { summariseAction } from '../surfaces/summary';
@@ -84,7 +90,8 @@ export function withRefusedReadsDropped<Row extends Partial<AppliedAction>>(
     const parsed = action ? parseSurfaceAction(action) : undefined;
     return parsed?.ok === true && actionIntent(parsed.action) === 'read';
   };
-  if (!applied.some((row, index) => row.ok === true && !refusedRead(row, index))) return [...applied];
+  if (!applied.some((row, index) => row.ok === true && !refusedRead(row, index)))
+    return [...applied];
   return applied.map((row, index) =>
     refusedRead(row, index)
       ? { ...row, ok: true, held: true, reason: `${DROPPED_READ_PREFIX}${row.reason}` }
@@ -245,20 +252,30 @@ export function landedNoteRows(
 ): LandedNoteRow[] {
   return ledgerPhases(output).flatMap(({ actions, applied }) =>
     applied.flatMap((entry, index): LandedNoteRow[] => {
-      const outcomeUnknown = entry.outcomeUnknown === true || entry.reason === OUTCOME_UNKNOWN_REASON;
+      const outcomeUnknown =
+        entry.outcomeUnknown === true || entry.reason === OUTCOME_UNKNOWN_REASON;
       if (!outcomeUnknown && (entry.ok !== true || entry.held === true)) return [];
       const action = actions[index];
       const parsed = action ? parseSurfaceAction(action) : undefined;
-      const surface = parsed?.ok ? surfaces.find((row) => row.slug === parsed.action.surface) : undefined;
+      const surface = parsed?.ok
+        ? surfaces.find((row) => row.slug === parsed.action.surface)
+        : undefined;
       if (parsed?.ok && surface && isManagerDm(parsed.action, surface)) return [];
-      const read = !outcomeUnknown && parsed?.ok === true && actionIntent(parsed.action) !== 'write';
+      const read =
+        !outcomeUnknown && parsed?.ok === true && actionIntent(parsed.action) !== 'write';
       const line = action
         ? summariseAction(action, surfaces, { replyTarget })
         : typeof entry.tool === 'string'
           ? entry.tool
           : 'unknown action';
       // The line is built from the action as authored, so it passes the same structural floor the ledger's effect does.
-      return [{ kind: read ? 'read' : 'write', line: redactTokenShapes(line), ...(outcomeUnknown ? { outcomeUnknown: true } : {}) }];
+      return [
+        {
+          kind: read ? 'read' : 'write',
+          line: redactTokenShapes(line),
+          ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
+        },
+      ];
     }),
   );
 }

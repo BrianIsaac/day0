@@ -55,22 +55,38 @@ vi.mock('../../src/lib/mastra', () => ({
         whyThisHire: 'A small RevOps team is drowning in tier-2 asks during the Q3 close.',
         proposedFunction:
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
-        evidence: [{ text: 'Formal work is in Linear, team REVOPS, project Q3 close.', source: '' }],
-        shortTermGoals: { day30: 'Clean drafts on tickets.', day60: 'Own routine tickets.', day90: 'Cover close-week tracker maintenance.' },
+        evidence: [
+          { text: 'Formal work is in Linear, team REVOPS, project Q3 close.', source: '' },
+        ],
+        shortTermGoals: {
+          day30: 'Clean drafts on tickets.',
+          day60: 'Own routine tickets.',
+          day90: 'Cover close-week tracker maintenance.',
+        },
         proposedBoundaries: {
-          willDo: ['Handle owned, prioritized Linear tickets in the Q3 close project.', 'Draft replies to asks in #revops-asks.'],
+          willDo: [
+            'Handle owned, prioritized Linear tickets in the Q3 close project.',
+            'Draft replies to asks in #revops-asks.',
+          ],
           willNotDo: ['Post to public Slack channels.'],
           escalationTriggers: ['A ticket outside the Q3 close project.'],
         },
         namedCollaborators: [{ name: 'Priya', topic: 'pipeline', introPath: 'manager' }],
         namedSystems: [
-          { name: 'Linear', class: 'kanban', whereMentioned: 'Formal work is in Linear, team REVOPS, project Q3 close.' },
+          {
+            name: 'Linear',
+            class: 'kanban',
+            whereMentioned: 'Formal work is in Linear, team REVOPS, project Q3 close.',
+          },
           { name: 'Slack', class: 'chat', whereMentioned: 'Asks arrive in Slack #revops-asks.' },
         ],
         priorityReading: ['team overview'],
         adjacentRoles: [],
         approvalChain: { boss: '', confidence: 'high' },
-        openQuestions: ['Whether Northstar CRM access will be granted.', 'Who owns the Looker pipeline tile.'],
+        openQuestions: [
+          'Whether Northstar CRM access will be granted.',
+          'Who owns the Looker pipeline tile.',
+        ],
         constraints: scripted.constraints,
       };
     }
@@ -87,14 +103,15 @@ afterEach((): void => {
 });
 
 async function deployAgent(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
-  return await harness.run(async (ctx) =>
-    await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
-      name: 'worker 1',
-      userId: 'owner',
-      state: 'day-one-in-progress',
-      createdAt: 1,
-    }),
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'worker 1',
+        userId: 'owner',
+        state: 'day-one-in-progress',
+        createdAt: 1,
+      }),
   );
 }
 
@@ -108,7 +125,9 @@ async function synthesise(): Promise<Doc<'charters'>> {
     transcript: DAY_ONE_TRANSCRIPT_2026_09_14,
   });
   if (result.outcome !== 'synthesised') throw new Error(`outcome ${result.outcome}`);
-  const charter = await harness.run(async (ctx) => await ctx.db.get(result.charterId as Id<'charters'>));
+  const charter = await harness.run(
+    async (ctx) => await ctx.db.get(result.charterId as Id<'charters'>),
+  );
   if (!charter) throw new Error('no charter');
   return charter;
 }
@@ -121,7 +140,7 @@ describe('charter synthesis from the 14 September transcript', (): void => {
     expect(scripted.charterPrompts[0]).toContain("if it's a ticket it has an owner and a priority");
   });
 
-  it('carries the constraint the model listed, in the manager\'s own words', async (): Promise<void> => {
+  it("carries the constraint the model listed, in the manager's own words", async (): Promise<void> => {
     useSurfaceMode('mock');
     scripted.constraints = [
       {
@@ -129,10 +148,17 @@ describe('charter synthesis from the 14 September transcript', (): void => {
         quote: "if it's a ticket it has an owner and a priority",
         wording: ['owned, prioritized'],
       },
-      { kind: 'system-boundary', quote: 'Never post to public channels.', wording: ['Post to public Slack channels.'] },
+      {
+        kind: 'system-boundary',
+        quote: 'Never post to public channels.',
+        wording: ['Post to public Slack channels.'],
+      },
     ];
     const charter = await synthesise();
-    const body = charter.body as { constraints: unknown[]; proposedBoundaries: { willDo: string[] } };
+    const body = charter.body as {
+      constraints: unknown[];
+      proposedBoundaries: { willDo: string[] };
+    };
     expect(body.constraints).toEqual([
       {
         kind: 'candidate-property',
@@ -155,7 +181,9 @@ describe('charter synthesis from the 14 September transcript', (): void => {
   it('derives the ticket-owner constraint from the transcript when the model lists none', async (): Promise<void> => {
     useSurfaceMode('mock');
     const charter = await synthesise();
-    const body = charter.body as { constraints: Array<{ quote: string; wording: string[]; origin: string }> };
+    const body = charter.body as {
+      constraints: Array<{ quote: string; wording: string[]; origin: string }>;
+    };
     expect(body.constraints).toEqual([
       {
         kind: 'candidate-property',
@@ -187,7 +215,9 @@ describe('provenance suffixes on clauses', (): void => {
       willNotDo: CLEAN_CLAUSES_2026_09_16.willNotDo,
       escalationTriggers: CLEAN_CLAUSES_2026_09_16.escalationTriggers,
     });
-    expect(body.evidence).toEqual([{ text: CLEAN_CLAUSES_2026_09_16.evidenceText, source: 'from manager 1:1 day-1' }]);
+    expect(body.evidence).toEqual([
+      { text: CLEAN_CLAUSES_2026_09_16.evidenceText, source: 'from manager 1:1 day-1' },
+    ]);
     expect(body.shortTermGoals).toEqual(CLEAN_CLAUSES_2026_09_16.shortTermGoals);
     expect(body.priorityReading).toEqual(CLEAN_CLAUSES_2026_09_16.priorityReading);
     expect(JSON.stringify(body)).not.toContain(PROVENANCE_SUFFIX_2026_09_16.trim());

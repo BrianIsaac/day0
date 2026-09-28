@@ -77,7 +77,9 @@ export function isSynthesisNote(text: string): boolean {
  *   The open questions in charter order.
  */
 export function managerOpenQuestions(charter: Pick<Charter, 'openQuestions'>): string[] {
-  return (charter.openQuestions ?? []).filter((question: string): boolean => !isSynthesisNote(question));
+  return (charter.openQuestions ?? []).filter(
+    (question: string): boolean => !isSynthesisNote(question),
+  );
 }
 
 /**
@@ -94,7 +96,10 @@ export function synthesisNotes(
   charter: Pick<Charter, 'openQuestions'> & Partial<Pick<Charter, 'synthesisNotes'>>,
 ): string[] {
   const out: string[] = [];
-  for (const note of [...(charter.synthesisNotes ?? []), ...(charter.openQuestions ?? []).filter(isSynthesisNote)]) {
+  for (const note of [
+    ...(charter.synthesisNotes ?? []),
+    ...(charter.openQuestions ?? []).filter(isSynthesisNote),
+  ]) {
     if (!out.includes(note)) out.push(note);
   }
   return out;
@@ -126,16 +131,96 @@ export function questionKey(question: string): string {
  * begin with, so the shorter function words need no listing.
  */
 const STOP_WORDS = new Set([
-  'about', 'after', 'again', 'also', 'answer', 'before', 'being', 'between', 'both',
-  'check', 'confirm', 'could', 'does', 'doing', 'draft', 'during', 'each', 'either',
-  'else', 'every', 'from', 'granted', 'have', 'here', 'into', 'just', 'like', 'make',
-  'more', 'most', 'much', 'need', 'needs', 'once', 'only', 'other', 'over', 'read',
-  'same', 'should', 'since', 'some', 'still', 'such', 'than', 'that', 'their', 'them',
-  'then', 'there', 'these', 'they', 'this', 'those', 'through', 'under', 'until',
-  'very', 'were', 'what', 'when', 'where', 'whether', 'which', 'while', 'will',
-  'with', 'within', 'without', 'would', 'your', 'ticket', 'tickets', 'work', 'plan',
-  'step', 'steps', 'open', 'question', 'questions', 'later', 'first', 'next',
-  'agent', 'manager', 'team', 'access', 'owns', 'owner', 'owned',
+  'about',
+  'after',
+  'again',
+  'also',
+  'answer',
+  'before',
+  'being',
+  'between',
+  'both',
+  'check',
+  'confirm',
+  'could',
+  'does',
+  'doing',
+  'draft',
+  'during',
+  'each',
+  'either',
+  'else',
+  'every',
+  'from',
+  'granted',
+  'have',
+  'here',
+  'into',
+  'just',
+  'like',
+  'make',
+  'more',
+  'most',
+  'much',
+  'need',
+  'needs',
+  'once',
+  'only',
+  'other',
+  'over',
+  'read',
+  'same',
+  'should',
+  'since',
+  'some',
+  'still',
+  'such',
+  'than',
+  'that',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'those',
+  'through',
+  'under',
+  'until',
+  'very',
+  'were',
+  'what',
+  'when',
+  'where',
+  'whether',
+  'which',
+  'while',
+  'will',
+  'with',
+  'within',
+  'without',
+  'would',
+  'your',
+  'ticket',
+  'tickets',
+  'work',
+  'plan',
+  'step',
+  'steps',
+  'open',
+  'question',
+  'questions',
+  'later',
+  'first',
+  'next',
+  'agent',
+  'manager',
+  'team',
+  'access',
+  'owns',
+  'owner',
+  'owned',
 ]);
 
 /**

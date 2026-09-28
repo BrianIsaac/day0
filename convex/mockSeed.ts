@@ -399,13 +399,7 @@ export const seedMockEnvironment = internalMutation({
       channelSlug: string,
       threadKey: string | undefined,
       sender: string,
-      senderKind:
-        | 'agent-draft'
-        | 'agent-posted'
-        | 'manager'
-        | 'teammate'
-        | 'requester'
-        | 'system',
+      senderKind: 'agent-draft' | 'agent-posted' | 'manager' | 'teammate' | 'requester' | 'system',
       body: string,
     ) => {
       const existingMsgs = await ctx.db

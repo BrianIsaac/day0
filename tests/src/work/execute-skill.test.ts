@@ -123,8 +123,9 @@ describe('executor output contract', (): void => {
     });
 
     expect(first).not.toBe(second);
-    expect(skillAgentName(skill, { sourceSystem: 'slack', externalId: 'write-team-handoff' }))
-      .toBe(first);
+    expect(skillAgentName(skill, { sourceSystem: 'slack', externalId: 'write-team-handoff' })).toBe(
+      first,
+    );
     expect(
       skillAgentName(
         skill,
@@ -209,7 +210,13 @@ describe('executor output contract', (): void => {
     for (const row of [
       { trailId: 'trail-1', state: 'mapped', actionIndex: 0 },
       { trailId: 'trail-1', state: 'inapplicable', reason: 'Not applicable here.' },
-      { trailId: 'trail-1', state: 'deferred', reason: 'A later phase is required.', dependsOnActionIndex: null, dependsOnField: null },
+      {
+        trailId: 'trail-1',
+        state: 'deferred',
+        reason: 'A later phase is required.',
+        dependsOnActionIndex: null,
+        dependsOnField: null,
+      },
     ]) {
       expect(
         schema.safeParse({
@@ -1217,7 +1224,12 @@ describe('executor output contract', (): void => {
       tool: 'mcp.call',
       args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
     };
-    const undeclared: ExecutionOutput = { draft: '', notes: '', needsDependentPhase: true, actions: [read] };
+    const undeclared: ExecutionOutput = {
+      draft: '',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [read],
+    };
     // The closing set: comment, state change, manager DM, thread reply, one read-back.
     expect(CLOSING_SET_CAP).toBe(5);
     expect(dependentActionCap(undeclared)).toBe(CLOSING_SET_CAP);
@@ -1237,7 +1249,13 @@ describe('executor output contract', (): void => {
       dependentActionCap({
         ...undeclared,
         procedureTrails: [
-          { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure', dependsOnActionIndex: 0, dependsOnField: 'record' },
+          {
+            trailId: 'trail-1',
+            state: 'deferred',
+            reason: 'quotes the read-back figure',
+            dependsOnActionIndex: 0,
+            dependsOnField: 'record',
+          },
         ],
       }),
     ).toBe(CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE);
@@ -1263,10 +1281,18 @@ describe('executor output contract', (): void => {
       ],
       actions: Array.from({ length: count }, () => read),
     });
-    const closingSetOnly = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real', CLOSING_SET_CAP);
+    const closingSetOnly = dependentExecuteSchemaForProcedureContract(
+      { trails: [] },
+      'real',
+      CLOSING_SET_CAP,
+    );
     expect(closingSetOnly.safeParse(closing(CLOSING_SET_CAP)).success).toBe(true);
     expect(closingSetOnly.safeParse(closing(CLOSING_SET_CAP + 1)).success).toBe(false);
-    const withSequence = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real', DEPENDENT_ACTION_CAP);
+    const withSequence = dependentExecuteSchemaForProcedureContract(
+      { trails: [] },
+      'real',
+      DEPENDENT_ACTION_CAP,
+    );
     expect(withSequence.safeParse(closing(DEPENDENT_ACTION_CAP)).success).toBe(true);
     expect(withSequence.safeParse(closing(DEPENDENT_ACTION_CAP + 1)).success).toBe(false);
   });
@@ -1349,7 +1375,12 @@ describe('executor output contract', (): void => {
     const text = appliedLedgerPrompt(
       [snapshot, issue, snapshot],
       [
-        { tool: 'mcp.call', ok: true, effect: 'browser_snapshot on looker · visible figure 68%', idempotencyKey: 'work:first:3' },
+        {
+          tool: 'mcp.call',
+          ok: true,
+          effect: 'browser_snapshot on looker · visible figure 68%',
+          idempotencyKey: 'work:first:3',
+        },
         { tool: 'mcp.call', ok: true, effect: 'REVOPS-7 · Done', idempotencyKey: 'work:first:4' },
         {
           tool: 'mcp.call',
@@ -1357,7 +1388,10 @@ describe('executor output contract', (): void => {
           effect: 'browser_snapshot on looker · visible figure 74%',
           idempotencyKey: 'work:retry:5',
           refreshed: {
-            previous: { effect: 'browser_snapshot on looker · ### Page - Page URL: about:blank', idempotencyKey: 'work:first:6' },
+            previous: {
+              effect: 'browser_snapshot on looker · ### Page - Page URL: about:blank',
+              idempotencyKey: 'work:first:6',
+            },
             at: Date.UTC(2026, 8, 16, 21, 11, 30),
           },
         },
@@ -1472,8 +1506,11 @@ describe('probed argument names in the surface list', (): void => {
 
   it('preserves mock instructions even when persisted surfaces carry probed arguments', () => {
     const args = {
-      mode: 'mock' as const, autonomousActions: false, skillBody: 'Read the issue.',
-      mockEnv: emptyMock, now,
+      mode: 'mock' as const,
+      autonomousActions: false,
+      skillBody: 'Read the issue.',
+      mockEnv: emptyMock,
+      now,
     };
     expect(executorInstructions({ ...args, surfaces: [probed] })).toBe(
       executorInstructions({ ...args, surfaces: [{ ...probed, toolArguments: undefined }] }),
@@ -1489,7 +1526,9 @@ describe('probed argument names in the surface list', (): void => {
       mockEnv: emptyMock,
       now,
     });
-    expect(instructions).toContain('get_issue(id, includeCustomerNeeds, includeRelations, includeReleases)');
+    expect(instructions).toContain(
+      'get_issue(id, includeCustomerNeeds, includeRelations, includeReleases)',
+    );
   });
 
   it('adds no guidance line when no surface carries probed names', (): void => {
@@ -1961,6 +2000,10 @@ describe("manager's answers at plan approval", (): void => {
 });
 
 it('keeps the mock phase-one provider schema byte-identical', () => {
-  const schema = JSON.stringify(z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')));
-  expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(`"eeb7ba777f1f42a8ab311a70030b51ada6262e0c7fbb4894a2bd8d8542cc32d8"`);
+  const schema = JSON.stringify(
+    z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')),
+  );
+  expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(
+    `"eeb7ba777f1f42a8ab311a70030b51ada6262e0c7fbb4894a2bd8d8542cc32d8"`,
+  );
 });

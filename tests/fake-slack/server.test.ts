@@ -4,11 +4,7 @@ import { startFakeSlack, type FakeSlack } from './spawn';
 let BASE = '';
 let fake: FakeSlack;
 
-async function api(
-  method: string,
-  token: string,
-  body = '',
-): Promise<Record<string, unknown>> {
+async function api(method: string, token: string, body = ''): Promise<Record<string, unknown>> {
   return (await (
     await fetch(`${BASE}/api/${method}`, {
       method: 'POST',
@@ -139,7 +135,10 @@ describe('the isolated Slack provisioning proof', (): void => {
       (await (
         await fetch(`${BASE}/api/${path}`, {
           method: verb,
-          headers: { authorization: `Bearer ${token}`, ...(contentType ? { 'content-type': contentType } : {}) },
+          headers: {
+            authorization: `Bearer ${token}`,
+            ...(contentType ? { 'content-type': contentType } : {}),
+          },
           body,
         })
       ).json()) as Record<string, unknown>;
@@ -148,7 +147,9 @@ describe('the isolated Slack provisioning proof', (): void => {
 
     it('answers a thread read whose channel and ts are in the query, under GET and POST', async (): Promise<void> => {
       for (const verb of ['GET', 'POST'] as const) {
-        expect(await call(verb, 'conversations.replies?channel=C_REVOPS_ASKS&ts=1787817600.000001')).toMatchObject({
+        expect(
+          await call(verb, 'conversations.replies?channel=C_REVOPS_ASKS&ts=1787817600.000001'),
+        ).toMatchObject({
           ok: true,
           messages: [{ ts: '1787817600.000001', thread_ts: '1787817600.000001' }],
           has_more: false,
@@ -157,7 +158,9 @@ describe('the isolated Slack provisioning proof', (): void => {
     });
 
     it('answers a history read whose channel is in a form body', async (): Promise<void> => {
-      expect(await call('POST', 'conversations.history', FORM, 'channel=C_REVOPS&limit=5')).toMatchObject({
+      expect(
+        await call('POST', 'conversations.history', FORM, 'channel=C_REVOPS&limit=5'),
+      ).toMatchObject({
         ok: true,
         messages: [],
         has_more: false,
@@ -166,20 +169,32 @@ describe('the isolated Slack provisioning proof', (): void => {
 
     it('does not read a JSON body on a read method: the channel was never named', async (): Promise<void> => {
       const body = JSON.stringify({ channel: 'C_REVOPS_ASKS', ts: '1787817600.000001' });
-      expect(await call('POST', 'conversations.replies', JSON_TYPE, body)).toEqual({ ok: false, error: 'channel_not_found' });
-      expect(await call('POST', 'conversations.history', JSON_TYPE, body)).toEqual({ ok: false, error: 'channel_not_found' });
-      expect(await call('POST', 'users.lookupByEmail', JSON_TYPE, '{"email":"operator@example.test"}')).toEqual({
+      expect(await call('POST', 'conversations.replies', JSON_TYPE, body)).toEqual({
+        ok: false,
+        error: 'channel_not_found',
+      });
+      expect(await call('POST', 'conversations.history', JSON_TYPE, body)).toEqual({
+        ok: false,
+        error: 'channel_not_found',
+      });
+      expect(
+        await call('POST', 'users.lookupByEmail', JSON_TYPE, '{"email":"operator@example.test"}'),
+      ).toEqual({
         ok: false,
         error: 'users_not_found',
       });
     });
 
     it('refuses a channel it does not have, and a thread read with no ts', async (): Promise<void> => {
-      expect(await call('GET', 'conversations.replies?channel=C_ELSEWHERE&ts=1787817600.000001')).toEqual({
+      expect(
+        await call('GET', 'conversations.replies?channel=C_ELSEWHERE&ts=1787817600.000001'),
+      ).toEqual({
         ok: false,
         error: 'channel_not_found',
       });
-      expect(await call('GET', 'conversations.replies?channel=C_REVOPS&thread_ts=1787817600.000001')).toEqual({
+      expect(
+        await call('GET', 'conversations.replies?channel=C_REVOPS&thread_ts=1787817600.000001'),
+      ).toEqual({
         ok: false,
         error: 'invalid_arguments',
       });
@@ -187,7 +202,12 @@ describe('the isolated Slack provisioning proof', (): void => {
 
     it('still reads a JSON body on the write methods that take one', async (): Promise<void> => {
       expect(
-        await call('POST', 'chat.postMessage', JSON_TYPE, JSON.stringify({ channel: 'C_REVOPS', text: 'a note' })),
+        await call(
+          'POST',
+          'chat.postMessage',
+          JSON_TYPE,
+          JSON.stringify({ channel: 'C_REVOPS', text: 'a note' }),
+        ),
       ).toMatchObject({ ok: true, channel: 'C_REVOPS' });
     });
   });

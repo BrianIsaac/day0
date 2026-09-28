@@ -35,7 +35,7 @@ function location(response: Response): URL {
 }
 
 describe('the Slack install redirect', (): void => {
-  it('sends a completed install to the agent\'s Surfaces tab', async (): Promise<void> => {
+  it("sends a completed install to the agent's Surfaces tab", async (): Promise<void> => {
     action.mockResolvedValue({ ok: true, agentId: 'j57agent', surfaceSlug: 'slack' });
     const response = await GET(redirect({ code: 'the-code', state: 'the-state' }));
 

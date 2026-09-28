@@ -40,7 +40,11 @@ function localProofMode(): boolean {
   return SURFACE_MODE === 'real';
 }
 
-function localOverride(name: string, expectedPath: string, hosts: readonly string[]): URL | undefined {
+function localOverride(
+  name: string,
+  expectedPath: string,
+  hosts: readonly string[],
+): URL | undefined {
   const raw = process.env[name]?.trim();
   if (!raw) return undefined;
   if (!localProofMode()) {
@@ -69,8 +73,7 @@ function localOverride(name: string, expectedPath: string, hosts: readonly strin
 /** Resolve the Slack Web API base to production or the isolated fake. */
 export function slackApiBaseUrl(): URL {
   return (
-    localOverride('DAY0_TEST_SLACK_API_URL', '/api/', ['fake-slack']) ??
-    new URL(SLACK_API_ENDPOINT)
+    localOverride('DAY0_TEST_SLACK_API_URL', '/api/', ['fake-slack']) ?? new URL(SLACK_API_ENDPOINT)
   );
 }
 

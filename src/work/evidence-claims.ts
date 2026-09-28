@@ -1,4 +1,9 @@
-import { actionIntent, isSurfaceTool, parseSurfaceAction, type ParsedSurfaceAction } from '../surfaces/policy';
+import {
+  actionIntent,
+  isSurfaceTool,
+  parseSurfaceAction,
+  type ParsedSurfaceAction,
+} from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import type { AppliedAction } from '../surfaces/types';
 import type { MockAction, WorkCandidate } from './types';
@@ -186,7 +191,12 @@ const REQUEST_OPENING =
  * repeated as a fact.
  */
 function reports(sentence: string): boolean {
-  return claims(sentence) && !HEDGED.test(sentence) && !asks(sentence) && !REQUEST_OPENING.test(sentence.trim());
+  return (
+    claims(sentence) &&
+    !HEDGED.test(sentence) &&
+    !asks(sentence) &&
+    !REQUEST_OPENING.test(sentence.trim())
+  );
 }
 
 /** The string values an action's arguments carry, at any depth: where a record read names its ticket. */
@@ -203,7 +213,10 @@ export function readsTheItem(action: MockAction, externalId: string): boolean {
   if (!id || !isSurfaceTool(action.tool)) return false;
   const parsed = parseSurfaceAction(action);
   if (!parsed.ok || actionIntent(parsed.action) !== 'read') return false;
-  const args = parsed.action.kind === 'mcp.call' ? parsed.action.toolArgs : { path: parsed.action.path, body: parsed.action.bodyJson };
+  const args =
+    parsed.action.kind === 'mcp.call'
+      ? parsed.action.toolArgs
+      : { path: parsed.action.path, body: parsed.action.bodyJson };
   return argumentStrings(args).some((value) => value.trim().toLowerCase() === id);
 }
 
@@ -225,11 +238,15 @@ export function readsTheItem(action: MockAction, externalId: string): boolean {
  *   The redacted texts, one per source; empty when the item carries none.
  */
 export function itemEvidence(
-  candidate: Pick<WorkCandidate, 'externalId' | 'title' | 'contentSummary'> & Partial<Pick<WorkCandidate, 'contentRefs'>>,
+  candidate: Pick<WorkCandidate, 'externalId' | 'title' | 'contentSummary'> &
+    Partial<Pick<WorkCandidate, 'contentRefs'>>,
   reads: readonly GroundingRead[] = [],
 ): string[] {
   const landed = reads
-    .filter(({ action, applied }) => applied.ok && !applied.held && readsTheItem(action, candidate.externalId))
+    .filter(
+      ({ action, applied }) =>
+        applied.ok && !applied.held && readsTheItem(action, candidate.externalId),
+    )
     .map(({ applied }) => (applied.effect ?? '').replace(/\\[nr]/g, '\n'));
   const names = [candidate.externalId, ...(candidate.contentRefs ?? [])].join(' ');
   return [candidate.title, candidate.contentSummary, names, ...landed]
@@ -243,7 +260,11 @@ function asks(sentence: string): boolean {
 
 function supported(sentence: string, prepared: PreparedEvidence): boolean {
   if (HEDGED.test(sentence) || asks(sentence)) return true;
-  if (quotedSpans(sentence).some((span) => prepared.quotable.some((source) => source.includes(normalised(span))))) {
+  if (
+    quotedSpans(sentence).some((span) =>
+      prepared.quotable.some((source) => source.includes(normalised(span))),
+    )
+  ) {
     return true;
   }
   if (runsOf(sentence).some((run) => prepared.ledgerRuns.has(run))) return true;
@@ -259,9 +280,15 @@ function supported(sentence: string, prepared: PreparedEvidence): boolean {
  * ride on the ticket's 26; a value alone would let the ticket's id vouch
  * for a result, which only the ledger can show.
  */
-function repeatsTheItem(sentence: string, tokens: readonly string[], prepared: PreparedEvidence): boolean {
+function repeatsTheItem(
+  sentence: string,
+  tokens: readonly string[],
+  prepared: PreparedEvidence,
+): boolean {
   if (!runsOf(sentence).some((run) => prepared.itemRuns.has(run))) return false;
-  return tokens.every((token) => prepared.itemTokens.has(token) || prepared.ledgerTokens.has(token));
+  return tokens.every(
+    (token) => prepared.itemTokens.has(token) || prepared.ledgerTokens.has(token),
+  );
 }
 
 /**
@@ -353,7 +380,11 @@ function payloadWithoutMessages(action: MockAction): string {
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok) return action.tool;
     return parsed.action.kind === 'mcp.call'
-      ? JSON.stringify({ surface: parsed.action.surface, tool: parsed.action.tool, args: withoutMessages(parsed.action.toolArgs) })
+      ? JSON.stringify({
+          surface: parsed.action.surface,
+          tool: parsed.action.tool,
+          args: withoutMessages(parsed.action.toolArgs),
+        })
       : JSON.stringify({
           surface: parsed.action.surface,
           method: parsed.action.method,
@@ -388,7 +419,10 @@ const NO_EVIDENCE = /^[\s\u2014\u2013\-?\u2026.]*$/;
 const STATE_WORDS =
   'done|closed|completed|complete|resolved|cancelled|canceled|backlog|todo|to do|triage|open|in progress|in review|blocked|duplicate';
 /** The state a check requires, named in its head: "Close tickets at Done". */
-const REQUIRED_STATE = new RegExp(`\\b(?:at|to|in|is|are|as|reach(?:es|ed)?|=)\\s+[\`"']?(${STATE_WORDS})\\b`, 'i');
+const REQUIRED_STATE = new RegExp(
+  `\\b(?:at|to|in|is|are|as|reach(?:es|ed)?|=)\\s+[\`"']?(${STATE_WORDS})\\b`,
+  'i',
+);
 /**
  * A head that asks for a close without naming the state: "Close tickets",
  * "Resolve the sibling issues", "Tickets closed". The checklist may name
@@ -397,9 +431,21 @@ const REQUIRED_STATE = new RegExp(`\\b(?:at|to|in|is|are|as|reach(?:es|ed)?|=)\\
 const CLOSE_HEAD =
   /^(?:close|complete|resolve)\s+[^.:]{0,30}?\b(?:tickets?|issues?|items?|[a-z]+-\d+)\b|\b(?:tickets?|issues?|items?)\s+(?:closed|done|completed|resolved)\b/i;
 /** The states a close ends in; anything else the evidence reports is an open state. */
-const CLOSED_STATES = new Set(['done', 'closed', 'completed', 'complete', 'resolved', 'cancelled', 'canceled', 'duplicate']);
+const CLOSED_STATES = new Set([
+  'done',
+  'closed',
+  'completed',
+  'complete',
+  'resolved',
+  'cancelled',
+  'canceled',
+  'duplicate',
+]);
 /** A state the evidence reports for something: "REVOPS-6 (...) \u2014 Backlog", "(Todo)", "is at Backlog". */
-const REPORTED_STATE = new RegExp(`(?:[\\u2014\\u2013\\-:(]|\\b(?:at|in|is|are|state))\\s*[\`"']?(${STATE_WORDS})\\b`, 'gi');
+const REPORTED_STATE = new RegExp(
+  `(?:[\\u2014\\u2013\\-:(]|\\b(?:at|in|is|are|state))\\s*[\`"']?(${STATE_WORDS})\\b`,
+  'gi',
+);
 
 const CHECKS_NAMED = /\bchecks?\s+#?\d+(?:\s*(?:,|and|&|\/|or)\s*(?:checks?\s+)?#?\d+)*/gi;
 
@@ -409,7 +455,9 @@ const CHECKS_NAMED = /\bchecks?\s+#?\d+(?:\s*(?:,|and|&|\/|or)\s*(?:checks?\s+)?
  * lines, each with a head and evidence, and after the last of them a line
  * opening "Not confirmed". Anything else is free prose and is not judged.
  */
-function enumeratedChecks(text: string): { checks: EnumeratedCheck[]; closing: string } | undefined {
+function enumeratedChecks(
+  text: string,
+): { checks: EnumeratedCheck[]; closing: string } | undefined {
   const lines = text.replace(TRAILER, '').split('\n');
   const checks: EnumeratedCheck[] = [];
   let lastItem = -1;
@@ -439,7 +487,9 @@ function unmetReason(check: EnumeratedCheck): string | undefined {
   const required = check.head.match(REQUIRED_STATE)?.[1];
   const reportedStates = [...check.evidence.matchAll(REPORTED_STATE)].map((match) => match[1]!);
   if (required) {
-    const reported = reportedStates.filter((state) => state.toLowerCase() !== required.toLowerCase());
+    const reported = reportedStates.filter(
+      (state) => state.toLowerCase() !== required.toLowerCase(),
+    );
     if (reported.length === 0) return undefined;
     return `reports ${[...new Set(reported)].join(' and ')} where the check requires ${required}`;
   }
@@ -451,9 +501,40 @@ function unmetReason(check: EnumeratedCheck): string | undefined {
 
 /** Words that name nothing in particular in a closing line or a check. */
 const COMMON_WORDS = new Set([
-  'check', 'checks', 'confirmed', 'confirm', 'done', 'with', 'from', 'this', 'that', 'were', 'have', 'been', 'each',
-  'their', 'there', 'into', 'only', 'also', 'than', 'then', 'when', 'what', 'which', 'still', 'reports', 'reported',
-  'shows', 'showed', 'linear', 'because', 'since', 'after', 'before', 'about',
+  'check',
+  'checks',
+  'confirmed',
+  'confirm',
+  'done',
+  'with',
+  'from',
+  'this',
+  'that',
+  'were',
+  'have',
+  'been',
+  'each',
+  'their',
+  'there',
+  'into',
+  'only',
+  'also',
+  'than',
+  'then',
+  'when',
+  'what',
+  'which',
+  'still',
+  'reports',
+  'reported',
+  'shows',
+  'showed',
+  'linear',
+  'because',
+  'since',
+  'after',
+  'before',
+  'about',
 ]);
 
 /** A word's stem, wide enough to match its plural, past and noun forms: "deals" / "deal", "reconciled" / "reconciliation". */
@@ -462,7 +543,11 @@ function stem(word: string): string {
 }
 
 function stemsOf(text: string): Set<string> {
-  return new Set(words(text).filter((word) => word.length >= 4 && !COMMON_WORDS.has(word)).map(stem));
+  return new Set(
+    words(text)
+      .filter((word) => word.length >= 4 && !COMMON_WORDS.has(word))
+      .map(stem),
+  );
 }
 
 /**
@@ -472,20 +557,36 @@ function stemsOf(text: string): Set<string> {
  * evidence alone use, in any form ("deal reconciliation", "ticket
  * closure"). What another check also carries names nothing.
  */
-function namedInClosing(check: EnumeratedCheck, closing: string, others: readonly EnumeratedCheck[]): boolean {
+function namedInClosing(
+  check: EnumeratedCheck,
+  closing: string,
+  others: readonly EnumeratedCheck[],
+): boolean {
   const numbers = new Set(
-    [...closing.matchAll(CHECKS_NAMED)].flatMap((match) => (match[0].match(/\d+/g) ?? []).map(Number)),
+    [...closing.matchAll(CHECKS_NAMED)].flatMap((match) =>
+      (match[0].match(/\d+/g) ?? []).map(Number),
+    ),
   );
   if (numbers.has(check.number)) return true;
   const headWords = words(check.head).slice(0, 2);
   if (headWords.length > 0 && normalised(closing).includes(headWords.join(' '))) return true;
-  const elsewhere = others.filter((other) => other.number !== check.number).map((other) => `${other.head} ${other.evidence}`).join('\n');
+  const elsewhere = others
+    .filter((other) => other.number !== check.number)
+    .map((other) => `${other.head} ${other.evidence}`)
+    .join('\n');
   const closingTokens = new Set(distinctiveTokens(closing));
   const tokensElsewhere = new Set(distinctiveTokens(elsewhere));
-  if (distinctiveTokens(check.evidence).some((token) => closingTokens.has(token) && !tokensElsewhere.has(token))) return true;
+  if (
+    distinctiveTokens(check.evidence).some(
+      (token) => closingTokens.has(token) && !tokensElsewhere.has(token),
+    )
+  )
+    return true;
   const closingStems = stemsOf(closing);
   const stemsElsewhere = stemsOf(elsewhere);
-  const own = [...stemsOf(`${check.head} ${check.evidence}`)].filter((word) => !stemsElsewhere.has(word));
+  const own = [...stemsOf(`${check.head} ${check.evidence}`)].filter(
+    (word) => !stemsElsewhere.has(word),
+  );
   return own.filter((word) => closingStems.has(word)).length >= 2;
 }
 
@@ -514,7 +615,9 @@ export function inconsistentNotConfirmedLine(text: string): string | undefined {
     return [`check ${check.number} ("${check.head}") ${reason} in its own evidence`];
   });
   if (omitted.length === 0) return undefined;
-  const named = listed.checks.filter((check) => namedInClosing(check, listed.closing, listed.checks)).map((check) => `check ${check.number}`);
+  const named = listed.checks
+    .filter((check) => namedInClosing(check, listed.closing, listed.checks))
+    .map((check) => `check ${check.number}`);
   return `the not-confirmed line names ${named.length > 0 ? named.join(' and ') : 'no check'} but ${omitted.join('; ')}; name every check whose evidence is unmet in that line, and record the manager's acceptance beside the evidence, never in place of it`;
 }
 
@@ -571,7 +674,10 @@ export function unsupportedClaimFindings(
   actions.forEach((action, index): void => {
     if (only && !only(action, index)) return;
     const beside = actions.filter((_, other) => other !== index).map(payloadWithoutMessages);
-    const withResponse: ClaimEvidence = { ...evidence, ledger: [evidence.ledger, ...beside].join('\n') };
+    const withResponse: ClaimEvidence = {
+      ...evidence,
+      ledger: [evidence.ledger, ...beside].join('\n'),
+    };
     for (const text of messageTexts(action)) {
       for (const claim of unsupportedClaims(text, withResponse)) {
         findings.push({
@@ -581,7 +687,10 @@ export function unsupportedClaimFindings(
       }
       const inconsistent = inconsistentNotConfirmedLine(text);
       if (inconsistent) {
-        findings.push({ index, issue: `action ${index} (${describeAction(action)}): ${inconsistent}` });
+        findings.push({
+          index,
+          issue: `action ${index} (${describeAction(action)}): ${inconsistent}`,
+        });
       }
     }
   });

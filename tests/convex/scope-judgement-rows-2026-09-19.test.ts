@@ -8,7 +8,12 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import { K_REASON, L_REASON, mateoCharter, priyaCharter } from '../src/work/scope-run-fixtures-2026-09-19';
+import {
+  K_REASON,
+  L_REASON,
+  mateoCharter,
+  priyaCharter,
+} from '../src/work/scope-run-fixtures-2026-09-19';
 
 /**
  * Findings K and L of the second full run (19 Sep 2026), on the rows.
@@ -58,13 +63,16 @@ type Harness = TestConvex<typeof schema>;
 const inScope: Answer = {
   inScope: true,
   fit: true,
-  reason: 'the status note is the role\'s own ticket',
+  reason: "the status note is the role's own ticket",
   exclusion: { kind: 'none', quote: '' },
 };
 
 const AUTHORITY = 'Post the status note without asking until the manager decides otherwise.';
 
-function skip(reason: string, exclusion: Answer['exclusion'] = { kind: 'none', quote: '' }): Answer {
+function skip(
+  reason: string,
+  exclusion: Answer['exclusion'] = { kind: 'none', quote: '' },
+): Answer {
   return { inScope: false, fit: true, reason, exclusion };
 }
 
@@ -100,12 +108,12 @@ interface Seeded {
   workItemId: Id<'workItems'>;
 }
 
-async function seed(
-  harness: Harness,
-  who: 'priya' | 'mateo',
-): Promise<Seeded> {
+async function seed(harness: Harness, who: 'priya' | 'mateo'): Promise<Seeded> {
   const charter = who === 'priya' ? priyaCharter : mateoCharter;
-  const bounds = who === 'priya' ? { team: 'REVOPS', project: 'Q3 close' } : { team: 'FIN', project: 'September close' };
+  const bounds =
+    who === 'priya'
+      ? { team: 'REVOPS', project: 'Q3 close' }
+      : { team: 'FIN', project: 'September close' };
   const ticket =
     who === 'priya'
       ? {
@@ -173,7 +181,8 @@ async function seed(
 }
 
 async function evaluate(harness: Harness, workItemId: Id<'workItems'>): Promise<string> {
-  return (await harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId })).decision;
+  return (await harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }))
+    .decision;
 }
 
 async function row(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
@@ -253,7 +262,7 @@ describe('finding K on the rows: REVOPS-27', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'priya');
     recorded.answers.push(
-      skip('Configuring Linear is the admins\' lane.', {
+      skip("Configuring Linear is the admins' lane.", {
         kind: 'will-not-do',
         quote: "Own Linear or Slack administration (the admins' lane).",
       }),
@@ -319,7 +328,10 @@ describe('finding L on the rows: FIN-1', (): void => {
             ...mateoCharter,
             proposedBoundaries: {
               ...mateoCharter.proposedBoundaries,
-              willNotDo: [...mateoCharter.proposedBoundaries.willNotDo, 'Post the close status note.'],
+              willNotDo: [
+                ...mateoCharter.proposedBoundaries.willNotDo,
+                'Post the close status note.',
+              ],
             },
           },
         }),
@@ -348,7 +360,10 @@ describe('finding L on the rows: FIN-1', (): void => {
       await ctx.db.patch(workItemId, {
         state: 'skipped',
         skipReason: 'out-of-scope: no charter or current documented-system overlap',
-        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: no charter or current documented-system overlap',
+        },
       });
     });
 
@@ -371,7 +386,9 @@ describe('finding L on the rows: FIN-1', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { charterId, workItemId } = await seed(harness, 'mateo');
     await harness.run(async (ctx) => {
-      await ctx.db.patch(workItemId, { scopeAdmission: { charterId, at: 1, basis: 'charter-judgement' } });
+      await ctx.db.patch(workItemId, {
+        scopeAdmission: { charterId, at: 1, basis: 'charter-judgement' },
+      });
     });
 
     const decision = (

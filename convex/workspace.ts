@@ -56,9 +56,7 @@ async function readFileImpl(
   }
   const row = await ctx.db
     .query('workspace')
-    .withIndex('by_agent_file', (q) =>
-      q.eq('agentId', args.agentId).eq('fileName', args.fileName),
-    )
+    .withIndex('by_agent_file', (q) => q.eq('agentId', args.agentId).eq('fileName', args.fileName))
     .unique();
   return row?.content ?? '';
 }
@@ -106,9 +104,7 @@ export async function writeFileImpl(
   }
   const existing = await ctx.db
     .query('workspace')
-    .withIndex('by_agent_file', (q) =>
-      q.eq('agentId', args.agentId).eq('fileName', args.fileName),
-    )
+    .withIndex('by_agent_file', (q) => q.eq('agentId', args.agentId).eq('fileName', args.fileName))
     .unique();
   if (existing) {
     await ctx.db.patch(existing._id, { content: args.content, updatedAt: Date.now() });

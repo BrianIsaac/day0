@@ -340,11 +340,11 @@ describe('the steps that re-establish a browser session', (): void => {
 
   it('replays a navigate between two such clicks, so each click meets its own page', (): void => {
     const menu = navigate('http://looker-tile:8080/menu');
-    const openPipeline = call('browser_click', { element: 'Pipeline' });
+    const gotIt = call('browser_click', { element: 'Got it' });
     const reports = navigate('http://looker-tile:8080/reports');
     const recipe = sessionRecipe(
       'looker',
-      run([navigate(), signIn, clickSignIn, menu, openPipeline, reports]),
+      run([navigate(), signIn, clickSignIn, menu, gotIt, reports]),
       ENDPOINT,
     );
     expect(tools(recipe)).toEqual([
@@ -372,6 +372,57 @@ describe('the steps that re-establish a browser session', (): void => {
       ['browser_click', 'wi:run:3'],
       ['browser_navigate', 'wi:run:6'],
     ]);
+  });
+
+  it('stops at a lone click that was itself the work, so an Approve is never sent again', (): void => {
+    const reports = navigate('http://looker-tile:8080/dashboards/7');
+    for (const element of ['Approve', 'Archive', 'Refresh tile', 'Pipeline', 'Yes', 'OK']) {
+      const work = call('browser_click', { element });
+      const dismiss = call('browser_click', { element: 'Dismiss' });
+      const recipe = sessionRecipe(
+        'looker',
+        run([navigate(), signIn, clickSignIn, work, dismiss, reports, snapshot]),
+        ENDPOINT,
+      );
+      expect(tools(recipe), element).toEqual([
+        ['browser_navigate', 'wi:run:0'],
+        ['browser_fill_form', 'wi:run:1'],
+        ['browser_click', 'wi:run:2'],
+        ['browser_navigate', 'wi:run:5'],
+      ]);
+    }
+  });
+
+  it('replays only the controls a login ends on: cookies, stay signed in, a dismissal, continue', (): void => {
+    const reports = navigate('http://looker-tile:8080/reports');
+    for (const element of [
+      'Accept cookies',
+      'Accept all',
+      'Reject all cookies',
+      'Yes, stay signed in',
+      'Keep me logged in',
+      'Dismiss',
+      'Close',
+      'Skip',
+      'Not now',
+      'Got it',
+      'Continue',
+      'Continue as revops',
+    ]) {
+      const interstitial = call('browser_click', { element });
+      const recipe = sessionRecipe(
+        'looker',
+        run([navigate(), signIn, clickSignIn, interstitial, reports]),
+        ENDPOINT,
+      );
+      expect(tools(recipe), element).toEqual([
+        ['browser_navigate', 'wi:run:0'],
+        ['browser_fill_form', 'wi:run:1'],
+        ['browser_click', 'wi:run:2'],
+        ['browser_click', 'wi:run:3'],
+        ['browser_navigate', 'wi:run:4'],
+      ]);
+    }
   });
 
   it('replays no click after the sign-in when the run never navigated after it', (): void => {

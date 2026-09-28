@@ -32,7 +32,7 @@ describe('the install link state', (): void => {
     });
   });
 
-  it('refuses a state signed with another deployment\'s key', (): void => {
+  it("refuses a state signed with another deployment's key", (): void => {
     expect(verifyOauthState(state(), OTHER_KEY, NOW)).toEqual({ ok: false, reason: 'signature' });
   });
 

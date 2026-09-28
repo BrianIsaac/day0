@@ -89,7 +89,8 @@ async function seedApprovedSkill(harness: Harness, name: string): Promise<Id<'sk
     return await ctx.db.insert('skills', {
       agentId,
       name: 'analytics-refresh-value',
-      description: 'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
+      description:
+        'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
       body: '',
       rationale: 'No registered skill covers value refresh on an analytics surface.',
       sourceType: 'agent-authored',
@@ -246,7 +247,9 @@ describe('an authoring run and the verification sandbox lease', (): void => {
 
     expect(result.ok).toBe(false);
     expect((await readSkill(harness, skillId)).state).toBe('failed');
-    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual([]);
+    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual(
+      [],
+    );
   });
 
   it('does not queue behind a lease when the hosted sandbox is the one configured', async (): Promise<void> => {
@@ -306,7 +309,10 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     ).resolves.toEqual({ ok: true });
     expect(recorded.outputs).toHaveLength(0);
     expect(recorded.sandboxRuns).toBe(1);
-    expect(await readSkill(harness, skillId)).toMatchObject({ state: 'registered', body: reusableBody });
+    expect(await readSkill(harness, skillId)).toMatchObject({
+      state: 'registered',
+      body: reusableBody,
+    });
   });
 
   it('does not persist a token-shaped value in a parked body or smoke test', async (): Promise<void> => {

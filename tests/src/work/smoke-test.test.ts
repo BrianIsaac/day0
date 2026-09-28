@@ -13,16 +13,28 @@ const program = [
 
 describe('a smoke test wrapped in a markdown fence', (): void => {
   it('is unwrapped whether or not the fence names a language', (): void => {
-    expect(unwrapMarkdownFence('```python\n' + program + '\n```')).toEqual({ source: program, unwrapped: true });
-    expect(unwrapMarkdownFence('```\n' + program + '\n```\n')).toEqual({ source: program, unwrapped: true });
-    expect(unwrapMarkdownFence('  ```py\n' + program + '\n```  ')).toEqual({ source: program, unwrapped: true });
+    expect(unwrapMarkdownFence('```python\n' + program + '\n```')).toEqual({
+      source: program,
+      unwrapped: true,
+    });
+    expect(unwrapMarkdownFence('```\n' + program + '\n```\n')).toEqual({
+      source: program,
+      unwrapped: true,
+    });
+    expect(unwrapMarkdownFence('  ```py\n' + program + '\n```  ')).toEqual({
+      source: program,
+      unwrapped: true,
+    });
   });
 
   it('leaves an unfenced program and a program that merely contains a fence alone', (): void => {
     expect(unwrapMarkdownFence(program)).toEqual({ source: program, unwrapped: false });
     const inner = 'print("```")\n' + program;
     expect(unwrapMarkdownFence(inner)).toEqual({ source: inner, unwrapped: false });
-    expect(unwrapMarkdownFence('```python\n' + program)).toEqual({ source: '```python\n' + program, unwrapped: false });
+    expect(unwrapMarkdownFence('```python\n' + program)).toEqual({
+      source: '```python\n' + program,
+      unwrapped: false,
+    });
   });
 
   it('names what was done for the log', (): void => {
@@ -75,12 +87,14 @@ describe('the smoke test preflight', (): void => {
     expect(smokeTestPreflightReason(cases, 'real')).toBeUndefined();
     expect(smokeTestPreflightReason(cases, 'mock')).toContain('must print a success line');
     expect(smokeTestPreflightReason(cases)).toContain('must print a success line');
-    expect(smokeTestPreflightReason('def main(inputs: dict) -> dict:\n    return {}\n', 'real')).toContain(
-      'must define run(inputs: dict) -> dict',
-    );
+    expect(
+      smokeTestPreflightReason('def main(inputs: dict) -> dict:\n    return {}\n', 'real'),
+    ).toContain('must define run(inputs: dict) -> dict');
   });
 
   it('does not unwrap a fence itself: the caller decides and records it', (): void => {
-    expect(smokeTestPreflightReason('```python\n' + program + '\n```')).toContain('does not parse at line 1, column 1');
+    expect(smokeTestPreflightReason('```python\n' + program + '\n```')).toContain(
+      'does not parse at line 1, column 1',
+    );
   });
 });

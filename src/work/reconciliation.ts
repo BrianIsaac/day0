@@ -112,10 +112,7 @@ export function providerReconciliationEntries(output: unknown): ReconciliationEn
   );
 }
 
-export function retryRequiresProviderReconciliation(
-  output: unknown,
-  skipReason?: string,
-): boolean {
+export function retryRequiresProviderReconciliation(output: unknown, skipReason?: string): boolean {
   return (
     skipReason === INTERRUPTED_APPLY_REASON || providerReconciliationEntries(output).length > 0
   );

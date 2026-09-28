@@ -68,7 +68,8 @@ export async function POST(req: Request): Promise<NextResponse> {
   const bossLabel = typeof dyn.boss_label === 'string' ? dyn.boss_label : 'boss';
   const sessionToken =
     typeof dyn.internal_session_token === 'string' ? dyn.internal_session_token : undefined;
-  const conversationId = typeof data?.conversation_id === 'string' ? data.conversation_id : undefined;
+  const conversationId =
+    typeof data?.conversation_id === 'string' ? data.conversation_id : undefined;
 
   if (!agentId) {
     return NextResponse.json(
@@ -83,10 +84,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     );
   }
   if (!conversationId) {
-    return NextResponse.json(
-      { error: 'data.conversation_id not provided' },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: 'data.conversation_id not provided' }, { status: 400 });
   }
 
   const transcript = (data?.transcript ?? [])

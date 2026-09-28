@@ -42,18 +42,25 @@ describe('model provider capability route', (): void => {
           object: 'chat.completion',
           created: 1,
           model: 'qwen3:8b',
-          choices: [{ index: 0, message: { role: 'assistant', content: 'hello' }, finish_reason: 'stop' }],
+          choices: [
+            { index: 0, message: { role: 'assistant', content: 'hello' }, finish_reason: 'stop' },
+          ],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
     ];
-    vi.stubGlobal('fetch', vi.fn(async (): Promise<Response> => responses.shift()!));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (): Promise<Response> => responses.shift()!),
+    );
 
     const counter = { count: 0 };
     await countingProviderRequests(counter, async (): Promise<void> => {
       const model = languageModel('qwen3:8b');
-      const prompt = [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hello' }] }];
+      const prompt = [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'hello' }] },
+      ];
       // The first request is refused, as the provider does when it is hot;
       // whoever retries - the SDK inside one of our attempts, or the wrapper
       // around them - sends a second request, and both are counted against

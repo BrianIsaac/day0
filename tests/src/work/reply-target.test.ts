@@ -3,9 +3,18 @@ import { replyTargetFor } from '../../../src/work/reply-target';
 
 describe('the reply target of a work item', (): void => {
   it('prefers the stored target', (): void => {
-    const stored = { channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' };
+    const stored = {
+      channel: 'C0BSF04TZ19',
+      channelName: 'revops-asks',
+      threadTs: '1787746453.202809',
+    };
     expect(
-      replyTargetFor({ replyTarget: stored, sourceCategory: 'event-stream', externalId: 'x', title: 'y' }),
+      replyTargetFor({
+        replyTarget: stored,
+        sourceCategory: 'event-stream',
+        externalId: 'x',
+        title: 'y',
+      }),
     ).toBe(stored);
   });
 
@@ -35,14 +44,26 @@ describe('the reply target of a work item', (): void => {
         externalId: 'C0BSF04TZ19:1787746453.202809',
         title: 'Slack mention in #revops-asks',
       }),
-    ).toEqual({ channel: 'C0BSF04TZ19', threadTs: '1787746453.202809', channelName: 'revops-asks' });
+    ).toEqual({
+      channel: 'C0BSF04TZ19',
+      threadTs: '1787746453.202809',
+      channelName: 'revops-asks',
+    });
     expect(
-      replyTargetFor({ sourceCategory: 'event-stream', externalId: 'G0PRIVATE:1.2', title: 'Slack mention' }),
+      replyTargetFor({
+        sourceCategory: 'event-stream',
+        externalId: 'G0PRIVATE:1.2',
+        title: 'Slack mention',
+      }),
     ).toEqual({ channel: 'G0PRIVATE', threadTs: '1.2' });
   });
 
   it('gives a ticket, or an unrecognised id, no target', (): void => {
-    expect(replyTargetFor({ sourceCategory: 'ticket-queue', externalId: 'REVOPS-10', title: 'x' })).toBeUndefined();
-    expect(replyTargetFor({ sourceCategory: 'event-stream', externalId: 'not-a-slack-id', title: 'x' })).toBeUndefined();
+    expect(
+      replyTargetFor({ sourceCategory: 'ticket-queue', externalId: 'REVOPS-10', title: 'x' }),
+    ).toBeUndefined();
+    expect(
+      replyTargetFor({ sourceCategory: 'event-stream', externalId: 'not-a-slack-id', title: 'x' }),
+    ).toBeUndefined();
   });
 });

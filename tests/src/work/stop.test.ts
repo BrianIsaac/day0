@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import { OUTCOME_UNKNOWN_REASON } from '../../../src/work/reconciliation';
-import { LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION, SHARED_WRITE_WITHOUT_ATTRIBUTION } from '../../../src/surfaces/policy';
+import {
+  LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION,
+  SHARED_WRITE_WITHOUT_ATTRIBUTION,
+} from '../../../src/surfaces/policy';
 import {
   DROPPED_READ_PREFIX,
   droppedReadRefusal,
@@ -15,7 +18,10 @@ import {
   withRefusedReadsDropped,
 } from '../../../src/work/stop';
 import { FIN_1_ITEM, FIN_1_ITEM_ACTIONS } from '../../fixtures/mateo-stopped-rows-2026-09-19';
-import { OPS_REQUESTS_ASK, OPS_REQUESTS_ASK_ACTIONS } from '../../fixtures/priya-stopped-rows-2026-09-19';
+import {
+  OPS_REQUESTS_ASK,
+  OPS_REQUESTS_ASK_ACTIONS,
+} from '../../fixtures/priya-stopped-rows-2026-09-19';
 import { REFUSED_CREATE_RUN } from '../../fixtures/refused-ticket-create-2026-09-19';
 import type { MockAction } from '../../../src/work/types';
 
@@ -49,7 +55,11 @@ const read: MockAction = {
 };
 const comment: MockAction = {
   tool: 'mcp.call',
-  args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"iss-1","body":"Done."}' },
+  args: {
+    surface: 'linear',
+    tool: 'save_comment',
+    toolArgsJson: '{"issueId":"iss-1","body":"Done."}',
+  },
 };
 const dm: MockAction = {
   tool: 'http.request',
@@ -75,10 +85,16 @@ describe('the landed work of a run', (): void => {
         { tool: 'mcp.call', ok: false, reason: OUTCOME_UNKNOWN_REASON, idempotencyKey: 'k' },
       ],
     };
-    expect(landedWork(output, [slack, linear]).map((entry) => [entry.actionIndex, entry.outcome])).toEqual([
-      [4, 'outcome-unknown'],
-    ]);
-    const landed = { actions: [dm, comment], applied: [{ tool: 'http.request', ...ok }, { tool: 'mcp.call', ...ok }] };
+    expect(
+      landedWork(output, [slack, linear]).map((entry) => [entry.actionIndex, entry.outcome]),
+    ).toEqual([[4, 'outcome-unknown']]);
+    const landed = {
+      actions: [dm, comment],
+      applied: [
+        { tool: 'http.request', ...ok },
+        { tool: 'mcp.call', ...ok },
+      ],
+    };
     expect(landedWork(landed, [slack, linear]).map((entry) => entry.actionIndex)).toEqual([1]);
     // Without the chat surface the DM cannot be told from any other write, so it counts.
     expect(landedWork(landed, [linear]).map((entry) => entry.actionIndex)).toEqual([0, 1]);
@@ -137,9 +153,21 @@ describe('a run cut short by a gate refusal (19 Sep run, finding N)', (): void =
   });
 
   it('leaves a run with a provider failure beside the refusal an ordinary failure', (): void => {
-    const mixed = [...applied.slice(0, 7), { tool: 'http.request', ok: false, reason: 'HTTP 500', idempotencyKey: 'k:7' }];
+    const mixed = [
+      ...applied.slice(0, 7),
+      { tool: 'http.request', ok: false, reason: 'HTTP 500', idempotencyKey: 'k:7' },
+    ];
     expect(gateRefusalStop(actions, mixed)).toBeUndefined();
-    const unknown = [...applied.slice(0, 7), { tool: 'http.request', ok: false, outcomeUnknown: true, reason: OUTCOME_UNKNOWN_REASON, idempotencyKey: 'k:7' }];
+    const unknown = [
+      ...applied.slice(0, 7),
+      {
+        tool: 'http.request',
+        ok: false,
+        outcomeUnknown: true,
+        reason: OUTCOME_UNKNOWN_REASON,
+        idempotencyKey: 'k:7',
+      },
+    ];
     expect(gateRefusalStop(actions, unknown)).toBeUndefined();
   });
 
@@ -150,7 +178,9 @@ describe('a run cut short by a gate refusal (19 Sep run, finding N)', (): void =
 
   it('leaves a mock run exactly as it read before', (): void => {
     const mock: MockAction[] = [{ tool: 'ticket.update', args: { slug: 'T-1', status: 'done' } }];
-    expect(gateRefusalStop(mock, [{ tool: 'ticket.update', ok: false, reason: 'unknown tool' }])).toBeUndefined();
+    expect(
+      gateRefusalStop(mock, [{ tool: 'ticket.update', ok: false, reason: 'unknown tool' }]),
+    ).toBeUndefined();
   });
 });
 
@@ -159,7 +189,10 @@ describe('a read the gate refused is dropped, not a stop (19 Sep third run, find
   const ledger = FIN_1_ITEM.applied as Array<Partial<AppliedAction>>;
   // The run's own refusal names a write; a read is refused for its grant, its
   // surface or its allowlist, so the row is replayed under each of those.
-  const refusedAs = (reason: string): Array<Partial<AppliedAction>> => [ledger[0]!, { ...ledger[1]!, reason }];
+  const refusedAs = (reason: string): Array<Partial<AppliedAction>> => [
+    ledger[0]!,
+    { ...ledger[1]!, reason },
+  ];
 
   it("keeps the run's list_issues and marks the refused Slack read dropped, with the gate's reason", (): void => {
     const dropped = withRefusedReadsDropped(actions, refusedAs('no grant (slack:read)'));
@@ -182,14 +215,20 @@ describe('a read the gate refused is dropped, not a stop (19 Sep third run, find
   });
 
   it('never drops a refused write: the run still stops at it', (): void => {
-    const rows = [{ tool: 'mcp.call', ...ok }, { tool: 'mcp.call', ok: false, reason: 'no grant (linear:write)' }];
+    const rows = [
+      { tool: 'mcp.call', ...ok },
+      { tool: 'mcp.call', ok: false, reason: 'no grant (linear:write)' },
+    ];
     const kept = withRefusedReadsDropped([read, comment], rows);
     expect(kept).toEqual(rows);
     expect(gateRefusalStop([read, comment], kept)).toContain("Day0's gate refused 1 of 2 actions");
   });
 
   it('never drops a read the provider failed, or one whose outcome is unknown', (): void => {
-    const failed = [{ tool: 'mcp.call', ...ok }, { tool: 'mcp.call', ok: false, reason: 'provider said no' }];
+    const failed = [
+      { tool: 'mcp.call', ...ok },
+      { tool: 'mcp.call', ok: false, reason: 'provider said no' },
+    ];
     expect(withRefusedReadsDropped([comment, read], failed)).toEqual(failed);
     const unknown = [
       { tool: 'mcp.call', ...ok },
@@ -205,11 +244,20 @@ describe('a read the gate refused is dropped, not a stop (19 Sep third run, find
   });
 
   it('leaves a mock run and an unparsable row alone', (): void => {
-    const mock: MockAction[] = [{ tool: 'slack.postMessage', args: { slug: 'dm-manager' } }, { tool: 'ticket.update', args: { slug: 'T-1' } }];
-    const rows = [{ tool: 'slack.postMessage', ok: false, reason: 'unknown tool' }, { tool: 'ticket.update', ...ok }];
+    const mock: MockAction[] = [
+      { tool: 'slack.postMessage', args: { slug: 'dm-manager' } },
+      { tool: 'ticket.update', args: { slug: 'T-1' } },
+    ];
+    const rows = [
+      { tool: 'slack.postMessage', ok: false, reason: 'unknown tool' },
+      { tool: 'ticket.update', ...ok },
+    ];
     expect(withRefusedReadsDropped(mock, rows)).toEqual(rows);
     const broken: MockAction[] = [{ tool: 'mcp.call', args: { surface: 'linear' } }, comment];
-    const malformed = [{ tool: 'mcp.call', ok: false, reason: 'malformed surface action (tool is required)' }, { tool: 'mcp.call', ...ok }];
+    const malformed = [
+      { tool: 'mcp.call', ok: false, reason: 'malformed surface action (tool is required)' },
+      { tool: 'mcp.call', ...ok },
+    ];
     expect(withRefusedReadsDropped(broken, malformed)).toEqual(malformed);
   });
 
@@ -251,6 +299,8 @@ describe('a refused read-back sent as GET with a body is dropped, not a stop (19
     };
     const kept = withRefusedReadsDropped([...actions.slice(0, 8), write], ledger);
     expect(kept).toEqual(ledger);
-    expect(gateRefusalStop([...actions.slice(0, 8), write], kept)).toContain("Day0's gate refused 1 of 9 actions");
+    expect(gateRefusalStop([...actions.slice(0, 8), write], kept)).toContain(
+      "Day0's gate refused 1 of 9 actions",
+    );
   });
 });

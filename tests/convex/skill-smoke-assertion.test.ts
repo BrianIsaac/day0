@@ -5,7 +5,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { verdictFor, type AuthorSkillArgs, type SkillSandboxRun } from '../../src/lib/skill-sandbox';
+import {
+  verdictFor,
+  type AuthorSkillArgs,
+  type SkillSandboxRun,
+} from '../../src/lib/skill-sandbox';
 import {
   RECORDED_ASSERTION_LINE,
   RECORDED_BODY_2026_09_18,
@@ -63,8 +67,16 @@ const REHEARSAL_CONTRACT: SmokeHarnessContract = {
   body: RECORDED_BODY_2026_09_18,
   targetSurface: 'linear',
   surfaces: [
-    { slug: 'linear', path: 'mcp', allowedTools: ['get_issue', 'list_issues', 'save_comment', 'save_issue'] },
-    { slug: 'slack', path: 'documented-api', allowedTools: ['chat.postMessage', 'conversations.history'] },
+    {
+      slug: 'linear',
+      path: 'mcp',
+      allowedTools: ['get_issue', 'list_issues', 'save_comment', 'save_issue'],
+    },
+    {
+      slug: 'slack',
+      path: 'documented-api',
+      allowedTools: ['chat.postMessage', 'conversations.history'],
+    },
   ],
   boundInputs: [...CANDIDATE_BOUND_TARGET_INPUTS],
 };

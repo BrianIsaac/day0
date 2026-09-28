@@ -74,7 +74,8 @@ export function transitionDirectedByNote(args: TransitionDirectionArgs): boolean
   const step = planObligations(args.plan)?.transitionStep;
   if (step === undefined || step === null) return false;
   const outcome = args.planStepOutcomes?.find((row) => row.step === step);
-  if (!outcome || outcome.status !== 'satisfied' || outcome.basis !== 'manager-feedback') return false;
+  if (!outcome || outcome.status !== 'satisfied' || outcome.basis !== 'manager-feedback')
+    return false;
   const targets = args.actions.flatMap((action): string[] => {
     if (!isSurfaceTool(action.tool)) return [];
     const parsed = parseSurfaceAction(action);

@@ -11,7 +11,11 @@ const surface = (slug: string, path: SurfaceRecord['path'], cls = 'kanban'): Sur
   credentialLanded: true,
   path,
 });
-const surfaces = [surface('linear', 'mcp'), surface('slack', 'documented-api', 'chat'), surface('looker', 'browser-driven', 'analytics')];
+const surfaces = [
+  surface('linear', 'mcp'),
+  surface('slack', 'documented-api', 'chat'),
+  surface('looker', 'browser-driven', 'analytics'),
+];
 
 const mcp = (slug: string, tool: string, args: Record<string, unknown> = {}): MockAction => ({
   tool: 'mcp.call',
@@ -19,7 +23,11 @@ const mcp = (slug: string, tool: string, args: Record<string, unknown> = {}): Mo
 });
 const replies: MockAction = {
   tool: 'http.request',
-  args: { surface: 'slack', method: 'GET', path: '/conversations.replies?channel=C0BSF04TZ19&ts=1787746453.202809' },
+  args: {
+    surface: 'slack',
+    method: 'GET',
+    path: '/conversations.replies?channel=C0BSF04TZ19&ts=1787746453.202809',
+  },
 };
 const landed = (index: number, effect = `row ${index}`): AppliedAction => ({
   tool: 'mcp.call',
@@ -57,12 +65,22 @@ describe('the carried reads a resumed closing phase takes again', (): void => {
 
   it('takes nothing again from a ledger that read nothing', (): void => {
     const writes = [actions[3]!, actions[4]!, actions[6]!];
-    expect(carriedReadIndexes(writes, writes.map((_, index) => landed(index)), surfaces)).toEqual([]);
+    expect(
+      carriedReadIndexes(
+        writes,
+        writes.map((_, index) => landed(index)),
+        surfaces,
+      ),
+    ).toEqual([]);
   });
 });
 
 describe('the resumed ledger with its reads taken again', (): void => {
-  const actions = [mcp('looker', 'browser_navigate'), mcp('looker', 'browser_snapshot'), mcp('slack', 'chat_post_message')];
+  const actions = [
+    mcp('looker', 'browser_navigate'),
+    mcp('looker', 'browser_snapshot'),
+    mcp('slack', 'chat_post_message'),
+  ];
   const carried = {
     actions,
     applied: [landed(0), landed(1, 'browser_snapshot on looker · visible figure 68%'), landed(2)],
@@ -84,7 +102,10 @@ describe('the resumed ledger with its reads taken again', (): void => {
         {
           ...rows[1],
           refreshed: {
-            previous: { effect: 'browser_snapshot on looker · visible figure 68%', idempotencyKey: 'wi:first:1' },
+            previous: {
+              effect: 'browser_snapshot on looker · visible figure 68%',
+              idempotencyKey: 'wi:first:1',
+            },
             at: 1_789_593_000_000,
           },
         },
@@ -102,7 +123,13 @@ describe('the resumed ledger with its reads taken again', (): void => {
         reason: 'could not re-read looker before the closing set: browser component not configured',
         at: 5,
         actions: [actions[1]],
-        applied: [{ ok: false, idempotencyKey: 'wi:retry:1', refreshed: { previous: { idempotencyKey: 'wi:first:1' } } }],
+        applied: [
+          {
+            ok: false,
+            idempotencyKey: 'wi:retry:1',
+            refreshed: { previous: { idempotencyKey: 'wi:first:1' } },
+          },
+        ],
       },
     });
     expect(rereadStopReason('linear, looker', 'agent not found')).toBe(

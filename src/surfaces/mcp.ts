@@ -165,7 +165,7 @@ export function sendOnceFence(base: PinnedFetch): SendOnceFence {
  * `isError` arrives as this error, after the server answered: the call was
  * refused, and nothing about its outcome is unknown (P5-4).
  */
-function isServerToolError(error: unknown): boolean {
+export function isServerToolError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
     error !== null &&

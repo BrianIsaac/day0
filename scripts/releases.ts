@@ -13,6 +13,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { compareReleases, NEWEST_MIGRATION_RELEASE, releaseParts } from '../src/lib/release';
 
 /**
  * The release a deployment that holds rows but no stamp is taken to be at:
@@ -44,10 +45,28 @@ export function changelogReleases(changelog: string): string[] {
   return [...new Set(newestFirst)].reverse();
 }
 
-/** The checkout's own release and the releases its CHANGELOG records, or why they cannot be read. */
+/** What the upgrade knows of the checkout it runs from. */
+export interface CheckoutReleases {
+  /** The checkout's own release, from `package.json`. */
+  readonly release: string;
+  /** Every release its `CHANGELOG.md` records, oldest first. */
+  readonly releases: readonly string[];
+  /** The newest release a migration in this tree names (`src/lib/release.ts`). */
+  readonly newestMigrationRelease: string;
+}
+
+/**
+ * The checkout's own release, the releases its CHANGELOG records and the
+ * newest release its migrations name, or why they cannot be read.
+ *
+ * @param cwd - The checkout.
+ * @param newestMigrationRelease - The newest release a shipped migration
+ *   names; this tree's unless a disposable checkout names its own.
+ */
 export function checkoutReleases(
   cwd: string,
-): { release: string; releases: string[] } | { reason: string } {
+  newestMigrationRelease: string = NEWEST_MIGRATION_RELEASE,
+): CheckoutReleases | { reason: string } {
   const changelogPath = join(cwd, 'CHANGELOG.md');
   let release: unknown;
   try {
@@ -60,7 +79,49 @@ export function checkoutReleases(
     return { reason: 'package.json names no version' };
   }
   if (!existsSync(changelogPath)) return { reason: 'there is no CHANGELOG.md in this checkout' };
-  return { release, releases: changelogReleases(readFileSync(changelogPath, 'utf8')) };
+  return {
+    release,
+    releases: changelogReleases(readFileSync(changelogPath, 'utf8')),
+    newestMigrationRelease,
+  };
+}
+
+/**
+ * Why this checkout may not be pushed over any deployment, new or kept, or
+ * undefined when it may: its release must be one its CHANGELOG records and
+ * no older than the newest release its migrations name. A tree before its
+ * release commit (staging between a tag and the next) names the release
+ * before its migrations, so the stamp that follows them would be refused;
+ * refusing here leaves the deployment untouched and names both files a bed
+ * from such a tree sets in its own checkout.
+ *
+ * @param checkout - The checkout's releases.
+ */
+export function checkoutRefusal(checkout: CheckoutReleases): string | undefined {
+  const { release, releases, newestMigrationRelease } = checkout;
+  if (releaseParts(release) === undefined) {
+    return (
+      `this checkout's release (${release}, from package.json) is not shaped as X.Y.Z, ` +
+      'so the deployment could not be stamped with it.'
+    );
+  }
+  if (compareReleases(release, newestMigrationRelease) < 0) {
+    return (
+      `this checkout's release (${release}, from package.json) is older than ` +
+      `${newestMigrationRelease}, the newest release its migrations name, so the deployment ` +
+      'could not be stamped once they ran. This is a tree before its release commit: set ' +
+      `package.json's version to ${newestMigrationRelease} and add a "## v${newestMigrationRelease}" ` +
+      'heading to CHANGELOG.md in this checkout (a bed from staging sets both in its own ' +
+      'checkout), then run again.'
+    );
+  }
+  if (!releases.includes(release)) {
+    return (
+      `this checkout's release (${release}, from package.json) has no heading in CHANGELOG.md, so ` +
+      'the upgrade cannot tell which release comes before it.'
+    );
+  }
+  return undefined;
 }
 
 /** The Convex CLI arguments that list the deployment's tables. */
@@ -119,23 +180,23 @@ export function parseReleaseStamp(stdout: string): ReleaseStamp | undefined {
  * @param input.fresh - Whether the data volume is new.
  * @param input.checkout - This checkout's release.
  * @param input.releases - Every release, oldest first.
+ * @param input.newestMigrationRelease - The newest release a shipped migration names.
  */
 export function upgradeVerdict(input: {
   stored: string | undefined;
   fresh: boolean;
   checkout: string;
   releases: readonly string[];
+  newestMigrationRelease: string;
 }): UpgradeVerdict {
   const { checkout, releases } = input;
+  const refusal = checkoutRefusal({
+    release: checkout,
+    releases,
+    newestMigrationRelease: input.newestMigrationRelease,
+  });
+  if (refusal !== undefined) return { allowed: false, reason: refusal };
   const at = releases.indexOf(checkout);
-  if (at < 0) {
-    return {
-      allowed: false,
-      reason:
-        `this checkout's release (${checkout}, from package.json) has no heading in CHANGELOG.md, so ` +
-        'the upgrade cannot tell which release comes before it.',
-    };
-  }
   if (input.fresh)
     return { allowed: true, from: undefined, note: `a new volume, starting at ${checkout}` };
   const stored = input.stored ?? LAST_UNVERSIONED_RELEASE;
@@ -363,17 +424,20 @@ export interface CliResult {
 
 /**
  * Read the deployment's release stamp through the Convex CLI and decide
- * whether this checkout may be pushed over its rows. A deployment with no
- * tables has had nothing pushed, so it is new whatever its volume; one that
- * cannot be read is refused.
+ * whether this checkout may be pushed over its rows. The checkout itself is
+ * judged first (`checkoutRefusal`), before the deployment is so much as
+ * read. A deployment with no tables has had nothing pushed, so it is new
+ * whatever its volume; one that cannot be read is refused.
  *
  * @param npx - Runs `npx` with the given arguments against the deployment.
- * @param checkout - This checkout's release and the releases it records.
+ * @param checkout - This checkout's releases.
  */
 export function readReleaseVerdict(
   npx: (args: readonly string[]) => CliResult,
-  checkout: { release: string; releases: readonly string[] },
+  checkout: CheckoutReleases,
 ): UpgradeVerdict {
+  const checkoutOnly = checkoutRefusal(checkout);
+  if (checkoutOnly !== undefined) return { allowed: false, reason: checkoutOnly };
   const refused = (what: string, result: CliResult): UpgradeVerdict => ({
     allowed: false,
     reason: `${what}: ${firstLineOf(result.stderr) || firstLineOf(result.stdout) || `exit ${result.status ?? 'unknown'}`}`,
@@ -396,6 +460,7 @@ export function readReleaseVerdict(
     fresh,
     checkout: checkout.release,
     releases: checkout.releases,
+    newestMigrationRelease: checkout.newestMigrationRelease,
   });
   if (!verdict.allowed || fresh) return verdict;
   const candidates = declarationsToCheck(stored, checkout.releases);

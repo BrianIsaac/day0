@@ -50,7 +50,9 @@ export interface RequirementsDigests {
  */
 export function requirementsDigests(root: string): RequirementsDigests {
   const digest = (file: string): string =>
-    createHash('sha256').update(readFileSync(join(root, file))).digest('hex');
+    createHash('sha256')
+      .update(readFileSync(join(root, file)))
+      .digest('hex');
   return { cpu: digest(REQUIREMENTS_FILES.cpu), cuda: digest(REQUIREMENTS_FILES.cuda) };
 }
 
@@ -185,6 +187,7 @@ export function redactorGpuDecision(args: {
         mode: 'off',
         device: 'cpu',
         rebuilds: true,
-        reason: 'no warm venv and no NVIDIA driver: the first start installs the CPU wheels and fetches the model.',
+        reason:
+          'no warm venv and no NVIDIA driver: the first start installs the CPU wheels and fetches the model.',
       };
 }

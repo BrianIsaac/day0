@@ -107,7 +107,11 @@ export function DocsTab({
         </ul>
       </aside>
 
-      <article className="overflow-y-auto pr-2">
+      <article
+        className="overflow-y-auto pr-2"
+        tabIndex={0}
+        aria-label={active ? `Page: ${active.title}` : 'Page'}
+      >
         {active ? (
           <>
             <div className="flex items-center gap-2 mb-3">

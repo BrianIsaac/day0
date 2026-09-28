@@ -1,4 +1,5 @@
 import type { MockAction, ReplyTarget } from '../work/types';
+import { isInterstitialControl, NEXT_CONTROL, SIGN_IN_CONTROL } from './browser';
 import { MOCK_TOOLS } from './mock';
 import type {
   ActionAuthority,
@@ -29,6 +30,10 @@ export const HELD_PUBLIC_POST = 'public post held for the manager';
 /** Why a browser read waits with the writes it shares a session with. */
 export const HELD_BROWSER_SEQUENCE =
   'held with the rest of this browser session, which runs in one browser';
+
+/** Why a session restore refuses to repeat a click that was the run's own work. */
+export const REPLAY_NOT_INTERSTITIAL =
+  'replayed click is neither a login control nor one a login ends on';
 
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 /** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
@@ -926,6 +931,23 @@ export function grantRefusal(
 }
 
 /**
+ * A session restore repeats a run's login controls and the controls its login
+ * ended on, and nothing else: the recipe is built from the run's landed rows,
+ * so this is the check that holds when a recorded restore or a later reader
+ * carries any other click.
+ */
+function replayedClickRefusal(parsed: ParsedSurfaceAction): string | undefined {
+  if (parsed.kind !== 'mcp.call' || parsed.tool !== 'browser_click') return undefined;
+  const element = parsed.toolArgs.element;
+  const name = typeof element === 'string' ? element.trim() : '';
+  if (name === '') return `${REPLAY_NOT_INTERSTITIAL} (unnamed element)`;
+  if (SIGN_IN_CONTROL.test(name) || NEXT_CONTROL.test(name) || isInterstitialControl(name)) {
+    return undefined;
+  }
+  return `${REPLAY_NOT_INTERSTITIAL} (${name})`;
+}
+
+/**
  * Why a replayed browser call may not be sent now, if it may not.
  *
  * A new browser is signed in again by repeating calls the run already landed,
@@ -960,6 +982,8 @@ export function replayAuthorityRefusal(
   const revoked = live.revokedScopes ?? new Set<string>();
   const scope = requiredScope(parsed);
   if (revoked.has(scope)) return `${NO_GRANT} (${scope})`;
+  const click = replayedClickRefusal(parsed);
+  if (click) return click;
   switch (authority) {
     case 'manager':
       return needsStandingGrant(parsed, surface)
@@ -1130,16 +1154,25 @@ export function allowlistEntry(method: HttpMethod, operation: string): string {
  * Whether one request segment may stand in for a `{name}` segment: not empty,
  * and not a path in disguise. An encoded slash or backslash would reach a
  * server that decodes it as a deeper path the entry never documented, so
- * `issues/{id}` would admit `issues/7%2Fdelete`.
+ * `issues/{id}` would admit `issues/7%2Fdelete`; a proxy and a server that
+ * each decode once reach the same path through `7%252Fdelete`, so the value
+ * is decoded to a fixpoint (the passes `resolveRequestUrl` makes) and a
+ * slash, a backslash or a percent sign left after them is refused.
  */
 function templateValue(segment: string): boolean {
   if (segment === '') return false;
-  try {
-    return !/[/\\]/.test(decodeURIComponent(segment));
-  } catch {
-    // Not decodable, so not a value a server would read the same way.
-    return false;
+  let decoded = segment;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      // Not decodable, so not a value a server would read the same way.
+      return false;
+    }
   }
+  return !/[/\\%]/.test(decoded);
 }
 
 /** Whether a path matches an entry's path, a `{name}` segment standing for any one value segment. */
@@ -1667,7 +1700,10 @@ export type ProvenanceResult =
   | { ok: false; reason: string };
 
 /**
- * Whether an HTTP request posts a chat message.
+ * Whether an HTTP request posts a chat message, by the operation the request
+ * resolves to on the surface's endpoint, however its path is spelled. The
+ * summary reads the same predicate, so a held post the policy read as a chat
+ * post is described as one, channel and text included.
  *
  * Args:
  *   parsed: A parsed HTTP request.
@@ -1676,7 +1712,7 @@ export type ProvenanceResult =
  * Returns:
  *   True for a write to a chat surface that carries message text.
  */
-function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
+export function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
   return (
     parsed.method === 'POST' &&
     surface.class === 'chat' &&

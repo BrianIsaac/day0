@@ -15,7 +15,11 @@ vi.mock('../../src/lib/mastra', () => ({
   },
 }));
 
-import { missingReadReason, unmetDeclaredReads, validatePlanStepOutcomes } from '../../convex/workActions';
+import {
+  missingReadReason,
+  unmetDeclaredReads,
+  validatePlanStepOutcomes,
+} from '../../convex/workActions';
 import type { GroundingRead } from '../../src/work/evidence-claims';
 import {
   FIN_1_RETRY_NOTE,
@@ -75,12 +79,14 @@ const owedReads = (args: GateArgs): string[] => {
 };
 
 describe('the plan-grounding read of the item is a landed read (LOG-1, 19 September)', () => {
-  it('reproduces the run: with no grounding read handed over, the gate refuses with the run\'s sentence', (): void => {
+  it("reproduces the run: with no grounding read handed over, the gate refuses with the run's sentence", (): void => {
     expect(() => log1Gate()).toThrow(LOG_1_REFUSAL);
-    expect(() => log1Gate({ outcomes: log1SecondRefusedClosing.planStepOutcomes })).toThrow(LOG_1_REFUSAL);
+    expect(() => log1Gate({ outcomes: log1SecondRefusedClosing.planStepOutcomes })).toThrow(
+      LOG_1_REFUSAL,
+    );
   });
 
-  it('accepts both refused closing sets once the item\'s own grounding read is counted', (): void => {
+  it("accepts both refused closing sets once the item's own grounding read is counted", (): void => {
     const grounded = { candidate: log1Candidate, groundingReads: [log1GroundingRead] };
     expect(owedReads({ ...log1Args, ...grounded })).toEqual([]);
     expect(
@@ -92,11 +98,17 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
     const variant = (change: (read: GroundingRead) => GroundingRead): GroundingRead[] => [
       change(structuredClone(log1GroundingRead)),
     ];
-    const failed = variant((read) => ({ ...read, applied: { ...read.applied, ok: false, reason: 'HTTP 401' } }));
+    const failed = variant((read) => ({
+      ...read,
+      applied: { ...read.applied, ok: false, reason: 'HTTP 401' },
+    }));
     const held = variant((read) => ({ ...read, applied: { ...read.applied, held: true } }));
     const other = variant((read) => ({
       ...read,
-      action: { ...read.action, args: { ...read.action.args, toolArgsJson: JSON.stringify({ id: 'LOG-12' }) } },
+      action: {
+        ...read.action,
+        args: { ...read.action.args, toolArgsJson: JSON.stringify({ id: 'LOG-12' }) },
+      },
     }));
     for (const groundingReads of [failed, held, other]) {
       expect(() => log1Gate({ candidate: log1Candidate, groundingReads })).toThrow(LOG_1_REFUSAL);
@@ -110,7 +122,9 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
       { action: {}, applied: { ok: true } },
       { action: log1GroundingRead.action, applied: null },
     ] as unknown as GroundingRead[];
-    expect(() => log1Gate({ candidate: log1Candidate, groundingReads: malformed })).toThrow(LOG_1_REFUSAL);
+    expect(() => log1Gate({ candidate: log1Candidate, groundingReads: malformed })).toThrow(
+      LOG_1_REFUSAL,
+    );
     expect(
       owedReads({
         ...log1Args,
@@ -121,9 +135,13 @@ describe('the plan-grounding read of the item is a landed read (LOG-1, 19 Septem
   });
 
   it('counts the grounding read for its own surface only: a declared Slack read is still owed', (): void => {
-    expect(() => fin1Gate({ retryNote: undefined, groundingReads: [log1GroundingRead], candidate: log1Candidate })).toThrow(
-      'approved plan step 4 declares a read of Slack',
-    );
+    expect(() =>
+      fin1Gate({
+        retryNote: undefined,
+        groundingReads: [log1GroundingRead],
+        candidate: log1Candidate,
+      }),
+    ).toThrow('approved plan step 4 declares a read of Slack');
   });
 
   it('still refuses a plan that declares a read of a surface the run never read by any path', (): void => {
@@ -147,13 +165,15 @@ describe('a retry note releases the declared read it removed (FIN-1, 19 Septembe
     expect(() => fin1Gate({ retryNote: undefined })).toThrow(fin1RefusedClosing.reason);
   });
 
-  it('accepts the run\'s closing set: a live retry note, the step resting on it, and the note naming the surface it removes', (): void => {
+  it("accepts the run's closing set: a live retry note, the step resting on it, and the note naming the surface it removes", (): void => {
     expect(owedReads(fin1Args)).toEqual([]);
   });
 
-  it('releases nothing when the step does not rest on the manager\'s feedback', (): void => {
+  it("releases nothing when the step does not rest on the manager's feedback", (): void => {
     const outcomes = fin1RefusedClosing.planStepOutcomes.map((outcome) =>
-      outcome.step === 4 ? { step: 4, status: 'satisfied' as const, evidence: outcome.evidence } : outcome,
+      outcome.step === 4
+        ? { step: 4, status: 'satisfied' as const, evidence: outcome.evidence }
+        : outcome,
     );
     expect(() => fin1Gate({ outcomes })).toThrow(fin1RefusedClosing.reason);
   });
@@ -166,7 +186,9 @@ describe('a retry note releases the declared read it removed (FIN-1, 19 Septembe
       'Post the note in Linear. The Slack thread can wait for nobody.',
       'Leave out the Notion step.',
     ]) {
-      expect(() => fin1Gate({ retryNote, managerFeedback: retryNote }), retryNote).toThrow(fin1RefusedClosing.reason);
+      expect(() => fin1Gate({ retryNote, managerFeedback: retryNote }), retryNote).toThrow(
+        fin1RefusedClosing.reason,
+      );
     }
   });
 
@@ -174,14 +196,18 @@ describe('a retry note releases the declared read it removed (FIN-1, 19 Septembe
     const retryNote = 'Skip step 4, the questions were answered on a call.';
     expect(owedReads({ ...fin1Args, retryNote, managerFeedback: retryNote })).toEqual([]);
     const wrongStep = 'Skip step 2, the questions were answered on a call.';
-    expect(() => fin1Gate({ retryNote: wrongStep, managerFeedback: wrongStep })).toThrow(fin1RefusedClosing.reason);
+    expect(() => fin1Gate({ retryNote: wrongStep, managerFeedback: wrongStep })).toThrow(
+      fin1RefusedClosing.reason,
+    );
   });
 
   it('releases only the read: the step must still carry evidence and the feedback must be live', (): void => {
-    expect(() => fin1Gate({ managerFeedback: undefined })).toThrow('step 4 cites manager feedback the run does not carry');
+    expect(() => fin1Gate({ managerFeedback: undefined })).toThrow(
+      'step 4 cites manager feedback the run does not carry',
+    );
   });
 
-  it('owes nothing for a read the manager\'s note took out of the plan itself: a redrafted plan declares its own reads', (): void => {
+  it("owes nothing for a read the manager's note took out of the plan itself: a redrafted plan declares its own reads", (): void => {
     const redrafted = {
       ...fin1Plan,
       steps: fin1Plan.steps.slice(0, 3),
@@ -191,4 +217,3 @@ describe('a retry note releases the declared read it removed (FIN-1, 19 Septembe
     expect(owedReads({ ...fin1Args, plan: redrafted, outcomes, retryNote: undefined })).toEqual([]);
   });
 });
-

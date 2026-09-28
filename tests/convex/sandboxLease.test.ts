@@ -85,7 +85,9 @@ describe('one verification at a time', (): void => {
       harness.mutation(internal.sandboxLease.take, second),
     ]);
     expect(attempts.filter((attempt) => attempt.taken)).toHaveLength(1);
-    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toHaveLength(1);
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect()),
+    ).toHaveLength(1);
   });
 
   it('is taken by the waiter as soon as the holder releases it', async (): Promise<void> => {
@@ -120,7 +122,7 @@ describe('one verification at a time', (): void => {
     expect((await harness.mutation(internal.sandboxLease.take, second)).taken).toBe(false);
   });
 
-  it('is taken over once the holder\'s lease has expired, so a dead run cannot hold the queue', async (): Promise<void> => {
+  it("is taken over once the holder's lease has expired, so a dead run cannot hold the queue", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());

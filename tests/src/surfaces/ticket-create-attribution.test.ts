@@ -68,7 +68,9 @@ describe('a ticket create through a shared credential (19 Sep run, finding N)', 
     expect(result.action.toolArgs.description).toBe(
       `${before}\n\n${provenanceTrailer('Priya', 'wi_1', 'run_1')}`,
     );
-    expect(result.action.toolArgs.title).toBe('Refresh the Looker pipeline tile to the standup figure');
+    expect(result.action.toolArgs.title).toBe(
+      'Refresh the Looker pipeline tile to the standup figure',
+    );
     expect(result.action.toolArgs.team).toBe('REVOPS');
   });
 
@@ -141,7 +143,10 @@ describe('what the attribution rule still refuses', (): void => {
   });
 
   it('a described delete, which a trailer would not make attributable', (): void => {
-    const removal = saveIssue({ title: 'Old tickets', description: 'Everything stale.' }, 'delete_issues');
+    const removal = saveIssue(
+      { title: 'Old tickets', description: 'Everything stale.' },
+      'delete_issues',
+    );
     expect(isTicketCreate(removal, linear)).toBe(false);
     expect(sharedWriteWithoutAttribution(removal, linear, 'value', 0, [], [])).toBe(true);
   });

@@ -55,9 +55,7 @@ describe('evaluation action argument audit', (): void => {
         },
       ],
     });
-    expect(result.actions[0]!.consumedEffectDigest).toBe(
-      result.actions[1]!.consumedEffectDigest,
-    );
+    expect(result.actions[0]!.consumedEffectDigest).toBe(result.actions[1]!.consumedEffectDigest);
   });
 
   it('normalises spreadsheet cells to the object the mock adapter writes', (): void => {

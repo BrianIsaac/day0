@@ -15,7 +15,8 @@ export interface CandidateProperty {
 export const CANDIDATE_PROPERTIES: ReadonlyArray<CandidateProperty> = [
   {
     property: 'ownership',
-    words: /\b(?:owner|owners|owned|ownership|assignee|assignees|assigned|assignment|unassigned)\b/i,
+    words:
+      /\b(?:owner|owners|owned|ownership|assignee|assignees|assigned|assignment|unassigned)\b/i,
   },
   { property: 'priority', words: /\bpriorit(?:y|ies|ised|ized|ise|ize)\b/i },
   {

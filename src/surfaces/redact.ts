@@ -1,5 +1,10 @@
 import type { SpanModel } from '../redaction/client';
-import { redactStructural, REDACTED, redactText, type RedactionDegradation } from '../redaction/redact';
+import {
+  redactStructural,
+  REDACTED,
+  redactText,
+  type RedactionDegradation,
+} from '../redaction/redact';
 
 /**
  * The synchronous redaction floor for surface metadata, prompts and exports.
@@ -92,7 +97,9 @@ export async function redactOutcome(
     known: [...(secret ? [secret] : []), ...known],
     onUnavailable: 'structural',
   });
-  return result.degraded ? { text: result.text, redaction: result.degraded } : { text: result.text };
+  return result.degraded
+    ? { text: result.text, redaction: result.degraded }
+    : { text: result.text };
 }
 
 /**

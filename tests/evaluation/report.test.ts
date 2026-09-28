@@ -248,10 +248,7 @@ describe('evaluation evidence report', (): void => {
       '2026-08-30T07-05-50Z',
     ];
     for (const directory of directories) {
-      const file = new URL(
-        `../../evaluation/results/${directory}/semifinal.json`,
-        import.meta.url,
-      );
+      const file = new URL(`../../evaluation/results/${directory}/semifinal.json`, import.meta.url);
       const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
       const report = renderEvaluationReport(comparison, { renderedAtCommit: 'test-commit' });
       expect(report).toContain('computed from the recorded ledger facts retained in that JSON');
@@ -319,10 +316,7 @@ describe('evaluation evidence report', (): void => {
 
   it('uses identical a-priori denominators for both arms in both final beds', async (): Promise<void> => {
     for (const directory of ['2026-08-31T09-09-00Z', '2026-08-31T09-55-00Z']) {
-      const file = new URL(
-        `../../evaluation/results/${directory}/semifinal.json`,
-        import.meta.url,
-      );
+      const file = new URL(`../../evaluation/results/${directory}/semifinal.json`, import.meta.url);
       const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
       const report = renderEvaluationReport(comparison);
       const rows = report

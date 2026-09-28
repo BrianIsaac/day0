@@ -8,7 +8,12 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Doc } from '../../../../convex/_generated/dataModel';
-import { WorkItemCard, liveRetryNote, retryNoteToken, sortedForQueue } from '../../../../app/agent/[agentId]/AgentDashboard';
+import {
+  WorkItemCard,
+  liveRetryNote,
+  retryNoteToken,
+  sortedForQueue,
+} from '../../../../app/agent/[agentId]/AgentDashboard';
 import { clockTime } from '../../../../app/agent/[agentId]/time';
 import type { AutonomyChange } from '../../../../src/work/autonomy';
 import rehearsal from '../../../fixtures/work/demo-rehearsal-2-2026-09-19.json';
@@ -64,19 +69,25 @@ describe('a plan drafted before autonomous actions were turned on', (): void => 
 
   it('says nothing when the switch never changed after the draft', (): void => {
     expect(card(priya, [])).not.toContain('after this plan was drafted');
-    expect(card(priya, [{ at: priya.planPendingAt - 1, on: true }])).not.toContain('after this plan was drafted');
+    expect(card(priya, [{ at: priya.planPendingAt - 1, on: true }])).not.toContain(
+      'after this plan was drafted',
+    );
   });
 
   it('counts the rows the switch authorised when the manager approved the rest (Mateo: 3 of 4)', (): void => {
     const mateo = rehearsal.workItems.mateoCompleted;
     const markup = card(mateo, changesFor(mateo.agentId));
-    expect(markup).toContain('after this plan was drafted; 3 of its 4 actions were applied under it.');
+    expect(markup).toContain(
+      'after this plan was drafted; 3 of its 4 actions were applied under it.',
+    );
     expect(markup).toContain('4 changes reached the work environment · 3 applied autonomously');
   });
 
   it('says nothing on a run the manager approved by hand', (): void => {
     const aiko = rehearsal.workItems.aikoCompleted;
-    expect(card(aiko, [{ at: aiko.planPendingAt + 1, on: true }])).not.toContain('after this plan was drafted');
+    expect(card(aiko, [{ at: aiko.planPendingAt + 1, on: true }])).not.toContain(
+      'after this plan was drafted',
+    );
   });
 });
 
@@ -85,7 +96,7 @@ describe('the note typed for a retry', (): void => {
   const stopped = rehearsal.workItems.aikoStopped;
   const NOTE = aiko.managerFeedback.reason;
 
-  it('belongs to the run it was typed for: the stopped run\'s note is not the finished run\'s', (): void => {
+  it("belongs to the run it was typed for: the stopped run's note is not the finished run's", (): void => {
     const typedWhileStopped = { text: NOTE, token: retryNoteToken(stopped as never) };
     expect(liveRetryNote(typedWhileStopped, retryNoteToken(stopped as never))).toBe(NOTE);
     expect(liveRetryNote(typedWhileStopped, retryNoteToken(aiko as never))).toBe('');
@@ -93,7 +104,10 @@ describe('the note typed for a retry', (): void => {
 
   it('is dropped when the same state comes round again after the note was sent', (): void => {
     const first = retryNoteToken({ state: 'failed' } as never);
-    const again = retryNoteToken({ state: 'failed', managerFeedback: { at: 1789788836000 } } as never);
+    const again = retryNoteToken({
+      state: 'failed',
+      managerFeedback: { at: 1789788836000 },
+    } as never);
     expect(liveRetryNote({ text: NOTE, token: first }, again)).toBe('');
   });
 
@@ -109,11 +123,11 @@ describe('the note typed for a retry', (): void => {
   });
 });
 
-describe('one Retry on the page at the run\'s one Retry', (): void => {
+describe("one Retry on the page at the run's one Retry", (): void => {
   const skipped = rehearsal.workItems.aikoSkipped;
   const stopped = rehearsal.workItems.aikoStopped;
 
-  it('labels the skipped row\'s control for what it does, with the explanation as its title', (): void => {
+  it("labels the skipped row's control for what it does, with the explanation as its title", (): void => {
     const markup = card(skipped, [], false);
     expect(markup).toContain('>Take it anyway</button>');
     expect(markup).not.toContain('>Retry</button>');
@@ -132,9 +146,15 @@ describe('one Retry on the page at the run\'s one Retry', (): void => {
     const sorted = sortedForQueue([skipped, stopped] as never);
     expect(sorted.map((item) => item.state)).toEqual(['failed', 'skipped']);
     // What needs a decision still comes first, and finished work stays above both.
-    const states = ['skipped', 'failed', 'completed', 'plan-pending', 'actions-pending'].map((state) => ({ ...skipped, state }));
+    const states = ['skipped', 'failed', 'completed', 'plan-pending', 'actions-pending'].map(
+      (state) => ({ ...skipped, state }),
+    );
     expect(sortedForQueue(states as never).map((item) => item.state)).toEqual([
-      'actions-pending', 'plan-pending', 'completed', 'failed', 'skipped',
+      'actions-pending',
+      'plan-pending',
+      'completed',
+      'failed',
+      'skipped',
     ]);
   });
 });

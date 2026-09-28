@@ -47,7 +47,11 @@ const charter: Charter = {
   proposedFunction: 'Record routine shipment exceptions from the logistics desk tickets in Linear.',
   evidence: [],
   shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
-  proposedBoundaries: { willDo: ['Record shipment exceptions in Linear.'], willNotDo: [], escalationTriggers: [] },
+  proposedBoundaries: {
+    willDo: ['Record shipment exceptions in Linear.'],
+    willNotDo: [],
+    escalationTriggers: [],
+  },
   namedCollaborators: [],
   namedSystems: [],
   priorityReading: [],
@@ -68,12 +72,33 @@ const mockEnv = {
 
 const live = { verdict: 'connected' as const, credentialLanded: true, lastVerifiedAt: 1 };
 const surfaces: SurfaceRecord[] = [
-  { slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp', endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'], ...live },
-  { slug: 'slack', displayName: 'Slack', class: 'chat', path: 'documented-api', endpoint: 'https://slack.com/api/', toolAllowlist: ['chat.postMessage'], managerDmChannelId: 'D0MANAGER', ...live },
+  {
+    slug: 'linear',
+    displayName: 'Linear',
+    class: 'kanban',
+    path: 'mcp',
+    endpoint: 'https://mcp.linear.app/mcp',
+    toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'],
+    ...live,
+  },
+  {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage'],
+    managerDmChannelId: 'D0MANAGER',
+    ...live,
+  },
 ];
 
 const groundingReads = [{ action: log2GroundingAction, applied: log2GroundingApplied }];
-const skill = { name: 'kanban-comment-and-close', description: 'Comment and close.', body: '# Skill' };
+const skill = {
+  name: 'kanban-comment-and-close',
+  description: 'Comment and close.',
+  body: '# Skill',
+};
 
 const phaseOneOf = (actions: MockAction[]) => ({
   draft: LOG_2_DRAFT,
@@ -105,9 +130,19 @@ describe('the work item in the evidence for what phase one says', (): void => {
   });
 
   const run = (extra: Partial<Parameters<typeof runSkill>[0]> = {}) =>
-    runSkill({ skill, plan: log2Plan, candidate: log2Candidate, charter, mockEnv, mode: 'real', surfaces, groundingReads, ...extra });
+    runSkill({
+      skill,
+      plan: log2Plan,
+      candidate: log2Candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces,
+      groundingReads,
+      ...extra,
+    });
 
-  it('sends the 19 September DM on first try: the sentence is the ticket\'s own', async (): Promise<void> => {
+  it("sends the 19 September DM on first try: the sentence is the ticket's own", async (): Promise<void> => {
     recorded.outputs.push(asRun);
     const output = await run();
     expect(recorded.users).toHaveLength(1);
@@ -139,25 +174,53 @@ describe('the work item in the evidence for what phase one says', (): void => {
     expect(audits).toEqual([[1]]);
   });
 
-  it('does not take another employee\'s ticket for this item\'s', async (): Promise<void> => {
+  it("does not take another employee's ticket for this item's", async (): Promise<void> => {
     const claim = 'The Brightwater freight accrual in NetLedger is confirmed at 41,200.';
     const fin4 = {
-      action: { tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'FIN-4' }) } },
-      applied: { ...log2GroundingApplied, providerId: 'FIN-4', effect: `get_issue on linear · ${JSON.stringify({ id: 'FIN-4', description: claim })}` },
+      action: {
+        tool: 'mcp.call' as const,
+        args: {
+          surface: 'linear',
+          tool: 'get_issue',
+          toolArgsJson: JSON.stringify({ id: 'FIN-4' }),
+        },
+      },
+      applied: {
+        ...log2GroundingApplied,
+        providerId: 'FIN-4',
+        effect: `get_issue on linear · ${JSON.stringify({ id: 'FIN-4', description: claim })}`,
+      },
     };
-    const borrowed = phaseOneOf([log2PhaseOneActions[0]!, managerDm(claim), ...log2PhaseOneActions.slice(2)]);
+    const borrowed = phaseOneOf([
+      log2PhaseOneActions[0]!,
+      managerDm(claim),
+      ...log2PhaseOneActions.slice(2),
+    ]);
     recorded.outputs.push(borrowed, borrowed);
     const output = await run({ groundingReads: [...groundingReads, fin4] });
-    expect(output.withheldActions).toEqual([{ action: borrowed.actions[1], reason: expect.stringContaining(claim) }]);
+    expect(output.withheldActions).toEqual([
+      { action: borrowed.actions[1], reason: expect.stringContaining(claim) },
+    ]);
   });
 
   it('puts nothing of the grounding read in a prompt, and no token-shaped value in a refusal', async (): Promise<void> => {
     const token = ['xo', 'xb-', '1234567890', '-', 'abcdefghijkl'].join('');
-    const leaky = [{ action: log2GroundingAction, applied: { ...log2GroundingApplied, effect: `${log2GroundingApplied.effect} portal ${token}` } }];
+    const leaky = [
+      {
+        action: log2GroundingAction,
+        applied: {
+          ...log2GroundingApplied,
+          effect: `${log2GroundingApplied.effect} portal ${token}`,
+        },
+      },
+    ];
     const wrong = phaseOneOf([managerDm(LOG_2_REFUSED_CLAIM.replace('26', '27'))]);
     recorded.outputs.push(wrong, wrong);
     const reasons: string[] = [];
-    await run({ groundingReads: leaky, onAuditCorrection: (_, reason) => void reasons.push(reason) });
+    await run({
+      groundingReads: leaky,
+      onAuditCorrection: (_, reason) => void reasons.push(reason),
+    });
     const withReads = [...recorded.users];
     recorded.users.length = 0;
     recorded.outputs.push(wrong, wrong);
@@ -187,8 +250,21 @@ describe('the work item in the evidence for what the closing phase says', (): vo
 
   const close = (extra: Partial<Parameters<typeof runDependentSkill>[0]> = {}) =>
     runDependentSkill({
-      skill, plan: log2Plan, candidate: log2Candidate, charter, mockEnv, mode: 'real', surfaces, groundingReads,
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      skill,
+      plan: log2Plan,
+      candidate: log2Candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces,
+      groundingReads,
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
       ...extra,
     });

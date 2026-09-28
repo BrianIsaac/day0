@@ -99,9 +99,13 @@ describe('demo seed', (): void => {
     const seeded = await seedAsOwner();
     expect(seeded.result).toEqual({ skillsInstalled: 1, mockEnvSeeded: false, mode: 'real' });
     expect(seeded.skills).toEqual(['see-internal-docs']);
-    expect([seeded.channels, seeded.tickets, seeded.tweets, seeded.spreadsheets, seeded.docs.length]).toEqual([
-      0, 0, 0, 0, 0,
-    ]);
+    expect([
+      seeded.channels,
+      seeded.tickets,
+      seeded.tweets,
+      seeded.spreadsheets,
+      seeded.docs.length,
+    ]).toEqual([0, 0, 0, 0, 0]);
   });
 
   it('refuses to seed an agent the caller does not own', async (): Promise<void> => {

@@ -178,8 +178,8 @@ function CharterSection({
           </span>
         </div>
         <p className="text-sm text-[var(--color-muted)] leading-relaxed">
-          Approval followed the draft by six seconds. Initial scopes had already been granted at deployment;
-          the recorded work was surfaced after the boss approved this charter.
+          Approval followed the draft by six seconds. Initial scopes had already been granted at
+          deployment; the recorded work was surfaced after the boss approved this charter.
         </p>
         <p className="text-xs text-[var(--color-muted)] mt-3">{conversation.note}</p>
         <p className="text-xs text-[var(--color-muted)] mt-2">
@@ -245,8 +245,8 @@ function CharterSection({
 
       <Card title="Provenance">
         <p className="text-xs text-[var(--color-muted)] mb-3">
-          The recorded charter cites the Day-1 conversation. These are sanitised summaries, not conversation quotations. Source:{' '}
-          {charter.source}.
+          The recorded charter cites the Day-1 conversation. These are sanitised summaries, not
+          conversation quotations. Source: {charter.source}.
         </p>
         <ul className="space-y-2">
           {charter.evidence.map((quote) => (

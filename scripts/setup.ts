@@ -113,6 +113,7 @@ import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from '
 import { setupRoute } from './setup-route';
 import {
   checkoutReleases,
+  type CheckoutReleases,
   listsReleaseTable,
   migrationLines,
   MIGRATIONS_ARGUMENTS,
@@ -301,6 +302,11 @@ export interface SetupIo {
   now?(): number;
   /** Whether stdin is a terminal; the model picker asks only then. Absent means yes. */
   interactive?: boolean;
+  /**
+   * The newest release a shipped migration names; absent means this tree's
+   * (`src/lib/release.ts`). A test's disposable checkout names its own.
+   */
+  newestMigrationRelease?: string;
 }
 
 /** The reader stopped at a prompt. Nothing is undone; nothing was reset. */
@@ -2278,7 +2284,7 @@ function onlyOwedCompanyTokenGaps(output: string): boolean {
 function releaseCheck(
   io: SetupIo,
   environment: Record<string, string>,
-  checkout: { release: string; releases: string[] },
+  checkout: CheckoutReleases,
 ): UpgradeVerdict {
   return readReleaseVerdict(
     (args) => io.run('npx', args, { env: environment, timeoutMs: 120_000 }),
@@ -2423,7 +2429,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`error: run this from the repository root; ${io.cwd} is not a Day0 checkout.`);
       return 1;
     }
-    const checkoutRelease = checkoutReleases(io.cwd);
+    const checkoutRelease = checkoutReleases(io.cwd, io.newestMigrationRelease);
     if ('reason' in checkoutRelease) {
       io.log(`error: this checkout's release cannot be read: ${checkoutRelease.reason}.`);
       return 1;
@@ -3966,7 +3972,7 @@ function upgradeRefusedEarly(options: SetupOptions, io: SetupIo): string | undef
   const target = lifecycleTarget(io, options, 'upgrade');
   if (typeof target === 'string') return target;
   if (!(runningServices(io, target.project) ?? []).includes('backend')) return undefined;
-  const checkout = checkoutReleases(io.cwd);
+  const checkout = checkoutReleases(io.cwd, io.newestMigrationRelease);
   if ('reason' in checkout) return `this checkout's release cannot be read: ${checkout.reason}.`;
   const verdict = releaseCheck(io, target.environment, checkout);
   return verdict.allowed ? undefined : verdict.reason;
@@ -4086,7 +4092,7 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
       return 1;
     }
     const digest = createHash('sha256').update(readFileSync(file)).digest('hex');
-    const checkout = checkoutReleases(io.cwd);
+    const checkout = checkoutReleases(io.cwd, io.newestMigrationRelease);
     const head = io.run('git', ['rev-parse', '--short=12', 'HEAD'], { timeoutMs: 30_000 });
     const manifest: BackupManifest = {
       project,

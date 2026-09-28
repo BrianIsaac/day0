@@ -250,7 +250,12 @@ function VoiceRoomInner({
             </button>
           </>
         )}
-        <StatusPill status={status} isSpeaking={isSpeaking} isListening={isListening} muted={muted} />
+        <StatusPill
+          status={status}
+          isSpeaking={isSpeaking}
+          isListening={isListening}
+          muted={muted}
+        />
       </div>
 
       <div
@@ -262,7 +267,11 @@ function VoiceRoomInner({
         ) : (
           transcript.map((t, i) => (
             <div key={i}>
-              <span className={t.source === 'ai' ? 'text-[var(--color-accent)]' : 'text-[var(--color-fg)]'}>
+              <span
+                className={
+                  t.source === 'ai' ? 'text-[var(--color-accent)]' : 'text-[var(--color-fg)]'
+                }
+              >
                 {t.source === 'ai' ? 'agent' : 'you'}:
               </span>{' '}
               <span className="text-[var(--color-fg)]">{t.message}</span>
@@ -274,13 +283,7 @@ function VoiceRoomInner({
   );
 }
 
-function SpeakToggle({
-  muted,
-  onToggle,
-}: {
-  muted: boolean;
-  onToggle: () => void;
-}) {
+function SpeakToggle({ muted, onToggle }: { muted: boolean; onToggle: () => void }) {
   return (
     <button
       onClick={onToggle}

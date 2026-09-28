@@ -65,17 +65,24 @@ describe('the texts a person reads', (): void => {
         },
       }),
     ).toEqual(['The tile is refreshed to 74%.']);
-    expect(messageTexts({ tool: 'slack.postMessage', args: { channelSlug: 'revops', body: 'Done.' } })).toEqual([
-      'Done.',
-    ]);
-    expect(messageTexts({ tool: 'ticket.update', args: { slug: 'T-1', status: 'done', comment: 'Closed.' } })).toEqual([
-      'Closed.',
-    ]);
+    expect(
+      messageTexts({ tool: 'slack.postMessage', args: { channelSlug: 'revops', body: 'Done.' } }),
+    ).toEqual(['Done.']);
+    expect(
+      messageTexts({
+        tool: 'ticket.update',
+        args: { slug: 'T-1', status: 'done', comment: 'Closed.' },
+      }),
+    ).toEqual(['Closed.']);
     expect(messageTexts(LEDGER_2026_09_15.actions[0]!)).toEqual([]);
     expect(
       messageTexts({
         tool: 'mcp.call',
-        args: { surface: 'linear', tool: 'update_issue', toolArgsJson: '{"issueId":"REVOPS-5","state":"Done"}' },
+        args: {
+          surface: 'linear',
+          tool: 'update_issue',
+          toolArgsJson: '{"issueId":"REVOPS-5","state":"Done"}',
+        },
       }),
     ).toEqual([]);
   });
@@ -83,7 +90,9 @@ describe('the texts a person reads', (): void => {
 
 describe('the 15 September revision', (): void => {
   it('asserted completion the ledger, the page and the manager did not carry', (): void => {
-    expect(unsupportedClaims(UNSUPPORTED_COMMENT_2026_09_15, evidence15)).toEqual([UNSUPPORTED_CLAIM_2026_09_15]);
+    expect(unsupportedClaims(UNSUPPORTED_COMMENT_2026_09_15, evidence15)).toEqual([
+      UNSUPPORTED_CLAIM_2026_09_15,
+    ]);
   });
 
   it('is refused with a reason naming the claim and the action', (): void => {
@@ -113,7 +122,10 @@ describe('the 16 September audit note', (): void => {
   it('would be refused for the one line the ledger does not show', (): void => {
     const withoutTheTile: ClaimEvidence = {
       ...evidence16,
-      ledger: appliedLedgerPrompt(LEDGER_2026_09_16.actions.slice(1), LEDGER_2026_09_16.applied.slice(1)),
+      ledger: appliedLedgerPrompt(
+        LEDGER_2026_09_16.actions.slice(1),
+        LEDGER_2026_09_16.applied.slice(1),
+      ),
     };
     expect(unsupportedClaims(SUPPORTED_COMMENT_2026_09_16, withoutTheTile)).toEqual([
       'Pipeline coverage tile: the tile shows 74%',
@@ -124,28 +136,37 @@ describe('the 16 September audit note', (): void => {
 
 describe('what counts as support', (): void => {
   const evidence: ClaimEvidence = {
-    ledger: '0. landed · {"tool":"mcp.call"} · save_comment on linear · {"id":"c-1","body":"Refreshed the tile to 74%."}',
-    documentation: ['Looker pipeline tile\nThe approved figure for REVOPS-7 is 74%; the tile is refreshed by hand each Friday.'],
+    ledger:
+      '0. landed · {"tool":"mcp.call"} · save_comment on linear · {"id":"c-1","body":"Refreshed the tile to 74%."}',
+    documentation: [
+      'Looker pipeline tile\nThe approved figure for REVOPS-7 is 74%; the tile is refreshed by hand each Friday.',
+    ],
     managerFeedback: ['REVOPS-7 is owned by Priya.'],
   };
 
   it("accepts a fact the manager's feedback states, quoted", (): void => {
-    expect(unsupportedClaims('Ownership is confirmed: REVOPS-7 is owned by Priya.', evidence)).toEqual([]);
+    expect(
+      unsupportedClaims('Ownership is confirmed: REVOPS-7 is owned by Priya.', evidence),
+    ).toEqual([]);
   });
 
   it('accepts documentation only when it is quoted', (): void => {
     expect(
       unsupportedClaims('Per the page, "the tile is refreshed by hand each Friday".', evidence),
     ).toEqual([]);
-    expect(unsupportedClaims('The tile is refreshed each Friday by the analysts.', evidence)).toEqual([
-      'The tile is refreshed each Friday by the analysts.',
-    ]);
+    expect(
+      unsupportedClaims('The tile is refreshed each Friday by the analysts.', evidence),
+    ).toEqual(['The tile is refreshed each Friday by the analysts.']);
   });
 
   it('accepts a sentence that says what it could not confirm, or asks', (): void => {
-    expect(unsupportedClaims('The reconciliation is not confirmed; I could not verify it.', evidence)).toEqual([]);
+    expect(
+      unsupportedClaims('The reconciliation is not confirmed; I could not verify it.', evidence),
+    ).toEqual([]);
     expect(unsupportedClaims('Is the reconciliation complete?', evidence)).toEqual([]);
-    expect(unsupportedClaims('Could you confirm the reconciliation is complete?', evidence)).toEqual([]);
+    expect(
+      unsupportedClaims('Could you confirm the reconciliation is complete?', evidence),
+    ).toEqual([]);
     expect(unsupportedClaims('Has the tile been refreshed on your side?', evidence)).toEqual([]);
   });
 
@@ -160,21 +181,37 @@ describe('what counts as support', (): void => {
   });
 
   it('leaves sentences that assert no settled state alone', (): void => {
-    expect(unsupportedClaims('Audit note for the Q3 close, in checklist order.', evidence)).toEqual([]);
+    expect(unsupportedClaims('Audit note for the Q3 close, in checklist order.', evidence)).toEqual(
+      [],
+    );
     expect(unsupportedClaims('Moving this to Done once you approve.', evidence)).toEqual([]);
   });
 
   it('lets a message describe what another action in the same response does, never what a message says', (): void => {
     const fill: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'looker', tool: 'browser_fill_form', toolArgsJson: '{"fields":[{"name":"Pipeline coverage","value":"74%"}]}' },
+      args: {
+        surface: 'looker',
+        tool: 'browser_fill_form',
+        toolArgsJson: '{"fields":[{"name":"Pipeline coverage","value":"74%"}]}',
+      },
     };
     const comment = (body: string): MockAction => ({
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-7', body }) },
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'REVOPS-7', body }),
+      },
     });
-    const bare: ClaimEvidence = { ledger: '(no action result was recorded)', documentation: [], managerFeedback: [] };
-    expect(unsupportedClaimIssues([fill, comment('Set the tile to 74% in this response.')], bare)).toEqual([]);
+    const bare: ClaimEvidence = {
+      ledger: '(no action result was recorded)',
+      documentation: [],
+      managerFeedback: [],
+    };
+    expect(
+      unsupportedClaimIssues([fill, comment('Set the tile to 74% in this response.')], bare),
+    ).toEqual([]);
     const vouching = unsupportedClaimIssues(
       [comment('The tile is refreshed.'), comment('The tile is refreshed.')],
       bare,
@@ -184,31 +221,55 @@ describe('what counts as support', (): void => {
 
   it('does not let the run trailer or a bare year stand in for evidence', (): void => {
     expect(
-      unsupportedClaims('All three checks are complete as of 2026. -- Priya (Day0) · run wi_91/run_4', {
-        ...evidence,
-        ledger: '0. landed · {"tool":"mcp.call"} · get_issue on linear · {"createdAt":"2026-09-15T07:00:00Z"} -- Priya (Day0) · run wi_91/run_4',
-      }),
+      unsupportedClaims(
+        'All three checks are complete as of 2026. -- Priya (Day0) · run wi_91/run_4',
+        {
+          ...evidence,
+          ledger:
+            '0. landed · {"tool":"mcp.call"} · get_issue on linear · {"createdAt":"2026-09-15T07:00:00Z"} -- Priya (Day0) · run wi_91/run_4',
+        },
+      ),
     ).toEqual(['All three checks are complete as of 2026.']);
   });
 });
 
 describe('which phase-one actions are messages to people', (): void => {
-  const surfaces = [{ slug: 'slack', class: 'chat' }, { slug: 'linear', class: 'kanban' }];
+  const surfaces = [
+    { slug: 'slack', class: 'chat' },
+    { slug: 'linear', class: 'kanban' },
+  ];
   const dm: MockAction = {
     tool: 'http.request',
-    args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: '{"channel":"D01","text":"Comment posted."}' },
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{}',
+      body: '{"channel":"D01","text":"Comment posted."}',
+    },
   };
   const comment: MockAction = {
     tool: 'mcp.call',
-    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Comment posted."}' },
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-5","body":"Comment posted."}',
+    },
   };
 
   it('reads a chat-surface message and a mock chat tool, never a ticket comment', (): void => {
     expect(isChatMessage(dm, surfaces)).toBe(true);
-    expect(isChatMessage({ tool: 'slack.postMessage', args: { channelSlug: 'revops', body: 'Done.' } }, [])).toBe(true);
+    expect(
+      isChatMessage(
+        { tool: 'slack.postMessage', args: { channelSlug: 'revops', body: 'Done.' } },
+        [],
+      ),
+    ).toBe(true);
     expect(isChatMessage(comment, surfaces)).toBe(false);
     const nothing: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
-    expect(unsupportedClaimIssues([comment, dm], nothing, (action) => isChatMessage(action, surfaces))).toEqual([
+    expect(
+      unsupportedClaimIssues([comment, dm], nothing, (action) => isChatMessage(action, surfaces)),
+    ).toEqual([
       expect.stringContaining('action 1 (slack POST /chat.postMessage) says "Comment posted."'),
     ]);
   });
@@ -222,15 +283,27 @@ describe('a settled form inside a condition', (): void => {
 
   it('states what must hold, not what does, so the 16 September question DM stands', (): void => {
     expect(unsupportedClaims(RUN_DM_1, nothing)).toEqual([]);
-    expect(unsupportedClaims('The ticket moves to Done when all three checks are confirmed.', nothing)).toEqual([]);
-    expect(unsupportedClaims('If the figure is confirmed, I will post the comment.', nothing)).toEqual([]);
-    expect(unsupportedClaims('I will move it to Done once the audit line is verified.', nothing)).toEqual([]);
+    expect(
+      unsupportedClaims('The ticket moves to Done when all three checks are confirmed.', nothing),
+    ).toEqual([]);
+    expect(
+      unsupportedClaims('If the figure is confirmed, I will post the comment.', nothing),
+    ).toEqual([]);
+    expect(
+      unsupportedClaims('I will move it to Done once the audit line is verified.', nothing),
+    ).toEqual([]);
   });
 
   it('still reads a claim beside a condition, a tagged question, or a past form under "once"', (): void => {
-    expect(unsupportedClaims('The tile is refreshed if you reload the page.', nothing)).toHaveLength(1);
-    expect(unsupportedClaims('All three checks are complete, can you confirm?', nothing)).toHaveLength(1);
-    expect(unsupportedClaims('Once the tile was refreshed, the note went out.', nothing)).toHaveLength(1);
+    expect(
+      unsupportedClaims('The tile is refreshed if you reload the page.', nothing),
+    ).toHaveLength(1);
+    expect(
+      unsupportedClaims('All three checks are complete, can you confirm?', nothing),
+    ).toHaveLength(1);
+    expect(
+      unsupportedClaims('Once the tile was refreshed, the note went out.', nothing),
+    ).toHaveLength(1);
     expect(unsupportedClaims('When I checked, the tile showed 74%.', nothing)).toHaveLength(1);
   });
 });
@@ -245,7 +318,9 @@ describe('a hedge in one clause and a claim in the next', (): void => {
     expect(unsupportedClaims(RUN_DM_2, nothing)).toEqual([
       'REVOPS-5 audit comment posted with the three checks in checklist order',
     ]);
-    expect(unsupportedClaims('The reconciliation is not confirmed; I could not verify it.', nothing)).toEqual([]);
+    expect(
+      unsupportedClaims('The reconciliation is not confirmed; I could not verify it.', nothing),
+    ).toEqual([]);
   });
 });
 
@@ -279,12 +354,27 @@ describe('the telegraphic form a status message takes', (): void => {
   const nothing: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
 
   it('reads "audit comment posted" as the claim it is, and lets a plain description stand', (): void => {
-    expect(unsupportedClaims('REVOPS-5 audit comment posted with the three checks in checklist order.', nothing)).toEqual([
-      'REVOPS-5 audit comment posted with the three checks in checklist order.',
-    ]);
-    expect(unsupportedClaims('Tile refreshed to 74%; figure verified against the standup deck.', nothing)).toHaveLength(2);
-    expect(unsupportedClaims('Starting the REVOPS-5 audit note: check 1 read from the tile, check 3 from the Linear issue list.', nothing)).toEqual([]);
-    expect(unsupportedClaims('Posting the audit comment next; the Done move waits for you.', nothing)).toEqual([]);
+    expect(
+      unsupportedClaims(
+        'REVOPS-5 audit comment posted with the three checks in checklist order.',
+        nothing,
+      ),
+    ).toEqual(['REVOPS-5 audit comment posted with the three checks in checklist order.']);
+    expect(
+      unsupportedClaims(
+        'Tile refreshed to 74%; figure verified against the standup deck.',
+        nothing,
+      ),
+    ).toHaveLength(2);
+    expect(
+      unsupportedClaims(
+        'Starting the REVOPS-5 audit note: check 1 read from the tile, check 3 from the Linear issue list.',
+        nothing,
+      ),
+    ).toEqual([]);
+    expect(
+      unsupportedClaims('Posting the audit comment next; the Done move waits for you.', nothing),
+    ).toEqual([]);
   });
 });
 
@@ -296,7 +386,11 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
   };
   const comment = (body: string): MockAction => ({
     tool: 'mcp.call',
-    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body }) },
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body }),
+    },
   });
 
   it('quotes the ledger in every claim, so the sentence check alone lets it stand', (): void => {
@@ -317,7 +411,8 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
   });
 
   it('does not judge free prose, a list with no closing line, or a check whose evidence is met', (): void => {
-    const prose = 'REVOPS-6 is at Backlog and REVOPS-7 is at Backlog; check 3 is not confirmed. Not confirmed: check 2.';
+    const prose =
+      'REVOPS-6 is at Backlog and REVOPS-7 is at Backlog; check 3 is not confirmed. Not confirmed: check 2.';
     expect(unsupportedClaimIssues([comment(prose)], evidenceRun3)).toEqual([]);
     expect(unsupportedClaimIssues([SUPPORTED_ACTION_2026_09_16], evidence16)).toEqual([]);
     const allMet = [
@@ -329,24 +424,48 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
   });
 
   it('reads evidence that is only a dash, "pending", "to be confirmed" or "awaiting" as unmet', (): void => {
-    for (const evidenceLine of ['—', '-', 'pending', 'To be confirmed with the team.', 'Awaiting REVOPS-7.', 'outstanding', 'TBC', 'not yet']) {
-      const note = ['1. Pipeline coverage confirmed. The tile shows 74%.', `2. Close tickets at Done. ${evidenceLine}`, 'Not confirmed: none.'].join('\n');
+    for (const evidenceLine of [
+      '—',
+      '-',
+      'pending',
+      'To be confirmed with the team.',
+      'Awaiting REVOPS-7.',
+      'outstanding',
+      'TBC',
+      'not yet',
+    ]) {
+      const note = [
+        '1. Pipeline coverage confirmed. The tile shows 74%.',
+        `2. Close tickets at Done. ${evidenceLine}`,
+        'Not confirmed: none.',
+      ].join('\n');
       const issues = unsupportedClaimIssues([comment(note)], evidenceRun3);
       expect(issues, evidenceLine).toHaveLength(1);
       expect(issues[0], evidenceLine).toContain('check 2');
     }
     // "Not applicable" is a disposition, not an absence of evidence.
-    const notApplicable = ['1. Pipeline coverage confirmed. The tile shows 74%.', '2. Close tickets at Done. Not applicable: no sibling tickets this quarter.', 'Not confirmed: none.'].join('\n');
+    const notApplicable = [
+      '1. Pipeline coverage confirmed. The tile shows 74%.',
+      '2. Close tickets at Done. Not applicable: no sibling tickets this quarter.',
+      'Not confirmed: none.',
+    ].join('\n');
     expect(unsupportedClaimIssues([comment(notApplicable)], evidenceRun3)).toEqual([]);
   });
 
   it('reads a close the head asks for without naming the state ("Close tickets") against an open state in the evidence', (): void => {
-    const openState = ['1. Pipeline coverage confirmed. The tile shows 74%.', '2. Close tickets. As Linear reports them: REVOPS-6 — Backlog; REVOPS-7 — In Progress.', 'Not confirmed: none.'].join('\n');
+    const openState = [
+      '1. Pipeline coverage confirmed. The tile shows 74%.',
+      '2. Close tickets. As Linear reports them: REVOPS-6 — Backlog; REVOPS-7 — In Progress.',
+      'Not confirmed: none.',
+    ].join('\n');
     const issues = unsupportedClaimIssues([comment(openState)], evidenceRun3);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('check 2');
     expect(issues[0]).toContain('Backlog');
-    const closed = openState.replace('REVOPS-6 — Backlog; REVOPS-7 — In Progress', 'REVOPS-6 — Done; REVOPS-7 — Cancelled');
+    const closed = openState.replace(
+      'REVOPS-6 — Backlog; REVOPS-7 — In Progress',
+      'REVOPS-6 — Done; REVOPS-7 — Cancelled',
+    );
     expect(unsupportedClaimIssues([comment(closed)], evidenceRun3)).toEqual([]);
     // A head with no closing word and no state names no required state.
     const listed = openState.replace('2. Close tickets.', '2. Sibling tickets listed.');
@@ -361,10 +480,16 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
       'Not confirmed: deal reconciliation (no tracker) and ticket closure (REVOPS-6 and REVOPS-7 still at Backlog).',
     ].join('\n');
     expect(unsupportedClaimIssues([comment(note)], evidenceRun3)).toEqual([]);
-    const byIdentifierOnly = note.replace(/Not confirmed: .*$/, 'Not confirmed: the tracker reconciliation, and REVOPS-6 with REVOPS-7.');
+    const byIdentifierOnly = note.replace(
+      /Not confirmed: .*$/,
+      'Not confirmed: the tracker reconciliation, and REVOPS-6 with REVOPS-7.',
+    );
     expect(unsupportedClaimIssues([comment(byIdentifierOnly)], evidenceRun3)).toEqual([]);
     // An identifier another check's evidence also carries names nothing: 74% is check 1's, not check 3's.
-    const wrongIdentifier = note.replace(/Not confirmed: .*$/, 'Not confirmed: deal reconciliation; the tile shows 74%.');
+    const wrongIdentifier = note.replace(
+      /Not confirmed: .*$/,
+      'Not confirmed: deal reconciliation; the tile shows 74%.',
+    );
     const issues = unsupportedClaimIssues([comment(wrongIdentifier)], evidenceRun3);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('check 3');
@@ -379,7 +504,10 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
     const issues = unsupportedClaimIssues([comment(absentRead)], evidenceRun3);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('check 1');
-    const namedByHead = absentRead.replace('Not confirmed: none.', 'Not confirmed: pipeline coverage — the tile could not be read.');
+    const namedByHead = absentRead.replace(
+      'Not confirmed: none.',
+      'Not confirmed: pipeline coverage — the tile could not be read.',
+    );
     expect(unsupportedClaimIssues([comment(namedByHead)], evidenceRun3)).toEqual([]);
   });
 });
@@ -390,55 +518,119 @@ describe('the work item as evidence (19 September, LOG-2)', (): void => {
   const withItem = (item: string[]): ClaimEvidence => ({ ...bare, item });
   const log2 = withItem(itemEvidence(log2Candidate, [ownRead]));
 
-  it('refused the ticket\'s own sentence while the item was no part of the evidence', (): void => {
+  it("refused the ticket's own sentence while the item was no part of the evidence", (): void => {
     expect(unsupportedClaims(LOG_2_DRAFT_DM, bare)).toContain(LOG_2_REFUSED_CLAIM);
   });
 
   it('lets the DM say what the ticket says, from the row alone and from the grounding read alone', (): void => {
     expect(unsupportedClaimIssues([managerDm(LOG_2_DRAFT_DM)], log2)).toEqual([]);
-    expect(unsupportedClaims(LOG_2_DRAFT_DM, withItem(itemEvidence(log2Candidate, [])))).toEqual([]);
-    const readOnly = itemEvidence({ ...log2Candidate, title: 'LOG-2', contentSummary: '' }, [ownRead]);
+    expect(unsupportedClaims(LOG_2_DRAFT_DM, withItem(itemEvidence(log2Candidate, [])))).toEqual(
+      [],
+    );
+    const readOnly = itemEvidence({ ...log2Candidate, title: 'LOG-2', contentSummary: '' }, [
+      ownRead,
+    ]);
     expect(unsupportedClaims(LOG_2_DRAFT_DM, withItem(readOnly))).toEqual([]);
   });
 
   it('still refuses a date, a shipment or a result the ticket does not carry', (): void => {
     const wrongDate = LOG_2_REFUSED_CLAIM.replace('26 September', '27 September');
     expect(unsupportedClaims(wrongDate, log2)).toEqual([wrongDate]);
-    const wrongShipment = 'For SH-4461, Meridian Freight has confirmed a revised delivery date of 26 September.';
+    const wrongShipment =
+      'For SH-4461, Meridian Freight has confirmed a revised delivery date of 26 September.';
     expect(unsupportedClaims(wrongShipment, log2)).toEqual([wrongShipment]);
     // An identifier the item carries vouches for nothing on its own: that is the ledger's privilege.
     const result = 'The exception comment on LOG-2 is posted and SH-4460 is now closed.';
     expect(unsupportedClaims(result, log2)).toEqual([result]);
-    expect(unsupportedClaims(result, { ...bare, ledger: itemEvidence(log2Candidate, [ownRead]).join('\n') })).toEqual([]);
+    expect(
+      unsupportedClaims(result, {
+        ...bare,
+        ledger: itemEvidence(log2Candidate, [ownRead]).join('\n'),
+      }),
+    ).toEqual([]);
   });
 
-  it('counts only a landed read of this item: another ticket\'s record, a held read and a failed one are left out', (): void => {
-    const other = (id: string, description: string): { action: MockAction; applied: typeof log2GroundingApplied } => ({
-      action: { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id }) } },
-      applied: { ...log2GroundingApplied, providerId: id, effect: `get_issue on linear · ${JSON.stringify({ id, description })}` },
+  it("counts only a landed read of this item: another ticket's record, a held read and a failed one are left out", (): void => {
+    const other = (
+      id: string,
+      description: string,
+    ): { action: MockAction; applied: typeof log2GroundingApplied } => ({
+      action: {
+        tool: 'mcp.call',
+        args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id }) },
+      },
+      applied: {
+        ...log2GroundingApplied,
+        providerId: id,
+        effect: `get_issue on linear · ${JSON.stringify({ id, description })}`,
+      },
     });
     const brightwater = 'The Brightwater freight accrual in NetLedger is confirmed at 41,200.';
     const fin4 = other('FIN-4', brightwater);
     expect(itemEvidence(log2Candidate, [fin4]).join('\n')).not.toContain('Brightwater');
-    expect(unsupportedClaims(brightwater, withItem(itemEvidence(log2Candidate, [ownRead, fin4])))).toEqual([brightwater]);
+    expect(
+      unsupportedClaims(brightwater, withItem(itemEvidence(log2Candidate, [ownRead, fin4]))),
+    ).toEqual([brightwater]);
     // An id that merely starts the same is another ticket.
-    expect(itemEvidence(log2Candidate, [other('LOG-21', brightwater)]).join('\n')).not.toContain('Brightwater');
+    expect(itemEvidence(log2Candidate, [other('LOG-21', brightwater)]).join('\n')).not.toContain(
+      'Brightwater',
+    );
     const held = { ...ownRead, applied: { ...log2GroundingApplied, held: true } };
-    const failed = { ...ownRead, applied: { ...log2GroundingApplied, ok: false, effect: undefined, reason: brightwater } };
-    const rowOnly = itemEvidence({ ...log2Candidate, title: '', contentSummary: '', contentRefs: [] }, [held, failed]);
+    const failed = {
+      ...ownRead,
+      applied: { ...log2GroundingApplied, ok: false, effect: undefined, reason: brightwater },
+    };
+    const rowOnly = itemEvidence(
+      { ...log2Candidate, title: '', contentSummary: '', contentRefs: [] },
+      [held, failed],
+    );
     expect(rowOnly).toEqual(['LOG-2']);
   });
 
   it('takes only what the item reports: a request, a condition, a doubt and a short quotation support nothing', (): void => {
     const asked = (contentSummary: string): ClaimEvidence =>
-      withItem(itemEvidence({ ...log2Candidate, externalId: 'REVOPS-7', title: 'Refresh the tile', contentSummary }, []));
+      withItem(
+        itemEvidence(
+          { ...log2Candidate, externalId: 'REVOPS-7', title: 'Refresh the tile', contentSummary },
+          [],
+        ),
+      );
     const done = 'The pipeline tile is refreshed to 74% and the audit comment is posted.';
-    expect(unsupportedClaims(done, asked('Confirm the pipeline tile is refreshed to 74% and the audit comment is posted.'))).toEqual([done]);
-    expect(unsupportedClaims(done, asked('Move REVOPS-7 to Done once the pipeline tile is refreshed to 74% and the audit comment is posted.'))).toEqual([done]);
-    expect(unsupportedClaims(done, asked('Finance say the pipeline tile is refreshed to 74% and the audit comment is posted, which is not confirmed.'))).toEqual([done]);
-    expect(unsupportedClaims(done, asked('Is the pipeline tile is refreshed to 74% and the audit comment is posted?'))).toEqual([done]);
+    expect(
+      unsupportedClaims(
+        done,
+        asked('Confirm the pipeline tile is refreshed to 74% and the audit comment is posted.'),
+      ),
+    ).toEqual([done]);
+    expect(
+      unsupportedClaims(
+        done,
+        asked(
+          'Move REVOPS-7 to Done once the pipeline tile is refreshed to 74% and the audit comment is posted.',
+        ),
+      ),
+    ).toEqual([done]);
+    expect(
+      unsupportedClaims(
+        done,
+        asked(
+          'Finance say the pipeline tile is refreshed to 74% and the audit comment is posted, which is not confirmed.',
+        ),
+      ),
+    ).toEqual([done]);
+    expect(
+      unsupportedClaims(
+        done,
+        asked('Is the pipeline tile is refreshed to 74% and the audit comment is posted?'),
+      ),
+    ).toEqual([done]);
     // The same words as a report are the requester's statement, and may be repeated.
-    expect(unsupportedClaims(done, asked('The pipeline tile is refreshed to 74% and the audit comment is posted.'))).toEqual([]);
+    expect(
+      unsupportedClaims(
+        done,
+        asked('The pipeline tile is refreshed to 74% and the audit comment is posted.'),
+      ),
+    ).toEqual([]);
     const quoted = "LOG-2 is now closed, per 'Meridian Freight'.";
     expect(unsupportedClaims(quoted, log2)).toEqual([quoted]);
   });
@@ -446,13 +638,18 @@ describe('the work item as evidence (19 September, LOG-2)', (): void => {
   it('knows the item by its id without a grounding read', (): void => {
     const named = `On LOG-2, ${LOG_2_REFUSED_CLAIM}`;
     expect(unsupportedClaims(named, withItem(itemEvidence(log2Candidate, [])))).toEqual([]);
-    expect(unsupportedClaims(named.replace('LOG-2', 'LOG-3'), withItem(itemEvidence(log2Candidate, [])))).toHaveLength(1);
+    expect(
+      unsupportedClaims(named.replace('LOG-2', 'LOG-3'), withItem(itemEvidence(log2Candidate, []))),
+    ).toHaveLength(1);
   });
 
   it('keeps a token-shaped value in the ticket body out of the evidence', (): void => {
     const token = ['xo', 'xb-', '1234567890', '-', 'abcdefghijkl'].join('');
     const body = `${log2Candidate.contentSummary}\nThe carrier portal token is confirmed as ${token}.`;
-    const leaky = { ...ownRead, applied: { ...log2GroundingApplied, effect: `${log2GroundingApplied.effect} ${token}` } };
+    const leaky = {
+      ...ownRead,
+      applied: { ...log2GroundingApplied, effect: `${log2GroundingApplied.effect} ${token}` },
+    };
     const evidence = itemEvidence({ ...log2Candidate, contentSummary: body }, [leaky]);
     expect(evidence.join('\n')).not.toContain(token);
     expect(evidence.join('\n')).toContain('has confirmed a revised delivery date of 26 September');

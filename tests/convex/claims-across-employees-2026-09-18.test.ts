@@ -114,7 +114,9 @@ const OPS_ASK_TITLE = 'Slack mention in #ops-requests';
 const ISSUE = '6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f';
 const ISSUE_TITLE = 'Post the Q3 close summary for the board pack';
 
-type SurfaceSpec = { kind: 'slack'; slug?: string; workspace?: string; path?: string; endpoint?: string } | { kind: 'linear'; slug: string };
+type SurfaceSpec =
+  | { kind: 'slack'; slug?: string; workspace?: string; path?: string; endpoint?: string }
+  | { kind: 'linear'; slug: string };
 
 /**
  * One employee with an approved charter that covers close summaries, the
@@ -173,7 +175,12 @@ async function seedEmployee(
       });
     }
     const scopes = new Set(['boss:message']);
-    const live = { credentialLanded: true, lastVerifiedAt: Date.now(), whereFound: [], createdAt: 1 };
+    const live = {
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+      whereFound: [],
+      createdAt: 1,
+    };
     for (const surface of surfaces) {
       const slug = surface.slug ?? 'slack';
       scopes.add(`${slug}:read`);
@@ -215,7 +222,11 @@ async function seedEmployee(
 }
 
 /** Seed the #ops-requests ask for one employee, the way intake's Slack reader does. */
-async function seedAsk(harness: Harness, agentId: Id<'agents'>, slug = 'slack'): Promise<Id<'workItems'>> {
+async function seedAsk(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  slug = 'slack',
+): Promise<Id<'workItems'>> {
   return await harness.mutation(internal.work.seedItem, {
     agentId,
     sourceCategory: 'event-stream',
@@ -223,15 +234,25 @@ async function seedAsk(harness: Harness, agentId: Id<'agents'>, slug = 'slack'):
     externalId: OPS_ASK,
     title: OPS_ASK_TITLE,
     contentSummary: '<@U0DAY0BOT> please send the Q3 close summary to the leadership thread today.',
-    contentRefs: [`https://app.slack.com/client/${WORKSPACE}/C0OPSREQ/thread/C0OPSREQ-1789000000000100`],
+    contentRefs: [
+      `https://app.slack.com/client/${WORKSPACE}/C0OPSREQ/thread/C0OPSREQ-1789000000000100`,
+    ],
     requesterLabel: 'U0OPERATOR',
     requester: 'U0OPERATOR',
-    replyTarget: { channel: 'C0OPSREQ', channelName: 'ops-requests', threadTs: '1789000000.000100' },
+    replyTarget: {
+      channel: 'C0OPSREQ',
+      channelName: 'ops-requests',
+      threadTs: '1789000000.000100',
+    },
   });
 }
 
 /** Seed the shared Linear issue for one employee, the way intake's Linear reader does. */
-async function seedIssue(harness: Harness, agentId: Id<'agents'>, slug: string): Promise<Id<'workItems'>> {
+async function seedIssue(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  slug: string,
+): Promise<Id<'workItems'>> {
   return await harness.mutation(internal.work.seedItem, {
     agentId,
     sourceCategory: 'ticket-queue',
@@ -287,7 +308,9 @@ async function holderAndColleague(
   const holder = read.find((row) => row.state !== 'skipped');
   const colleague = read.find((row) => row.state === 'skipped');
   if (!holder || !colleague) {
-    throw new Error(`expected one holder and one skipped colleague, got ${read.map((row) => row.state).join(', ')}`);
+    throw new Error(
+      `expected one holder and one skipped colleague, got ${read.map((row) => row.state).join(', ')}`,
+    );
   }
   return { holder, colleague };
 }
@@ -321,10 +344,17 @@ describe('two employees of one owner reach one item', (): void => {
     const { holder, colleague } = await holderAndColleague(harness, rows);
     expect(holder.state).toBe('claimed');
     const holderName = holder.agentId === priya ? 'Priya' : 'Mateo';
-    expect(colleague.skipReason).toBe(`claimed-by-colleague: ${holderName} holds it (${OPS_ASK_TITLE})`);
+    expect(colleague.skipReason).toBe(
+      `claimed-by-colleague: ${holderName} holds it (${OPS_ASK_TITLE})`,
+    );
     expect(colleague.verdict).toMatchObject({
       decision: 'skip',
-      claimedBy: { agentId: holder.agentId, workItemId: holder._id, name: holderName, title: OPS_ASK_TITLE },
+      claimedBy: {
+        agentId: holder.agentId,
+        workItemId: holder._id,
+        name: holderName,
+        title: OPS_ASK_TITLE,
+      },
     });
 
     const refused = await eventsOf(harness, 'work.claim-refused');
@@ -354,17 +384,25 @@ describe('two employees of one owner reach one item', (): void => {
     const apiEmployee = await seedEmployee(harness, { name: 'Priya' });
     const browserEmployee = await seedEmployee(harness, {
       name: 'Mateo',
-      surfaces: [{
-        kind: 'slack',
-        slug: 'slack-browser',
-        path: 'browser-driven',
-        endpoint: 'https://app.slack.com/client/T0COMPANY/C0OPSREQ',
-      }],
+      surfaces: [
+        {
+          kind: 'slack',
+          slug: 'slack-browser',
+          path: 'browser-driven',
+          endpoint: 'https://app.slack.com/client/T0COMPANY/C0OPSREQ',
+        },
+      ],
     });
     const first = await seedAsk(harness, apiEmployee);
     const second = await seedAsk(harness, browserEmployee, 'slack-browser');
-    await harness.mutation(internal.work.setVerdict, { workItemId: first, verdict: { decision: 'claim' } });
-    await harness.mutation(internal.work.setVerdict, { workItemId: second, verdict: { decision: 'claim' } });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: first,
+      verdict: { decision: 'claim' },
+    });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: second,
+      verdict: { decision: 'claim' },
+    });
 
     expect((await readItem(harness, first)).state).toBe('claimed');
     expect(await readItem(harness, second)).toMatchObject({
@@ -380,7 +418,10 @@ describe('two employees of one owner reach one item', (): void => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
-    const priya = await seedEmployee(harness, { name: 'Priya', surfaces: [{ kind: 'linear', slug: 'linear' }] });
+    const priya = await seedEmployee(harness, {
+      name: 'Priya',
+      surfaces: [{ kind: 'linear', slug: 'linear' }],
+    });
     const aiko = await seedEmployee(harness, {
       name: 'Aiko',
       surfaces: [{ kind: 'linear', slug: 'linear-finance' }],
@@ -403,8 +444,14 @@ describe('two employees of one owner reach one item', (): void => {
   it('keeps the provider key an item had at intake when its surface disappears before the verdict', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
-    const priya = await seedEmployee(harness, { name: 'Priya', surfaces: [{ kind: 'linear', slug: 'linear' }] });
-    const mateo = await seedEmployee(harness, { name: 'Mateo', surfaces: [{ kind: 'linear', slug: 'linear' }] });
+    const priya = await seedEmployee(harness, {
+      name: 'Priya',
+      surfaces: [{ kind: 'linear', slug: 'linear' }],
+    });
+    const mateo = await seedEmployee(harness, {
+      name: 'Mateo',
+      surfaces: [{ kind: 'linear', slug: 'linear' }],
+    });
     const first = await seedIssue(harness, priya, 'linear');
     const second = await seedIssue(harness, mateo, 'linear');
     await harness.run(async (ctx) => {
@@ -416,8 +463,14 @@ describe('two employees of one owner reach one item', (): void => {
       await ctx.db.delete(surface._id);
     });
 
-    await harness.mutation(internal.work.setVerdict, { workItemId: first, verdict: { decision: 'claim' } });
-    await harness.mutation(internal.work.setVerdict, { workItemId: second, verdict: { decision: 'claim' } });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: first,
+      verdict: { decision: 'claim' },
+    });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: second,
+      verdict: { decision: 'claim' },
+    });
 
     expect((await readItem(harness, second)).skipReason).toContain('claimed-by-colleague: Priya');
     expect((await claimsOf(harness)).filter((claim) => claim.releasedAt === undefined)).toEqual([
@@ -464,7 +517,10 @@ describe('two employees of one owner reach one item', (): void => {
       });
     });
 
-    await harness.mutation(internal.work.setVerdict, { workItemId: second, verdict: { decision: 'claim' } });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: second,
+      verdict: { decision: 'claim' },
+    });
 
     const refused = await readItem(harness, second);
     expect(refused.state).toBe('skipped');
@@ -488,8 +544,14 @@ describe('two employees of one owner reach one item', (): void => {
     });
     const first = await seedIssue(harness, priya, 'linear');
     const second = await seedIssue(harness, priya, 'linear-ops');
-    await harness.mutation(internal.work.setVerdict, { workItemId: first, verdict: { decision: 'claim' } });
-    await harness.mutation(internal.work.setVerdict, { workItemId: second, verdict: { decision: 'claim' } });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: first,
+      verdict: { decision: 'claim' },
+    });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: second,
+      verdict: { decision: 'claim' },
+    });
 
     const refused = await readItem(harness, second);
     expect(refused.state).toBe('skipped');
@@ -499,7 +561,7 @@ describe('two employees of one owner reach one item', (): void => {
   });
 });
 
-describe('the claim is the owner\'s', (): void => {
+describe("the claim is the owner's", (): void => {
   it('lets two owners each claim the same item', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -541,7 +603,7 @@ describe('releasing a claim', (): void => {
     return { priya, mateo, held, refused };
   }
 
-  it('returns the colleague\'s row for evaluation when the holder\'s plan is cancelled', async (): Promise<void> => {
+  it("returns the colleague's row for evaluation when the holder's plan is cancelled", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -561,7 +623,9 @@ describe('releasing a claim', (): void => {
       }),
     ]);
     const claims = await claimsOf(harness);
-    expect(claims.find((claim) => claim.workItemId === held)?.releasedAt).toEqual(expect.any(Number));
+    expect(claims.find((claim) => claim.workItemId === held)?.releasedAt).toEqual(
+      expect.any(Number),
+    );
     expect(claims.filter((claim) => claim.releasedAt === undefined)).toEqual([
       expect.objectContaining({ agentId: mateo, workItemId: refused }),
     ]);
@@ -688,7 +752,9 @@ describe('releasing a claim', (): void => {
     const atScope = await seedAsk(harness, aiko);
     await drain(harness);
     const { mateo, held, refused } = await heldAndRefused(harness);
-    expect((await readItem(harness, atScope)).skipReason).toBe('out-of-scope: the ask belongs to another desk');
+    expect((await readItem(harness, atScope)).skipReason).toBe(
+      'out-of-scope: the ask belongs to another desk',
+    );
     expect((await claimsOf(harness)).some((claim) => claim.workItemId === atScope)).toBe(false);
 
     await harness
@@ -701,7 +767,9 @@ describe('releasing a claim', (): void => {
     expect(stays.state).toBe('skipped');
     expect(stays.skipReason).toBe('out-of-scope: the ask belongs to another desk');
     expect(stays).not.toHaveProperty('reevaluation');
-    expect((await eventsOf(harness, 'work.requeued')).map((event) => event.agentId)).toEqual([mateo]);
+    expect((await eventsOf(harness, 'work.requeued')).map((event) => event.agentId)).toEqual([
+      mateo,
+    ]);
   });
 
   it('refuses a retry of the cancelled item while a colleague holds it', async (): Promise<void> => {
@@ -710,7 +778,10 @@ describe('releasing a claim', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { held, refused } = await heldAndRefused(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
-    await owner.mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
+    await owner.mutation(api.work.cancelPlan, {
+      workItemId: held,
+      reason: 'finance owns this ask',
+    });
     await drain(harness);
     expect((await readItem(harness, refused)).state).toBe('plan-pending');
 
@@ -735,7 +806,10 @@ describe('releasing a claim', (): void => {
 
     const retried = await owner.mutation(api.work.retryFailed, { workItemId: held });
     expect(retried.resumeState).toBe('claimed');
-    expect(await readItem(harness, held)).toMatchObject({ state: 'claimed', planRejectedAt: expect.any(Number) });
+    expect(await readItem(harness, held)).toMatchObject({
+      state: 'claimed',
+      planRejectedAt: expect.any(Number),
+    });
     expect((await readItem(harness, held)).plan).toBeUndefined();
 
     const claims = await claimsOf(harness);
@@ -752,8 +826,14 @@ describe('releasing a claim', (): void => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
-    const priya = await seedEmployee(harness, { name: 'Priya', surfaces: [{ kind: 'linear', slug: 'linear' }] });
-    const mateo = await seedEmployee(harness, { name: 'Mateo', surfaces: [{ kind: 'linear', slug: 'linear' }] });
+    const priya = await seedEmployee(harness, {
+      name: 'Priya',
+      surfaces: [{ kind: 'linear', slug: 'linear' }],
+    });
+    const mateo = await seedEmployee(harness, {
+      name: 'Mateo',
+      surfaces: [{ kind: 'linear', slug: 'linear' }],
+    });
     const first = await seedIssue(harness, priya, 'linear');
     await drain(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
@@ -795,7 +875,9 @@ describe('releasing a claim', (): void => {
 
     expect((await readItem(harness, taken)).state).toBe('plan-pending');
     const claims = await claimsOf(harness);
-    expect(claims.find((claim) => claim.workItemId === stale)?.releasedAt).toEqual(expect.any(Number));
+    expect(claims.find((claim) => claim.workItemId === stale)?.releasedAt).toEqual(
+      expect.any(Number),
+    );
     expect(claims.filter((claim) => claim.releasedAt === undefined)).toEqual([
       expect.objectContaining({ workItemId: taken }),
     ]);
@@ -833,10 +915,14 @@ describe('what claims nothing', (): void => {
     const rows = [await seedAsk(harness, priya), await seedAsk(harness, mateo)];
 
     for (const workItemId of rows) {
-      await harness.mutation(internal.work.setVerdict, { workItemId, verdict: { decision: 'claim' } });
+      await harness.mutation(internal.work.setVerdict, {
+        workItemId,
+        verdict: { decision: 'claim' },
+      });
     }
 
-    for (const workItemId of rows) expect((await readItem(harness, workItemId)).state).toBe('claimed');
+    for (const workItemId of rows)
+      expect((await readItem(harness, workItemId)).state).toBe('claimed');
     expect(await claimsOf(harness)).toEqual([]);
     expect(await eventsOf(harness, 'work.claim-refused')).toEqual([]);
   });
@@ -862,7 +948,10 @@ describe('what claims nothing', (): void => {
         }),
     );
 
-    await harness.mutation(internal.work.setVerdict, { workItemId, verdict: { decision: 'claim' } });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'claim' },
+    });
 
     expect((await readItem(harness, workItemId)).state).toBe('claimed');
     expect(await claimsOf(harness)).toEqual([]);

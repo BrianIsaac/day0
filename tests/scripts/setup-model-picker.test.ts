@@ -50,7 +50,9 @@ describe('the curated list', (): void => {
     expect(CURATED_MODELS[0].tested).toContain('local evaluation bed');
     expect(CURATED_MODELS[0].downloadLabel).toContain('5.2 GB');
     // The tested note lives in scripts/models.ts and nowhere else in the setup.
-    expect(readFileSync(join(ROOT, 'scripts/setup.ts'), 'utf8')).not.toContain('local evaluation bed');
+    expect(readFileSync(join(ROOT, 'scripts/setup.ts'), 'utf8')).not.toContain(
+      'local evaluation bed',
+    );
   });
 });
 

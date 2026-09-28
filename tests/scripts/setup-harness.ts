@@ -156,6 +156,8 @@ export interface HarnessOptions {
   servicesBeforeUp?: string[];
   /** The release the deployment's rows are stamped at; absent means no stamp table. */
   releaseStamp?: string;
+  /** The newest release the disposable checkout's migrations name; absent means its own, 0.3.0. */
+  newestMigrationRelease?: string;
   /** Tables the deployment lists besides the stamp's; none means nothing was ever pushed. */
   deploymentTables?: string[];
   /**
@@ -460,6 +462,7 @@ export function harness(options: HarnessOptions = {}): Harness {
       clock += ms;
     },
     now: (): number => clock,
+    newestMigrationRelease: options.newestMigrationRelease ?? '0.3.0',
     ...(options.interactive === undefined ? {} : { interactive: options.interactive }),
   };
   return { io, commands, output, directory, volumes };

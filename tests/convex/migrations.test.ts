@@ -7,6 +7,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
+import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
 import { avatarById } from '../../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../../src/docs/types';
 import {
@@ -389,6 +390,63 @@ describe('the approved tool list backfill (U10 D2 (b))', (): void => {
       completedAt: expect.any(Number),
     });
   });
+
+  it('gives an approved card whose failed probe cleared its list an empty approved list at its last connection, and leaves one that never connected', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [cleared, neverConnected, unapproved] = await harness.run(async (ctx) => {
+      const card = async (
+        slug: string,
+        fields: Partial<Doc<'surfaces'>>,
+      ): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict: 'listed-dead',
+          whereFound: [],
+          credentialLanded: false,
+          createdAt: 1,
+          ...fields,
+        });
+      const ids = await Promise.all([
+        card('linear', { reason: 'no answer', managerApprovedAt: 5 }),
+        card('jira', { verdict: 'ungranted', reason: '401', managerApprovedAt: 6 }),
+        card('asana', { reason: 'no answer' }),
+      ]);
+      for (const [surfaceId, createdAt] of [
+        [ids[0], 40],
+        [ids[0], 70],
+        [ids[2], 50],
+      ] as const) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'surface.connected',
+          payload: { surfaceId },
+          createdAt,
+        });
+      }
+      return ids;
+    });
+
+    await runAll(harness);
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await Promise.all([cleared, neverConnected, unapproved].map((id) => ctx.db.get(id))),
+    );
+    expect(rows.map((row) => [row?.approvedToolAllowlist, row?.toolAllowlistApprovedAt])).toEqual([
+      [[], 70],
+      [undefined, undefined],
+      [undefined, undefined],
+    ]);
+    expect(
+      (await harness.query(internal.migrations.status, {})).migrations.find(
+        (row) => row.name === 'surfaces-approved-tools',
+      ),
+    ).toMatchObject({ read: 3, changed: 1 });
+  });
 });
 
 describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {
@@ -741,6 +799,8 @@ describe('the single approval (Q10)', (): void => {
     vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
     const harness = limitedHarness();
     const agentId = await agent(harness, { userId: 'owner' });
+    // A source with no page for the quoted ref: the queue it documented is gone.
+    const sourceId = await source(harness, 'owner');
     const ids = await harness.run(async (ctx) => {
       const card = async (
         slug: string,
@@ -778,6 +838,12 @@ describe('the single approval (Q10)', (): void => {
         itOnly: await card('jira', { itApprovedAt: 60 }),
         connected,
         refused: await card('looker', { path: 'browser-driven', managerApprovedAt: 70 }),
+        queueChanged: await card('slack', {
+          managerApprovedAt: 75,
+          intakeScope: {
+            team: { value: 'REVOPS', sourceId, ref: 'handbook.md', quote: 'Team: REVOPS' },
+          },
+        }),
         untouched: await card('notion', {}),
       };
     });
@@ -789,6 +855,7 @@ describe('the single approval (Q10)', (): void => {
       itOnly: await ctx.db.get(ids.itOnly),
       connected: await ctx.db.get(ids.connected),
       refused: await ctx.db.get(ids.refused),
+      queueChanged: await ctx.db.get(ids.queueChanged),
       untouched: await ctx.db.get(ids.untouched),
       events: await ctx.db.query('events').collect(),
       scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
@@ -807,11 +874,17 @@ describe('the single approval (Q10)', (): void => {
       expiresAt: UPGRADED_AT + DAY,
       accessSetBy: 'approval',
     });
-    expect(rows.refused).toMatchObject({
-      verdict: 'proposed',
-      reason: expect.stringContaining('BROWSER_DRIVER_ABSENT'),
-    });
+    // The absent driver is read live by the card, never stored: once the
+    // driver runs, the card offers Approve again (wave 3.5 review M12).
+    expect(rows.refused).toMatchObject({ verdict: 'proposed', path: 'browser-driven' });
+    expect(rows.refused?.reason).toBeUndefined();
     expect(rows.refused?.managerApprovedAt).toBeUndefined();
+    expect(rows.queueChanged).toMatchObject({
+      verdict: 'proposed',
+      reason:
+        'A documented intake queue changed; reject this card and re-run orientation before approval.',
+    });
+    expect(rows.queueChanged?.managerApprovedAt).toBeUndefined();
     expect(rows.untouched).toMatchObject({ verdict: 'proposed' });
     expect(rows.untouched?.reason).toBeUndefined();
     for (const row of [rows.managerOnly, rows.itOnly, rows.connected, rows.refused]) {
@@ -839,8 +912,8 @@ describe('the single approval (Q10)', (): void => {
     const status = await harness.query(internal.migrations.status, {});
     expect(status.migrations.find((row) => row.name === 'surfaces-single-approval')).toMatchObject({
       release: '0.6.0',
-      read: 5,
-      changed: 4,
+      read: 6,
+      changed: 5,
       completedAt: expect.any(Number),
     });
   });
@@ -1057,6 +1130,8 @@ describe('the release a stamp may name', (): void => {
       .map((migration) => migration.release)
       .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
       .at(-1)!;
+    // The constant the upgrade reads before it pushes is the migrations' own.
+    expect(NEWEST_MIGRATION_RELEASE).toBe(newest);
     // A deployment set up from a tree whose package still says the release
     // before its migrations would otherwise read as a release that lacks them.
     for (const release of ['0.5.0', '0.3.0', 'v0.6.0', '0.6', 'latest']) {

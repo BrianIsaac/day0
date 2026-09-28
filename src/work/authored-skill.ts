@@ -1,4 +1,9 @@
-import { credentialInputIssues, EXECUTION_INPUT_LINES, undeclaredSkillInputs, declaredSkillInputs } from './skill-inputs';
+import {
+  credentialInputIssues,
+  EXECUTION_INPUT_LINES,
+  undeclaredSkillInputs,
+  declaredSkillInputs,
+} from './skill-inputs';
 
 /**
  * The static gate on an authored skill, run before any sandbox spends a run.
@@ -31,7 +36,8 @@ const DOUBLE_BRACE = /\{\{\s*([^}]*?)\s*\}\}/g;
 const SECRET_PLACEHOLDER = /^secret(?:[:.][A-Za-z0-9_-]+)?$/;
 const PERCENTAGE = /\d+(?:[.,]\d+)?\s?%/g;
 const CURRENCY = /[$£€]\s?\d[\d,]*(?:\.\d+)?\s?[kKmMbB]?(?![A-Za-z0-9])/g;
-const WHOLE_NUMBER = /(?<![A-Za-z0-9_.,-])(?:\d{1,3}(?:,\d{3})+|\d{2,})(?:\.\d+)?(?![A-Za-z0-9%]|[.,]\d)/g;
+const WHOLE_NUMBER =
+  /(?<![A-Za-z0-9_.,-])(?:\d{1,3}(?:,\d{3})+|\d{2,})(?:\.\d+)?(?![A-Za-z0-9%]|[.,]\d)/g;
 const QUOTED = /["“]([^"”\n]{3,})["”]/g;
 const MIN_LITERAL_LENGTH = 2;
 
@@ -50,7 +56,10 @@ function escapeRegExp(value: string): string {
  *   channel and thread, and each percentage, amount, whole number and quoted
  *   phrase in the title and summary.
  */
-export function instanceLiterals(instance: AuthoredSkillInstance, documentedProcedure = ''): string[] {
+export function instanceLiterals(
+  instance: AuthoredSkillInstance,
+  documentedProcedure = '',
+): string[] {
   const prose = `${instance.title}\n${instance.contentSummary}`;
   const found: string[] = [instance.externalId];
   for (const ref of instance.contentRefs) {
@@ -78,9 +87,9 @@ export function instanceLiterals(instance: AuthoredSkillInstance, documentedProc
   }
   return [
     ...new Set(
-      found.map((value: string): string => value.trim()).filter(
-        (value: string): boolean => value.length >= MIN_LITERAL_LENGTH,
-      ),
+      found
+        .map((value: string): string => value.trim())
+        .filter((value: string): boolean => value.length >= MIN_LITERAL_LENGTH),
     ),
   ];
 }

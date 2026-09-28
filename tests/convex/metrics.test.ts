@@ -1006,6 +1006,32 @@ describe('the figures do not depend on the order the rows are read in', (): void
     expect(idOrder).toEqual(indexOrder);
   });
 
+  it('withdraws the plan ask a re-draft on reconnection replaced, so the figures count the second ask alone (wave 3.5 review M21)', (): void => {
+    const minute = 60_000;
+    const events = [
+      event(1, 'work.decision-requesting', { workItemId: 'w1', decisionId: 'd1', kind: 'plan' }, 0),
+      event(
+        2,
+        'work.plan-redrafting',
+        { workItemId: 'w1', surfaceId: 's', slug: 'linear' },
+        10 * minute,
+      ),
+      event(
+        3,
+        'work.decision-requesting',
+        { workItemId: 'w1', decisionId: 'd2', kind: 'plan' },
+        11 * minute,
+      ),
+      event(4, 'work.plan-approved', { workItemId: 'w1', decidedVia: 'dashboard' }, 12 * minute),
+    ];
+    expect(computeAgentMetrics(events, [], []).decisions).toMatchObject({
+      requested: 1,
+      approved: 1,
+      medianLatencyMs: minute,
+      byVia: { dashboard: { decided: 1, medianLatencyMs: minute } },
+    });
+  });
+
   it('uses backend write order for duplicate ledger observations in reversed and shuffled reads', (): void => {
     const row = (effect?: string): Record<string, unknown> => ({
       tool: 'mcp.call',

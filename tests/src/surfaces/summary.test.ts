@@ -106,6 +106,21 @@ describe('the plain-language action line', (): void => {
     );
   });
 
+  it('describes a chat post by the operation it resolves to, however the path is spelled (wave 3.5 review M11)', (): void => {
+    for (const path of ['chat.postMessage?x=1', 'chat.postMessage#frag']) {
+      expect(
+        summariseAction(http('POST', path, { channel: 'C0PUBLIC', text: 'Covered.' }), surfaces),
+        path,
+      ).toBe('Post to Slack channel C0PUBLIC: "Covered."');
+    }
+    expect(
+      summariseAction(
+        http('POST', 'chat.postMessage?x=1', { channel: 'D0MANAGER', text: 'Hi' }),
+        surfaces,
+      ),
+    ).toBe('Send Brian a Slack DM: "Hi"');
+  });
+
   it('names the manager DM and every other chat post by its channel', (): void => {
     expect(
       summariseAction(

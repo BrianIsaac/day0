@@ -46,7 +46,7 @@ const SYSTEM_PROMPT = [
   '  - `writes`: the slugs of the connected surfaces the step writes.',
   '  - `reason`: one line saying why, in words the manager can check against the step.',
   '',
-  'For the plan as a whole, answer `transition`, the plan\'s word on the originating ticket\'s state:',
+  "For the plan as a whole, answer `transition`, the plan's word on the originating ticket's state:",
   '  - `promised`: the plan commits to moving the ticket state, unconditionally.',
   '  - `conditional-on-evidence`: the plan moves the state only if something the run reads shows a stated condition holds (the audit line was read back, the figure matches).',
   '  - `conditional-on-manager`: the plan moves the state only if or after the manager approves or decides.',
@@ -101,7 +101,10 @@ export interface PlanObligationsArgs {
 }
 
 /** The connected surfaces, the only ones an obligation may name. */
-export function connectedSurfaces(surfaces: readonly SurfaceRecord[], now: number): SurfaceRecord[] {
+export function connectedSurfaces(
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+): SurfaceRecord[] {
   return surfaces.filter((surface) => verdictFor(surface, now) === 'connected');
 }
 
@@ -142,7 +145,12 @@ export function planObligationsPrompt(args: PlanObligationsArgs): string {
     '--- Surfaces with no connection (never an obligation) ---',
     absent.length === 0
       ? '(none)'
-      : absent.map((surface) => `  - ${surface.slug} (${surface.displayName}) · ${verdictFor(surface, args.now)}`).join('\n'),
+      : absent
+          .map(
+            (surface) =>
+              `  - ${surface.slug} (${surface.displayName}) · ${verdictFor(surface, args.now)}`,
+          )
+          .join('\n'),
   ];
   if (args.documents) {
     lines.push(
@@ -162,7 +170,7 @@ export function planObligationsPrompt(args: PlanObligationsArgs): string {
     'Steps:',
     ...args.plan.steps.map((step, index) => `${index + 1}. ${redactTokenShapes(step)}`),
     '',
-    'Declare the obligations of every step and the plan\'s word on the ticket state now.',
+    "Declare the obligations of every step and the plan's word on the ticket state now.",
   );
   return lines.join('\n');
 }
@@ -176,7 +184,9 @@ export function planObligationsPrompt(args: PlanObligationsArgs): string {
  * Returns:
  *   The judgement; throws when the model cannot be reached.
  */
-export async function judgePlanObligations(args: PlanObligationsArgs): Promise<PlanObligationsJudgement> {
+export async function judgePlanObligations(
+  args: PlanObligationsArgs,
+): Promise<PlanObligationsJudgement> {
   return await agentJson({
     agent: agent(),
     user: planObligationsPrompt(args),
@@ -194,7 +204,10 @@ export interface PlannerObligations {
 /** One event the settlement records; the hosting action logs it against the work item. */
 export type ObligationEvent =
   | { type: 'plan.obligations-judged'; payload: { obligations: PlanObligations } }
-  | { type: 'plan.obligations-failed-open'; payload: { reason: string; planner?: PlannerObligations } }
+  | {
+      type: 'plan.obligations-failed-open';
+      payload: { reason: string; planner?: PlannerObligations };
+    }
   | {
       type: 'plan.obligations-disagreed';
       payload: { planner: PlannerObligations; judgement: PlanObligations; differences: string[] };
@@ -214,7 +227,8 @@ function connectedSlug(name: string, connected: readonly SurfaceRecord[]): strin
   const wanted = name.trim().toLowerCase();
   if (wanted === '') return undefined;
   return connected.find(
-    (surface) => surface.slug.toLowerCase() === wanted || surface.displayName.toLowerCase() === wanted,
+    (surface) =>
+      surface.slug.toLowerCase() === wanted || surface.displayName.toLowerCase() === wanted,
   )?.slug;
 }
 
@@ -280,7 +294,11 @@ export function plannerObligationsOf(
 ): PlannerObligations | undefined {
   if (!raw.stepObligations || !raw.transition) return undefined;
   return normalise(
-    { steps: raw.stepObligations, transition: raw.transition, transitionStep: raw.transitionStep ?? null },
+    {
+      steps: raw.stepObligations,
+      transition: raw.transition,
+      transitionStep: raw.transitionStep ?? null,
+    },
     stepCount,
     connectedSurfaces(surfaces, now),
   );
@@ -294,18 +312,25 @@ function differences(planner: PlannerObligations, judgement: PlannerObligations)
   judgement.steps.forEach((row, index): void => {
     const theirs = planner.steps[index];
     if (!theirs) return;
-    if (theirs.kind !== row.kind) found.push(`step ${index + 1} kind: planner ${theirs.kind}, judgement ${row.kind}`);
+    if (theirs.kind !== row.kind)
+      found.push(`step ${index + 1} kind: planner ${theirs.kind}, judgement ${row.kind}`);
     if (!same(theirs.reads, row.reads)) {
-      found.push(`step ${index + 1} reads: planner [${theirs.reads.join(', ')}], judgement [${row.reads.join(', ')}]`);
+      found.push(
+        `step ${index + 1} reads: planner [${theirs.reads.join(', ')}], judgement [${row.reads.join(', ')}]`,
+      );
     }
     if (!same(theirs.writes, row.writes)) {
-      found.push(`step ${index + 1} writes: planner [${theirs.writes.join(', ')}], judgement [${row.writes.join(', ')}]`);
+      found.push(
+        `step ${index + 1} writes: planner [${theirs.writes.join(', ')}], judgement [${row.writes.join(', ')}]`,
+      );
     }
   });
   if (planner.transition !== judgement.transition) {
     found.push(`transition: planner ${planner.transition}, judgement ${judgement.transition}`);
   } else if (planner.transitionStep !== judgement.transitionStep) {
-    found.push(`transition step: planner ${planner.transitionStep ?? 'none'}, judgement ${judgement.transitionStep ?? 'none'}`);
+    found.push(
+      `transition step: planner ${planner.transitionStep ?? 'none'}, judgement ${judgement.transitionStep ?? 'none'}`,
+    );
   }
   return found;
 }
@@ -331,10 +356,13 @@ export async function settlePlanObligations(
   // comparison never turns on a surface neither side may name.
   const planner = raw ? normalise(raw, args.plan.steps.length, connected) : undefined;
   const failOpen = (reason: string): SettledObligations => ({
-    obligations: planner
-      ? { ...planner, basis: 'planner', failedOpen: reason }
-      : undefined,
-    events: [{ type: 'plan.obligations-failed-open', payload: { reason, ...(planner ? { planner } : {}) } }],
+    obligations: planner ? { ...planner, basis: 'planner', failedOpen: reason } : undefined,
+    events: [
+      {
+        type: 'plan.obligations-failed-open',
+        payload: { reason, ...(planner ? { planner } : {}) },
+      },
+    ],
   });
   let judged: PlanObligationsJudgement;
   try {
@@ -370,7 +398,9 @@ export async function settlePlanObligations(
     transitionStep: bounded.transitionStep,
     basis: 'judgement',
     reason: judged.reason.trim(),
-    ...(planner && planner.transition !== bounded.transition ? { plannerTransition: planner.transition } : {}),
+    ...(planner && planner.transition !== bounded.transition
+      ? { plannerTransition: planner.transition }
+      : {}),
   };
   const events: ObligationEvent[] = [{ type: 'plan.obligations-judged', payload: { obligations } }];
   if (planner) {

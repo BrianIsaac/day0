@@ -8,11 +8,7 @@ import type { Id } from '@convex/_generated/dataModel';
  * render it, so it has no real-mode copy to show. */
 export const EMPTY_TWEETS = 'no tweets seeded';
 
-export function TwitterTab({
-  agentId,
-}: {
-  agentId: Id<'agents'>;
-}) {
+export function TwitterTab({ agentId }: { agentId: Id<'agents'> }) {
   const tweets = useQuery(api.mock.listTweets, { agentId });
 
   if (!tweets) return <div className="text-xs text-[var(--color-muted)]">loading…</div>;
@@ -22,7 +18,14 @@ export function TwitterTab({
   return (
     <div className="space-y-4">
       {tweets.map((t) => (
-        <TweetThread key={t._id} agentId={agentId} slug={t.slug} author={t.author} handle={t.handle} body={t.body} />
+        <TweetThread
+          key={t._id}
+          agentId={agentId}
+          slug={t.slug}
+          author={t.author}
+          handle={t.handle}
+          body={t.body}
+        />
       ))}
     </div>
   );
