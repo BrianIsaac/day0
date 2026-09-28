@@ -368,6 +368,8 @@ export function decisionRequestText(args: {
   item?: DecisionRequestItem;
   /** The set's rows the gate refused, which no decision sends. */
   refused?: ReadonlyArray<{ readonly index: number; readonly reason: string }>;
+  /** Whether Slack renders the request, so another channel reads by its Slack mention. */
+  slackMarkup?: boolean;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
@@ -377,6 +379,7 @@ export function decisionRequestText(args: {
   const summary: SummaryContext = {
     ...(args.item?.replyTarget ? { replyTarget: args.item.replyTarget } : {}),
     textLimit: PLAN_LINE_MAX_CHARS,
+    ...(args.slackMarkup ? { slackMarkup: true } : {}),
   };
   const refused =
     args.kind === 'actions'

@@ -140,6 +140,22 @@ describe('the plain-language action line', (): void => {
         surfaces,
       ),
     ).toBe('Post to Slack channel C0PUBLIC (in thread): "Ack."');
+    // Text Slack renders names a channel by Slack's own mention, which its
+    // client shows as the channel's name (P8-6's raw ids).
+    expect(
+      summariseAction(
+        http('POST', '/chat.postMessage', { channel: 'C0PUBLIC', text: 'Drafting.' }),
+        surfaces,
+        { slackMarkup: true },
+      ),
+    ).toBe('Post to Slack channel <#C0PUBLIC>: "Drafting."');
+    expect(
+      summariseAction(
+        http('POST', '/chat.postMessage', { channel: '#general', text: 'Drafting.' }),
+        surfaces,
+        { slackMarkup: true },
+      ),
+    ).toBe('Post to Slack channel #general: "Drafting."');
     // A post into the ask's own channel reads as the reply it is; a different thread or channel keeps the id.
     const replyTarget = {
       channel: 'C0BSF04TZ19',

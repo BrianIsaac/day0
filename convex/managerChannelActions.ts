@@ -19,6 +19,7 @@ import {
   type RequestEdit,
 } from '../src/surfaces/policy';
 import { applySurfaceActions } from '../src/surfaces/registry';
+import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import type { BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import {
@@ -215,6 +216,8 @@ export const requestDecision = internalAction({
       item: prepared.item,
       surfaces: prepared.surfaces,
       closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
+      slackMarkup:
+        prepared.surface.path === 'documented-api' && isSlackApiEndpoint(prepared.surface.endpoint),
     });
     // Other held action sets are already waiting on this channel: offer one
     // code that decides them all, each named with its own.

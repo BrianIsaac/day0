@@ -484,6 +484,31 @@ describe('what a decision request says about its item (P8-6, U9 step 24)', (): v
     expect(text.indexOf('Held actions:')).toBeLessThan(text.indexOf('Refused by'));
   });
 
+  it('names another channel by its Slack mention when Slack renders the request', (): void => {
+    const post: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close completed.' }),
+      },
+    };
+    const request = (slackMarkup: boolean): string =>
+      decisionRequestText({
+        agentName: 'ops worker',
+        title: 'Close August',
+        id: 'ab3xyz',
+        kind: 'actions',
+        actions: [post],
+        heldIndexes: [0],
+        surfaces: [slack],
+        slackMarkup,
+      });
+    expect(request(true)).toContain('1. Post to Slack channel <#C0PUBLIC>: "Close completed."');
+    expect(request(false)).toContain('1. Post to Slack channel C0PUBLIC: "Close completed."');
+  });
+
   it('keeps the gate’s reason on a refused row whose body fills the quote', (): void => {
     const long: MockAction = {
       tool: 'http.request',
