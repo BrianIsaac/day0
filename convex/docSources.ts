@@ -1537,6 +1537,9 @@ export const finishSync = internalMutation({
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
+      // An earlier sync already superseded it and unbound its surfaces; doing
+      // it again would rewrite nothing but the count.
+      if (credential.status === 'superseded') continue;
       await supersedeCredential(ctx, credential);
       credentialsSuperseded += 1;
     }
@@ -1587,12 +1590,11 @@ async function supersedeCredential(
   // decrypt and exact-value list, and the same value returning on a later
   // sync revives the row (`credentials.store`). Only a person's revoke
   // stamps `revokedAt`, so a sync never undoes one and never makes one. The
-  // first supersede's time stands through every later sync's, so the row ages.
+  // caller skips a row already superseded, so its first time stands and it ages.
   await ctx.db.patch(credential._id, {
     status: 'superseded',
     statusReason: 'No longer detected in synced documentation.',
-    supersededAt:
-      credential.status === 'superseded' ? (credential.supersededAt ?? Date.now()) : Date.now(),
+    supersededAt: Date.now(),
   });
   const surfaces = await ctx.db
     .query('surfaces')

@@ -1324,6 +1324,41 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
   expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(surface);
 });
 
+it('leaves a credential an earlier sync superseded alone, and counts only what this sync superseded', async () => {
+  useSurfaceMode('real');
+  const harness = convexTest(schema, allConvexModules());
+  const { sourceId } = await seedSyncedSource(harness);
+  const credentialId = await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Slack credential',
+        source: { sourceId, ref: 'page.md' },
+        ciphertext: 'sealed',
+        iv: 'iv',
+        createdAt: 1,
+      }),
+  );
+  const sync = async (): Promise<Doc<'docSyncRuns'> | null> => {
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId,
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    return await harness.run(async (ctx) => await ctx.db.get(runId));
+  };
+  expect((await sync())?.summary?.credentialsSuperseded).toBe(1);
+  const first = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+  expect(first?.status).toBe('superseded');
+  expect((await sync())?.summary?.credentialsSuperseded).toBe(0);
+  expect(await harness.run(async (ctx) => await ctx.db.get(credentialId))).toEqual(first);
+});
+
 describe('superseded page credentials that have aged out (C2 D2 (a))', (): void => {
   const DAY = 24 * 60 * 60 * 1000;
   const NOW = Date.UTC(2026, 9, 28);
