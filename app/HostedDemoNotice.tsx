@@ -16,12 +16,14 @@ export function HostedDemoNotice() {
         <p key={paragraph}>{paragraph}</p>
       ))}
       <p>
+        {HOSTED_DEMO_NOTICE.link.before}
         <a
           href={HOSTED_DEMO_NOTICE.link.href}
           className="underline decoration-zinc-700 underline-offset-4 transition-colors hover:decoration-[var(--color-accent)]"
         >
           {HOSTED_DEMO_NOTICE.link.label}
         </a>
+        {HOSTED_DEMO_NOTICE.link.after}
       </p>
     </div>
   );

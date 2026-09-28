@@ -14,6 +14,12 @@ describe('HostedDemoNotice', () => {
     for (const paragraph of HOSTED_DEMO_NOTICE.paragraphs)
       expect(html).toContain(`<p>${paragraph}</p>`);
     expect(html).toContain(`href="${HOSTED_DEMO_NOTICE.link.href}"`);
-    expect(html).toContain(`>${HOSTED_DEMO_NOTICE.link.label}</a>`);
+    // Inside a sentence, so the link keeps the text's size under WCAG's inline exception.
+    expect(html).toContain(
+      `<p>${HOSTED_DEMO_NOTICE.link.before}<a href="${HOSTED_DEMO_NOTICE.link.href}"`,
+    );
+    expect(html).toContain(
+      `>${HOSTED_DEMO_NOTICE.link.label}</a>${HOSTED_DEMO_NOTICE.link.after}</p>`,
+    );
   });
 });

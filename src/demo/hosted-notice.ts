@@ -13,9 +13,15 @@ export const HOSTED_DEMO_NOTICE = {
     'The hosted office is a seeded mock: nothing your employee does reaches a real system.',
     "To run it, your sign-in email goes to Clerk, the pages are served by Vercel, and every row, your employee's included, is stored in Convex's cloud. Your one-to-one and the mock office's content go to the model provider the deployment names, a skill your employee writes is smoke-tested on Daytona, and a voice one-to-one, when you choose one, goes to ElevenLabs with your email address.",
   ],
-  link: { label: 'Who receives what, in full', href: `${REPOSITORY_URL}#disclosures` },
+  /** The closing sentence, whose middle links the README's disclosures. */
+  link: {
+    before: "The README's disclosures say ",
+    label: 'who receives what, in full',
+    after: '.',
+    href: `${REPOSITORY_URL}#disclosures`,
+  },
 } as const satisfies {
   heading: string;
   paragraphs: readonly string[];
-  link: { label: string; href: string };
+  link: { before: string; label: string; after: string; href: string };
 };
