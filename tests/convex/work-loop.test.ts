@@ -596,6 +596,7 @@ describe('the server drives the work loop in real mode', (): void => {
 
   it('schedules nothing for a revocation trial row', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.stubEnv('DAY0_EVALUATION_BED', 'revocation-test');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness, { bossEmail: 'eval-revocation-01@day0.local' });

@@ -5,6 +5,7 @@ import { action, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgentAction } from './ownership';
+import { requireEvaluationAgent } from './revocationEvaluation';
 import { applySurfaceActions } from '../src/surfaces/registry';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
@@ -118,7 +119,8 @@ export const setupSurfaceCards = action({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ slack: Id<'surfaces'>; tile: Id<'surfaces'> }> => {
     const agent = await assertOwnsAgentAction(ctx, args.agentId);
-    if (!agent.bossEmail.startsWith('eval-revocation-') || !agent.userId) {
+    requireEvaluationAgent(agent, 'revocationEvaluationActions.setupSurfaceCards');
+    if (!agent.userId) {
       throw new Error('revocation evaluation accepts only its isolated evaluation agent');
     }
     const slackCredentialId: Id<'credentials'> = await ctx.runAction(internal.credentials.store, {

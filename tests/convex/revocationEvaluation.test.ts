@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest } from 'convex-test';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -9,11 +9,48 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const OWNER = { subject: 'owner' };
 
+beforeEach((): void => {
+  vi.stubEnv('DAY0_EVALUATION_BED', 'revocation-test');
+});
+
 afterEach((): void => {
   restoreSurfaceMode();
 });
 
 describe('the live revocation evaluation fixture', (): void => {
+  it('refuses every entry on a deployment that names no evaluation bed, before it stores anything', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_EVALUATION_BED', '');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'eval-revocation-unbedded@day0.local',
+          name: 'Evaluation agent',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.action(api.revocationEvaluationActions.setupSurfaceCards, { agentId }),
+    ).rejects.toThrow('runs only on an evaluation bed');
+    await expect(
+      owner.mutation(api.revocationEvaluation.seedTrial, {
+        agentId,
+        trialId: 'rev-scope-01',
+        kind: 'queued-read',
+      }),
+    ).rejects.toThrow('runs only on an evaluation bed');
+    expect(
+      await harness.run(async (ctx) => [
+        ...(await ctx.db.query('credentials').collect()),
+        ...(await ctx.db.query('workItems').collect()),
+      ]),
+    ).toEqual([]);
+  });
+
   it('is restricted to an evaluation agent and installs ordinary proposed cards', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

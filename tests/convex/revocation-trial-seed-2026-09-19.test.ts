@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -43,6 +43,10 @@ vi.mock('../../src/lib/mastra', () => ({
 type Harness = TestConvex<typeof schema>;
 const OWNER = { subject: 'owner' };
 const STRANGER = { subject: 'stranger' };
+
+beforeEach((): void => {
+  vi.stubEnv('DAY0_EVALUATION_BED', 'revocation-test');
+});
 
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
