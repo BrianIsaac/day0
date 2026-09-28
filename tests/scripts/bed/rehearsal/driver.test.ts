@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   agentIdFromUrl,
+  APPROVE_CARD,
   ASK_AGAIN,
   COMPLETE_LINE,
   REPLY_PLACEHOLDER,
@@ -46,6 +47,18 @@ describe('the dashboard driver', (): void => {
     expect(DRIVER).not.toContain("name: 'Retry', exact: true");
   });
 
+  it('approves a surface card with its one Approve and waits for the verdict to leave proposed (Q10)', (): void => {
+    const approveCard = DRIVER.slice(
+      DRIVER.indexOf('async approveCard'),
+      DRIVER.indexOf('private workCard'),
+    );
+    expect(approveCard).toContain('name: APPROVE_CARD, exact: true');
+    expect(approveCard).toContain(':not([data-verdict="proposed"])');
+    expect(approveCard).toContain("getByRole('alert')");
+    expect(DRIVER).not.toMatch(/Approve as (manager|IT)/);
+    expect(SURFACES).not.toMatch(/Approve as (manager|IT)/);
+  });
+
   it("clicks the dashboard's own control texts, so a copy change here fails before a run does", (): void => {
     expect(CHAT).toContain(`'${REPLY_PLACEHOLDER}'`);
     expect(CHAT).toContain(COMPLETE_LINE);
@@ -54,8 +67,8 @@ describe('the dashboard driver', (): void => {
       [DASHBOARD, 'Approve · author and verify'],
       [DASHBOARD, 'Approve plan'],
       [DASHBOARD, 'Approve all'],
-      [SURFACES, 'Approve as manager'],
-      [SURFACES, 'Approve as IT'],
+      [SURFACES, `export const APPROVE_CARD = '${APPROVE_CARD}';`],
+      [SURFACES, 'data-verdict={surface.verdict}'],
       [SURFACES, 'id={`surface-${surface.slug}`}'],
       [SURFACES, 'id={`credential-${props.credentialLabel}`}'],
       [DOCUMENTATION, 'placeholder="Location label"'],
@@ -69,8 +82,8 @@ describe('the dashboard driver', (): void => {
       "'Approve · author and verify'",
       "'Approve plan'",
       "'Approve all'",
-      "'Approve as manager'",
-      "'Approve as IT'",
+      'name: APPROVE_CARD, exact: true',
+      ':not([data-verdict="proposed"])',
       'article#surface-',
       'input[id^="credential-"]',
       "'Location label'",

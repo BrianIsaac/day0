@@ -5,11 +5,7 @@ import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
 import { grantScopeInTransaction } from './agents';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc, Id } from './_generated/dataModel';
-import {
-  browserComponent,
-  browserComponentRefusal,
-  withBrowserComponentState,
-} from '../src/surfaces/browser';
+import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import {
   documentedSystemIdentity,
   sameDocumentedSystem,
@@ -504,9 +500,8 @@ const credentialKind = v.union(v.literal('value'), v.literal('location'), v.lite
  *
  * A work-bearing card carries the queues its employee will read; they are
  * approved with the rest of the card and replaced only by a new proposal.
- * The access length the card shows is the request's; its clock starts when
- * the card is approved (Q5), so nothing here sets an end date, and
- * `expiresInDays` is the orientation's copy of the same draft value.
+ * A proposal names no access length and sets no end date: the approval
+ * starts Q5's 90 days and the manager is the only other source (Q5, U3 D2 (b)).
  */
 export const propose = internalMutation({
   args: {
@@ -520,7 +515,6 @@ export const propose = internalMutation({
     credentialId: v.optional(v.id('credentials')),
     credentialKind: v.optional(credentialKind),
     credentialLocation: v.optional(v.string()),
-    expiresInDays: v.number(),
     intakeScope: schema.tables.surfaces.validator.fields.intakeScope,
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -640,7 +634,7 @@ export async function scheduleOrientationFor(
  *
  * Orientation leaves such a system declared and the card lists it under the
  * others; this is the manager's click that orients that one surface. The
- * card it files still needs the manager and IT to approve it. Nothing is
+ * card it files still needs the manager's approval. Nothing is
  * stored on the row: a rejected or failed card goes back to waiting, one
  * click from a card again, and a pending job for the surface is replaced
  * so the request is not swallowed by a run that would skip it.
@@ -734,7 +728,7 @@ export const attachCredential = internalMutation({
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
-    const approved = surface.managerApprovedAt !== undefined && surface.itApprovedAt !== undefined;
+    const approved = surface.managerApprovedAt !== undefined;
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       credentialKind: args.credentialKind,
@@ -1100,7 +1094,6 @@ export const demoteAfterProbeFailure = internalMutation({
       surface.probeGeneration !== args.generation ||
       !['approved', 'ungranted', 'listed-dead'].includes(surface.verdict) ||
       surface.managerApprovedAt === undefined ||
-      surface.itApprovedAt === undefined ||
       isManagerLookupFailure(args.reason)
     ) {
       return null;
@@ -1429,16 +1422,16 @@ export const recordConnected = internalMutation({
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-/** Q5's access length, in days, for an approved card that names none. */
+/** Q5's access length at approval, in days; only the manager sets another (`setAccessDays`). */
 export const SURFACE_ACCESS_DEFAULT_DAYS = 90;
 
-/** The longest access a card or the manager can set, in days. */
+/** The longest access the manager can set, in days. */
 export const SURFACE_ACCESS_MAX_DAYS = 365;
 
 /** Surfaces one page of the access-clock migration reads. */
 const ACCESS_BACKFILL_BATCH = 100;
 
-/** The verdicts of a surface both approvals reached, whose access runs on a clock. */
+/** The verdicts of an approved surface, whose access runs on a clock. */
 const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'approved',
   'connected',
@@ -1448,26 +1441,6 @@ const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
 
 /** Who set an access end date: the approval that started it, the manager, or the upgrade. */
 type AccessSetBy = NonNullable<Doc<'surfaces'>['accessSetBy']>;
-
-/**
- * The access length an approved card carries, in whole days.
- *
- * Args:
- *   request: The proposal's stored request, which the card renders.
- *
- * Returns:
- *   The request's length capped at a year, or Q5's default when it names none.
- */
-function approvedAccessDays(request: unknown): number {
-  const days =
-    typeof request === 'object' && request !== null && 'expiresInDays' in request
-      ? request.expiresInDays
-      : undefined;
-  if (typeof days !== 'number' || !Number.isInteger(days) || days < 1) {
-    return SURFACE_ACCESS_DEFAULT_DAYS;
-  }
-  return Math.min(days, SURFACE_ACCESS_MAX_DAYS);
-}
 
 /** Whether an approved surface's access end date has passed; renewal moves the date. */
 function accessEndDatePassed(surface: Doc<'surfaces'>, now: number): boolean {
@@ -1611,14 +1584,14 @@ async function surfaceEventExists(
  *
  * Returns:
  *   True when no grant of the scope is active and one was revoked at or
- *   after the later approval stamp.
+ *   after the manager's approval.
  */
 async function readRevokedSinceApproval(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
   readScope: string,
 ): Promise<boolean> {
-  const approvedAt = Math.max(surface.managerApprovedAt ?? 0, surface.itApprovedAt ?? 0);
+  const approvedAt = surface.managerApprovedAt ?? 0;
   const grants = await ctx.db
     .query('permissionGrants')
     .withIndex('by_agent_scope', (index) =>
@@ -1823,6 +1796,52 @@ export async function backfillAccessSetByPage(
   };
 }
 
+/**
+ * One page of the `surfaces-single-approval` migration (Q10, N10). The IT
+ * approval is gone, so a proposed card an older release left with the
+ * manager's stamp alone is approved, as the manager's approval now does it,
+ * its access running from the upgrade (`accessSetBy: 'upgrade'`); and no card
+ * keeps an IT stamp, so the release after this one can remove the
+ * declaration. A card whose approval would now be refused (a documented queue
+ * it reads changed, or its browser component is absent) stays proposed
+ * without the stamp and says why, so the manager approves it once it can be.
+ * Run by `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @param now - The upgrade's moment, from which an approved card's access runs.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function singleApprovalPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+  now: number,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    const approvedAt = surface.verdict === 'proposed' ? surface.managerApprovedAt : undefined;
+    if (approvedAt === undefined && surface.itApprovedAt === undefined) continue;
+    if (surface.itApprovedAt !== undefined) {
+      await ctx.db.patch(surface._id, { itApprovedAt: undefined });
+    }
+    if (approvedAt !== undefined) {
+      const refusal = await approvalRefusal(ctx, surface);
+      if (refusal === undefined) {
+        await approveInTransaction(ctx, surface, { approvedAt, now, by: 'upgrade' });
+      } else {
+        await ctx.db.patch(surface._id, { managerApprovedAt: undefined, reason: refusal });
+      }
+    }
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
 /** Who set a surface's end date last, by its newest `surface.access-set` event. */
 async function latestAccessSetter(
   ctx: MutationCtx,
@@ -1865,78 +1884,114 @@ export const recordIntake = internalMutation({
 });
 
 /**
- * Record manager or IT approval; both are required for `approved`.
+ * Why a proposed card cannot be approved now, or undefined when it can.
  *
- * Only a proposed surface can be approved: an absent, declared or already
- * approved surface has nothing to approve, and a rejected surface must be
- * re-proposed from evidence before either stamp can be placed again. The
- * second stamp starts the access clock at the card's length (Q5).
+ * Every documented intake queue the card reads must still read as quoted,
+ * and a browser-driven card needs the component that drives it.
+ */
+async function approvalRefusal(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<string | undefined> {
+  for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
+    if (!value.sourceId) continue;
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (index) =>
+        index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref),
+      )
+      .unique();
+    if (!page?.markdown.split(/\r?\n/).some((line) => line.trim() === value.quote)) {
+      return 'A documented intake queue changed; reject this card and re-run orientation before approval.';
+    }
+  }
+  return surface.path === 'browser-driven'
+    ? browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL)
+    : undefined;
+}
+
+/** One approval to apply: when the manager gave it, when access starts, and who set the end date. */
+interface Approval {
+  /** When the manager approved: now at the card, the older release's stamp at the upgrade. */
+  readonly approvedAt: number;
+  /** When the access clock starts. */
+  readonly now: number;
+  /** `approval` for the card's button, `upgrade` for a card an older release left half approved. */
+  readonly by: Extract<AccessSetBy, 'approval' | 'upgrade'>;
+}
+
+/**
+ * Approve a proposed card in the caller's transaction (Q10): the manager's
+ * stamp, the verdict, an access end date Q5's 90 days from `now` (the
+ * manager moves it with `setAccessDays`), the `surface.access-set` and
+ * `surface.approved` events, and a probe at once.
+ */
+async function approveInTransaction(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  approval: Approval,
+): Promise<void> {
+  const expiresAt = approval.now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
+  await ctx.db.patch(surface._id, {
+    verdict: 'approved',
+    managerApprovedAt: approval.approvedAt,
+    expiresAt,
+    accessSetBy: approval.by,
+  });
+  await logAccessSet(ctx, surface, {
+    by: approval.by,
+    days: SURFACE_ACCESS_DEFAULT_DAYS,
+    expiresAt,
+    at: approval.now,
+  });
+  await appendEvent(ctx, {
+    agentId: surface.agentId,
+    type: 'surface.approved',
+    payload: { surfaceId: surface._id },
+    createdAt: approval.now,
+  });
+  await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+    surfaceId: surface._id,
+  });
+}
+
+/**
+ * Approve a proposed card: the manager's one approval (Q10).
+ *
+ * Public, owner-guarded, real mode only; the card's Approve button. Only a
+ * proposed card can be approved: an absent, declared or already approved card
+ * has nothing to approve, and a rejected one is re-proposed from evidence
+ * first. Writes `managerApprovedAt`, the verdict `approved`, an access end
+ * date Q5's 90 days from now (`accessSetBy: 'approval'`),
+ * `surface.access-set` and `surface.approved`, and schedules the probe.
+ *
+ * @throws ConvexError when the card is not proposed, a documented intake
+ *   queue it reads changed, or its browser-driven path has no component.
  */
 export const approve = mutation({
-  args: { surfaceId: v.id('surfaces'), role: v.union(v.literal('manager'), v.literal('it')) },
+  args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<void> => {
     assertRealMode('Surface approval');
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     if (surface.verdict !== 'proposed') {
-      throw new Error(`Only a proposed surface can be approved; this one is ${surface.verdict}.`);
+      throw new ConvexError(
+        `Only a proposed surface can be approved; this one is ${surface.verdict}.`,
+      );
     }
-    for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
-      if (!value.sourceId) continue;
-      const page = await ctx.db
-        .query('docPages')
-        .withIndex('by_source_ref', (index) =>
-          index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref),
-        )
-        .unique();
-      if (!page?.markdown.split(/\r?\n/).some((line) => line.trim() === value.quote)) {
-        throw new Error(
-          'A documented intake queue changed; reject this card and re-run orientation before approval.',
-        );
-      }
-    }
-    if (surface.path === 'browser-driven') {
-      const component = browserComponent(process.env.DAY0_BROWSER_MCP_URL);
-      if (!component.present) throw new Error(component.reason);
-    }
+    const refusal = await approvalRefusal(ctx, surface);
+    if (refusal !== undefined) throw new ConvexError(refusal);
     const now = Date.now();
-    const patch = args.role === 'manager' ? { managerApprovedAt: now } : { itApprovedAt: now };
-    const both =
-      (args.role === 'manager' || surface.managerApprovedAt !== undefined) &&
-      (args.role === 'it' || surface.itApprovedAt !== undefined);
-    if (!both) {
-      await ctx.db.patch(surface._id, { ...patch, verdict: 'proposed' });
-      return;
-    }
-    // Q5: the access clock starts here, at the second approval, never at proposal.
-    const days = approvedAccessDays(surface.request);
-    const expiresAt = now + days * DAY_MS;
-    await ctx.db.patch(surface._id, {
-      ...patch,
-      verdict: 'approved',
-      expiresAt,
-      accessSetBy: 'approval',
-    });
-    await logAccessSet(ctx, surface, { by: 'approval', days, expiresAt, at: now });
-    await appendEvent(ctx, {
-      agentId: surface.agentId,
-      type: 'surface.approved',
-      payload: { surfaceId: surface._id },
-      createdAt: now,
-    });
-    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
-      surfaceId: surface._id,
-    });
+    await approveInTransaction(ctx, surface, { approvedAt: now, now, by: 'approval' });
   },
 });
 
 /**
  * Reject a proposed or approved surface and return it to `declared`.
  *
- * Both approval stamps and every connection detail are cleared, so a later
- * re-proposal starts from evidence again and a single approval can never
- * complete it on the strength of a stamp placed before the rejection.
+ * The approval and every connection detail are cleared, so a later
+ * re-proposal starts from evidence again and waits for a new approval.
  */
 export const reject = mutation({
   args: { surfaceId: v.id('surfaces'), reason: v.string() },
@@ -1956,7 +2011,6 @@ export const reject = mutation({
       reason: args.reason,
       request: undefined,
       managerApprovedAt: undefined,
-      itApprovedAt: undefined,
       endpoint: undefined,
       path: undefined,
       fallbackPath: undefined,

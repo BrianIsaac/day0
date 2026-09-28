@@ -59,6 +59,7 @@ vi.mock('convex/react', () => ({
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   AccessRow,
+  ApprovalRow,
   CredentialRow,
   credentialStatusLine,
   EMPTY_SURFACES,
@@ -455,10 +456,7 @@ describe('SurfacesTab and the optional browser component', (): void => {
     expect(markup).toContain('http://looker-tile:8080/');
     expect(markup).toContain('This system is reached through its web UI.');
     expect(markup).toContain('--profile browser');
-    expect(markup).toContain('Approve as manager');
-    expect(
-      markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g),
-    ).toHaveLength(2);
+    expect(markup.match(/<button[^>]*disabled=""[^>]*>Approve<\/button>/g)).toHaveLength(1);
   });
 
   it('says the same when a configured driver turned out not to be listening', (): void => {
@@ -472,9 +470,7 @@ describe('SurfacesTab and the optional browser component', (): void => {
     state.browserComponent = undefined;
     state.reason = undefined;
     const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
-    expect(
-      markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g),
-    ).toHaveLength(2);
+    expect(markup.match(/<button[^>]*disabled=""[^>]*>Approve<\/button>/g)).toHaveLength(1);
   });
 
   it('names a failing manager decision poll on the card that stopped answering', (): void => {
@@ -496,8 +492,50 @@ describe('SurfacesTab and the optional browser component', (): void => {
     state.reason = undefined;
     const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
     expect(markup).not.toContain('This system is reached through its web UI.');
-    expect(markup).toContain('Approve as manager');
+    expect(markup.match(/<button[^>]*>Approve<\/button>/g)).toHaveLength(1);
     expect(markup).not.toContain('disabled=""');
+  });
+
+  it('offers one Approve on a proposed card and names no second approver (Q10)', (): void => {
+    state.browserComponent = true;
+    state.reason = undefined;
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup.match(/<button[^>]*>Approve<\/button>/g)).toHaveLength(1);
+    expect(markup).toContain('data-verdict="proposed"');
+    expect(markup).toContain('Probe runs automatically once you approve.');
+    for (const gone of ['Approve as', 'IT approved', 'Manager approved', 'same operator', ' IT ']) {
+      expect(markup).not.toContain(gone);
+    }
+  });
+});
+
+describe('ApprovalRow', (): void => {
+  const idle = {
+    blocked: false,
+    onApprove: (): void => undefined,
+    onReject: (): void => undefined,
+  };
+
+  it('offers Approve and Reject while nothing is in flight', (): void => {
+    const markup = renderToStaticMarkup(<ApprovalRow {...idle} />);
+    expect(markup).toMatch(/<button type="button" class="[^"]*">Approve<\/button>/);
+    expect(markup).toMatch(/<button type="button" class="[^"]*">Reject<\/button>/);
+    expect(markup).not.toContain('role="alert"');
+  });
+
+  it('holds both controls while a decision is in flight', (): void => {
+    const markup = renderToStaticMarkup(<ApprovalRow {...idle} pending="approve" />);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Approving\.\.\.<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Reject<\/button>/);
+  });
+
+  it('says why the approval was refused, where the manager clicked', (): void => {
+    const refusal =
+      'A documented intake queue changed; reject this card and re-run orientation before approval.';
+    const markup = renderToStaticMarkup(<ApprovalRow {...idle} error={refusal} />);
+    expect(markup).toContain(`role="alert"`);
+    expect(markup).toContain(refusal);
+    expect(markup).toMatch(/<button type="button" class="[^"]*">Approve<\/button>/);
   });
 });
 
@@ -849,7 +887,7 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
     );
     expect(ended).toContain('Access ended <time');
     expect(ended).toContain(
-      ' · restarted by the upgrade. Nothing is read or sent through this card until you renew it.',
+      ' · set by the upgrade. Nothing is read or sent through this card until you renew it.',
     );
     expect(ended).toMatch(/>Renew access<\/button>/);
   });
@@ -935,7 +973,7 @@ describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b
         path: 'mcp',
         whereFound: [],
         credentialLanded: false,
-        request: { scopeRequested: ['read:issues'], costBand: 'free', expiresInDays: 30 },
+        request: { scopeRequested: ['read:issues'], costBand: 'free' },
       },
     ];
     try {

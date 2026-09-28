@@ -90,7 +90,6 @@ async function propose(
     fallbackPath: 'escalate',
     endpoint: 'https://mcp.linear.app/mcp',
     credentialLocation: 'Linear automation / Access',
-    expiresInDays: 30,
   });
 }
 
@@ -743,7 +742,6 @@ describe('surface persistence', (): void => {
       fallbackPath: 'escalate',
       endpoint: 'http://looker-tile:8080/',
       credentialLocation: 'No sign-in required',
-      expiresInDays: 30,
     });
     await harness.mutation(internal.surfaces.setStatus, {
       surfaceId,
@@ -783,7 +781,6 @@ describe('surface persistence', (): void => {
         path: 'mcp',
         fallbackPath: 'escalate',
         endpoint: 'https://mcp.linear.app/mcp',
-        expiresInDays: 30,
       }),
     ).resolves.toBe(true);
     await expect(
@@ -793,7 +790,6 @@ describe('surface persistence', (): void => {
         whereFound: [],
         path: 'escalate',
         fallbackPath: 'escalate',
-        expiresInDays: 1,
       }),
     ).resolves.toBe(false);
     await expect(
@@ -887,13 +883,11 @@ describe('surface probe generations', (): void => {
       ],
       endpoint: 'https://mcp.jira.example/mcp',
       credentialLocation: 'Jira automation credential',
-      expiresInDays: 30,
     });
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.patch(surfaceId, {
         verdict: 'approved',
         managerApprovedAt: 10,
-        itApprovedAt: 11,
         toolAllowlist: ['stale_tool'],
         toolArguments: [{ tool: 'stale_tool', arguments: [] }],
         providerIdentityId: 'stale-provider-user',
@@ -934,7 +928,6 @@ describe('surface probe generations', (): void => {
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       managerApprovedAt: 10,
-      itApprovedAt: 11,
       path: 'browser-driven',
       endpoint: 'https://jira.example/issues',
       fallbackPath: 'escalate',
@@ -1000,13 +993,11 @@ describe('surface probe generations', (): void => {
         { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
       ],
       endpoint: 'https://mcp.jira.example/mcp',
-      expiresInDays: 30,
     });
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.patch(surfaceId, {
         verdict: 'connected',
         managerApprovedAt: 10,
-        itApprovedAt: 11,
         credentialLanded: true,
         lastVerifiedAt: 50,
       });
@@ -1465,7 +1456,6 @@ describe('surface probe generations', (): void => {
           ],
           credentialLanded: false,
           managerApprovedAt: 1,
-          itApprovedAt: 1,
           createdAt: 1,
         });
         const itemId = await ctx.db.insert('workItems', {
@@ -1557,7 +1547,6 @@ describe('surface probe generations', (): void => {
           ],
           credentialLanded: false,
           managerApprovedAt: 1,
-          itApprovedAt: 1,
           createdAt: 1,
         });
         const itemId = await ctx.db.insert('workItems', {
@@ -1609,7 +1598,7 @@ describe('surface probe generations', (): void => {
 });
 
 describe('surface connection lifecycle metadata', (): void => {
-  it('returns an approved failed surface to probing when IT lands a credential', async (): Promise<void> => {
+  it('returns an approved failed surface to probing when the manager lands a credential', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
@@ -1618,7 +1607,6 @@ describe('surface connection lifecycle metadata', (): void => {
       await ctx.db.patch(surfaceId, {
         verdict: 'ungranted',
         managerApprovedAt: 10,
-        itApprovedAt: 20,
         reason: 'credential missing',
       });
     });
@@ -1626,13 +1614,13 @@ describe('surface connection lifecycle metadata', (): void => {
       surfaceId,
       credentialId: '10000credentials' as GenericId<'credentials'>,
       credentialKind: 'location',
-      credentialLocation: 'entered by IT approver',
+      credentialLocation: 'entered by the manager',
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'approved',
       credentialId: '10000credentials',
       credentialKind: 'location',
-      credentialLocation: 'entered by IT approver',
+      credentialLocation: 'entered by the manager',
       credentialLanded: false,
     });
     expect((await readSurface(harness, surfaceId)).reason).toBeUndefined();
@@ -1709,9 +1697,9 @@ describe('surface approval state machine', (): void => {
     await propose(harness, surfaceId);
     const owner = harness.withIdentity({ subject: 'owner' });
 
-    await expect(
-      owner.mutation(liveApi.surfaces.approve, { surfaceId, role: 'manager' }),
-    ).rejects.toThrow('local real-mode feature');
+    await expect(owner.mutation(liveApi.surfaces.approve, { surfaceId })).rejects.toThrow(
+      'local real-mode feature',
+    );
     await expect(
       owner.mutation(liveApi.surfaces.reject, { surfaceId, reason: 'No.' }),
     ).rejects.toThrow('local real-mode feature');
@@ -1719,33 +1707,31 @@ describe('surface approval state machine', (): void => {
     const surface = await readSurface(harness, surfaceId);
     expect(surface.verdict).toBe('proposed');
     expect(surface.managerApprovedAt).toBeUndefined();
-    expect(surface.itApprovedAt).toBeUndefined();
     expect(await eventTypes(harness)).not.toContain('surface.approved');
     expect(
       await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect()),
     ).toHaveLength(0);
   });
 
-  it('requires both approvals and emits surface.approved exactly once', async (): Promise<void> => {
+  it('approves a proposed card with one approval and emits surface.approved once, naming no role', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
     const owner = harness.withIdentity({ subject: 'owner' });
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
-    expect(await readSurface(harness, surfaceId)).toMatchObject({
-      verdict: 'proposed',
+    await owner.mutation(api.surfaces.approve, { surfaceId });
+    const approved = await readSurface(harness, surfaceId);
+    expect(approved).toMatchObject({
+      verdict: 'approved',
       managerApprovedAt: expect.any(Number),
     });
-    expect(await eventTypes(harness)).not.toContain('surface.approved');
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' });
-    expect(await readSurface(harness, surfaceId)).toMatchObject({
-      verdict: 'approved',
-      itApprovedAt: expect.any(Number),
-    });
-    expect((await eventTypes(harness)).filter((type) => type === 'surface.approved')).toHaveLength(
-      1,
+    expect(approved).not.toHaveProperty('itApprovedAt');
+    const approvals = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type === 'surface.approved')
+        .map((event): unknown => event.payload),
     );
+    expect(approvals).toEqual([{ surfaceId }]);
     const scheduled = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
     );
@@ -1756,7 +1742,7 @@ describe('surface approval state machine', (): void => {
         state: { kind: 'pending' },
       },
     ]);
-    await expect(owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' })).rejects.toThrow(
+    await expect(owner.mutation(api.surfaces.approve, { surfaceId })).rejects.toThrow(
       'Only a proposed surface can be approved; this one is approved.',
     );
   });
@@ -1774,13 +1760,12 @@ describe('surface approval state machine', (): void => {
       fallbackPath: 'escalate',
       endpoint: 'http://looker-tile:8080/',
       credentialLocation: 'No sign-in required',
-      expiresInDays: 30,
     });
     const owner = harness.withIdentity({ subject: 'owner' });
 
-    await expect(
-      owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' }),
-    ).rejects.toThrow(BROWSER_DRIVER_ABSENT);
+    await expect(owner.mutation(api.surfaces.approve, { surfaceId })).rejects.toThrow(
+      BROWSER_DRIVER_ABSENT,
+    );
     expect(await readSurface(harness, surfaceId)).toMatchObject({ verdict: 'proposed' });
     expect((await readSurface(harness, surfaceId)).managerApprovedAt).toBeUndefined();
   });
@@ -1796,19 +1781,16 @@ describe('surface approval state machine', (): void => {
       whereFound: [],
     });
     const owner = harness.withIdentity({ subject: 'owner' });
-    await expect(
-      owner.mutation(api.surfaces.approve, { surfaceId: declared, role: 'manager' }),
-    ).rejects.toThrow('this one is declared');
-    await expect(
-      owner.mutation(api.surfaces.approve, { surfaceId: absent, role: 'manager' }),
-    ).rejects.toThrow('this one is absent');
-    await expect(
-      owner.mutation(api.surfaces.approve, { surfaceId: absent, role: 'it' }),
-    ).rejects.toThrow('this one is absent');
+    await expect(owner.mutation(api.surfaces.approve, { surfaceId: declared })).rejects.toThrow(
+      'this one is declared',
+    );
+    await expect(owner.mutation(api.surfaces.approve, { surfaceId: absent })).rejects.toThrow(
+      'this one is absent',
+    );
     const row = await readSurface(harness, absent);
     expect(row.verdict).toBe('absent');
     expect(row.managerApprovedAt).toBeUndefined();
-    expect(row.itApprovedAt).toBeUndefined();
+    expect((await readSurface(harness, declared)).managerApprovedAt).toBeUndefined();
     expect(await eventTypes(harness)).not.toContain('surface.approved');
   });
 
@@ -1818,22 +1800,21 @@ describe('surface approval state machine', (): void => {
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
     const other = harness.withIdentity({ subject: 'other-owner' });
-    await expect(
-      other.mutation(api.surfaces.approve, { surfaceId, role: 'manager' }),
-    ).rejects.toThrow('forbidden');
+    await expect(other.mutation(api.surfaces.approve, { surfaceId })).rejects.toThrow('forbidden');
+    expect(await readSurface(harness, surfaceId)).toMatchObject({ verdict: 'proposed' });
     await expect(other.mutation(api.surfaces.reject, { surfaceId, reason: 'no' })).rejects.toThrow(
       'forbidden',
     );
   });
 
-  it('clears stamps and connection details on rejection so a re-proposal starts clean', async (): Promise<void> => {
+  it('clears the approval and connection details on rejection so a re-proposal waits for a new approval', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     const owner = harness.withIdentity({ subject: 'owner' });
 
     await propose(harness, surfaceId);
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
+    await owner.mutation(api.surfaces.approve, { surfaceId });
     await harness.mutation(internal.surfaces.attachCredential, {
       surfaceId,
       credentialId: '10000credentials' as GenericId<'credentials'>,
@@ -1853,7 +1834,7 @@ describe('surface approval state machine', (): void => {
     expect(rejected.credentialId).toBeUndefined();
     expect(rejected.credentialKind).toBeUndefined();
     expect(rejected.managerApprovedAt).toBeUndefined();
-    expect(rejected.itApprovedAt).toBeUndefined();
+    expect(rejected.expiresAt).toBeUndefined();
     expect(rejected.endpoint).toBeUndefined();
     expect(rejected.path).toBeUndefined();
     expect(rejected.request).toBeUndefined();
@@ -1863,17 +1844,17 @@ describe('surface approval state machine', (): void => {
     expect(rejected.managerName).toBeUndefined();
 
     await propose(harness, surfaceId);
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' });
-    const halfApproved = await readSurface(harness, surfaceId);
-    expect(halfApproved.verdict).toBe('proposed');
-    expect(halfApproved.itApprovedAt).toEqual(expect.any(Number));
-    expect(halfApproved.managerApprovedAt).toBeUndefined();
-    expect(await eventTypes(harness)).not.toContain('surface.approved');
-
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
-    expect((await readSurface(harness, surfaceId)).verdict).toBe('approved');
+    const reproposed = await readSurface(harness, surfaceId);
+    expect(reproposed.verdict).toBe('proposed');
+    expect(reproposed.managerApprovedAt).toBeUndefined();
     expect((await eventTypes(harness)).filter((type) => type === 'surface.approved')).toHaveLength(
       1,
+    );
+
+    await owner.mutation(api.surfaces.approve, { surfaceId });
+    expect((await readSurface(harness, surfaceId)).verdict).toBe('approved');
+    expect((await eventTypes(harness)).filter((type) => type === 'surface.approved')).toHaveLength(
+      2,
     );
   });
 
@@ -2037,7 +2018,6 @@ describe('surface approval state machine', (): void => {
       path: 'browser-driven',
       fallbackPath: 'escalate',
       endpoint: 'http://looker-tile:8080/',
-      expiresInDays: 30,
     });
 
     await harness
@@ -2068,8 +2048,7 @@ describe('surface approval state machine', (): void => {
     ).rejects.toThrow('this one is declared');
 
     await propose(harness, surfaceId);
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' });
+    await owner.mutation(api.surfaces.approve, { surfaceId });
     await harness.mutation(internal.surfaces.setStatus, {
       surfaceId,
       verdict: 'approved',
@@ -2081,7 +2060,6 @@ describe('surface approval state machine', (): void => {
     expect(row).toMatchObject({ verdict: 'declared', reason: 'Revoked.', credentialLanded: false });
     expect(row.lastVerifiedAt).toBeUndefined();
     expect(row.managerApprovedAt).toBeUndefined();
-    expect(row.itApprovedAt).toBeUndefined();
     expect(await eventTypes(harness)).toContain('surface.rejected');
 
     await harness.mutation(internal.surfaces.markAbsent, {
@@ -2170,7 +2148,6 @@ describe('the dedicated app on a surface row', (): void => {
         path: 'documented-api',
         endpoint: 'https://slack.com/api/',
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         ...(sharedId ? { credentialId: sharedId, credentialKind: 'value' as const } : {}),
         provisioning: {
           appId: 'A123',
@@ -2387,7 +2364,6 @@ describe('a connected surface and its last skip reason', (): void => {
         path: 'browser-driven',
         endpoint: 'http://looker-tile:8080/',
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         intakeSkipReason: 'surface is proposed; awaiting connection',
         credentialLanded: false,
         probeGeneration: 1,
@@ -2411,6 +2387,8 @@ describe('access expiry (Q5)', (): void => {
   const DAY = 24 * 60 * 60 * 1_000;
   const PROPOSED_AT = Date.UTC(2026, 8, 1);
   const APPROVED_AT = PROPOSED_AT + 10 * DAY;
+  /** Every approval's end date: Q5's 90 days from the approval, whatever the request says. */
+  const ENDS_AT = APPROVED_AT + 90 * DAY;
 
   beforeEach((): void => {
     useSurfaceMode('real');
@@ -2419,18 +2397,18 @@ describe('access expiry (Q5)', (): void => {
   });
 
   /**
-   * Propose, then approve as both roles ten days later.
+   * Propose, then approve ten days later.
    *
    * Args:
    *   harness: Convex test harness.
-   *   request: The proposal's request, carrying its access length or none.
+   *   request: The proposal's stored request.
    *
    * Returns:
    *   The approved surface id.
    */
   async function approvedSurface(
     harness: TestConvex<typeof schema>,
-    request: Record<string, unknown> = { target: { system: 'Linear' }, expiresInDays: 30 },
+    request: Record<string, unknown> = { target: { system: 'Linear' } },
   ): Promise<Id<'surfaces'>> {
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
@@ -2441,12 +2419,9 @@ describe('access expiry (Q5)', (): void => {
       path: 'mcp',
       fallbackPath: 'escalate',
       endpoint: 'https://mcp.linear.app/mcp',
-      expiresInDays: typeof request.expiresInDays === 'number' ? request.expiresInDays : 90,
     });
     vi.setSystemTime(APPROVED_AT);
-    const owner = harness.withIdentity({ subject: 'owner' });
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
-    await owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' });
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, { surfaceId });
     return surfaceId;
   }
 
@@ -2477,24 +2452,28 @@ describe('access expiry (Q5)', (): void => {
 
     const approved = await approvedSurface(harness);
     expect(await readSurface(harness, approved)).toMatchObject({
-      expiresAt: APPROVED_AT + 30 * DAY,
+      expiresAt: ENDS_AT,
       accessSetBy: 'approval',
     });
+    expect(await payloads(harness, 'surface.access-set')).toEqual([
+      { surfaceId: approved, by: 'approval', days: 90, expiresAt: ENDS_AT },
+    ]);
   });
 
-  it("uses Q5's 90-day default when the proposal names no length", async (): Promise<void> => {
+  it('starts every approval at 90 days, whatever length a stored request names (Q5, U3 D2 (b))', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const surfaceId = await approvedSurface(harness, { target: { system: 'Linear' } });
-    expect((await readSurface(harness, surfaceId)).expiresAt).toBe(APPROVED_AT + 90 * DAY);
-  });
-
-  it('caps a proposed length at a year', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const surfaceId = await approvedSurface(harness, {
-      target: { system: 'Linear' },
-      expiresInDays: 3650,
-    });
-    expect((await readSurface(harness, surfaceId)).expiresAt).toBe(APPROVED_AT + 365 * DAY);
+    // Requests an older release stored carry the model's length; the approval ignores it.
+    for (const expiresInDays of [1, 30, 3650]) {
+      const surfaceId = await approvedSurface(harness, {
+        target: { system: 'Linear' },
+        expiresInDays,
+      });
+      expect(await readSurface(harness, surfaceId)).toMatchObject({
+        expiresAt: ENDS_AT,
+        accessSetBy: 'approval',
+      });
+      vi.setSystemTime(PROPOSED_AT);
+    }
   });
 
   it('keeps the end date through every probe that connects', async (): Promise<void> => {
@@ -2513,14 +2492,14 @@ describe('access expiry (Q5)', (): void => {
     }
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'connected',
-      expiresAt: APPROVED_AT + 30 * DAY,
+      expiresAt: ENDS_AT,
     });
   });
 
   it('refuses to probe an approval whose access has ended', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
-    vi.setSystemTime(APPROVED_AT + 31 * DAY);
+    vi.setSystemTime(ENDS_AT + DAY);
     await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toBeNull();
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'approved',
@@ -2531,7 +2510,7 @@ describe('access expiry (Q5)', (): void => {
   it('refuses every probe of an ended access, not only the first, until the manager renews it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
-    const endedAt = APPROVED_AT + 31 * DAY;
+    const endedAt = ENDS_AT + DAY;
     vi.setSystemTime(endedAt);
     await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endedAt });
 
@@ -2562,7 +2541,7 @@ describe('access expiry (Q5)', (): void => {
         ],
       });
     });
-    const endsAt = APPROVED_AT + 30 * DAY;
+    const endsAt = ENDS_AT;
     vi.setSystemTime(endsAt - 2_000);
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!probe) throw new Error('probe was not reserved');
@@ -2590,7 +2569,7 @@ describe('access expiry (Q5)', (): void => {
       vi.setSystemTime(PROPOSED_AT);
       const harness = convexTest(schema, allConvexModules());
       const surfaceId = await approvedSurface(harness);
-      const endsAt = APPROVED_AT + 30 * DAY;
+      const endsAt = ENDS_AT;
       vi.setSystemTime(endsAt - 2_000);
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
       if (!probe) throw new Error('probe was not reserved');
@@ -2640,7 +2619,7 @@ describe('access expiry (Q5)', (): void => {
       toolArguments: [],
       verifiedAt: APPROVED_AT + DAY,
     });
-    const endedAt = APPROVED_AT + 31 * DAY;
+    const endedAt = ENDS_AT + DAY;
     await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endedAt });
     const renewedAt = endedAt + DAY;
     vi.setSystemTime(renewedAt);
@@ -2657,7 +2636,7 @@ describe('access expiry (Q5)', (): void => {
     });
     expect(surface.reason).toBeUndefined();
     expect(await payloads(harness, 'surface.access-set')).toEqual([
-      { surfaceId, by: 'approval', days: 30, expiresAt: APPROVED_AT + 30 * DAY },
+      { surfaceId, by: 'approval', days: 90, expiresAt: ENDS_AT },
       { surfaceId, by: 'manager', days: 60, expiresAt: renewedAt + 60 * DAY, renewed: true },
     ]);
     const scheduled = await harness.run(
@@ -2688,7 +2667,7 @@ describe('access expiry (Q5)', (): void => {
       });
     };
     await connect(['list_issues', 'save_comment'], APPROVED_AT + DAY);
-    const endedAt = APPROVED_AT + 31 * DAY;
+    const endedAt = ENDS_AT + DAY;
     vi.setSystemTime(endedAt);
     await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endedAt });
     const renewedAt = endedAt + DAY;
@@ -2760,16 +2739,16 @@ describe('access expiry (Q5)', (): void => {
         .withIdentity({ subject: 'intruder' })
         .mutation(api.surfaces.setAccessDays, { surfaceId: approved, days: 30 }),
     ).rejects.toThrow('forbidden');
-    expect((await readSurface(harness, approved)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
+    expect((await readSurface(harness, approved)).expiresAt).toBe(ENDS_AT);
     expect(await payloads(harness, 'surface.access-set')).toEqual([
-      { surfaceId: approved, by: 'approval', days: 30, expiresAt: APPROVED_AT + 30 * DAY },
+      { surfaceId: approved, by: 'approval', days: 90, expiresAt: ENDS_AT },
     ]);
   });
 
   it('writes one notice a week before the end date, and none earlier', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
-    const expiresAt = APPROVED_AT + 30 * DAY;
+    const expiresAt = ENDS_AT;
 
     await expect(
       harness.mutation(internal.surfaces.recordExpiryNotice, {
@@ -2781,7 +2760,7 @@ describe('access expiry (Q5)', (): void => {
       await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now });
     }
     expect(await payloads(harness, 'surface.expiring')).toEqual([
-      { surfaceId, expiresAt, noticeDay: '2026-10-04' },
+      { surfaceId, expiresAt, noticeDay: '2026-12-03' },
     ]);
   });
 
@@ -2790,10 +2769,10 @@ describe('access expiry (Q5)', (): void => {
     const surfaceId = await approvedSurface(harness);
     const agentId = (await readSurface(harness, surfaceId)).agentId;
     await harness.run(async (ctx) => await ctx.db.patch(agentId, { zone: 'Asia/Singapore' }));
-    // Midnight UTC on 11 October is 08:00 on 11 October in Singapore; the
-    // notice day there is 4 October, which starts at 16:00 UTC on 3 October.
-    const expiresAt = APPROVED_AT + 30 * DAY;
-    const noticeDayStarts = Date.UTC(2026, 9, 3, 16);
+    // Midnight UTC on 10 December is 08:00 on 10 December in Singapore; the
+    // notice day there is 3 December, which starts at 16:00 UTC on 2 December.
+    const expiresAt = ENDS_AT;
+    const noticeDayStarts = Date.UTC(2026, 11, 2, 16);
     await expect(
       harness.mutation(internal.surfaces.recordExpiryNotice, {
         surfaceId,
@@ -2804,14 +2783,14 @@ describe('access expiry (Q5)', (): void => {
       harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: noticeDayStarts }),
     ).resolves.toBe(true);
     expect(await payloads(harness, 'surface.expiring')).toEqual([
-      { surfaceId, expiresAt, noticeDay: '2026-10-04' },
+      { surfaceId, expiresAt, noticeDay: '2026-12-03' },
     ]);
   });
 
   it('notices a new end date after the manager moves it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
-    const first = APPROVED_AT + 30 * DAY;
+    const first = ENDS_AT;
     await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: first - DAY });
     vi.setSystemTime(first - DAY);
     await harness
@@ -2820,8 +2799,8 @@ describe('access expiry (Q5)', (): void => {
     const second = first - DAY + 3 * DAY;
     await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: second - DAY });
     expect(await payloads(harness, 'surface.expiring')).toEqual([
-      { surfaceId, expiresAt: first, noticeDay: '2026-10-04' },
-      { surfaceId, expiresAt: second, noticeDay: '2026-10-06' },
+      { surfaceId, expiresAt: first, noticeDay: '2026-12-03' },
+      { surfaceId, expiresAt: second, noticeDay: '2026-12-05' },
     ]);
   });
 
@@ -2845,9 +2824,7 @@ describe('access expiry (Q5)', (): void => {
             displayName: fields.slug,
             class: 'kanban',
             whereFound: [],
-            request: { expiresInDays: 30 },
             managerApprovedAt: PROPOSED_AT + DAY,
-            itApprovedAt: PROPOSED_AT + DAY,
             credentialLanded: fields.verdict === 'connected',
             expiresAt: PROPOSED_AT + 30 * DAY,
             createdAt: 1,
@@ -2915,7 +2892,7 @@ describe('access expiry (Q5)', (): void => {
     }
     expect((await readSurface(harness, ended)).expiresAt).toBe(PROPOSED_AT + 30 * DAY);
     expect((await readSurface(harness, declared)).expiresAt).toBeUndefined();
-    expect((await readSurface(harness, current)).expiresAt).toBe(APPROVED_AT + 30 * DAY);
+    expect((await readSurface(harness, current)).expiresAt).toBe(ENDS_AT);
     expect(
       (await payloads(harness, 'surface.access-set')).filter(
         (payload) => (payload as { by?: unknown }).by === 'upgrade',
@@ -3018,7 +2995,7 @@ describe('the read grant on reconnect (Q7)', (): void => {
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
     await harness.run(async (ctx): Promise<void> => {
-      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: 1, itApprovedAt: 1 });
+      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: 1 });
     });
     await connect(harness, surfaceId, 100);
     expect(await holds(harness, agentId, 'linear:read')).toBe(true);
@@ -3042,7 +3019,7 @@ describe('the read grant on reconnect (Q7)', (): void => {
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
     await harness.run(async (ctx): Promise<void> => {
-      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: 1, itApprovedAt: 1 });
+      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: 1 });
     });
     await connect(harness, surfaceId, 100);
     await harness
@@ -3053,7 +3030,6 @@ describe('the read grant on reconnect (Q7)', (): void => {
       await ctx.db.patch(surfaceId, {
         verdict: 'approved',
         managerApprovedAt: reapprovedAt,
-        itApprovedAt: reapprovedAt,
       });
     });
 
@@ -3094,10 +3070,9 @@ describe('a replaceable manager on the surface row', (): void => {
         { path: 'browser-driven', endpoint: 'https://app.slack.com' },
       ],
       endpoint: 'https://slack.com/api',
-      expiresInDays: 30,
     });
     await harness.run(async (ctx): Promise<void> => {
-      await ctx.db.patch(surfaceId, { verdict, managerApprovedAt: 10, itApprovedAt: 11 });
+      await ctx.db.patch(surfaceId, { verdict, managerApprovedAt: 10 });
     });
     return surfaceId;
   }
@@ -3246,7 +3221,6 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
       await ctx.db.patch(surfaceId, {
         verdict: 'approved',
         managerApprovedAt: 10,
-        itApprovedAt: 11,
       });
     });
     const probe = async (tools: string[], verifiedAt: number): Promise<void> => {

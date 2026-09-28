@@ -297,7 +297,13 @@ export default defineSchema({
     ),
     endpoint: v.optional(v.string()),
     request: v.optional(v.any()),
+    /** The manager's approval of the card, the one approval there is (Q10). */
     managerApprovedAt: v.optional(v.number()),
+    /**
+     * The IT approval of releases before 0.6.0. Nothing writes or reads it;
+     * the `surfaces-single-approval` migration clears it, and the release
+     * after that removes this declaration (N10).
+     */
     itApprovedAt: v.optional(v.number()),
     /** Phase 2 Lane B connection evidence. Credential contents remain in the
      * lane-A credentials table and are decrypted only inside Node actions. */
@@ -372,7 +378,7 @@ export default defineSchema({
     /** The queues this employee reads on a work-bearing surface: picked at
      * orientation from its own role's documented `Team:`, `Project:` and
      * `Channels:` lines, each value kept with the page line that states it,
-     * and approved by the manager and IT with the card. Absent on rows
+     * and approved by the manager with the card. Absent on rows
      * proposed before the field, which keep the page scan; present with no
      * value means intake reads nothing, and `notes` says why. */
     intakeScope: v.optional(

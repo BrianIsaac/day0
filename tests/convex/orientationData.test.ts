@@ -123,7 +123,7 @@ describe('orientation data boundary', (): void => {
     });
   });
 
-  it('re-probes connected rows and dead rows that still hold a credential and both approvals', async (): Promise<void> => {
+  it('re-probes connected rows and dead rows that still hold a credential and the approval', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
@@ -156,7 +156,6 @@ describe('orientation data boundary', (): void => {
         verdict: 'listed-dead',
         credentialId,
         managerApprovedAt: 1,
-        itApprovedAt: 2,
       });
       // Dead but rejected since (no stamps): not retried.
       await ctx.db.patch(bySlug.asana._id, { verdict: 'listed-dead', credentialId });
@@ -164,7 +163,6 @@ describe('orientation data boundary', (): void => {
       await ctx.db.patch(bySlug.slack._id, {
         verdict: 'ungranted',
         managerApprovedAt: 1,
-        itApprovedAt: 2,
       });
     });
     const candidates = await harness.query(internal.orientationData.reprobeCandidates, {});
@@ -197,7 +195,7 @@ describe('orientation data boundary', (): void => {
       surfaces.map((surface): [string, Doc<'surfaces'>] => [surface.slug, surface]),
     );
     const credentialId = '10000credentials' as GenericId<'credentials'>;
-    const approved = { credentialId, managerApprovedAt: 1, itApprovedAt: 2 };
+    const approved = { credentialId, managerApprovedAt: 1 };
     await harness.run(async (ctx): Promise<void> => {
       // The account behind the manager email was deactivated: the token works.
       await ctx.db.patch(bySlug.slack._id, {

@@ -42,6 +42,9 @@ type SurfaceEvidence = {
   url?: string;
 };
 
+/** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
+export const APPROVE_CARD = 'Approve';
+
 export const LOADING_SURFACES = 'Loading discovered systems, connection status and evidence…';
 export const EMPTY_SURFACES =
   'No systems have been discovered yet. After charter approval, orientation maps systems from the linked documentation and shows their connection status here.';
@@ -59,14 +62,13 @@ type ConnectRequestBody = {
   registrySuggestion?: { endpoint?: string; note?: string };
   blastRadius?: string;
   costBand?: string;
-  expiresInDays?: number;
   rollback?: string;
   openQuestions?: string[];
 };
 
 type Operation = {
   error?: string;
-  kind: 'landing' | 'probe' | 'propose' | 'provision';
+  kind: 'approve' | 'landing' | 'probe' | 'propose' | 'provision' | 'reject';
   surfaceId: string;
 };
 
@@ -165,7 +167,7 @@ export interface IntakeScopeRowProps {
 
 /**
  * Show the queues a work-bearing card reads, each with the handbook line
- * that states it, so the manager and IT approve exactly what intake reads.
+ * that states it, so the manager approves exactly what intake reads.
  *
  * Args:
  *   props: The card's scope, what has changed on its pages, and source labels.
@@ -257,7 +259,7 @@ export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNod
       </summary>
       <p className="mt-2 text-[var(--color-muted)]">
         Cards are proposed for the systems the charter names. Propose one of these to file its card;
-        the manager and IT still approve it, and a charter amendment names it for good.
+        you still approve it, and a charter amendment names it for good.
       </p>
       <ul className="mt-2 space-y-2">
         {props.systems.map((system: UnnamedSystem): React.ReactNode => {
@@ -302,6 +304,63 @@ export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNod
         })}
       </ul>
     </details>
+  );
+}
+
+/** What the approval row of a proposed card shows and does. */
+export interface ApprovalRowProps {
+  /** The decision in flight, if any. */
+  readonly pending?: 'approve' | 'reject';
+  /** The card cannot be approved on this deployment yet (its browser component is absent). */
+  readonly blocked: boolean;
+  /** Why the last decision was refused, in the backend's words. */
+  readonly error?: string;
+  /** Approve the card. */
+  readonly onApprove: () => void;
+  /** Reject the card, returning it to declared. */
+  readonly onReject: () => void;
+}
+
+/**
+ * The proposed card's one approval (Q10): Approve, Reject, the refusal of the
+ * last decision, and the line that says the probe follows.
+ *
+ * Args:
+ *   props: The decision's state and the two controls' handlers.
+ *
+ * Returns:
+ *   The row.
+ */
+export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
+  return (
+    <>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={props.blocked || props.pending !== undefined}
+          onClick={props.onApprove}
+          className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+        >
+          {props.pending === 'approve' ? 'Approving...' : APPROVE_CARD}
+        </button>
+        <button
+          type="button"
+          disabled={props.pending !== undefined}
+          onClick={props.onReject}
+          className="text-xs text-[var(--color-danger)] disabled:opacity-50"
+        >
+          Reject
+        </button>
+        {props.error ? (
+          <span role="alert" className="text-xs text-[var(--color-danger)]">
+            {props.error}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 text-[10px] text-[var(--color-muted)]">
+        Probe runs automatically once you approve.
+      </p>
+    </>
   );
 }
 
@@ -547,7 +606,7 @@ export const DEFAULT_ACCESS_DAYS = 90;
 /** How long before the end date the card warns, as the server's notice does (Q5). */
 const EXPIRY_WARNING_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** The verdicts of a card both approvals reached, whose access runs on a clock. */
+/** The verdicts of an approved card, whose access runs on a clock. */
 const ACCESS_VERDICTS: ReadonlySet<string> = new Set([
   'approved',
   'connected',
@@ -559,7 +618,7 @@ const ACCESS_VERDICTS: ReadonlySet<string> = new Set([
 const ACCESS_SET_BY_WORDS: Readonly<Record<NonNullable<Doc<'surfaces'>['accessSetBy']>, string>> = {
   approval: 'set when you approved the card',
   manager: 'set by you',
-  upgrade: 'restarted by the upgrade',
+  upgrade: 'set by the upgrade',
 };
 
 /** A surface as the access row reads it. */
@@ -1088,6 +1147,24 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     }
   }
 
+  async function onDecide(surfaceId: Id<'surfaces'>, kind: 'approve' | 'reject'): Promise<void> {
+    setOperation({ kind, surfaceId });
+    try {
+      if (kind === 'approve') await approve({ surfaceId });
+      else await reject({ surfaceId, reason: 'Rejected by the operator.' });
+      setOperation(null);
+    } catch (failure) {
+      setOperation({
+        kind,
+        surfaceId,
+        error: refusalText(
+          failure,
+          kind === 'approve' ? 'The card was not approved.' : 'The card was not rejected.',
+        ),
+      });
+    }
+  }
+
   async function onProbe(surfaceId: Id<'surfaces'>): Promise<void> {
     setOperation({ kind: 'probe', surfaceId });
     try {
@@ -1208,6 +1285,10 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             provisioning?.appName,
           );
           const currentOperation = operation?.surfaceId === surface._id ? operation : undefined;
+          const decision =
+            currentOperation?.kind === 'approve' || currentOperation?.kind === 'reject'
+              ? { kind: currentOperation.kind, error: currentOperation.error }
+              : undefined;
           const canProbe = ['approved', 'connected', 'ungranted', 'listed-dead'].includes(
             surface.verdict,
           );
@@ -1227,6 +1308,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             <article
               id={`surface-${surface.slug}`}
               key={surface._id}
+              data-verdict={surface.verdict}
               className="rounded-lg border border-[var(--color-border)] p-4"
             >
               <div className="flex items-center justify-between gap-2">
@@ -1395,48 +1477,19 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                 <p className="mt-3 text-xs text-[var(--color-warn)]">{browserFloor.message}</p>
               ) : null}
               {surface.verdict === 'proposed' ? (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {surface.managerApprovedAt ? (
-                    <span className="rounded border px-2 py-1 text-xs">Manager approved</span>
-                  ) : (
-                    <button
-                      disabled={browserFloor.absent}
-                      onClick={(): void =>
-                        void approve({ surfaceId: surface._id, role: 'manager' })
-                      }
-                      className="rounded border px-2 py-1 text-xs disabled:opacity-50"
-                    >
-                      Approve as manager
-                    </button>
-                  )}
-                  {surface.itApprovedAt ? (
-                    <span className="rounded border px-2 py-1 text-xs">IT approved</span>
-                  ) : (
-                    <button
-                      disabled={browserFloor.absent}
-                      onClick={(): void => void approve({ surfaceId: surface._id, role: 'it' })}
-                      className="rounded border px-2 py-1 text-xs disabled:opacity-50"
-                    >
-                      Approve as IT
-                    </button>
-                  )}
-                  <button
-                    onClick={(): void =>
-                      void reject({
-                        surfaceId: surface._id,
-                        reason: 'Rejected by the operator.',
-                      })
-                    }
-                    className="text-xs text-[var(--color-danger)]"
-                  >
-                    Reject
-                  </button>
-                </div>
-              ) : null}
-              {surface.verdict === 'proposed' ? (
-                <p className="mt-2 text-[10px] text-[var(--color-muted)]">
-                  Probe runs automatically after both approvals.
-                </p>
+                <ApprovalRow
+                  pending={decision && !decision.error ? decision.kind : undefined}
+                  blocked={browserFloor.absent}
+                  error={decision?.error}
+                  onApprove={(): void => {
+                    // onDecide ends in its own catch, which shows the refusal on the card.
+                    void onDecide(surface._id, 'approve');
+                  }}
+                  onReject={(): void => {
+                    // onDecide ends in its own catch, which shows the refusal on the card.
+                    void onDecide(surface._id, 'reject');
+                  }}
+                />
               ) : null}
               {canProbe ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1456,9 +1509,6 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   ) : null}
                 </div>
               ) : null}
-              <p className="mt-3 text-[10px] text-[var(--color-muted)]">
-                In this local single-user run, manager and IT are the same operator.
-              </p>
             </article>
           );
         })}

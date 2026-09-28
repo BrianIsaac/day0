@@ -30,7 +30,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { CREDENTIAL_RESEAL_MIGRATION, credentialKeyCounts } from './credentials';
-import { backfillAccessSetByPage, restartAccessClocksPage } from './surfaces';
+import { backfillAccessSetByPage, restartAccessClocksPage, singleApprovalPage } from './surfaces';
 import { keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
@@ -42,11 +42,14 @@ import { deploymentZone } from '../src/lib/zone';
 /**
  * Every migration, in the order the upgrade runs them. The access clocks come
  * first, so the hourly sweep has the least time to end a card on the clock
- * they restart; owners come before the inclusion-list conversion, which reads
- * an adopted agent's sources.
+ * they restart, and the single approval next, so a card its manager already
+ * approved starts its access and its probe as soon as the upgrade can; owners
+ * come before the inclusion-list conversion, which reads an adopted agent's
+ * sources.
  */
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
+  'surfaces-single-approval',
   'agents-owner',
   'credentials-sync-revoke',
   'ticket-listings',
@@ -132,6 +135,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'rewrites an avatar id the gallery no longer lists, the handle-keyed ids of earlier builds, to the face the dashboard already shows for it',
     thenRemoves: 'nothing: avatarById keeps its digest fallback for an id a client sends',
+  },
+  'surfaces-single-approval': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'approves each proposed card an older release left with the manager’s stamp alone, its access running from the upgrade, or leaves it proposed without the stamp where the approval would now be refused; and clears every IT stamp (Q10)',
+    thenRemoves: 'the surfaces.itApprovedAt declaration',
   },
   'mirrors-rekey': {
     release: SCHEMA_STEP_RELEASE,
@@ -487,6 +495,8 @@ const MIGRATION_PAGES: Readonly<
   'mirrors-rekey': rekeyMirrors,
   'surfaces-access-clock': async (ctx, cursor) =>
     await restartAccessClocksPage(ctx, cursor, Date.now()),
+  'surfaces-single-approval': async (ctx, cursor) =>
+    await singleApprovalPage(ctx, cursor, Date.now()),
 };
 
 /** A migration's row, if it has started. */

@@ -940,7 +940,6 @@ describe('documentation sources in real mode', (): void => {
           whereFound: [],
           createdAt: 1,
           managerApprovedAt: 2,
-          itApprovedAt: 3,
           probeGeneration: 4,
           intakeScope: {
             channels: [
@@ -972,13 +971,9 @@ describe('documentation sources in real mode', (): void => {
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'proposed', probeGeneration: 5 });
     expect(surface?.managerApprovedAt).toBeUndefined();
-    expect(surface?.itApprovedAt).toBeUndefined();
     expect(surface?.intakeScope?.channels?.[0].value).toBe('finance-close');
     await expect(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, {
-        surfaceId,
-        role: 'manager',
-      }),
+      harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, { surfaceId }),
     ).rejects.toThrow('re-run orientation');
   });
 
@@ -999,7 +994,6 @@ describe('documentation sources in real mode', (): void => {
           whereFound: [],
           createdAt: 1,
           managerApprovedAt: 2,
-          itApprovedAt: 3,
           probeGeneration: 4,
           managerDmChannelId: 'D1',
           // The team's handbook is renamed within the team's directory; a
@@ -1189,7 +1183,6 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
       createdAt: 1,
       request: { credential: { found: 'value', method: 'bot-token', evidenceRef: 'page.md' } },
       managerApprovedAt: 2,
-      itApprovedAt: 3,
       probeGeneration: 4,
       lastVerifiedAt: 5,
       toolAllowlist: ['chat.postMessage'],
@@ -1229,7 +1222,6 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
     credentialLanded: false,
     probeGeneration: 5,
     managerApprovedAt: 2,
-    itApprovedAt: 3,
     request: { credential: { found: 'location', method: 'bot-token' } },
   });
   expect(surface?.credentialId).toBeUndefined();
@@ -1387,7 +1379,6 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         whereFound: [{ sourceId, ref: 'runbooks/page-3.md', quote: '# Runbook' }],
         createdAt: 1,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         intakeScope: {
           channels: [
             {

@@ -432,6 +432,168 @@ describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {
   });
 });
 
+describe('the single approval (Q10)', (): void => {
+  const UPGRADED_AT = Date.UTC(2026, 8, 28, 9);
+  const DAY = 24 * 60 * 60 * 1_000;
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('approves a card the manager alone approved, clears every IT stamp, and leaves a refused card proposed saying why', async (): Promise<void> => {
+    // The approval schedules a probe; the fake clock holds it so none runs.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(UPGRADED_AT);
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const ids = await harness.run(async (ctx) => {
+      const card = async (
+        slug: string,
+        fields: Partial<Doc<'surfaces'>>,
+      ): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug,
+          displayName: slug,
+          class: 'kanban',
+          verdict: 'proposed',
+          path: 'mcp',
+          whereFound: [],
+          credentialLanded: false,
+          createdAt: 1,
+          ...fields,
+        });
+      const connected = await card('asana', {
+        verdict: 'connected',
+        managerApprovedAt: 10,
+        itApprovedAt: 11,
+        expiresAt: UPGRADED_AT + DAY,
+        accessSetBy: 'approval',
+      });
+      // A clock an earlier release started carries its event; the access-clock
+      // migration leaves it alone.
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'surface.access-set',
+        payload: { surfaceId: connected, by: 'approval', days: 90, expiresAt: UPGRADED_AT + DAY },
+        createdAt: 11,
+      });
+      return {
+        managerOnly: await card('linear', { managerApprovedAt: 50 }),
+        itOnly: await card('jira', { itApprovedAt: 60 }),
+        connected,
+        refused: await card('looker', { path: 'browser-driven', managerApprovedAt: 70 }),
+        untouched: await card('notion', {}),
+      };
+    });
+
+    await runAll(harness);
+
+    const rows = await harness.run(async (ctx) => ({
+      managerOnly: await ctx.db.get(ids.managerOnly),
+      itOnly: await ctx.db.get(ids.itOnly),
+      connected: await ctx.db.get(ids.connected),
+      refused: await ctx.db.get(ids.refused),
+      untouched: await ctx.db.get(ids.untouched),
+      events: await ctx.db.query('events').collect(),
+      scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    expect(rows.managerOnly).toMatchObject({
+      verdict: 'approved',
+      managerApprovedAt: 50,
+      expiresAt: UPGRADED_AT + 90 * DAY,
+      accessSetBy: 'upgrade',
+    });
+    expect(rows.itOnly).toMatchObject({ verdict: 'proposed' });
+    expect(rows.itOnly?.managerApprovedAt).toBeUndefined();
+    expect(rows.connected).toMatchObject({
+      verdict: 'connected',
+      managerApprovedAt: 10,
+      expiresAt: UPGRADED_AT + DAY,
+      accessSetBy: 'approval',
+    });
+    expect(rows.refused).toMatchObject({
+      verdict: 'proposed',
+      reason: expect.stringContaining('BROWSER_DRIVER_ABSENT'),
+    });
+    expect(rows.refused?.managerApprovedAt).toBeUndefined();
+    expect(rows.untouched).toMatchObject({ verdict: 'proposed' });
+    expect(rows.untouched?.reason).toBeUndefined();
+    for (const row of [rows.managerOnly, rows.itOnly, rows.connected, rows.refused]) {
+      expect(row).not.toHaveProperty('itApprovedAt');
+    }
+    expect(
+      rows.events
+        .filter((event) => event.createdAt === UPGRADED_AT)
+        .map((event) => ({ type: event.type, payload: event.payload })),
+    ).toEqual([
+      {
+        type: 'surface.access-set',
+        payload: {
+          surfaceId: ids.managerOnly,
+          by: 'upgrade',
+          days: 90,
+          expiresAt: UPGRADED_AT + 90 * DAY,
+        },
+      },
+      { type: 'surface.approved', payload: { surfaceId: ids.managerOnly } },
+    ]);
+    expect(rows.scheduled).toMatchObject([
+      { name: 'surfaceActions:probeInternal', args: [{ surfaceId: ids.managerOnly }] },
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-single-approval')).toMatchObject({
+      release: '0.6.0',
+      read: 5,
+      changed: 4,
+      completedAt: expect.any(Number),
+    });
+  });
+
+  it('changes nothing when it runs again', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(UPGRADED_AT);
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'proposed',
+          path: 'mcp',
+          whereFound: [],
+          credentialLanded: false,
+          managerApprovedAt: 50,
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.migrations.runMigrationPage, {
+      name: 'surfaces-single-approval',
+    });
+    const approved = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'surfaces-single-approval'))
+        .unique();
+      if (row) await ctx.db.delete(row._id);
+    });
+    vi.setSystemTime(UPGRADED_AT + DAY);
+    await harness.mutation(internal.migrations.runMigrationPage, {
+      name: 'surfaces-single-approval',
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(approved);
+    const approvals = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter((event) => event.type === 'surface.approved'),
+    );
+    expect(approvals).toHaveLength(1);
+  });
+});
+
 describe('the declarations the schema step retired (N10)', (): void => {
   it('runs no migration of a retired declaration and declares none of them any more', (): void => {
     for (const { declaration, migration } of RETIRED_DECLARATIONS) {

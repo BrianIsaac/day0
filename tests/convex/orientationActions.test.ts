@@ -30,6 +30,7 @@ import {
   isBrowserLoginCredential,
   isPrivateHost,
   namesSystem,
+  orientationSchema,
   orientSurface,
   pickIntakeScope,
   registryRemoteEndpoint,
@@ -137,7 +138,6 @@ vi.mock('../../src/lib/mastra', () => ({
         : { found: 'none', method: 'unknown' },
       blastRadius: echo('One system.'),
       costBand: 'none',
-      expiresInDays: 30,
       rollback: echo('Reject the surface.'),
       openQuestions: model.echoInput ? [user] : [],
     };
@@ -1716,7 +1716,7 @@ describe('orientation run', (): void => {
     expect(model.prompts).toHaveLength(1);
   });
 
-  it('reports a model failure on the card and still files the evidence-backed proposal at the 90-day default', async (): Promise<void> => {
+  it('reports a model failure on the card and still files the evidence-backed proposal, naming no access length', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = undefined;
     const harness = convexTest(schema, orientationModules());
@@ -1748,7 +1748,22 @@ describe('orientation run', (): void => {
     expect((linear.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
       'could not classify this system (model unavailable in tests)',
     );
-    expect((linear.request as { expiresInDays: number }).expiresInDays).toBe(90);
+    expect(linear.request).not.toHaveProperty('expiresInDays');
+  });
+
+  it('asks the model for no access length and files none, so the approval starts the only clock (Q5, U3 D2 (b))', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK }, [
+      { name: 'Linear', class: 'kanban' },
+    ]);
+    await expect(orientDeclared(harness, agentId)).resolves.toMatchObject({ proposed: 1 });
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    expect(linear).toMatchObject({ verdict: 'proposed' });
+    expect(linear.request).not.toHaveProperty('expiresInDays');
+    expect(linear.expiresAt).toBeUndefined();
+    expect(Object.keys(orientationSchema.shape)).not.toContain('expiresInDays');
   });
 
   it('fans out one scheduled job per declared system and isolates a stale job', async (): Promise<void> => {
@@ -2493,21 +2508,10 @@ describe('each employee reads its own role', (): void => {
     ).toEqual([{ surfaceId: before['looker-pipeline-tile']._id, slug: 'looker-pipeline-tile' }]);
 
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
-    await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id,
-      role: 'manager',
-    });
-    expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
-      verdict: 'proposed',
-      managerApprovedAt: expect.any(Number),
-    });
-    await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id,
-      role: 'it',
-    });
+    await owner.mutation(api.surfaces.approve, { surfaceId: after['looker-pipeline-tile']._id });
     expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
       verdict: 'approved',
-      itApprovedAt: expect.any(Number),
+      managerApprovedAt: expect.any(Number),
     });
 
     // Rejected, the card goes back under the row, one click from a card again.

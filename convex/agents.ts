@@ -521,7 +521,7 @@ const MAX_EMAIL_LENGTH = 254;
 /** One `@`, a dotted domain and no spaces: enough to refuse a typo, not a validator. */
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** The verdicts a surface keeps while its approvals and credential stand. */
+/** The verdicts a surface keeps while its approval and credential stand. */
 const MANAGER_REPROBE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'connected',
   'ungranted',
@@ -540,7 +540,6 @@ function reprobedForManagerChange(surface: Doc<'surfaces'>): boolean {
     surface.class === 'chat' &&
     surface.credentialId !== undefined &&
     surface.managerApprovedAt !== undefined &&
-    surface.itApprovedAt !== undefined &&
     MANAGER_REPROBE_VERDICTS.includes(surface.verdict) &&
     (surface.verdict === 'connected' || isManagerLookupFailure(surface.reason))
   );

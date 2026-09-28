@@ -508,7 +508,6 @@ describe('surface probe action state', (): void => {
       credentialId: 'test-credential-id',
       credentialLanded: false,
       managerApprovedAt: 2,
-      itApprovedAt: 3,
       whereFound: [],
       createdAt: 1,
     };
@@ -597,7 +596,6 @@ describe('surface probe action state', (): void => {
         credentialId: 'test-credential-id',
         credentialLanded: false,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         pathCandidates: [{ path: partialSurface.path, endpoint: partialSurface.endpoint }],
         whereFound: [],
         createdAt: 1,
@@ -660,7 +658,6 @@ describe('surface probe action state', (): void => {
         credentialId: 'test-credential-id',
         credentialLanded: false,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         whereFound: [],
         createdAt: 1,
       };
@@ -712,7 +709,6 @@ describe('surface probe action state', (): void => {
       credentialId: 'test-credential-id',
       credentialLanded: false,
       managerApprovedAt: 2,
-      itApprovedAt: 3,
       whereFound: [],
       createdAt: 1,
     };
@@ -784,7 +780,6 @@ describe('surface probe action state', (): void => {
       credentialId: 'test-credential-id',
       credentialLanded: false,
       managerApprovedAt: 2,
-      itApprovedAt: 3,
       whereFound: [],
       intakeScope: {
         channels: ['finance-close', 'ops-requests'].map((value) => ({
@@ -852,7 +847,6 @@ describe('surface probe action state', (): void => {
               credentialId: 'local-test-credential-id',
               credentialLanded: false,
               whereFound: [],
-              request: { expiresInDays: 30 },
               createdAt: 1,
             },
           };
@@ -988,7 +982,6 @@ describe('surface probe action state', (): void => {
           credentialLocation: 'IT vault / Day0 Linear',
           credentialLanded: false,
           managerApprovedAt: 2,
-          itApprovedAt: 3,
           createdAt: 1,
         });
         return { agentId, surfaceId };
@@ -1099,7 +1092,6 @@ describe('probing a documented API that is not Slack', (): void => {
       credentialId: 'test-credential-id',
       credentialLanded: false,
       managerApprovedAt: 2,
-      itApprovedAt: 3,
       whereFound: [],
       createdAt: 1,
       ...partial,
@@ -1265,7 +1257,6 @@ describe('the hourly re-probe sweep', (): void => {
           verdict: 'connected',
           whereFound: [],
           managerApprovedAt: 1,
-          itApprovedAt: 1,
           credentialLanded: true,
           expiresAt,
           createdAt: 1,
@@ -1348,7 +1339,7 @@ describe('credential landing from the card', (): void => {
         whereFound: [],
         path: method === 'oauth' ? 'documented-api' : 'mcp',
         endpoint: method === 'oauth' ? 'https://slack.com/api/' : 'https://mcp.linear.app/mcp',
-        ...(approved ? { managerApprovedAt: 2, itApprovedAt: 2 } : {}),
+        ...(approved ? { managerApprovedAt: 2 } : {}),
         request: {
           credential: {
             found: 'none',
@@ -1434,21 +1425,16 @@ describe('credential landing from the card', (): void => {
 });
 
 describe('what the card may not store', (): void => {
-  const approved = { managerApprovedAt: 2, itApprovedAt: 2 };
+  const approved = { managerApprovedAt: 2 };
 
   afterEach((): void => {
     vi.useRealTimers();
   });
 
-  it('stores nothing before the card is approved', (): void => {
-    for (const stamps of [{}, { managerApprovedAt: 2 }, { itApprovedAt: 2 }]) {
-      expect(
-        credentialLandingRefusal(
-          { ...stamps, endpoint: 'https://mcp.linear.app/mcp' },
-          'lin_api_x',
-        ),
-      ).toBe('Approve the card before landing its credential; nothing was stored.');
-    }
+  it("stores nothing before the card is approved, and lands once the manager's one approval is on it", (): void => {
+    expect(credentialLandingRefusal({ endpoint: 'https://mcp.linear.app/mcp' }, 'lin_api_x')).toBe(
+      'Approve the card before landing its credential; nothing was stored.',
+    );
     expect(
       credentialLandingRefusal(
         { ...approved, endpoint: 'https://mcp.linear.app/mcp' },
@@ -2014,7 +2000,6 @@ describe('probing the browser floor', (): void => {
           path: 'browser-driven',
           endpoint: TILE,
           managerApprovedAt: 2,
-          itApprovedAt: 3,
           credentialLanded: false,
           createdAt: 1,
         });
@@ -2206,7 +2191,6 @@ describe('probing the browser floor', (): void => {
         credentialKind: 'location',
         credentialLanded: false,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         createdAt: 1,
       });
     });
@@ -2276,7 +2260,6 @@ describe('probing the browser floor', (): void => {
           { path: 'browser-driven', endpoint: 'https://reports.example.test/forecast' },
         ],
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         credentialLanded: false,
         createdAt: 2,
       });
@@ -2341,7 +2324,6 @@ describe('probing the browser floor', (): void => {
         credentialKind: 'location',
         credentialLanded: false,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         createdAt: 1,
       });
     });
@@ -2410,8 +2392,6 @@ describe('probing the browser floor', (): void => {
         credentialKind: 'location',
         credentialLanded: false,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
-        request: { expiresInDays: 30 },
         createdAt: 1,
       });
       const sourceId = await ctx.db.insert('docSources', {
@@ -2617,8 +2597,6 @@ describe('one failed probe does not write listed-dead', (): void => {
         credentialKind: 'location',
         credentialLanded: false,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
-        request: { expiresInDays: 30 },
         createdAt: 1,
       });
     });
