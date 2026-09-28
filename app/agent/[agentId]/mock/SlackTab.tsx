@@ -66,11 +66,13 @@ export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
           />
         </nav>
 
-        {/* Focusable and named, so a keyboard can scroll the conversation. */}
+        {/* Focusable and named, so a keyboard can scroll the conversation. A
+            region, not a log: switching channels replaces every message, and
+            a log would read the whole channel out on each switch. */}
         <div
           ref={scrollRef}
           tabIndex={0}
-          role="log"
+          role="region"
           aria-label="Messages"
           className="overflow-y-auto @lg:pr-2 space-y-3 min-w-0"
         >

@@ -404,6 +404,7 @@ describe('the chat room for a screen reader, and a 1:1 that could not start (ste
     const log = view.container.querySelector('[role="log"]');
     expect(log?.getAttribute('aria-label')).toBe('The 1:1 so far');
     expect(log?.getAttribute('tabindex')).toBe('0');
+    expect(log?.getAttribute('aria-busy')).toBe('false');
     expect(log?.textContent).toContain('Employee: Why this hire?');
     expect(log?.textContent).toContain('You: Close week is heavy.');
     view.unmount();

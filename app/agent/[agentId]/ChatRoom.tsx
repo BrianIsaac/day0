@@ -383,6 +383,8 @@ export function ChatRoom({
         tabIndex={0}
         role="log"
         aria-label="The 1:1 so far"
+        // A turn streams in token by token; the log is read once it is whole.
+        aria-busy={status === 'submitted' || status === 'streaming'}
         className="flex-1 overflow-y-auto p-4 space-y-3 text-sm"
       >
         {withoutPrimingTurn(messages).map((m) => (
