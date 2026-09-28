@@ -11,9 +11,9 @@ import {
   type PrivateHostAllowlist,
 } from '../../lib/private-hosts';
 import { resolveHostname, type HostResolver } from '../../surfaces/mcp-address';
-import type { DocPage, DocSourceRecord } from '../types';
+import type { DocSourceRecord } from '../types';
 import type { DocumentationReader, ReadPageBatch } from './batch';
-import { readMarkdownDirectory, readMarkdownDirectoryBatch } from './folder';
+import { readMarkdownDirectoryBatch } from './folder';
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
