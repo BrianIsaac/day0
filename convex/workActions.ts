@@ -941,10 +941,11 @@ async function refreshCarriedReads(
   const indexes = carriedReadIndexes(actions, applied, surfaces);
   if (indexes.length === 0) return { ok: true, output: args.resume };
   const reread = new Set(indexes);
+  let knownValues: readonly string[] = [];
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
     if (!agent) throw new Error('agent not found');
-    const knownValues = await knownValuesForAgent(ctx, agent);
+    knownValues = await knownValuesForAgent(ctx, agent);
     const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
       agentId: args.agentId,
     });
@@ -990,20 +991,48 @@ async function refreshCarriedReads(
       ? { ok: true, output: { ...args.resume, applied: refreshed.applied } }
       : refreshed;
   } catch (error) {
-    const surfaceNames = [...new Set(indexes.map((index) => String(actions[index]!.args.surface)))];
     return {
       ok: false,
-      failed: {
-        reason: rereadStopReason(
-          surfaceNames.join(', '),
-          error instanceof Error ? error.message : String(error),
-        ),
-        at: Date.now(),
-        actions: indexes.map((index) => actions[index]!),
-        applied: [],
-      },
+      failed: rereadFailure(
+        indexes.map((index) => actions[index]!),
+        error,
+        knownValues,
+        Date.now(),
+      ),
     };
   }
+}
+
+/**
+ * The failed re-read a resumed run stops on when the re-read itself threw:
+ * the surfaces it was for, and the failure scrubbed to one line the way every
+ * other failure path is, since it is the reason the card shows.
+ *
+ * Args:
+ *   actions: The carried reads that were to be taken again.
+ *   error: What the attempt threw.
+ *   knownValues: The owner's stored values, removed exactly.
+ *   at: When the attempt stopped.
+ *
+ * Returns:
+ *   The failed re-read, with nothing applied.
+ */
+export function rereadFailure(
+  actions: readonly MockAction[],
+  error: unknown,
+  knownValues: readonly string[],
+  at: number,
+): FailedReread {
+  const surfaceNames = [...new Set(actions.map((action) => String(action.args.surface)))];
+  return {
+    reason: rereadStopReason(
+      surfaceNames.join(', '),
+      safeFailureMessage(error, '', 'the re-read failed', 300, knownValues),
+    ),
+    at,
+    actions: [...actions],
+    applied: [],
+  };
 }
 
 /** An output with the writes earlier runs landed on it, when there are any. */

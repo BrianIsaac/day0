@@ -16,6 +16,7 @@ import {
   dependentTransitionRefusal,
   findMatchingSkillForCandidate,
   prerequisiteOutput,
+  rereadFailure,
   thisRunWrites,
   validatePlanStepOutcomes,
 } from '../../convex/workActions';
@@ -8743,5 +8744,26 @@ describe('an execution failure on its way to the card (step 42, C-10)', (): void
       expect(said).not.toContain('node_modules');
     }
     expect(failed.skipReason).toContain('401 Unauthorized');
+  });
+
+  it('scrubs a re-read that threw before the closing set, against the owner values too', (): void => {
+    const read: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+    };
+    const failed = rereadFailure(
+      [read, read],
+      new Error(
+        'connect to https://ops:hunter2-owner-pass@tile.internal/mcp refused; token acme-owner-value-91\n    at Socket.emit (node:events:519:28)',
+      ),
+      ['acme-owner-value-91'],
+      5,
+    );
+
+    expect(failed.reason).toMatch(/^could not re-read looker before the closing set: connect to /);
+    expect(failed.reason).not.toContain('hunter2-owner-pass');
+    expect(failed.reason).not.toContain('acme-owner-value-91');
+    expect(failed.reason).not.toContain('node:events');
+    expect(failed).toMatchObject({ at: 5, actions: [read, read], applied: [] });
   });
 });
