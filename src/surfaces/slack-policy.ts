@@ -32,7 +32,7 @@ export function documentedChannelNames(pages: readonly PolicyPage[]): string[] {
     if (!/slack/i.test(`${page.title}\n${page.markdown}`)) continue;
     for (const line of page.markdown.split(/\r?\n/)) {
       if (!/\bChannels?\s*:/i.test(line)) continue;
-      for (const match of line.matchAll(/#([a-z0-9][a-z0-9_-]*)/gi)) {
+      for (const match of line.matchAll(/#([\p{L}\p{N}][\p{L}\p{N}_-]*)/gu)) {
         names.add(match[1].toLowerCase());
       }
     }
